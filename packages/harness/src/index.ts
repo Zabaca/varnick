@@ -5,10 +5,17 @@
 // below runs in the host and answers a bridge call.
 //
 // This barrel is host-side: it re-exports ./sandbox.ts, which imports node built
-// -ins. Core imports the subpaths it needs — `@varnick/harness/bridge` and
-// `@varnick/harness/credentials`, the two modules that import no Node — and
-// never this one. ./runtime.ts is not re-exported at all; it is loaded by the
-// runtime process and by nothing else.
+// -ins. Core imports the subpaths it needs — `@varnick/harness/bridge`,
+// `@varnick/harness/credentials` and `@varnick/harness/turn`, three modules that
+// import no Node — and never this one. ./runtime.ts is not re-exported at all;
+// it is loaded by the runtime process and by nothing else.
+//
+// The count above was two for as long as `turn` did not exist, and stayed two
+// after it did. It is checked now rather than described: eslint.config.js carries
+// the same three names, and `bun run lint` fails on a Core source file importing
+// this barrel or any Harness subpath outside that list. `packages/core/scripts/`
+// is deliberately outside the rule — drive.ts is a headless Node script and
+// imports session, secrets and secret-resolution because it may.
 //
 // Four responsibilities, each with an ADR behind it:
 //   sandbox      — @anthropic-ai/sandbox-runtime around the agent's whole
@@ -28,8 +35,6 @@
 // What is wired and what is still a stub is recorded in exactly one place —
 // LIVE_NOT_IMPLEMENTED in packages/core/src/actors/live.ts — rather than
 // restated here, where nothing would keep it true.
-
-export const HARNESS_VERSION = '0.0.0'
 
 export {
   HARNESS_FAILURES,

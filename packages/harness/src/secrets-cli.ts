@@ -12,6 +12,8 @@
 import {
   describeSecretsForAgent,
   openSecretsStore,
+  SECRET_ADD_COMMAND,
+  SECRET_REMOVE_COMMAND,
   SECRETS_KEYCHAIN_SERVICE,
   SecretsError,
   securityKeychain,
@@ -22,9 +24,9 @@ const USAGE = `varnick secrets — keys the agent can name and never read.
 
   bun run secret list              the names, which is what the agent is given
   bun run secret brief             the exact text the agent is handed
-  bun run secret add <NAME>        reads the value from stdin
+  ${SECRET_ADD_COMMAND}        reads the value from stdin
   bun run secret rename <OLD> <NEW>
-  bun run secret remove <NAME>
+  ${SECRET_REMOVE_COMMAND}
 
 Values are kept in the system keychain under the "${SECRETS_KEYCHAIN_SERVICE}"
 service, one item per secret. The agent is told the names and never a value.
@@ -126,7 +128,7 @@ async function main(argv: string[]): Promise<number> {
     case 'list': {
       const names = store.names()
       if (names.length === 0) {
-        process.stdout.write(`No secrets stored. Add one with \`bun run secret add <NAME>\`.\n`)
+        process.stdout.write(`No secrets stored. Add one with \`${SECRET_ADD_COMMAND}\`.\n`)
         return 0
       }
       process.stdout.write(`${names.join('\n')}\n`)

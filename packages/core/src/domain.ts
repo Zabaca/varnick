@@ -226,9 +226,11 @@ export function commandQuery(draft: string): string {
   return draft.startsWith('/') ? draft : ''
 }
 
-/** Deterministic id source. `Math.random()` and a live clock make the states
- *  page impossible to compare between runs. */
-export function makeIdFactory(prefix: string, start = 1) {
-  let n = start
-  return () => `${prefix}-${n++}`
-}
+/*
+  `makeIdFactory` was here, unused. It existed for a real constraint — Core must
+  not reach for `Math.random()` or a live clock, or the states page cannot be
+  compared between runs — and nothing in Core does either, so the factory was
+  guarding a rule that already held by construction. Removed rather than kept as
+  a comment with an implementation attached: the ids that exist are literals in
+  seed data and scenario definitions, which is as deterministic as it gets.
+*/
