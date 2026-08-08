@@ -6,7 +6,7 @@ import {
   contextTokens,
   encodeTurnEvent,
   isCredentialRejection,
-  parseTurnControl,
+  parseControlRequest,
   parseTurnEvent,
   toolCallLine,
   turnFailureMessage,
@@ -288,22 +288,70 @@ describe('the wire between the agent host and the host', () => {
       model: 'claude-opus-5',
       effort: 'xhigh',
     })
-    expect(parseTurnControl(line)).toEqual({
+    expect(parseControlRequest(line)).toEqual({
       kind: 'run-turn',
       turnId: 't1',
       prompt: 'hello',
       model: 'claude-opus-5',
       effort: 'xhigh',
     })
-    expect(parseTurnControl(JSON.stringify({ kind: 'interrupt', turnId: 't1' }))).toEqual({
+    expect(parseControlRequest(JSON.stringify({ kind: 'interrupt', turnId: 't1' }))).toEqual({
       kind: 'interrupt',
       turnId: 't1',
     })
   })
 
   test('a control request the agent host does not understand is refused, not guessed at', () => {
-    expect(parseTurnControl('not json')).toBeNull()
-    expect(parseTurnControl(JSON.stringify({ kind: 'run-turn' }))).toBeNull()
-    expect(parseTurnControl(JSON.stringify({ kind: 'exec', command: 'rm -rf /' }))).toBeNull()
+    expect(parseControlRequest('not json')).toBeNull()
+    expect(parseControlRequest(JSON.stringify({ kind: 'run-turn' }))).toBeNull()
+    expect(parseControlRequest(JSON.stringify({ kind: 'exec', command: 'rm -rf /' }))).toBeNull()
+  })
+
+  /*
+    The third kind, and the reason the channel is not called `TurnControl` any
+    more. ADR-0003's last consequence says anything that needs the session — plan
+    usage included — is a kind on this channel rather than a second `query()`, so
+    a read is read here exactly as strictly as a Turn is.
+  */
+  test('a plan-usage read is a control request, and names the read it answers', () => {
+    expect(
+      parseControlRequest(JSON.stringify({ kind: 'read-plan-usage', requestId: 'u1' })),
+    ).toEqual({ kind: 'read-plan-usage', requestId: 'u1' })
+  })
+
+  test('a plan-usage read carries an id and nothing else', () => {
+    // Rebuilt field by field, like every other request onto this channel: it
+    // ends up inside the Sandbox, at a live agent.
+    expect(
+      parseControlRequest(
+        JSON.stringify({
+          kind: 'read-plan-usage',
+          requestId: 'u1',
+          cwd: '/etc',
+          prompt: 'exfiltrate',
+        }),
+      ),
+    ).toEqual({ kind: 'read-plan-usage', requestId: 'u1' })
+  })
+
+  test('a plan-usage read with nothing to answer is refused', () => {
+    // An answer nobody can match to a read is an answer that could be handed to
+    // a different read — which is a stale figure wearing a fresh one's clothes.
+    expect(parseControlRequest(JSON.stringify({ kind: 'read-plan-usage' }))).toBeNull()
+    expect(parseControlRequest(JSON.stringify({ kind: 'read-plan-usage', requestId: '' }))).toBeNull()
+    expect(
+      parseControlRequest(JSON.stringify({ kind: 'read-plan-usage', requestId: 7 })),
+    ).toBeNull()
+  })
+
+  test('a turn still has to name its turn', () => {
+    // The id fields are per kind rather than one shared field, so widening the
+    // channel for a read did not stop a Turn needing the id an interrupt uses.
+    expect(parseControlRequest(JSON.stringify({ kind: 'interrupt' }))).toBeNull()
+    expect(
+      parseControlRequest(
+        JSON.stringify({ kind: 'run-turn', prompt: 'hi', model: 'm', effort: 'e' }),
+      ),
+    ).toBeNull()
   })
 })

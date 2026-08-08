@@ -422,10 +422,15 @@ function PlanUsage({ usage, mode }: { usage: SubscriptionUsage | null; mode: Act
 /**
  * The one place the build admits what it is.
  *
- * Every actor is a stub right now, so every number on this screen is invented —
- * plausibly, deliberately, and only until the Harness is written. The marker
- * disappears on its own when actors/live.ts stops throwing, because it reads
- * the same list.
+ * It gates on `mode`, and only on `mode`. A seeded run invents every number on
+ * this screen — plausibly and deliberately — so the warning is true whatever
+ * else is wired, and it goes away when a run stops being seeded rather than when
+ * some list empties.
+ *
+ * `UNIMPLEMENTED` is read for the tooltip and for nothing else. This was written
+ * the other way round once, and driving it showed the difference: a list-driven
+ * marker goes quiet on the last wiring while a seeded surface is still rendering
+ * seeded figures, which is the exact claim it exists to stop anyone making.
  */
 function SeededMarker({ mode }: { mode: ActorMode }) {
   const [open, setOpen] = useState(false)

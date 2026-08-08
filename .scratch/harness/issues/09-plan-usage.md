@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (needs a Sandboxed session to ask), which in turn needs 15. Was unblocked; the research half is done and merged, and the edge to 03 was discovered by doing it — see the comments.
 
-**Status:** ready-for-agent — research half merged, wiring waits on 03
+**Status:** done
 
 **Realizes:** `subscription.reading`, `subscription.read`
 
@@ -12,8 +12,8 @@
 
 - [x] A real source is identified and proven, and the read reports itself as live — wiring it to a Sandboxed session is what ticket 03 completes
 - [x] A failed read leaves whatever was last known — which may be nothing — and never invents a figure
-- [ ] `readSubscriptionUsage` is removed from the unimplemented list — waits on 03
-- [ ] The strip stops being marked as seeded when the run stops being seeded. Not because the marker reads the unimplemented list — it does not, it gates on the actor mode and reads the list only to name what is stubbed
+- [x] `readSubscriptionUsage` is removed from the unimplemented list
+- [x] The strip stops being marked as seeded when the run stops being seeded. Not because the marker reads the unimplemented list — it does not, it gates on the actor mode and reads the list only to name what is stubbed
 
 Covers story 70, and closes story 71 for these two numbers.
 
@@ -50,6 +50,25 @@ reader as a required parameter with no default, `reportFromSession()` adapts a
 session someone else owns, and `readSubscriptionUsage` went back onto
 `LIVE_NOT_IMPLEMENTED`. What remains is one wire from ticket 03's confined
 session, and the strip stays honestly marked as seeded until then.
+
+**The wire, closed.** `read-plan-usage` is a third `ControlRequest` kind on the
+channel ticket 05 built — the type is no longer called `TurnControl`, because a
+plan-usage read is not a Turn and never becomes one. It goes renderer →
+`callHarness` → `route_of` (Host, beside the Turn, for the second of the two
+reasons that list exists) → one line onto the agent process's stdin. The read
+itself happens *inside* `srt`: `runAgentHost` hands `serveTurns` the session it
+already holds, and `reportFromSession` adapts that one. Only the two figures come
+back out, as `{"kind":"plan-usage","requestId":…,"usage":…|null}` on the stdout a
+Turn's events already use, told apart by which id they name.
+
+**With no agent running the read refuses, and that is the design rather than a
+gap in it.** There is no session to ask, so the host says so and the machine
+keeps whatever was last measured — nothing at all, before the first run.
+`a_read_with_no_agent_running_refuses_rather_than_starting_one` is the assertion
+that holds that shut, and it needs no process precisely because the answer is
+that there is none. `DesignedPage` therefore asks twice: at start-up, and again
+on entering `agent.running`, which is the first moment the question can be
+answered.
 
 **Also found, and fixed in the comments rather than the code:** the seeded marker
 does not decide visibility by reading `LIVE_NOT_IMPLEMENTED` — it gates on

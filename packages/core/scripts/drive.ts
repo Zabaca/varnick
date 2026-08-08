@@ -1425,7 +1425,99 @@ async function turnPath(
   // stayed on the list would keep the seeded marker claiming a real turn is
   // fake; one that left it while still throwing would claim the opposite.
   check('the turn actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('runTurn'))
+  check(
+    'the plan-usage actor is no longer listed as unimplemented',
+    !UNIMPLEMENTED.includes('readSubscriptionUsage'),
+  )
   check('every unimplemented name is a real actor', UNIMPLEMENTED.every((name) => (ACTOR_NAMES as readonly string[]).includes(name)))
+}
+
+// ---------------------------------------------------------------------------
+// Plan usage — a figure, or the last one there was
+// ---------------------------------------------------------------------------
+
+/*
+  The product rule that outlives whatever is behind the read: the strip renders
+  beside the words "plan usage", so a number there was measured or there is no
+  number. The Harness parses and refuses; the machine keeps or replaces. These
+  drive the machine half, which nothing was asserting.
+*/
+
+type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded' }
+
+{
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        readSubscriptionUsage: resolves<Usage, Record<string, never>>({
+          fiveHourPct: 11,
+          weeklyPct: 54,
+          source: 'live',
+        }),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  check('plan usage starts unread', regionOf(actor.getSnapshot().value, 'subscription') === 'unread')
+  check('and with nothing to show', actor.getSnapshot().context.subscription === null)
+
+  actor.send({ type: 'READ_SUBSCRIPTION' })
+  await waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'read')
+  check(
+    'a successful read is what the actor measured',
+    actor.getSnapshot().context.subscription?.fiveHourPct === 11,
+  )
+  check(
+    'and says where it came from, so the surface never has to guess',
+    actor.getSnapshot().context.subscription?.source === 'live',
+  )
+  actor.stop()
+}
+
+{
+  // The criterion in full: a failed read leaves whatever was last known, and
+  // what was last known may be nothing.
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: { readSubscriptionUsage: rejects<Usage, Record<string, never>>('no session to ask') },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  actor.send({ type: 'READ_SUBSCRIPTION' })
+  await waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'unread')
+  check(
+    'a failed first read invents nothing at all',
+    actor.getSnapshot().context.subscription === null,
+  )
+  actor.stop()
+}
+
+{
+  // The other half, and the one a default would break silently: a read that
+  // fails after a good one must not blank it or replace it with a plausible
+  // zero. The strip keeps showing the last measurement.
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: { readSubscriptionUsage: rejects<Usage, Record<string, never>>('the agent stopped') },
+    }),
+    {
+      input: {
+        policy: seedPolicy,
+        subscription: { fiveHourPct: 11, weeklyPct: 54, source: 'live' },
+        enterSubscription: 'read',
+      },
+    },
+  ).start()
+
+  actor.send({ type: 'READ_SUBSCRIPTION' })
+  await waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'unread')
+  const kept = actor.getSnapshot().context.subscription
+  check('a failed read leaves the last measurement standing', kept?.fiveHourPct === 11)
+  check('all of it, not the half that was easy to keep', kept?.weeklyPct === 54)
+  check('still labelled as the measurement it was', kept?.source === 'live')
+  actor.stop()
 }
 
 // ---------------------------------------------------------------------------

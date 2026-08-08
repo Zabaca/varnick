@@ -92,9 +92,25 @@ function LiveChat({
     }
   }, [ctx.credentialState, send])
 
+  /*
+    Plan usage is asked for at start-up and again once the agent is up.
+
+    Both, because the read rides the confined session (ADR-0003) and there is no
+    session before there is an agent. The start-up read is what a seeded run
+    answers immediately; live, it fails and leaves the strip with whatever was
+    last known, which on a first run is nothing at all. `running` is the first
+    moment the question can be answered, so it is asked again there.
+
+    Not a retry loop. Each of these fires once per thing changing, and a failed
+    read that re-fired on its own is the hot loop READ_CREDENTIAL was fixed for.
+  */
   useEffect(() => {
     send({ type: 'READ_SUBSCRIPTION' })
   }, [send])
+
+  useEffect(() => {
+    if (agentState === 'running') send({ type: 'READ_SUBSCRIPTION' })
+  }, [agentState, send])
 
   useEffect(() => {
     if (
