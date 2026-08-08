@@ -40,6 +40,24 @@ export interface Message {
 }
 
 /**
+ * The conversation varnick continues when it launches.
+ *
+ * One name, fixed, because varnick runs one Session. The mirror can hold
+ * several files — the `#/states` cards write under their own ids, and an id
+ * that has since changed leaves its transcript behind — but none of them is a
+ * candidate: resume asks the store for the Session it is about to run and never
+ * searches. Picking "the most recently written" would be inventing a way to
+ * choose between conversations, and there is no term for a set of Sessions in
+ * CONTEXT.md because the product has no such thing. When it grows one, the
+ * selection is that feature's decision to make, not a rule left behind by this
+ * one.
+ *
+ * The literal lives here rather than in the machine's default so that the id
+ * the app resumes and the id the app runs cannot drift into two strings.
+ */
+export const LIVE_SESSION_ID = 'session-1'
+
+/**
  * Read one region out of a parallel machine's state value.
  *
  * A parallel state value is a record of region name to value, and the value may

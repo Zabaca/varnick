@@ -7,6 +7,7 @@ import {
   createSessionStore,
   defaultSessionRoot,
   redactSecrets,
+  restoredTranscript,
   type SessionStore,
   type StoredMessage,
 } from './session.ts'
@@ -293,6 +294,116 @@ describe('durability of the Session is not durability of the keys', () => {
   test('redactSecrets catches a private key block', () => {
     const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEow\nkey\n-----END RSA PRIVATE KEY-----'
     expect(redactSecrets(`here: ${pem}`, [])).not.toContain('MIIEow')
+  })
+})
+
+describe('a relaunch continues the conversation', () => {
+  test('what the last Turn boundary wrote is what a relaunch reads back', async () => {
+    // Quit, relaunch: a second store over the same root, which is what a new
+    // process gets.
+    await store.persist({
+      sessionId: 's1',
+      messages: [user('m1', 'build me a Surface'), agent('m2', 'on it')],
+    })
+
+    const relaunched = createSessionStore({ root })
+    const restored = restoredTranscript(await relaunched.read('s1'))
+
+    expect(restored.messages).toEqual([
+      user('m1', 'build me a Surface'),
+      agent('m2', 'on it'),
+    ])
+  })
+
+  test('a Session that was never written restores as empty rather than failing', async () => {
+    expect(restoredTranscript(await store.read('never-used'))).toEqual({
+      messages: [],
+      redacted: false,
+    })
+  })
+
+  test('a restored transcript says when it is a redacted record', async () => {
+    const secret = 'hunter2-the-actual-value'
+    const guarded = createSessionStore({ root, secretValues: () => [secret] })
+    await guarded.persist({
+      sessionId: 's1',
+      messages: [user('m1', `use ${secret} for the call`)],
+    })
+
+    const restored = restoredTranscript(await guarded.read('s1'))
+
+    // The value is gone and stays gone — reading a secret back onto the screen
+    // would defeat the redaction the write path exists for. What is owed is
+    // that the developer can tell this is the record rather than what they typed.
+    expect(restored.messages[0]?.text).toBe('use [redacted] for the call')
+    expect(restored.redacted).toBe(true)
+  })
+
+  test('a transcript with nothing redacted does not claim a redaction', async () => {
+    await store.persist({ sessionId: 's1', messages: [user('m1', 'plain prose')] })
+
+    expect(restoredTranscript(await store.read('s1')).redacted).toBe(false)
+  })
+
+  test('a transcript damaged mid-write still restores everything before the damage', async () => {
+    // Killing the process is the case this is for: the tail of one write is
+    // lost, the transcript is not.
+    await store.persist({ sessionId: 's1', messages: [user('m1', 'one'), agent('m2', 'two')] })
+    const whole = await readFile(store.pathFor('s1'), 'utf8')
+    await writeFile(store.pathFor('s1'), `${whole}{"id":"m3","role":"us`)
+
+    expect(restoredTranscript(await store.read('s1')).messages.map((m) => m.id)).toEqual([
+      'm1',
+      'm2',
+    ])
+  })
+
+  test('a Turn after a relaunch extends the file rather than replacing it', async () => {
+    // The reason the read has to succeed before a Session runs on that id. A
+    // Session that started empty would hand the mirror a transcript the file is
+    // not a prefix of, and the store would take that for a rewritten history —
+    // Compaction, or `/clear` — and replace a day's work.
+    await store.persist({ sessionId: 's1', messages: [user('m1', 'one'), agent('m2', 'two')] })
+
+    const relaunched = createSessionStore({ root })
+    const restored = restoredTranscript(await relaunched.read('s1'))
+    await relaunched.persist({
+      sessionId: 's1',
+      messages: [...restored.messages, user('m3', 'three')],
+    })
+
+    expect((await relaunched.read('s1')).map((m) => m.text)).toEqual(['one', 'two', 'three'])
+  })
+
+  test('relaunching and saving again writes nothing, redactions and all', async () => {
+    // Redaction is idempotent, so a restored message is byte-identical to the
+    // one on disk. If it were not, every relaunch would rewrite the whole
+    // transcript on the first save rather than appending to it.
+    const guarded = createSessionStore({ root, secretValues: () => ['hunter2-the-actual-value'] })
+    await guarded.persist({
+      sessionId: 's1',
+      messages: [user('m1', 'use hunter2-the-actual-value'), agent('m2', 'done')],
+    })
+    const before = await readFile(guarded.pathFor('s1'), 'utf8')
+
+    const relaunched = createSessionStore({ root, secretValues: () => ['hunter2-the-actual-value'] })
+    const restored = restoredTranscript(await relaunched.read('s1'))
+    await relaunched.persist({ sessionId: 's1', messages: restored.messages })
+
+    expect(await readFile(guarded.pathFor('s1'), 'utf8')).toBe(before)
+  })
+
+  test('the mirror has nowhere to keep a partial, so a restore ends at a Turn boundary', async () => {
+    // The whole of what `persist` accepts is complete messages. A Turn that was
+    // still streaming when the process died left no partial on disk to fold in,
+    // which is what makes resuming as `turn.idle` cost nothing: there is no
+    // half-finished answer for any other state to be about.
+    await store.persist({ sessionId: 's1', messages: [user('m1', 'one')] })
+
+    const onDisk = await readByHand('s1')
+    for (const line of onDisk) {
+      expect(Object.keys(line as object).sort()).toEqual(['id', 'role', 'text'])
+    }
   })
 })
 

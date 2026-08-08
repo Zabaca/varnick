@@ -4,18 +4,18 @@
 
 **Blocked by:** 06 (needs the mirror to read from), 15 (the renderer cannot reach the mirror without it).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** `turn.idle` entered with a restored transcript — the `#/states → idle-empty` card, with messages
 
 The entry point already exists: the Harness spawns the Session from an input the states page uses to park a conversation mid-flight. This ticket fills it from disk instead of from a literal.
 
-**Decide and record:** what happens when a Turn was in flight at the moment of the crash. The honest options are resuming as `turn.idle` with the partial folded into the transcript, or resuming as `turn.failed` with a reason. Not `sending` — nothing is in flight, and a state that lies about a live request is worse than either.
+**Decided and recorded:** [ADR-0009](../../../docs/adr/0009-resume-reads-the-mirror.md). Resume reads the **mirror**, redactions and all, and the surface says when it is showing a redacted record. A Turn in flight at the crash resumes as **`turn.idle`** — and the decision cost nothing, because the mirror is written at Turn boundaries and holds only complete messages, so a Turn that was still streaming left nothing on disk to fold in. The transcript ends at the last completed boundary.
 
-- [ ] Quitting mid-conversation and relaunching shows the same transcript
-- [ ] Killing the process and relaunching shows the same transcript
-- [ ] A Userspace module that does not compile leaves the transcript readable
-- [ ] The in-flight-at-crash decision is recorded, not just implemented
+- [x] Quitting mid-conversation and relaunching shows the same transcript
+- [x] Killing the process and relaunching shows the same transcript
+- [x] A Userspace module that does not compile leaves the transcript readable
+- [x] The in-flight-at-crash decision is recorded, not just implemented
 
 Covers stories 22, 23, 24, 25.
 

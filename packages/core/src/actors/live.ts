@@ -9,6 +9,7 @@ import type {
   SubscriptionUsage,
   SurfaceDescriptor,
 } from '../domain.ts'
+import type { SessionInput } from '../machines/session.ts'
 
 /**
  * The real implementations.
@@ -128,3 +129,49 @@ export function liveActors() {
 
 /** Descriptors a live discovery would return. Nothing scans the filesystem yet. */
 export const liveSurfaces: SurfaceDescriptor[] = []
+
+/**
+ * A conversation, as a relaunch gets it back.
+ *
+ * `input` is the same `SessionInput` the states page uses to park a Session
+ * mid-flight — the entry point already existed, and this fills it from disk
+ * instead of from a literal.
+ */
+export interface RestoredSession {
+  readonly input: SessionInput
+  /**
+   * Whether the mirror kept something out of this transcript.
+   *
+   * The surface owes the developer this. The mirror is redacted on the write
+   * path, so a restored message can read `[redacted]` where a secret value was,
+   * and a developer looking at their own words has to be able to tell that they
+   * are reading the record rather than what they typed.
+   */
+  readonly redacted: boolean
+}
+
+/**
+ * Read the Session back from the host-side mirror.
+ *
+ * **The mirror, not the Agent SDK's own store.** The two answer different
+ * questions and both keep their job: the SDK's copy is what the *agent* resumes
+ * from — its context, its continuity — and the mirror is what varnick
+ * *displays*, because it is the one that survives a build the agent just broke.
+ * That is the case resume exists for. See
+ * docs/adr/0009-resume-reads-the-mirror.md.
+ *
+ * Not an xstate actor, because it is not invoked by a machine: the Harness
+ * spawns the Session from an input it holds in context, so the transcript has
+ * to be in hand before the machine is created. Start-up owns this, the same way
+ * it owns reading the credential — see pages/DesignedPage.tsx.
+ *
+ * Rejects with a {@link HarnessUnavailable} carrying the reason, like every
+ * other call across the bridge. A failed read must never be flattened into an
+ * empty transcript: that is what a first run looks like, and a Session that
+ * started empty over a mirror that is not empty would replace it on the next
+ * save — the loss the mirror exists to prevent.
+ */
+export async function restoreSession(sessionId: string): Promise<RestoredSession> {
+  const { messages, redacted } = await callHarness({ kind: 'read-session', sessionId })
+  return { input: { sessionId, messages: [...messages] }, redacted }
+}

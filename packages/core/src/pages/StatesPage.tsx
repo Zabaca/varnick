@@ -140,7 +140,12 @@ function CardBody({ scenario, onReset }: { scenario: Scenario; onReset: () => vo
       {/* The real surface, at a size that shows the composer and the transcript
           together — the two halves whose relationship is the thing to judge. */}
       <div className="h-[440px] overflow-hidden">
-        <ChatSurface snapshot={snapshot} send={send} mode="seeded" />
+        <ChatSurface
+          snapshot={snapshot}
+          send={send}
+          mode="seeded"
+          restoredRedacted={scenario.restoredRedacted}
+        />
       </div>
     </section>
   )

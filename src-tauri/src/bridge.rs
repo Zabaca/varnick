@@ -99,7 +99,7 @@ pub enum Route {
 pub fn route_of(kind: &str) -> Option<Route> {
     match kind {
         "read-credential" => Some(Route::Host),
-        "check-sandbox" | "persist-session" => Some(Route::Runtime),
+        "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
         _ => None,
     }
 }
@@ -313,6 +313,28 @@ mod tests {
     fn the_sandbox_and_the_mirror_are_answered_by_the_runtime() {
         assert_eq!(route_of("check-sandbox"), Some(Route::Runtime));
         assert_eq!(route_of("persist-session"), Some(Route::Runtime));
+        // Both directions of the mirror go the same way. The runtime is the
+        // process with a filesystem, and resume reads the mirror rather than
+        // the Agent SDK's own store — docs/adr/0009-resume-reads-the-mirror.md.
+        assert_eq!(route_of("read-session"), Some(Route::Runtime));
+    }
+
+    #[test]
+    fn a_restored_transcript_comes_back_as_the_answer_rather_than_an_empty_ok() {
+        // Every other call answers `ok: {}`. A restore is the one that carries
+        // a payload, and it has to survive decoding intact or a relaunch shows
+        // an empty conversation over a mirror that is not empty.
+        let reply = decode_reply(
+            4,
+            r#"{"id":4,"ok":{"messages":[{"id":"m1","role":"user","text":"one"}],"redacted":true}}"#,
+        );
+        assert_eq!(
+            reply,
+            Ok(json!({
+                "messages": [{ "id": "m1", "role": "user", "text": "one" }],
+                "redacted": true
+            }))
+        );
     }
 
     #[test]

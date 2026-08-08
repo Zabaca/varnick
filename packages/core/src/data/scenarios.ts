@@ -29,6 +29,17 @@ export interface Scenario {
   /** The state paths this card demonstrates. Checked against the machines. */
   readonly covers: readonly StatePath[]
   readonly input: HarnessInput
+  /**
+   * Whether this card is a conversation restored from the mirror with a
+   * redaction in it.
+   *
+   * Not a state, and deliberately not one: a resumed Session is `turn.idle`
+   * with messages, which the machines already had. How the run started is a
+   * prop on the surface, the same as the seeded marker's `mode`, so a card that
+   * wants to show it has to say so here. See
+   * docs/adr/0009-resume-reads-the-mirror.md.
+   */
+  readonly restoredRedacted?: boolean
 }
 
 /** Harness held up, ready for a Session. */
@@ -158,6 +169,30 @@ export const SCENARIOS: readonly Scenario[] = [
     question: 'Does an empty transcript tell you what to type?',
     covers: ['agent.running', 'subscription.read', 'turn.idle', 'persistence.saved', 'composer.typing'],
     input: { ...up, sessionInput: { sessionId: 'states-idle' } },
+  },
+  {
+    id: 'resumed',
+    title: 'Resumed on launch',
+    blurb:
+      'varnick was quit — or killed — and relaunched. The transcript came back from the mirror, which is redacted on the way in, so one message reads [redacted] where a secret value was.',
+    question: 'Can you tell you are reading the record rather than what you typed?',
+    // The same idle state, entered from disk instead of from a literal. A Turn
+    // that was in flight at the crash comes back here too: the mirror is
+    // written at Turn boundaries and holds no partial, so the transcript simply
+    // ends at the last completed one.
+    covers: ['turn.idle', 'persistence.saved'],
+    restoredRedacted: true,
+    input: {
+      ...up,
+      sessionInput: {
+        sessionId: 'states-resumed',
+        messages: [
+          { id: 'm1', role: 'user', text: 'Call the runs API with [redacted] and show the last ten.' },
+          { id: 'm2', role: 'agent', text: 'Done — userspace/surfaces/runs now lists them.' },
+        ],
+        tokensUsed: 18_200,
+      },
+    },
   },
   {
     id: 'sending',

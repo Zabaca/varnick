@@ -56,6 +56,7 @@ describe('a missing host is a value to branch on, not an exception to catch', ()
       { kind: 'check-sandbox' },
       { kind: 'read-credential' },
       { kind: 'persist-session', sessionId: 's', messages: [] },
+      { kind: 'read-session', sessionId: 's' },
     ]
     for (const request of requests) {
       expect((await failureOf(request, null)).failure).toBe('no-host')
@@ -171,6 +172,44 @@ describe('the answer is rebuilt, never passed through', () => {
       answers({ ok: true, path: '/Users/someone/Library/whatever.jsonl' }),
     )
     expect(answer).toEqual({ ok: true })
+  })
+
+  test('a restored transcript is rebuilt message by message', async () => {
+    const answer = await callHarness(
+      { kind: 'read-session', sessionId: 's' },
+      answers({
+        messages: [{ id: 'm1', role: 'user', text: 'hello', apiKey: LOOKS_LIKE_A_KEY }],
+        redacted: false,
+        path: '/Users/someone/Library/whatever.jsonl',
+      }),
+    )
+    expect(answer).toEqual({
+      messages: [{ id: 'm1', role: 'user', text: 'hello' }],
+      redacted: false,
+    })
+    expect(JSON.stringify(answer)).not.toContain(LOOKS_LIKE_A_KEY)
+  })
+
+  test('an empty transcript is an answer, not a malformed one', async () => {
+    expect(
+      await callHarness({ kind: 'read-session', sessionId: 's' }, answers({ messages: [] })),
+    ).toEqual({ messages: [], redacted: false })
+  })
+
+  test('a transcript the bridge cannot read is malformed rather than a silent empty one', async () => {
+    // An empty transcript would look like a first run, and the next save would
+    // replace a Session nobody managed to read.
+    const unreadable = [
+      answers({ messages: 'not a list' }),
+      answers({ messages: [{ id: 'm1', role: 'wizard', text: 'x' }] }),
+      answers({ messages: [{ id: 7, text: 'x', role: 'user' }] }),
+      answers(undefined),
+    ]
+    for (const bridge of unreadable) {
+      expect((await failureOf({ kind: 'read-session', sessionId: 's' }, bridge)).failure).toBe(
+        'malformed',
+      )
+    }
   })
 
   test('an answer that is not ok is malformed rather than quietly successful', async () => {

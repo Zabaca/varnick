@@ -79,6 +79,46 @@ export interface SessionStore {
 
 export const REDACTED = '[redacted]'
 
+/**
+ * The transcript as a relaunch gets it back.
+ *
+ * Two fields because a restore has to answer two questions, and the second one
+ * is only interesting because of what the write path does. The mirror is
+ * redacted on the way in, so a restored message can read `[redacted]` where a
+ * secret value was. That is not undone here and must not be: reading a secret
+ * back onto the screen after deliberately keeping it off disk would defeat the
+ * redaction, and a second unredacted copy kept to make a resume prettier would
+ * be a durable plaintext secret store created for cosmetic reasons. What is
+ * owed instead is honesty — `redacted` is what lets the surface say the
+ * developer is looking at the record rather than at what they typed.
+ */
+export interface RestoredTranscript {
+  readonly messages: readonly StoredMessage[]
+  /** Whether the mirror kept something out of this transcript. */
+  readonly redacted: boolean
+}
+
+/**
+ * What a relaunch continues from.
+ *
+ * Deliberately nothing but the messages and that one flag. There is no partial
+ * to fold in and no Turn state to restore, because the mirror is written at Turn
+ * *boundaries* and `persist` accepts only complete messages — a Turn that was
+ * still streaming when the process was killed left nothing on disk. The
+ * transcript therefore ends at the last completed boundary, which is why a
+ * Session resumed from it enters `turn.idle`: nothing is in flight, and nothing
+ * observed a failure either. See
+ * docs/adr/0009-resume-reads-the-mirror.md.
+ */
+export function restoredTranscript(
+  messages: readonly StoredMessage[],
+): RestoredTranscript {
+  return {
+    messages,
+    redacted: messages.some((message) => message.text.includes(REDACTED)),
+  }
+}
+
 /** The Tauri bundle identifier, from src-tauri/tauri.conf.json. */
 const APP_IDENTIFIER = 'com.zabaca.varnick'
 

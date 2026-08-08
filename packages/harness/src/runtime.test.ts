@@ -15,12 +15,13 @@ import type { StoredMessage } from './session.ts'
 interface Recorded {
   sandboxChecks: number
   saves: { sessionId: string; messages: readonly StoredMessage[] }[]
+  reads: string[]
 }
 
 function capabilities(
   overrides: Partial<HarnessCapabilities> = {},
 ): HarnessCapabilities & { recorded: Recorded } {
-  const recorded: Recorded = { sandboxChecks: 0, saves: [] }
+  const recorded: Recorded = { sandboxChecks: 0, saves: [], reads: [] }
   return {
     recorded,
     establishSandbox: async () => {
@@ -29,6 +30,10 @@ function capabilities(
     persist: async (input) => {
       recorded.saves.push(input)
       return { ok: true as const }
+    },
+    readSession: async (sessionId) => {
+      recorded.reads.push(sessionId)
+      return []
     },
     ...overrides,
   }
@@ -127,6 +132,62 @@ describe('persist-session writes through the mirror', () => {
     const messages = [{ id: 'm1', role: 'user', text: 'hello', apiKey: 'sk-ant-LEAK' }]
     await reply(call(1, { kind: 'persist-session', sessionId: 'a', messages }), caps)
     expect(caps.recorded.saves[0]?.messages).toEqual([{ id: 'm1', role: 'user', text: 'hello' }])
+  })
+})
+
+describe('read-session is how a relaunch continues the conversation', () => {
+  test('the transcript comes back, with whether it is a redacted record', async () => {
+    const caps = capabilities({
+      readSession: async () => [
+        { id: 'm1', role: 'user', text: 'use [redacted] for the call' },
+        { id: 'm2', role: 'agent', text: 'done' },
+      ],
+    })
+
+    expect(await reply(call(1, { kind: 'read-session', sessionId: 'abc' }), caps)).toEqual({
+      id: 1,
+      ok: {
+        messages: [
+          { id: 'm1', role: 'user', text: 'use [redacted] for the call' },
+          { id: 'm2', role: 'agent', text: 'done' },
+        ],
+        redacted: true,
+      },
+    })
+  })
+
+  test('the Session asked for is the Session read', async () => {
+    const caps = capabilities()
+    await reply(call(1, { kind: 'read-session', sessionId: 'session-1' }), caps)
+    expect(caps.recorded.reads).toEqual(['session-1'])
+  })
+
+  test('a Session with nothing mirrored answers empty rather than refusing', async () => {
+    const caps = capabilities()
+    expect(await reply(call(1, { kind: 'read-session', sessionId: 'fresh' }), caps)).toEqual({
+      id: 1,
+      ok: { messages: [], redacted: false },
+    })
+  })
+
+  test('a read that failed answers with the reason rather than an empty transcript', async () => {
+    // Answering `[]` here would look like a first run and let the next save
+    // replace a transcript nobody managed to read.
+    const caps = capabilities({
+      readSession: async () => {
+        throw new Error('EACCES: permission denied')
+      },
+    })
+    const answer = await reply(call(1, { kind: 'read-session', sessionId: 'a' }), caps)
+    expect(answer.ok).toBeUndefined()
+    expect(answer.error).toContain('EACCES')
+  })
+
+  test('a request with no Session id never reaches the store', async () => {
+    const caps = capabilities()
+    expect((await reply(call(1, { kind: 'read-session' }), caps)).ok).toBeUndefined()
+    expect((await reply(call(2, { kind: 'read-session', sessionId: 7 }), caps)).ok).toBeUndefined()
+    expect(caps.recorded.reads).toEqual([])
   })
 })
 

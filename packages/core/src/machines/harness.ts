@@ -1,5 +1,5 @@
 import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
-import { canStartAgent, refusalFor, regionOf } from '../domain.ts'
+import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
   SandboxPolicy,
   StartRefusal,
@@ -73,6 +73,11 @@ export interface HarnessContext {
    * The states page parks a Session in a named turn state, and the only way in
    * is through the parent that owns the spawn. Held in context rather than read
    * off the event so the entry point works on a machine created cold.
+   *
+   * A relaunch comes in through the same door with the transcript read off
+   * disk, which is why resume needed no new state: a Session restored from the
+   * mirror is `turn.idle` with messages, and that is a card the states page
+   * already renders. See docs/adr/0009-resume-reads-the-mirror.md.
    */
   readonly sessionInput: SessionInput
   readonly enterCredential: string | null
@@ -197,7 +202,7 @@ export const harnessMachine = setup({
     surfaces: [],
     session: null,
     subscription: input.subscription ?? null,
-    sessionInput: input.sessionInput ?? { sessionId: 'session-1' },
+    sessionInput: input.sessionInput ?? { sessionId: LIVE_SESSION_ID },
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
