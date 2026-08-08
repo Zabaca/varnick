@@ -41,7 +41,15 @@ function fakeKeychain(): SecretsKeychain {
   }
 }
 
-/** Values shaped like real keys, so a leak is unmistakable in a grep. */
+/*
+  Values shaped like real keys, so a leak is unmistakable in a grep — but using
+  a *test-mode* prefix on purpose. `sk_test_…` is what a scanner looks for, and a
+  fixture carrying one blocks every push to this repository and every fork of it,
+  forever, over a value that was fabricated. GitHub's push protection caught
+  exactly that. The shape is decorative here regardless: these are redacted by
+  exact value out of the Secrets Store, and the pattern half of the redactor
+  matches `sk-ant-…` and `sk-…` with hyphens, which this never did.
+*/
 const STRIPE = 'sk_test_51RESOLVEDNEVERSEEN0000000'
 const BILLING = 'tok_billing_NEVER_ENUMERABLE_9999'
 
