@@ -61,6 +61,31 @@ Each of these is a command, not a judgement. Write down what came back.
 4. **Does an `srt` wrapping computed in one process still work when another process spawns it?** The agent spawn already relies on this — the runtime computes the wrapping, the Rust host performs the spawn (ADR-0008) — but it has only ever been relied on for a policy the wrapping process itself initialized. If `wrapWithSandboxArgv` writes a profile to a temp path, confirm that path outlives the process that made it.
 5. **What does it write, and where?** Point `CLAUDE_CONFIG_DIR` at a directory varnick owns for this and nothing else. `allowWrite` for this command is that directory alone — not the clone.
 
+## What the spike found, and why it changed the plan
+
+A throwaway spike ran `claude setup-token` under a policy of its own. **It did not mint a token, and the reason is worth more than the token would have been.**
+
+The native binary cannot run under any policy that denies `$HOME`:
+
+```
+base         exit 1   error: An internal error occurred (EPERM)
+noDenyRead   exit 0   2.1.226 (Claude Code)
+writeHome    exit 1   EPERM
+openNet      exit 1   EPERM
+keepHome     exit 1   EPERM      <- denyRead /Users + $HOME alone reproduces it
+keepBins     exit 0   2.1.226
+keepKeys     exit 0   2.1.226
+```
+
+That is `claude --version`, not `setup-token` — so it is nothing to do with OAuth, browsers or listeners. Two things follow:
+
+- **`denyRead` beats `allowRead`.** Adding `~/.local/share/claude/**` to `allowRead` does not lift a path out of a denied root. Neither does hardlinking the binary into the writable root, which was the obvious way to keep the boundary and was tried.
+- **It is a different case from ADR-0003's correction.** That correction says `(allow process-exec)` is unconditional, and it was measured on `/usr/bin` system binaries, which execute while unreadable. This binary is a 280MB self-extracting single-file executable — it has to *read itself* — so denying read does deny it, and the earlier finding does not generalise the way its wording suggests. Worth a line in ADR-0003 whoever picks this up.
+
+**The way out is to not run that binary.** The Agent SDK's `getDefaultExecutable()` returns `"bun"`, and varnick never sets `pathToClaudeCodeExecutable` — so the agent runs Claude Code *as JavaScript under bun*, which is why the agent is unaffected by any of this. Confirmed rather than assumed: probe 6 driven with a deliberately invalid key reaches "the Session ended as failed" — a result message, so the CLI launched inside `srt` and failed on the credential, which is the expected outcome.
+
+So the first thing this ticket should try is minting through the same JS entry the agent already uses, rather than through the installed `claude`. If that is not reachable, the fallback is a policy for this command that does not deny `$HOME` — which is a far larger widening than `allowLocalBinding` and should be argued for explicitly, not slipped in.
+
 ## The shape, given those answers
 
 `SandboxManager.initialize()` is process-wide: one policy per process, and `wrap()` uses whatever was initialized. The runtime already holds the agent's policy, so a second, narrower policy needs a second process. That is not the process-per-call ADR-0008 rejected — that argument was about losing the *agent's* Sandbox between calls, and this establishes a different Sandbox for a different command that runs once.
