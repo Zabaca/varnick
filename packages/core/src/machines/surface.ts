@@ -35,14 +35,27 @@ export interface SurfaceContext {
   /** Set only in `failed`. A failed Surface must be able to say why. */
   error: string | null
   attempts: number
-  /** Explorer entry point — see PATTERNS.md §1. */
-  readonly enter: SurfaceStatePath | null
 }
 
+/**
+ * A Surface is started with the module to load, and nothing else.
+ *
+ * The other machines take an explorer entry point — a state to route straight
+ * into, so a card can be parked somewhere without waiting. This one deliberately
+ * does not, and it used to anyway: `enter` and `error` were on the input, a
+ * `routing` state branched on them, and no instantiation site ever passed
+ * either. Both arms were unreachable and `routing` always fell through, so the
+ * machine had a state whose only behaviour was to be skipped.
+ *
+ * It is not an oversight that nothing passed them — `frozen.ts` records the
+ * reason. An entry point is for a region with nothing to wait on; a loader has
+ * something to wait on, and a card that arrived in `loaded` without a load would
+ * be showing a state nothing produced. So the frozen loader settles for real,
+ * once, and then holds. Removed rather than wired, because wiring it would have
+ * meant building the thing frozen.ts argues against.
+ */
 export interface SurfaceInput {
   descriptor: SurfaceDescriptor
-  enter?: SurfaceStatePath | null
-  error?: string | null
 }
 
 export type SurfaceEvent = { type: 'RETRY' } | { type: 'UNLOAD' }
@@ -66,21 +79,13 @@ export const surfaceMachine = setup({
   },
 }).createMachine({
   id: 'surface',
-  initial: 'routing',
+  initial: 'loading',
   context: ({ input }) => ({
     descriptor: input.descriptor,
-    error: input.error ?? null,
+    error: null,
     attempts: 0,
-    enter: input.enter ?? null,
   }),
   states: {
-    routing: {
-      always: [
-        { target: 'loaded', guard: ({ context }) => context.enter === 'loaded' },
-        { target: 'failed', guard: ({ context }) => context.enter === 'failed' },
-        { target: 'loading' },
-      ],
-    },
     loading: {
       entry: assign({ attempts: ({ context }) => context.attempts + 1, error: null }),
       invoke: {

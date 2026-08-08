@@ -803,6 +803,13 @@ test.skipIf(blocked !== null)(
       makes, held to the kernel.
     */
     const outside = mkdtempSync('/private/tmp/varnick-outside-home-')
+    // The control's file, created rather than assumed. This used to read
+    // `~/.zshrc`, which meant that on a machine without one `cat` exited
+    // non-zero for "No such file" and the control proved nothing — a probe that
+    // passes for the wrong reason is worse than one that fails. Writing the
+    // marker here makes the assertion about the *bytes* rather than about an
+    // exit code, so a missing file can no longer stand in for a denial.
+    const insideHome = mkdtempSync(join(homedir(), '.varnick-probe-control-'))
     try {
       mkdirSync(join(outside, '.git'), { recursive: true })
       writeFileSync(join(outside, 'secret.txt'), SELFTEST_MARKER, 'utf8')
@@ -814,11 +821,14 @@ test.skipIf(blocked !== null)(
       expect(read.code).toBe(0)
       expect(read.stdout).toContain(SELFTEST_MARKER)
 
-      // The control that makes the line above mean something: the same read
-      // under a home directory is refused, so this is about location and not
-      // about the wrapper being broken.
-      const underHome = await run(`cat ${JSON.stringify(join(homedir(), '.zshrc'))}`)
+      // The control that makes the line above mean something: the same read of
+      // an identical file under a home directory is refused, so this is about
+      // location and not about the wrapper being broken.
+      const controlFile = join(insideHome, 'secret.txt')
+      writeFileSync(controlFile, SELFTEST_MARKER, 'utf8')
+      const underHome = await run(`cat ${JSON.stringify(controlFile)}`)
       expect(underHome.code).not.toBe(0)
+      expect(underHome.stdout).not.toContain(SELFTEST_MARKER)
 
       // And the write, which is refused. allowWrite is a real allowlist.
       const write = await run(`touch ${JSON.stringify(join(outside, 'written'))}`)
@@ -833,6 +843,7 @@ test.skipIf(blocked !== null)(
       ])
     } finally {
       rmSync(outside, { recursive: true, force: true })
+      rmSync(insideHome, { recursive: true, force: true })
       await releaseSandbox()
     }
   },
