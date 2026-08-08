@@ -219,6 +219,24 @@ is a limit somebody measured, written at the strength the measurement supports.
   install. ADR-0002 accepts that, because closing it would also stop the agent
   adding an ordinary Userspace dependency. Whether the dev server could itself
   run inside the Sandbox, which would narrow this, has not been checked.
+- **That edge is one of several, and this list used to name only the first.**
+  `denyWrite` covers `packages/core/**`, `packages/harness/**`, the root
+  `package.json`, `vite.config.*`, `sandbox-policy.json` and its baseline.
+  Everything else in the clone is writable, and these are the writable files a
+  host process later executes: `packages/userspace/package.json`,
+  `packages/lint/package.json`, `bun.lock`, `tsconfig.json`, `eslint.config.js`,
+  and `scripts/clean-clone.sh` — which this README tells you to run. They are the
+  same accepted class as the line above, not a separate defect, but naming one of
+  them read as if the list were complete.
+- **Your own `claude` in this repo is not confined by any of this.** varnick never
+  spawns a Claude Code session outside `srt` ([ADR-0003](docs/adr/0003-containment-wraps-the-process-tree.md)),
+  and the agent it does spawn is isolated from your `~/.claude`
+  ([ADR-0010](docs/adr/0010-the-agent-is-isolated-from-the-developers-claude-code.md)).
+  Neither says anything about the session *you* start in this directory. The
+  clone's `.claude/settings.json` is agent-writable, and hooks declared there run
+  unconfined in your session, with your permissions. If you run Claude Code in a
+  repo an agent has been working in, read that file the way you would read a
+  `postinstall`.
 - **Only macOS is claimed.** Every measurement on this page is Darwin 25.5 on
   arm64. `sandbox-runtime` has bubblewrap and Windows backends; neither has been
   exercised here, so neither is claimed. The probes skip with a printed reason on
@@ -235,7 +253,7 @@ bun test packages         # unit tests plus the real-kernel boundary probes
 bun run drive             # the state-machine driver
 bun run typecheck
 bun run build
-bun run lint              # the two ADR import rules, and nothing else
+bun run lint              # three import rules — two ADRs and the bundle boundary
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
 scripts/clean-clone.sh    # what a stranger's clone does, as far as one machine can show
