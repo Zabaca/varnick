@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 (the probes), 16 (the deny-list wording and the System.keychain question). The README may claim only what was measured — writing it earlier is how a documented boundary becomes a believed one.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** no state path.
 
