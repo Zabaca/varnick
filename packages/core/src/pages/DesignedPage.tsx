@@ -87,22 +87,10 @@ export function DesignedPage() {
       run: () => session?.send({ type: 'INTERRUPT' }),
     },
     {
-      name: '/save',
-      description: 'Write the session now',
-      available: sessionCan({ type: 'SAVE' }),
-      run: () => session?.send({ type: 'SAVE' }),
-    },
-    {
       name: '/restart',
       description: 'Restart the agent',
       available: snapshot.can({ type: 'RESTART' }),
       run: () => send({ type: 'RESTART' }),
-    },
-    {
-      name: '/stop',
-      description: 'Stop the agent',
-      available: snapshot.can({ type: 'STOP' }),
-      run: () => send({ type: 'STOP' }),
     },
     /*
       Values are separate entries rather than an argument to parse. Typing
@@ -270,6 +258,7 @@ export function DesignedPage() {
                 working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
               }
               effort={s?.context.effort ?? 'xhigh'}
+              model={MODELS.find((m) => m.id === s?.context.model)?.label ?? 'opus-5'}
               // No mode cycling in varnick, so the mode line would describe a
               // control that does not exist.
               mode={false}

@@ -89,6 +89,7 @@ export function ClaudePrompt({
   placeholder = "",
   mode = "auto",
   effort = "xhigh",
+  model,
   className,
   inputClassName,
 }: {
@@ -101,6 +102,9 @@ export function ClaudePrompt({
   mode?: ClaudeMode | false;
   /** Effort chip above the prompt. Pass `false` to hide. */
   effort?: ClaudeEffort | false;
+  /** Local addition: shown beside the effort chip, so the two settings the
+   *  next turn runs on read together. */
+  model?: string;
   className?: string;
   inputClassName?: string;
 }) {
@@ -117,6 +121,12 @@ export function ClaudePrompt({
           style={{ color: GRAY }}
         >
           <span className="min-w-0 break-words text-right">
+            {model ? (
+              <>
+                {model}
+                <span aria-hidden> · </span>
+              </>
+            ) : null}
             <span aria-hidden>{e.glyph}</span> {e.label}
           </span>
         </div>
