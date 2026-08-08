@@ -28,7 +28,6 @@ const notImplemented = (name: string, what: string) => (): never => {
 }
 
 export const LIVE_NOT_IMPLEMENTED = [
-  'checkSandbox',
   'readCredential',
   'spawnAgent',
   'readSubscriptionUsage',
@@ -40,9 +39,25 @@ export const LIVE_NOT_IMPLEMENTED = [
 
 export function liveActors() {
   return {
-    checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(
-      notImplemented('checkSandbox', 'nothing establishes a sandbox-runtime policy'),
-    ),
+    /*
+      Establishes the real srt policy scoped to the clone, or fails.
+
+      Imported at call time and hidden from the bundler on purpose: the Harness
+      talks to the kernel through node built-ins, and pulling that graph into
+      the browser build would ship the sandbox implementation into the webview
+      where it can never run. Loaded from the host process this resolves; loaded
+      from a plain browser it throws, which is the honest answer — a renderer
+      with no host behind it has no sandbox, and `sandbox.unavailable` carrying
+      that reason is exactly right. There is no third branch here, by design:
+      nothing in this actor can return ok without srt having said so.
+    */
+    checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(async () => {
+      const specifier = '@varnick/harness/sandbox'
+      type HarnessSandbox = typeof import('@varnick/harness/sandbox')
+      const harness = (await import(/* @vite-ignore */ specifier)) as HarnessSandbox
+      await harness.establishSandbox()
+      return { ok: true }
+    }),
 
     readCredential: fromPromise<{ source: 'keychain' | 'env' }, Record<string, never>>(
       notImplemented('readCredential', 'Tauri does not read the keychain yet'),

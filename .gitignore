@@ -27,6 +27,11 @@ coverage/
 # Specs and tickets under .scratch/ are tracked deliberately — see
 # docs/agents/issue-tracker.md. Do not add .scratch/ here.
 
+# The sandbox policy is generated into the clone on first launch and holds
+# absolute paths for one machine. Read it, edit it, do not commit it — the
+# generator in packages/harness/src/sandbox.ts is what a fork changes.
+/sandbox-policy.json
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/
