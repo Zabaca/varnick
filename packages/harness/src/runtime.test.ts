@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { answerHarnessLine, type HarnessCapabilities } from './runtime.ts'
+import { answerHarnessLine, hostCapabilities, type HarnessCapabilities } from './runtime.ts'
 import type { StoredMessage } from './session.ts'
 
 /**
@@ -27,6 +27,11 @@ function capabilities(
     establishSandbox: async () => {
       recorded.sandboxChecks += 1
     },
+    wrapAgentCommand: async () => ({
+      argv: ['/bin/bash', '-c', 'sandbox-exec ... agent.ts'],
+      env: { SANDBOX_RUNTIME: '1' },
+      cwd: '/Users/dev/code/varnick',
+    }),
     persist: async (input) => {
       recorded.saves.push(input)
       return { ok: true as const }
@@ -196,6 +201,67 @@ describe('the credential is the host’s, never the runtime’s', () => {
     const answer = await reply(call(1, { kind: 'read-credential' }))
     expect(answer.ok).toBeUndefined()
     expect(String(answer.error)).toContain('credential')
+  })
+})
+
+describe('wrap-agent-command computes the wrapping and nothing else', () => {
+  test('the answer is argv, an overlay and the directory to spawn in', async () => {
+    const answer = await reply(call(1, { kind: 'wrap-agent-command' }))
+    expect(answer.ok).toEqual({
+      argv: ['/bin/bash', '-c', 'sandbox-exec ... agent.ts'],
+      env: { SANDBOX_RUNTIME: '1' },
+      cwd: '/Users/dev/code/varnick',
+    })
+  })
+
+  test('the runtime refuses when the Sandbox is not established', async () => {
+    // The product's only real claim. There is no flag, no environment variable
+    // and no state in which this answers anything but a refusal — and because
+    // the Rust host spawns nothing without this answer, the refusal is what
+    // makes "no fallback to unconfined" structural rather than a rule.
+    const caps = capabilities({
+      wrapAgentCommand: async () => {
+        throw new Error('The Sandbox is not established, so no agent may be started.')
+      },
+    })
+    const answer = await reply(call(1, { kind: 'wrap-agent-command' }), caps)
+    expect(answer.ok).toBeUndefined()
+    expect(String(answer.error)).toContain('not established')
+  })
+
+  test('the answer carries no environment beyond the overlay', async () => {
+    // The overlay crosses a pipe to the process that holds the credential. The
+    // whole environment must not, because the runtime inherits the host's.
+    const caps = capabilities({
+      wrapAgentCommand: async () => ({
+        argv: ['/bin/bash', '-c', 'agent'],
+        env: { HTTPS_PROXY: 'http://srt:tok@localhost:1' },
+        cwd: '/clone',
+      }),
+    })
+    const answer = await reply(call(1, { kind: 'wrap-agent-command' }), caps)
+    expect(JSON.stringify(answer)).not.toContain('sk-ant')
+    expect(Object.keys((answer.ok as { env: Record<string, string> }).env)).toEqual(['HTTPS_PROXY'])
+  })
+
+  test('the real capabilities refuse to wrap an agent before a Sandbox exists', async () => {
+    // Not the injected double: the actual gate, in the actual object the
+    // runtime process uses. Nothing here establishes a Sandbox, so this is the
+    // state a run is in before `check-sandbox` succeeds — and it is the state a
+    // run stays in when `check-sandbox` fails. No flag reaches past it, because
+    // there is no flag: the only thing that sets the Sandbox is establishing
+    // one.
+    await expect(hostCapabilities().wrapAgentCommand()).rejects.toThrow(/not established/)
+  })
+
+  test('the runtime never spawns the agent itself', async () => {
+    // ADR-0008's third rejection. The runtime holds the Sandbox, so spawning
+    // here reads as natural — and would mean sending the credential across the
+    // bridge. `spawn-agent` is not a kind this process answers, and that is the
+    // assertion, not a comment.
+    const answer = await reply(call(1, { kind: 'spawn-agent' }))
+    expect(answer.ok).toBeUndefined()
+    expect(String(answer.error)).toContain('spawn-agent')
   })
 })
 

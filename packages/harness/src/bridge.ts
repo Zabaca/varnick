@@ -26,10 +26,13 @@
  *     mirror serialises its saves through a queue that a fresh process per call
  *     would not have.
  *
- * The runtime is a Node process, not a Claude Code process. Nothing on this path
- * spawns an agent; when ticket 03 does, it spawns it `wrap()`ped by the same
- * runtime that holds the Sandbox, which is what ADR-0003's last consequence
- * requires.
+ * The runtime is a Node process, not a Claude Code process, and it is not the
+ * process that starts one. The agent is spawned by the Rust host, using a
+ * wrapping the runtime computed — argv, an environment overlay and a working
+ * directory, none of them secret — because the credential has to go into the
+ * child's environment and the credential lives in Rust. The agent is inside srt
+ * either way, which is what ADR-0003's last consequence requires, and the
+ * credential never crosses this bridge, which is what ADR-0008 requires.
  *
  * ## What may cross
  *
@@ -81,17 +84,52 @@ export interface ReadSessionRequest {
 }
 
 /**
+ * Start the agent under the established Sandbox. Answers with its pid.
+ *
+ * Answered by the Rust host, which asks the runtime for the wrapping and adds
+ * the credential to the child's environment. There is no request field for the
+ * credential and no way to supply one — see src-tauri/src/agent.rs.
+ */
+export interface SpawnAgentRequest {
+  readonly kind: 'spawn-agent'
+}
+
+/** Stop the agent's whole process tree. Answers `{ ok: true }`. */
+export interface StopAgentRequest {
+  readonly kind: 'stop-agent'
+}
+
+/**
+ * Wait for the running agent to exit, and answer with why.
+ *
+ * The one call that does not return promptly: it is how the process's own exit
+ * reaches the machine as `AGENT_EXIT`. A request/response seam cannot push, and
+ * a poll would make `agent.running` mean "running as of a second ago", so this
+ * waits instead.
+ */
+export interface AwaitAgentExitRequest {
+  readonly kind: 'await-agent-exit'
+}
+
+/**
  * Every call the bridge carries.
  *
  * A closed union rather than a name and a payload: an actor cannot ask for
  * something the host has not agreed to answer, and adding a capability is a
  * change both halves see at compile time.
+ *
+ * `wrap-agent-command` is deliberately absent. It is a host-internal call from
+ * Rust to the runtime, and putting it here would let the renderer ask for the
+ * wrapping — harmless in itself, and one more thing that could be asked for.
  */
 export type HarnessRequest =
   | CheckSandboxRequest
   | ReadCredentialRequest
   | PersistSessionRequest
   | ReadSessionRequest
+  | SpawnAgentRequest
+  | StopAgentRequest
+  | AwaitAgentExitRequest
 
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
@@ -99,6 +137,9 @@ export interface HarnessAnswers {
   'read-credential': { readonly source: 'keychain' | 'env' }
   'persist-session': { readonly ok: true }
   'read-session': RestoredTranscript
+  'spawn-agent': { readonly pid: number }
+  'stop-agent': { readonly ok: true }
+  'await-agent-exit': { readonly reason: string }
 }
 
 /**
@@ -233,6 +274,28 @@ function credentialAnswer(answer: unknown): { source: 'keychain' | 'env' } {
   return { source }
 }
 
+/** A started agent, as one number. Anything else is not a started agent. */
+function spawnAnswer(answer: unknown): { pid: number } {
+  const pid = (answer as { pid?: unknown } | null | undefined)?.pid
+  if (typeof pid !== 'number' || !Number.isFinite(pid)) throw new HarnessUnavailable('malformed')
+  return { pid }
+}
+
+/**
+ * Why the process ended.
+ *
+ * A reason is required rather than optional: `agent.crashed` renders this
+ * string, and an exit with nothing to say is the failure this seam exists to
+ * turn into a legible one.
+ */
+function exitAnswer(answer: unknown): { reason: string } {
+  const reason = (answer as { reason?: unknown } | null | undefined)?.reason
+  if (typeof reason !== 'string' || reason.length === 0) {
+    throw new HarnessUnavailable('malformed')
+  }
+  return { reason }
+}
+
 /**
  * Read a restored transcript back, message by message.
  *
@@ -286,8 +349,13 @@ export async function callHarness<R extends HarnessRequest>(
       return credentialAnswer(answer) as HarnessAnswers[R['kind']]
     case 'read-session':
       return transcriptAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'spawn-agent':
+      return spawnAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'await-agent-exit':
+      return exitAnswer(answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
     case 'persist-session':
+    case 'stop-agent':
       return okAnswer(answer) as HarnessAnswers[R['kind']]
   }
 }

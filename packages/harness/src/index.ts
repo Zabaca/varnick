@@ -42,6 +42,16 @@ export {
 } from './bridge.ts'
 
 export {
+  AGENT_ENTRY_RELATIVE_PATH,
+  CREDENTIAL_ENV_VAR_NAME,
+  agentCommand,
+  agentEntryPath,
+  agentSdkEntry,
+  sandboxEnvOverlay,
+  type AgentCommandInput,
+} from './agent.ts'
+
+export {
   DEFAULT_ALLOWED_HOSTS,
   DENIED_BINARIES,
   SANDBOX_POLICY_FILENAME,
@@ -57,4 +67,5 @@ export {
   type EstablishedSandbox,
   type SandboxPolicy,
   type SandboxPolicyInput,
+  type WrappedCommand,
 } from './sandbox.ts'

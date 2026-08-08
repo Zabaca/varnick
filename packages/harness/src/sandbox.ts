@@ -24,6 +24,7 @@ import {
   SandboxRuntimeConfigSchema,
   type SandboxRuntimeConfig,
 } from '@anthropic-ai/sandbox-runtime'
+import { sandboxEnvOverlay } from './agent.ts'
 
 /**
  * Binaries denied by making them unreadable.
@@ -271,17 +272,49 @@ export function ensureSandboxPolicy(input: SandboxPolicyInput): EnsuredSandboxPo
   return { policy, path, generated: true }
 }
 
+/**
+ * A command, wrapped so that running it runs it under the policy.
+ *
+ * Everything a caller needs for a `{ shell: false }` spawn, and nothing else.
+ * This crosses a pipe to the Rust host, which is why {@link WrappedCommand.env}
+ * is an overlay rather than an environment: see `sandboxEnvOverlay`.
+ */
+export interface WrappedCommand {
+  /** `spawn(argv[0], argv.slice(1), { shell: false })`. */
+  readonly argv: string[]
+  /**
+   * What to add to the spawning process's own environment — not a replacement
+   * for it. Empty on macOS, where srt bakes the proxy variables into the
+   * wrapped command instead. Carries no secret, by construction.
+   */
+  readonly env: Record<string, string>
+  /**
+   * The directory to spawn in, which must be the clone.
+   *
+   * Load-bearing rather than a convenience. The policy denies the home
+   * directory and reads exactly the clone back out of it, so a child started
+   * anywhere else has an unreadable working directory — and an interpreter
+   * whose cwd it cannot read fails at startup with an error that names nothing.
+   * Measured while wiring ticket 03: this, not the interpreter's own location,
+   * was why a wrapped `bun` could not run a script.
+   */
+  readonly cwd: string
+}
+
 export interface EstablishedSandbox {
   readonly policy: SandboxPolicy
   /** The file a developer can read and edit. */
   readonly path: string
+  /** The clone this Sandbox was established for. */
+  readonly cloneRoot: string
   /**
    * Wrap a shell command so it runs under the policy.
    *
-   * Returns argv and env for a `{ shell: false }` spawn — the form that keeps
-   * the command's bytes off the host shell.
+   * Returns argv, an environment overlay and a working directory for a
+   * `{ shell: false }` spawn — the form that keeps the command's bytes off the
+   * host shell.
    */
-  wrap(command: string): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }>
+  wrap(command: string): Promise<WrappedCommand>
 }
 
 /**
@@ -317,7 +350,16 @@ export async function establishSandbox(
   return {
     policy,
     path,
-    wrap: (command: string) => SandboxManager.wrapWithSandboxArgv(command),
+    cloneRoot,
+    wrap: async (command: string) => {
+      const { argv, env } = await SandboxManager.wrapWithSandboxArgv(command)
+      // The overlay, never the whole environment. srt answers with the calling
+      // process's own `process.env` plus whatever the platform adds, and this
+      // process inherits the host's environment — which may hold an exported
+      // credential. Only the difference crosses, and the credential variable
+      // never does.
+      return { argv, env: sandboxEnvOverlay(env, process.env), cwd: cloneRoot }
+    },
   }
 }
 

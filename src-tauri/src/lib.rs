@@ -6,6 +6,7 @@
 // See docs/adr/0003-containment-wraps-the-process-tree.md and
 // docs/adr/0006-agents-author-secret-use-never-hold-secrets.md.
 
+mod agent;
 mod bridge;
 mod credential;
 
@@ -17,6 +18,9 @@ pub fn run() {
         // runtime, which is the process that holds the Sandbox.
         .manage(credential::CredentialStore::default())
         .manage(bridge::HarnessRuntime::default())
+        // The agent process. Held here rather than in the runtime because the
+        // spawn needs the credential, which never leaves this process.
+        .manage(agent::AgentProcess::default())
         .invoke_handler(tauri::generate_handler![bridge::harness_call])
         .run(tauri::generate_context!())
         .expect("error while running varnick");

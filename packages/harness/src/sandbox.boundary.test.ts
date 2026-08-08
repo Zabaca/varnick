@@ -1,20 +1,25 @@
 import { afterAll, expect, test } from 'bun:test'
-import { accessSync, constants, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { establishSandbox, releaseSandbox, type EstablishedSandbox } from './sandbox.ts'
+import { agentCommand } from './agent.ts'
+import {
+  establishSandbox,
+  releaseSandbox,
+  sandboxPolicyPath,
+  type EstablishedSandbox,
+} from './sandbox.ts'
 
 /*
   The slow suite. Everything here runs a real process under a real kernel
   sandbox, which is the only way to learn anything about a containment
   boundary — a mocked sandbox proves the policy compiles, not that it holds.
 
-  Two probes live here. Ticket 01's: a command run under the policy cannot read
-  the home directory. Ticket 10's: it cannot open the Secrets Store, which is
-  the system keychain. The full matrix — Read, Grep and Glob denied the same
-  paths as Bash, denied binaries, reachable and unreachable hosts — is ticket
-  04, which needs a running agent.
+  This file carries the single probe ticket 01 owes: a command run under the
+  policy cannot read the home directory. The full matrix — Read, Grep and Glob
+  denied the same paths as Bash, denied binaries, reachable and unreachable
+  hosts — is ticket 04, which needs a running agent.
 
   It skips, loudly, when the platform cannot run it. A boundary test that fails
   on Linux CI for want of bubblewrap teaches nobody anything, and a red suite
@@ -41,21 +46,41 @@ const clone = blocked ? '' : mkdtempSync(join(homedir(), '.varnick-boundary-'))
 const insideClone = join(clone, 'inside.txt')
 const outsideClone = join(homedir(), `.varnick-boundary-probe-${process.pid}.txt`)
 
-// One sandbox for the file, established on first use. srt initialises process
-// globals and starts proxies; two independent establishments in one process
-// would be testing the manager rather than the policy.
-let established: Promise<EstablishedSandbox> | null = null
-const sandbox = (): Promise<EstablishedSandbox> =>
-  (established ??= establishSandbox({ cloneRoot: clone }))
+/**
+ * This repository, used as the clone for the agent probe.
+ *
+ * The agent entry needs its dependencies, so a `mkdtemp` with nothing in it
+ * cannot host it. Establishing a Sandbox here generates `sandbox-policy.json`
+ * exactly as a first launch does — it is gitignored, and removed below if this
+ * run is what created it.
+ */
+const repoRoot = resolve(import.meta.dir, '../../..')
+const hadPolicy = blocked ? true : existsSync(sandboxPolicyPath(repoRoot))
 
-async function run(command: string) {
-  const { argv, env } = await (await sandbox()).wrap(command)
-  const child = Bun.spawn({ cmd: argv, env, stdout: 'pipe', stderr: 'pipe' })
-  const [stdout, stderr] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ])
-  return { code: await child.exited, stdout, stderr }
+/**
+ * Run a command the way the Rust host runs the agent.
+ *
+ * The overlay is *added* to this process's environment rather than replacing
+ * it, and the working directory is the one the wrapper named — both of which
+ * are the contract src-tauri/src/agent.rs spawns against. A probe that spawned
+ * differently would be measuring a boundary nothing else crosses.
+ */
+function runner(sandbox: EstablishedSandbox) {
+  return async (command: string) => {
+    const { argv, env, cwd } = await sandbox.wrap(command)
+    const child = Bun.spawn({
+      cmd: argv,
+      cwd,
+      env: { ...process.env, ...env },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ])
+    return { code: await child.exited, stdout, stderr }
+  }
 }
 
 afterAll(async () => {
@@ -63,6 +88,7 @@ afterAll(async () => {
   await releaseSandbox()
   rmSync(clone, { recursive: true, force: true })
   rmSync(outsideClone, { force: true })
+  if (!hadPolicy) rmSync(sandboxPolicyPath(repoRoot), { force: true })
 })
 
 test.skipIf(blocked !== null)(
@@ -70,6 +96,9 @@ test.skipIf(blocked !== null)(
   async () => {
     writeFileSync(insideClone, SECRET, 'utf8')
     writeFileSync(outsideClone, SECRET, 'utf8')
+
+    const sandbox = await establishSandbox({ cloneRoot: clone })
+    const run = runner(sandbox)
 
     // The control. Without it, a denial proves only that the wrapper is broken.
     const allowed = await run(`cat ${JSON.stringify(insideClone)}`)
@@ -86,22 +115,50 @@ test.skipIf(blocked !== null)(
 )
 
 test.skipIf(blocked !== null)(
-  'the keychain files are unreadable under the policy',
+  'the real agent entry runs under the policy, and is contained when it does',
   async () => {
-    // The half of the Secrets Store's containment that holds. The keychain
-    // databases live under the home directory, which is denied, so nothing
-    // under the policy can open the files themselves.
-    const listed = await run(`ls ${JSON.stringify(join(homedir(), 'Library/Keychains'))}`)
-    expect(listed.code).not.toBe(0)
-    expect(listed.stdout).not.toContain('keychain')
+    // The probe ticket 03 owes. Every earlier boundary measurement here ran
+    // `cat`, which proves the wrapper works and nothing about the thing the
+    // product actually starts. This runs the real agent host — the same entry,
+    // the same interpreter, the same wrapping the Rust host spawns — and asks
+    // it what it can reach.
+    //
+    // `--selftest` opens no session and needs no credential, so this runs on a
+    // machine that has never stored one. What it proves is the pair that
+    // matters: the process can load the Agent SDK inside the Sandbox, and it
+    // still cannot read outside the clone once it has.
+    writeFileSync(outsideClone, SECRET, 'utf8')
 
-    const opened = await run(
-      `cat ${JSON.stringify(join(homedir(), 'Library/Keychains/login.keychain-db'))}`,
+    // One Sandbox per process, and `SandboxManager.initialize` returns early
+    // once there is one — it does not replace the policy. The previous test
+    // established a Sandbox for a different clone, so without this the probe
+    // would run against that policy and fail for the wrong reason. Worth
+    // knowing beyond this file: a second `check-sandbox` keeps the first
+    // policy rather than adopting an edited one.
+    await releaseSandbox()
+
+    const sandbox = await establishSandbox({ cloneRoot: repoRoot })
+    const run = runner(sandbox)
+
+    const probe = await run(
+      `${agentCommand({ cloneRoot: repoRoot })} --selftest ${JSON.stringify(outsideClone)}`,
     )
-    expect(opened.code).not.toBe(0)
-    expect(opened.stderr).toMatch(/not permitted|No such file|Permission denied/i)
+    if (probe.stdout.trim() === '') throw new Error(`the agent probe said nothing: ${probe.stderr}`)
+
+    const report = JSON.parse(probe.stdout.trim().split('\n').at(-1) ?? '{}') as Record<
+      string,
+      string
+    >
+
+    // The control: the interpreter ran, and the Agent SDK loaded from inside
+    // the Sandbox. Without this a denial below would only prove the process
+    // never started.
+    expect(report.sdk).toBe('loaded')
+    // The boundary, measured from inside the real agent process.
+    expect(report.read).toBe('denied')
+    expect(probe.stdout).not.toContain(SECRET)
   },
-  120_000,
+  180_000,
 )
 
 test.skipIf(blocked !== null)(
@@ -109,36 +166,33 @@ test.skipIf(blocked !== null)(
   async () => {
     /*
       Two claims, measured separately, because conflating them cost this project
-      two wrong corrections.
+      three rounds of wrong corrections.
 
       1. Denying read does not deny execution. ADR-0003 said `srt` has no execute
          allowlist, so a binary is blocked by making it unreadable. The first half
          is true — `cat` on it is refused. The second half does not follow: srt's
-         generated macOS profile carries an unconditional `(allow process-exec)`,
-         while `denyRead` emits `file-read-data` denials, a different operation.
-         So the binary is unopenable and fully runnable at once. Denying binaries
+         profile carries an unconditional `(allow process-exec)`, while `denyRead`
+         emits `file-read-data` denials, a different operation. Denying binaries
          could not have worked anyway, since the Security framework links
-         in-process.
+         in-process and needs no binary at all.
 
       2. The Keychain is protected regardless, by `denyRead` on $HOME. That is
          where the login Keychain file lives, and it is what actually stops the
          agent — not the denied binary, and not srt's Mach allowlist, which still
          permits com.apple.securityd.xpc and makes no difference either way.
 
-      The load-bearing assertion is the second one, and it is load-bearing
-      because the protection is incidental. Nothing was designed to put the
-      Keychain out of reach; it is out of reach because of where Apple stores it.
-      A future policy that adds a read-allow covering $HOME — and there is real
-      pressure toward that, since a runtime under ~/.bun is unreadable for the
-      same reason — would reopen it silently. This test is what makes that loud.
+      The second assertion is load-bearing, because the protection is incidental.
+      Nothing was designed to put the Keychain out of reach; it is out of reach
+      because of where Apple stores it. A policy that later adds a read-allow
+      covering $HOME reopens it silently. This test is what makes that loud.
 
       Nothing here creates a Keychain item. This suite never touches the
       developer's real Keychain.
     */
+    const sandbox = await establishSandbox({ cloneRoot: clone })
+    const run = runner(sandbox)
 
     // The control, outside the sandbox: the binary is there and is executable.
-    // Without it a denial would be indistinguishable from a machine that has no
-    // `security` at all.
     accessSync('/usr/bin/security', constants.R_OK | constants.X_OK)
 
     // 1. Unreadable, and runs anyway.
@@ -150,26 +204,18 @@ test.skipIf(blocked !== null)(
     expect(ran.stderr + ran.stdout).toMatch(/keychain|Usage/i)
 
     // 2. And still cannot see the login Keychain. `list-keychains` reports the
-    //    search list this process actually has; the login Keychain is absent
-    //    from it because its file is under a denied path.
+    //    search list this process actually has.
     const listed = await run('/usr/bin/security list-keychains')
     expect(listed.code).toBe(0)
     expect(listed.stdout).not.toContain('login.keychain')
     expect(listed.stdout).toContain('System.keychain')
 
-    // The file itself, directly. Belt and braces: if the search list ever stops
-    // being a reliable signal, this stays true for as long as $HOME is denied.
+    // The file itself. Belt and braces: true for as long as $HOME is denied.
     const file = await run(
       `cat ${JSON.stringify(join(homedir(), 'Library/Keychains/login.keychain-db'))}`,
     )
     expect(file.code).not.toBe(0)
     expect(file.stderr).toMatch(/not permitted|Permission denied|No such file/i)
-
-    console.log(
-      'boundary probe: /usr/bin/security is unreadable and executes anyway, but the login' +
-        ' Keychain is not in the sandboxed search list and its file cannot be opened.' +
-        ' The Keychain is protected by denyRead on $HOME — see ADR-0003.',
-    )
   },
   120_000,
 )

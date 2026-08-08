@@ -57,6 +57,9 @@ describe('a missing host is a value to branch on, not an exception to catch', ()
       { kind: 'read-credential' },
       { kind: 'persist-session', sessionId: 's', messages: [] },
       { kind: 'read-session', sessionId: 's' },
+      { kind: 'spawn-agent' },
+      { kind: 'stop-agent' },
+      { kind: 'await-agent-exit' },
     ]
     for (const request of requests) {
       expect((await failureOf(request, null)).failure).toBe('no-host')
@@ -210,6 +213,41 @@ describe('the answer is rebuilt, never passed through', () => {
         'malformed',
       )
     }
+  })
+
+  test('a spawned agent answers with its pid and nothing else', async () => {
+    const answer = await callHarness(
+      { kind: 'spawn-agent' },
+      answers({ pid: 4242, argv: ['/bin/bash'], env: { ANTHROPIC_API_KEY: LOOKS_LIKE_A_KEY } }),
+    )
+    expect(answer).toEqual({ pid: 4242 })
+    expect(JSON.stringify(answer)).not.toContain(LOOKS_LIKE_A_KEY)
+  })
+
+  test('a pid that is not a number is malformed rather than a running agent', async () => {
+    // `agent.running` spawning the Session hangs off this answer, so a host
+    // that said something unreadable must not be read as a started process.
+    expect((await failureOf({ kind: 'spawn-agent' }, answers({ pid: 'lots' }))).failure).toBe(
+      'malformed',
+    )
+    expect((await failureOf({ kind: 'spawn-agent' }, answers({}))).failure).toBe('malformed')
+  })
+
+  test('an exit answers with the reason the process actually gave', async () => {
+    const answer = await callHarness(
+      { kind: 'await-agent-exit' },
+      answers({ reason: 'The agent process was killed (signal 9).' }),
+    )
+    expect(answer).toEqual({ reason: 'The agent process was killed (signal 9).' })
+  })
+
+  test('an exit with no reason is malformed, never an empty crash', async () => {
+    // agent.crashed renders this string. An empty one would be a crash that
+    // says nothing, which is the state this ticket exists to avoid.
+    expect((await failureOf({ kind: 'await-agent-exit' }, answers({}))).failure).toBe('malformed')
+    expect((await failureOf({ kind: 'await-agent-exit' }, answers({ reason: 7 }))).failure).toBe(
+      'malformed',
+    )
   })
 
   test('an answer that is not ok is malformed rather than quietly successful', async () => {

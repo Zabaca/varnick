@@ -1,5 +1,5 @@
 import { seededActors, defaultSeedControls, type SeedControls } from './seeded.ts'
-import { liveActors, LIVE_NOT_IMPLEMENTED } from './live.ts'
+import { liveActors, liveAgentExit, liveStopAgent, LIVE_NOT_IMPLEMENTED } from './live.ts'
 
 /**
  * Which implementations the machines run against.
@@ -39,6 +39,36 @@ export const UNIMPLEMENTED: readonly ActorName[] = LIVE_NOT_IMPLEMENTED
 
 export function actorsFor(mode: ActorMode, controls: SeedControls = defaultSeedControls) {
   return mode === 'live' ? liveActors() : seededActors(controls)
+}
+
+/**
+ * The agent process, as something with a lifetime rather than a result.
+ *
+ * Separate from the actors above because neither of these is one. An actor is
+ * invoked by a state and answers it; a process ending is something the world
+ * did, which reaches the machine as `AGENT_EXIT` — an event, like
+ * `CREDENTIAL_REJECTED`. Modelling it as an actor would have meant a state
+ * whose job was to wait for a crash, and `agent.running` is not that.
+ *
+ * Chosen by the same mode as the actors, so one run is one system.
+ */
+export interface AgentControl {
+  /** Resolves when the agent process ends, with why. */
+  exit(): Promise<string>
+  /** Stop the process tree behind `agent.down`. */
+  stop(): Promise<void>
+}
+
+export function agentControlFor(mode: ActorMode): AgentControl {
+  return mode === 'live'
+    ? { exit: liveAgentExit, stop: liveStopAgent }
+    : {
+        // A seeded agent never dies on its own. The bare page's AGENT_EXIT
+        // button is how that state is reached without a process, and a seed
+        // that crashed on a timer would make the states page non-deterministic.
+        exit: () => new Promise<string>(() => {}),
+        stop: async () => {},
+      }
 }
 
 /**

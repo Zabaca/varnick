@@ -18,8 +18,19 @@
  *     overlapping saves in two processes have no queue between them and would
  *     both append the same message.
  *
- * Nothing here spawns a Claude Code process. When ticket 03 does, it spawns it
- * from *this* process, wrapped by the Sandbox this process established.
+ * ## This process computes the wrapping; it does not spawn the agent
+ *
+ * Nothing here spawns a Claude Code process, and that is the decision rather
+ * than an omission. Holding the Sandbox makes spawning from here look natural —
+ * it is the trap ADR-0008's third rejection was written about — but the agent
+ * needs the credential in its environment, and the credential lives in the Rust
+ * host and may not cross the bridge. So `wrap-agent-command` answers with argv,
+ * an environment overlay and a working directory, all of them free of secrets,
+ * and src-tauri/src/agent.rs performs the spawn with the credential it already
+ * has. The agent is inside srt either way, because the wrapping is in the argv.
+ *
+ * The proxies srt runs still live in *this* process, which is why it has to
+ * outlive the call that established them.
  *
  * ## What this module is not
  *
@@ -35,7 +46,12 @@
  * unhandled case is a case someone can quietly implement.
  */
 
-import { establishSandbox } from './sandbox.ts'
+import { agentCommand } from './agent.ts'
+import {
+  establishSandbox,
+  type EstablishedSandbox,
+  type WrappedCommand,
+} from './sandbox.ts'
 import {
   createSessionStore,
   defaultSessionRoot,
@@ -49,6 +65,14 @@ import { openSecretsStore, securityKeychain, type SecretsStore } from './secrets
 export interface HarnessCapabilities {
   /** Establish the Sandbox, or throw with the reason. */
   establishSandbox(): Promise<unknown>
+  /**
+   * Compute how to start the agent under the Sandbox, or throw with the reason.
+   *
+   * Computes; never spawns. The spawn belongs to the Rust host, because that is
+   * the process holding the credential and the credential may not cross the
+   * bridge — ADR-0008's third rejection.
+   */
+  wrapAgentCommand(): Promise<WrappedCommand>
   /** Write a transcript to the Session mirror, or throw with the reason. */
   persist(input: {
     sessionId: string
@@ -110,13 +134,39 @@ export function hostCapabilities(): HarnessCapabilities {
     return opened
   }
 
+  /**
+   * The Sandbox this process is holding, once it holds one.
+   *
+   * The gate for starting an agent, and the reason it is a variable rather than
+   * a call: `establishSandbox()` is what makes the kernel restrictions real, and
+   * an agent may only be started under restrictions that already exist. Null
+   * here means no agent starts. There is no other branch.
+   */
+  let sandbox: EstablishedSandbox | null = null
+
   return {
-    establishSandbox: () => establishSandbox(),
+    establishSandbox: async () => {
+      sandbox = await establishSandbox()
+    },
+
+    wrapAgentCommand: async () => {
+      if (sandbox === null) {
+        throw new Error(
+          'The Sandbox is not established, so there is nothing to start an agent inside. varnick has no unconfined mode: check the sandbox first, and if that failed, the reason it gave is the thing to fix.',
+        )
+      }
+      // The clone the Sandbox was established for, not one chosen here. A
+      // command wrapped for one policy and run against another is the failure
+      // this cannot be allowed to have.
+      return sandbox.wrap(agentCommand({ cloneRoot: sandbox.cloneRoot }))
+    },
+
     persist: async (input) => {
       const { store, secrets } = await open()
       await secrets.reload().catch(() => undefined)
       return store.persist(input)
     },
+
     // Reads do not reload the Secrets Store: redaction happens on the way in,
     // so what is on disk is already clean and nothing here can unredact it.
     readSession: async (sessionId) => (await open()).store.read(sessionId),
@@ -166,6 +216,14 @@ async function answer(
     case 'check-sandbox':
       await capabilities.establishSandbox()
       return {}
+
+    case 'wrap-agent-command': {
+      const { argv, env, cwd } = await capabilities.wrapAgentCommand()
+      // Rebuilt rather than forwarded, like every other answer here: the host
+      // gets argv, an overlay and a directory, and nothing a capability
+      // volunteered alongside them.
+      return { argv, env, cwd }
+    }
 
     case 'persist-session': {
       const { sessionId, messages } = request as Record<string, unknown>
@@ -239,10 +297,11 @@ export async function answerHarnessLine(
   }
 
   try {
-    // `ok` is an empty object for every call that has nothing to say beyond
-    // having been done, which is most of them — the bridge rebuilds every
-    // answer regardless. A restore is the one call here that answers with
-    // something; a credential read never comes here at all.
+    // Most answers are an empty object: the bridge rebuilds every answer, so
+    // there is nothing for the runtime to say beyond having done it. The
+    // exceptions are a restore, whose transcript *is* the answer, and
+    // `wrap-agent-command` — deliberately the one thing this process computes
+    // for a spawn it does not perform. A credential read never comes here.
     return `${JSON.stringify({ id, ok: await answer(request, capabilities) })}\n`
   } catch (error) {
     return `${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`

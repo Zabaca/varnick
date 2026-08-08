@@ -20,17 +20,17 @@
 // implementation of srt policy generation and of the Agent SDK — the product's
 // only real claim, written twice.
 //
-// The runtime is a Node process, not a Claude Code process. Nothing on this path
-// spawns an agent; when one is spawned it will be spawned by the runtime, under
-// the Sandbox the runtime established, which is what ADR-0003's last consequence
-// requires.
+// The runtime is a Node process, not a Claude Code process, and it is not what
+// starts one. It computes the wrapping — argv, an environment overlay and a
+// working directory — and this host performs the spawn. See agent.rs.
 //
-// ## Except the credential
+// ## Except the credential, and everything downstream of it
 //
 // `read-credential` is answered here, in Rust, and never forwarded. The value
 // must exist in exactly one process, and it has to be the process that spawns
-// the agent subprocess and injects the value into its environment. `route_of`
-// is where that is decided, and it is a unit test rather than a convention.
+// the agent subprocess and injects the value into its environment — so starting,
+// stopping and watching that process are answered here too. `route_of` is where
+// that is decided, and it is a unit test rather than a convention.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -42,6 +42,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
 
+use crate::agent::AgentProcess;
 use crate::credential::CredentialStore;
 
 /// The environment variable that points at the runtime entry, for a build that
@@ -98,8 +99,14 @@ pub enum Route {
 /// build, and forwarding it would turn that into a timeout.
 pub fn route_of(kind: &str) -> Option<Route> {
     match kind {
-        "read-credential" => Some(Route::Host),
+        // The credential, and the three calls that need it or the process it
+        // was injected into. All of them are this process's, because this is
+        // where the value is — see agent.rs.
+        "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" => Some(Route::Host),
         "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
+        // `wrap-agent-command` is absent on purpose. The runtime answers it, but
+        // only when *this* process asks: it is a step inside a spawn, not a
+        // capability the renderer has.
         _ => None,
     }
 }
@@ -194,6 +201,17 @@ pub struct HarnessRuntime {
 }
 
 impl HarnessRuntime {
+    /// Ask the runtime for the wrapping that starts an agent.
+    ///
+    /// The only caller is the spawn in this module. It is not reachable from
+    /// `route_of`, so the renderer cannot ask for it — and the answer is the
+    /// single gate on starting an agent: a runtime with no Sandbox established
+    /// refuses, and this returns that refusal rather than spawning.
+    pub fn agent_wrapping(&self) -> Result<crate::agent::Wrapping, Failure> {
+        let answer = self.call(&serde_json::json!({ "kind": "wrap-agent-command" }))?;
+        crate::agent::wrapping_of(&answer)
+    }
+
     /// Ask the runtime to do one thing.
     ///
     /// Calls are serialised by the lock. That is not a limitation worked around:
@@ -278,22 +296,53 @@ fn start_runtime() -> Result<Channel, Failure> {
 /// Answers with a value or a {@link Failure} tag. Every live actor's call comes
 /// through here, so a call that cannot be delivered reaches that actor's own
 /// failure state carrying the reason, rather than rejecting unhandled.
-#[tauri::command]
+///
+/// Marked `async` so Tauri runs it off the main thread.
+///
+/// Not a detail: `await-agent-exit` blocks until the agent process ends, and a
+/// synchronous command runs on the main thread, where blocking would freeze the
+/// window for the life of the agent. Every runtime call blocks on a pipe too, so
+/// this is the right thread for all of them.
+#[tauri::command(async)]
 pub fn harness_call(
     request: Value,
     credentials: State<'_, CredentialStore>,
     runtime: State<'_, HarnessRuntime>,
+    agent: State<'_, AgentProcess>,
 ) -> Result<Value, Failure> {
     let kind = request.get("kind").and_then(Value::as_str).unwrap_or("");
 
     match route_of(kind) {
-        Some(Route::Host) => {
+        Some(Route::Host) => match kind {
             // The credential, read and held in this process. `Reading`
             // serialises to `{ source }` and `Secret` has no `Serialize` at all,
             // so the value has no way through even if this line were wrong.
-            let reading = crate::credential::read_credential(&credentials).map_err(Failure::refused)?;
-            serde_json::to_value(reading).map_err(|_| Failure::of("malformed"))
-        }
+            "read-credential" => {
+                let reading =
+                    crate::credential::read_credential(&credentials).map_err(Failure::refused)?;
+                serde_json::to_value(reading).map_err(|_| Failure::of("malformed"))
+            }
+            // Two steps, in this order, with no third: ask the runtime how to
+            // run the agent under the Sandbox it established, then run that with
+            // the credential added. A runtime that refuses the first step ends
+            // the call — there is no path from here to an unwrapped process.
+            "spawn-agent" => {
+                let wrapping = runtime.agent_wrapping()?;
+                let pid = agent.spawn(&wrapping, &credentials)?;
+                Ok(serde_json::json!({ "pid": pid }))
+            }
+            "stop-agent" => {
+                agent.stop()?;
+                Ok(serde_json::json!({ "ok": true }))
+            }
+            "await-agent-exit" => {
+                let reason = agent.await_exit()?;
+                Ok(serde_json::json!({ "reason": reason }))
+            }
+            // Unreachable while `route_of` and this match agree, and a closed
+            // default rather than a forward if they ever stop agreeing.
+            _ => Err(Failure::of("malformed")),
+        },
         Some(Route::Runtime) => runtime.call(&request),
         None => Err(Failure::of("malformed")),
     }
@@ -338,8 +387,24 @@ mod tests {
     }
 
     #[test]
+    fn starting_stopping_and_watching_the_agent_are_answered_where_the_credential_is() {
+        // The spawn has to happen in the process holding the credential, so the
+        // three calls about the agent process are this process's — ADR-0008.
+        assert_eq!(route_of("spawn-agent"), Some(Route::Host));
+        assert_eq!(route_of("stop-agent"), Some(Route::Host));
+        assert_eq!(route_of("await-agent-exit"), Some(Route::Host));
+    }
+
+    #[test]
+    fn the_renderer_cannot_ask_for_the_agent_wrapping_itself() {
+        // The runtime answers `wrap-agent-command`, but only to this process,
+        // as a step inside a spawn. It is not a capability Core has.
+        assert_eq!(route_of("wrap-agent-command"), None);
+    }
+
+    #[test]
     fn a_kind_this_host_does_not_know_is_routed_nowhere() {
-        assert_eq!(route_of("spawn-agent"), None);
+        assert_eq!(route_of("run-turn"), None);
         assert_eq!(route_of(""), None);
     }
 
