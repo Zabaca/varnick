@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useHarness, useChildRevision, toPath } from '../hooks.ts'
-import { defaultSeedControls } from '../actors/seeded.ts'
+import { UNIMPLEMENTED, type ActorMode } from '../actors/index.ts'
 import { ClaudeHeader } from '../components/brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from '../components/brainless/claude/claude-message.tsx'
 import { ClaudeThinking } from '../components/brainless/claude/claude-thinking.tsx'
@@ -33,7 +33,7 @@ import type { SubscriptionUsage } from '../domain.ts'
  */
 
 export function DesignedPage() {
-  const { snapshot, send } = useHarness(defaultSeedControls)
+  const { snapshot, send, mode } = useHarness()
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -48,8 +48,21 @@ export function DesignedPage() {
   const sessionCan = (e: SessionEvent) => Boolean(s?.can(e))
 
   // Bring the harness up on its own, in order.
+  /*
+    Start-up runs each step at most once.
+
+    An earlier version re-sent READ_CREDENTIAL whenever the credential was
+    absent, which is a hot loop the moment a read fails: it lands back in absent
+    and the effect fires again. Found by switching to live actors, where every
+    read throws. Recovery is a deliberate act, not a retry storm.
+  */
+  const attempted = useRef({ credential: false, sandbox: false, agent: false })
+
   useEffect(() => {
-    if (ctx.credentialState === 'absent') send({ type: 'READ_CREDENTIAL' })
+    if (ctx.credentialState === 'absent' && !attempted.current.credential) {
+      attempted.current.credential = true
+      send({ type: 'READ_CREDENTIAL' })
+    }
   }, [ctx.credentialState, send])
 
   useEffect(() => {
@@ -57,13 +70,24 @@ export function DesignedPage() {
   }, [send])
 
   useEffect(() => {
-    if (ctx.credentialState === 'present' && ctx.sandboxState === 'unchecked') {
+    if (
+      ctx.credentialState === 'present' &&
+      ctx.sandboxState === 'unchecked' &&
+      !attempted.current.sandbox
+    ) {
+      attempted.current.sandbox = true
       send({ type: 'CHECK_SANDBOX' })
     }
   }, [ctx.credentialState, ctx.sandboxState, send])
 
   useEffect(() => {
-    if (ctx.credentialState === 'present' && ctx.sandboxState === 'available' && agentState === 'down') {
+    if (
+      ctx.credentialState === 'present' &&
+      ctx.sandboxState === 'available' &&
+      agentState === 'down' &&
+      !attempted.current.agent
+    ) {
+      attempted.current.agent = true
       send({ type: 'START' })
     }
   }, [ctx.credentialState, ctx.sandboxState, agentState, send])
@@ -180,7 +204,7 @@ export function DesignedPage() {
 
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
-      <PlanUsage usage={ctx.subscription} />
+      <PlanUsage usage={ctx.subscription} mode={mode} />
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
@@ -207,7 +231,13 @@ export function DesignedPage() {
                   <span aria-hidden>✗ </span>
                   {problem.text}{' '}
                   {problem.event && (
-                    <button onClick={() => send(problem.event!)} style={{ color: 'var(--accent)' }}>
+                    <button
+                      onClick={() => {
+                        attempted.current = { credential: false, sandbox: false, agent: false }
+                        send(problem.event!)
+                      }}
+                      style={{ color: 'var(--accent)' }}
+                    >
                       {problem.action}
                     </button>
                   )}
@@ -343,34 +373,75 @@ export function DesignedPage() {
 /**
  * Plan usage, outside the chat shell.
  *
- * Renders the windows only when something actually measured them. Nothing in
- * this repository does yet, so the strip says so instead of showing zeros that
- * would read as "barely used".
+ * Whether these numbers are measured or seeded is answered once, by the marker
+ * beside them, rather than by this component second-guessing each value.
  */
-function PlanUsage({ usage }: { usage: SubscriptionUsage | null }) {
+function PlanUsage({ usage, mode }: { usage: SubscriptionUsage | null; mode: ActorMode }) {
   if (!usage) return null
-  const unwired = usage.source === 'unwired'
   return (
     <div
       className="flex items-center gap-5 px-6 py-1.5 text-[11.5px]"
       style={{ borderBottom: '1px solid var(--rule)', color: 'var(--fg-faint)' }}
     >
       <span>plan usage</span>
-      {unwired ? (
-        <span style={{ color: 'var(--warn)' }}>
-          not wired — no source for 5-hour or weekly windows yet
+      <span>
+        5h{' '}
+        <span data-numeric style={{ color: 'var(--fg-dim)' }}>
+          {usage.fiveHourPct}%
         </span>
-      ) : (
-        <>
-          <span>
-            5h <span data-numeric style={{ color: 'var(--fg-dim)' }}>{usage.fiveHourPct}%</span>
-          </span>
-          <span>
-            week <span data-numeric style={{ color: 'var(--fg-dim)' }}>{usage.weeklyPct}%</span>
-          </span>
-        </>
-      )}
+      </span>
+      <span>
+        week{' '}
+        <span data-numeric style={{ color: 'var(--fg-dim)' }}>
+          {usage.weeklyPct}%
+        </span>
+      </span>
+      <SeededMarker mode={mode} />
     </div>
+  )
+}
+
+/**
+ * The one place the build admits what it is.
+ *
+ * Every actor is a stub right now, so every number on this screen is invented —
+ * plausibly, deliberately, and only until the Harness is written. The marker
+ * disappears on its own when actors/live.ts stops throwing, because it reads
+ * the same list.
+ */
+function SeededMarker({ mode }: { mode: ActorMode }) {
+  const [open, setOpen] = useState(false)
+  if (mode === 'live') return null
+  return (
+    <span className="relative ml-auto">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ color: 'var(--warn)' }}
+        aria-expanded={open}
+      >
+        seeded data — nothing here is measured
+      </button>
+      {open && (
+        <span
+          className="absolute right-0 z-10 mt-1 block w-[380px] p-3 text-left leading-relaxed"
+          style={{
+            background: 'var(--ground-raised)',
+            border: '1px solid var(--rule)',
+            color: 'var(--fg-dim)',
+          }}
+        >
+          These actors have no live implementation yet:
+          <span className="mt-1.5 block" style={{ color: 'var(--fg-faint)' }}>
+            {UNIMPLEMENTED.join(', ')}
+          </span>
+          <span className="mt-2 block">
+            Machines, states and refusals are real; the services behind them are
+            stubs. Append <span style={{ color: 'var(--fg-dim)' }}>?actors=live</span> to fail on
+            the first one that is missing.
+          </span>
+        </span>
+      )}
+    </span>
   )
 }
 
@@ -390,6 +461,13 @@ function harnessProblem(
   }
   if (ctx.credentialState === 'rejected') {
     return { text: 'The stored credential was rejected.', action: 'try again', event: { type: 'READ_CREDENTIAL' } }
+  }
+  if (ctx.credentialState === 'absent' && ctx.credentialError) {
+    return {
+      text: `Could not read a credential — ${ctx.credentialError}`,
+      action: 'try again',
+      event: { type: 'READ_CREDENTIAL' },
+    }
   }
   if (ctx.credentialState === 'absent' && ctx.sandboxState !== 'unchecked') {
     return { text: 'No credential is available.', action: 'try again', event: { type: 'READ_CREDENTIAL' } }

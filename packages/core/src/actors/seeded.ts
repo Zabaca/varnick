@@ -62,14 +62,13 @@ export function seededActors(controls: SeedControls) {
     }),
 
     /*
-      There is no implementation of this. Claude Code surfaces plan usage from
-      an account endpoint this project does not have, so the seed returns zeros
-      marked 'unwired' rather than plausible percentages. The view renders the
-      marker, never a number dressed as a measurement.
+      Plausible plan usage, so the strip can be designed against something that
+      looks like a real reading. Safe to render because the whole build is
+      marked seeded — see actors/index.ts. Deterministic, like every other seed.
     */
     readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(async () => {
       await wait(200)
-      return { fiveHourPct: 0, weeklyPct: 0, source: 'unwired' }
+      return { fiveHourPct: 68, weeklyPct: 41, source: 'seeded' }
     }),
 
     runTurn: fromPromise<

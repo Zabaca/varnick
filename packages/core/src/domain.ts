@@ -154,14 +154,15 @@ export function formatContext(used: number, total: number): string {
 /**
  * Subscription usage across the plan's rolling windows.
  *
- * `source` is deliberately part of the shape. Nothing in this repository knows
- * how to read these numbers yet, and a percentage rendered without saying where
- * it came from is indistinguishable from one that was invented.
+ * `source` is part of the shape so a reading always carries where it came from.
+ * The seeded-data marker is what tells a viewer the build is not measuring
+ * anything; this field is what lets a single value say so even if it outlives
+ * the marker.
  */
 export interface SubscriptionUsage {
   fiveHourPct: number
   weeklyPct: number
-  source: 'live' | 'unwired'
+  source: 'live' | 'seeded'
 }
 
 /** The query a command draft is filtering by — everything typed so far. */

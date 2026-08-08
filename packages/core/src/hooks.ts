@@ -4,7 +4,13 @@ import type { AnyActorRef, InspectionEvent } from 'xstate'
 import { harnessMachine } from './machines/harness.ts'
 import { surfaceMachine } from './machines/surface.ts'
 import { sessionMachine } from './machines/session.ts'
-import { seededActors, defaultSeedControls, type SeedControls } from './actors/seeded.ts'
+import {
+  actorsFor,
+  resolveActorMode,
+  defaultSeedControls,
+  type ActorMode,
+  type SeedControls,
+} from './actors/index.ts'
 import { seedPolicy } from './data/seed.ts'
 
 /** Flatten a nested state value to a dotted path. */
@@ -27,14 +33,19 @@ export interface Transition {
 }
 
 /**
- * Bind the Harness with seeded actors.
+ * Bind the Harness.
  *
- * The seeds are provided at the top so every child inherits them — the Session
- * and every Surface run the same implementations, which is what makes the
- * transition log an honest record of one system rather than three.
+ * Implementations are chosen once, at the top, so every child inherits the same
+ * set — the Session and every Surface run against one mode, which is what makes
+ * the transition log an honest record of one system rather than three. See
+ * actors/index.ts for what seeded and live mean.
  */
-export function useHarness(controls: SeedControls = defaultSeedControls) {
-  const seeds = useMemo(() => seededActors(controls), [controls])
+export function useHarness(
+  controls: SeedControls = defaultSeedControls,
+  requestedMode?: ActorMode,
+) {
+  const mode = requestedMode ?? resolveActorMode()
+  const seeds = useMemo(() => actorsFor(mode, controls), [mode, controls])
   const log = useRef<Transition[]>([])
   const last = useRef<Record<string, string>>({})
   const [, bumpLog] = useReducer((n: number) => n + 1, 0)
@@ -80,7 +91,7 @@ export function useHarness(controls: SeedControls = defaultSeedControls) {
     inspect,
   })
 
-  return { snapshot, send, actorRef, transitions: log.current }
+  return { snapshot, send, actorRef, mode, transitions: log.current }
 }
 
 /**

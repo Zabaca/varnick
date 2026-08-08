@@ -39,7 +39,7 @@ const SURFACE_EVENTS: SurfaceEvent[] = [{ type: 'RETRY' }, { type: 'UNLOAD' }]
 
 export function BarePage() {
   const [controls, setControls] = useState<SeedControls>(defaultSeedControls)
-  const { snapshot, send, transitions } = useHarness(controls)
+  const { snapshot, send, transitions, mode } = useHarness(controls)
   const [draft, setDraft] = useState('')
 
   const ctx = snapshot.context
@@ -68,6 +68,10 @@ export function BarePage() {
       </nav>
 
       <h1>varnick — bare</h1>
+      <p>
+        actors: <strong>{mode}</strong>
+        {mode === 'seeded' ? ' — every service behind these machines is a stub' : ''}
+      </p>
       <p>No design system. Every control is filtered through <code>can()</code>.</p>
 
       <h2>Seeds</h2>

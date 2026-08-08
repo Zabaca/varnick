@@ -54,6 +54,7 @@ export interface HarnessContext {
   refusal: StartRefusal | null
   sandboxError: string | null
   agentError: string | null
+  credentialError: string | null
   surfaces: ActorRefFrom<typeof surfaceMachine>[]
   session: ActorRefFrom<typeof sessionMachine> | null
   /**
@@ -140,13 +141,11 @@ export const harnessMachine = setup({
         output SubscriptionUsage — percentages plus where they came from
         error  thrown Error; the view shows nothing rather than a stale number
 
-      No implementation reads real plan usage yet. Until one does, the seeded
-      actor returns source: 'unwired' and the view labels it, because a
-      percentage presented as a measurement is the failure this project keeps
-      having to undo.
+      Like every actor here, the default is a stub the machine never relies on;
+      the mode chosen in actors/index.ts supplies the real one.
     */
     readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(
-      async () => ({ fiveHourPct: 0, weeklyPct: 0, source: 'unwired' as const }),
+      async () => ({ fiveHourPct: 0, weeklyPct: 0, source: 'seeded' as const }),
     ),
   },
   guards: {
@@ -172,6 +171,7 @@ export const harnessMachine = setup({
     refusal: input.refusal ?? null,
     sandboxError: input.sandboxError ?? null,
     agentError: input.agentError ?? null,
+    credentialError: null,
     surfaces: [],
     session: null,
     subscription: null,
@@ -231,8 +231,16 @@ export const harnessMachine = setup({
           invoke: {
             src: 'readCredential',
             input: () => ({}) as Record<string, never>,
-            onDone: 'present',
-            onError: 'absent',
+            onDone: { target: 'present', actions: assign({ credentialError: null }) },
+            // Keep the reason. Without it a failed read is indistinguishable
+            // from never having been attempted, and the view has nothing to say.
+            onError: {
+              target: 'absent',
+              actions: assign({
+                credentialError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+              }),
+            },
           },
         },
         present: {
