@@ -4,7 +4,9 @@
 
 **Blocked by:** 24. It owns the setup screen and the write path; this adds a second way to fill the same field.
 
-**Status:** blocked on the local-binding measurement, which is the one that decides whether this is possible at all. Measurements 1 and 2 are taken; see "What was measured". The flow needs a local listener, and the agent's policy forbids one.
+**Status:** ready-for-agent. Every measurement that decides feasibility is taken and the answer is yes; what remains is measurement 4 (does a wrapping survive being spawned by another process) and the capture problem, which are implementation questions rather than existential ones.
+
+**The developer has accepted the trade** that this command's policy sets `allowLocalBinding: true` where the agent's leaves it `false`. That acceptance is about *this command's* policy only — the agent's is unchanged and the ticket fails if it moves.
 
 **The measurements corrected the ticket twice**, and both corrections are left visible below rather than tidied away. The first draft said the flow could not run confined because it opens a browser; it prints the URL as a fallback, so it can. The second said it was paste-the-code with no local server; it is a local callback on an ephemeral port, and it needs `allowLocalBinding`, which the agent's policy sets to `false`.
 
@@ -51,7 +53,11 @@ Each of these is a command, not a judgement. Write down what came back.
 1. ~~Does it need to open a browser itself?~~ **Answered above: no.**
 2. ~~Which hosts does the flow contact?~~ **Answered.** `claude.com/cai/oauth/authorize` and `platform.claude.com/oauth/code/{callback,success}` are the *developer's browser* and need nothing from the policy — the browser was never inside it. The one the CLI itself calls is **`platform.claude.com/v1/oauth/token`**, read out of the shipped binary's strings rather than inferred from what a browser was sent to. That host goes in **this command's** allowlist and **never** in the agent's; `DEFAULT_ALLOWED_HOSTS` stays `api.anthropic.com` and `registry.npmjs.org`. Worth confirming against a real run once, since a string in a binary is evidence of an endpoint and not proof it is the one used.
 
-3. **NEW — does a sandboxed process's local listener work, and can the browser reach it?** Two halves. `allowLocalBinding: true` has to be set for this command's policy or the CLI cannot bind at all. And the browser is an unsandboxed process on the same machine connecting *inward* to a socket a sandboxed process opened; seatbelt does not namespace the network, so this should work, and "should" is what this project keeps being wrong about. Measure both: that the listener binds, and that a connection from outside completes.
+3. ~~Does a sandboxed process's local listener work, and can something outside reach it?~~ **Answered — both halves, and this is what unblocks the ticket.**
+
+   Under the shipped policy, with `allowLocalBinding: false`, a Python HTTP server binding `127.0.0.1:0` fails with `PermissionError [Errno 1] Operation not permitted`, against a control proving the interpreter itself runs. So the setting does something and the agent genuinely cannot listen. That is now **probe 10** in `containment.probe.test.ts`, because it was one line in `sandbox.ts` that nothing held to the kernel, and it guards a channel the allowlist says nothing about: the allowlist bounds where the agent may reach, not who may reach the agent.
+
+   With the same policy and `allowLocalBinding: true`, the same server bound an ephemeral port (53340 in the run), and an **unsandboxed** process fetched `http://127.0.0.1:<port>/callback` and got its marker back. So the browser reaching inward works, which is exactly the shape of the OAuth callback.
 4. **Does an `srt` wrapping computed in one process still work when another process spawns it?** The agent spawn already relies on this — the runtime computes the wrapping, the Rust host performs the spawn (ADR-0008) — but it has only ever been relied on for a policy the wrapping process itself initialized. If `wrapWithSandboxArgv` writes a profile to a temp path, confirm that path outlives the process that made it.
 5. **What does it write, and where?** Point `CLAUDE_CONFIG_DIR` at a directory varnick owns for this and nothing else. `allowWrite` for this command is that directory alone — not the clone.
 

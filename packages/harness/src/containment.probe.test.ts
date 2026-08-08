@@ -983,6 +983,70 @@ test.skipIf(blocked !== null)(
   120_000,
 )
 
+// ---------------------------------------------------------------------------
+// 10. A listening socket
+// ---------------------------------------------------------------------------
+
+test.skipIf(blocked !== null)(
+  'the agent cannot open a listening socket, and that is what allowLocalBinding buys',
+  async () => {
+    /*
+      `allowLocalBinding: false` is one line in sandbox.ts and nothing held it to
+      the kernel. It matters more than it looks: a listener is how a confined
+      process accepts an *inbound* connection, which is a channel the allowlist
+      says nothing about — the allowlist bounds where the agent may reach, not
+      who may reach the agent.
+
+      Measured because ticket 25 needed the opposite answer. `claude setup-token`
+      finishes by bouncing the browser to `http://localhost:<ephemeral>/callback`,
+      so minting a token confined requires binding, and that command's policy
+      therefore has to set this true where the agent's leaves it false. Before
+      widening anything for one command it is worth knowing the setting does
+      something, and this is that check. It asserts the deny only: the allow is
+      ticket 25's to carry, against its own policy, and does not belong in the
+      suite that guards the agent's.
+    */
+    const listener = join(insideDir, 'listen.py')
+    writeFileSync(
+      listener,
+      [
+        'import http.server, sys',
+        'try:',
+        "    s = http.server.HTTPServer(('127.0.0.1', 0), http.server.BaseHTTPRequestHandler)",
+        'except Exception as e:',
+        "    print('BIND-REFUSED', type(e).__name__, flush=True); sys.exit(1)",
+        "print('BOUND', s.server_address[1], flush=True)",
+      ].join('\n'),
+      'utf8',
+    )
+
+    try {
+      const run = runner(await freshSandbox(repoRoot))
+
+      // The control: python runs, so a refusal below is about the bind rather
+      // than about the interpreter being unreachable.
+      const control = await run('python3 -c "print(6*7)"')
+      expect(control.code).toBe(0)
+      expect(control.stdout.trim()).toBe('42')
+
+      const bind = await run(`python3 ${JSON.stringify(listener)}`)
+
+      report('probe 10 — a listening socket under the shipped policy', [
+        ['python3 runs at all  (control)', outcome(control)],
+        ['bind 127.0.0.1:0', outcome(bind)],
+      ])
+
+      // The boundary. The agent may not listen.
+      expect(bind.stdout).not.toContain('BOUND')
+      expect(bind.stdout).toContain('BIND-REFUSED')
+    } finally {
+      rmSync(listener, { force: true })
+      await releaseSandbox()
+    }
+  },
+  120_000,
+)
+
 if (blocked) {
   console.log(`containment probes skipped — ${blocked}`)
 } else if (toolProbeBlocked) {
