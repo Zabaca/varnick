@@ -61,11 +61,15 @@ Confirmed:
 
 ### v1 scope
 
-In: `srt` sandbox around the agent process tree, scoped to the clone; Tauri-side credential read and environment injection; Secrets Store with host-side resolution; durable Session (SDK persistence plus a host-side mirror); chat transcript; the Core/Userspace boundary enforced in the sandbox policy; a network allowlist as a config file.
+In: `srt` sandbox around the agent process tree, scoped to the clone; Tauri-side credential read and environment injection; Secrets Store with host-side resolution; a minimal Surface execution path, enough to run one real Userspace module; durable Session (SDK persistence plus a host-side mirror); chat transcript; the Core/Userspace boundary enforced in the sandbox policy; a network allowlist as a config file.
 
-Out of v1, deliberately: canvas or artifact panel; multiple sessions; session forking; a settings and provenance panel; allowlist UI; the Core Profile and the Escalation path (v1 changes Core by opening a separate Claude Code session in the repository).
+**A minimal Surface execution path is in v1 — decided after it was ruled out.** An earlier draft had full dynamic Surface loading in v1, reasoning from the boundary ADRs; that was cut, on the grounds that those ADRs govern how a Surface behaves once one exists and do not require one to ship. Cutting it turned out to take something else with it.
 
-Also out: **rendering Surfaces in the chat surface.** An earlier draft of this scope had dynamic Surface loading in v1, reasoning from the boundary ADRs. Those ADRs govern how a Surface behaves once one exists; they do not require one to ship. v1 is the chat. `surfaceMachine` and the loader stay in the codebase because the moment the agent builds anything they are needed and they are already proven, but nothing renders until a real Userspace module exists.
+Host-side secret resolution happens at the moment the host runs code the agent wrote. With nothing in the product running Userspace code, that moment does not exist, and the Secrets Store ships as a store with no consumer — which makes "the agent authors secret use and never holds a secret" a claim rather than a demonstrated property. The alternative considered was resolving when the host runs a plain script with no Surface involved; it was rejected in favour of the loader that is already modelled, already proven by `drive.ts`, and already the thing the product is for.
+
+So: **enough of the Surface loader to run one real Userspace module**, and no more. Not a Surface framework, not a layout system, not a registry. The rest of the Workspace remains what a fork builds.
+
+Still out: the canvas or artifact panel, multiple sessions, session forking, a settings and provenance panel, an allowlist UI, and the Core Profile and Escalation path (v1 changes Core by opening a separate Claude Code session in the repository).
 
 Explicitly undecided — record, do not invent:
 

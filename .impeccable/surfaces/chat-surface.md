@@ -64,8 +64,11 @@ Everything else about the surface is deliberately unremarkable.
 - **No unmarked invention.** While actors are stubs, one marker beside the plan
   usage says so, and it reads `UNIMPLEMENTED` rather than being maintained by
   hand.
-- **No Surfaces aside.** Rendering a Surface is out of v1 scope; the narrow aside
-  in the original direction contract was cut during the visual gate.
+- **No Surfaces aside.** The narrow aside in the original direction contract was
+  cut during the visual gate, and it stays cut. v1 runs one Userspace module; it
+  does not arrange several, and a permanent sidebar is the affordance that would
+  promise otherwise. Where a running module appears is a decision for whoever
+  builds the second one.
 
 ## Where it is reviewed
 

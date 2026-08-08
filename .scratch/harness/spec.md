@@ -182,7 +182,11 @@ The bugs it and the bare page caught, kept here because each one is a rule worth
 
 ## Out of Scope
 
-**Rendering Surfaces in the chat** *(visual gate)*. This spec's stories 36–40 assumed dynamic Surface loading ships in v1, reasoning from the boundary ADRs. Those ADRs govern how a Surface behaves once one exists; they do not require one to ship, and v1 is the chat. `surfaceMachine` and the loader stay in the codebase — the moment the agent builds anything they are needed, and they are already proven by `drive.ts` — but nothing renders until a real Userspace module exists. Stories 36–40 are therefore deferred, not withdrawn, and `SURFACE_STATE_PATHS` is waived on the states-page banner by decision rather than left uncovered. Matches `PRODUCT.md` → v1 scope.
+**Rendering Surfaces: cut at the visual gate, then partly restored** *(visual gate, then stage 5)*. Stories 36–40 assumed full dynamic Surface loading in v1. That was cut — the boundary ADRs govern how a Surface behaves once one exists, they do not require one to ship, and v1 is the chat.
+
+Cutting it took host-side secret resolution with it, which the stage-5 split surfaced: resolution happens when the host runs code the agent wrote, and with nothing running Userspace code there is no such moment. A Secrets Store with no consumer makes ADR-0006 a claim rather than a demonstrated property.
+
+So **a minimal execution path is back in v1** — enough of the loader to run one real Userspace module, and no more. Not a Surface framework, not a layout system, not a registry. Stories 36–40 are met in that narrow form; anything wider stays out. See ticket 14, and `PRODUCT.md` → v1 scope.
 
 The canvas or artifact panel. Multiple concurrent Sessions, session switching, and session forking — the data layer models Sessions as a collection because that is a one-way door, but the v1 UI shows one. A settings and provenance panel. A UI for the network allowlist. Any plugin API, versioned extension contract, or published Harness package.
 

@@ -86,8 +86,9 @@ function Coverage({ uncovered, unknown }: { uncovered: string[]; unknown: string
         </div>
       )}
       <div className="mt-2" style={{ color: 'var(--fg-faint)' }}>
-        Waived by decision: {SURFACE_STATE_PATHS.map((p) => `surface.${p}`).join(', ')} — rendering
-        a Surface is out of v1 scope (PRODUCT.md), so these have no card on purpose.
+        Waived until ticket 14: {SURFACE_STATE_PATHS.map((p) => `surface.${p}`).join(', ')} — nothing
+        renders a Surface yet, so there is no component to park in these states. The waiver expires
+        when one exists; it is not a decision that they need no cards.
       </div>
     </div>
   )

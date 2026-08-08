@@ -320,9 +320,14 @@ export const SCENARIOS: readonly Scenario[] = [
 /**
  * Paths the coverage banner checks.
  *
- * Surfaces are deliberately absent: rendering a Surface is out of v1 scope
- * (PRODUCT.md), so `SURFACE_STATE_PATHS` has no card by decision rather than by
- * omission — and the banner says so instead of sitting permanently amber.
+ * Surfaces are absent for one reason only: nothing renders a Surface yet, so
+ * there is no component to park in `loading`, `loaded` or `failed`. This is a
+ * waiver with an expiry, not a decision that those states need no cards —
+ * ticket 14 brings a minimal execution path into v1, and moving these paths in
+ * here is one of its acceptance criteria.
+ *
+ * The distinction matters. "Out of scope" is the kind of waiver that survives
+ * the reason for it and quietly becomes a gap.
  */
 export const COVERED_PATHS: readonly StatePath[] = [
   ...HARNESS_STATE_PATHS,
