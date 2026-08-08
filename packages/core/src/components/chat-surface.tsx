@@ -218,6 +218,59 @@ export function ChatSurface({
   const storing = toPath((snapshot.value as Record<string, unknown>).credential) === 'storing'
   const starting = !session && !problem && !settingUp && !storing
 
+  /*
+    First run takes the whole surface, and that is the honest rendering rather
+    than a stylistic preference.
+
+    It was a panel above the composer for one build, and the composer under it
+    did nothing: the Session is spawned on `agent.running` (see harness.ts), so
+    with no credential `session` is null and every `session?.send(...)` below is
+    a no-op. A control that silently does nothing is exactly the affordance this
+    project keeps ruling against — the state has no handler, so there should be
+    no button rather than a dead one. The welcome box has the same problem one
+    step further on: it greets a developer as though something had started.
+
+    The sandbox problem line stays, because it is the one thing that can be
+    wrong while setup is on screen and pasting a credential will not fix it.
+  */
+  if (settingUp || storing) {
+    return (
+      <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          <div className="space-y-3" style={{ maxWidth: 'var(--prose)' }}>
+            <CredentialSetup snapshot={snapshot} send={send} />
+
+            {storing && (
+              <div style={{ color: 'var(--fg-faint)' }}>
+                Storing your{' '}
+                {ctx.storingKind === 'subscription' ? 'subscription token' : 'API key'} in the
+                keychain…
+              </div>
+            )}
+
+            {problem && (
+              <div style={{ color: 'var(--bad)' }}>
+                <span aria-hidden>✗ </span>
+                {problem.text}{' '}
+                {problem.event && (
+                  <button
+                    onClick={() => {
+                      onRecover?.()
+                      send(problem.event!)
+                    }}
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    {problem.action}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
       <PlanUsage usage={ctx.subscription} kind={ctx.credentialKind} mode={mode} />
@@ -688,8 +741,13 @@ function harnessProblem(ctx: HarnessSnapshot['context'], agentState: string): Pr
  * Written from the developer's side rather than the machine's: the difference
  * that matters at this moment is what it costs them, not which environment
  * variable it becomes. `claude setup-token` is named because it is the one step
- * varnick cannot do for them — spawning it would be a second Claude Code process
- * outside the Sandbox, which is what ADR-0003's last consequence forbids.
+ * varnick does not yet do for them.
+ *
+ * The reason is narrower than it first looks, and this comment said the wider
+ * version: ADR-0003 forbids a Claude Code process *outside* the Sandbox, not a
+ * Claude Code process. Run wrapped, under its own policy, minting a token is
+ * allowed by that rule rather than an exception to it — ticket 25, which is
+ * filed blocked on four measurements rather than started on an assumption.
  */
 const CREDENTIAL_CHOICES = [
   {
