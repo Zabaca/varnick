@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { useMachine } from '@xstate/react'
-import type { AnyActorRef, InspectionEvent } from 'xstate'
+import { fromPromise, type AnyActorRef, type InspectionEvent } from 'xstate'
 import { harnessMachine, type HarnessEvent } from './machines/harness.ts'
 import { surfaceMachine } from './machines/surface.ts'
 import { sessionMachine, type SessionInput } from './machines/session.ts'
@@ -13,8 +13,23 @@ import {
   type SeedControls,
   type TurnObserver,
 } from './actors/index.ts'
+import { loadUserspaceSurface } from './actors/surface-loader.ts'
 import { regionOf } from './domain.ts'
 import { seedPolicy } from './data/seed.ts'
+
+/**
+ * The Surface loader, the same in seeded and live mode.
+ *
+ * Wired here rather than in `actorsFor` because it is not one of the two: there
+ * is no service behind an `import()` to stand in for, so there is nothing to
+ * seed — see ACTOR_NAMES in actors/index.ts. Here is also as far into Core as
+ * `import.meta.glob` may reach: this module is browser-only, and drive.ts,
+ * which runs under bun where that construct does not exist, never imports it.
+ */
+const loadSurface = fromPromise<{ ok: true }, { modulePath: string }>(async ({ input }) => {
+  await loadUserspaceSurface(input.modulePath)
+  return { ok: true as const }
+})
 
 /** Flatten a nested state value to a dotted path. */
 export function toPath(value: unknown): string {
@@ -92,7 +107,7 @@ export function useHarness(
           readCredential: seeds.readCredential,
           spawnAgent: seeds.spawnAgent,
           readSubscriptionUsage: seeds.readSubscriptionUsage,
-          surface: surfaceMachine.provide({ actors: { loadSurface: seeds.loadSurface } }),
+          surface: surfaceMachine.provide({ actors: { loadSurface } }),
           session: sessionMachine.provide({
             actors: {
               runTurn: seeds.runTurn,
@@ -218,7 +233,11 @@ export function useChildRevision(refs: AnyActorRef[]) {
   useEffect(() => {
     const subs = refs.map((r) => r.subscribe(bump))
     return () => subs.forEach((s) => s.unsubscribe())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Keyed on the ids, not on `refs`: callers build that array inline, so a
+    // dependency on it would resubscribe every render. An exhaustive-deps rule
+    // would want `refs` here and be wrong; the repo's lint config carries one
+    // rule and it is not that one, so this says it in prose rather than in a
+    // disable directive nothing defines.
   }, [key])
   return revision
 }

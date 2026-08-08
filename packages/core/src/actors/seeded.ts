@@ -118,12 +118,7 @@ export function seededActors(controls: SeedControls) {
       return { ok: true }
     }),
 
-    loadSurface: fromPromise<{ ok: true }, { modulePath: string }>(async ({ input }) => {
-      await wait(200)
-      // The Surface named "broken" always fails. ADR-0004 exists for this case,
-      // and a seed that never exercises it is not evidence of anything.
-      if (input.modulePath.includes('broken')) throw new Error(brokenSurfaceError)
-      return { ok: true }
-    }),
+    // No `loadSurface`. Importing a file is not a service call, so there is
+    // nothing here to stand in for one — see actors/index.ts.
   }
 }

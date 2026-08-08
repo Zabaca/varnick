@@ -1,10 +1,9 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { ChatSurface } from '../components/chat-surface.tsx'
 import { frozenHarness } from '../actors/frozen.ts'
 import { useChildRevision, toPath } from '../hooks.ts'
 import { SCENARIOS, uncoveredPaths, unknownPaths, type Scenario } from '../data/scenarios.ts'
-import { SURFACE_STATE_PATHS } from '../machines/surface.ts'
 
 /**
  * Every state of the chat surface, on one page.
@@ -85,11 +84,6 @@ function Coverage({ uncovered, unknown }: { uncovered: string[]; unknown: string
           )}
         </div>
       )}
-      <div className="mt-2" style={{ color: 'var(--fg-faint)' }}>
-        Waived until ticket 14: {SURFACE_STATE_PATHS.map((p) => `surface.${p}`).join(', ')} — nothing
-        renders a Surface yet, so there is no component to park in these states. The waiver expires
-        when one exists; it is not a decision that they need no cards.
-      </div>
     </div>
   )
 }
@@ -102,8 +96,16 @@ function Card({ scenario }: { scenario: Scenario }) {
 }
 
 function CardBody({ scenario, onReset }: { scenario: Scenario; onReset: () => void }) {
-  const machine = useMemo(() => frozenHarness(), [])
+  const machine = useMemo(() => frozenHarness(scenario.surfaceOutcome), [scenario.surfaceOutcome])
   const [snapshot, send] = useMachine(machine, { input: scenario.input })
+
+  // Discovery is an event, not an input — a Surface arrives when the filesystem
+  // is scanned. drive.ts sends the same list from the same field, so a card and
+  // the coverage check cannot disagree about what this scenario found.
+  const surfaces = scenario.surfaces
+  useEffect(() => {
+    if (surfaces) send({ type: 'DISCOVER_SURFACES', descriptors: [...surfaces] })
+  }, [surfaces, send])
 
   const session = snapshot.context.session
   useChildRevision(session ? [session] : [])

@@ -16,7 +16,6 @@ import type {
   ModelId,
   SandboxPolicy,
   SubscriptionUsage,
-  SurfaceDescriptor,
 } from '../domain.ts'
 import type { SessionInput } from '../machines/session.ts'
 
@@ -56,7 +55,7 @@ const notImplemented = (name: string, what: string) => (): never => {
   )
 }
 
-export const LIVE_NOT_IMPLEMENTED = ['loadSurface'] as const
+export const LIVE_NOT_IMPLEMENTED = [] as const
 
 /**
  * What a running Turn says that is not its result.
@@ -370,14 +369,10 @@ export function liveActors(observer: TurnObserver = silentObserver) {
       }
     }),
 
-    loadSurface: fromPromise<{ ok: true }, { modulePath: string }>(
-      notImplemented('loadSurface', 'no Userspace module is imported'),
-    ),
+    // `loadSurface` is deliberately absent from both this list and the seeded
+    // one. It has no seeded half in either mode — see actors/index.ts.
   }
 }
-
-/** Descriptors a live discovery would return. Nothing scans the filesystem yet. */
-export const liveSurfaces: SurfaceDescriptor[] = []
 
 /**
  * A conversation, as a relaunch gets it back.

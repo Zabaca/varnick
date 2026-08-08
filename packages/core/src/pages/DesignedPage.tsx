@@ -3,6 +3,7 @@ import { useHarness, toPath } from '../hooks.ts'
 import { ChatSurface } from '../components/chat-surface.tsx'
 import { resolveActorMode, type ActorMode } from '../actors/index.ts'
 import { restoreSession, type RestoredSession } from '../actors/live.ts'
+import { discoverSurfaces, loadedSurface } from '../actors/surface-loader.ts'
 import { LIVE_SESSION_ID } from '../domain.ts'
 import type { SessionInput } from '../machines/session.ts'
 
@@ -108,6 +109,18 @@ function LiveChat({
     send({ type: 'READ_SUBSCRIPTION' })
   }, [send])
 
+  /*
+    Surfaces are discovered at launch, not gated on the agent.
+
+    Deliberately outside the start-up chain above: a Surface is a file that is
+    already on disk, and holding it back until a credential is read would mean a
+    clone with no key shows an empty window instead of the Workspace someone
+    built. `DISCOVER_SURFACES` is idempotent, so re-running it costs nothing.
+  */
+  useEffect(() => {
+    send({ type: 'DISCOVER_SURFACES', descriptors: discoverSurfaces() })
+  }, [send])
+
   useEffect(() => {
     if (agentState === 'running') send({ type: 'READ_SUBSCRIPTION' })
   }, [agentState, send])
@@ -141,6 +154,7 @@ function LiveChat({
       send={send}
       mode={mode}
       restoredRedacted={redacted}
+      resolveSurface={loadedSurface}
       // A deliberate recovery re-arms start-up, so the steps after the one that
       // failed run again on their own.
       onRecover={() => {
