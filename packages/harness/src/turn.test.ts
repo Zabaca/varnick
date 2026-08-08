@@ -25,7 +25,12 @@ import {
   ADR-0003 says never happens.
 */
 
-const LOOKS_LIKE_A_KEY = 'sk-" + "ant-api03-NEVER-LET-THIS-OUT'
+/*
+  Assembled rather than written out: the value is invented, but its shape is one
+  every secret scanner flags, and a literal of that shape blocks pushing for this
+  repository and every fork of it.
+*/
+const LOOKS_LIKE_A_KEY = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
 
 const textDelta = (text: string) => ({
   type: 'stream_event',

@@ -48,7 +48,12 @@ function fakeKeychain(
 
 /** Values shaped like real keys, used to prove they never come back out. */
 const STRIPE = 'sk_test_51NEVERLETTHISOUT0000000000'
-const OPENAI = 'sk-" + "ant-api03-ALSO-NEVER-LET-THIS-OUT'
+/*
+  Assembled rather than written out: the value is invented, but its shape is one
+  every secret scanner flags, and a literal of that shape blocks pushing for this
+  repository and every fork of it.
+*/
+const OPENAI = ['sk-', 'ant-api03-ALSO-NEVER-LET-THIS-OUT'].join('')
 
 const index = (names: readonly string[]) => JSON.stringify(names)
 
@@ -185,7 +190,7 @@ describe('the store refuses rather than corrupting', () => {
 
   test('an ordinary key with punctuation and spacing inside it is fine', async () => {
     const store = await openSecretsStore({ keychain: fakeKeychain() })
-    for (const value of ['sk-" + "ant-api03-a_b-c=', 'a{b}c[d]e(f)!@#$%^&*', 'two words here'])
+    for (const value of [['sk-', 'ant-api03-a_b-c='].join(''), 'a{b}c[d]e(f)!@#$%^&*', 'two words here'])
       await store.store('K', value)
     expect(store.names()).toEqual(['K'])
   })

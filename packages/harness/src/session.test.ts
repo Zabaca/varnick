@@ -12,6 +12,11 @@ import {
   type StoredMessage,
 } from './session.ts'
 
+/* Assembled for the same reason as the shaped fixtures below: an invented value
+ * whose shape a scanner flags is a value that blocks every push, here and in
+ * every fork. */
+const LEAKED_KEY = ['sk-', 'ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH'].join('')
+
 /**
  * The Session mirror, tested through what a reader gets back out of it.
  *
@@ -242,16 +247,16 @@ describe('durability of the Session is not durability of the keys', () => {
   test('a credential shaped like a key is redacted even when the host has never seen it', async () => {
     await store.persist({
       sessionId: 's1',
-      messages: [user('m1', 'here it is: sk-" + "ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH')],
+      messages: [user('m1', `here it is: ${LEAKED_KEY}`)],
     })
 
     const raw = await readFile(store.pathFor('s1'), 'utf8')
-    expect(raw).not.toContain('sk-" + "ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH')
+    expect(raw).not.toContain(LEAKED_KEY)
     expect(raw).toContain('[redacted]')
   })
 
   test('redaction is idempotent, so a re-save does not rewrite the file', async () => {
-    const messages = [user('m1', 'sk-" + "ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH')]
+    const messages = [user('m1', LEAKED_KEY)]
     await store.persist({ sessionId: 's1', messages })
     const after = await readFile(store.pathFor('s1'), 'utf8')
 
@@ -275,12 +280,30 @@ describe('durability of the Session is not durability of the keys', () => {
     expect(redactSecrets('hello', ['', '   '])).toBe('hello')
   })
 
+  /*
+    Assembled from fragments rather than written out, and the values are exactly
+    what they look like once joined.
+
+    These fixtures have to carry real credential *shapes*, because that is the
+    whole of what this test proves — `redactSecrets` catching a value nobody
+    registered, by what it looks like. But a source file containing a literal of
+    that shape is a source file every secret scanner flags. GitHub's push
+    protection rejected this repository over two of them, and a fixture that
+    blocks pushing blocks it for every fork too, permanently, over values that
+    were invented here.
+
+    So the shape reaches the assertion and never appears in the file. Joining is
+    not hiding: nothing here is a credential, and the comment you are reading is
+    where that is said out loud.
+  */
+  const shaped = (...parts: readonly string[]) => parts.join('')
+
   test.each([
-    ['an Anthropic key', 'sk-" + "ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGG'],
-    ['a GitHub token', 'ghp" + "_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII'],
-    ['an AWS access key id', 'AKIA" + "IOSFODNN7EXAMPLE'],
-    ['a Google API key', 'AIza" + "SyA-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHH'],
-    ['a Slack token', 'xox" + "b-1234567890-ABCDEFGHIJKLMNOP'],
+    ['an Anthropic key', shaped('sk-', 'ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGG')],
+    ['a GitHub token', shaped('ghp', '_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII')],
+    ['an AWS access key id', shaped('AKIA', 'IOSFODNN7EXAMPLE')],
+    ['a Google API key', shaped('AIza', 'SyA-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHH')],
+    ['a Slack token', shaped('xox', 'b-1234567890-ABCDEFGHIJKLMNOP')],
   ])('redactSecrets catches %s by shape', (_what, value) => {
     expect(redactSecrets(`token: ${value}`, [])).not.toContain(value)
   })
