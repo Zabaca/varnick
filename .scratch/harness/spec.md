@@ -91,6 +91,46 @@ Everything the developer builds on top is theirs. What ships is a Harness small 
 44. As a developer, I want varnick isolated from my existing Claude Code configuration by default, so that its behaviour does not depend on machine state I forgot I set.
 45. As a developer, I want a flag to inherit my Claude Code environment, so that my existing skills and MCP servers are available when I want them.
 
+### States the prose did not predict *(machine phase)*
+
+Discovered while writing the machines and building the states page. Each one is a
+card at `#/states`.
+
+46. As a developer, I want the first frame after launch to be a usable empty chat rather than a splash or a spinner, so that a fresh clone looks like a product and not like a build step. *(machine phase)*
+47. As a developer, I want the wait while the credential is read and the sandbox is established to claim nothing about the outcome, so that a slow start is not mistaken for a granted permission. *(machine phase)*
+48. As a developer, I want a partially streamed answer rendered as an answer rather than as a placeholder, so that I can read it while it arrives and act before it finishes. *(machine phase)*
+49. As a developer, I want an interrupted turn to keep what had already arrived, so that pressing escape costs me the rest of the answer and not the part I was reading. *(machine phase)*
+50. As a developer, I want a failed turn to offer both retry and dismiss, so that I can decide whether the failure is worth another attempt without the error becoming permanent furniture. *(machine phase)*
+51. As a developer, I want a failed save to be visibly a different problem from a failed turn, so that I do not retry the conversation when the disk is what went wrong. *(machine phase)*
+52. As a developer, I want a save to be able to fail while a turn is still running and neither to cancel the other, so that persistence trouble never costs me work in flight. *(machine phase)*
+53. As a developer, I want a refused start to name the precondition that refused it, so that a click that does nothing is impossible. *(machine phase)*
+54. As a developer, I want a failed credential read to say what failed, so that "no credential" is distinguishable from "never tried". *(machine phase)*
+55. As a developer, I want the agent to crash without taking the transcript with it, so that a restart is a restart and not a reset. *(machine phase)*
+56. As a developer, I want every state of this surface visible on one page, driven by the real machines, so that the states a screenshot never shows are reviewed rather than discovered in production. *(machine phase)*
+57. As a developer, I want that page to go amber when a machine gains a state with no card, so that coverage is checked by the build rather than remembered by a person. *(machine phase)*
+58. As a developer, I want a design-free page showing raw machine state and one button per accepted event, so that behaviour can be judged with no design covering for it. *(machine phase)*
+
+### Decided at the visual gate *(visual gate)*
+
+Behavioural changes made while using the high-fidelity page. Each one changed
+which events are legal, so each looped back through the machines.
+
+59. As a developer, I want `/` in the composer to open a command menu, so that I do not have to remember what the harness accepts. *(visual gate)*
+60. As a developer, I want the menu to list only commands the machines will actually accept right now, so that it cannot advertise capability the product does not have. *(visual gate)*
+61. As a developer, I want Tab to complete a command and Enter to send, so that completing and running are separate decisions. *(visual gate)*
+62. As a developer, I want Escape to close the menu without clearing what I typed, so that dismissing a suggestion is not the same as losing a draft. *(visual gate)*
+63. As a developer, I want to keep typing while the agent works, so that I can queue the next instruction instead of waiting. *(visual gate)*
+64. As a developer, I want `/model` and `/effort` to list every value as its own entry with the current one marked, so that the menu answers "what is this set to" without a settings panel. *(visual gate)*
+65. As a developer, I want a model or effort change to apply to the next turn without disturbing the turn in flight, so that changing my mind is not destructive. *(visual gate)*
+66. As a developer, I want `/compact` to summarise the conversation and say so while it runs, so that reclaiming context is a visible act rather than a silent rewrite. *(visual gate)*
+67. As a developer, I want a failed compaction to state that the conversation is unchanged, so that I do not have to guess whether history was lost. *(visual gate)*
+68. As a developer, I want `/clear` to reset the transcript and the context count together, so that the meter cannot disagree with what is on screen. *(visual gate)*
+69. As a developer, I want context used out of the window on the same line as the model and effort, so that the cost of the next turn is answered in one glance. *(visual gate)*
+70. As a developer, I want plan usage for the 5-hour and weekly windows shown outside the chat, so that I know how much runway I have before starting something long. *(visual gate)*
+71. As a developer, I want any number the build has not actually measured marked as seeded, so that a prototype cannot be mistaken for a reading. *(visual gate)*
+72. As a developer, I want the shell to use the full window with only prose capped, so that a transcript of diffs and paths is not folded into an essay column. *(visual gate)*
+73. As a developer, I want no control shown for a mode the product does not have, so that the surface does not describe a keyboard shortcut that does nothing. *(visual gate)*
+
 ## Implementation Decisions
 
 **Two packages.** The Harness is a package inside the repository — sandbox policy generation, credential resolution, the Secrets Store, and Session persistence — consumed by Core, which owns the chat and the Surface loader. The Harness is not published; it stays editable in the clone, because the thing a fork most wants to change is the sandbox policy. Extraction later is a move, not a rewrite.
@@ -113,13 +153,26 @@ Everything the developer builds on top is theirs. What ships is a Harness small 
 
 **The network allowlist is a configuration file in v1**, not a UI. Its contents are readable and editable, and the honest limit is documented: any allowed host is an exfiltration path, so the allowlist bounds blast radius rather than data egress.
 
-**Machine decomposition is proposed, not settled.** The shape this spec assumes is one parent machine owning agent-process lifecycle and credential state, with one child actor per Surface. Independent facts — credential present, sandbox available, agent process running — look like parallel regions rather than one status enum. The decomposition is confirmed at the start of the machine stage and this spec is amended if it differs.
+**Machine decomposition, as built** *(machine phase — replaces the proposal this spec carried)*. Three machines: `harness` is the parent, `session` is one child spawned once and outliving every agent restart, `surface` is one child per discovered Surface. The Harness is parallel across four regions — `credential`, `sandbox`, `subscription`, `agent` — because they are genuinely independent facts, and the Session is parallel across three — `turn`, `persistence`, `composer` — for the same reason. A save can fail while a turn streams, and the command menu can open mid-turn. Recorded in [ADR-0007](../../docs/adr/0007-state-decomposition-for-the-harness.md).
+
+Two things fell out of that shape and are load-bearing:
+
+- **Regions publish their state into context.** An XState v5 guard receives only `{ context, event }` and cannot read a sibling region, so each region assigns its own state to `credentialState` / `sandboxState` on entry and the start guard reads those. The UI reads the same two fields, so the affordance and the rule cannot drift.
+- **START's refusal is an unguarded fallback, not a disabled button.** `can({type:'START'})` is therefore permanently true and nothing may bind `disabled` to it; readiness comes from `canStartAgent()`. A refused start explains itself instead of swallowing the click.
+
+**Implementations swap at one seam** *(machine phase)*. Machines declare actor contracts and never import an implementation; `actors/index.ts` chooses `seeded` or `live` for the whole system, and `?actors=live` overrides at runtime. Live actors exist and throw with the name of what is missing, so an unwired path fails loudly at the actor rather than appearing to work — which is what a silent stub did once already here. `UNIMPLEMENTED` is the list the seeded marker reads, so the UI stops claiming a thing is fake the moment it stops being.
+
+**The states page is the third build of the same code, not a demo** *(machine phase)*. `#/states` renders the shipped component driven by the shipped machine, frozen through `provide()` — actors that never settle, named delays held. Entry points are inputs on the machines (`enterCredential`, `enterSandbox`, `enterAgent`, `enterSubscription`, `enterTurn`, `enterPersistence`, and a `sessionInput` the parent spawns the Session with), which is why the machines name their delays instead of writing numeric literals in `after`.
 
 **Every actor declares its real-service contract when the machine is written** — input shape, output shape, error shape — for `spawnAgent`, `readCredential`, `persistSession`, and `loadSurface`. Failure and retry branches are asserted against seeded failures, not just happy paths.
 
 ## Testing Decisions
 
 A good test here asserts external behaviour and, more than usual, asserts **refusals**. Most of what this feature promises is something not happening: a path not readable, an event not accepted, a failure not spreading. A test that only exercises the happy path proves almost nothing about a containment boundary.
+
+**Seam 1 is built and green** *(machine phase)*. `packages/core/scripts/drive.ts`, run with `bun run drive`, carries 142 assertions over the three machines with no DOM and no components. It also asserts the states page from the same data: that every declared state path has a scenario, that no scenario names a path no machine declares, that each scenario created cold actually reaches the state it claims, and that a frozen card does not advance on its own. Scenarios live in `src/data/scenarios.ts` as plain data precisely so this check is headless.
+
+The bugs it and the bare page caught, kept here because each one is a rule worth not re-learning: a `START` swallowed after a refusal; `EDIT_DRAFT` scoped to `turn.idle`, which made the composer inert mid-turn; `DISCOVER_SURFACES` spawning duplicate actors on a rescan; a root-level `READ_SUBSCRIPTION` transition that tore down every parallel region and with it the Session; and two actors missing from `provide()`, which fell back to default stubs silently.
 
 **Seam 1 — the harness machine, driven headlessly.** No DOM, no framework, no components. Assertions: send refused with no credential; send refused while the agent process is down; interrupt legal only while streaming; a failed Surface leaves its siblings and the transcript intact; a Session restored after a simulated crash carries its transcript; a seeded actor failure recovers on retry; a final state accepts nothing. Actors are provided as seeds here, so latency and failure states are proven rather than assumed.
 

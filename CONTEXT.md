@@ -63,3 +63,42 @@ _Avoid_: merge (Collect stops short of merging; the merge is a human's), sync, p
 **Session**:
 One durable conversation with an agent. Persisted twice — by the Agent SDK for resumption, and mirrored host-side so it survives a broken build, a crash, and a restart.
 _Avoid_: chat, thread, conversation (all fine in the UI; `Session` is the persisted object)
+
+**Turn**:
+One exchange: a prompt sent and the answer to it. The unit that can be interrupted, retried, and fail. A Session is a sequence of Turns; a Turn is never persisted separately from its Session.
+_Avoid_: message (a Turn produces two), request, exchange
+
+**Compaction**:
+Replacing earlier messages with a summary to free context. Named as its own Turn state because it can fail, and when it fails the conversation is explicitly unchanged.
+_Avoid_: summarise (the mechanism), truncate, prune (both lose the fact that nothing is discarded blindly)
+
+### State names
+
+These are machine state names before they are UI words, and the two must not diverge. Every one is addressable at `#/states`.
+
+**Harness — `credential`**: `absent`, `reading`, `present`, `rejected`.
+`absent` means no credential is available, whether or not a read was attempted; a read that failed also records why. `rejected` means one exists and the API refused it — a different problem with a different fix.
+
+**Harness — `sandbox`**: `unchecked`, `checking`, `available`, `unavailable`.
+`unavailable` has no path forward except an explicit re-check. There is deliberately no state meaning "running without confinement".
+
+**Harness — `agent`**: `down`, `startRefused`, `starting`, `running`, `crashed`.
+`down` is stopped on purpose; `crashed` is stopped on its own and carries a reason. `startRefused` is a start that was asked for and declined, holding the refusal so it can be read.
+_Avoid_: stopped, idle, dead, paused, blocked
+
+**Harness — `subscription`**: `unread`, `reading`, `read`. Plan usage across the rolling windows. A failed read leaves whatever was last known and never invents a figure.
+
+**Session — `turn`**: `idle`, `sending`, `streaming`, `interrupting`, `compacting`, `failed`.
+`sending` is posted with nothing back yet; `streaming` is output arriving. `interrupting` keeps the partial — an interrupted Turn still said something.
+
+**Session — `persistence`**: `saved`, `saving`, `saveFailed`. Independent of `turn`, which is the point: a failed save must not cancel a Turn.
+
+**Session — `composer`**: `typing`, `menu`. `menu` is derived from the draft, not toggled.
+
+**Surface**: `loading`, `loaded`, `failed`, `unloaded`. `failed` is the only state with a retry, because the state has no handler rather than because the UI hid a button.
+
+### Event names
+
+`READ_CREDENTIAL`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `READ_SUBSCRIPTION`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
+
+Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
