@@ -4,7 +4,7 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** in progress — D15, D16, D17, R3, R4 and most of D18 and D20 are cleared. What is left is listed under "Still open" at the bottom, and every item of it sits in a file ticket 22 is currently working in.
 
 **Realizes:** no state path.
 
@@ -54,6 +54,23 @@ Each should either assert something that can fail or be deleted. An assertion th
 
 - **The clone's `.claude/settings.json` is agent-writable and the developer runs Claude Code in this repo.** ADR-0003 records that varnick must never spawn a host-side session; it does not say that the developer's own `claude` in this repo runs those hooks unconfined. That belongs in "Where confinement stops".
 - **The write boundary's documented edge is one of several.** ADR-0002 and the README name `packages/userspace/package.json`. Also agent-writable and host-executed: `packages/lint/package.json`, `bun.lock`, `tsconfig.json`, `eslint.config.js`, and `scripts/clean-clone.sh`, which the README tells the developer to run. Same accepted class; the prose reads as if the list were complete.
+
+## Still open
+
+Everything below is in a file ticket 22 has checked out, so it waits for that merge rather than racing it.
+
+- **D18**, the comments in `src-tauri/src/lib.rs`, `src-tauri/src/bridge.rs`, `packages/harness/src/agent.ts`, `packages/core/src/actors/live.ts` and `actors/index.ts`. `CLAUDE.md` and `packages/harness/src/index.ts` are done.
+- **D19**, the newline framing duplicated between `agent.ts` and `runtime.ts`, and the stored-message validation duplicated between `bridge.ts` and `runtime.ts`. The `secrets-cli.ts` half is done — the CLI now uses `SECRET_ADD_COMMAND` and `SECRET_REMOVE_COMMAND` rather than hardcoding both strings in three places.
+- **D20**, `CREDENTIAL_ENV_VAR` duplicating `CREDENTIAL_ENV_VAR_NAME`. Ticket 22 rewrites exactly this — a credential's variable is now chosen by its Kind — so the duplicate should be resolved there or immediately after, not before.
+- **N4** below, which is a decision rather than a fix.
+
+## What was cleared, and what it turned up
+
+- **D15** — five assertions replaced, and the replacement for `at.size === 6` was falsified before it was committed: removing `turn.compacting` from `SESSION_STATE_PATHS` turns the suite red.
+- **D16** — probe 7's control writes its own marker under `$HOME` and asserts the bytes never arrive, so a missing `~/.zshrc` can no longer stand in for a denial.
+- **D17** — `enter` removed rather than wired, for the reason `frozen.ts` already gives.
+- **D20**, the interesting half — `packages/harness/src/index.ts` claimed Core imports "the two modules that import no Node"; there are three. It is a lint rule now rather than a sentence. Writing it found two things: scoping it to `packages/core/**` wrongly rejected `drive.ts`, which is a headless Node script and may import what it likes, and banning the barrel as a `group` banned every subpath under it, because a gitignore pattern matches children. Both are recorded at the rule.
+- **R3, R4** — both written into the README's *Where confinement stops*, with the `.claude/settings.json` claim verified against `git ls-files` and against the six paths `sandbox.ts` denies.
 
 ## One thing to decide rather than fix (N4)
 
