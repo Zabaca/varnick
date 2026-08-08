@@ -90,6 +90,20 @@ export type HarnessEvent =
  *                  output { pid: number }
  *                  error  thrown Error — process failed to start
  */
+/**
+ * The START transition, declared once and used by both `down` and
+ * `startRefused` so the two cannot drift.
+ *
+ * The second entry is an unguarded fallback, so a refusal explains itself
+ * instead of swallowing the click. The consequence: `can({type:'START'})` is
+ * permanently true, and nothing may bind a `disabled` attribute to it —
+ * readiness comes from `canStartAgent()`.
+ */
+const startTransition = [
+  { target: 'starting', guard: 'canStart' },
+  { target: 'startRefused', actions: 'recordRefusal' },
+] as const
+
 export const harnessMachine = setup({
   types: {
     context: {} as HarnessContext,
@@ -108,6 +122,16 @@ export const harnessMachine = setup({
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
     })),
+  },
+  guards: {
+    canStart: ({ context }) =>
+      canStartAgent({ credential: context.credentialState, sandbox: context.sandboxState }),
+  },
+  actions: {
+    recordRefusal: assign({
+      refusal: ({ context }) =>
+        refusalFor({ credential: context.credentialState, sandbox: context.sandboxState }),
+    }),
   },
   delays: {
     refusalTimeout: 6000,
@@ -132,17 +156,25 @@ export const harnessMachine = setup({
     // Surfaces are discovered, never registered — adding one must not require
     // editing Core, which the agent cannot write anyway (ADR-0002).
     DISCOVER_SURFACES: {
+      // Idempotent by construction. Discovery re-runs whenever the Surfaces
+      // directory changes, so appending unconditionally would spawn a second
+      // actor for a Surface that is already loaded — and both would answer to
+      // the same id. Caught by driving the bare page: React reported duplicate
+      // keys, which was the symptom of two live actors per Surface.
       actions: assign({
-        surfaces: ({ context, event, spawn }) => [
-          ...context.surfaces,
-          ...event.descriptors.map((descriptor) =>
-            spawn('surface', {
-              id: `surface-${descriptor.id}`,
-              syncSnapshot: true,
-              input: { descriptor },
-            }),
-          ),
-        ],
+        surfaces: ({ context, event, spawn }) => {
+          const known = new Set(context.surfaces.map((ref) => ref.getSnapshot().context.descriptor.id))
+          const added = event.descriptors
+            .filter((descriptor) => !known.has(descriptor.id))
+            .map((descriptor) =>
+              spawn('surface', {
+                id: `surface-${descriptor.id}`,
+                syncSnapshot: true,
+                input: { descriptor },
+              }),
+            )
+          return added.length === 0 ? context.surfaces : [...context.surfaces, ...added]
+        },
       }),
     },
     UNLOAD_SURFACE: {
@@ -251,38 +283,17 @@ export const harnessMachine = setup({
             { target: 'down' },
           ],
         },
-        down: {
-          on: {
-            START: [
-              {
-                target: 'starting',
-                guard: ({ context }) =>
-                  canStartAgent({
-                    credential: context.credentialState,
-                    sandbox: context.sandboxState,
-                  }),
-              },
-              // Fallback so a refusal explains itself rather than swallowing
-              // the click. Note the consequence: can({type:'START'}) is now
-              // always true, so nothing may bind `disabled` to it — compute
-              // readiness from canStartAgent instead.
-              {
-                target: 'startRefused',
-                actions: assign({
-                  refusal: ({ context }) =>
-                    refusalFor({
-                      credential: context.credentialState,
-                      sandbox: context.sandboxState,
-                    }),
-                }),
-              },
-            ],
-          },
-        },
+        down: { on: { START: startTransition } },
         startRefused: {
           after: { refusalTimeout: 'down' },
           exit: assign({ refusal: null }),
-          on: { START: 'down' },
+          // START must behave here exactly as it does in `down`. An earlier
+          // version sent it to `down` as a way to dismiss the refusal, which
+          // swallowed a START that had since become valid: the user fixed the
+          // cause, clicked again, and nothing happened. Caught by driving the
+          // bare page, not by the headless script — which never pressed START
+          // twice.
+          on: { START: startTransition },
         },
         starting: {
           invoke: {

@@ -104,6 +104,50 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   actor.stop()
 }
 
+{
+  // Pressing START again after fixing the cause must start the agent.
+  //
+  // Regression: `startRefused` handled START by returning to `down`, so the
+  // second press — the one that should have worked — silently did nothing.
+  // Found by driving the bare page, because this script only ever pressed
+  // START once.
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({
+          source: 'keychain',
+        }),
+        checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+        spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 7 }),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  actor.send({ type: 'START' })
+  check(
+    'the first START is refused',
+    regionOf(actor.getSnapshot().value, 'agent') === 'startRefused',
+  )
+
+  actor.send({ type: 'READ_CREDENTIAL' })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+  actor.send({ type: 'CHECK_SANDBOX' })
+  await waitFor(actor, (s) => regionOf(s.value, 'sandbox') === 'available')
+  check(
+    'still showing the refusal after the cause is fixed',
+    regionOf(actor.getSnapshot().value, 'agent') === 'startRefused',
+  )
+
+  actor.send({ type: 'START' })
+  await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
+  check(
+    'START from startRefused starts the agent once it can',
+    regionOf(actor.getSnapshot().value, 'agent') === 'running',
+  )
+  actor.stop()
+}
+
 // ---------------------------------------------------------------------------
 // Harness — region independence
 // ---------------------------------------------------------------------------
@@ -355,8 +399,18 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
     regionOf(actor.getSnapshot().value, 'agent') === 'down',
   )
 
+  // Discovery re-runs whenever the Surfaces directory changes. A second scan
+  // that finds the same three must not spawn three more actors sharing the
+  // same ids. Found by driving the bare page, not here.
+  actor.send({ type: 'DISCOVER_SURFACES', descriptors: seedSurfaces })
+  check('rediscovering the same Surfaces is idempotent', actor.getSnapshot().context.surfaces.length === 3)
+
   actor.send({ type: 'UNLOAD_SURFACE', id: 'broken' })
   check('unloading removes it from the parent', actor.getSnapshot().context.surfaces.length === 2)
+
+  // ...and an unloaded Surface can be discovered again.
+  actor.send({ type: 'DISCOVER_SURFACES', descriptors: seedSurfaces })
+  check('an unloaded Surface can be rediscovered', actor.getSnapshot().context.surfaces.length === 3)
   actor.stop()
 }
 
