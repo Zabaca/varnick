@@ -37,10 +37,21 @@ Three of the four denied binaries execute. `sudo` is the exception and fails for
 
 Two separate things were assumed to be one. `srt`'s generated macOS profile contains an unconditional `(allow process-exec)`, and `denyRead` emits `file-read-data` denials; `execve` is a different operation and is not covered. `sudo` fails for its own reason — it is setuid, and that needs more than exec.
 
-Denying the keychain *files* does not help either. `security` does not read them; it asks `securityd` over Mach, and `srt`'s policy has no surface for Mach services.
+Denying the keychain *files* does not help either. `security` does not read them; it asks `securityd` over Mach IPC, and the keychain files are that daemon's private storage.
+
+**The binary is not the mechanism, and denying binaries could never have closed this.** The Security framework is linkable in-process, so any program the agent writes reaches `securityd` without `/usr/bin/security` existing. Measured:
+
+```
+python3 -c "ctypes.CDLL(find_library('Security'))"  -> loaded, SecItemCopyMatching resolves
+```
+
+**Where it actually comes from.** `srt`'s profile opens `(deny default)` and allowlists Mach services individually, under a comment reading *"specific services only (no wildcard)"*. `com.apple.securityd.xpc` is on that allowlist. The keychain is reachable because it is permitted by name, not because Mach went unconsidered — which makes this a narrower and more fixable problem than "the sandbox does not cover IPC".
+
+A later `(deny mach-lookup (global-name "com.apple.securityd.xpc"))` would close it, since later rules win in SBPL. Two things to establish before anyone does: what else needs `securityd` — TLS trust evaluation and code-signing checks go through it, and `srt` separately gates `com.apple.trustd.agent` behind `enableWeakerNetworkIsolation`, which suggests the trust path is deliberately distinct — and where the rule would live, because `srt`'s config surface is `network` and `filesystem` only, with no hook for extra profile rules. That means upstream or a fork.
 
 - **The Keychain is reachable from inside the sandbox, and both things kept there are affected.** The credential ([ticket 02](../../.scratch/harness/issues/02-credential-read-and-injection.md)) and the Secrets Store ([ADR-0006](./0006-agents-author-secret-use-never-hold-secrets.md), ticket 10) are stored there because this ADR said the agent could not reach them. Host-side injection remains the right shape — the agent still never *needs* the Keychain — but it is no longer what stops it.
-- **Adding entries to `DENIED_BINARIES` cannot close it.** That list is `denyRead`, and `denyRead` is the mechanism that failed. Closing it needs an execute deny `srt` does not currently express, or storage that is a file under the denied home directory rather than a daemon behind an IPC boundary.
+- **Adding entries to `DENIED_BINARIES` cannot close it.** That list is `denyRead`, `denyRead` is the mechanism that failed, and the binary is not the route anyway. An execute denial would fix `osascript` and `open`; it would not fix this.
+- **Two things would fix this one.** Denying `com.apple.securityd.xpc` at `mach-lookup`, which needs an `srt` change and a measurement of what else breaks. Or storage that is a file under the denied home directory rather than a daemon behind an IPC boundary — `denyRead` is enforced per file by the kernel, so no API call routes around it, which is the same reason `$HOME` is unreadable above.
 - **The measurement lives in `packages/harness/src/sandbox.boundary.test.ts`**, as an inverted assertion against the real kernel. It goes red the day this closes, which is when these paragraphs get deleted.
 
 This adopts the design and the measurements from `zbc/packages/agent/docs/adr/0002-containment-wraps-the-cli-process.md`.
