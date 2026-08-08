@@ -12,7 +12,7 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { CREDENTIAL_ENV_VAR_NAME, SELFTEST_MARKER, agentCommand } from './agent.ts'
+import { CREDENTIAL_ENV_VAR_NAMES, SELFTEST_MARKER, agentCommand } from './agent.ts'
 import {
   UNREADABLE_BINARIES,
   DEFAULT_ALLOWED_HOSTS,
@@ -709,11 +709,15 @@ test.skipIf(blocked !== null)(
  * inside, and widening the policy to reach one would be widening the policy to
  * make a probe pass.
  */
+const CREDENTIAL_VARIABLES = CREDENTIAL_ENV_VAR_NAMES.join(' or ')
+
 const toolProbeBlocked =
   blocked ??
-  (process.env[CREDENTIAL_ENV_VAR_NAME]
+  // Either kind opens a Session — an API key or a subscription token. The probe
+  // does not care which authenticated it, only that something did.
+  (CREDENTIAL_ENV_VAR_NAMES.some((name) => process.env[name])
     ? null
-    : `no ${CREDENTIAL_ENV_VAR_NAME} in the environment, so no Session can be opened`)
+    : `no ${CREDENTIAL_VARIABLES} in the environment, so no Session can be opened`)
 
 test.skipIf(toolProbeBlocked !== null)(
   "the Agent SDK's own Read, Grep and Glob tools are denied the same file",
@@ -983,6 +987,6 @@ if (blocked) {
   console.log(`containment probes skipped — ${blocked}`)
 } else if (toolProbeBlocked) {
   console.log(
-    `containment probe 6 skipped — ${toolProbeBlocked}. Every other probe ran; probe 1 is what covers Read, Grep and Glob without one. To run this last one, export ${CREDENTIAL_ENV_VAR_NAME} and re-run this file.`,
+    `containment probe 6 skipped — ${toolProbeBlocked}. Every other probe ran; probe 1 is what covers Read, Grep and Glob without one. To run this last one, export ${CREDENTIAL_VARIABLES} and re-run this file.`,
   )
 }

@@ -3,8 +3,30 @@
 /** Where the agent's credential came from. */
 export type CredentialSource = 'keychain' | 'env'
 
-export interface Credential {
+/**
+ * What the agent's credential is: an Anthropic API key, or a Claude
+ * subscription token minted by `claude setup-token`.
+ *
+ * Decided by the host from what it resolved, never configured — ADR-0011. It
+ * decides which variable the agent is spawned with, and whether there is a plan
+ * for plan usage to be about. Orthogonal to the source: either kind can come
+ * from either store.
+ */
+export type CredentialKind = 'api-key' | 'subscription'
+
+/**
+ * Everything Core learns from a successful read.
+ *
+ * Two facts, and neither is the value. This is the whole of what crosses the
+ * bridge — see packages/harness/src/credentials.ts, where the same shape is
+ * narrowed out of whatever the host answered.
+ */
+export interface CredentialReading {
   readonly source: CredentialSource
+  readonly kind: CredentialKind
+}
+
+export interface Credential extends CredentialReading {
   /** Never the value itself — Core only ever needs to know one exists. */
   readonly present: true
 }

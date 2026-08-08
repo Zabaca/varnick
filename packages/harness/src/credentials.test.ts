@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { HarnessUnavailable } from './bridge.ts'
 import {
-  CREDENTIAL_ENV_VAR,
-  CREDENTIAL_KEYCHAIN_ACCOUNT,
+  CREDENTIAL_ENV_VARS,
+  CREDENTIAL_KEYCHAIN_ACCOUNTS,
   CREDENTIAL_KEYCHAIN_SERVICE,
+  CREDENTIAL_SETUP_COMMANDS,
   CredentialUnavailable,
+  SUBSCRIPTION_TOKEN_COMMAND,
   credentialGuidance,
   credentialRejection,
   readCredential,
@@ -22,9 +24,15 @@ import {
  * passed, so the injection point is the assertion.
  */
 
-/** A host that answers the way the Tauri command does on success. */
-const answers = (source: unknown): CredentialHost => ({
-  read: async () => ({ source }),
+/**
+ * A host that answers the way the Tauri command does on success.
+ *
+ * Two facts, because a reading is two facts: which store answered, and what was
+ * in it. The kind defaults to `api-key` so the cases that predate ADR-0011 read
+ * as what they always were.
+ */
+const answers = (source: unknown, kind: unknown = 'api-key'): CredentialHost => ({
+  read: async () => ({ source, kind }),
 })
 
 /** A host that rejects the way the bridge rejects a refused call. */
@@ -45,18 +53,35 @@ const refusal = (tag: string) => new HarnessUnavailable('refused', tag)
 */
 const LOOKS_LIKE_A_KEY = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
 
-describe('a successful read reports the store and nothing else', () => {
+describe('a successful read reports the store and the kind, and nothing else', () => {
   test('the keychain answered', async () => {
-    expect(await readCredential(answers('keychain'))).toEqual({ source: 'keychain' })
+    expect(await readCredential(answers('keychain'))).toEqual({
+      source: 'keychain',
+      kind: 'api-key',
+    })
   })
 
   test('the environment answered', async () => {
-    expect(await readCredential(answers('env'))).toEqual({ source: 'env' })
+    expect(await readCredential(answers('env'))).toEqual({ source: 'env', kind: 'api-key' })
   })
 
-  test('a reading carries one field, and it is the source', async () => {
+  test('a subscription token is a reading of its own kind, from either store', async () => {
+    // ADR-0011: the kind is a property of the credential that was resolved, not
+    // a setting. Either kind can come from either store, so the two facts are
+    // orthogonal and both have to travel.
+    expect(await readCredential(answers('keychain', 'subscription'))).toEqual({
+      source: 'keychain',
+      kind: 'subscription',
+    })
+    expect(await readCredential(answers('env', 'subscription'))).toEqual({
+      source: 'env',
+      kind: 'subscription',
+    })
+  })
+
+  test('a reading carries two fields, and they are the source and the kind', async () => {
     const reading = await readCredential(answers('keychain'))
-    expect(Object.keys(reading)).toEqual(['source'])
+    expect(Object.keys(reading)).toEqual(['source', 'kind'])
   })
 })
 
@@ -95,6 +120,16 @@ describe('a failed read records which failure it was', () => {
     expect(await absenceOf(answers('elsewhere'))).toBe('store-unreadable')
   })
 
+  test('a kind the host did not name is a failure, never a guess', async () => {
+    // The kind decides which variable the agent is spawned with. Defaulting it
+    // would mean spawning with a variable nobody resolved, and the symptom is
+    // an agent that starts and cannot authenticate.
+    // No `kind` field at all — an older host, or one that answered a shape
+    // this build does not know.
+    expect(await absenceOf({ read: async () => ({ source: 'keychain' }) })).toBe('store-unreadable')
+    expect(await absenceOf(answers('keychain', 'oauth'))).toBe('store-unreadable')
+  })
+
   test('every failure is a CredentialUnavailable, so nothing rejects unhandled', async () => {
     for (const host of [null, refuses(refusal('nothing-stored')), answers(undefined)]) {
       await expect(readCredential(host)).rejects.toBeInstanceOf(CredentialUnavailable)
@@ -114,14 +149,38 @@ describe('the three absences are legible and distinct', () => {
     for (const absence of all) expect(credentialGuidance(absence).length).toBeGreaterThan(20)
   })
 
-  test('the first-run message names the single thing to do, once', () => {
+  test('the first-run message names both ways to supply a credential', () => {
+    /*
+      There are two kinds now, and a developer holding a Claude subscription who
+      is told only about an API key is being told to pay twice. So the message
+      names both — and it still names only the keychain for each, because the
+      environment variables are the escape hatch rather than the advice a fresh
+      clone opens with.
+    */
     const message = credentialGuidance('nothing-stored')
-    expect(message).toContain('security add-generic-password')
     expect(message).toContain(CREDENTIAL_KEYCHAIN_SERVICE)
-    expect(message).toContain(CREDENTIAL_KEYCHAIN_ACCOUNT)
-    // One instruction, not a menu. The env var is the escape hatch, not the
-    // advice a fresh clone opens with.
-    expect(message.match(/security add-generic-password/g)).toHaveLength(1)
+    expect(message).toContain(CREDENTIAL_KEYCHAIN_ACCOUNTS['api-key'])
+    expect(message).toContain(CREDENTIAL_KEYCHAIN_ACCOUNTS.subscription)
+    expect(message.match(/security add-generic-password/g)).toHaveLength(2)
+  })
+
+  test('the first-run message names the command that mints a subscription token', () => {
+    // `claude setup-token`, and nothing about Claude Code's own credential
+    // store. ADR-0011 refuses to read that item; a message that pointed at it
+    // would be the refused implementation, described.
+    const message = credentialGuidance('nothing-stored')
+    expect(message).toContain(SUBSCRIPTION_TOKEN_COMMAND)
+    expect(message).not.toContain('Claude Code-credentials')
+  })
+
+  test('every setup command ends at the flag that prompts, with no value on it', () => {
+    // `security add-generic-password` takes the keychain as a positional
+    // argument, so a `-w VALUE` written before it writes into whatever comes
+    // next. Twice in this project's history that has been the wrong keychain.
+    // Ending at a bare `-w` makes the tool prompt instead.
+    for (const command of Object.values(CREDENTIAL_SETUP_COMMANDS)) {
+      expect(command.endsWith(' -w')).toBe(true)
+    }
   })
 
   test('the no-host message says where the credential is actually read', () => {
@@ -164,11 +223,16 @@ describe('nothing the host said can reach a message', () => {
 
   test('a host that volunteers the value gets no help carrying it further', async () => {
     const chatty: CredentialHost = {
-      read: async () => ({ source: 'keychain', value: LOOKS_LIKE_A_KEY, apiKey: LOOKS_LIKE_A_KEY }),
+      read: async () => ({
+        source: 'keychain',
+        kind: 'subscription',
+        value: LOOKS_LIKE_A_KEY,
+        apiKey: LOOKS_LIKE_A_KEY,
+      }),
     }
     const reading = await readCredential(chatty)
     expect(JSON.stringify(reading)).not.toContain(LOOKS_LIKE_A_KEY)
-    expect(Object.keys(reading)).toEqual(['source'])
+    expect(Object.keys(reading)).toEqual(['source', 'kind'])
   })
 })
 
@@ -225,17 +289,21 @@ describe('the read rides the one bridge, like every other Harness call', () => {
     ;(globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
       invoke: async (command: string, payload?: unknown) => {
         invoked.push([command, payload])
-        return { source: 'keychain' }
+        return { source: 'keychain', kind: 'subscription' }
       },
     }
 
     const host = tauriCredentialHost()
     expect(host).not.toBeNull()
-    expect(await readCredential(host)).toEqual({ source: 'keychain' })
+    expect(await readCredential(host)).toEqual({ source: 'keychain', kind: 'subscription' })
     expect(invoked).toEqual([['harness_call', { request: { kind: 'read-credential' } }]])
   })
 
-  test('the env var the host injects is the one the Agent SDK reads', () => {
-    expect(CREDENTIAL_ENV_VAR).toBe('ANTHROPIC_API_KEY')
+  test('each kind names the variable the Agent SDK reads it from', () => {
+    // Both are first-class authentication variables to the Agent SDK, listed
+    // side by side in its own credential table — ADR-0011. Mirrored as ENV_VAR
+    // in src-tauri/src/credential.rs and CREDENTIAL_ENV_VAR_NAMES in ./agent.ts.
+    expect(CREDENTIAL_ENV_VARS['api-key']).toBe('ANTHROPIC_API_KEY')
+    expect(CREDENTIAL_ENV_VARS.subscription).toBe('CLAUDE_CODE_OAUTH_TOKEN')
   })
 })

@@ -1,5 +1,12 @@
 import { fromPromise } from 'xstate'
-import type { Effort, Message, ModelId, SandboxPolicy, SubscriptionUsage } from '../domain.ts'
+import type {
+  CredentialReading,
+  Effort,
+  Message,
+  ModelId,
+  SandboxPolicy,
+  SubscriptionUsage,
+} from '../domain.ts'
 import { compactedTranscript } from '../domain.ts'
 import { brokenSurfaceError } from '../data/seed.ts'
 
@@ -49,11 +56,14 @@ export function seededActors(controls: SeedControls) {
       return { ok: true }
     }),
 
-    readCredential: fromPromise<{ source: 'keychain' | 'env' }, Record<string, never>>(
+    readCredential: fromPromise<CredentialReading, Record<string, never>>(
       async () => {
         await wait(150)
         if (controls.failCredential) throw new Error('no credential found')
-        return { source: 'keychain' }
+        // A subscription, because that is the case with more downstream of it:
+        // plan usage exists to be read only under one, so a seed that always
+        // said `api-key` would leave the strip unexercised in every seeded run.
+        return { source: 'keychain', kind: 'subscription' }
       },
     ),
 

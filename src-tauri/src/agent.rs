@@ -458,14 +458,21 @@ impl AgentProcess {
         wrapping: &Wrapping,
         credentials: &CredentialStore,
     ) -> Result<u32, Failure> {
-        let Some((variable, value)) = credential_env(credentials) else {
+        let Some(injection) = credential_env(credentials) else {
             // A tag, not a message. Nothing about a credential is described in
             // a string this process builds — see credential.rs.
             return Err(Failure::refused("nothing-stored"));
         };
 
         let mut child = build_command(wrapping)
-            .env(variable, value)
+            .env(injection.variable, injection.value)
+            // The other authentication variable, taken away rather than left
+            // to be inherited. This process was launched from a developer's
+            // terminal and may itself hold an exported ANTHROPIC_API_KEY; an
+            // agent handed that beside an injected subscription token would
+            // authenticate as an account varnick never resolved. Exactly one
+            // credential reaches the child, and it is the resolved one.
+            .env_remove(injection.cleared)
             .spawn()
             // Nothing the spawn said is forwarded. The environment it failed
             // with holds the credential, and an OS error can quote it.
@@ -1249,12 +1256,20 @@ mod tests {
     }
 
     #[test]
-    fn the_credential_is_not_in_the_command_before_the_spawn_adds_it() {
+    fn no_credential_is_in_the_command_before_the_spawn_adds_one() {
         // The value is attached at the spawn and nowhere else, so nothing that
-        // inspects a command can find it.
+        // inspects a command can find it. Both variables now, because a
+        // credential has a kind and either one may be the one injected.
         let command = build_command(&wrapping());
         for (name, _) in command.get_envs() {
-            assert_ne!(name, std::ffi::OsStr::new(crate::credential::ENV_VAR));
+            assert_ne!(
+                name,
+                std::ffi::OsStr::new(crate::credential::API_KEY_ENV_VAR)
+            );
+            assert_ne!(
+                name,
+                std::ffi::OsStr::new(crate::credential::SUBSCRIPTION_ENV_VAR)
+            );
         }
     }
 

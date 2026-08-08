@@ -236,7 +236,12 @@ export type HarnessRequest =
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
   'check-sandbox': { readonly ok: true }
-  'read-credential': { readonly source: 'keychain' | 'env' }
+  // Which store answered, and what was in it. Spelled out rather than imported
+  // from ./credentials.ts, which imports this module.
+  'read-credential': {
+    readonly source: 'keychain' | 'env'
+    readonly kind: 'api-key' | 'subscription'
+  }
   'persist-session': { readonly ok: true }
   'read-session': RestoredTranscript
   'spawn-agent': { readonly pid: number }
@@ -377,10 +382,24 @@ function okAnswer(answer: unknown): { ok: true } {
   return { ok: true }
 }
 
-function credentialAnswer(answer: unknown): { source: 'keychain' | 'env' } {
-  const source = (answer as { source?: unknown } | null | undefined)?.source
+/**
+ * A credential reading: two facts, and neither of them is the value.
+ *
+ * The kind is required rather than defaulted. It decides which variable the
+ * agent is spawned with (ADR-0011), so filling it in here would be this side of
+ * the bridge choosing an authentication method the host never resolved — and
+ * the symptom would be an agent that starts and cannot authenticate.
+ */
+function credentialAnswer(answer: unknown): {
+  source: 'keychain' | 'env'
+  kind: 'api-key' | 'subscription'
+} {
+  const reading = answer as { source?: unknown; kind?: unknown } | null | undefined
+  const source = reading?.source
   if (source !== 'keychain' && source !== 'env') throw new HarnessUnavailable('malformed')
-  return { source }
+  const kind = reading?.kind
+  if (kind !== 'api-key' && kind !== 'subscription') throw new HarnessUnavailable('malformed')
+  return { source, kind }
 }
 
 /** A started agent, as one number. Anything else is not a started agent. */

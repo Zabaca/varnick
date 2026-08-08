@@ -11,12 +11,17 @@
  * Correction in docs/adr/0003-containment-wraps-the-process-tree.md.
  *
  * **The value is not representable here.** Nothing in this module has a field
- * that could hold it, and no function returns one. A read answers with which
- * store replied — `keychain` or `env` — and that is the whole vocabulary. The
- * value never crosses the IPC boundary into the webview, so it can never reach
- * the transcript, a log line, or the Session mirror. That is a property of the
+ * that could hold it, and no function returns one. A read answers with two
+ * facts — which store replied (`keychain` or `env`) and what was in it
+ * (`api-key` or `subscription`) — and that is the whole vocabulary. The value
+ * never crosses the IPC boundary into the webview, so it can never reach the
+ * transcript, a log line, or the Session mirror. That is a property of the
  * types rather than a rule someone has to remember; see src-tauri/src/credential.rs
  * for the other half, where the value does exist and cannot be printed.
+ *
+ * The kind is the second fact rather than a setting: the host decides it from
+ * what it resolved, and it decides which variable the agent is spawned with —
+ * ADR-0011. varnick never reads Claude Code's own credential store to get one.
  *
  * Every message this module produces is written here and selected by an enum.
  * Nothing a host said is ever interpolated into one, so a store that answers
@@ -33,9 +38,20 @@ import { HarnessUnavailable, callHarness, tauriHarnessBridge } from './bridge.ts
 /** Which store answered. Reportable — the value it held is not. */
 export type CredentialSource = 'keychain' | 'env'
 
+/**
+ * What the credential turned out to be. Reportable, and not a setting.
+ *
+ * Decided by the host from what it resolved (ADR-0011), never declared by the
+ * developer, and orthogonal to the source: either kind can come from either
+ * store. It decides which variable the agent is spawned with, and whether there
+ * is a plan for plan usage to be about.
+ */
+export type CredentialKind = 'api-key' | 'subscription'
+
 /** Everything Core is allowed to learn from a successful read. */
 export interface CredentialReading {
   readonly source: CredentialSource
+  readonly kind: CredentialKind
 }
 
 /**
@@ -54,15 +70,54 @@ export type CredentialAbsence =
   /** There is no host process to do the reading. A browser tab is not a desktop app. */
   | 'no-host'
 
-/** The variable the agent subprocess is spawned with. What the Agent SDK reads. */
-export const CREDENTIAL_ENV_VAR = 'ANTHROPIC_API_KEY'
+/**
+ * The variable the agent subprocess is spawned with, per kind.
+ *
+ * Both are first-class authentication variables to the Agent SDK, listed side
+ * by side in its own credential table — which is what makes supporting a
+ * subscription one substitution rather than a second authentication path.
+ * Mirrored as `API_KEY_ENV_VAR`/`SUBSCRIPTION_ENV_VAR` in
+ * src-tauri/src/credential.rs, and as `CREDENTIAL_ENV_VAR_NAMES` in ./agent.ts.
+ */
+export const CREDENTIAL_ENV_VARS: Readonly<Record<CredentialKind, string>> = {
+  'api-key': 'ANTHROPIC_API_KEY',
+  subscription: 'CLAUDE_CODE_OAUTH_TOKEN',
+}
 
-/** The keychain item the host looks for first. */
+/** The keychain the host looks in first, whichever kind it is holding. */
 export const CREDENTIAL_KEYCHAIN_SERVICE = 'varnick'
-export const CREDENTIAL_KEYCHAIN_ACCOUNT = 'anthropic-api-key'
 
-/** The one command a fresh clone is told to run. */
-export const CREDENTIAL_SETUP_COMMAND = `security add-generic-password -s ${CREDENTIAL_KEYCHAIN_SERVICE} -a ${CREDENTIAL_KEYCHAIN_ACCOUNT} -w`
+/** The account within that keychain, per kind. */
+export const CREDENTIAL_KEYCHAIN_ACCOUNTS: Readonly<Record<CredentialKind, string>> = {
+  'api-key': 'anthropic-api-key',
+  subscription: 'claude-oauth-token',
+}
+
+/**
+ * The command that stores a credential, per kind.
+ *
+ * Both end at a bare `-w`, which makes `security` prompt for the value rather
+ * than take it from the command line. That is not only about shell history:
+ * `add-generic-password` takes the keychain as a *positional* argument, so a
+ * `-w VALUE` written before it is read as the keychain to write into. That
+ * mistake has put a credential in the wrong keychain twice here.
+ */
+export const CREDENTIAL_SETUP_COMMANDS: Readonly<Record<CredentialKind, string>> = {
+  'api-key': `security add-generic-password -s ${CREDENTIAL_KEYCHAIN_SERVICE} -a ${CREDENTIAL_KEYCHAIN_ACCOUNTS['api-key']} -w`,
+  subscription: `security add-generic-password -s ${CREDENTIAL_KEYCHAIN_SERVICE} -a ${CREDENTIAL_KEYCHAIN_ACCOUNTS.subscription} -w`,
+}
+
+/**
+ * The one command that mints a subscription token.
+ *
+ * varnick does not read Claude Code's own credential store — ADR-0011 records
+ * that as a boundary rather than a convenience, because the access token in it
+ * expires in about an hour and consuming it would mean varnick implementing
+ * OAuth refresh against an item another process is also writing. `claude
+ * setup-token` mints a long-lived token for exactly this, and the developer
+ * stores it beside the API key.
+ */
+export const SUBSCRIPTION_TOKEN_COMMAND = 'claude setup-token'
 
 /**
  * What to do about an absence, in one sentence.
@@ -73,7 +128,17 @@ export const CREDENTIAL_SETUP_COMMAND = `security add-generic-password -s ${CRED
 export function credentialGuidance(absence: CredentialAbsence): string {
   switch (absence) {
     case 'nothing-stored':
-      return `nothing is stored. Run \`${CREDENTIAL_SETUP_COMMAND}\` and paste your key, then try again.`
+      // Both kinds, because a developer who pays for a subscription and is
+      // told only about an API key is being asked to pay for the same work
+      // twice. The subscription comes first for the same reason it wins in
+      // `resolve()`. Neither line mentions an environment variable: those are
+      // the escape hatch for CI, not the advice a fresh clone opens with.
+      return (
+        'nothing is stored. For a Claude subscription, run ' +
+        `\`${SUBSCRIPTION_TOKEN_COMMAND}\` and paste the token into ` +
+        `\`${CREDENTIAL_SETUP_COMMANDS.subscription}\`; for an Anthropic API key, ` +
+        `paste it into \`${CREDENTIAL_SETUP_COMMANDS['api-key']}\`. Then try again.`
+      )
     case 'store-unreadable':
       return `the keychain would not answer. Open Keychain Access and allow varnick to read the "${CREDENTIAL_KEYCHAIN_SERVICE}" item, then try again.`
     case 'no-host':
@@ -164,13 +229,25 @@ export async function readCredential(
     throw new CredentialUnavailable(absenceOf(rejection))
   }
 
-  const source = (answer as { source?: unknown } | null | undefined)?.source
+  const reading = answer as { source?: unknown; kind?: unknown } | null | undefined
+
+  const source = reading?.source
   if (source !== 'keychain' && source !== 'env') throw new CredentialUnavailable('store-unreadable')
+
+  // Not defaulted. The kind decides which variable the agent is spawned with,
+  // so a kind nobody resolved would mean spawning with a variable nobody
+  // resolved — and the symptom is an agent that starts and then cannot
+  // authenticate, which reads as a bad credential rather than as this.
+  const kind = reading?.kind
+  if (kind !== 'api-key' && kind !== 'subscription') {
+    throw new CredentialUnavailable('store-unreadable')
+  }
 
   // Rebuilt rather than passed through. A host that volunteered extra fields —
   // the value among them — cannot have them forwarded into the machine's
-  // context, from where they would reach the Session mirror.
-  return { source }
+  // context, from where they would reach the Session mirror. Two facts is the
+  // whole vocabulary, and neither of them is the value.
+  return { source, kind }
 }
 
 /**

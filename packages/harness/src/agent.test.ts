@@ -5,7 +5,7 @@ import {
   AGENT_ENTRY_RELATIVE_PATH,
   CLAUDE_CONFIG_DIR_ENV_VAR,
   CLAUDE_CONFIG_RELATIVE_PATH,
-  CREDENTIAL_ENV_VAR_NAME,
+  CREDENTIAL_ENV_VAR_NAMES,
   INHERIT_CLAUDE_CONFIG_ENV_VAR,
   agentCommand,
   agentConfigurationOptions,
@@ -32,6 +32,12 @@ import { parseTurnEvent, turnFailureMessage, type TurnEvent } from './turn.ts'
   the constant that names it.
 */
 const LOOKS_LIKE_A_KEY = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
+
+/** A value shaped like a subscription token, for the same reason. */
+const LOOKS_LIKE_A_TOKEN = ['sk-', 'ant-oat01-NEVER-LET-THIS-OUT'].join('')
+
+/** The two variables a credential can arrive in, named by what they are. */
+const [API_KEY_VAR, SUBSCRIPTION_VAR] = CREDENTIAL_ENV_VAR_NAMES
 
 /*
   The seam is what the Harness hands the host to spawn — a command string, and
@@ -112,14 +118,23 @@ describe('the overlay carries no secret', () => {
     expect(sandboxEnvOverlay({ ...base }, base)).toEqual({})
   })
 
-  test('the credential variable can never ride the overlay, however it got there', () => {
+  test('the names match the ones the Rust host injects', () => {
+    // Mirrored as API_KEY_ENV_VAR and SUBSCRIPTION_ENV_VAR in
+    // src-tauri/src/credential.rs, and as CREDENTIAL_ENV_VARS in
+    // ./credentials.ts. Both are authentication variables the Agent SDK reads.
+    expect([...CREDENTIAL_ENV_VAR_NAMES]).toEqual(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'])
+  })
+
+  test('no credential variable can ride the overlay, however it got there', () => {
     // The runtime is started by the host, so it inherits whatever the host was
     // launched with — which on a developer machine may include an exported
-    // ANTHROPIC_API_KEY. The overlay crosses a pipe; the credential may not.
+    // ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN. The overlay crosses a pipe;
+    // neither kind of credential may.
     const base = { PATH: '/usr/bin' }
     const wrapped = {
       ...base,
-      [CREDENTIAL_ENV_VAR_NAME]: LOOKS_LIKE_A_KEY,
+      [API_KEY_VAR]: LOOKS_LIKE_A_KEY,
+      [SUBSCRIPTION_VAR]: LOOKS_LIKE_A_TOKEN,
       HTTPS_PROXY: 'http://srt:tok@localhost:51418',
     }
     const overlay = sandboxEnvOverlay(wrapped, base)
@@ -133,10 +148,6 @@ describe('the overlay carries no secret', () => {
     expect(Object.keys(overlay)).toEqual([])
   })
 
-  test('the name matches the one the Rust host injects', () => {
-    // Mirrored as ENV_VAR in src-tauri/src/credential.rs.
-    expect(CREDENTIAL_ENV_VAR_NAME).toBe('ANTHROPIC_API_KEY')
-  })
 })
 
 /*
@@ -156,7 +167,7 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
   const developerEnvironment = {
     PATH: '/usr/bin',
     HOME: '/Users/dev',
-    [CREDENTIAL_ENV_VAR_NAME]: LOOKS_LIKE_A_KEY,
+    [API_KEY_VAR]: LOOKS_LIKE_A_KEY,
     CLAUDECODE: '1',
     CLAUDE_CODE_ENTRYPOINT: 'cli',
     CLAUDE_CODE_SESSION_ID: 'a-session-that-is-not-ours',
@@ -199,7 +210,7 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
 
     // The credential is the one thing that must survive: it is what the host
     // injected, and it is how the agent authenticates.
-    expect(env[CREDENTIAL_ENV_VAR_NAME]).toBe(LOOKS_LIKE_A_KEY)
+    expect(env[API_KEY_VAR]).toBe(LOOKS_LIKE_A_KEY)
 
     for (const name of [
       'CLAUDECODE',
@@ -216,6 +227,40 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
     // needs, and scrubbing beyond the two prefixes would be guessing.
     expect(env.PATH).toBe('/usr/bin')
     expect(env.HOME).toBe('/Users/dev')
+  })
+
+  test('a subscription token survives the scrub that its own name matches', () => {
+    /*
+      The failure ADR-0011's ticket names, and it has no error anywhere: the
+      isolation drops every `CLAUDE*` variable by prefix, and the variable the
+      Agent SDK reads a subscription from is `CLAUDE_CODE_OAUTH_TOKEN`. A
+      credential varnick injected has to be owned rather than inherited, or the
+      scrub takes away the thing that authenticates and the symptom is "the
+      subscription token does nothing".
+    */
+    const env = agentEnvironment(
+      {
+        PATH: '/usr/bin',
+        [SUBSCRIPTION_VAR]: LOOKS_LIKE_A_TOKEN,
+        CLAUDECODE: '1',
+        CLAUDE_CODE_ENTRYPOINT: 'cli',
+      },
+      { cloneRoot: CLONE, inherit: false },
+    )
+    expect(env[SUBSCRIPTION_VAR]).toBe(LOOKS_LIKE_A_TOKEN)
+    expect(env.CLAUDECODE).toBeUndefined()
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
+  })
+
+  test('the agent spawned under a subscription is handed no API key', () => {
+    // The spawn removes the other authentication variable rather than leaving
+    // an inherited one beside the token — see credential.rs. What arrives here
+    // is one credential, and what leaves is the same one.
+    const env = agentEnvironment(
+      { PATH: '/usr/bin', [SUBSCRIPTION_VAR]: LOOKS_LIKE_A_TOKEN },
+      { cloneRoot: CLONE, inherit: false },
+    )
+    expect(env[API_KEY_VAR]).toBeUndefined()
   })
 
   test('a variable nobody has thought of yet is dropped too', () => {
@@ -252,7 +297,7 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
     const env = agentEnvironment(developerEnvironment, { cloneRoot: CLONE, inherit: true })
     expect(env.CLAUDECODE).toBe('1')
     expect(env.ANTHROPIC_BASE_URL).toBe('https://proxy.example.invalid')
-    expect(env[CREDENTIAL_ENV_VAR_NAME]).toBe(LOOKS_LIKE_A_KEY)
+    expect(env[API_KEY_VAR]).toBe(LOOKS_LIKE_A_KEY)
   })
 
   test('the flag itself is not passed on to the agent', () => {
@@ -268,11 +313,11 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
   })
 
   test('what counts as inherited is what varnick did not put there', () => {
-    // The two varnick owns are not the developer's, whatever their names look
-    // like: the credential the host injected, and the config directory the
-    // Sandbox forces. The boundary probe counts this set inside the real
-    // confined process, so a second definition here would be one that drifts.
-    expect(inheritedConfigVariables(developerEnvironment)).toEqual([
+    // The ones varnick owns are not the developer's, whatever their names look
+    // like: either credential variable the host may have injected, and the
+    // config directory the Sandbox forces. The boundary probe counts this set
+    // inside the real confined process, so a second definition here would drift.
+    expect(inheritedConfigVariables({ ...developerEnvironment, [SUBSCRIPTION_VAR]: LOOKS_LIKE_A_TOKEN })).toEqual([
       'CLAUDECODE',
       'CLAUDE_CODE_ENTRYPOINT',
       'CLAUDE_CODE_SESSION_ID',
