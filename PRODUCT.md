@@ -61,9 +61,11 @@ Confirmed:
 
 ### v1 scope
 
-In: `srt` sandbox around the agent process tree, scoped to the clone; Tauri-side credential read and environment injection; Secrets Store with host-side resolution; durable Session (SDK persistence plus a host-side mirror); chat transcript; the Core/Userspace boundary enforced in the sandbox policy; dynamic Surface loading with per-Surface error isolation; a network allowlist as a config file.
+In: `srt` sandbox around the agent process tree, scoped to the clone; Tauri-side credential read and environment injection; Secrets Store with host-side resolution; durable Session (SDK persistence plus a host-side mirror); chat transcript; the Core/Userspace boundary enforced in the sandbox policy; a network allowlist as a config file.
 
 Out of v1, deliberately: canvas or artifact panel; multiple sessions; session forking; a settings and provenance panel; allowlist UI; the Core Profile and the Escalation path (v1 changes Core by opening a separate Claude Code session in the repository).
+
+Also out: **rendering Surfaces in the chat surface.** An earlier draft of this scope had dynamic Surface loading in v1, reasoning from the boundary ADRs. Those ADRs govern how a Surface behaves once one exists; they do not require one to ship. v1 is the chat. `surfaceMachine` and the loader stay in the codebase because the moment the agent builds anything they are needed and they are already proven, but nothing renders until a real Userspace module exists.
 
 Explicitly undecided — record, do not invent:
 

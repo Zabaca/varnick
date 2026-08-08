@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useHarness, useChildRevision, toPath } from '../hooks.ts'
 import { defaultSeedControls } from '../actors/seeded.ts'
-import { seedSurfaces } from '../data/seed.ts'
 import { ClaudeHeader } from '../components/brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from '../components/brainless/claude/claude-message.tsx'
 import { ClaudeThinking } from '../components/brainless/claude/claude-thinking.tsx'
@@ -38,7 +37,7 @@ export function DesignedPage() {
   const working = turn === 'sending' || turn === 'streaming'
   const sessionCan = (e: SessionEvent) => Boolean(s?.can(e))
 
-  // Bring the harness up on its own, in order, and find Surfaces once it is up.
+  // Bring the harness up on its own, in order.
   useEffect(() => {
     if (ctx.credentialState === 'absent') send({ type: 'READ_CREDENTIAL' })
   }, [ctx.credentialState, send])
@@ -55,11 +54,6 @@ export function DesignedPage() {
     }
   }, [ctx.credentialState, ctx.sandboxState, agentState, send])
 
-  useEffect(() => {
-    if (agentState === 'running' && ctx.surfaces.length === 0) {
-      send({ type: 'DISCOVER_SURFACES', descriptors: seedSurfaces })
-    }
-  }, [agentState, ctx.surfaces.length, send])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -86,7 +80,7 @@ export function DesignedPage() {
                 user="you"
                 org=""
                 version="v0.0.0"
-                tips={['Ask for a Surface and it appears in the sidebar']}
+                tips={['Describe what you want built and the agent goes and builds it']}
                 whatsNew={[]}
               />
 
@@ -175,52 +169,6 @@ export function DesignedPage() {
           </div>
         </div>
 
-        {ctx.surfaces.length > 0 && (
-          <aside
-            className="w-[220px] shrink-0 overflow-y-auto px-4 py-4 text-[12px]"
-            style={{ borderLeft: '1px solid var(--rule)' }}
-          >
-            <div className="mb-2" style={{ color: 'var(--fg-faint)' }}>
-              surfaces
-            </div>
-            <div className="flex flex-col gap-2">
-              {ctx.surfaces.map((ref) => {
-                const snap = ref.getSnapshot()
-                const state = toPath(snap.value)
-                return (
-                  <div key={ref.id}>
-                    <div className="flex items-baseline gap-1.5">
-                      <span
-                        aria-hidden
-                        style={{
-                          color:
-                            state === 'loaded'
-                              ? 'var(--ok)'
-                              : state === 'failed'
-                                ? 'var(--bad)'
-                                : 'var(--warn)',
-                        }}
-                      >
-                        ●
-                      </span>
-                      <span>{snap.context.descriptor.name}</span>
-                    </div>
-                    {snap.context.error && (
-                      <div className="pl-4 text-[11.5px] leading-snug" style={{ color: 'var(--fg-faint)' }}>
-                        {snap.context.error}{' '}
-                        {snap.can({ type: 'RETRY' }) && (
-                          <button onClick={() => ref.send({ type: 'RETRY' })} style={{ color: 'var(--accent)' }}>
-                            retry
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </aside>
-        )}
       </div>
     </div>
   )
