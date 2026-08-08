@@ -6,6 +6,8 @@
 
 **Realizes:** `credential.storing` — a new state, so it needs a card at `#/states` and a line in `CONTEXT.md`, both of which the build checks.
 
+`CONTEXT.md` briefly documented that state, and `STORE_CREDENTIAL` beside it, before any of this existed — written while ADR-0011 was being recorded and caught during ticket 22's review. Both are out again. This ticket adds them, and the order matters for the reason CLAUDE.md gives: a state is named in exactly one place, the machines, and a domain doc that runs ahead of them is the same defect as one that lags.
+
 **Status:** ready-for-agent
 
 ## What changes
