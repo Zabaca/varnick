@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@userspace/*": ["../userspace/*"]
+    },
+    "types": ["bun", "vite/client"]
+  },
+  "include": ["src", "scripts", "vite.config.ts"]
+}

@@ -1,0 +1,15 @@
+// The Harness: the runtime half of Core.
+//
+// Four responsibilities, each with an ADR behind it:
+//   sandbox      — @anthropic-ai/sandbox-runtime around the agent's whole
+//                  process tree, never the SDK's own `sandbox` option (ADR-0003)
+//   credentials  — read host-side by Tauri, injected as env; the agent can
+//                  never reach the keychain that holds them (ADR-0003)
+//   secrets      — the agent authors code that names a secret and never holds
+//                  one; the host resolves names at run time (ADR-0006)
+//   session      — persisted twice, so a transcript survives a broken build
+//
+// Nothing is implemented yet. The machines come first: no component and no
+// implementation before scripts/drive.ts passes. See docs/agents/workflow.md.
+
+export const HARNESS_VERSION = '0.0.0'

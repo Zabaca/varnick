@@ -26,3 +26,7 @@ coverage/
 
 # Specs and tickets under .scratch/ are tracked deliberately — see
 # docs/agents/issue-tracker.md. Do not add .scratch/ here.
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
