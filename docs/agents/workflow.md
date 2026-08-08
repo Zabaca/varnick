@@ -9,10 +9,13 @@ Skills are invoked by the user — most carry `disable-model-invocation: true` a
 ```
 HUMAN   1. /grill-with-docs          → CONTEXT.md, docs/adr/
 HUMAN   2. /to-spec                  → .scratch/<slug>/spec.md   (prose, no code)
+          ⤷ gate: does this touch UI?
+HUMAN  2.5 /impeccable shape         → .impeccable/surfaces/<slug>.md   (UI work only)
+          ⤷ job, audience, direction, boundaries. No states. No code.
           ⤷ gate: machine decomposition announced in one line, confirmed
 AUTO    3. /machine-first-prototype  → machines, drive.ts, bare, states, high-fidelity
-                                       amends spec; writes CONTEXT.md terms,
-                                       decomposition ADR, surface brief
+                                       amends spec; writes CONTEXT.md terms and
+                                       the decomposition ADR; inherits the brief
 HUMAN   4. use it; iterate visuals; lock look and experience
           ⤷ visual change: free
           ⤷ behavioural change: loops back to stage 3, re-amend spec
@@ -28,7 +31,7 @@ AUTO    5. /to-tickets               → integration slices only
 
 ## The UI gate
 
-Stages 3, 4, and 7 apply only to work that touches UI. For backend-only or non-visual work the flow is stages 1, 2, 5, 6, 8.
+Stages 2.5, 3, 4, and 7 apply only to work that touches UI. For backend-only or non-visual work the flow is stages 1, 2, 5, 6, 8.
 
 Answer the gate question explicitly at the end of stage 2: **does this touch UI?**
 
@@ -41,6 +44,14 @@ Answer the gate question explicitly at the end of stage 2: **does this touch UI?
 **Tickets are thinner than usual.** By stage 5 the UI and the machines exist. Tickets cover persistence, the seams where stubbed actors become real services, auth, migrations, and failure paths that only exist against a real backend. They do not cover "build the UI".
 
 **The view layer is pure.** See [ADR-0001](../adr/0001-pure-view-layer.md). This is what lets the states page and the live app be the same code rather than two copies that drift.
+
+## One rule about states
+
+**A state is named in exactly one place: the machines.** Their exported path lists are the source, `CONTEXT.md` defines the names, `#/states` renders them, and a ticket points at a card. Nothing else enumerates them.
+
+That is why stage 2.5 writes no states. `/impeccable shape` offers a *States and ranges* section; here it keeps the ranges and drops the states. Ranges are content facts a builder needs before the machines exist — how many messages, how long a tool output, what an empty Workspace holds. States are machine facts discovered *by* stage 3, and prose written before them is a guess that goes stale within a day and then contradicts the code.
+
+This is checked, not trusted: `drive.ts` asserts that no surface brief contains a declared state path or a states heading. A brief that starts enumerating states fails the build.
 
 ## Gates that must not be skipped
 
@@ -57,7 +68,7 @@ Answer the gate question explicitly at the end of stage 2: **does this touch UI?
 | `CONTEXT.md` | `/grill-with-docs`, stage 3 | Lazily, as each term resolves |
 | `docs/adr/` | `/grill-with-docs`, stage 3 | When a decision passes the three ADR tests |
 | `.scratch/<slug>/spec.md` | `/to-spec`, amended by stages 3 and 4 | Stage 2, then in place |
-| `.impeccable/surfaces/<slug>.md` | stage 3 | When the visual direction is chosen |
+| `.impeccable/surfaces/<slug>.md` | `/impeccable shape` (stage 2.5), amended by stage 3 | Before the machines; amended when the build teaches something |
 | `.scratch/<slug>/issues/NN-*.md` | `/to-tickets` | Stage 5 |
 | `DESIGN.md` + `.impeccable/design.json` | `/impeccable document` | Stage 7, from shipped code |
 

@@ -200,7 +200,7 @@ Three cards deliberately have no ticket, because nothing is stubbed underneath t
 - `composer.menu` — derived from the draft and the command names, no service behind it
 - `turn.idle` after a failed compaction — the state is `idle`; only the actor in ticket 08 is missing
 
-Two tickets deliberately name no state path — 02 (containment probes) and 10 (Secrets Store). The first is evidence for tickets 01 and 04; the second is a Harness capability with no machine and no v1 UI. Both are named here so their absence from the states page is not read as missed work.
+Two tickets deliberately name no state path — 04 (containment probes) and 10 (Secrets Store). The first is evidence for tickets 01 and 04; the second is a Harness capability with no machine and no v1 UI. Both are named here so their absence from the states page is not read as missed work.
 
 **The boundary is partial by design, and the documentation must say so.** Userspace code executes in the host process when it loads, so the agent's output reaches the host by being run — that is the point of the product and cannot be closed without abandoning it. The Sandbox protects the home directory, other repositories, and the network. It does not protect the clone from the code the agent writes into it. Git is the undo.
 

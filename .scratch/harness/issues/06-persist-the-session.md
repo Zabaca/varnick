@@ -1,17 +1,20 @@
-# Mirror the Session host-side
+# 06 — Mirror the Session host-side
+
+**What to build:** The transcript is written to a host-side store the developer can read and back up, alongside the Agent SDK's own persistence. Two stores deliberately: the SDK's is for resumption, the mirror is what survives a build the agent just broke and what gives the UI something queryable. A save that fails is visibly a different problem from a Turn that fails, and neither cancels the other.
+
+**Blocked by:** 05 (a transcript worth persisting).
 
 **Status:** ready-for-agent
 
 **Realizes:** `persistence.saving`, `persistence.saved`, `persistence.saveFailed`
 
-`persistSession` resolves after 120ms and writes nothing. This slice writes the transcript to a host-side store on every Turn boundary, alongside the Agent SDK's own persistence. Two stores, deliberately: the SDK's is for resumption, the mirror is what survives a build the agent just broke and what gives the UI something queryable.
+**The storage mechanism is the open decision in this ticket**, carried unresolved from `PRODUCT.md` and the spec. Whatever is chosen must be inspectable by hand — "durable" that cannot be read is a claim taken on faith.
 
-**The storage mechanism is the open decision in this ticket** — it is carried unresolved from `PRODUCT.md` and the spec. Whatever is chosen must be readable and backupable by hand, because "durable" that cannot be inspected is a claim taken on faith.
-
-The `persistence` region is parallel to `turn` and stays that way. A failed save must not cancel a Turn, and a running Turn must not block a save.
-
-**Done when** a save failure is visibly a different problem from a Turn failure — `#/states → save-failed` next to `→ turn-failed` is the check — and `RETRY_SAVE` recovers without touching the conversation.
-
-**Refuses:** no secret value reaches the mirror. Durability of the Session must not become durability of the user's keys.
+- [ ] The transcript is written at every Turn boundary
+- [ ] The store is readable and backupable without varnick running
+- [ ] A save failure surfaces as its own problem, distinct from a Turn failure — `#/states → save-failed` beside `→ turn-failed` is the check
+- [ ] Retrying the save recovers without touching the conversation
+- [ ] A save can fail while a Turn streams, and a running Turn never blocks a save
+- [ ] No secret value reaches the mirror — durability of the Session must not become durability of the developer's keys
 
 Covers stories 21, 22, 26.

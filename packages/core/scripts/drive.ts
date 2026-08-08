@@ -8,10 +8,11 @@
  *
  * Run: bun run drive
  */
+import { readdirSync, readFileSync } from 'node:fs'
 import { createActor, fromPromise, waitFor } from 'xstate'
-import { harnessMachine } from '../src/machines/harness.ts'
-import { sessionMachine } from '../src/machines/session.ts'
-import { surfaceMachine } from '../src/machines/surface.ts'
+import { harnessMachine, HARNESS_STATE_PATHS } from '../src/machines/harness.ts'
+import { sessionMachine, SESSION_STATE_PATHS } from '../src/machines/session.ts'
+import { surfaceMachine, SURFACE_STATE_PATHS } from '../src/machines/surface.ts'
 import {
   regionOf,
   canStartAgent,
@@ -765,6 +766,46 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
     String(actor.getSnapshot().context.session?.getSnapshot().value.turn) === 'sending',
   )
   actor.stop()
+}
+
+// ---------------------------------------------------------------------------
+// Surface briefs — a state is named in exactly one place
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The brief says who arrives and what the surface is for. The machines say
+    which states exist. When a brief starts enumerating states it is writing the
+    same fact somewhere nothing keeps current: the machines change, the exported
+    path list changes with them, the states page goes amber, and the brief stays
+    wrong and confident.
+
+    Ranges are welcome — how long a transcript runs, how big a tool output gets.
+    Those are content facts a builder needs before any machine exists.
+
+    Pointing at the route is fine. `#/states` is a pointer, not a copy.
+  */
+  const dir = new URL('../../../.impeccable/surfaces/', import.meta.url).pathname
+  const banned = [...HARNESS_STATE_PATHS, ...SESSION_STATE_PATHS, ...SURFACE_STATE_PATHS.map((p) => `surface.${p}`)]
+
+  let briefs: string[] = []
+  try {
+    briefs = readdirSync(dir).filter((name) => name.endsWith('.md'))
+  } catch {
+    briefs = []
+  }
+
+  check('at least one surface brief exists', briefs.length > 0)
+
+  for (const name of briefs) {
+    const text = readFileSync(`${dir}${name}`, 'utf-8')
+    const named = banned.filter((path) => text.includes(path))
+    check(`${name} names no machine state (found: ${named.join(', ') || 'none'})`, named.length === 0)
+    check(
+      `${name} has no states section`,
+      !/^#+\s.*\bstates?\b/im.test(text.replace(/#\/states/g, 'the states page')),
+    )
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -16,6 +16,32 @@ What each stage of [the workflow](./workflow.md) reads, writes, and must satisfy
 
 ---
 
+## Stage 2.5 — `/impeccable shape`
+
+UI work only. Skipped entirely for backend-only features.
+
+**Reads:** `PRODUCT.md`, the spec from stage 2, `DESIGN.md` and any existing surface brief.
+
+**Writes:** `.impeccable/surfaces/<slug>.md`.
+
+`shape` runs a discovery interview, resolves the visual direction — routing through impeccable's `new-work` when the surface is new or the world is being replaced — and returns a brief. It never writes code and never writes a direction contract; the contract is written in stage 3 phase 5, as the opening comment of the high-fidelity page.
+
+**Why before the machines rather than after.** The brief answers *who arrives, what they must accomplish, what would make this feel wrong even if it looked polished, and what must remain untouched*. Those answers change which machines get written. Discovered afterwards, they arrive as rework — and the two worst rounds of rework in this project were both this: a visual world whose vocabulary read as confusing, and a Surfaces sidebar built for scope the product did not have.
+
+**What the brief carries:** job and audience, visitor mode, the selected direction and its structural thesis, the focal moment, scope and anti-goals, content and data ranges, interaction and layout intent, and the decisions a builder must not invent.
+
+**What it must not carry: states.**
+
+`shape` offers a *States and ranges* section. In this repo it keeps the ranges and drops the states. Ranges are content facts a builder needs before any machine exists — how many messages a transcript holds, how long a tool output runs, what an empty Workspace looks like. States are machine facts, and stage 3 exists to discover the ones prose cannot predict. A brief that enumerates them is writing the same fact in a second place, where nothing keeps it current: the machines change, the exported path list changes with them, the states page goes amber, and the brief stays wrong and confident.
+
+Naming a *route* is fine — pointing at `#/states` is a pointer, not a copy.
+
+Enforced, not trusted: `drive.ts` asserts that no surface brief contains a declared state path or a states heading. See the states rule in [workflow.md](./workflow.md#one-rule-about-states).
+
+**Exit:** the brief is confirmed by the human. `shape` stops there by design.
+
+---
+
 ## Stage 3 — `/machine-first-prototype`
 
 The skill is screenshot-driven. For greenfield work there are no screenshots; the spec's user stories and the surface brief are the declared evidence. **Say that substitution out loud** rather than letting states be invented silently.
@@ -30,14 +56,17 @@ If `PRODUCT.md` does not exist, stop and run `/impeccable init` first. No visual
 | 2. Write machines | `docs/adr/` | The decomposition passes all three ADR tests — hard to reverse, surprising, a real trade-off. One ADR per feature: *state decomposition for `<feature>`*. Record why parallel regions beat a flat enum, or why one child actor per item beat a single collection machine. |
 | 3. Verify headlessly | `docs/adr/` (amend) | A guard the drive script proves impossible, or a refused-event rule that turns out to be load-bearing, is a domain decision. Amend the ADR rather than leaving it only in `drive.ts`. |
 | 4. Bare page | *nothing visual* | Hard checkpoint. The bare page exists to prove behaviour with no design covering for it. No writes to `DESIGN.md` or the surface brief here. |
-| 5. High-fidelity page | `.impeccable/surfaces/<slug>.md` | Visitor mode, audience, chosen direction, memorable moment. Per-surface strategy only — never global product truth, never `DESIGN.md` tokens. |
+| 5. High-fidelity page | `.impeccable/surfaces/<slug>.md` (amend), direction contract in the page | The brief already exists from stage 2.5 — inherit it, do not rewrite it. Amend only what the build taught, and say what changed. The direction contract is written here, as the opening comment of the page. Still no states in the brief. |
 | 6. States page | `.scratch/<slug>/spec.md` (append) | Loading, empty, filtered-empty, error, and every in-flight state — the states no prose predicts. Each becomes a numbered user story appended to the spec, tagged `(machine phase)`. An amber coverage banner means a state has no scenario. |
 | 7. Browser verify | — | Screenshot every page and look at them, then drive the real interactions over CDP. Report what the driver printed, not that it compiled. |
 
 ### The visual-world branch at phase 5
 
+The world was chosen at stage 2.5, inside `shape`. Phase 5 builds it; it does not re-decide it.
+
 - **`DESIGN.md` exists** → inherit it. The token file is generated *from* its frontmatter, not invented. Any deviation is either a bug or a proposed system change; propose it explicitly rather than drifting.
-- **`DESIGN.md` missing** → this is a new visual world. Route the world choice through impeccable's `new-work` — the choice belongs to the user — and write the direction contract as the opening comment in the high-fidelity page. Still do not write `DESIGN.md`; that happens at stage 7, from the shipped build.
+- **`DESIGN.md` missing** → the world came from `new-work` during stage 2.5 and lives in the brief. Write the direction contract as the opening comment in the high-fidelity page. Still do not write `DESIGN.md`; that happens at stage 7, from the shipped build.
+- **Stage 2.5 was skipped** → route the world choice through `new-work` here, and write the brief before writing components. A world chosen while looking at half-built components is a world chosen by sunk cost.
 
 ### Actor contracts
 
@@ -54,7 +83,7 @@ Every machine and component written in this stage obeys [ADR-0001](../adr/0001-p
 1. `drive.ts` passes; the assertion count is reported
 2. `CONTEXT.md` defines every state and event name the machines use
 3. A decomposition ADR exists, or the three tests were applied and it failed them
-4. `.impeccable/surfaces/<slug>.md` exists for the surface
+4. `.impeccable/surfaces/<slug>.md` exists for the surface, carries no states, and its direction matches what was built
 5. The spec carries the states discovered in phases 5 and 6
 6. Every actor has a declared real-service contract, with its failure branch asserted
 
