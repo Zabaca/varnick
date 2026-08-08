@@ -2,7 +2,7 @@
 
 **What to build:** The transcript is written to a host-side store the developer can read and back up, alongside the Agent SDK's own persistence. Two stores deliberately: the SDK's is for resumption, the mirror is what survives a build the agent just broke and what gives the UI something queryable. A save that fails is visibly a different problem from a Turn that fails, and neither cancels the other.
 
-**Blocked by:** 05 (a transcript worth persisting).
+**Blocked by:** None — can start immediately. `persistSession` takes `{ sessionId, messages }` and does not care where the messages came from, so this is demoable against the seeded Turn: send a message, quit, read it off disk. An edge to 05 was considered and dropped — it bought a nicer demo and serialised two independent slices.
 
 **Status:** ready-for-agent
 

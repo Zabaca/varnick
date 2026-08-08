@@ -8,13 +8,11 @@
 
 **Realizes:** `credential.absent`, `agent.down` — the first frame a stranger sees. `#/states → cold-start`.
 
-**Open question worth answering here:** whether the dev server can itself run inside the sandbox. Userspace code executes in the host process when it loads, so the agent's output reaches the host by being run; if the dev server can be confined, that remaining escape narrows considerably at low cost.
+Documentation honesty about where confinement stops is ticket 13, which is blocked on the probes that measure it.
 
 - [ ] No paths, usernames, model defaults or allowlist entries specific to the author
 - [ ] First launch on a machine that has never run varnick is a working chat, or one legible sentence naming what to do
 - [ ] varnick is isolated from the developer's existing Claude Code configuration by default, with a flag to inherit it — so behaviour does not depend on forgotten machine state
-- [ ] The README states plainly where confinement is **partial**: the Sandbox protects the home directory, other repositories and the network; it does not protect the clone from the code the agent writes into it. Git is the undo
-- [ ] The README claims confinement only on macOS unless the bubblewrap or Windows backend has actually been exercised — neither has been
-- [ ] The clean-clone run is actually performed and what happened is reported, including anything missing
+- [ ] The clean-clone run is actually performed on a machine that has never run varnick, and what happened is reported, including anything missing
 
-Covers stories 8, 9, 41, 42, 43, 44, 45.
+Covers stories 41, 42, 43, 44, 45.

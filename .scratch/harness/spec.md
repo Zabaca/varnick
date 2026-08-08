@@ -192,7 +192,7 @@ Also out: multi-user anything, authentication, tenancy, hosted deployment, and t
 
 ## Further Notes
 
-**Tickets, and the states with none** *(stage 5)*. Eleven integration slices live in `issues/`. Run the check both directions: every state path named by a ticket has a card at `#/states`, and every card resolves either to a ticket or to work already done.
+**Tickets, and the states with none** *(stage 5)*. Thirteen integration slices live in `issues/`. Run the check both directions: every state path named by a ticket has a card at `#/states`, and every card resolves either to a ticket or to work already done.
 
 Three cards deliberately have no ticket, because nothing is stubbed underneath them — they are pure machine logic that already ships:
 
@@ -200,7 +200,9 @@ Three cards deliberately have no ticket, because nothing is stubbed underneath t
 - `composer.menu` — derived from the draft and the command names, no service behind it
 - `turn.idle` after a failed compaction — the state is `idle`; only the actor in ticket 08 is missing
 
-Two tickets deliberately name no state path — 04 (containment probes) and 10 (Secrets Store). The first is evidence for tickets 01 and 04; the second is a Harness capability with no machine and no v1 UI. Both are named here so their absence from the states page is not read as missed work.
+Four tickets deliberately name no state path — 04 (containment probes), 10 and 12 (secrets), and 13 (documenting where confinement stops). The first is evidence for 01 and 03; the secrets pair is a Harness capability with no machine and no v1 UI; the last is prose that can only be written once the probes have measured something. All four are named here so their absence from the states page is not read as missed work.
+
+**One ticket is `needs-info`, not `ready-for-agent`.** Splitting the Secrets Store in two exposed that host-side secret resolution has no execution moment in v1: resolution happens when the host runs Userspace code, and v1 deliberately runs none. Ticket 12 records the three ways out and stays blocked on that decision. The store half (ticket 10) is buildable today and unaffected.
 
 **The boundary is partial by design, and the documentation must say so.** Userspace code executes in the host process when it loads, so the agent's output reaches the host by being run — that is the point of the product and cannot be closed without abandoning it. The Sandbox protects the home directory, other repositories, and the network. It does not protect the clone from the code the agent writes into it. Git is the undo.
 
