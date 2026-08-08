@@ -76,8 +76,9 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: 'cold-start',
     title: 'Cold start',
-    blurb: 'Nothing has been read or checked yet. The first frame after launch.',
-    question: 'Does an empty session look like a product, or like a form waiting to be filled in?',
+    blurb:
+      'Nothing has been read or checked yet. The literal first frame after launch, before even the sandbox has been asked about.',
+    question: 'Is the first thing asked for the first thing that is needed, and nothing else?',
     covers: ['credential.absent', 'sandbox.unchecked', 'agent.down', 'subscription.unread'],
     input: { policy: seedPolicy },
   },
@@ -147,14 +148,29 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'no-credential',
-    title: 'No credential',
-    blurb: 'The read failed and said why. The sandbox is fine.',
-    question: 'Does the recovery affordance point at the thing that actually failed?',
+    title: 'No credential — first run',
+    blurb:
+      'What a stranger sees on the first launch of a fresh clone: the read found nothing, and the way out is a field rather than a command to go and type somewhere else. The sandbox is fine.',
+    question: 'Could someone who has never seen this get to a working agent without leaving the window?',
     covers: ['credential.absent'],
     input: {
       policy: seedPolicy,
       enterSandbox: 'available',
       credentialError: 'no credential found',
+    },
+  },
+  {
+    id: 'storing-credential',
+    title: 'Storing the credential',
+    blurb:
+      'A subscription token was pasted into the setup screen and the host is writing the keychain item. The value crossed once and is held nowhere on this side.',
+    question: 'Does the wait read as a write in progress rather than a form that stopped responding?',
+    covers: ['credential.storing'],
+    input: {
+      policy: seedPolicy,
+      enterCredential: 'storing',
+      storingKind: 'subscription',
+      enterSandbox: 'available',
     },
   },
   {

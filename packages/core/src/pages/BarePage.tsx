@@ -44,6 +44,17 @@ export function BarePage() {
   const [controls, setControls] = useState<SeedControls>(defaultSeedControls)
   const { snapshot, send, transitions, mode } = useHarness(controls)
   const [draft, setDraft] = useState('')
+  /*
+    The paste, held for exactly as long as it takes to send.
+
+    Not in the machine, and not in the transition log this page renders — a
+    credential is the one string in Core that must not survive the interaction,
+    and this page's whole job is to show everything. Cleared on send.
+
+    In live mode this writes the developer's own keychain, which is the point:
+    the bare page proves behaviour with nothing covering for it.
+  */
+  const [pasting, setPasting] = useState('')
 
   const ctx = snapshot.context
   const surfaces = ctx.surfaces
@@ -83,6 +94,7 @@ export function BarePage() {
           [
             ['failSandbox', 'sandbox check fails'],
             ['failCredential', 'credential read fails'],
+            ['failStore', 'credential store fails'],
             ['failTurn', 'turn fails'],
             ['failSave', 'save fails'],
           ] as const
@@ -111,7 +123,52 @@ export function BarePage() {
           <dd>{ctx.sandboxError ?? '—'}</dd>
           <dt>agent error</dt>
           <dd>{ctx.agentError ?? '—'}</dd>
+          <dt>credential error</dt>
+          <dd>{ctx.credentialError ?? '—'}</dd>
+          <dt>kind a store would write</dt>
+          <dd>{ctx.storingKind}</dd>
         </dl>
+
+        {/*
+          STORE_CREDENTIAL is the one Harness event with an argument a person
+          types, so it cannot be a button in the list below with a literal in it.
+          Both controls come from `can()` like every other one here: the kind
+          buttons because `absent` accepts the choice, the store button because
+          the machine accepts *this* value.
+        */}
+        <div style={{ marginTop: 8 }}>
+          {(['subscription', 'api-key'] as const)
+            .filter((kind) => snapshot.can({ type: 'CHOOSE_CREDENTIAL_KIND', kind }))
+            .map((kind) => (
+              <button
+                key={kind}
+                onClick={() => send({ type: 'CHOOSE_CREDENTIAL_KIND', kind })}
+                aria-pressed={kind === ctx.storingKind}
+              >
+                CHOOSE_CREDENTIAL_KIND {kind}
+              </button>
+            ))}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <input
+            type="password"
+            autoComplete="off"
+            value={pasting}
+            placeholder="credential to store"
+            onChange={(ev) => setPasting(ev.target.value)}
+          />
+          {snapshot.can({ type: 'STORE_CREDENTIAL', kind: ctx.storingKind, value: pasting }) && (
+            <button
+              onClick={() => {
+                send({ type: 'STORE_CREDENTIAL', kind: ctx.storingKind, value: pasting })
+                setPasting('')
+              }}
+            >
+              STORE_CREDENTIAL
+            </button>
+          )}
+        </div>
+
         <div style={{ marginTop: 8 }}>
           {HARNESS_EVENTS.filter((e) => snapshot.can(e)).map((e) => (
             <button

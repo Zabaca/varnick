@@ -1,5 +1,6 @@
 import { fromPromise } from 'xstate'
 import type {
+  CredentialKind,
   CredentialReading,
   Effort,
   Message,
@@ -32,6 +33,8 @@ export interface SeedControls {
   failSandbox: boolean
   /** Make readCredential fail, as it does when nothing is stored. */
   failCredential: boolean
+  /** Make storeCredential fail, as the keychain does when it refuses a write. */
+  failStore: boolean
   /** Make the next turn fail. */
   failTurn: boolean
   /** Make persistence fail. */
@@ -43,6 +46,7 @@ export interface SeedControls {
 export const defaultSeedControls: SeedControls = {
   failSandbox: false,
   failCredential: false,
+  failStore: false,
   failTurn: false,
   failSave: false,
   failCompact: false,
@@ -66,6 +70,24 @@ export function seededActors(controls: SeedControls) {
         return { source: 'keychain', kind: 'subscription' }
       },
     ),
+
+    /*
+      A store that writes nowhere.
+
+      The one seed that must never reach a real service even in a seeded run:
+      the live implementation writes the developer's keychain, and a seeded mode
+      that fell through to it would make "design against plausible data" mean
+      "edit the machine's own credential". So this waits and answers, and the
+      value it was handed is dropped without being read.
+
+      `failCredential` is deliberately not reused for it. A keychain that will
+      not answer a read and one that will not accept a write are two different
+      machines to be looking at.
+    */
+    storeCredential: fromPromise<void, { kind: CredentialKind; value: string }>(async () => {
+      await wait(400)
+      if (controls.failStore) throw new Error('the keychain refused to store it')
+    }),
 
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => {
       await wait(300)

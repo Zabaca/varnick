@@ -24,6 +24,7 @@ import { sessionMachine, type SessionInput } from './session.ts'
 
 export const HARNESS_STATE_PATHS = [
   'credential.absent',
+  'credential.storing',
   'credential.reading',
   'credential.present',
   'credential.rejected',
@@ -42,7 +43,7 @@ export const HARNESS_STATE_PATHS = [
 ] as const
 export type HarnessStatePath = (typeof HARNESS_STATE_PATHS)[number]
 
-export type CredentialState = 'absent' | 'reading' | 'present' | 'rejected'
+export type CredentialState = 'absent' | 'storing' | 'reading' | 'present' | 'rejected'
 export type SandboxState = 'unchecked' | 'checking' | 'available' | 'unavailable'
 
 export interface HarnessContext {
@@ -69,6 +70,21 @@ export interface HarnessContext {
    * Nothing here is or could be the value; see packages/harness/src/credentials.ts.
    */
   credentialKind: CredentialKind | null
+  /**
+   * Which keychain item a store is writing, while one is being written.
+   *
+   * The developer's choice on the setup screen, held here because the view is a
+   * pure function of `(snapshot, send)` — a radio button whose selection lived
+   * in a component would be a piece of this surface the states page could not
+   * park in (ADR-0001). It is not a preference and nothing consults it later:
+   * which credential varnick *uses* is still resolved by the host from what it
+   * finds, on the read that follows every store (ADR-0011).
+   *
+   * Not the value, and there is deliberately no field for one. The pasted
+   * credential travels as the store actor's *input*, which is not context, and
+   * is gone the moment the actor settles.
+   */
+  storingKind: CredentialKind
   sandboxState: SandboxState
   refusal: StartRefusal | null
   sandboxError: string | null
@@ -104,6 +120,7 @@ export interface HarnessContext {
 export interface HarnessInput {
   policy: SandboxPolicy
   credentialKind?: CredentialKind | null
+  storingKind?: CredentialKind
   enterCredential?: string | null
   enterSandbox?: string | null
   enterAgent?: string | null
@@ -119,6 +136,26 @@ export interface HarnessInput {
 export type HarnessEvent =
   | { type: 'CHECK_SANDBOX' }
   | { type: 'READ_CREDENTIAL' }
+  /**
+   * A credential pasted into the window, on its way to the keychain.
+   *
+   * `kind` names the item to write and nothing else — the host still resolves
+   * which credential to use by what it finds (ADR-0011). `value` is the one
+   * string in Core that must not survive the interaction: it is read by the
+   * store actor's `input` and never assigned into context, so the machine that
+   * carried it holds nothing afterwards.
+   */
+  | { type: 'STORE_CREDENTIAL'; kind: CredentialKind; value: string }
+  /**
+   * Which of the two the developer is about to paste.
+   *
+   * A machine event rather than component state because the view is a pure
+   * function of `(snapshot, send)` — a selection living in a `useState` would be
+   * part of the setup screen the states page could not park in. It changes which
+   * item a store would write and nothing else; the host still resolves the kind
+   * from what it finds (ADR-0011).
+   */
+  | { type: 'CHOOSE_CREDENTIAL_KIND'; kind: CredentialKind }
   | { type: 'CREDENTIAL_REJECTED'; detail: string }
   | { type: 'START' }
   | { type: 'STOP' }
@@ -174,6 +211,22 @@ export const harnessMachine = setup({
     readCredential: fromPromise<CredentialReading, Record<string, never>>(
       async () => ({ source: 'keychain' as const, kind: 'api-key' as const }),
     ),
+    /*
+      Real-service contract for storeCredential:
+        input  { kind, value } — which keychain item to write, and what a
+               developer pasted into the window. The one actor input in this
+               system that is secret, and the reason it is an input rather than
+               context: an input is handed to the actor and gone, and context is
+               what the surface renders and the mirror is built from.
+        output nothing. A store has nothing to report, so there is no shape on
+               the success path a value could come back in.
+        error  thrown Error — the keychain refused, or there was nothing usable
+               to write. Authored from a tag; nothing `security` said is in it.
+               See packages/harness/src/credentials.ts.
+    */
+    storeCredential: fromPromise<void, { kind: CredentialKind; value: string }>(
+      async () => {},
+    ),
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
     })),
@@ -198,6 +251,17 @@ export const harnessMachine = setup({
   guards: {
     canStart: ({ context }) =>
       canStartAgent({ credential: context.credentialState, sandbox: context.sandboxState }),
+    /*
+      Something was actually pasted.
+
+      The same shape as the Session's send guard, and for the same reason: the
+      control comes from `can()`, so an empty field has to make the machine say
+      no rather than make the surface remember to. A store of nothing would
+      otherwise be a round trip to the host to be told what the field already
+      knew, and it would create a keychain item that reads back as empty.
+    */
+    credentialPasted: ({ event }) =>
+      event.type === 'STORE_CREDENTIAL' && event.value.trim().length > 0,
   },
   actions: {
     recordRefusal: assign({
@@ -215,6 +279,10 @@ export const harnessMachine = setup({
     policy: input.policy,
     credentialState: (input.enterCredential as CredentialState | undefined) ?? 'absent',
     credentialKind: input.credentialKind ?? null,
+    // A subscription by default, for the same reason it wins in `resolve()`: a
+    // developer already paying for a plan should not be shown a bill-per-request
+    // key as the obvious choice.
+    storingKind: input.storingKind ?? 'subscription',
     sandboxState: (input.enterSandbox as SandboxState | undefined) ?? 'unchecked',
     refusal: input.refusal ?? null,
     sandboxError: input.sandboxError ?? null,
@@ -270,12 +338,74 @@ export const harnessMachine = setup({
             { target: 'present', guard: ({ context }) => context.enterCredential === 'present' },
             { target: 'rejected', guard: ({ context }) => context.enterCredential === 'rejected' },
             { target: 'reading', guard: ({ context }) => context.enterCredential === 'reading' },
+            { target: 'storing', guard: ({ context }) => context.enterCredential === 'storing' },
             { target: 'absent' },
           ],
         },
         absent: {
           entry: assign({ credentialState: 'absent' as const }),
-          on: { READ_CREDENTIAL: 'reading' },
+          on: {
+            READ_CREDENTIAL: 'reading',
+            // The way out of `absent` that is not a terminal. Only here: a paste
+            // over a credential that is present would replace a working one by
+            // accident, and one during a read would race the read it invalidates.
+            STORE_CREDENTIAL: { target: 'storing', guard: 'credentialPasted' },
+            // Accepted only where a store is, so the two controls appear and
+            // disappear together rather than leaving a choice with nothing to
+            // choose for.
+            CHOOSE_CREDENTIAL_KIND: {
+              actions: assign({ storingKind: ({ event }) => event.kind }),
+            },
+          },
+        },
+        /*
+          The paste, on its way to the keychain.
+
+          A state rather than a fire-and-forget, because writing to a keychain
+          can fail, can prompt, and can take long enough to need a screen that
+          says what is happening. What it is *not* is a place a credential is
+          kept: the value is the actor's input and the machine holds no field for
+          one, so this state exists for as long as the write takes and carries
+          nothing away from it.
+
+          A success re-reads rather than declaring the credential present.
+          That is one code path establishing the credential whether it was stored
+          a minute ago or a year ago — and a write that somehow produced an
+          unreadable item fails here, in front of the developer who just made it,
+          rather than at the next launch.
+        */
+        storing: {
+          entry: assign({
+            credentialState: 'storing' as const,
+            credentialError: null,
+            storingKind: ({ context, event }) =>
+              event.type === 'STORE_CREDENTIAL' ? event.kind : context.storingKind,
+          }),
+          invoke: {
+            src: 'storeCredential',
+            // Read straight off the event and handed on. The states page enters
+            // this state without one, through `enterCredential`, and its actors
+            // never settle — so the empty value below is a card holding still,
+            // never a store of nothing. The guard on the transition above is
+            // what makes that true of every other way in.
+            input: ({ context, event }) => ({
+              kind: event.type === 'STORE_CREDENTIAL' ? event.kind : context.storingKind,
+              value: event.type === 'STORE_CREDENTIAL' ? event.value : '',
+            }),
+            onDone: 'reading',
+            // Back where it started, saying why — the same shape a failed read
+            // takes, so the surface has one field to render whichever of the two
+            // went wrong. Nothing of the value is in the message: it is authored
+            // from a tag in packages/harness/src/credentials.ts.
+            onError: {
+              target: 'absent',
+              actions: assign({
+                credentialError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+                credentialKind: null,
+              }),
+            },
+          },
         },
         reading: {
           entry: assign({ credentialState: 'reading' as const }),

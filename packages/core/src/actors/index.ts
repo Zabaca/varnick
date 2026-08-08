@@ -39,6 +39,7 @@ export type ActorMode = 'seeded' | 'live'
 export const ACTOR_NAMES = [
   'checkSandbox',
   'readCredential',
+  'storeCredential',
   'spawnAgent',
   'readSubscriptionUsage',
   'runTurn',

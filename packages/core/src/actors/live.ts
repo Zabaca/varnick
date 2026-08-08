@@ -3,6 +3,7 @@ import { callHarness } from '@varnick/harness/bridge'
 import {
   CREDENTIAL_REJECTED_DETAIL,
   readCredential as readCredentialFromHost,
+  storeCredential as storeCredentialOnHost,
 } from '@varnick/harness/credentials'
 import {
   compactionFailureMessage,
@@ -11,6 +12,7 @@ import {
 } from '@varnick/harness/turn'
 import { compactedTranscript } from '../domain.ts'
 import type {
+  CredentialKind,
   CredentialReading,
   Effort,
   Message,
@@ -145,6 +147,25 @@ export function liveActors(observer: TurnObserver = silentObserver) {
     // with a reason, not an unhandled rejection.
     readCredential: fromPromise<CredentialReading, Record<string, never>>(() =>
       readCredentialFromHost(),
+    ),
+
+    /*
+      Real. The Tauri host writes the keychain item for the kind the developer
+      chose, and answers with nothing.
+
+      This is the only actor in the system whose input is secret, and the value
+      goes exactly one way: into this call, across the bridge once, into the
+      keychain. Nothing comes back — `storeCredential` returns `void`, so there
+      is no shape here for a value to arrive in even by accident — and nothing on
+      this side keeps a reference once the promise settles.
+
+      Which item is written is the developer's choice. Which credential varnick
+      *uses* is not: the machine follows a store with a read, and the host
+      resolves the kind from what it finds. ADR-0011 is a rule about resolution
+      and this does not touch it.
+    */
+    storeCredential: fromPromise<void, { kind: CredentialKind; value: string }>(({ input }) =>
+      storeCredentialOnHost({ kind: input.kind, value: input.value }),
     ),
 
     /*

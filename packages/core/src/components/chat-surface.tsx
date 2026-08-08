@@ -206,7 +206,16 @@ export function ChatSurface({
 
   // Only what is actually wrong, and only while it is wrong.
   const problem = harnessProblem(ctx, agentState)
-  const starting = !session && !problem
+  /*
+    Whether first-run setup is on screen, asked of the machine.
+
+    Read here as well as inside {@link CredentialSetup} because "Starting the
+    agent…" must not sit above a screen that says nothing has started. Same
+    question, same probe, one answer.
+  */
+  const settingUp = snapshot.can({ type: 'STORE_CREDENTIAL', kind: ctx.storingKind, value: 'x' })
+  const storing = toPath((snapshot.value as Record<string, unknown>).credential) === 'storing'
+  const starting = !session && !problem && !settingUp && !storing
 
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
@@ -242,6 +251,21 @@ export function ChatSurface({
               />
 
               {starting && <div style={{ color: 'var(--fg-faint)' }}>Starting the agent…</div>}
+
+              {/*
+                First-run setup, before anything else on the screen. It is not a
+                problem line and it is not an error: it is what a stranger who
+                just cloned this sees, and the only thing they can usefully do.
+              */}
+              <CredentialSetup snapshot={snapshot} send={send} />
+
+              {storing && (
+                <div style={{ color: 'var(--fg-faint)', maxWidth: 'var(--prose)' }}>
+                  Storing your{' '}
+                  {ctx.storingKind === 'subscription' ? 'subscription token' : 'API key'} in the
+                  keychain…
+                </div>
+              )}
 
               {problem && (
                 <div style={{ color: 'var(--bad)' }}>
@@ -606,7 +630,15 @@ function SeededMarker({ mode }: { mode: ActorMode }) {
 
 type Problem = { text: string; action?: string; event?: HarnessEvent }
 
-/** Nothing while the harness holds. A named problem and its recovery when it does not. */
+/**
+ * Nothing while the harness holds. A named problem and its recovery when it does not.
+ *
+ * Having no credential is deliberately not on this list. It used to be — one red
+ * line telling a stranger with a fresh clone to go and run two `security`
+ * commands in a terminal — and it is now {@link CredentialSetup}, because "you
+ * cannot use this yet" is a screen rather than an error. Whatever went wrong on
+ * the way there is rendered inside that screen, next to the field that fixes it.
+ */
 function harnessProblem(ctx: HarnessSnapshot['context'], agentState: string): Problem | null {
   if (ctx.sandboxState === 'unavailable') {
     return {
@@ -618,16 +650,6 @@ function harnessProblem(ctx: HarnessSnapshot['context'], agentState: string): Pr
   if (ctx.credentialState === 'rejected') {
     return { text: 'The stored credential was rejected.', action: 'try again', event: { type: 'READ_CREDENTIAL' } }
   }
-  if (ctx.credentialState === 'absent' && ctx.credentialError) {
-    return {
-      text: `Could not read a credential — ${ctx.credentialError}`,
-      action: 'try again',
-      event: { type: 'READ_CREDENTIAL' },
-    }
-  }
-  if (ctx.credentialState === 'absent' && ctx.sandboxState !== 'unchecked') {
-    return { text: 'No credential is available.', action: 'try again', event: { type: 'READ_CREDENTIAL' } }
-  }
   if (agentState === 'crashed') {
     return {
       text: `The agent stopped${ctx.agentError ? ` — ${ctx.agentError}` : ''}.`,
@@ -636,4 +658,174 @@ function harnessProblem(ctx: HarnessSnapshot['context'], agentState: string): Pr
     }
   }
   return null
+}
+
+/**
+ * What each kind means for the person choosing, in one sentence.
+ *
+ * Written from the developer's side rather than the machine's: the difference
+ * that matters at this moment is what it costs them, not which environment
+ * variable it becomes. `claude setup-token` is named because it is the one step
+ * varnick cannot do for them — spawning it would be a second Claude Code process
+ * outside the Sandbox, which is what ADR-0003's last consequence forbids.
+ */
+const CREDENTIAL_CHOICES = [
+  {
+    kind: 'subscription' as const,
+    label: 'Claude subscription',
+    note: 'Uses the plan you already pay for. Run `claude setup-token` once in a terminal to mint a long-lived token, then paste it here.',
+    placeholder: 'Paste the token from `claude setup-token`',
+  },
+  {
+    kind: 'api-key' as const,
+    label: 'Anthropic API key',
+    note: 'Bills each request to your Anthropic account. Paste a key from console.anthropic.com.',
+    placeholder: 'Paste your API key',
+  },
+]
+
+/**
+ * The screen a fresh clone opens on, and the whole of first-run setup.
+ *
+ * **Every control here comes from `can()`**, never from reading
+ * `credentialState`. The screen appears because the machine would accept a
+ * credential typed into it; the button appears because it would accept *this*
+ * one. Those are two different questions and both are asked of the machine —
+ * ADR-0001 — which is also why a card at `#/states` parked in `credential.absent`
+ * shows this exact component rather than a picture of it.
+ *
+ * **The pasted value is the one string in Core that must not survive the
+ * interaction.** It lives in a `useState` for as long as it takes to send, is
+ * cleared the moment it is, and is never written into machine context, a `ref`
+ * that outlives the screen, or anything the Session mirror can reach. The field
+ * is `type="password"` and `autoComplete="off"` so the browser does not keep a
+ * copy either.
+ *
+ * The kind, by contrast, *is* machine state — it is not a secret, and a radio
+ * selection living in a component would be part of this surface the states page
+ * could not park in.
+ */
+function CredentialSetup({
+  snapshot,
+  send,
+}: {
+  snapshot: HarnessSnapshot
+  send: (event: HarnessEvent) => void
+}) {
+  const [pasted, setPasted] = useState('')
+  const ctx = snapshot.context
+  const kind = ctx.storingKind
+  const choice = CREDENTIAL_CHOICES.find((c) => c.kind === kind) ?? CREDENTIAL_CHOICES[0]!
+
+  /*
+    Would the machine take a credential typed here at all?
+
+    Probed with a stand-in rather than with the empty field, because the guard is
+    about *this* paste and the question the screen asks is the prior one. The
+    stand-in is a constant, is never sent, and is not a credential.
+  */
+  const accepts = snapshot.can({ type: 'STORE_CREDENTIAL', kind, value: 'x' })
+  if (!accepts) return null
+
+  // And would it take this one? Empty field, no button — from the machine's
+  // guard rather than from a `disabled` this component decided on.
+  const submittable = snapshot.can({ type: 'STORE_CREDENTIAL', kind, value: pasted })
+
+  /*
+    Deliberately not an `onRecover`, which every other recovery on this surface
+    calls.
+
+    Re-arming start-up would let the owner's "read the credential once" step run
+    again the moment a failed store landed back in `credential.absent` — and the
+    read's own reason would overwrite the store's, so a developer whose keychain
+    refused the write would be told nothing is stored instead. Nothing after a
+    *successful* store needs re-arming: the agent was never started, so its
+    step has not been attempted either.
+  */
+  const store = () => {
+    if (!submittable) return
+    send({ type: 'STORE_CREDENTIAL', kind, value: pasted })
+    // Cleared on the way out, not on the way back: nothing that happens after
+    // this needs it, and a failed store must not leave it sitting in a field.
+    setPasted('')
+  }
+
+  return (
+    <section className="space-y-3" style={{ maxWidth: 'var(--prose)' }}>
+      <div>
+        <h2 style={{ color: 'var(--fg)' }}>Connect varnick to Claude</h2>
+        <p className="mt-1" style={{ color: 'var(--fg-dim)' }}>
+          varnick runs a coding agent on this machine and needs your Claude credentials to do it.
+          Paste one below and it goes straight into the macOS keychain — the agent it starts can
+          never read it back.
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        {CREDENTIAL_CHOICES.map((option) => (
+          <button
+            key={option.kind}
+            onClick={() => send({ type: 'CHOOSE_CREDENTIAL_KIND', kind: option.kind })}
+            aria-pressed={option.kind === kind}
+            className="px-3 py-1.5"
+            style={{
+              border: `1px solid ${option.kind === kind ? 'var(--accent)' : 'var(--rule)'}`,
+              color: option.kind === kind ? 'var(--fg)' : 'var(--fg-dim)',
+              background: option.kind === kind ? 'var(--ground-raised)' : 'transparent',
+            }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <p style={{ color: 'var(--fg-faint)' }}>{choice.note}</p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={pasted}
+          placeholder={choice.placeholder}
+          onChange={(e) => setPasted(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              store()
+            }
+          }}
+          className="min-w-0 flex-1 px-2 py-1.5"
+          style={{
+            border: '1px solid var(--rule)',
+            background: 'var(--ground)',
+            color: 'var(--fg)',
+          }}
+        />
+        {submittable && (
+          <button onClick={store} className="px-3 py-1.5" style={{ color: 'var(--accent)', border: '1px solid var(--rule)' }}>
+            store and continue
+          </button>
+        )}
+      </div>
+
+      {/*
+        Whatever went wrong last time, beside the field that fixes it. A failed
+        read and a failed store both land here, because both leave the machine
+        in `credential.absent` with a reason — and the reason is authored from a
+        tag, so nothing a keychain printed and nothing that was pasted is in it.
+      */}
+      {ctx.credentialError && (
+        <p style={{ color: 'var(--bad)' }}>
+          <span aria-hidden>✗ </span>
+          {ctx.credentialError}
+        </p>
+      )}
+
+      <p style={{ color: 'var(--fg-faint)' }}>
+        Prefer the terminal, or setting up a machine with no window? README.md has the `security`
+        commands and the environment variables, and they still work.
+      </p>
+    </section>
+  )
 }

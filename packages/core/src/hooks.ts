@@ -105,6 +105,7 @@ export function useHarness(
         actors: {
           checkSandbox: seeds.checkSandbox,
           readCredential: seeds.readCredential,
+          storeCredential: seeds.storeCredential,
           spawnAgent: seeds.spawnAgent,
           readSubscriptionUsage: seeds.readSubscriptionUsage,
           surface: surfaceMachine.provide({ actors: { loadSurface } }),
