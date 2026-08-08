@@ -154,21 +154,48 @@ describe('every failure is legible and distinct', () => {
 })
 
 describe('the answer is rebuilt, never passed through', () => {
-  test('a credential reading carries one field, and it is the source', async () => {
-    const reading = await callHarness({ kind: 'read-credential' }, answers({ source: 'keychain' }))
-    expect(reading).toEqual({ source: 'keychain' })
+  test('a credential reading carries two fields — the source and the kind', async () => {
+    const reading = await callHarness(
+      { kind: 'read-credential' },
+      answers({ source: 'keychain', kind: 'subscription' }),
+    )
+    expect(reading).toEqual({ source: 'keychain', kind: 'subscription' })
   })
 
   test('a host that volunteers the value gets no help carrying it further', async () => {
-    const chatty = answers({ source: 'env', value: LOOKS_LIKE_A_KEY, apiKey: LOOKS_LIKE_A_KEY })
+    const chatty = answers({
+      source: 'env',
+      kind: 'api-key',
+      value: LOOKS_LIKE_A_KEY,
+      apiKey: LOOKS_LIKE_A_KEY,
+    })
     const reading = await callHarness({ kind: 'read-credential' }, chatty)
-    expect(Object.keys(reading)).toEqual(['source'])
+    expect(Object.keys(reading)).toEqual(['source', 'kind'])
     expect(JSON.stringify(reading)).not.toContain(LOOKS_LIKE_A_KEY)
   })
 
   test('a store the bridge does not know is malformed, not a reading', async () => {
     expect(
-      (await failureOf({ kind: 'read-credential' }, answers({ source: 'elsewhere' }))).failure,
+      (
+        await failureOf(
+          { kind: 'read-credential' },
+          answers({ source: 'elsewhere', kind: 'api-key' }),
+        )
+      ).failure,
+    ).toBe('malformed')
+  })
+
+  test('a kind the bridge does not know is malformed too, never defaulted', async () => {
+    // The kind decides which variable the agent is spawned with. A default here
+    // would be this side of the bridge choosing an authentication method the
+    // host never resolved.
+    expect(
+      (await failureOf({ kind: 'read-credential' }, answers({ source: 'env' }))).failure,
+    ).toBe('malformed')
+    expect(
+      (
+        await failureOf({ kind: 'read-credential' }, answers({ source: 'env', kind: 'oauth' }))
+      ).failure,
     ).toBe('malformed')
   })
 
@@ -319,7 +346,7 @@ describe('the request crosses intact and carries nothing extra', () => {
     const recording: HarnessBridge = {
       call: async (request) => {
         seen.push(request)
-        return { source: 'env' }
+        return { source: 'env', kind: 'api-key' }
       },
     }
     await callHarness({ kind: 'read-credential' }, recording)

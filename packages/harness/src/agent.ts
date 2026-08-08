@@ -82,13 +82,26 @@ export function failureOfThrown(error: unknown): TurnFailure {
 export const AGENT_ENTRY_RELATIVE_PATH = 'packages/harness/src/agent.ts'
 
 /**
- * The variable the credential arrives in.
+ * The two variables a credential can arrive in — an API key, then a
+ * subscription token.
  *
- * Mirrored as `ENV_VAR` in src-tauri/src/credential.rs and as
- * `CREDENTIAL_ENV_VAR` in ./credentials.ts. Named here so
- * {@link sandboxEnvOverlay} can refuse to carry it.
+ * Two rather than one because a Credential has a Kind (ADR-0011), and the kind
+ * decides which of these the host injects. Exactly one of them is ever set on a
+ * spawned agent: the host injects the one that matches what it resolved and
+ * removes the other, so an `ANTHROPIC_API_KEY` the developer happened to export
+ * cannot sit beside an injected subscription token.
+ *
+ * Mirrored as `API_KEY_ENV_VAR` and `SUBSCRIPTION_ENV_VAR` in
+ * src-tauri/src/credential.rs, and as `CREDENTIAL_ENV_VARS` in ./credentials.ts.
+ * Named here so {@link sandboxEnvOverlay} can refuse to carry either, and so
+ * {@link agentEnvironment} knows which names are varnick's own.
  */
-export const CREDENTIAL_ENV_VAR_NAME = 'ANTHROPIC_API_KEY'
+export const CREDENTIAL_ENV_VAR_NAMES = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const
+
+/** Is this variable one varnick injects a credential into? */
+function isCredentialVariable(key: string): boolean {
+  return (CREDENTIAL_ENV_VAR_NAMES as readonly string[]).includes(key)
+}
 
 /** The agent host's path in a given clone. */
 export function agentEntryPath(cloneRoot: string): string {
@@ -169,7 +182,7 @@ export function sandboxEnvOverlay(
   const overlay: Record<string, string> = {}
   for (const [key, value] of Object.entries(wrapped)) {
     if (value === undefined) continue
-    if (key === CREDENTIAL_ENV_VAR_NAME) continue
+    if (isCredentialVariable(key)) continue
     if (base[key] === value) continue
     overlay[key] = value
   }
@@ -275,7 +288,7 @@ export function agentEnvironment(
 
   for (const [key, value] of Object.entries(base)) {
     if (key === INHERIT_CLAUDE_CONFIG_ENV_VAR) continue
-    if (key === CREDENTIAL_ENV_VAR_NAME) {
+    if (isCredentialVariable(key)) {
       environment[key] = value
       continue
     }
@@ -323,16 +336,26 @@ export function agentConfigurationOptions(inherit: boolean): {
 /**
  * Variables in Claude Code's namespace that varnick did not put there.
  *
- * Two are varnick's own and are therefore not "inherited" whatever their names
- * look like: the credential, which the host read and injected and which
- * isolation must never take away, and the config directory, which varnick sets
- * because the Sandbox leaves nowhere else writable. Everything else matching
- * the prefixes came from whoever launched the app.
+ * Three are varnick's own and are therefore not "inherited" whatever their
+ * names look like: either variable a credential can arrive in — the host read
+ * one and injected it, and isolation must never take it away — and the config
+ * directory, which varnick sets because the Sandbox leaves nowhere else
+ * writable. Everything else matching the prefixes came from whoever launched
+ * the app.
+ *
+ * `CLAUDE_CODE_OAUTH_TOKEN` is the one that has to be *named*: it matches the
+ * `CLAUDE` prefix the scrub drops by, so a subscription credential left to the
+ * rule would be removed from the environment of the very process it
+ * authenticates. There is no error on that path — the agent starts, and every
+ * Turn fails as though the token were wrong.
  *
  * Exported so the boundary probe counts the same set the scrub uses, rather
  * than a second definition that could drift from it.
  */
-const VARNICK_OWNED_VARIABLES = [CREDENTIAL_ENV_VAR_NAME, CLAUDE_CONFIG_DIR_ENV_VAR] as const
+const VARNICK_OWNED_VARIABLES = [
+  ...CREDENTIAL_ENV_VAR_NAMES,
+  CLAUDE_CONFIG_DIR_ENV_VAR,
+] as const
 
 export function inheritedConfigVariables(
   env: Record<string, string | undefined>,

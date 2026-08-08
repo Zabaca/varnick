@@ -11,6 +11,7 @@ import {
 } from '@varnick/harness/turn'
 import { compactedTranscript } from '../domain.ts'
 import type {
+  CredentialReading,
   Effort,
   Message,
   ModelId,
@@ -138,10 +139,11 @@ export function liveActors(observer: TurnObserver = silentObserver) {
     ),
 
     // Real. The Tauri host reads the credential and answers with which store
-    // replied; the value never crosses the IPC boundary, so Core has no field
-    // that could hold it. No host — a browser tab at the dev server — is a
-    // failed read with a reason, not an unhandled rejection.
-    readCredential: fromPromise<{ source: 'keychain' | 'env' }, Record<string, never>>(() =>
+    // replied and what was in it — an API key or a subscription token. The
+    // value never crosses the IPC boundary, so Core has no field that could
+    // hold it. No host — a browser tab at the dev server — is a failed read
+    // with a reason, not an unhandled rejection.
+    readCredential: fromPromise<CredentialReading, Record<string, never>>(() =>
       readCredentialFromHost(),
     ),
 

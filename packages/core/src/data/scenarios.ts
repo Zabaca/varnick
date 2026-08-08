@@ -60,6 +60,11 @@ export interface Scenario {
 const up = {
   policy: seedPolicy,
   enterCredential: 'present',
+  // A credential that is present always turned out to be something. A card
+  // parked in `credential.present` with no kind is a context the live machine
+  // cannot reach — and a subscription is the one with plan usage behind it,
+  // which is what the strip in these scenarios is showing.
+  credentialKind: 'subscription' as const,
   enterSandbox: 'available',
   enterAgent: 'running',
   enterSubscription: 'read',
@@ -94,7 +99,12 @@ export const SCENARIOS: readonly Scenario[] = [
     blurb: 'Credential in hand, srt not yet established. The agent has not started.',
     question: 'Does the surface stay quiet while a step that usually succeeds is running?',
     covers: ['credential.present', 'sandbox.checking'],
-    input: { policy: seedPolicy, enterCredential: 'present', enterSandbox: 'checking' },
+    input: {
+      policy: seedPolicy,
+      enterCredential: 'present',
+      credentialKind: 'subscription',
+      enterSandbox: 'checking',
+    },
   },
   {
     id: 'starting-agent',
@@ -105,6 +115,7 @@ export const SCENARIOS: readonly Scenario[] = [
     input: {
       policy: seedPolicy,
       enterCredential: 'present',
+      credentialKind: 'subscription',
       enterSandbox: 'available',
       enterAgent: 'starting',
     },
@@ -121,6 +132,7 @@ export const SCENARIOS: readonly Scenario[] = [
     input: {
       policy: seedPolicy,
       enterCredential: 'present',
+      credentialKind: 'subscription',
       enterSandbox: 'unavailable',
       sandboxError: 'srt: sandbox could not be established',
     },
@@ -169,6 +181,7 @@ export const SCENARIOS: readonly Scenario[] = [
     input: {
       policy: seedPolicy,
       enterCredential: 'present',
+      credentialKind: 'subscription',
       enterSandbox: 'available',
       enterAgent: 'crashed',
       agentError: 'exit code 137',

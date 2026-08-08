@@ -23,10 +23,24 @@ Two Agent SDK options and one environment rule, all of them in
   settings, none contributed by plugins. Only servers varnick passes itself,
   and today it passes none.
 - **Every `CLAUDE*` and `ANTHROPIC_*` variable is dropped** from the
-  subprocess environment, except `ANTHROPIC_API_KEY`, which is the credential
-  the host injected and the only reason the agent can authenticate. A prefix
-  rule rather than a list, because a list is right today and stale on the next
-  release, and a stale list fails silently.
+  subprocess environment, except the credential the host injected, which is the
+  only reason the agent can authenticate. A prefix rule rather than a list,
+  because a list is right today and stale on the next release, and a stale list
+  fails silently.
+
+  **Amended by [ADR-0011](./0011-varnick-takes-a-subscription-token-not-the-subscription.md).**
+  The exception was written as `ANTHROPIC_API_KEY` when that was the only
+  credential varnick had. There are now two — `ANTHROPIC_API_KEY` for a key and
+  `CLAUDE_CODE_OAUTH_TOKEN` for a subscription — and the host injects exactly
+  one of them, having removed the other from the child's environment so an
+  inherited variable cannot sit beside an injected one.
+
+  The second name matters more than it looks. `CLAUDE_CODE_OAUTH_TOKEN` matches
+  the `CLAUDE` prefix this rule drops by, so a subscription credential left to
+  the rule would be scrubbed out of the environment of the very process it
+  authenticates — and nothing anywhere would say so. The variable is named in
+  `VARNICK_OWNED_VARIABLES`, and the test that holds it is
+  "a subscription token survives the scrub that its own name matches".
 
 That last one is not hypothetical tidying. Probed under the real generated
 policy, from a terminal that happened to be a Claude Code session:

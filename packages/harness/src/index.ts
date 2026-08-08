@@ -45,7 +45,7 @@ export {
 
 export {
   AGENT_ENTRY_RELATIVE_PATH,
-  CREDENTIAL_ENV_VAR_NAME,
+  CREDENTIAL_ENV_VAR_NAMES,
   agentCommand,
   agentEntryPath,
   agentSdkEntry,

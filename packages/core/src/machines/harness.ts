@@ -1,6 +1,8 @@
 import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
 import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
+  CredentialKind,
+  CredentialReading,
   SandboxPolicy,
   StartRefusal,
   SubscriptionUsage,
@@ -54,6 +56,19 @@ export interface HarnessContext {
    * two fields, so the affordance and the rule cannot drift.
    */
   credentialState: CredentialState
+  /**
+   * What the credential turned out to be, once one has been read.
+   *
+   * `null` until a read succeeds, and back to `null` when one fails: a kind
+   * left standing over a credential that is gone would be a decision made about
+   * something that is no longer there. It is a fact on `credential.present`
+   * rather than a state of its own — ADR-0011 adds two facts to a reading, and
+   * a state per kind would double the region for a distinction no transition
+   * depends on.
+   *
+   * Nothing here is or could be the value; see packages/harness/src/credentials.ts.
+   */
+  credentialKind: CredentialKind | null
   sandboxState: SandboxState
   refusal: StartRefusal | null
   sandboxError: string | null
@@ -88,6 +103,7 @@ export interface HarnessContext {
 
 export interface HarnessInput {
   policy: SandboxPolicy
+  credentialKind?: CredentialKind | null
   enterCredential?: string | null
   enterSandbox?: string | null
   enterAgent?: string | null
@@ -119,7 +135,11 @@ export type HarnessEvent =
  *                  error  thrown Error — srt could not be established. The run
  *                         must fail here rather than proceeding unconfined.
  *   readCredential input  {}
- *                  output { source: 'keychain' | 'env' }
+ *                  output { source: 'keychain' | 'env',
+ *                           kind:   'api-key' | 'subscription' }
+ *                         Two facts about the reading and no third. The value
+ *                         is not representable on this side — ADR-0008, and
+ *                         packages/harness/src/credentials.ts.
  *                  error  thrown Error — no credential available
  *   spawnAgent     input  { policy }
  *                  output { pid: number }
@@ -151,8 +171,8 @@ export const harnessMachine = setup({
     checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(async () => ({
       ok: true,
     })),
-    readCredential: fromPromise<{ source: 'keychain' | 'env' }, Record<string, never>>(
-      async () => ({ source: 'keychain' as const }),
+    readCredential: fromPromise<CredentialReading, Record<string, never>>(
+      async () => ({ source: 'keychain' as const, kind: 'api-key' as const }),
     ),
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
@@ -194,6 +214,7 @@ export const harnessMachine = setup({
   context: ({ input }) => ({
     policy: input.policy,
     credentialState: (input.enterCredential as CredentialState | undefined) ?? 'absent',
+    credentialKind: input.credentialKind ?? null,
     sandboxState: (input.enterSandbox as SandboxState | undefined) ?? 'unchecked',
     refusal: input.refusal ?? null,
     sandboxError: input.sandboxError ?? null,
@@ -261,7 +282,16 @@ export const harnessMachine = setup({
           invoke: {
             src: 'readCredential',
             input: () => ({}) as Record<string, never>,
-            onDone: { target: 'present', actions: assign({ credentialError: null }) },
+            onDone: {
+              target: 'present',
+              actions: assign({
+                credentialError: null,
+                // The reading's second fact. Taken off the event rather than
+                // asked for again, because the kind belongs to the credential
+                // that was resolved and a second read could resolve another.
+                credentialKind: ({ event }) => event.output.kind,
+              }),
+            },
             // Keep the reason. Without it a failed read is indistinguishable
             // from never having been attempted, and the view has nothing to say.
             onError: {
@@ -269,6 +299,10 @@ export const harnessMachine = setup({
               actions: assign({
                 credentialError: ({ event }) =>
                   event.error instanceof Error ? event.error.message : String(event.error),
+                // And forget the kind. A kind left standing over a credential
+                // that could not be read is a fact about something that is not
+                // there, and everything downstream of it would be decided on it.
+                credentialKind: null,
               }),
             },
           },

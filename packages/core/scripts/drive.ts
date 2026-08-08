@@ -37,7 +37,13 @@ import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.t
 import { SCENARIOS, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
 import { frozenHarness } from '../src/actors/frozen.ts'
 import { ACTOR_NAMES, UNIMPLEMENTED } from '../src/actors/index.ts'
-import type { Effort, Message, ModelId, SandboxPolicy } from '../src/domain.ts'
+import type {
+  CredentialReading,
+  Effort,
+  Message,
+  ModelId,
+  SandboxPolicy,
+} from '../src/domain.ts'
 
 let passed = 0
 const failures: string[] = []
@@ -106,7 +112,7 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   const actor = createActor(
     harnessMachine.provide({
       actors: {
-        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({ source: 'keychain' }),
+        readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'api-key' }),
         checkSandbox: rejects<{ ok: true }, { policy: SandboxPolicy }>('srt: sandbox_apply not permitted'),
       },
     }),
@@ -135,6 +141,73 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
 }
 
 {
+  /*
+    A credential has a kind, and `credential.present` carries it.
+
+    No new state — ADR-0011 adds a fact to a state rather than a state. The
+    reason it is a machine fact at all: the kind decides whether there is a plan
+    for plan usage to be about, and a region that reads it off a component would
+    be reading it somewhere the states page cannot park.
+  */
+  for (const kind of ['api-key', 'subscription'] as const) {
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          readCredential: resolves<CredentialReading, Record<string, never>>({
+            source: 'keychain',
+            kind,
+          }),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+
+    check(`a ${kind} credential starts with no kind known`, actor.getSnapshot().context.credentialKind === null)
+
+    actor.send({ type: 'READ_CREDENTIAL' })
+    await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+    check(
+      `a ${kind} reading carries its kind into context`,
+      actor.getSnapshot().context.credentialKind === kind,
+    )
+    actor.stop()
+  }
+}
+
+{
+  // A read that failed leaves no kind behind. Otherwise a credential that was
+  // read once and then removed would leave the previous kind standing, and the
+  // decisions the kind drives would be made about a credential that is gone.
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        readCredential: resolves<CredentialReading, Record<string, never>>({
+          source: 'env',
+          kind: 'subscription',
+        }),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  actor.send({ type: 'READ_CREDENTIAL' })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+  check('a subscription read from the environment is still a subscription', actor.getSnapshot().context.credentialKind === 'subscription')
+  actor.stop()
+
+  const failing = createActor(
+    harnessMachine.provide({
+      actors: { readCredential: rejects<CredentialReading, Record<string, never>>('nothing is stored') },
+    }),
+    { input: { policy: seedPolicy, credentialKind: 'subscription' } },
+  ).start()
+  failing.send({ type: 'READ_CREDENTIAL' })
+  await waitFor(failing, (s) => regionOf(s.value, 'credential') === 'absent')
+  check('a failed read leaves no kind standing', failing.getSnapshot().context.credentialKind === null)
+  failing.stop()
+}
+
+{
   // Pressing START again after fixing the cause must start the agent.
   //
   // Regression: `startRefused` handled START by returning to `down`, so the
@@ -144,8 +217,9 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   const actor = createActor(
     harnessMachine.provide({
       actors: {
-        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({
+        readCredential: resolves<CredentialReading, Record<string, never>>({
           source: 'keychain',
+          kind: 'api-key',
         }),
         checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
         spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 7 }),
@@ -186,7 +260,7 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   const actor = createActor(
     harnessMachine.provide({
       actors: {
-        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({ source: 'keychain' }),
+        readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'api-key' }),
         checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
         spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 4242 }),
       },
@@ -220,7 +294,7 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   const actor = createActor(
     harnessMachine.provide({
       actors: {
-        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({ source: 'keychain' }),
+        readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'api-key' }),
         checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
         spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 1 }),
       },
@@ -256,8 +330,9 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   const actor = createActor(
     harnessMachine.provide({
       actors: {
-        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({
+        readCredential: resolves<CredentialReading, Record<string, never>>({
           source: 'keychain',
+          kind: 'api-key',
         }),
         checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
         spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 99 }),
@@ -637,7 +712,7 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   const actor = createActor(
     harnessMachine.provide({
       actors: {
-        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({ source: 'keychain' }),
+        readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'api-key' }),
         checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
         spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 1 }),
         session: sessionMachine.provide({

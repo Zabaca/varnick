@@ -26,17 +26,36 @@ still be: varnick reads its credential in the desktop host, so the chat only
 works from `bun tauri dev`. `bun run dev` gives you the same interface in a
 browser with no host behind it, and it says so rather than failing quietly.
 
-The credential is one keychain item, and the app names the command if it is
-missing:
+The credential is one keychain item, and it is either a Claude subscription
+token or an Anthropic API key. The app names both commands if neither is there.
+
+For a subscription — mint a long-lived token, then store it:
+
+```
+claude setup-token
+security add-generic-password -s varnick -a claude-oauth-token -w
+```
+
+For an API key:
 
 ```
 security add-generic-password -s varnick -a anthropic-api-key -w
 ```
 
-An exported `ANTHROPIC_API_KEY` also works; the keychain wins when both answer.
-Nothing else is configured, and there is nothing to fill in on first launch —
-an empty chat is the first frame, and anything that went wrong is one sentence
-naming what to do about it.
+varnick works out which kind it is holding from what it found; there is nothing
+to declare. Exported `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` variables
+also work. The keychain wins over the environment, and within either store a
+subscription wins over a key — a plan you already pay for should not sit unused
+while varnick bills per request. Nothing else is configured, and there is
+nothing to fill in on first launch — an empty chat is the first frame, and
+anything that went wrong is one sentence naming what to do about it.
+
+varnick does not read Claude Code's own credential store. That item holds an
+access token that expires in about an hour, so consuming it would mean varnick
+implementing OAuth refresh against an item Claude Code is also writing, from a
+second process with no lock between them. `claude setup-token` exists for
+exactly this, and the boundary is recorded in
+[ADR-0011](docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md).
 
 Three routes ship, and they are the same code three ways: `#/designed` is the
 chat and is where a launch lands, `#/bare` is the design-free page showing raw
