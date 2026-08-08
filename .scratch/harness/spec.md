@@ -178,6 +178,14 @@ The bugs it and the bare page caught, kept here because each one is a rule worth
 
 **Seam 2 — containment probes against a real sandboxed process.** This seam exists because a mocked sandbox proves nothing about the only claim the product rests on, and because the `Read`/`Grep` hole in the SDK's sandbox option was found only by running the real thing and reading the output. Assertions: a probe file outside the boundary is unreadable by `Bash`, `Read`, `Grep`, and `Glob` alike; each denied binary reports as not found; a non-allowlisted host is unreachable; an allowlisted host is reachable; the run fails rather than proceeding when the sandbox cannot be established. This seam is slow and needs a real machine, and that is accepted.
 
+**Where Harness code is tested** *(stage 5)*. Seams 1 and 2 cover the machines and the containment boundary. The tickets are mostly neither: sandbox policy generation, credential resolution, the Session mirror, and the Secrets Store are ordinary code in `packages/harness`, and until this was written down there was nowhere to put a failing test for any of them.
+
+The convention: `packages/harness/**/*.test.ts`, run by `bun:test` through `bun test` at the repo root. Test the package's exported functions and nothing below them — a policy generator is tested by the policy it produces, not by how it assembles the string. Every agent building a ticket tests here unless the ticket says otherwise, so that "test at the agreed seam and nowhere else" means the same thing to all of them.
+
+Three tickets are exceptions, and say so: 04 is seam 2 and runs a real process; 13 is prose; 14 changes machine-adjacent code and belongs in `drive.ts`.
+
+**ADR-0004 is checked by `drive.ts`.** The ADR says the no-static-Userspace-import rule is enforced by lint rather than discipline, and this repo has no linter — which made it a promise. `drive.ts` now walks Core's sources and fails if any file statically imports Userspace. A real lint rule can replace it later without changing what is asserted.
+
 **Prior art** is `zbc/packages/agent` — its `sandboxed.test.ts` and `e2e/smoke.ts` are the closest existing examples of seam 2, and its ADR-0002 is the record of what happens when containment is asserted from documentation rather than measurement.
 
 ## Out of Scope

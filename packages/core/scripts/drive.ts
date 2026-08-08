@@ -769,6 +769,47 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
 }
 
 // ---------------------------------------------------------------------------
+// The Core/Userspace boundary — ADR-0004, enforced rather than promised
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    Core must never statically import Userspace.
+
+    A React error boundary catches a render error and does nothing about a build
+    error: a static import of a Userspace module that does not compile takes the
+    whole bundle down, and the next launch is a blank window with no chat — no
+    transcript, and no way to ask for the fix.
+
+    ADR-0004 says this is "enforced by lint, not by discipline". There is no
+    linter in this repo yet, and an ADR nothing checks is a promise. This is the
+    cheapest thing that makes it true today; a lint rule can replace it later
+    without changing what is being asserted.
+  */
+  const root = new URL('../src/', import.meta.url).pathname
+  const files: string[] = []
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = `${dir}${entry.name}`
+      if (entry.isDirectory()) walk(`${full}/`)
+      else if (/\.tsx?$/.test(entry.name)) files.push(full)
+    }
+  }
+  walk(root)
+
+  check('Core has source files to check', files.length > 0)
+
+  // `import(...)` is how a Surface is meant to load, so only the static form is
+  // a violation — matched at the start of a line, which is where it must be.
+  const staticImport = /^\s*import\s[^\n]*from\s+['"][^'"]*userspace[^'"]*['"]/m
+  const offenders = files.filter((file) => staticImport.test(readFileSync(file, 'utf-8')))
+  check(
+    `Core statically imports no Userspace module (found: ${offenders.length})`,
+    offenders.length === 0,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Surface briefs — a state is named in exactly one place
 // ---------------------------------------------------------------------------
 

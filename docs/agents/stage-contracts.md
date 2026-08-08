@@ -125,6 +125,17 @@ By now the UI and the machines exist and ship. Tickets cover **integration only*
 
 ## Stage 6 — `/implement`
 
+**The seams, so every agent means the same thing by "the seam".**
+
+| What is being built | Where it is tested |
+| --- | --- |
+| Machines, guards, refusals, states | `packages/core/scripts/drive.ts` — no DOM, no components |
+| Harness package code — policy generation, credential resolution, persistence, secrets | `packages/harness/**/*.test.ts` via `bun test` |
+| The containment boundary itself | Its own slow suite against a real sandboxed process |
+| The Core/Userspace import rule | `drive.ts`, until a linter exists to hold it |
+
+Test the exported surface and nothing below it. A policy generator is tested by the policy it produces, not by how it assembles the string.
+
 Test at the machine seam with `/tdd`. Typecheck regularly, run single test files regularly, run the full suite once at the end. Review with `/code-review` before the PR.
 
 Swapping a seeded actor for a real one must not change any machine's states, guards, or transitions. If it does, the model was wrong and the change belongs in stage 3, not here.
