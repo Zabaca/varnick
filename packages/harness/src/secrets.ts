@@ -2,7 +2,7 @@
 //
 // The agent is told a secret's *name* and writes code that references it; the
 // host substitutes the value when it runs that code (ADR-0006). This module is
-// the store half. Resolution — the substitution itself — is ticket 12.
+// the store half. Resolution — the substitution itself — is ./secret-resolution.ts.
 //
 // **Storage is the system keychain**, the same store the credential lives in
 // (src-tauri/src/credential.rs), one item per secret under its own service.
@@ -36,6 +36,12 @@
 // one direction: `secretValues()`, which exists to feed the Session mirror's
 // redaction pass and is named so that a call site reads as what it is. Every
 // other member answers with names.
+//
+// It has a second reader now: `hostSecretResolution` in ./secret-resolution.ts
+// zips it against `names()` to bind `process.env.NAME` while the host runs a
+// Userspace module. Still one direction out, and still through the member that
+// says what it yields — there is deliberately no `get(name)`, because a store
+// with one is a store something can be talked into asking.
 
 /**
  * The keychain service holding one item per secret.

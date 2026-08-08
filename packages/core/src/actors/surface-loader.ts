@@ -54,6 +54,22 @@ export function discoverSurfaces(): SurfaceDescriptor[] {
  *
  * Throws with a sentence the failed Surface shows. Records nothing on failure,
  * so `RETRY` re-runs the import — see importSurface.
+ *
+ * ## No secret resolution here, and that is the decision rather than the gap
+ *
+ * `importSurface` takes a `SecretResolution` as its third argument and this call
+ * does not supply one. There is nothing to supply: a resolution binds names into
+ * a `process.env`, this module runs in a webview, and the only way a value could
+ * get here is across the bridge — which ticket 15 closed in both directions, for
+ * a reason that has held up. A renderer holding every secret the developer owns
+ * is reachable over HTTP the moment `VARNICK_HOST` binds the dev server to
+ * anything but localhost, and `vite.config.ts` documents doing exactly that.
+ *
+ * So resolution lives where the host runs Userspace code with a process around
+ * it, and a Surface rendered in the window is not that. What a Surface can do
+ * today is show what an integration produced; what it cannot do is hold the key
+ * the integration used. That line is worth knowing before designing against it —
+ * see the finding recorded on ticket 12.
  */
 export async function loadUserspaceSurface(modulePath: string): Promise<void> {
   const view = await importSurface(modulePath, FOUND.importers)

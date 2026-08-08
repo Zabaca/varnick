@@ -17,7 +17,9 @@
 //                  never needs the keychain (ADR-0003, and read its correction:
 //                  needing it and reaching it turned out to be different things)
 //   secrets      — the agent authors code that names a secret and never holds
-//                  one; the host resolves names at run time (ADR-0006)
+//                  one; the host resolves names at run time (ADR-0006). Two
+//                  modules: ./secrets.ts stores, ./secret-resolution.ts binds
+//                  `process.env.NAME` around one Userspace module's evaluation
 //   session      — persisted twice, so a transcript survives a broken build
 //
 // The machines come first: no component and no implementation before
