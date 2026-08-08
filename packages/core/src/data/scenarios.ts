@@ -1,8 +1,10 @@
 import type { HarnessInput } from '../machines/harness.ts'
 import { HARNESS_STATE_PATHS } from '../machines/harness.ts'
 import { SESSION_STATE_PATHS } from '../machines/session.ts'
-import { MODELS } from '../domain.ts'
-import { seedPolicy, seedMessages } from './seed.ts'
+import { SURFACE_STATE_PATHS } from '../machines/surface.ts'
+import { MODELS, type SurfaceDescriptor } from '../domain.ts'
+import type { SurfaceOutcome } from '../actors/frozen.ts'
+import { seedPolicy, seedMessages, statesSurface } from './seed.ts'
 
 /**
  * Every state the chat surface can be in, as data.
@@ -40,6 +42,18 @@ export interface Scenario {
    * docs/adr/0009-resume-reads-the-mirror.md.
    */
   readonly restoredRedacted?: boolean
+  /**
+   * Surfaces this card discovers, sent as `DISCOVER_SURFACES` once the actor is
+   * running.
+   *
+   * Not part of `input`, because discovery is not something a Harness is
+   * created with: a Surface arrives when the filesystem is scanned, and the
+   * event is the only way in. The states page and drive.ts both send it, from
+   * this one list.
+   */
+  readonly surfaces?: readonly SurfaceDescriptor[]
+  /** What the frozen loader does with them. See actors/frozen.ts. */
+  readonly surfaceOutcome?: SurfaceOutcome
 }
 
 /** Harness held up, ready for a Session. */
@@ -317,6 +331,45 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
 
+  // -- Surfaces ------------------------------------------------------------
+  //
+  // The same Surface three times, because the three states are three things
+  // that happen to one file. What is inside a loaded Surface is Userspace's and
+  // differs per clone, so these cards show the frame Core draws and stop there —
+  // inventing content would make them the mock this page exists to avoid.
+  {
+    id: 'surface-loading',
+    title: 'Surface loading',
+    blurb: 'A Surface was found on disk and its module is being imported.',
+    question: 'Is a Surface that has not arrived yet distinguishable from one that failed?',
+    covers: ['surface.loading'],
+    input: { ...up, sessionInput: { sessionId: 'states-surface-loading', messages: seedMessages } },
+    surfaces: [statesSurface],
+    surfaceOutcome: 'holds',
+  },
+  {
+    id: 'surface-loaded',
+    title: 'Surface loaded',
+    blurb:
+      'The module imported and its default export is rendered here. Nothing in Core imports it — it was found by scanning the directory, which is why adding one never touches Core.',
+    question: 'Does a Surface read as part of the window rather than as a panel bolted to it?',
+    covers: ['surface.loaded'],
+    input: { ...up, sessionInput: { sessionId: 'states-surface-loaded', messages: seedMessages } },
+    surfaces: [statesSurface],
+    surfaceOutcome: 'loads',
+  },
+  {
+    id: 'surface-failed',
+    title: 'Surface failed',
+    blurb:
+      'The module did not compile. One Surface is down, its siblings are not, and the conversation that caused it is still on the left to fix it — ADR-0004.',
+    question: 'Does the error say enough to act on without opening a console?',
+    covers: ['surface.failed'],
+    input: { ...up, sessionInput: { sessionId: 'states-surface-failed', messages: seedMessages } },
+    surfaces: [statesSurface],
+    surfaceOutcome: 'fails',
+  },
+
   // -- Persistence ---------------------------------------------------------
   {
     id: 'saving',
@@ -355,18 +408,17 @@ export const SCENARIOS: readonly Scenario[] = [
 /**
  * Paths the coverage banner checks.
  *
- * Surfaces are absent for one reason only: nothing renders a Surface yet, so
- * there is no component to park in `loading`, `loaded` or `failed`. This is a
- * waiver with an expiry, not a decision that those states need no cards —
- * ticket 14 brings a minimal execution path into v1, and moving these paths in
- * here is one of its acceptance criteria.
- *
- * The distinction matters. "Out of scope" is the kind of waiver that survives
- * the reason for it and quietly becomes a gap.
+ * Every state every machine declares, with nothing waived. Surfaces used to be:
+ * nothing rendered one, so there was no component to park in `loading`,
+ * `loaded` or `failed`, and the banner said so with ticket 14's number on it.
+ * Ticket 14 built the loader, so the waiver is gone rather than reworded —
+ * "out of scope" is the kind of waiver that outlives the reason for it and
+ * quietly becomes a gap.
  */
 export const COVERED_PATHS: readonly StatePath[] = [
   ...HARNESS_STATE_PATHS,
   ...SESSION_STATE_PATHS,
+  ...SURFACE_STATE_PATHS.map((p) => `surface.${p}`),
 ]
 
 /** Paths with no scenario. Empty is the only green result. */

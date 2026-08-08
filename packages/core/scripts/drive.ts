@@ -20,6 +20,7 @@ import {
   isCommandDraft,
   formatContext,
 } from '../src/domain.ts'
+import { discoverFrom, importSurface } from '../src/surfaces.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
 import { SCENARIOS, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
 import { frozenHarness } from '../src/actors/frozen.ts'
@@ -996,6 +997,150 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 }
 
 // ---------------------------------------------------------------------------
+// Surfaces — discovery, and what the loader does with what it finds
+//
+// Both halves of ticket 14's execution path, at the only seam that has no
+// browser in it. `discoverFrom` and `importSurface` take the module record as an
+// argument precisely so this script can hand them one: in the app that record
+// comes from Vite's filesystem scan, and here it is a literal, which is what
+// makes "a module that does not compile" testable without shipping one.
+// ---------------------------------------------------------------------------
+
+{
+  // Nothing found is not a failure. A fresh clone with no Surfaces is a running
+  // varnick with a chat in it, which is the whole point of ADR-0004.
+  check('an empty Userspace discovers no Surfaces', discoverFrom({}).descriptors.length === 0)
+
+  const ok = async () => ({ default: () => null })
+  const found = discoverFrom({
+    '../../../userspace/surfaces/runs/index.tsx': ok,
+    '../../../userspace/surfaces/recent-notes/index.tsx': ok,
+  })
+
+  check('every Surface directory is a Surface', found.descriptors.length === 2)
+  check(
+    'the directory name is the id — nothing is registered anywhere',
+    found.descriptors.map((d) => d.id).join(',') === 'recent-notes,runs',
+  )
+  check(
+    'the name is derived from the directory too',
+    found.descriptors.map((d) => d.name).join(',') === 'Recent notes,Runs',
+  )
+  check(
+    'a descriptor names a file a developer can open',
+    found.descriptors[1]!.modulePath === 'packages/userspace/surfaces/runs/index.tsx',
+  )
+
+  // The glob is a pattern over one directory, but the record it produces is
+  // ordinary data, and a Surface is a directory with an entry file in it.
+  // Anything else under there is a file the agent wrote for its own reasons.
+  const noise = discoverFrom({
+    '../../../userspace/surfaces/README.md': ok,
+    '../../../userspace/surfaces/runs/helpers.ts': ok,
+    '../../../userspace/surfaces/runs/index.tsx': ok,
+  })
+  check('only the entry file makes a Surface', noise.descriptors.length === 1)
+  check('and it is the one in a directory', noise.descriptors[0]!.id === 'runs')
+
+  /*
+    The criterion ADR-0002 turns on: adding a Surface is creating a file.
+
+    Not "creating a file and appending to a list in Core" — the agent cannot
+    write Core, so a registry would make the product's main loop impossible on
+    day one. Checked as a difference rather than as a count, because a count
+    would still pass if discovery had quietly renamed everything.
+  */
+  const before = discoverFrom({ '../../../userspace/surfaces/runs/index.tsx': ok })
+  const after = discoverFrom({
+    '../../../userspace/surfaces/runs/index.tsx': ok,
+    '../../../userspace/surfaces/notes/index.tsx': ok,
+  })
+  check(
+    'creating a file is the whole of adding a Surface',
+    after.descriptors.length === before.descriptors.length + 1,
+  )
+  check(
+    'and it leaves the Surface that was already there alone',
+    JSON.stringify(after.descriptors.find((d) => d.id === 'runs')) ===
+      JSON.stringify(before.descriptors[0]),
+  )
+}
+
+{
+  // The loader. Every failure below is a failed Surface carrying a sentence,
+  // never a thrown value nobody caught — the machine puts the message on screen
+  // and this is what it will read.
+  const path = 'packages/userspace/surfaces/runs/index.tsx'
+  const view = () => null
+
+  /*
+    A load that failed when it should not have has to read as a failed
+    assertion, not as a rejected promise: an unhandled rejection stops the
+    script with a stack trace, which is the same signal a broken build gives.
+  */
+  const loads = (run: Promise<unknown>) => run.catch(() => null)
+  const reason = async (run: Promise<unknown>) =>
+    run.then(() => '', (error: unknown) => (error instanceof Error ? error.message : String(error)))
+
+  const good = discoverFrom({ '../../../userspace/surfaces/runs/index.tsx': async () => ({ default: view }) })
+  check(
+    'a Surface module resolves to what it default-exports',
+    (await loads(importSurface(path, good.importers))) === view,
+  )
+
+  // The case ADR-0004 exists for: the module did not compile, so the dynamic
+  // import rejected. Contained here, in a try/catch, rather than at bundle time.
+  const broken = discoverFrom({
+    '../../../userspace/surfaces/runs/index.tsx': async () => {
+      throw new SyntaxError('Unexpected token (3:7)')
+    },
+  })
+  const brokenSaid = await reason(importSurface(path, broken.importers))
+  check('a module that does not compile names the module', brokenSaid.includes(path))
+  check('and says why it did not load', brokenSaid.includes('Unexpected token (3:7)'))
+
+  // Loaded and useless is still a failed Surface. Rendering `undefined` would
+  // put a blank panel on screen with nothing to explain it.
+  const empty = discoverFrom({
+    '../../../userspace/surfaces/runs/index.tsx': async () => ({ notDefault: view }),
+  })
+  const emptySaid = await reason(importSurface(path, empty.importers))
+  check('a module with no default export is a failed Surface', emptySaid.includes(path))
+  check('and is told apart from one that would not compile', emptySaid.includes('default export'))
+
+  // A descriptor for a file that has since been deleted, or a path nothing
+  // matched. The message has to say where the file goes, because "not found" is
+  // useless advice when the answer is to create it.
+  const goneSaid = await reason(importSurface('packages/userspace/surfaces/gone/index.tsx', good.importers))
+  check('a Surface with no module says so', goneSaid.includes('packages/userspace/surfaces/gone/index.tsx'))
+  check('and says where the file goes', goneSaid.includes('packages/userspace/surfaces'))
+
+  /*
+    Retry without restarting varnick.
+
+    The loader keeps no record of a failure, so `RETRY` re-runs the import and a
+    module that has since been fixed loads. A loader that cached the rejection
+    would leave the only recovery a relaunch — and the conversation that caused
+    the breakage is the one that fixes it, so a relaunch is the one thing that
+    must not be required.
+  */
+  let attempts = 0
+  const fixable = discoverFrom({
+    '../../../userspace/surfaces/runs/index.tsx': async () => {
+      attempts++
+      if (attempts === 1) throw new SyntaxError('Unexpected token (3:7)')
+      return { default: view }
+    },
+  })
+  check('the first load fails', (await reason(importSurface(path, fixable.importers))) !== '')
+  check(
+    'and the second one loads the module that was fixed',
+    (await loads(importSurface(path, fixable.importers))) === view,
+  )
+  check('the loader really imported twice', attempts === 2)
+}
+
+// ---------------------------------------------------------------------------
 // Surface — failure isolation
 // ---------------------------------------------------------------------------
 
@@ -1092,7 +1237,34 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   // created cold, with the same frozen build the page uses, and asked where it
   // actually is.
   for (const scenario of SCENARIOS) {
-    const actor = createActor(frozenHarness(), { input: scenario.input }).start()
+    const actor = createActor(frozenHarness(scenario.surfaceOutcome), {
+      input: scenario.input,
+    }).start()
+
+    /*
+      A Surface arrives by event, and its load settles on a later tick.
+
+      Waited for by name rather than by a blanket flush: a card claiming
+      `surface.loaded` says so in `covers`, so that is what is waited on, and
+      `surface.loading` is reached synchronously and waits for nothing. The wait
+      is bounded and its result discarded — a Surface that never arrives is
+      caught by the assertion below, which reads better than a script that hangs.
+    */
+    if (scenario.surfaces) {
+      actor.send({ type: 'DISCOVER_SURFACES', descriptors: [...scenario.surfaces] })
+      for (const path of scenario.covers) {
+        if (!path.startsWith('surface.')) continue
+        const want = path.slice('surface.'.length)
+        await reaches(
+          waitFor(
+            actor,
+            (s) => s.context.surfaces.some((ref) => String(ref.getSnapshot().value) === want),
+            soon,
+          ),
+        )
+      }
+    }
+
     const snap = actor.getSnapshot()
     const session = snap.context.session
 
@@ -1106,6 +1278,11 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
       )) {
         reached.add(`${region}.${String(value)}`)
       }
+    }
+    // Surfaces are children rather than regions, so they are read off the
+    // parent's context instead of out of its state value.
+    for (const ref of snap.context.surfaces) {
+      reached.add(`surface.${String(ref.getSnapshot().value)}`)
     }
 
     for (const path of scenario.covers) {
@@ -1140,10 +1317,13 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
     whole bundle down, and the next launch is a blank window with no chat — no
     transcript, and no way to ask for the fix.
 
-    ADR-0004 says this is "enforced by lint, not by discipline". There is no
-    linter in this repo yet, and an ADR nothing checks is a promise. This is the
-    cheapest thing that makes it true today; a lint rule can replace it later
-    without changing what is being asserted.
+    ADR-0004 says this is "enforced by lint, not by discipline", and as of
+    ticket 14 there is one: `no-restricted-imports` in eslint.config.js, run by
+    `bun run lint`. This check stays, and it is the stronger of the two for a
+    reason that has nothing to do with linting. It lives under
+    `packages/core/**`, which the sandbox policy denies the agent write access
+    to (ADR-0002); `eslint.config.js` sits at the clone root, where no such deny
+    applies. An agent that could switch the rule off cannot switch this off.
   */
   const root = new URL('../src/', import.meta.url).pathname
   const files: string[] = []
@@ -1425,6 +1605,10 @@ async function turnPath(
   // stayed on the list would keep the seeded marker claiming a real turn is
   // fake; one that left it while still throwing would claim the opposite.
   check('the turn actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('runTurn'))
+  // The Surface loader is real in both modes and has no seeded half — there is
+  // no service behind an import to stand in for. Listing it would tell a reader
+  // the panel beside the chat is showing something invented.
+  check('the Surface loader is not listed as unimplemented', !UNIMPLEMENTED.includes('loadSurface'))
   check('every unimplemented name is a real actor', UNIMPLEMENTED.every((name) => (ACTOR_NAMES as readonly string[]).includes(name)))
 }
 

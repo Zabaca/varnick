@@ -22,7 +22,20 @@ import {
  */
 export type ActorMode = 'seeded' | 'live'
 
-/** Every actor the system declares, and what supplies it in each mode. */
+/**
+ * Every actor the system declares, and what supplies it in each mode.
+ *
+ * `loadSurface` is on this list and in neither `seededActors` nor `liveActors`,
+ * which is not an oversight. Every other actor stands in for a service — a
+ * keychain, an API, a file store — and a seed is a plausible answer from one.
+ * Loading a Surface is not a service call: it is importing a file that either
+ * exists and compiles or does not. A seeded loader would answer `loaded` for a
+ * module nobody imported, and the panel beside the chat would then be empty
+ * with nothing on screen to explain it. So there is one implementation, used in
+ * both modes, and it is wired where the machine is assembled — see hooks.ts,
+ * which is also the last place in Core that can reach Userspace without
+ * dragging `import.meta.glob` into drive.ts.
+ */
 export const ACTOR_NAMES = [
   'checkSandbox',
   'readCredential',

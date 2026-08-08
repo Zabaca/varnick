@@ -22,5 +22,29 @@ export const seedMessages: Message[] = [
   { id: 'm2', role: 'agent', text: 'Created userspace/surfaces/runs.' },
 ]
 
+/**
+ * The Surface the states page shows in each of the loader's three states.
+ *
+ * One Surface, not three, because the three cards are three things that can
+ * happen to the same file. Its path is a real one — Surfaces are discovered
+ * from the filesystem, so a descriptor that named nothing findable would be a
+ * shape no scan can produce.
+ */
+export const statesSurface: SurfaceDescriptor = {
+  id: 'notes',
+  name: 'Notes',
+  modulePath: 'packages/userspace/surfaces/notes/index.tsx',
+}
+
+/**
+ * What a Userspace module that does not compile says.
+ *
+ * Written in the shape the real loader produces — see `importSurface` in
+ * surfaces.ts — so a seeded failure reads like the one a developer will hit,
+ * naming the file and then the reason.
+ */
+export const brokenSurfaceErrorFor = (modulePath: string) =>
+  `${modulePath} did not load — Unexpected token (3:7)`
+
 /** A Surface module that will not compile — the case ADR-0004 exists for. */
-export const brokenSurfaceError = 'Failed to load module: unexpected token at line 3'
+export const brokenSurfaceError = brokenSurfaceErrorFor(seedSurfaces[2]!.modulePath)

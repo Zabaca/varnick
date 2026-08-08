@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import type { SnapshotFrom } from 'xstate'
+import { useEffect, useRef, useState, type ComponentType } from 'react'
+import type { ActorRefFrom, SnapshotFrom } from 'xstate'
 import { useChildRevision, toPath } from '../hooks.ts'
 import { UNIMPLEMENTED, type ActorMode } from '../actors/index.ts'
+import type { surfaceMachine } from '../machines/surface.ts'
 import { ClaudeHeader } from './brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from './brainless/claude/claude-message.tsx'
 import { ClaudeThinking } from './brainless/claude/claude-thinking.tsx'
@@ -53,6 +54,17 @@ export interface ChatSurfaceProps {
   restoredRedacted?: boolean
   /** Called before a recovery event, so the owner can re-arm its start-up. */
   onRecover?: () => void
+  /**
+   * What a loaded Surface renders, looked up by module path.
+   *
+   * A prop rather than a lookup this component does for itself, for the same
+   * reason `mode` is one: the loader is a module that scans the filesystem, and
+   * ADR-0001 keeps this surface a function of its arguments. The live pages pass
+   * the real loader's record; `#/states` passes nothing, because Userspace
+   * content is not Core's to invent and a card that faked one would be the mock
+   * the states page exists to avoid.
+   */
+  resolveSurface?: (modulePath: string) => ComponentType | undefined
 }
 
 export function ChatSurface({
@@ -61,12 +73,15 @@ export function ChatSurface({
   mode,
   restoredRedacted,
   onRecover,
+  resolveSurface,
 }: ChatSurfaceProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const ctx = snapshot.context
   const session = ctx.session
-  useChildRevision(session ? [session] : [])
+  // Surfaces run on their own clocks, so one failing has to reach React here or
+  // the panel keeps claiming `loading` for a module that gave up.
+  useChildRevision([...ctx.surfaces, ...(session ? [session] : [])])
   const s = session?.getSnapshot()
 
   const agentState = toPath((snapshot.value as Record<string, unknown>).agent)
@@ -383,8 +398,115 @@ export function ChatSurface({
             />
           </div>
         </div>
+
+        {/*
+          The Surfaces, beside the conversation that built them.
+
+          Stacked in the order discovery found them, and that is the whole of the
+          arrangement — a way to place several is a layout system, which is what
+          a fork builds. What must be true here is narrower and load-bearing: one
+          Surface failing leaves its siblings rendered and the chat on the left
+          untouched (ADR-0004).
+        */}
+        {ctx.surfaces.length > 0 && (
+          <aside
+            className="min-h-0 w-[320px] shrink-0 overflow-y-auto"
+            style={{ borderLeft: '1px solid var(--rule)' }}
+          >
+            {ctx.surfaces.map((ref) => (
+              <SurfacePanel key={ref.id} surface={ref} resolveSurface={resolveSurface} />
+            ))}
+          </aside>
+        )}
       </div>
     </div>
+  )
+}
+
+/**
+ * One Surface, in whichever of its states it is in.
+ *
+ * Every branch is the machine's, read rather than inferred, and `retry` appears
+ * because `failed` accepts `RETRY` — the same rule as every other control here.
+ * A loaded Surface has no retry button because the state has no handler.
+ */
+function SurfacePanel({
+  surface,
+  resolveSurface,
+}: {
+  surface: ActorRefFrom<typeof surfaceMachine>
+  resolveSurface?: (modulePath: string) => ComponentType | undefined
+}) {
+  const snap = surface.getSnapshot()
+  const { descriptor, error, attempts } = snap.context
+  const state = toPath(snap.value)
+  const View = state === 'loaded' ? resolveSurface?.(descriptor.modulePath) : undefined
+
+  return (
+    <section className="px-4 py-3" style={{ borderBottom: '1px solid var(--rule)' }}>
+      <div className="flex items-baseline gap-2 text-[12px]">
+        <h2 style={{ color: 'var(--fg)' }}>{descriptor.name}</h2>
+        <code style={{ color: 'var(--fg-faint)' }}>{state}</code>
+        {snap.can({ type: 'UNLOAD' }) && (
+          <button
+            className="ml-auto"
+            onClick={() => surface.send({ type: 'UNLOAD' })}
+            style={{ color: 'var(--fg-faint)' }}
+          >
+            unload
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2">
+        {state === 'loading' && (
+          <p className="text-[12px]" style={{ color: 'var(--fg-faint)' }}>
+            Loading {descriptor.modulePath}
+            {attempts > 1 ? ` — attempt ${attempts}` : ''}…
+          </p>
+        )}
+
+        {/*
+          What a module that does not compile looks like: the reason, in full,
+          against the Surface it belongs to. Not a toast and not a console line —
+          the failure has a place on screen because the Surface does, and the
+          chat is still there to ask about it.
+        */}
+        {state === 'failed' && (
+          <div className="text-[12px]" style={{ color: 'var(--bad)' }}>
+            <p>
+              <span aria-hidden>✗ </span>
+              {error ?? 'The module did not load.'}
+            </p>
+            {/*
+              Which attempt this was. A retry that lands back on the same
+              sentence is indistinguishable from a button that did nothing, and
+              "did the retry run?" is the first thing a developer asks when the
+              module they just fixed still will not load.
+            */}
+            {attempts > 1 && (
+              <p style={{ color: 'var(--fg-faint)' }}>attempt {attempts}</p>
+            )}
+            {snap.can({ type: 'RETRY' }) && (
+              <button
+                className="mt-1.5"
+                onClick={() => surface.send({ type: 'RETRY' })}
+                style={{ color: 'var(--accent)' }}
+              >
+                retry
+              </button>
+            )}
+          </div>
+        )}
+
+        {/*
+          Userspace's code, running in Core's window. `View` is whatever the
+          module default-exported; if this build never imported one there is
+          nothing here to draw, and nothing is drawn.
+        */}
+        {View && <View />}
+      </div>
+    </section>
   )
 }
 

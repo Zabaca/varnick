@@ -9,6 +9,7 @@
     "drive": "bun run --filter @varnick/core drive",
     "secret": "bun run packages/harness/src/secrets-cli.ts",
     "typecheck": "bun run --filter '*' typecheck",
+    "lint": "eslint .",
     "test": "bun test packages"
   },
   "devDependencies": {

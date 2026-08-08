@@ -9,6 +9,7 @@ import type {
   SandboxPolicy,
   SubscriptionUsage,
 } from '../domain.ts'
+import { brokenSurfaceErrorFor } from '../data/seed.ts'
 
 /**
  * The Harness, frozen.
@@ -34,7 +35,24 @@ const never = <TOut, TIn>() => fromPromise<TOut, TIn>(() => new Promise<TOut>(()
 /** Longer than anyone will read one card. Not Infinity — setTimeout clamps it. */
 const HELD = 24 * 60 * 60 * 1000
 
-export function frozenHarness() {
+/**
+ * What the frozen loader does with the Surface a card discovers.
+ *
+ * The one actor a card may need to *settle*, and the exception is the point
+ * rather than a hole in it: `loading` is a card frozen the way every other card
+ * is frozen, and `loaded` and `failed` are states a Surface can only be in
+ * because a load finished. Each settles once, immediately, and then holds — the
+ * property "a card does not advance while it is read" is intact, which is what
+ * freezing is for.
+ *
+ * The alternative was routing a card straight into `loaded` through the
+ * machine's entry point. That entry point exists for regions with nothing to
+ * wait on; a loader has something to wait on, and a card that reached `loaded`
+ * without a load would be showing a state nothing produced.
+ */
+export type SurfaceOutcome = 'holds' | 'loads' | 'fails'
+
+export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
   return harnessMachine.provide({
     actors: {
       checkSandbox: never<{ ok: true }, { policy: SandboxPolicy }>(),
@@ -42,7 +60,15 @@ export function frozenHarness() {
       spawnAgent: never<{ pid: number }, { policy: SandboxPolicy }>(),
       readSubscriptionUsage: never<SubscriptionUsage, Record<string, never>>(),
       surface: surfaceMachine.provide({
-        actors: { loadSurface: never<{ ok: true }, { modulePath: string }>() },
+        actors: {
+          loadSurface: fromPromise<{ ok: true }, { modulePath: string }>(({ input }) => {
+            if (surfaceOutcome === 'holds') return new Promise<{ ok: true }>(() => {})
+            if (surfaceOutcome === 'fails') {
+              return Promise.reject(new Error(brokenSurfaceErrorFor(input.modulePath)))
+            }
+            return Promise.resolve({ ok: true as const })
+          }),
+        },
       }),
       session: sessionMachine.provide({
         actors: {

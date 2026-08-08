@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useHarness, useChildRevision, toPath } from '../hooks.ts'
 import { canStartAgent } from '../domain.ts'
 import { defaultSeedControls, type SeedControls } from '../actors/seeded.ts'
-import { seedSurfaces } from '../data/seed.ts'
+import { discoverSurfaces } from '../actors/surface-loader.ts'
 import type { HarnessEvent } from '../machines/harness.ts'
 import type { SessionEvent } from '../machines/session.ts'
 import type { SurfaceEvent } from '../machines/surface.ts'
@@ -23,7 +23,10 @@ const HARNESS_EVENTS: HarnessEvent[] = [
   { type: 'RESTART' },
   { type: 'AGENT_EXIT', detail: 'killed from the bare page' },
   { type: 'CREDENTIAL_REJECTED', detail: '401 from the API' },
-  { type: 'DISCOVER_SURFACES', descriptors: seedSurfaces },
+  // The real scan, not a seed. The bare page's job is to prove behaviour with
+  // nothing covering for it, and a seeded descriptor list would prove that a
+  // literal can be spawned from.
+  { type: 'DISCOVER_SURFACES', descriptors: discoverSurfaces() },
 ]
 
 const SESSION_EVENTS: SessionEvent[] = [
