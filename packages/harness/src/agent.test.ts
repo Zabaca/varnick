@@ -3,10 +3,17 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   AGENT_ENTRY_RELATIVE_PATH,
+  CLAUDE_CONFIG_DIR_ENV_VAR,
+  CLAUDE_CONFIG_RELATIVE_PATH,
   CREDENTIAL_ENV_VAR_NAME,
+  INHERIT_CLAUDE_CONFIG_ENV_VAR,
   agentCommand,
+  agentConfigurationOptions,
   agentEntryPath,
+  agentEnvironment,
   agentSdkEntry,
+  claudeConfigDir,
+  inheritsClaudeConfig,
   sandboxEnvOverlay,
 } from './agent.ts'
 
@@ -113,5 +120,143 @@ describe('the overlay carries no secret', () => {
   test('the name matches the one the Rust host injects', () => {
     // Mirrored as ENV_VAR in src-tauri/src/credential.rs.
     expect(CREDENTIAL_ENV_VAR_NAME).toBe('ANTHROPIC_API_KEY')
+  })
+})
+
+/*
+  Isolation from the developer's own Claude Code configuration.
+
+  The reason this is a boundary and not a preference: varnick was measured
+  launching a Claude Code process with nine inherited CLAUDE_* variables in its
+  environment, none of them chosen by varnick and none of them visible to the
+  person running it. Behaviour that depends on what happens to be exported in
+  the terminal you launched from is behaviour nobody else can reproduce.
+
+  Everything here is a pure function over an environment record. Nothing spawns
+  a process, and in particular nothing here starts a Claude Code session — the
+  rule ADR-0003's last consequence exists for.
+*/
+describe('the agent does not inherit the developer\'s Claude Code configuration', () => {
+  const developerEnvironment = {
+    PATH: '/usr/bin',
+    HOME: '/Users/dev',
+    [CREDENTIAL_ENV_VAR_NAME]: 'sk-" + "ant-api03-NEVER-LET-THIS-OUT',
+    CLAUDECODE: '1',
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CLAUDE_CODE_SESSION_ID: 'a-session-that-is-not-ours',
+    CLAUDE_EFFORT: 'xhigh',
+    CLAUDE_CONFIG_DIR: '/Users/dev/.claude',
+    ANTHROPIC_BASE_URL: 'https://proxy.example.invalid',
+    ANTHROPIC_MODEL: 'something-else',
+  }
+
+  test('isolated is the default, and takes a flag to leave', () => {
+    expect(inheritsClaudeConfig({})).toBe(false)
+    expect(inheritsClaudeConfig({ [INHERIT_CLAUDE_CONFIG_ENV_VAR]: '1' })).toBe(true)
+    // An empty or explicitly off value is not a flag anyone meant to set. A
+    // variable left over as `0` must not silently un-isolate a run.
+    expect(inheritsClaudeConfig({ [INHERIT_CLAUDE_CONFIG_ENV_VAR]: '' })).toBe(false)
+    expect(inheritsClaudeConfig({ [INHERIT_CLAUDE_CONFIG_ENV_VAR]: '0' })).toBe(false)
+    expect(inheritsClaudeConfig({ [INHERIT_CLAUDE_CONFIG_ENV_VAR]: 'false' })).toBe(false)
+  })
+
+  test('no filesystem settings are read, and no MCP configuration but ours', () => {
+    // settingSources: [] is the SDK's own isolation mode — it drops
+    // ~/.claude/settings.json, the clone's .claude/settings.json and
+    // .claude/settings.local.json, and with them every hook and every CLAUDE.md.
+    // strictMcpConfig drops .mcp.json, user settings and plugin MCP servers.
+    expect(agentConfigurationOptions(false)).toEqual({
+      settingSources: [],
+      strictMcpConfig: true,
+    })
+  })
+
+  test('the flag stops overriding rather than opting into something new', () => {
+    // Inheriting is the CLI's own default behaviour, which is what "inherit"
+    // has to mean: varnick stops passing the two options and gets whatever
+    // Claude Code would have done on its own.
+    expect(agentConfigurationOptions(true)).toEqual({})
+  })
+
+  test('every CLAUDE and ANTHROPIC variable is dropped except the credential', () => {
+    const env = agentEnvironment(developerEnvironment, { cloneRoot: CLONE, inherit: false })
+
+    // The credential is the one thing that must survive: it is what the host
+    // injected, and it is how the agent authenticates.
+    expect(env[CREDENTIAL_ENV_VAR_NAME]).toBe('sk-" + "ant-api03-NEVER-LET-THIS-OUT')
+
+    for (const name of [
+      'CLAUDECODE',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'CLAUDE_CODE_SESSION_ID',
+      'CLAUDE_EFFORT',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_MODEL',
+    ]) {
+      expect(env[name]).toBeUndefined()
+    }
+
+    // Everything else is left alone. PATH and HOME are what the interpreter
+    // needs, and scrubbing beyond the two prefixes would be guessing.
+    expect(env.PATH).toBe('/usr/bin')
+    expect(env.HOME).toBe('/Users/dev')
+  })
+
+  test('a variable nobody has thought of yet is dropped too', () => {
+    // Prefix rule rather than a list, so a variable Claude Code grows next
+    // release is isolated by the rule that already shipped.
+    const env = agentEnvironment(
+      { CLAUDE_SOMETHING_INVENTED_LATER: 'yes', ANTHROPIC_ALSO_NEW: 'yes' },
+      { cloneRoot: CLONE, inherit: false },
+    )
+    expect(env.CLAUDE_SOMETHING_INVENTED_LATER).toBeUndefined()
+    expect(env.ANTHROPIC_ALSO_NEW).toBeUndefined()
+  })
+
+  test('the config directory is varnick\'s own, inside the clone', () => {
+    const env = agentEnvironment(developerEnvironment, { cloneRoot: CLONE, inherit: false })
+    expect(env[CLAUDE_CONFIG_DIR_ENV_VAR]).toBe(claudeConfigDir(CLONE))
+    expect(claudeConfigDir(CLONE)).toBe(join(CLONE, CLAUDE_CONFIG_RELATIVE_PATH))
+    // Inside the clone is not a preference. Measured under the generated
+    // policy: `mkdir` anywhere under $HOME is "Operation not permitted", and
+    // the clone and the temp directory are the only writable trees. A Claude
+    // Code process pointed at ~/.claude cannot write its own session store.
+    expect(claudeConfigDir(CLONE).startsWith(CLONE)).toBe(true)
+  })
+
+  test('the config directory is varnick\'s own under the flag as well', () => {
+    // The flag inherits configuration; it does not move the config directory,
+    // because ~/.claude is unwritable inside the Sandbox either way and a
+    // Claude Code that cannot write its config directory does not run at all.
+    const env = agentEnvironment(developerEnvironment, { cloneRoot: CLONE, inherit: true })
+    expect(env[CLAUDE_CONFIG_DIR_ENV_VAR]).toBe(claudeConfigDir(CLONE))
+  })
+
+  test('the flag leaves the rest of the environment as the developer had it', () => {
+    const env = agentEnvironment(developerEnvironment, { cloneRoot: CLONE, inherit: true })
+    expect(env.CLAUDECODE).toBe('1')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://proxy.example.invalid')
+    expect(env[CREDENTIAL_ENV_VAR_NAME]).toBe('sk-" + "ant-api03-NEVER-LET-THIS-OUT')
+  })
+
+  test('the flag itself is not passed on to the agent', () => {
+    // It is varnick's switch, not Claude Code's, and an agent that can read it
+    // is an agent whose behaviour depends on it.
+    for (const inherit of [false, true]) {
+      const env = agentEnvironment(
+        { ...developerEnvironment, [INHERIT_CLAUDE_CONFIG_ENV_VAR]: '1' },
+        { cloneRoot: CLONE, inherit },
+      )
+      expect(env[INHERIT_CLAUDE_CONFIG_ENV_VAR]).toBeUndefined()
+    }
+  })
+
+  test('the config directory is a path, not a place anything is read from here', () => {
+    // The whole point of the seam: this module computes a string. Reading
+    // configuration, running a SessionStart hook, or starting a session all
+    // happen in the Claude Code process, which is inside srt. Nothing in the
+    // Harness reads the file, so agent-authored configuration has no route to
+    // an unconfined process — see ADR-0003's last consequence.
+    expect(typeof claudeConfigDir(CLONE)).toBe('string')
   })
 })

@@ -11,6 +11,64 @@ its author, and nothing here has been deployed or distributed.
 Start with [CONTEXT.md](CONTEXT.md) for what the words mean, and
 [docs/adr/](docs/adr/) for why the boundaries are where they are.
 
+## First run
+
+You need [bun](https://bun.sh) and, for the desktop app, a Rust toolchain —
+Tauri's own [prerequisites](https://tauri.app/start/prerequisites/) are the list.
+
+```
+bun install
+bun tauri dev
+```
+
+That opens the chat. If nothing else on this page were true, one thing would
+still be: varnick reads its credential in the desktop host, so the chat only
+works from `bun tauri dev`. `bun run dev` gives you the same interface in a
+browser with no host behind it, and it says so rather than failing quietly.
+
+The credential is one keychain item, and the app names the command if it is
+missing:
+
+```
+security add-generic-password -s varnick -a anthropic-api-key -w
+```
+
+An exported `ANTHROPIC_API_KEY` also works; the keychain wins when both answer.
+Nothing else is configured, and there is nothing to fill in on first launch —
+an empty chat is the first frame, and anything that went wrong is one sentence
+naming what to do about it.
+
+Three routes ship, and they are the same code three ways: `#/designed` is the
+chat and is where a launch lands, `#/bare` is the design-free page showing raw
+machine state and one button per accepted event, `#/states` is every state of
+the chat on one page, driven by the real machines.
+
+`scripts/clean-clone.sh` clones the repository into a temporary directory and
+runs it with a scrubbed environment and a `HOME` that has never held varnick.
+It prints what that establishes and what it only approximates; the honest limit
+is that it runs on a machine which *has* run varnick, so it is not a
+clean-machine result and is not reported as one.
+
+## varnick does not inherit your Claude Code setup
+
+By default the agent varnick starts reads none of your settings, none of your
+`CLAUDE.md` files, no MCP servers, no plugins and no hooks, and is handed an
+environment with every `CLAUDE*` and `ANTHROPIC_*` variable removed except the
+credential. Behaviour that depends on what you happened to export in the
+terminal you launched from is behaviour you cannot reproduce and nobody else
+can either.
+
+```
+VARNICK_INHERIT_CLAUDE_CONFIG=1 bun tauri dev
+```
+
+is the way out, and it restores less than it sounds like: the Sandbox denies the
+home directory, so `~/.claude` — your user settings, your user `CLAUDE.md`, your
+skills, your plugins — stays unreachable either way. What the flag restores is
+the clone's own `.claude/` and `.mcp.json`, and your environment. The reasoning,
+and why widening the policy to reach the rest is not on offer, is
+[ADR-0010](docs/adr/0010-the-agent-is-isolated-from-the-developers-claude-code.md).
+
 ## What the Sandbox actually does
 
 varnick's only real claim is a containment claim, so this section is written to
@@ -71,10 +129,14 @@ established, the agent does not start.
 
 ```
 bun install
-bun run dev        # the app
-bun test packages  # unit tests plus the real-kernel boundary probes
-bun run drive      # the state-machine driver
+bun tauri dev             # the desktop app, which is the one that has a host
+bun run dev               # the same interface in a browser, with no host
+bun test packages         # unit tests plus the real-kernel boundary probes
+bun run drive             # the state-machine driver
 bun run typecheck
+bun run build
+cargo test --manifest-path src-tauri/Cargo.toml
+scripts/clean-clone.sh    # what a stranger's clone does, as far as one machine can show
 ```
 
 The boundary probes skip loudly rather than fail on a platform that cannot run

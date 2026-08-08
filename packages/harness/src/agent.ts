@@ -30,6 +30,15 @@
  * SDK's `sandbox` option on kills every Bash command with exit 71 (ADR-0003).
  * It is set to `enabled: false` below rather than merely left unset, because
  * "off" should be visible in the code that would be blamed for exit 71.
+ *
+ * ## The session is isolated from the developer's own Claude Code
+ *
+ * A Claude Code process reads settings, `CLAUDE.md`, MCP servers, plugins and
+ * hooks off the filesystem, and reads a good deal more out of its environment.
+ * Left alone it would pick up whichever of those the person launching varnick
+ * happens to have — including things they set months ago and have forgotten.
+ * That is unreproducible for everyone else, so varnick isolates by default and
+ * takes a flag to inherit. See ADR-0010, and `agentEnvironment` below.
  */
 
 import { join } from 'node:path'
@@ -134,6 +143,150 @@ export function sandboxEnvOverlay(
 }
 
 // ---------------------------------------------------------------------------
+// Configuration isolation
+// ---------------------------------------------------------------------------
+
+/**
+ * The flag that turns isolation off.
+ *
+ * An environment variable rather than a UI control or a config file, for the
+ * same reason `VARNICK_HOST` and `VARNICK_HARNESS_ENTRY` are: it is a property
+ * of one launch, it has to be readable before anything is rendered, and a
+ * setting stored in the clone would be a setting the agent can write.
+ *
+ *     VARNICK_INHERIT_CLAUDE_CONFIG=1 bun tauri dev
+ */
+export const INHERIT_CLAUDE_CONFIG_ENV_VAR = 'VARNICK_INHERIT_CLAUDE_CONFIG'
+
+/** Where Claude Code keeps its own state. */
+export const CLAUDE_CONFIG_DIR_ENV_VAR = 'CLAUDE_CONFIG_DIR'
+
+/**
+ * varnick's Claude Code configuration directory, relative to the clone.
+ *
+ * Inside the clone because the Sandbox leaves nowhere else durable: measured
+ * under the generated policy, `mkdir` anywhere below `$HOME` is "Operation not
+ * permitted", and `allowWrite` is the clone and the temp directory. A Claude
+ * Code process left pointing at `~/.claude` cannot write its session store, so
+ * redirecting this is a condition of the agent running at all — not only of it
+ * running isolated.
+ *
+ * Gitignored, per clone, and never committed: it is one machine's state.
+ */
+export const CLAUDE_CONFIG_RELATIVE_PATH = '.varnick/claude'
+
+/** varnick's Claude Code configuration directory in a given clone. */
+export function claudeConfigDir(cloneRoot: string): string {
+  return join(cloneRoot, CLAUDE_CONFIG_RELATIVE_PATH)
+}
+
+/**
+ * Variables that belong to Claude Code or to the Anthropic client, and are
+ * therefore the developer's rather than varnick's.
+ *
+ * A prefix rule rather than a list. The list would be right today and stale on
+ * the next release, and the failure mode of a stale list is silent: a variable
+ * nobody added to it changes the agent's behaviour and nothing says so.
+ *
+ * The credential is the one exception, and it is named rather than pattern
+ * matched — see {@link agentEnvironment}.
+ */
+const INHERITED_CONFIG_PREFIXES = ['CLAUDE', 'ANTHROPIC_'] as const
+
+/** Whether this launch was told to inherit the developer's configuration. */
+export function inheritsClaudeConfig(env: Record<string, string | undefined>): boolean {
+  const value = env[INHERIT_CLAUDE_CONFIG_ENV_VAR]
+  if (value === undefined) return false
+  const normalised = value.trim().toLowerCase()
+  // An empty, `0` or `false` value is not a flag anyone meant to set. A
+  // variable left behind in a shell profile must not quietly un-isolate a run.
+  return normalised !== '' && normalised !== '0' && normalised !== 'false'
+}
+
+export interface AgentEnvironmentInput {
+  /** The clone the agent works inside. */
+  readonly cloneRoot: string
+  /** True when {@link INHERIT_CLAUDE_CONFIG_ENV_VAR} was set. */
+  readonly inherit: boolean
+}
+
+/**
+ * The environment the Claude Code process runs with.
+ *
+ * Pure, and computed rather than inherited, because the SDK's `env` option
+ * *replaces* the subprocess environment — so what this returns is the whole of
+ * what Claude Code sees.
+ *
+ * Isolated (the default): every `CLAUDE*` and `ANTHROPIC_*` variable is
+ * dropped, except the credential the host injected. This is not hypothetical
+ * tidying. Probed under the real policy, the sandboxed process was handed nine
+ * inherited `CLAUDE*` variables — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
+ * `CLAUDE_EFFORT` and the rest — none of them chosen by varnick, all of them
+ * an accident of which terminal the app was launched from.
+ *
+ * Inherited (under the flag): everything is left as the developer had it.
+ *
+ * `CLAUDE_CONFIG_DIR` is set to the clone's own directory in both cases, for
+ * the containment reason recorded on {@link CLAUDE_CONFIG_RELATIVE_PATH}: the
+ * default is unwritable inside the Sandbox.
+ *
+ * The flag itself never reaches the agent. It is varnick's switch, and an agent
+ * that can read it is an agent whose behaviour depends on it.
+ */
+export function agentEnvironment(
+  base: Record<string, string | undefined>,
+  input: AgentEnvironmentInput,
+): Record<string, string | undefined> {
+  const environment: Record<string, string | undefined> = {}
+
+  for (const [key, value] of Object.entries(base)) {
+    if (key === INHERIT_CLAUDE_CONFIG_ENV_VAR) continue
+    if (key === CREDENTIAL_ENV_VAR_NAME) {
+      environment[key] = value
+      continue
+    }
+    if (!input.inherit && INHERITED_CONFIG_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      continue
+    }
+    environment[key] = value
+  }
+
+  environment[CLAUDE_CONFIG_DIR_ENV_VAR] = claudeConfigDir(input.cloneRoot)
+  return environment
+}
+
+/**
+ * The Agent SDK options that decide where configuration comes from.
+ *
+ * `settingSources: []` is the SDK's own isolation mode: no
+ * `~/.claude/settings.json`, no `.claude/settings.json`, no
+ * `.claude/settings.local.json`, and — because `CLAUDE.md` loads with the
+ * project source — no memory files either. Hooks live in those settings, so
+ * they go with them. `strictMcpConfig` drops `.mcp.json`, MCP servers declared
+ * in user settings, and MCP servers contributed by plugins.
+ *
+ * Inheriting is the *absence* of both, rather than an option asking for the
+ * opposite: what the flag restores is the CLI's own default, and stating it any
+ * other way would be varnick deciding what "inherit" means on Claude Code's
+ * behalf.
+ *
+ * Worth being plain about what the flag cannot restore. The Sandbox denies read
+ * on `$HOME`, so `~/.claude` — user settings, user `CLAUDE.md`, skills,
+ * plugins, and any stdio MCP server installed under the home directory — is
+ * unreachable with or without it. The flag restores the clone's own
+ * configuration and the developer's environment, and nothing under `$HOME`.
+ * Widening the policy to reach it is not on the table: `~/.claude.json` holds
+ * MCP server credentials, and a read-allow over the home directory is the exact
+ * mistake ADR-0003 records twice.
+ */
+export function agentConfigurationOptions(inherit: boolean): {
+  settingSources?: never[]
+  strictMcpConfig?: true
+} {
+  return inherit ? {} : { settingSources: [], strictMcpConfig: true }
+}
+
+// ---------------------------------------------------------------------------
 // The agent host, as a process
 // ---------------------------------------------------------------------------
 
@@ -182,10 +335,26 @@ async function selfTest(sdkEntry: string, deniedPath: string): Promise<void> {
  *
  * Exiting is how the agent stops. Whatever ends this function ends the process,
  * and the Rust host reports the exit as `AGENT_EXIT` carrying the real reason.
+ *
+ * This is the one place a Claude Code process is started, and it is inside the
+ * Sandbox. The configuration this hands it is computed here, from strings —
+ * nothing in the Harness opens a settings file, so a `SessionStart` hook the
+ * agent wrote runs in the confined process or not at all. ADR-0003's last
+ * consequence is the rule that makes that matter.
  */
 async function runAgentHost(sdkEntry: string): Promise<void> {
   const { query } = (await import(sdkEntry)) as typeof import('@anthropic-ai/claude-agent-sdk')
   type Prompt = Parameters<typeof query>[0]['prompt']
+
+  const cloneRoot = process.cwd()
+  const inherit = inheritsClaudeConfig(process.env)
+
+  // Created rather than assumed. Claude Code writes its own state here, and a
+  // directory it cannot create is a start that fails with an error about
+  // something else. Inside the clone, which is writable — see
+  // CLAUDE_CONFIG_RELATIVE_PATH for why nowhere under $HOME is.
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(claudeConfigDir(cloneRoot), { recursive: true })
 
   // Streaming input, held open. Nothing is sent on it — ticket 08 is what puts
   // turns on this wire — and it never returns, which is what keeps the Claude
@@ -198,12 +367,17 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
   const session = query({
     prompt,
     options: {
-      cwd: process.cwd(),
+      cwd: cloneRoot,
       // ADR-0003: the kernel refuses sandbox_apply inside an existing sandbox,
       // so the SDK's own sandbox must stay off. srt is already around this
       // whole process tree. Set rather than omitted, because "off" belongs in
       // the code that would be blamed for exit 71.
       sandbox: { enabled: false },
+      // ADR-0010. Isolated by default; `VARNICK_INHERIT_CLAUDE_CONFIG=1` is the
+      // flag out. `env` replaces the subprocess environment outright, which is
+      // why agentEnvironment returns the whole of it rather than an overlay.
+      env: agentEnvironment(process.env, { cloneRoot, inherit }),
+      ...agentConfigurationOptions(inherit),
     },
   })
 

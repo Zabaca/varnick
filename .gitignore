@@ -32,6 +32,12 @@ coverage/
 # generator in packages/harness/src/sandbox.ts is what a fork changes.
 /sandbox-policy.json
 
+# varnick's own Claude Code configuration directory, created inside the clone
+# on first launch. It is here rather than under ~/.claude because the Sandbox
+# denies writes to the home directory, and it is per-clone machine state that
+# nobody else should inherit — see ADR-0010.
+/.varnick/
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/
