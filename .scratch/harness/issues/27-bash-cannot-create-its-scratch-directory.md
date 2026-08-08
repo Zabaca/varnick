@@ -28,13 +28,13 @@ This is not the same defect as ticket 26. That one is `Grep` shelling out to a b
 
 The narrow fix is one path in `allowWrite`, and it is genuinely narrow: `/private/tmp/claude-<uid>/**` is a per-user scratch directory outside the clone, and the policy already grants exactly this for `os.tmpdir()`. It grants no new *kind* of access — it grants the same kind in the place the tool actually looks.
 
-The alternative worth measuring first is whether Claude Code honours `TMPDIR`. If it does, the agent's environment can point it at the temp directory that is already allowed and **the policy does not change at all**, which is strictly better. The path in the error is a fixed `/tmp` rather than a resolved temp dir, which suggests it does not, but that is an inference and this ticket exists because inference has been expensive here.
+**It does not honour `TMPDIR`, and that was measured rather than inferred.** A run with `TMPDIR=/private/tmp/varnick-tmpdir-test` still created its scratch under `/private/tmp/claude-<uid>/…`; the only thing that landed in `TMPDIR` was an unrelated file from a shell shim. So the free option — point the agent at the temp directory already allowed and change no policy — is not available, and the path is a fixed `/tmp/claude-<uid>` rather than a resolved temp dir.
 
 What must not happen is widening `allowWrite` to `/tmp` wholesale. That is a world-writable directory shared with every other process on the machine, and the agent having free rein there is a different proposition from having its own subdirectory in it.
 
-- [ ] Whether Claude Code honours `TMPDIR` is measured and recorded
-- [ ] If it does, the agent's environment is pointed at the already-allowed temp and the policy is untouched
-- [ ] If it does not, `allowWrite` gains the per-user scratch path and nothing broader — never `/tmp` itself
+- [x] Whether Claude Code honours `TMPDIR` is measured and recorded — it does not
+- [ ] `allowWrite` gains the per-user scratch path and nothing broader — never `/tmp` itself
+- [ ] The entry is derived from the running uid rather than hardcoded, so it is right in a fresh clone on another machine
 - [ ] A Bash command runs end to end under a real Turn, and that is what closes this rather than a unit test
 - [ ] The boundary probes gain a case for it, so a policy that loses this entry fails something
 

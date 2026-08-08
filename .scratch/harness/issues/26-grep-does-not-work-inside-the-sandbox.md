@@ -38,7 +38,7 @@ Each option gives something up, and this is the developer's call rather than the
 
 1. **Allow reading the Claude Code executable.** Cannot be done with `allowRead`: it is measured that `denyRead` on a root beats `allowRead` on a path beneath it, and hardlinking the binary into the writable root did not work either. It would mean not denying `$HOME` — the largest possible widening, and the thing that protects the login Keychain. **Almost certainly wrong.**
 2. **Give the agent a `rg` that is not that binary.** A real ripgrep on a readable path, with the tool pointed at it. Smallest boundary change; adds a dependency a fresh clone has to get from somewhere.
-3. **Accept it and say so.** Grep does not work; the agent has Read and Glob and Bash. Cheapest, and honest only if written into "Where confinement stops" — an agent silently missing a tool is worse than one documented as missing it.
+3. **Accept it and say so.** Grep does not work; the agent has Read and Glob and Bash. Cheapest. Note that with ticket 27 open the agent has *only* Read, so "accept it" is a much larger concession than it first reads. Honest only if written into "Where confinement stops" — an agent silently missing a tool is worse than one documented as missing it.
 
 - [ ] Whether Glob is affected is measured and written down
 - [ ] Probe 6 passes, or the probe records the limitation deliberately rather than failing
