@@ -182,6 +182,8 @@ The bugs it and the bare page caught, kept here because each one is a rule worth
 
 ## Out of Scope
 
+**Rendering Surfaces in the chat** *(visual gate)*. This spec's stories 36–40 assumed dynamic Surface loading ships in v1, reasoning from the boundary ADRs. Those ADRs govern how a Surface behaves once one exists; they do not require one to ship, and v1 is the chat. `surfaceMachine` and the loader stay in the codebase — the moment the agent builds anything they are needed, and they are already proven by `drive.ts` — but nothing renders until a real Userspace module exists. Stories 36–40 are therefore deferred, not withdrawn, and `SURFACE_STATE_PATHS` is waived on the states-page banner by decision rather than left uncovered. Matches `PRODUCT.md` → v1 scope.
+
 The canvas or artifact panel. Multiple concurrent Sessions, session switching, and session forking — the data layer models Sessions as a collection because that is a one-way door, but the v1 UI shows one. A settings and provenance panel. A UI for the network allowlist. Any plugin API, versioned extension contract, or published Harness package.
 
 The Core Profile and the Escalation path are out of v1. Changing Core in v1 means opening a separate Claude Code session in the repository; the Clone, Collect, and double-gated Escalation described in [ADR-0005](../../docs/adr/0005-two-profiles-live-userspace-cloned-core.md) are the design those will follow when built.
@@ -189,6 +191,16 @@ The Core Profile and the Escalation path are out of v1. Changing Core in v1 mean
 Also out: multi-user anything, authentication, tenancy, hosted deployment, and the morning-inbox workflow, which is a Userspace build on top of this and not part of the product.
 
 ## Further Notes
+
+**Tickets, and the states with none** *(stage 5)*. Eleven integration slices live in `issues/`. Run the check both directions: every state path named by a ticket has a card at `#/states`, and every card resolves either to a ticket or to work already done.
+
+Three cards deliberately have no ticket, because nothing is stubbed underneath them — they are pure machine logic that already ships:
+
+- `agent.startRefused` — the refusal is a guard and an unguarded fallback, both real
+- `composer.menu` — derived from the draft and the command names, no service behind it
+- `turn.idle` after a failed compaction — the state is `idle`; only the actor in ticket 08 is missing
+
+Two tickets deliberately name no state path — 02 (containment probes) and 10 (Secrets Store). The first is evidence for tickets 01 and 04; the second is a Harness capability with no machine and no v1 UI. Both are named here so their absence from the states page is not read as missed work.
 
 **The boundary is partial by design, and the documentation must say so.** Userspace code executes in the host process when it loads, so the agent's output reaches the host by being run — that is the point of the product and cannot be closed without abandoning it. The Sandbox protects the home directory, other repositories, and the network. It does not protect the clone from the code the agent writes into it. Git is the undo.
 
