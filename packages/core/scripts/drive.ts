@@ -545,6 +545,111 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 }
 
 // ---------------------------------------------------------------------------
+// Session — resumed on launch
+//
+// The entry point the states page uses to park a conversation mid-flight is the
+// same one a relaunch comes in through; the only difference is that the input
+// is read off disk instead of written as a literal. What the mirror does with
+// the bytes is tested in packages/harness/src/session.test.ts. These are the
+// machine facts: which state a restored Session enters, and what its first save
+// carries.
+// ---------------------------------------------------------------------------
+
+{
+  // A transcript as a relaunch gets it back from the mirror: complete messages,
+  // one of them redacted, and nothing else. There is no partial and no turn
+  // state on disk to restore, because the mirror is written at Turn boundaries.
+  const restored: Message[] = [
+    { id: 'm1', role: 'user', text: 'call the API with [redacted]' },
+    { id: 'm2', role: 'agent', text: 'done — it returned 200' },
+  ]
+
+  const { spy, actor: persistSession } = saveSpy(true)
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({ source: 'keychain' }),
+        checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+        spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 1 }),
+        session: sessionMachine.provide({
+          actors: { runTurn: resolves<TurnOutput, TurnInput>({ text: 'still here', tokensUsed: 7 }), persistSession },
+        }),
+      },
+    }),
+    { input: { policy: seedPolicy, sessionInput: { sessionId: 'session-1', messages: restored } } },
+  ).start()
+
+  actor.send({ type: 'READ_CREDENTIAL' })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+  actor.send({ type: 'CHECK_SANDBOX' })
+  await waitFor(actor, (s) => regionOf(s.value, 'sandbox') === 'available')
+  actor.send({ type: 'START' })
+  await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
+
+  const session = actor.getSnapshot().context.session
+  check('a launch spawns the Session from the input it was given', session !== null)
+
+  const resumed = session!.getSnapshot()
+  check(
+    'the restored transcript is the conversation, not a fresh one',
+    textsOf(resumed.context.messages) === 'call the API with [redacted]|done — it returned 200',
+  )
+  check('a resumed Session names the Session that was read', resumed.context.sessionId === 'session-1')
+
+  // The in-flight-at-crash decision, as a machine fact. Not `sending` — nothing
+  // is in flight. Not `failed` — nothing observed a failure; the process died.
+  // A killed Turn and an interrupted one are the same event from the
+  // transcript's side, and an interrupt already resolves to idle.
+  check('a resumed Session is idle, never sending', regionOf(resumed.value, 'turn') === 'idle')
+  check('a resumed Session invents no failure to explain the crash', resumed.context.turnError === null)
+  check('a resumed Session carries no partial, because the mirror holds none', resumed.context.partial === '')
+  check('a resumed Session is saved, not dirty', regionOf(resumed.value, 'persistence') === 'saved')
+  check('resuming is not a Turn boundary and writes nothing', spy.calls === 0)
+  check('a resumed Session can be talked to immediately', session!.getSnapshot().can({ type: 'EDIT_DRAFT', text: 'x' }))
+
+  // The reason a restore has to be read before a Session runs on that id: the
+  // next save has to *extend* the mirror. A Session that started empty over a
+  // transcript that is not empty would rewrite the file instead.
+  session!.send({ type: 'EDIT_DRAFT', text: 'carry on' })
+  session!.send({ type: 'SEND' })
+  check(
+    'the first Turn after a resume reaches the mirror',
+    await reaches(waitFor(session!, (s) => regionOf(s.value, 'turn') === 'idle' && spy.calls > 0, soon)),
+  )
+  check(
+    'the save after a resume extends the restored transcript rather than replacing it',
+    textsOf(spy.last) === 'call the API with [redacted]|done — it returned 200|carry on|still here',
+  )
+
+  actor.stop()
+}
+
+{
+  // Why the resumed state costs nothing to decide: a Turn that was still
+  // streaming has nothing on disk for any state to be about. The mirror is only
+  // ever handed `messages`, and the partial is not one until a boundary folds
+  // it in.
+  const { spy, actor: persistSession } = saveSpy(false)
+  const actor = createActor(
+    sessionMachine.provide({ actors: { runTurn: turnNever(), persistSession } }),
+    { input: { sessionId: 'p7' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'ask' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'STREAM_DELTA', text: 'half an answer' })
+  actor.send({ type: 'SAVE' })
+  await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saving', soon)
+
+  check('a save mid-stream carries the transcript', textsOf(spy.last) === 'ask')
+  check(
+    'a save mid-stream cannot carry the partial, so a crash leaves none to restore',
+    !textsOf(spy.last).includes('half an answer') && actor.getSnapshot().context.partial === 'half an answer',
+  )
+  actor.stop()
+}
+
+// ---------------------------------------------------------------------------
 // Session — the command menu
 // ---------------------------------------------------------------------------
 

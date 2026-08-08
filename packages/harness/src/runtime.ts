@@ -36,7 +36,12 @@
  */
 
 import { establishSandbox } from './sandbox.ts'
-import { createSessionStore, defaultSessionRoot, type StoredMessage } from './session.ts'
+import {
+  createSessionStore,
+  defaultSessionRoot,
+  restoredTranscript,
+  type StoredMessage,
+} from './session.ts'
 
 /** What the runtime can actually do. Injected so tests supply their own. */
 export interface HarnessCapabilities {
@@ -47,6 +52,15 @@ export interface HarnessCapabilities {
     sessionId: string
     messages: readonly StoredMessage[]
   }): Promise<{ ok: true }>
+  /**
+   * Read a transcript back out of the Session mirror, or throw with the reason.
+   *
+   * A Session that has never been written is an empty transcript, not a
+   * failure — that is a first run. A read that could not be *done* must throw,
+   * because an empty answer would be indistinguishable from a first run and the
+   * next save would replace a transcript nobody managed to read.
+   */
+  readSession(sessionId: string): Promise<readonly StoredMessage[]>
 }
 
 /**
@@ -67,6 +81,7 @@ export function hostCapabilities(): HarnessCapabilities {
   return {
     establishSandbox: () => establishSandbox(),
     persist: (input) => sessionMirror().persist(input),
+    readSession: (sessionId) => sessionMirror().read(sessionId),
   }
 }
 
@@ -94,17 +109,25 @@ function storedMessages(value: unknown): readonly StoredMessage[] | null {
 /**
  * Answer one request.
  *
+ * Returns what the caller gets as `ok`. Most calls have nothing to say beyond
+ * having been done, and answer with an empty object — the bridge rebuilds every
+ * answer, so a runtime that volunteered extra fields could not have them
+ * forwarded anyway. A restore is the one call here with a payload.
+ *
  * Throws with the reason. Every throw here becomes a `refused` on the bridge,
  * carrying this message — which is the string `sandbox.unavailable` and
  * `persistence.saveFailed` have always rendered.
  */
-async function answer(request: unknown, capabilities: HarnessCapabilities): Promise<void> {
+async function answer(
+  request: unknown,
+  capabilities: HarnessCapabilities,
+): Promise<Record<string, unknown>> {
   const kind = (request as { kind?: unknown } | null | undefined)?.kind
 
   switch (kind) {
     case 'check-sandbox':
       await capabilities.establishSandbox()
-      return
+      return {}
 
     case 'persist-session': {
       const { sessionId, messages } = request as Record<string, unknown>
@@ -118,7 +141,18 @@ async function answer(request: unknown, capabilities: HarnessCapabilities): Prom
         )
       }
       await capabilities.persist({ sessionId, messages: stored })
-      return
+      return {}
+    }
+
+    case 'read-session': {
+      const { sessionId } = request as Record<string, unknown>
+      if (typeof sessionId !== 'string') {
+        throw new Error('A restore needs a Session id, and this request carried none.')
+      }
+      // The mirror, not the Agent SDK's own store: this is the copy that
+      // survives a build the agent just broke, which is the case resume exists
+      // for. See docs/adr/0009-resume-reads-the-mirror.md.
+      return { ...restoredTranscript(await capabilities.readSession(sessionId)) }
     }
 
     case 'read-credential':
@@ -167,11 +201,11 @@ export async function answerHarnessLine(
   }
 
   try {
-    await answer(request, capabilities)
-    // `ok` is an empty object on purpose: the bridge rebuilds every answer, so
-    // there is nothing for the runtime to say beyond having done it. A credential
-    // read is the one call with a payload, and it never comes here.
-    return `${JSON.stringify({ id, ok: {} })}\n`
+    // `ok` is an empty object for every call that has nothing to say beyond
+    // having been done, which is most of them — the bridge rebuilds every
+    // answer regardless. A restore is the one call here that answers with
+    // something; a credential read never comes here at all.
+    return `${JSON.stringify({ id, ok: await answer(request, capabilities) })}\n`
   } catch (error) {
     return `${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`
   }

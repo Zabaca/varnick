@@ -3,7 +3,7 @@ import { useMachine } from '@xstate/react'
 import type { AnyActorRef, InspectionEvent } from 'xstate'
 import { harnessMachine } from './machines/harness.ts'
 import { surfaceMachine } from './machines/surface.ts'
-import { sessionMachine } from './machines/session.ts'
+import { sessionMachine, type SessionInput } from './machines/session.ts'
 import {
   actorsFor,
   resolveActorMode,
@@ -39,10 +39,17 @@ export interface Transition {
  * set — the Session and every Surface run against one mode, which is what makes
  * the transition log an honest record of one system rather than three. See
  * actors/index.ts for what seeded and live mean.
+ *
+ * `sessionInput` is what the Session is spawned with. It has to arrive here,
+ * before the machine is created, because the Harness holds it in context and
+ * spawns from it on entry to `agent.running` — which is also why a relaunch
+ * reads the mirror in start-up rather than in an actor. Left out, the machine
+ * uses its own default and the conversation starts empty.
  */
 export function useHarness(
   controls: SeedControls = defaultSeedControls,
   requestedMode?: ActorMode,
+  sessionInput?: SessionInput,
 ) {
   const mode = requestedMode ?? resolveActorMode()
   const seeds = useMemo(() => actorsFor(mode, controls), [mode, controls])
@@ -87,7 +94,7 @@ export function useHarness(
   }
 
   const [snapshot, send, actorRef] = useMachine(machine, {
-    input: { policy: seedPolicy },
+    input: { policy: seedPolicy, sessionInput },
     inspect,
   })
 

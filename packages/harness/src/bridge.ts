@@ -48,7 +48,7 @@
  * never imports.
  */
 
-import type { StoredMessage } from './session.ts'
+import type { RestoredTranscript, StoredMessage } from './session.ts'
 
 /** Establish the Sandbox, or fail. Answers `{ ok: true }` and nothing else. */
 export interface CheckSandboxRequest {
@@ -68,19 +68,37 @@ export interface PersistSessionRequest {
 }
 
 /**
+ * Read a transcript back out of the host-side Session mirror.
+ *
+ * The Session named, and only that one. The store can hold several files and
+ * this is not a search: varnick runs one conversation and asks for it by name,
+ * because it has no way to *choose* between conversations and inventing one
+ * here would invent a concept the glossary does not have.
+ */
+export interface ReadSessionRequest {
+  readonly kind: 'read-session'
+  readonly sessionId: string
+}
+
+/**
  * Every call the bridge carries.
  *
  * A closed union rather than a name and a payload: an actor cannot ask for
  * something the host has not agreed to answer, and adding a capability is a
  * change both halves see at compile time.
  */
-export type HarnessRequest = CheckSandboxRequest | ReadCredentialRequest | PersistSessionRequest
+export type HarnessRequest =
+  | CheckSandboxRequest
+  | ReadCredentialRequest
+  | PersistSessionRequest
+  | ReadSessionRequest
 
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
   'check-sandbox': { readonly ok: true }
   'read-credential': { readonly source: 'keychain' | 'env' }
   'persist-session': { readonly ok: true }
+  'read-session': RestoredTranscript
 }
 
 /**
@@ -216,6 +234,32 @@ function credentialAnswer(answer: unknown): { source: 'keychain' | 'env' } {
 }
 
 /**
+ * Read a restored transcript back, message by message.
+ *
+ * Rebuilt like every other answer, and strict for a reason particular to this
+ * one: a transcript the bridge cannot read has to be a failure rather than an
+ * empty one. An empty transcript is what a first run looks like, and a Session
+ * that started empty over a mirror that is not empty would replace it on the
+ * next save — the loss the mirror exists to prevent.
+ */
+function transcriptAnswer(answer: unknown): RestoredTranscript {
+  const payload = answer as { messages?: unknown; redacted?: unknown } | null | undefined
+  if (!Array.isArray(payload?.messages)) throw new HarnessUnavailable('malformed')
+
+  const messages: StoredMessage[] = []
+  for (const entry of payload.messages) {
+    const { id, role, text } = (entry ?? {}) as Record<string, unknown>
+    if (typeof id !== 'string' || typeof text !== 'string') {
+      throw new HarnessUnavailable('malformed')
+    }
+    if (role !== 'user' && role !== 'agent') throw new HarnessUnavailable('malformed')
+    messages.push({ id, role, text })
+  }
+
+  return { messages, redacted: payload.redacted === true }
+}
+
+/**
  * Ask the host to do one thing.
  *
  * Every path out is either the declared answer or a thrown
@@ -240,6 +284,8 @@ export async function callHarness<R extends HarnessRequest>(
   switch (request.kind) {
     case 'read-credential':
       return credentialAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'read-session':
+      return transcriptAnswer(answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
     case 'persist-session':
       return okAnswer(answer) as HarnessAnswers[R['kind']]

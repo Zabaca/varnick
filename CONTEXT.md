@@ -61,7 +61,7 @@ _Avoid_: merge (Collect stops short of merging; the merge is a human's), sync, p
 ### Conversation
 
 **Session**:
-One durable conversation with an agent. Persisted twice — by the Agent SDK for resumption, and mirrored host-side so it survives a broken build, a crash, and a restart.
+One durable conversation with an agent. Persisted twice — by the Agent SDK for resumption, and mirrored host-side so it survives a broken build, a crash, and a restart. varnick displays the mirror and resumes from it, redactions and all; see [ADR-0009](./docs/adr/0009-resume-reads-the-mirror.md). There is deliberately no term for a *set* of Sessions: the product holds one.
 _Avoid_: chat, thread, conversation (all fine in the UI; `Session` is the persisted object)
 
 **Turn**:
@@ -89,7 +89,7 @@ _Avoid_: stopped, idle, dead, paused, blocked
 **Harness — `subscription`**: `unread`, `reading`, `read`. Plan usage across the rolling windows. A failed read leaves whatever was last known and never invents a figure.
 
 **Session — `turn`**: `idle`, `sending`, `streaming`, `interrupting`, `compacting`, `failed`.
-`sending` is posted with nothing back yet; `streaming` is output arriving. `interrupting` keeps the partial — an interrupted Turn still said something.
+`sending` is posted with nothing back yet; `streaming` is output arriving. `interrupting` keeps the partial — an interrupted Turn still said something. A Session resumed on launch enters `idle`: a Turn in flight when the process died is an answer that stopped early, which is what an interrupt already is, and nothing observed a failure to report.
 
 **Session — `persistence`**: `saved`, `saving`, `saveFailed`. Independent of `turn`, which is the point: a failed save must not cancel a Turn.
 

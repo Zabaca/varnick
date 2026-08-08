@@ -1,6 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useHarness, toPath } from '../hooks.ts'
 import { ChatSurface } from '../components/chat-surface.tsx'
+import { resolveActorMode, type ActorMode } from '../actors/index.ts'
+import { restoreSession, type RestoredSession } from '../actors/live.ts'
+import { LIVE_SESSION_ID } from '../domain.ts'
+import type { SessionInput } from '../machines/session.ts'
 
 /**
  * The live chat surface.
@@ -12,9 +16,61 @@ import { ChatSurface } from '../components/chat-surface.tsx'
  * The harness starts itself. Loading a credential, establishing the sandbox and
  * spawning the agent are not user commands — a launch does them, and asking the
  * user to run them was debug wearing a product's clothes.
+ *
+ * Reading the transcript back is the step before all of those, and it is here
+ * rather than in an actor because of where the Session comes from: the Harness
+ * holds `sessionInput` in context and spawns the Session from it on entry to
+ * `agent.running`, so the transcript has to be in hand before the machine is
+ * created. That is start-up, and start-up is this page's job.
  */
 export function DesignedPage() {
-  const { snapshot, send, mode } = useHarness()
+  const mode = resolveActorMode()
+  const resume = useResume(mode)
+
+  if (resume.status === 'reading') {
+    return <StartupNote text="Reading the conversation…" />
+  }
+
+  /*
+    A restore that failed does not fall through to an empty conversation.
+
+    It would look like a first run, and the first save of that empty Session
+    would rewrite the mirror — the transcript on disk is not a prefix of a
+    transcript that starts from nothing, so the store replaces rather than
+    appends. Losing a day's work to a read that failed is precisely what the
+    mirror exists to prevent, so nothing starts until the read succeeds.
+  */
+  if (resume.status === 'failed') {
+    return (
+      <StartupNote
+        text={`Could not read the conversation — ${resume.reason} Nothing has been started, so the transcript on disk is untouched.`}
+        bad
+        action={{ label: 'try again', run: resume.retry }}
+      />
+    )
+  }
+
+  return <LiveChat mode={mode} sessionInput={resume.input} redacted={resume.redacted} />
+}
+
+/**
+ * The Harness, once there is a transcript to give it.
+ *
+ * A separate component because `useHarness` creates the machine on its first
+ * render and the input is read once. Gating inside it would either create the
+ * machine with an empty conversation and never correct it, or recreate the
+ * machine underneath a live Session.
+ */
+function LiveChat({
+  mode,
+  sessionInput,
+  redacted,
+}: {
+  mode: ActorMode
+  sessionInput: SessionInput | undefined
+  redacted: boolean
+}) {
+  const { snapshot, send } = useHarness(undefined, mode, sessionInput)
 
   const ctx = snapshot.context
   const agentState = toPath((snapshot.value as Record<string, unknown>).agent)
@@ -68,11 +124,92 @@ export function DesignedPage() {
       snapshot={snapshot}
       send={send}
       mode={mode}
+      restoredRedacted={redacted}
       // A deliberate recovery re-arms start-up, so the steps after the one that
       // failed run again on their own.
       onRecover={() => {
         attempted.current = { credential: false, sandbox: false, agent: false }
       }}
     />
+  )
+}
+
+type Resume =
+  | { status: 'reading' }
+  | { status: 'failed'; reason: string; retry: () => void }
+  | ({ status: 'restored'; input: SessionInput | undefined } & Pick<RestoredSession, 'redacted'>)
+
+/**
+ * Read the conversation back from the Session mirror.
+ *
+ * Only in live mode. Seeded mode has no host to ask and nothing was ever
+ * mirrored — `persistSession` is a stub there — so a read would be a call that
+ * cannot succeed asked about a transcript that cannot exist. The machine's own
+ * default input stands, and the conversation starts empty.
+ */
+function useResume(mode: ActorMode): Resume {
+  const [attempt, again] = useState(0)
+  const [state, setState] = useState<Resume>(
+    mode === 'live'
+      ? { status: 'reading' }
+      : { status: 'restored', input: undefined, redacted: false },
+  )
+  const retry = useCallback(() => {
+    setState({ status: 'reading' })
+    again((n) => n + 1)
+  }, [])
+
+  useEffect(() => {
+    if (mode !== 'live') return
+    let current = true
+    restoreSession(LIVE_SESSION_ID).then(
+      (restored) => {
+        if (current) setState({ status: 'restored', ...restored })
+      },
+      (error: unknown) => {
+        if (current) {
+          setState({
+            status: 'failed',
+            reason: error instanceof Error ? error.message : String(error),
+            retry,
+          })
+        }
+      },
+    )
+    return () => {
+      current = false
+    }
+  }, [mode, attempt, retry])
+
+  return state
+}
+
+/** A line before the chat exists. Nothing else is on screen at this point. */
+function StartupNote({
+  text,
+  bad,
+  action,
+}: {
+  text: string
+  bad?: boolean
+  action?: { label: string; run: () => void }
+}) {
+  return (
+    <div className="flex h-full flex-col px-6 py-4" style={{ background: 'var(--ground)' }}>
+      <div
+        className="flex flex-wrap items-baseline gap-x-3"
+        style={{ color: bad ? 'var(--bad)' : 'var(--fg-faint)', maxWidth: 'var(--prose)' }}
+      >
+        <span>
+          {bad && <span aria-hidden>✗ </span>}
+          {text}
+        </span>
+        {action && (
+          <button onClick={action.run} style={{ color: 'var(--accent)' }}>
+            {action.label}
+          </button>
+        )}
+      </div>
+    </div>
   )
 }

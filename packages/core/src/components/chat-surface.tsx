@@ -41,11 +41,27 @@ export interface ChatSurfaceProps {
   snapshot: HarnessSnapshot
   send: (event: HarnessEvent) => void
   mode: ActorMode
+  /**
+   * Whether this conversation was restored from the mirror with something
+   * redacted out of it.
+   *
+   * A prop rather than machine context, for the same reason `mode` is one: it
+   * is a fact about how this run started, and start-up belongs to whoever owns
+   * the actor. The machines stay unchanged by resume — a restored Session is
+   * `turn.idle` with messages, which is a state that already existed.
+   */
+  restoredRedacted?: boolean
   /** Called before a recovery event, so the owner can re-arm its start-up. */
   onRecover?: () => void
 }
 
-export function ChatSurface({ snapshot, send, mode, onRecover }: ChatSurfaceProps) {
+export function ChatSurface({
+  snapshot,
+  send,
+  mode,
+  restoredRedacted,
+  onRecover,
+}: ChatSurfaceProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const ctx = snapshot.context
@@ -211,6 +227,27 @@ export function ChatSurface({ snapshot, send, mode, onRecover }: ChatSurfaceProp
                       {problem.action}
                     </button>
                   )}
+                </div>
+              )}
+
+              {/*
+                The one thing a restored conversation owes the developer.
+
+                The mirror is redacted on the way in, so a message can read
+                `[redacted]` where a secret value was. That is not undone —
+                reading a secret back onto the screen after deliberately keeping
+                it off disk would defeat the redaction, and a second unredacted
+                copy would be a durable plaintext secret store kept for looks.
+                What is owed is that the developer can tell they are reading the
+                record rather than what they typed. Said once, above the
+                transcript it is about, in the same shape as every other thing
+                this surface admits — and gone once the transcript is.
+              */}
+              {restoredRedacted && (s?.context.messages.length ?? 0) > 0 && (
+                <div style={{ color: 'var(--warn)' }}>
+                  <span aria-hidden>⚠ </span>
+                  Restored from the Session mirror — secret values are kept off disk, so{' '}
+                  <span style={{ color: 'var(--fg-dim)' }}>[redacted]</span> stands where one was.
                 </div>
               )}
 
