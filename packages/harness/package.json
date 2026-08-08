@@ -8,7 +8,8 @@
     "./sandbox": "./src/sandbox.ts",
     "./credentials": "./src/credentials.ts",
     "./secrets": "./src/secrets.ts",
-    "./session": "./src/session.ts"
+    "./session": "./src/session.ts",
+    "./subscription": "./src/subscription.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

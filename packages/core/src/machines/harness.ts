@@ -155,8 +155,13 @@ export const harnessMachine = setup({
     /*
       Real-service contract for readSubscriptionUsage:
         input  {}
-        output SubscriptionUsage — percentages plus where they came from
-        error  thrown Error; the view shows nothing rather than a stale number
+        output SubscriptionUsage — percentages plus where they came from. Live,
+               this is the plan's own 5-hour and weekly windows, read through
+               the Agent SDK's `get_usage` control request.
+        error  thrown Error, including when the session has no plan to have
+               windows. `unread` keeps whatever was last known rather than
+               clearing it — a failed read must not blank a good reading, and
+               must never substitute a default.
 
       Like every actor here, the default is a stub the machine never relies on;
       the mode chosen in actors/index.ts supplies the real one.
