@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { CREDENTIAL_ENV_VAR_NAME, SELFTEST_MARKER, agentCommand } from './agent.ts'
@@ -617,7 +617,9 @@ test.skipIf(blocked !== null)(
     // Written through `sh -c` inside the Sandbox rather than from this process,
     // because this process is not confined and would succeed at all six.
     const write = (path: string) => run(`/bin/echo probe > ${JSON.stringify(path)}`)
-    const scratch = (relative: string) => join(repoRoot, relative)
+    // Absolute paths pass through: `allowWrite` names two trees and only one of
+    // them is the clone, so the second cannot be written as a relative path.
+    const scratch = (path: string) => (path.startsWith('/') ? path : join(repoRoot, path))
 
     const targets: [string, string, 'denied' | 'open'][] = [
       // Core, and the fence's own generator. Denied.
@@ -631,6 +633,15 @@ test.skipIf(blocked !== null)(
       ['packages/userspace/package.json', "Userspace's package.json", 'open'],
       // The control: ordinary Userspace work, which must stay possible.
       ['packages/userspace/surfaces/.varnick-probe-write', 'a Userspace Surface', 'open'],
+      /*
+        The second writable tree, which had never been measured while the README
+        claimed the clone and this one were the only two. `tmpdir()` is not
+        `/private/tmp` on macOS — it is the per-user `/var/folders/...` directory
+        `$TMPDIR` points at — and probe 7 writes into `/private/tmp` and is
+        refused, so the pair is what shows the allowlist is a path list rather
+        than the word "temp".
+      */
+      [join(tmpdir(), '.varnick-probe-write'), 'the OS temp directory', 'open'],
     ]
 
     const before = new Map<string, string | null>()
@@ -670,6 +681,11 @@ test.skipIf(blocked !== null)(
       // next install — ADR-0002 accepts that, because closing it would also stop
       // the agent adding a Userspace dependency, which is ordinary work.
       expect(results.get('packages/userspace/package.json')).toBe(true)
+
+      // The other writable tree. Asserted here so "the clone and the OS temp
+      // directory are the only writable trees" has both halves measured: this
+      // one succeeds, and probe 7's write outside both is refused.
+      expect(results.get(join(tmpdir(), '.varnick-probe-write'))).toBe(true)
     } finally {
       for (const [path, contents] of before) {
         if (contents === null) rmSync(path, { force: true })
@@ -817,6 +833,135 @@ test.skipIf(blocked !== null)(
       ])
     } finally {
       rmSync(outside, { recursive: true, force: true })
+      await releaseSandbox()
+    }
+  },
+  120_000,
+)
+
+// ---------------------------------------------------------------------------
+// 8. The root above every home directory
+// ---------------------------------------------------------------------------
+
+test.skipIf(blocked !== null)(
+  '/Users is denied above the home directory, not only inside it',
+  async () => {
+    /*
+      `denyRead` names the home directory *and* the root that holds it, and only
+      the first half had ever been measured — every probe that reached for a
+      denied path reached for one under `$HOME`. That left "and so is /Users
+      above it" resting on the policy's own word, in a README section whose
+      heading promises a measurement.
+
+      `/Users/Shared` is the path that separates the two claims: it is under
+      /Users, it is under no home directory, and it is on every macOS install.
+    */
+    const run = runner(await freshSandbox(repoRoot))
+    try {
+      const usersRoot = await run('ls /Users')
+      const shared = await run('ls -a /Users/Shared')
+
+      // The controls. Both listings with no Sandbox at all, so a refusal above
+      // is the policy and not a path that was never there.
+      const usersRootControl = await runUnconfined('ls /Users')
+      const sharedControl = await runUnconfined('ls -a /Users/Shared')
+
+      report('probe 8 — the root above every home directory', [
+        ['/Users  list', outcome(usersRoot)],
+        ['/Users  list, no Sandbox  (control)', outcome(usersRootControl)],
+        ['/Users/Shared  list  (under no home directory)', outcome(shared)],
+        ['/Users/Shared  list, no Sandbox  (control)', outcome(sharedControl)],
+      ])
+
+      // The controls first: both paths exist and this user can list them.
+      expect(usersRootControl.code).toBe(0)
+      expect(sharedControl.code).toBe(0)
+
+      // The boundary. The second line is the one that is not about `$HOME`.
+      expect(usersRoot.code).not.toBe(0)
+      expect(usersRoot.stderr).toMatch(/not permitted/i)
+      expect(shared.code).not.toBe(0)
+      expect(shared.stderr).toMatch(/not permitted/i)
+    } finally {
+      await releaseSandbox()
+    }
+  },
+  120_000,
+)
+
+// ---------------------------------------------------------------------------
+// 9. Apple Events
+// ---------------------------------------------------------------------------
+
+test.skipIf(blocked !== null)(
+  'an Apple Event does not reach another application, and neither does open',
+  async () => {
+    /*
+      "Apple Events are separately denied, which is what actually declaws `open`
+      and `osascript`" was the only load-bearing mitigation in the README's
+      *Where confinement stops* with no probe behind it — and every other time
+      this project asserted a mitigation it had not run, it was wrong.
+
+      Measuring it needs one distinction first. `osascript` executes under the
+      policy (probe 2), and AppleScript answers a *static* property of an
+      application specifier — `get name`, `get version` — out of the target's
+      bundle without sending anything at all. Those succeed inside the Sandbox
+      and would have made a careless probe report the opposite of the truth. So
+      what is asked for here is a round trip: a property only the running
+      application can answer, and a Launch Services open request.
+
+      `allowAppleEvents: false` is what generates this. It withholds
+      `(allow appleevent-send)`, `(allow lsopen)` and the mach services behind
+      them from a profile that opens `(deny default)`, which is why the failures
+      below are connection errors rather than a permission message.
+
+      Nothing here launches an application on a green run — that is the result
+      being asserted. A run where these stopped being denied would open
+      Calculator once, and go red.
+    */
+    const run = runner(await freshSandbox(repoRoot))
+    try {
+      // The control: osascript itself runs, with no application involved.
+      const arithmetic = await run("/usr/bin/osascript -e 'return 6*7'")
+
+      // Reported, not asserted: the answer AppleScript gives without sending an
+      // event. It is here so the next reader does not measure this and conclude
+      // Apple Events work.
+      const staticProperty = await run(
+        `/usr/bin/osascript -e 'tell application "Finder" to get version'`,
+      )
+
+      // The round trips. Only a running Finder can count its windows, and only
+      // a running System Events can enumerate processes.
+      const countWindows = await run(
+        `/usr/bin/osascript -e 'tell application "Finder" to count windows'`,
+      )
+      const processes = await run(
+        `/usr/bin/osascript -e 'tell application "System Events" to get name of every process'`,
+      )
+
+      // And the Launch Services half, which is `lsopen` rather than
+      // `appleevent-send` — the operation `open` actually needs.
+      const opened = await run('/usr/bin/open -a Calculator')
+
+      report('probe 9 — Apple Events, and the open request beside them', [
+        ["osascript  'return 6*7'  (control)", outcome(arithmetic)],
+        ['osascript  Finder version  (no event sent)', outcome(staticProperty)],
+        ['osascript  Finder count windows', outcome(countWindows)],
+        ['osascript  System Events process list', outcome(processes)],
+        ['open  -a Calculator', outcome(opened)],
+      ])
+
+      // The control: the binary runs, so the three refusals below are about the
+      // event and not about osascript being unreachable.
+      expect(arithmetic.code).toBe(0)
+      expect(arithmetic.stdout.trim()).toBe('42')
+
+      // The boundary.
+      expect(countWindows.code).not.toBe(0)
+      expect(processes.code).not.toBe(0)
+      expect(opened.code).not.toBe(0)
+    } finally {
       await releaseSandbox()
     }
   },

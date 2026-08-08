@@ -9,8 +9,26 @@ import type { SurfaceDescriptor } from '../domain.ts'
  * is this machine's entire reason to exist, and it is asserted in drive.ts.
  */
 
+/** The states with a card at `#/states`. One scenario each, checked by drive.ts. */
 export const SURFACE_STATE_PATHS = ['loading', 'loaded', 'failed'] as const
 export type SurfaceStatePath = (typeof SURFACE_STATE_PATHS)[number]
+
+/**
+ * `unloaded` is a real state and deliberately has no card.
+ *
+ * It is final, and the parent drops the actor ref the moment it handles
+ * `UNLOAD_SURFACE`, so nothing in the product is ever rendered in it — a card
+ * would be a picture of something no user can reach. Driving the child to
+ * `unloaded` directly, which the bare page can do, leaves a dead panel; that is
+ * documented at the button in chat-surface.tsx rather than drawn.
+ *
+ * It is exported anyway, because the exported lists are what `drive.ts` builds
+ * the surface-brief ban list from. A state the machines have and the list does
+ * not is a state a brief can name with the build staying green, which is the
+ * one thing that check exists to stop. Two lists, two jobs: this one is every
+ * state, `SURFACE_STATE_PATHS` is the ones with cards.
+ */
+export const SURFACE_UNCARDED_STATE_PATHS = ['unloaded'] as const
 
 export interface SurfaceContext {
   readonly descriptor: SurfaceDescriptor

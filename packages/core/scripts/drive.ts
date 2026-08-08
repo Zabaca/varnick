@@ -14,7 +14,11 @@ import { join } from 'node:path'
 import { createActor, fromPromise, waitFor } from 'xstate'
 import { harnessMachine, HARNESS_STATE_PATHS } from '../src/machines/harness.ts'
 import { sessionMachine, SESSION_STATE_PATHS, type SessionEvent } from '../src/machines/session.ts'
-import { surfaceMachine, SURFACE_STATE_PATHS } from '../src/machines/surface.ts'
+import {
+  surfaceMachine,
+  SURFACE_STATE_PATHS,
+  SURFACE_UNCARDED_STATE_PATHS,
+} from '../src/machines/surface.ts'
 import {
   regionOf,
   canStartAgent,
@@ -2188,7 +2192,14 @@ type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded'
     Pointing at the route is fine. `#/states` is a pointer, not a copy.
   */
   const dir = new URL('../../../.impeccable/surfaces/', import.meta.url).pathname
-  const banned = [...HARNESS_STATE_PATHS, ...SESSION_STATE_PATHS, ...SURFACE_STATE_PATHS.map((p) => `surface.${p}`)]
+  // Every state the machines have, not only the ones with cards: a brief that
+  // names `surface.unloaded` has to fail here too, and it is exactly the state
+  // the states page cannot catch because it deliberately has no card.
+  const banned = [
+    ...HARNESS_STATE_PATHS,
+    ...SESSION_STATE_PATHS,
+    ...[...SURFACE_STATE_PATHS, ...SURFACE_UNCARDED_STATE_PATHS].map((p) => `surface.${p}`),
+  ]
 
   let briefs: string[] = []
   try {

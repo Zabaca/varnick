@@ -43,7 +43,7 @@ _Avoid_: MCP server (a Custom Tool may be one; the term is about where the code 
 **Secrets Store**:
 Host-side storage the agent cannot read. The agent authors code that names a secret; the host resolves the name when it runs that code. See [ADR-0006](./docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
 
-It is worth knowing *why* it cannot, because the obvious answer is wrong and was believed for a while: not because `/usr/bin/security` is denied — that binary still runs, and the Security framework links in-process anyway — but because the Keychain file lives under `$HOME`, which `denyRead` covers. The protection is real and kernel-enforced, and it is incidental to where Apple puts the file. Widening `allowRead` over `$HOME` would remove it silently. See the correction in [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md).
+It is worth knowing *why* it cannot, because the obvious answer is wrong and was believed for a while: not because `/usr/bin/security` is denied — that binary still runs, and the Security framework links in-process anyway — but because the Keychain file lives under `$HOME`, which `denyRead` covers. The protection is real and kernel-enforced, and it is incidental to where Apple puts the file. Widening `allowRead` over `$HOME` would remove it silently. See the first correction in [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md).
 _Avoid_: vault, keychain, credentials (credentials are what authenticate the agent itself, which is a separate path)
 
 ### Changing Core
@@ -76,7 +76,7 @@ _Avoid_: summarise (the mechanism), truncate, prune (both lose the fact that not
 
 ### State names
 
-These are machine state names before they are UI words, and the two must not diverge. Every one is addressable at `#/states`.
+These are machine state names before they are UI words, and the two must not diverge. Every one below is addressable at `#/states`; the single state that is not is named as such where it appears.
 
 **Harness — `credential`**: `absent`, `reading`, `present`, `rejected`.
 `absent` means no credential is available, whether or not a read was attempted; a read that failed also records why. `rejected` means one exists and the API refused it — a different problem with a different fix.
@@ -97,7 +97,9 @@ _Avoid_: stopped, idle, dead, paused, blocked
 
 **Session — `composer`**: `typing`, `menu`. `menu` is derived from the draft, not toggled.
 
-**Surface**: `loading`, `loaded`, `failed`, `unloaded`. `failed` is the only state with a retry, because the state has no handler rather than because the UI hid a button.
+**Surface**: `loading`, `loaded`, `failed`. `failed` is the only state with a retry, because the state has no handler rather than because the UI hid a button.
+
+The machine has a fourth, `unloaded`, and it is the exception to the line above: it is final, and the parent drops the actor ref when it unloads a Surface, so nothing is ever rendered in it and it has no card. It is exported from `surface.ts` as `SURFACE_UNCARDED_STATE_PATHS` so a brief that names it still fails the build.
 
 ### Event names
 

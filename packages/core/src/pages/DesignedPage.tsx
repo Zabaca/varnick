@@ -125,16 +125,26 @@ function LiveChat({
     if (agentState === 'running') send({ type: 'READ_SUBSCRIPTION' })
   }, [agentState, send])
 
+  /*
+    The Sandbox is checked on start-up, not after a credential arrives.
+
+    It used to wait for `credential.present`, which made the product's central
+    claim invisible to anyone who had not stored a key yet: no credential meant
+    no check, so no policy was ever generated and `sandbox.unchecked` was the
+    resting state of a fresh clone. `refusalFor` reports the credential first, so
+    nothing on screen said so either.
+
+    The two facts are independent — one is about this machine, the other about
+    this developer — and `canStartAgent` already requires both. Checking early
+    means a developer with no key still learns whether their machine can contain
+    an agent at all, which is the thing worth knowing before going to get one.
+  */
   useEffect(() => {
-    if (
-      ctx.credentialState === 'present' &&
-      ctx.sandboxState === 'unchecked' &&
-      !attempted.current.sandbox
-    ) {
+    if (ctx.sandboxState === 'unchecked' && !attempted.current.sandbox) {
       attempted.current.sandbox = true
       send({ type: 'CHECK_SANDBOX' })
     }
-  }, [ctx.credentialState, ctx.sandboxState, send])
+  }, [ctx.sandboxState, send])
 
   useEffect(() => {
     if (

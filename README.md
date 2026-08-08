@@ -96,18 +96,23 @@ working boundary report the same green.
   `Glob` — is refused four times with `EPERM`. The same four reach that marker
   inside the clone, and the Agent SDK reports itself loaded from within the
   Sandbox, so a denial cannot mean the process never started.
-- Your home directory is unreadable, and so is `/Users` above it. SSH keys,
-  cloud credentials, and every repository stored under a home directory are
-  outside the agent's reach. The clone is read back out of that denial. Reads
-  are allow-by-default, so this is a statement about those roots and not about
-  the whole filesystem — see *Where confinement stops*.
+- Your home directory is unreadable, and so is `/Users` above it. Both roots are
+  asked for directly: listing `/Users` is refused, and so is `/Users/Shared`,
+  which is under no home directory. SSH keys, cloud credentials, and every
+  repository stored under a home directory are outside the agent's reach. The
+  clone is read back out of that denial. Reads are allow-by-default, so this is
+  a statement about those roots and not about the whole filesystem — see *Where
+  confinement stops*.
 - Writes are the other way round: the clone and the OS temp directory are the
-  only writable trees. A write to a directory outside both is refused.
+  only writable trees. Both are written to in the same run that is refused the
+  five paths below. The OS temp directory means `$TMPDIR` — `/var/folders/…` on
+  macOS, not `/private/tmp`, and a write into `/private/tmp` is refused.
 - Neither keychain on the machine can be opened, though by two different
   mechanisms. The login Keychain is not even in the sandboxed search list,
   because its file lives under the denied home directory. `/Library/Keychains`
-  does not, so it is denied on its own line — it holds `System.keychain`, whose
-  generic-password items include the Wi-Fi networks the machine has joined.
+  does not, so it is denied on its own line. What was in it when it was still
+  readable is in ADR-0003's second correction, and cannot be measured again from
+  here now that the directory is denied.
 - `api.anthropic.com` and `registry.npmjs.org` are reachable, over working TLS,
   and an unlisted host is not: `example.com` comes back
   `curl: (56) CONNECT tunnel failed, response 403`. The allowlist is strict and
@@ -143,8 +148,9 @@ working boundary report the same green.
   written from. What stands in its place is the first bullet, which runs the
   same syscalls in the same process tree under the same policy — that is the
   load-bearing measurement, and this one would be confirmation.
-- Sibling home directories. `/Users` is denied as a whole, but this machine has
-  one home directory, so no probe has read from another.
+- Sibling home directories. `/Users` and `/Users/Shared` are both asked for and
+  both refused, but this machine has one home directory, so no probe has reached
+  for another person's.
 
 ## The policy is yours to edit, and still gets varnick's fixes
 
@@ -194,7 +200,13 @@ is a limit somebody measured, written at the strength the measurement supports.
   is mode `-r-s--x--x`, unreadable to every non-root process on the machine
   before any policy applies. The list is a tripwire, not a boundary, and the
   keychains above are protected by file denials rather than by it. Apple Events
-  are separately denied, which is what actually declaws `open` and `osascript`.
+  are separately denied, and that half is now measured rather than reasoned:
+  `osascript` still evaluates a script, but an event only a running application
+  can answer — asking Finder to count its windows, asking System Events for the
+  process list — comes back a connection error, and `open -a Calculator` is
+  refused by Launch Services. One trap for whoever re-runs this: AppleScript
+  answers a *static* property such as `get version` out of the target's bundle
+  without sending an event at all, so that one succeeds and measures nothing.
 - **The Sandbox does not protect the clone from the agent.** Everything in
   Userspace is the agent's to rewrite — the write probe uses exactly that as its
   control, and it succeeds. Git is the undo; the Sandbox is not.
@@ -223,9 +235,17 @@ bun test packages         # unit tests plus the real-kernel boundary probes
 bun run drive             # the state-machine driver
 bun run typecheck
 bun run build
+bun run lint              # the two ADR import rules, and nothing else
 cargo test --manifest-path src-tauri/Cargo.toml
+cargo build --manifest-path src-tauri/Cargo.toml
 scripts/clean-clone.sh    # what a stranger's clone does, as far as one machine can show
 ```
+
+`cargo build` is on that list because a green `cargo test` is not evidence that
+the application builds: it compiles test harnesses and leaves `target/debug`
+holding no `varnick` binary, no `.dylib` and no `.a`, so everything that only
+happens at the real link — the three crate types the Tauri app is assembled
+from — is exercised nowhere else in the loop.
 
 The boundary probes skip loudly rather than fail on a platform that cannot run
 them.

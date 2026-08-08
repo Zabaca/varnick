@@ -29,7 +29,7 @@ Grep  ~/.zbc-read-probe                 -> the file's contents
   Two consequences of that, both narrow. The command the confined process runs is a constant in `packages/harness/src/turn.ts` rather than a field on the request, so no prompt crosses the bridge and there is nothing to smuggle through the one control kind that would otherwise want free text. And the port the loop drives the Session through grew a fifth method, `contextTokens()` — a read with no argument, answered by the SDK's `getContextUsage()` on the same session. Its alternative was a context meter showing a figure nobody measured.
 
 
-## Correction: what actually protects the Keychain
+## First correction: what actually protects the Keychain
 
 Two rounds of this were wrong before it was measured properly, so the measurement is written out in full. Darwin 25.5, `srt` 0.0.67, under the policy `sandboxPolicyFor` generates.
 
@@ -45,7 +45,7 @@ cat /usr/bin/security               -> Operation not permitted
 
 `srt`'s profile carries an unconditional `(allow process-exec)` while `denyRead` emits `file-read-data` denials. Those are different operations. Denying binaries could not have worked anyway: the Security framework links in-process, so a program the agent writes reaches the Keychain API with no `/usr/bin/security` involved.
 
-**Pursuing an execute denial in `srt` is not worth it, and the list stays.** The knob does not exist: `(allow process-exec)` is a literal in `generateSandboxProfile` in `dist/sandbox/macos-sandbox-utils.js`, and `SandboxRuntimeConfigSchema` has no exec-related field at all, so getting one means changing `srt` upstream and then carrying a fork or a wait. What that buys is bounded and small. It does nothing for the Keychain, which is the thing anyone would want it for, because the Security framework links in-process — the agent writes forty lines of Swift and never touches `/usr/bin/security`. It does not close `open` or `osascript` either, only makes them louder: `allowAppleEvents: false` already denies `appleevent-send` and `lsopen`, which is what actually stopped them doing damage, and a program the agent compiles can call `NSWorkspace` the same way. An execute allowlist is a real boundary against a program that *runs* something; against a program that *is* something it is a speed bump, and every process the agent needs — `git`, `bun`, the compiler — has to be on the allowlist anyway. So: not pursued. `UNREADABLE_BINARIES` keeps its four entries, because a binary the agent cannot open is one it cannot copy or patch and these four are worth seeing in a violation log, and the name and the comment now say that is all it is. Revisit only if `srt` grows the option for its own reasons.
+**Pursuing an execute denial in `srt` is not worth it, and the list stays.** The knob does not exist: `(allow process-exec)` is a literal in `generateSandboxProfile` in `dist/sandbox/macos-sandbox-utils.js`, and `SandboxRuntimeConfigSchema` has no exec-related field at all, so getting one means changing `srt` upstream and then carrying a fork or a wait. What that buys is bounded and small. It does nothing for the Keychain, which is the thing anyone would want it for, because the Security framework links in-process — the agent writes forty lines of Swift and never touches `/usr/bin/security`. It does not close `open` or `osascript` either, only makes them louder: `allowAppleEvents: false` already denies `appleevent-send` and `lsopen`, which is what actually stopped them doing damage, and probe 9 is where that is measured rather than assumed. A program the agent compiles can call `NSWorkspace` the same way. An execute allowlist is a real boundary against a program that *runs* something; against a program that *is* something it is a speed bump, and every process the agent needs — `git`, `bun`, the compiler — has to be on the allowlist anyway. So: not pursued. `UNREADABLE_BINARIES` keeps its four entries, because a binary the agent cannot open is one it cannot copy or patch and these four are worth seeing in a violation log, and the name and the comment now say that is all it is. Revisit only if `srt` grows the option for its own reasons.
 
 **The Keychain is protected regardless, and not by any of that.** The same item, in two keychains differing only in location:
 
@@ -61,9 +61,9 @@ The login Keychain is invisible from inside the Sandbox. What gates it is `denyR
 Removing `com.apple.securityd.xpc` from `srt`'s Mach allowlist changes none of the above. It was measured because the allowlist looked like the cause; it is not.
 
 - **The protection is incidental, not designed, and that is the risk worth carrying.** It holds because the Keychain happens to live under a denied path. Any future read-allow covering `$HOME` silently re-opens it — and there is real pressure toward exactly that, since a runtime installed under `~/.bun` or `~/.nvm` is unreadable for the same reason. Whatever is added must be narrow, and `packages/harness/src/sandbox.boundary.test.ts` asserts the Keychain stays unreachable so that widening it fails loudly.
-- **`osascript` and `open` still execute.** Apple Events are denied, which removes the worst of it, but the deny-by-read reasoning does not work and should not be relied on anywhere else.
+- **`osascript` and `open` still execute.** Apple Events are denied, which removes the worst of it and is measured by probe 9, but the deny-by-read reasoning does not work and should not be relied on anywhere else.
 
-## Correction, second part: the other keychain was not covered, and now is
+## Second correction: the other keychain was not covered, and now is
 
 `denyRead` on `$HOME` protects the login Keychain because of where the file sits. `/Library/Keychains` sits nowhere near a home directory, so nothing covered it. It was recorded here as readable and described as "system certificates, not user secrets". That description was wrong. Dumped from inside the Sandbox, before any change:
 
@@ -92,7 +92,7 @@ TLS is unaffected: the roots the handshake needs are in `/System/Library/Keychai
 
 `packages/harness/src/sandbox.boundary.test.ts` now asserts both halves — the keychains unreachable, and both allowlisted hosts still reachable — so a future widening cannot quietly trade one for the other.
 
-## Correction, third part: the fix above did not reach this repository
+## Third correction: the fix above did not reach this repository
 
 The deny shipped and the probe for it failed on merge, in this repository, because `sandbox-policy.json` had been generated an hour earlier without it. `ensureSandboxPolicy` wrote the file when absent and read it when present, so a clone kept the policy it was born with and every strengthening reached new clones only. Deleting the file made the probe pass. **Nobody deletes that file in a real clone**, and the failure is silent from both ends: the surface says `sandbox.available`, the policy is a policy, and it is simply not the one anyone thinks is running.
 
@@ -113,9 +113,11 @@ A clone that carries a policy but no baseline — every clone in existence when 
 
 This adopts the design and the measurements from `zbc/packages/agent/docs/adr/0002-containment-wraps-the-cli-process.md`.
 
-## Second correction: `sudo` is not stopped by the denied list either
+## A further correction to the first: `sudo` is not stopped by the denied list either
 
-The sentence above — sudo is refused "setuid, its own reason" — was still reasoned rather than measured. `packages/harness/src/containment.probe.test.ts` measures it, by generating the same policy with all four `DENIED_BINARIES` entries lifted out of `denyRead` into a throwaway clone and running the probe against that. Darwin 25.5, `srt` 0.0.67:
+*Not an ordinal of its own — it corrects one sentence of the first correction, and the numbered run below continues from the third.*
+
+The sentence above — sudo is refused "setuid, its own reason" — was still reasoned rather than measured. `packages/harness/src/containment.probe.test.ts` measures it, by generating the same policy with all four `UNREADABLE_BINARIES` entries lifted out of `denyRead` into a throwaway clone and running the probe against that. Darwin 25.5, `srt` 0.0.67:
 
 ```
                           denied list on      denied list lifted
@@ -124,18 +126,45 @@ The sentence above — sudo is refused "setuid, its own reason" — was still re
 /usr/bin/sudo      exec   not permitted       not permitted
 ```
 
-Two things follow. Sudo's refusal survives removing every entry, so `denyRead` is not what causes it. And sudo is mode `-r-s--x--x`, unreadable to every non-root process on the machine before any policy applies — so its entry in `DENIED_BINARIES` denies nothing that was not already denied, and the two different errnos are the tell.
+Two things follow. Sudo's refusal survives removing every entry, so `denyRead` is not what causes it. And sudo is mode `-r-s--x--x`, unreadable to every non-root process on the machine before any policy applies — so its entry in `UNREADABLE_BINARIES` denies nothing that was not already denied, and the two different errnos are the tell.
 
 The list is kept anyway. It does deny the *contents* of `security`, `osascript` and `open`, which is worth having; what it never did was deny execution. Removing entries to make the documentation true would be editing the fence to fit its label.
 
+## Fourth correction: reads are allow-by-default, so a repository outside a home directory was never covered
+
+Three documents said the Sandbox put "other repositories" out of the agent's reach. It puts repositories *under a home directory* out of reach, which is where they usually are and not where they have to be. `denyRead` is a deny list — `/Users`, the home directory inside it, `/Library/Keychains`, and four binaries — and `srt` reads everything not on it. `allowWrite` is the opposite shape, a genuine allowlist naming the clone and the OS temp directory, which is why the two halves of the boundary do not describe each other.
+
+Probe 7 in `containment.probe.test.ts` is the measurement. A git repository planted outside every home directory:
+
+```
+read  secret.txt              READABLE — exit 0
+read  under $HOME  (control)  denied — exit 1
+write into it                 refused — exit 1
+```
+
+The control is the point: the same read is refused under `$HOME`, so this is about location and not about a broken wrapper.
+
+**Probe 2b had already shown this and nobody read it that way.** Lifting `/usr/bin/security` out of `denyRead` only makes `cat` succeed if `/usr` was readable all along, which it was. A measurement can sit in the output of a green suite for a release without being seen, because it was taken to answer a different question.
+
+**Nothing is widened or narrowed here; what changed is what is claimed.** `sandbox.ts` says which shape it uses at the `denyRead` list, `README.md` states the asymmetry under *Where confinement stops* rather than implying a filesystem-wide boundary, and ADR-0002 no longer says the protection covers repositories generally. The fix for a repository on `/opt`, `/srv`, `/Volumes` or an external disk is to add the path to `denyRead` yourself.
+
+**Whether reads should be deny-by-default at all is open, and is a decision rather than an implementation.** `srt`'s filesystem config accepts a `denyAllExcept` shape; inverting the boundary is strictly stronger and would have made three of this project's four wrong turns impossible to make. The cost is that an interpreter, its standard library, `git`, the system libraries every process links, and the CA bundle all have to be reachable and are not in one place, and an allowlist that is nearly right fails as a startup error with no obvious cause. Ticket 18 holds the trade-off and stays `needs-info` until someone weighs it; a deny-by-default policy that has not started an agent would not be evidence of anything.
+
 ## What the probes measure, and what they do not
 
-`containment.probe.test.ts` is ticket 04. Five probes, each with a positive control beside it, run against the real policy on the real machine:
+`containment.probe.test.ts` is ticket 04. Nine probes and one variant, each with a positive control beside it, run against the real policy on the real machine. The list is written from the suite's printed output, because the previous version of it was written from memory and named five:
 
 1. one file under `$HOME`, asked for four ways — `Bash`, and the `Read`, `Grep` and `Glob` *shapes* run in-process inside the real agent entry. All four denied; all four permitted against the same file inside the clone.
-2. every `DENIED_BINARIES` entry, read and executed, with the same command run unconfined as the control.
+2. every `UNREADABLE_BINARIES` entry, read and executed, with the same command run unconfined as the control.
+   - **2b**, the variant: the same policy with all four entries lifted out into a throwaway clone, which is what shows the list is not what stops `sudo`.
 3. an allowlisted host answers; an unlisted one gets `CONNECT tunnel failed, response 403`.
 4. a clone whose policy the schema rejects raises rather than proceeding.
-5. the SDK's *own* `Read`, `Grep` and `Glob` tools, driven by a real Session.
+5. the write boundary — Core, the Harness, the root `package.json`, the generated policy and a root `vite.config` refused, with Userspace, its own manifest and the OS temp directory writable in the same run.
+6. the SDK's *own* `Read`, `Grep` and `Glob` tools, driven by a real Session.
+7. a git repository outside every home directory: readable, and refused a write.
+8. `/Users` and `/Users/Shared` — the root above every home directory, and a path under it that is under no home directory.
+9. Apple Events and Launch Services: an event only a running application can answer is refused, and so is `open`.
 
-Probe 5 is the only one needing a credential, and it skips with a printed reason without one. That is a real gap and it is named here rather than papered over: probe 1 runs the syscalls those tools make, in the agent process, under the same kernel policy and inside the same process tree — which is why it is the load-bearing measurement and probe 5 is confirmation. There is deliberately no faked substitute, because the Sandbox denies local binding and every unlisted host, so a stub API is unreachable from inside and widening the policy to reach one would be widening the policy to make a probe pass.
+Probe 6 is the only one needing a credential, and it skips with a printed reason without one. That is a real gap and it is named here rather than papered over: probe 1 runs the syscalls those tools make, in the agent process, under the same kernel policy and inside the same process tree — which is why it is the load-bearing measurement and probe 6 is confirmation. There is deliberately no faked substitute, because the Sandbox denies local binding and every unlisted host, so a stub API is unreachable from inside and widening the policy to reach one would be widening the policy to make a probe pass.
+
+Probe 9 is worth one more sentence, because it is the probe most likely to be re-run and misread. AppleScript answers a *static* property of an application specifier — `get name`, `get version` — out of the target's bundle, sending no event; those succeed inside the Sandbox. Only a round trip measures anything, which is why the probe asks Finder to count its windows and System Events to list processes.

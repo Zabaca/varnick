@@ -73,7 +73,7 @@ Still out: the canvas or artifact panel, multiple sessions, session forking, a s
 
 Explicitly undecided — record, do not invent:
 
-- **Persistence mechanism** for the Secrets Store. *(The host-side session mirror is decided: JSON Lines, one file per Session, under the app-data directory — see the spec's Implementation Decisions.)*
+- **Where the Secrets Store should live.** Its persistence mechanism is no longer open — it ships in the login keychain, one generic-password item per secret under the `varnick-secrets` service plus a `varnick.index` item holding the names. What is open is whether that is the right home, and it is open because of a measurement: the Sandbox keeps the agent out of the keychain only because the file happens to sit under the denied home directory, so the store's safety is incidental to Apple's choice of path rather than to varnick's. Named as a risk in ADR-0003's first correction, and carried as an open decision in the spec. *(The host-side session mirror is decided and not on this list: JSON Lines, one file per Session, under the app-data directory.)*
 - **Open-source licence.**
 - **Distribution.** Whether built binaries are released, or the project is source-only.
 - **Whether the dev server can run inside the sandbox.** If it can, the remaining escape in `docs/adr/0002-core-userspace-boundary.md` closes; nobody has checked.
