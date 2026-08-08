@@ -2,7 +2,7 @@
 
 **What to build:** A reader of the README knows exactly what the boundary does and does not protect, before they walk away from an agent running unattended. Nothing here is a code change; it is the difference between a security claim and a security property, and it can only be written after something has measured the boundary.
 
-**Blocked by:** 04 (the probes), 16 (what confinement actually stops is an open question until that is settled). The README may claim only what was measured — writing it earlier is how a documented boundary becomes a believed one.
+**Blocked by:** 04 (the probes), 16 (the deny-list wording and the System.keychain question). The README may claim only what was measured — writing it earlier is how a documented boundary becomes a believed one.
 
 **Status:** ready-for-agent
 

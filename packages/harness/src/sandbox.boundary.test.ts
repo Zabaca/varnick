@@ -4,7 +4,6 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { establishSandbox, releaseSandbox, type EstablishedSandbox } from './sandbox.ts'
-import { SECRETS_KEYCHAIN_SERVICE, SECRETS_INDEX_ACCOUNT } from './secrets.ts'
 
 /*
   The slow suite. Everything here runs a real process under a real kernel
@@ -106,41 +105,35 @@ test.skipIf(blocked !== null)(
 )
 
 test.skipIf(blocked !== null)(
-  'security is unreadable and runs anyway, so the Secrets Store is NOT closed by the policy',
+  'security runs despite being unreadable, and still cannot reach the login Keychain',
   async () => {
     /*
-      This probe was written to prove the Secrets Store unreadable from inside
-      the sandbox. It measured the opposite, and the measurement is kept here
-      because that is what a boundary suite is for.
+      Two claims, measured separately, because conflating them cost this project
+      two wrong corrections.
 
-      ADR-0003 says denying execution means denying read: srt has no execute
-      allowlist, so `/usr/bin/security` is blocked by making it unreadable. The
-      first half is true — `cat` on it is refused. The second half does not
-      follow. srt's generated macOS profile contains an unconditional
-      `(allow process-exec)`, and `denyRead` emits `file-read-data` denials,
-      which is a different operation from exec. So the binary is unopenable and
-      fully runnable at the same time.
+      1. Denying read does not deny execution. ADR-0003 said `srt` has no execute
+         allowlist, so a binary is blocked by making it unreadable. The first half
+         is true — `cat` on it is refused. The second half does not follow: srt's
+         generated macOS profile carries an unconditional `(allow process-exec)`,
+         while `denyRead` emits `file-read-data` denials, a different operation.
+         So the binary is unopenable and fully runnable at once. Denying binaries
+         could not have worked anyway, since the Security framework links
+         in-process.
 
-      It also does not matter that the keychain *files* are denied: `security`
-      does not read them. It asks securityd over Mach, and srt's policy has no
-      surface for Mach services. Measured on Darwin 25.5 with srt 0.0.67 by
-      storing a value in a throwaway keychain and reading it back from inside
-      the sandbox: it came back in plaintext, with no prompt, exit 0.
+      2. The Keychain is protected regardless, by `denyRead` on $HOME. That is
+         where the login Keychain file lives, and it is what actually stops the
+         agent — not the denied binary, and not srt's Mach allowlist, which still
+         permits com.apple.securityd.xpc and makes no difference either way.
 
-      Nothing here creates a keychain item — this suite never touches the
-      developer's real keychain. Reaching securityd is enough: a search that
-      answers "no such item" is a search that ran.
+      The load-bearing assertion is the second one, and it is load-bearing
+      because the protection is incidental. Nothing was designed to put the
+      Keychain out of reach; it is out of reach because of where Apple stores it.
+      A future policy that adds a read-allow covering $HOME — and there is real
+      pressure toward that, since a runtime under ~/.bun is unreadable for the
+      same reason — would reopen it silently. This test is what makes that loud.
 
-      What this does not mean: it is not a reason to widen the policy, and it is
-      not fixed by adding entries to DENIED_BINARIES, because that list is
-      denyRead and denyRead is already what is failing. Closing it needs either
-      an execute deny srt does not have, or a store that is a file under the
-      denied home directory rather than a daemon behind an IPC boundary. That is
-      a decision above this ticket. Ticket 04 measures, ticket 13 writes it down.
-
-      The assertions below are inverted on purpose. If a future srt or policy
-      closes this, this test goes red and whoever closed it gets to delete a
-      caveat from three documents — which is exactly the moment to notice.
+      Nothing here creates a Keychain item. This suite never touches the
+      developer's real Keychain.
     */
 
     // The control, outside the sandbox: the binary is there and is executable.
@@ -148,25 +141,34 @@ test.skipIf(blocked !== null)(
     // `security` at all.
     accessSync('/usr/bin/security', constants.R_OK | constants.X_OK)
 
-    // Holds: the file cannot be opened.
+    // 1. Unreadable, and runs anyway.
     const read = await run('cat /usr/bin/security')
     expect(read.code).not.toBe(0)
     expect(read.stderr).toMatch(/not permitted|Permission denied|No such file/i)
 
-    // Does not hold: it runs, and it reaches the store.
-    const searched = await run(
-      `/usr/bin/security find-generic-password -s ${SECRETS_KEYCHAIN_SERVICE} -a ${SECRETS_INDEX_ACCOUNT} -w`,
+    const ran = await run('/usr/bin/security help')
+    expect(ran.stderr + ran.stdout).toMatch(/keychain|Usage/i)
+
+    // 2. And still cannot see the login Keychain. `list-keychains` reports the
+    //    search list this process actually has; the login Keychain is absent
+    //    from it because its file is under a denied path.
+    const listed = await run('/usr/bin/security list-keychains')
+    expect(listed.code).toBe(0)
+    expect(listed.stdout).not.toContain('login.keychain')
+    expect(listed.stdout).toContain('System.keychain')
+
+    // The file itself, directly. Belt and braces: if the search list ever stops
+    // being a reliable signal, this stays true for as long as $HOME is denied.
+    const file = await run(
+      `cat ${JSON.stringify(join(homedir(), 'Library/Keychains/login.keychain-db'))}`,
     )
-    // 44 is `security`'s own "item not found", and that string is securityd's
-    // own error text. Both mean the program ran and the query was answered.
-    expect(searched.code).toBe(44)
-    expect(searched.stderr).toContain('SecKeychainSearchCopyNext')
-    expect(searched.stderr).not.toMatch(/Operation not permitted/i)
+    expect(file.code).not.toBe(0)
+    expect(file.stderr).toMatch(/not permitted|Permission denied|No such file/i)
 
     console.log(
-      'boundary probe: /usr/bin/security is unreadable under the policy and executes anyway —' +
-        ' the Secrets Store is reachable from inside the sandbox. See the comment in' +
-        ' packages/harness/src/sandbox.boundary.test.ts and ADR-0003.',
+      'boundary probe: /usr/bin/security is unreadable and executes anyway, but the login' +
+        ' Keychain is not in the sandboxed search list and its file cannot be opened.' +
+        ' The Keychain is protected by denyRead on $HOME — see ADR-0003.',
     )
   },
   120_000,

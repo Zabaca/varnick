@@ -16,7 +16,7 @@ Storage mechanism is an open decision, carried from `PRODUCT.md`. It is the same
 
 - [ ] Secrets can be stored, listed, renamed and removed without a restart
 - [ ] The agent is given the list of **names** and never a value
-- [ ] The store is unreadable from inside the sandbox, proven rather than assumed — **attempted, and disproved.** The proof is in `sandbox.boundary.test.ts` as an inverted assertion. Ticket 16 owns the choice of what to do about it; it cannot be met by Keychain storage under the current policy
+- [x] The store is unreadable from inside the sandbox, proven rather than assumed — **met, but not by the mechanism this ticket assumed.** The first measurement used a throwaway keychain in `/private/tmp`, a readable location, and concluded the store was exposed. Repeated with the keychain under `$HOME` — where the login Keychain actually lives — it is unreachable. `denyRead` on `$HOME` is what does it, not the denied binary. See ADR-0003's correction
 - [ ] Grepping the transcript and the Session mirror for a stored test value finds nothing
 
 Covers stories 16, 17, 19, 20, 21.
@@ -49,3 +49,13 @@ and into the Harness runtime. The wiring now lives in
 and a keychain. Behaviour is unchanged: the store is reloaded before every save,
 a failed reload keeps the last good snapshot, and a store that will not open at
 all makes the save reject so `persistence.saveFailed` says so.
+
+**Later correction.** The exposure reported above was a measurement artefact, and
+the third criterion is met. A keychain in `/private/tmp` can be read from inside
+the Sandbox; the login Keychain, under `$HOME`, cannot — `security
+list-keychains` inside the Sandbox does not even show it. Both things varnick
+stores there are covered.
+
+What remains true from that investigation: denying a binary by denying read does
+not stop it executing, and `osascript` and `open` still run. That reasoning
+should not be relied on anywhere. See ADR-0003.

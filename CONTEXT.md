@@ -41,9 +41,9 @@ A tool given to an agent as an in-process SDK MCP tool rather than a built-in. R
 _Avoid_: MCP server (a Custom Tool may be one; the term is about where the code runs)
 
 **Secrets Store**:
-Host-side storage the agent never *needs* to read. The agent authors code that names a secret; the host resolves the name when it runs that code. See [ADR-0006](./docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
+Host-side storage the agent cannot read. The agent authors code that names a secret; the host resolves the name when it runs that code. See [ADR-0006](./docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
 
-This entry used to read "can never read". That was measured while building ticket 10 and found to be false: a sandboxed process can still execute `/usr/bin/security` and reach the Keychain through `securityd`. The design — the agent handles names, the host handles values — is unchanged and still right. What changed is that it is a design the agent has no reason to defeat, not a wall it cannot climb. See the correction in [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md) and ticket 16.
+It is worth knowing *why* it cannot, because the obvious answer is wrong and was believed for a while: not because `/usr/bin/security` is denied — that binary still runs, and the Security framework links in-process anyway — but because the Keychain file lives under `$HOME`, which `denyRead` covers. The protection is real and kernel-enforced, and it is incidental to where Apple puts the file. Widening `allowRead` over `$HOME` would remove it silently. See the correction in [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md).
 _Avoid_: vault, keychain, credentials (credentials are what authenticate the agent itself, which is a separate path)
 
 ### Changing Core
