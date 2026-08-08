@@ -36,7 +36,13 @@
  */
 
 import { establishSandbox } from './sandbox.ts'
-import { createSessionStore, defaultSessionRoot, type StoredMessage } from './session.ts'
+import {
+  createSessionStore,
+  defaultSessionRoot,
+  type SessionStore,
+  type StoredMessage,
+} from './session.ts'
+import { openSecretsStore, securityKeychain, type SecretsStore } from './secrets.ts'
 
 /** What the runtime can actually do. Injected so tests supply their own. */
 export interface HarnessCapabilities {
@@ -56,17 +62,51 @@ export interface HarnessCapabilities {
  * an app-data directory, and constructing it eagerly would make a runtime that
  * only ever checks the Sandbox fail on start.
  *
- * No `secretValues` yet — there is no Secrets Store to read them from until
- * ticket 10. Until then the mirror redacts by credential shape only, which is
- * the weaker half of the mechanism; wiring the store in here closes it.
+ * The Secrets Store is opened alongside it and handed over as `secretValues`,
+ * which is what turns "no secret reaches the transcript" from a pattern match
+ * into an exact-value match. Both halves belong here for the same reason: the
+ * mirror needs a filesystem and the store needs the keychain, and this is the
+ * process that has both.
+ *
+ * `secretValues` is a function rather than a snapshot, and the store is
+ * re-read before each save. That is what makes "without a restart" true from
+ * the mirror's side as well: `bun run secret add` runs in a different process,
+ * so a running varnick would otherwise redact against the secrets it knew at
+ * launch and write the new one into the transcript verbatim. A refresh that
+ * fails keeps the previous snapshot — every secret the last good read knew
+ * about — because redacting against that beats refusing to save.
+ *
+ * A store that will not open at all is the other way round: the save rejects,
+ * so `persistence.saveFailed` says so rather than a transcript being written
+ * that nothing can promise is clean.
  */
 export function hostCapabilities(): HarnessCapabilities {
-  let mirror: ReturnType<typeof createSessionStore> | null = null
-  const sessionMirror = () => (mirror ??= createSessionStore({ root: defaultSessionRoot() }))
+  let opened: Promise<{ store: SessionStore; secrets: SecretsStore }> | null = null
+
+  function open() {
+    opened ??= (async () => {
+      const secrets = await openSecretsStore({ keychain: securityKeychain() })
+      const store = createSessionStore({
+        root: defaultSessionRoot(),
+        secretValues: () => secrets.secretValues(),
+      })
+      return { store, secrets }
+    })().catch((error: unknown) => {
+      // Dropped rather than cached, so a RETRY_SAVE genuinely retries instead
+      // of replaying the failure that happened once at open.
+      opened = null
+      throw error
+    })
+    return opened
+  }
 
   return {
     establishSandbox: () => establishSandbox(),
-    persist: (input) => sessionMirror().persist(input),
+    persist: async (input) => {
+      const { store, secrets } = await open()
+      await secrets.reload().catch(() => undefined)
+      return store.persist(input)
+    },
   }
 }
 

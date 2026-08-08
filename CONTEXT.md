@@ -41,7 +41,9 @@ A tool given to an agent as an in-process SDK MCP tool rather than a built-in. R
 _Avoid_: MCP server (a Custom Tool may be one; the term is about where the code runs)
 
 **Secrets Store**:
-Host-side storage the agent can never read. The agent authors code that names a secret; the host resolves the name when it runs that code. See [ADR-0006](./docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
+Host-side storage the agent never *needs* to read. The agent authors code that names a secret; the host resolves the name when it runs that code. See [ADR-0006](./docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
+
+This entry used to read "can never read". That was measured while building ticket 10 and found to be false: a sandboxed process can still execute `/usr/bin/security` and reach the Keychain through `securityd`. The design — the agent handles names, the host handles values — is unchanged and still right. What changed is that it is a design the agent has no reason to defeat, not a wall it cannot climb. See the correction in [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md) and ticket 16.
 _Avoid_: vault, keychain, credentials (credentials are what authenticate the agent itself, which is a separate path)
 
 ### Changing Core
