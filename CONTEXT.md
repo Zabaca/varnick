@@ -88,8 +88,8 @@ _Avoid_: summarise (the mechanism), truncate, prune (both lose the fact that not
 
 These are machine state names before they are UI words, and the two must not diverge. Every one below is addressable at `#/states`; the single state that is not is named as such where it appears.
 
-**Harness — `credential`**: `absent`, `reading`, `present`, `rejected`.
-`absent` means no credential is available, whether or not a read was attempted; a read that failed also records why. `rejected` means one exists and the API refused it — a different problem with a different fix. A successful read also carries a Credential Kind, which is a fact and not a state.
+**Harness — `credential`**: `absent`, `storing`, `reading`, `present`, `rejected`.
+`absent` means no credential is available, whether or not a read was attempted; a read that failed also records why. It is also the first-run screen: a developer pastes a key or a subscription token into it, which is `storing` — the host writing the keychain item for the kind they chose. A store that worked re-reads rather than declaring the credential present, so one path establishes it whether it was stored a minute ago or a year ago; a store that failed comes back to `absent` carrying why. `rejected` means one exists and the API refused it — a different problem with a different fix. A successful read also carries a Credential Kind, which is a fact and not a state.
 
 **Harness — `sandbox`**: `unchecked`, `checking`, `available`, `unavailable`.
 `unavailable` has no path forward except an explicit re-check. There is deliberately no state meaning "running without confinement".
@@ -113,6 +113,8 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 
 ### Event names
 
-`READ_CREDENTIAL`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `READ_SUBSCRIPTION`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
+`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `READ_SUBSCRIPTION`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
+
+`STORE_CREDENTIAL` carries the one value in Core that must not survive the interaction. It is read by the store actor's input and never assigned into context, so the machine that carried it holds nothing afterwards — which is why `CHOOSE_CREDENTIAL_KIND` is a separate event: the kind is not secret, belongs in context where the view can read it, and says only which item a store would write. Which credential varnick *uses* is still resolved by the host from what it finds ([ADR-0011](./docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md)).

@@ -5,14 +5,21 @@ import {
   CREDENTIAL_KEYCHAIN_ACCOUNTS,
   CREDENTIAL_KEYCHAIN_SERVICE,
   CREDENTIAL_SETUP_COMMANDS,
+  CREDENTIAL_STORE_FAILURES,
+  CredentialNotStored,
   CredentialUnavailable,
   SUBSCRIPTION_TOKEN_COMMAND,
   credentialGuidance,
   credentialRejection,
+  credentialStoreGuidance,
   readCredential,
+  storeCredential,
   tauriCredentialHost,
+  tauriCredentialWriter,
   type CredentialAbsence,
   type CredentialHost,
+  type CredentialStoreFailure,
+  type CredentialWriter,
 } from './credentials.ts'
 
 /**
@@ -236,6 +243,167 @@ describe('nothing the host said can reach a message', () => {
   })
 })
 
+describe('a credential can be stored from inside the window', () => {
+  /**
+   * A writer that records what it was handed and says it worked.
+   *
+   * Like {@link answers} above, this is the seam: `storeCredential` takes a
+   * `CredentialWriter` and there is no code path from it to a keychain. A test
+   * that wrote into the developer's own store would be a failed test even if it
+   * passed, and here that is impossible rather than merely forbidden.
+   */
+  const records = () => {
+    const seen: { kind: string; value: string }[] = []
+    const writer: CredentialWriter = {
+      store: async (request) => {
+        seen.push({ ...request })
+      },
+    }
+    return { seen, writer }
+  }
+
+  /** A writer that rejects the way the bridge rejects a refused call. */
+  const refusesWrite = (payload: unknown): CredentialWriter => ({
+    store: async () => {
+      throw payload
+    },
+  })
+
+  const failureOf = async (
+    writer: CredentialWriter | null,
+    value = LOOKS_LIKE_A_KEY,
+  ): Promise<CredentialStoreFailure> => {
+    try {
+      await storeCredential({ kind: 'api-key', value }, writer)
+    } catch (error) {
+      if (error instanceof CredentialNotStored) return error.failure
+      throw error
+    }
+    throw new Error('the store was expected to fail')
+  }
+
+  test('the value reaches the host once, with the kind the developer chose', async () => {
+    const { seen, writer } = records()
+    await storeCredential({ kind: 'subscription', value: LOOKS_LIKE_A_KEY }, writer)
+    expect(seen).toEqual([{ kind: 'subscription', value: LOOKS_LIKE_A_KEY }])
+  })
+
+  test('either kind can be written, and the choice is only which item', async () => {
+    // ADR-0011 is unchanged by this: the developer picks which item is
+    // *written*, and the host still resolves the kind by what it finds on the
+    // next read. Nothing here records a preference for it to consult.
+    const { seen, writer } = records()
+    await storeCredential({ kind: 'api-key', value: 'a-key' }, writer)
+    await storeCredential({ kind: 'subscription', value: 'a-token' }, writer)
+    expect(seen.map((s) => s.kind)).toEqual(['api-key', 'subscription'])
+  })
+
+  test('a store answers with nothing, so nothing can come back in it', async () => {
+    /*
+      The whole of "the value goes one direction". `storeCredential` is typed
+      `Promise<void>`, so there is no shape on the success path a value could
+      ride back in — the same property `Reading` has for a read, one step
+      stronger because a store has nothing at all to report.
+    */
+    const chatty: CredentialWriter = {
+      store: async () => ({ value: LOOKS_LIKE_A_KEY }) as unknown as void,
+    }
+    const answer = await storeCredential({ kind: 'api-key', value: LOOKS_LIKE_A_KEY }, chatty)
+    expect(answer).toBeUndefined()
+  })
+
+  test('no host is a failure with a reason, never a throw from the bridge', async () => {
+    expect(await failureOf(null)).toBe('no-host')
+  })
+
+  test('every tag the host can choose is carried through as itself', async () => {
+    // Each of these is a `&'static str` in src-tauri/src/credential.rs, chosen
+    // by a match arm. They are kept apart because each has a different single
+    // next action, the same reason `CredentialAbsence` has three.
+    expect(await failureOf(refusesWrite(refusal('nothing-pasted')))).toBe('nothing-pasted')
+    expect(await failureOf(refusesWrite(refusal('unstorable-value')))).toBe('unstorable-value')
+    expect(await failureOf(refusesWrite(refusal('store-refused')))).toBe('store-refused')
+    expect(await failureOf(refusesWrite(refusal('no-keychain')))).toBe('no-keychain')
+  })
+
+  test('a tag this build does not know is a refused store, never a quoted one', async () => {
+    // An unrecognised payload is exactly the payload nobody has checked for a
+    // secret, so it is classified rather than repeated.
+    expect(await failureOf(refusesWrite(refusal('something-new')))).toBe('store-refused')
+    expect(await failureOf(refusesWrite(new HarnessUnavailable('runtime-lost')))).toBe(
+      'store-refused',
+    )
+    expect(await failureOf(refusesWrite('a bare string'))).toBe('store-refused')
+  })
+
+  test('every failure is a CredentialNotStored, so nothing rejects unhandled', async () => {
+    for (const writer of [null, refusesWrite(refusal('store-refused')), refusesWrite(new Error('x'))]) {
+      await expect(
+        storeCredential({ kind: 'api-key', value: 'a-value' }, writer),
+      ).rejects.toBeInstanceOf(CredentialNotStored)
+    }
+  })
+
+  test('nothing a failed store says can contain what was pasted', async () => {
+    /*
+      The one assertion this whole path exists for, and it is asserted rather
+      than inspected. Every way a store can fail, over a value shaped like a
+      real key, and the sentence the developer reads must not contain it —
+      including the case where the host itself echoed it back.
+    */
+    const rejections: unknown[] = [
+      refusal('nothing-pasted'),
+      refusal('unstorable-value'),
+      refusal('store-refused'),
+      refusal('no-keychain'),
+      refusal(LOOKS_LIKE_A_KEY),
+      new Error(LOOKS_LIKE_A_KEY),
+      LOOKS_LIKE_A_KEY,
+      { failure: 'refused', detail: LOOKS_LIKE_A_KEY },
+    ]
+    for (const rejection of rejections) {
+      try {
+        await storeCredential({ kind: 'subscription', value: LOOKS_LIKE_A_KEY }, refusesWrite(rejection))
+      } catch (error) {
+        const thrown = error as CredentialNotStored
+        expect(thrown.message).not.toContain(LOOKS_LIKE_A_KEY)
+        expect(JSON.stringify(thrown, Object.getOwnPropertyNames(thrown))).not.toContain(
+          LOOKS_LIKE_A_KEY,
+        )
+        continue
+      }
+      throw new Error('the store was expected to fail')
+    }
+  })
+
+  test('each failure names a different thing to do about it', () => {
+    const messages = CREDENTIAL_STORE_FAILURES.map(credentialStoreGuidance)
+    expect(new Set(messages).size).toBe(CREDENTIAL_STORE_FAILURES.length)
+    for (const message of messages) expect(message.length).toBeGreaterThan(20)
+  })
+
+  test('the refusals a paste can earn say what about the paste was wrong', () => {
+    // These two are the developer's own typing rather than a broken machine,
+    // and the sentence has to be about what they did.
+    expect(credentialStoreGuidance('nothing-pasted')).toContain('paste')
+    expect(credentialStoreGuidance('unstorable-value')).toContain('one line')
+  })
+
+  test('the no-host message says where a credential is actually written', () => {
+    expect(credentialStoreGuidance('no-host')).toContain('tauri dev')
+  })
+
+  test('the error message is the guidance, so the machine records it verbatim', () => {
+    expect(new CredentialNotStored('store-refused').message).toBe(
+      credentialStoreGuidance('store-refused'),
+    )
+  })
+
+  test('a browser tab has nowhere to write, and that is a value rather than a throw', () => {
+    expect(tauriCredentialWriter()).toBeNull()
+  })
+})
+
 describe('a rejection by the API is its own outcome', () => {
   test('a 401 is a rejected credential', () => {
     expect(credentialRejection({ status: 401 })).not.toBeNull()
@@ -297,6 +465,32 @@ describe('the read rides the one bridge, like every other Harness call', () => {
     expect(host).not.toBeNull()
     expect(await readCredential(host)).toEqual({ source: 'keychain', kind: 'subscription' })
     expect(invoked).toEqual([['harness_call', { request: { kind: 'read-credential' } }]])
+  })
+
+  test('a store is a bridge call too, and the value goes one way', async () => {
+    const invoked: unknown[] = []
+    ;(globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (command: string, payload?: unknown) => {
+        invoked.push([command, payload])
+        return { ok: true }
+      },
+    }
+
+    const writer = tauriCredentialWriter()
+    expect(writer).not.toBeNull()
+    await storeCredential({ kind: 'subscription', value: LOOKS_LIKE_A_KEY }, writer)
+    expect(invoked).toEqual([
+      [
+        'harness_call',
+        {
+          request: {
+            kind: 'store-credential',
+            credentialKind: 'subscription',
+            value: LOOKS_LIKE_A_KEY,
+          },
+        },
+      ],
+    ])
   })
 
   test('each kind names the variable the Agent SDK reads it from', () => {

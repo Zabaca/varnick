@@ -11,9 +11,17 @@
 // docs/adr/0003-containment-wraps-the-process-tree.md; the TypeScript half of
 // this subsystem already says so and this one did not.
 //
-// The value leaves this module in exactly one direction — into the environment
-// of the agent subprocess, through `credential_env`. It cannot leave in any
-// other, and that is enforced rather than remembered:
+// A value *arrives* in one of two ways — read out of the keychain by
+// `read_credential`, or handed in by `store_credential` when a developer pastes
+// one into the window — and it *leaves* in exactly one, into the environment of
+// the agent subprocess through `credential_env`. Storing is the newer half and
+// the sharper one: it is the only path on which a credential crosses the IPC
+// boundary at all, it crosses inbound only, and what comes back is `Ok(())` or a
+// tag. Nothing about a write is echoed, and no test can reach a real keychain —
+// `store_credential` takes a {@link Security} with no default.
+//
+// A value cannot leave by any other route, and that is enforced rather than
+// remembered:
 //
 //   * `Secret` has no `Serialize`, so it cannot cross the IPC boundary into the
 //     webview, which is where the transcript and the Session mirror live.
@@ -42,7 +50,8 @@
 // `route_of` is where "the credential is answered in this process" stopped being
 // a convention and became a unit test.
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -78,6 +87,18 @@ const SUBSCRIPTION_KEYCHAIN_ACCOUNT: &str = "claude-oauth-token";
 
 /// The value. No `Serialize`, and a `Debug` that refuses.
 pub struct Secret(String);
+
+impl Secret {
+    /// Take ownership of a value on its way in.
+    ///
+    /// The one constructor outside this module, and it exists for the write:
+    /// the bridge pulls a string out of a request and has to put it somewhere
+    /// that cannot be printed or serialised before it does anything else with
+    /// it. Reading builds one internally and never needed this.
+    pub fn new(value: String) -> Self {
+        Secret(value)
+    }
+}
 
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -133,6 +154,21 @@ impl Kind {
             Kind::ApiKey => API_KEY_KEYCHAIN_ACCOUNT,
             Kind::Subscription => SUBSCRIPTION_KEYCHAIN_ACCOUNT,
         }
+    }
+}
+
+/// The kind a request named, or `None` for a name this host does not know.
+///
+/// Closed rather than defaulted, for the same reason the reading's kind is
+/// required on the way out: a store that guessed would write the wrong item, and
+/// the symptom is an agent spawned with a variable nobody resolved. The two
+/// names are the ones `Kind` serialises to, mirrored in
+/// packages/harness/src/credentials.ts as `CredentialKind`.
+pub fn kind_of(name: &str) -> Option<Kind> {
+    match name {
+        "api-key" => Some(Kind::ApiKey),
+        "subscription" => Some(Kind::Subscription),
+        _ => None,
     }
 }
 
@@ -275,6 +311,134 @@ pub fn read_credential(store: &CredentialStore) -> Result<Reading, &'static str>
     }
 }
 
+/// `/usr/bin/security`, as a port.
+///
+/// A trait rather than a `Command` built where it is needed, and the reason is
+/// the same one `openSecretsStore` takes a `SecretsKeychain` with no default: a
+/// test that forgot to supply one would write into the developer's own login
+/// Keychain, and `store_credential` has no way to reach the binary on its own.
+/// The read half's seam is `resolve`, which is pure because the precedence rule
+/// has no keychain in it; a write is nothing but the keychain, so the seam has
+/// to be here.
+pub trait Security {
+    /// Run `security` with these arguments and this stdin, and answer with its
+    /// exit code.
+    ///
+    /// Nothing it printed comes back — not stdout, not stderr. The one command
+    /// on this machine that handles credentials is the one most likely to echo
+    /// one, and every failure a caller can report is chosen by a match arm.
+    fn run(&self, args: &[&str], stdin: &str) -> Result<i32, ()>;
+}
+
+/// The real one. The only implementation that touches a keychain.
+pub struct SystemSecurity;
+
+impl Security for SystemSecurity {
+    fn run(&self, args: &[&str], stdin: &str) -> Result<i32, ()> {
+        let mut child = Command::new("/usr/bin/security")
+            .args(args)
+            .stdin(Stdio::piped())
+            // Captured and dropped. `security` writes its complaints here, and
+            // an authentication store's complaint is the likeliest place for a
+            // credential to be echoed back at you.
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| ())?;
+
+        child
+            .stdin
+            .take()
+            .ok_or(())?
+            .write_all(stdin.as_bytes())
+            .map_err(|_| ())?;
+
+        child.wait().map_err(|_| ())?.code().ok_or(())
+    }
+}
+
+/// The one line `security -i` is driven with, and the whole of it.
+///
+/// Hex, so the only part of this that varies is `[0-9a-f]+` and there is
+/// nothing to quote: `security -i` has its own tokeniser, and a value carrying
+/// a space or a quote would otherwise be parsed as two arguments. `-X` sets the
+/// item's data to the bytes the hex decodes to, so what lands in the keychain is
+/// the value itself and a developer opening Keychain Access sees their own
+/// token. `-U` updates in place when the item already exists, so storing over
+/// one is a single call rather than a delete and an add with a gap between them.
+///
+/// The same mechanism packages/harness/src/secrets.ts uses, and for the same
+/// two reasons. The first is that `/bin/ps` is not on the Sandbox's denied list,
+/// so a value in argv is readable by every user on the machine for as long as
+/// the process lives. The second is narrower and has bitten this project twice:
+/// `add-generic-password` takes the keychain as a *positional* argument, so a
+/// `-w VALUE` written before it is read as the keychain to write into. This
+/// command ends at a flag and names no keychain at all.
+fn store_script(account: &str, value: &str) -> String {
+    let hex: String = value.bytes().map(|b| format!("{b:02x}")).collect();
+    format!("add-generic-password -s {KEYCHAIN_SERVICE} -a {account} -X {hex} -U\n")
+}
+
+/// Why a value cannot be stored as it stands, or `None` when it can.
+///
+/// The set this accepts is printable ASCII with no whitespace around it, which
+/// is every API key and every subscription token and is deliberately not
+/// everything. `find-generic-password -w` — which is how the read half of this
+/// module gets the value back — prints an item as hex the moment its data holds
+/// a byte outside printable ASCII, and there is no flag saying which of the two
+/// forms you were handed. A credential stored outside that set would be handed
+/// to the agent as a string of hex digits and fail as an authentication error
+/// far from the cause.
+///
+/// The value is never quoted into the answer; the answer is a tag.
+fn value_problem(value: &str) -> Option<&'static str> {
+    if value.is_empty() {
+        return Some("nothing-pasted");
+    }
+    if !value.chars().all(|c| (' '..='~').contains(&c)) {
+        return Some("unstorable-value");
+    }
+    None
+}
+
+/// Write the credential for one kind into the keychain.
+///
+/// The one direction a value moves other than into the agent's environment, and
+/// it is one-way: this answers `Ok(())` or a `&'static str` tag, so there is no
+/// shape on either path a value could ride back in. Nothing here logs, prints
+/// or formats the value, and the tag a caller reports is chosen by a match arm.
+///
+/// Which kind is written is the developer's choice; which kind is *resolved*
+/// stays the host's, decided by what it finds on the next read. ADR-0011 refuses
+/// a stored preference, and this is not one — nothing records that this account
+/// was the one written, and the read that follows a store goes through the same
+/// precedence table as a read on any other launch.
+pub fn store_credential(
+    security: &dyn Security,
+    kind: Kind,
+    value: Secret,
+) -> Result<(), &'static str> {
+    // Trimmed on the way in because `resolve` trims on the way out: a value
+    // stored with a newline around it already works, and trimming here means
+    // the item a developer opens by hand holds what they meant to paste.
+    let trimmed = value.0.trim();
+    if let Some(problem) = value_problem(trimmed) {
+        return Err(problem);
+    }
+
+    let script = store_script(kind.keychain_account(), trimmed);
+    match security.run(&["-i"], &script) {
+        Ok(0) => Ok(()),
+        // The keychain answered and did not do it. Which code it chose is not
+        // forwarded: the developer's next action is the same either way.
+        Ok(_) => Err("store-refused"),
+        // No `security` binary at all — a platform with no keychain, rather than
+        // a keychain that refused. The read half falls through to the
+        // environment on this; a write has nowhere to fall through to.
+        Err(()) => Err("no-keychain"),
+    }
+}
+
 /// What the spawn puts into the agent's environment, and what it takes out.
 ///
 /// Three fields and only one of them is secret. The kind is *not* secret and
@@ -330,8 +494,8 @@ pub fn credential_env(store: &CredentialStore) -> Option<Injection> {
 #[cfg(test)]
 mod tests {
     use super::{
-        credential_env, resolve, CredentialStore, Kind, Secret, Source, Stores, API_KEY_ENV_VAR,
-        SUBSCRIPTION_ENV_VAR,
+        credential_env, kind_of, resolve, store_credential, store_script, CredentialStore, Kind,
+        Secret, Security, Source, Stores, API_KEY_ENV_VAR, KEYCHAIN_SERVICE, SUBSCRIPTION_ENV_VAR,
     };
     use std::sync::Mutex;
 
@@ -596,6 +760,23 @@ mod tests {
     }
 
     #[test]
+    fn a_kind_this_host_does_not_know_is_not_guessed_at() {
+        // Closed rather than defaulted: a store that guessed would write the
+        // wrong item, and nothing about the result would say so until the next
+        // launch resolved a credential the developer never stored.
+        assert_eq!(kind_of("api-key"), Some(Kind::ApiKey));
+        assert_eq!(kind_of("subscription"), Some(Kind::Subscription));
+        assert_eq!(kind_of("oauth"), None);
+        assert_eq!(kind_of(""), None);
+        // And the two names are the ones the reading serialises to, so the
+        // window sends back exactly what it was told.
+        for kind in [Kind::ApiKey, Kind::Subscription] {
+            let name = serde_json::to_value(kind).unwrap();
+            assert_eq!(kind_of(name.as_str().unwrap()), Some(kind));
+        }
+    }
+
+    #[test]
     fn a_reading_that_crosses_the_bridge_is_the_source_and_the_kind() {
         // The whole vocabulary the webview gets. `Secret` has no `Serialize`,
         // so there is no shape here a value could ride in even by accident.
@@ -664,6 +845,258 @@ mod tests {
         assert_eq!(
             format!("{:?}", Secret("a-token".to_string())),
             "Secret([redacted])"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The write
+    //
+    // A developer with an empty Keychain pastes a credential into the window
+    // and the host writes it. Every test below runs against a {@link Security}
+    // a test supplies, which is what makes "no test touches a real keychain" a
+    // property of the signature rather than a rule anyone has to remember:
+    // `store_credential` has no default and cannot reach `/usr/bin/security` on
+    // its own.
+    // -----------------------------------------------------------------------
+
+    /// A value shaped like a real token, used to prove it never comes back out.
+    ///
+    /// Assembled rather than written out: the value is invented, but its shape
+    /// is one every secret scanner flags, and a literal of that shape blocks
+    /// pushing for this repository and every fork of it.
+    fn looks_like_a_key() -> String {
+        ["sk-", "ant-api03-NEVER-LET-THIS-OUT"].concat()
+    }
+
+    /// Every call a run made, and nothing that reaches a keychain.
+    struct Recorder {
+        calls: Mutex<Vec<(Vec<String>, String)>>,
+        answer: Result<i32, ()>,
+    }
+
+    impl Recorder {
+        fn answering(answer: Result<i32, ()>) -> Self {
+            Recorder {
+                calls: Mutex::new(Vec::new()),
+                answer,
+            }
+        }
+
+        fn ok() -> Self {
+            Recorder::answering(Ok(0))
+        }
+
+        fn calls(&self) -> Vec<(Vec<String>, String)> {
+            self.calls.lock().expect("no test poisons this").clone()
+        }
+    }
+
+    impl Security for Recorder {
+        fn run(&self, args: &[&str], stdin: &str) -> Result<i32, ()> {
+            self.calls
+                .lock()
+                .expect("no test poisons this")
+                .push((args.iter().map(|a| a.to_string()).collect(), stdin.to_string()));
+            self.answer
+        }
+    }
+
+    #[test]
+    fn the_value_is_never_an_argument() {
+        // `/bin/ps` is not denied by the Sandbox policy, so a value on the
+        // command line is readable by every user on the machine for as long as
+        // the process lives. `security -i` reads its commands from stdin, which
+        // is the mechanism packages/harness/src/secrets.ts already uses.
+        let security = Recorder::ok();
+        let value = looks_like_a_key();
+        store_credential(&security, Kind::ApiKey, Secret::new(value.clone())).expect("a clean run");
+
+        let calls = security.calls();
+        assert_eq!(calls.len(), 1);
+        let (args, stdin) = &calls[0];
+        assert_eq!(args, &["-i".to_string()]);
+        for arg in args {
+            assert!(!arg.contains(&value));
+        }
+        // And not in the script either, which is hex rather than the string.
+        assert!(!stdin.contains(&value));
+    }
+
+    #[test]
+    fn the_script_writes_the_bytes_the_developer_pasted() {
+        // `-X` sets the item's data to what the hex decodes to, so a developer
+        // opening Keychain Access sees their own token rather than hex digits.
+        let hex = "a-token"
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            store_script(Kind::Subscription.keychain_account(), "a-token"),
+            format!(
+                "add-generic-password -s {KEYCHAIN_SERVICE} -a claude-oauth-token -X {hex} -U\n"
+            ),
+        );
+    }
+
+    #[test]
+    fn nothing_positional_follows_the_command() {
+        /*
+          `add-generic-password` takes the keychain as a *positional* argument,
+          so a value written where one is expected lands in whatever keychain
+          follows. That has put a credential in the wrong keychain twice in this
+          project's history.
+
+          The script therefore ends at a flag, and the only free-standing token
+          in it is hex — which cannot be read as a path, and cannot be read as
+          two arguments however it is tokenised.
+        */
+        for kind in [Kind::ApiKey, Kind::Subscription] {
+            // A value chosen to break a command line: spaces, a quote, and a
+            // string that would be read as a path if it ever reached argv.
+            let script = store_script(kind.keychain_account(), "a value 'with' /some/keychain");
+            let tokens: Vec<&str> = script.split_whitespace().collect();
+
+            // Eight tokens, whatever the value was. A value that could add a
+            // ninth is a value that could name a keychain.
+            assert_eq!(tokens.len(), 8);
+            assert_eq!(tokens[0], "add-generic-password");
+            assert_eq!(tokens[1], "-s");
+            assert_eq!(tokens[2], KEYCHAIN_SERVICE);
+            assert_eq!(tokens[3], "-a");
+            assert_eq!(tokens[4], kind.keychain_account());
+            assert_eq!(tokens[5], "-X");
+            // The one token the value decides, and it is hex.
+            assert!(tokens[6].chars().all(|c| c.is_ascii_hexdigit()));
+            // Ends at a flag. Nothing follows for `security` to read as the
+            // keychain to write into.
+            assert_eq!(tokens[7], "-U");
+
+            // `-w` is the flag that takes a value on the command line. It is
+            // right for a developer typing the command by hand, where `security`
+            // then prompts for the value, and wrong everywhere here.
+            assert!(!tokens.contains(&"-w"));
+        }
+    }
+
+    #[test]
+    fn each_kind_is_written_to_its_own_account() {
+        for (kind, account) in [
+            (Kind::ApiKey, "anthropic-api-key"),
+            (Kind::Subscription, "claude-oauth-token"),
+        ] {
+            let security = Recorder::ok();
+            store_credential(&security, kind, Secret::new("a-value".into())).expect("a clean run");
+            let (_, stdin) = security.calls().remove(0);
+            assert!(stdin.contains(&format!("-a {account} ")));
+        }
+    }
+
+    #[test]
+    fn a_paste_with_nothing_in_it_never_reaches_the_keychain() {
+        // An item created and never filled in is not a credential — `resolve`
+        // already refuses to let one shadow a working credential beside it — so
+        // writing one would produce a store that reads back as empty.
+        for empty in ["", "   ", "\n"] {
+            let security = Recorder::ok();
+            assert_eq!(
+                store_credential(&security, Kind::ApiKey, Secret::new(empty.into())),
+                Err("nothing-pasted")
+            );
+            assert!(security.calls().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_value_security_would_hand_back_hex_is_refused_rather_than_stored() {
+        /*
+          `find-generic-password -w` prints the item as hex the moment its data
+          holds a byte outside printable ASCII, with no flag saying which of the
+          two forms you were handed — measured in
+          packages/harness/src/secrets.ts, which refuses the same set for the
+          same reason. The read half of this module would hand such a credential
+          to the agent as a string of hex digits, and it would fail as an
+          authentication error far from the cause.
+        */
+        for bad in ["a\nb", "a\tb", "café"] {
+            let security = Recorder::ok();
+            assert_eq!(
+                store_credential(&security, Kind::Subscription, Secret::new(bad.into())),
+                Err("unstorable-value")
+            );
+            assert!(security.calls().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_value_is_trimmed_on_the_way_in_because_it_is_trimmed_on_the_way_out() {
+        // `resolve` trims what it reads, so a value stored with a newline around
+        // it already works. Trimming here means the item a developer opens by
+        // hand holds what they meant to paste.
+        let security = Recorder::ok();
+        store_credential(&security, Kind::ApiKey, Secret::new("  a-token\n".into()))
+            .expect("a clean run");
+        let (_, stdin) = security.calls().remove(0);
+        assert_eq!(
+            stdin,
+            store_script(Kind::ApiKey.keychain_account(), "a-token")
+        );
+    }
+
+    #[test]
+    fn a_keychain_that_refused_is_a_tag_and_never_what_it_printed() {
+        let security = Recorder::answering(Ok(45));
+        assert_eq!(
+            store_credential(&security, Kind::ApiKey, Secret::new("a-token".into())),
+            Err("store-refused")
+        );
+    }
+
+    #[test]
+    fn no_security_binary_at_all_is_a_different_failure() {
+        // A platform with no keychain, rather than a keychain that said no. The
+        // read half falls through to the environment on this; a write has
+        // nowhere to fall through to and says so.
+        let security = Recorder::answering(Err(()));
+        assert_eq!(
+            store_credential(&security, Kind::Subscription, Secret::new("a-token".into())),
+            Err("no-keychain")
+        );
+    }
+
+    #[test]
+    fn no_failure_path_can_carry_the_value() {
+        /*
+          The signature is the assertion — every error here is a `&'static str`,
+          so there is no `String` on this path for a value to be formatted into.
+          Written out anyway, over every way a store can fail, because "an error
+          quotes the credential" is the failure this module exists to make
+          impossible and the one an authentication path is likeliest to produce.
+        */
+        let value = looks_like_a_key();
+        let attempts = [
+            store_credential(&Recorder::answering(Ok(45)), Kind::ApiKey, Secret::new(value.clone())),
+            store_credential(&Recorder::answering(Err(())), Kind::ApiKey, Secret::new(value.clone())),
+            store_credential(
+                &Recorder::ok(),
+                Kind::ApiKey,
+                Secret::new(format!("{value}\n{value}")),
+            ),
+            store_credential(&Recorder::ok(), Kind::ApiKey, Secret::new("  ".into())),
+        ];
+        for attempt in attempts {
+            let tag = attempt.expect_err("each of these fails");
+            assert!(!tag.contains(&value));
+        }
+    }
+
+    #[test]
+    fn a_store_answers_with_nothing_at_all() {
+        // `Ok(())`, not `Ok(Reading)` and not `Ok(String)`. There is no shape on
+        // the success path a value could ride back in either.
+        let security = Recorder::ok();
+        assert_eq!(
+            store_credential(&security, Kind::ApiKey, Secret::new("a-token".into())),
+            Ok(())
         );
     }
 }

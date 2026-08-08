@@ -3,6 +3,7 @@ import { harnessMachine } from '../machines/harness.ts'
 import { sessionMachine } from '../machines/session.ts'
 import { surfaceMachine } from '../machines/surface.ts'
 import type {
+  CredentialKind,
   CredentialReading,
   Effort,
   Message,
@@ -58,6 +59,7 @@ export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
     actors: {
       checkSandbox: never<{ ok: true }, { policy: SandboxPolicy }>(),
       readCredential: never<CredentialReading, Record<string, never>>(),
+      storeCredential: never<void, { kind: CredentialKind; value: string }>(),
       spawnAgent: never<{ pid: number }, { policy: SandboxPolicy }>(),
       readSubscriptionUsage: never<SubscriptionUsage, Record<string, never>>(),
       surface: surfaceMachine.provide({

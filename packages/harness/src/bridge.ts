@@ -31,18 +31,29 @@
  * wrapping the runtime computed — argv, an environment overlay and a working
  * directory, none of them secret — because the credential has to go into the
  * child's environment and the credential lives in Rust. The agent is inside srt
- * either way, which is what ADR-0003's last consequence requires, and the
- * credential never crosses this bridge, which is what ADR-0008 requires.
+ * either way, which is what ADR-0003's last consequence requires, and no
+ * credential is ever *handed out* over this bridge, which is what ADR-0008
+ * requires. One crosses inbound — see below.
  *
  * ## What may cross
  *
- * Nothing secret, in either direction. There is no request field that could
- * carry a credential and no answer that could return one: a credential read
- * answers with which store replied and the answer is rebuilt here rather than
- * forwarded, so a host that volunteered the value could not have it reach the
- * transcript or the Session mirror. The one string that is forwarded verbatim is
- * a *refusal's* `detail`, and the credential route cannot produce prose — every
- * failure in src-tauri/src/credential.rs is a `&'static str` tag.
+ * **Nothing secret comes back.** There is no answer on this bridge that could
+ * return a credential: a read answers with which store replied and what was in
+ * it, and the answer is rebuilt here rather than forwarded, so a host that
+ * volunteered the value could not have it reach the transcript or the Session
+ * mirror. The one string forwarded verbatim is a *refusal's* `detail`, and
+ * neither credential route can produce prose — every failure in
+ * src-tauri/src/credential.rs is a `&'static str` tag.
+ *
+ * **One request goes the other way**, and it is the exception this paragraph
+ * used to be able to do without: {@link StoreCredentialRequest} carries a value
+ * a developer pasted into the window, inbound, once. It has to — the window is
+ * where a person types, and the keychain is reachable only from the host. What
+ * makes that safe is not that it never happens but that it is one-way and
+ * answered by Rust: the value reaches `Secret` before anything else touches it,
+ * the reply is `{ ok: true }`, and `route_of` refuses to forward the call to the
+ * Harness runtime, which would be a second process holding a credential.
+ * Nothing in Core keeps it after the call — see ./credentials.ts.
  *
  * ## Nothing here may import Node
  *
@@ -63,6 +74,31 @@ export interface CheckSandboxRequest {
 /** Read the credential host-side. Answers with which store replied. */
 export interface ReadCredentialRequest {
   readonly kind: 'read-credential'
+}
+
+/**
+ * Write a credential into the keychain, host-side. Answers `{ ok: true }`.
+ *
+ * **The one request on this bridge that carries a secret, and it carries it in
+ * one direction only.** A developer pastes a key or a subscription token into
+ * the window, it crosses once, the Rust host writes it into the keychain item
+ * for `credentialKind`, and the answer is a constant. Nothing comes back: not
+ * the value, not what `security` printed, not a message with either in it — see
+ * src-tauri/src/credential.rs, where every failure is a `&'static str` tag.
+ *
+ * Answered by the Rust host and never forwarded, which is stricter here than
+ * anywhere else on this bridge: forwarding a store to the Harness runtime would
+ * put a credential on a pipe to a second process, which is exactly what ADR-0008
+ * exists to prevent. `route_of` asserts it.
+ *
+ * `credentialKind` says which *item* is written, and that is all it says. The
+ * host still resolves which credential to use by what it finds on the next read
+ * — ADR-0011 refuses a stored preference, and this is not one.
+ */
+export interface StoreCredentialRequest {
+  readonly kind: 'store-credential'
+  readonly credentialKind: 'api-key' | 'subscription'
+  readonly value: string
 }
 
 /** Write a transcript to the host-side Session mirror. */
@@ -222,6 +258,7 @@ export interface CompactSessionRequest {
 export type HarnessRequest =
   | CheckSandboxRequest
   | ReadCredentialRequest
+  | StoreCredentialRequest
   | PersistSessionRequest
   | ReadSessionRequest
   | SpawnAgentRequest
@@ -242,6 +279,8 @@ export interface HarnessAnswers {
     readonly source: 'keychain' | 'env'
     readonly kind: 'api-key' | 'subscription'
   }
+  // A constant. A store has nothing to report and no shape to report it in.
+  'store-credential': { readonly ok: true }
   'persist-session': { readonly ok: true }
   'read-session': RestoredTranscript
   'spawn-agent': { readonly pid: number }
@@ -537,6 +576,7 @@ export async function callHarness<R extends HarnessRequest>(
     case 'read-plan-usage':
       return planUsageAnswer(request.requestId, answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
+    case 'store-credential':
     case 'persist-session':
     case 'stop-agent':
     case 'run-turn':

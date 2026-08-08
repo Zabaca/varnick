@@ -27,9 +27,23 @@ works from `bun tauri dev`. `bun run dev` gives you the same interface in a
 browser with no host behind it, and it says so rather than failing quietly.
 
 The credential is one keychain item, and it is either a Claude subscription
-token or an Anthropic API key. The app names both commands if neither is there.
+token or an Anthropic API key. **With nothing stored, the window asks for one.**
+A first launch opens on a setup screen: pick which of the two you are supplying,
+paste it, and varnick writes the keychain item and carries on. Nothing about
+that step needs a terminal, and the value goes one way — into the host process
+that owns the keychain, never back out, never into the transcript.
 
-For a subscription — mint a long-lived token, then store it:
+The one exception is minting a subscription token, which varnick will not do for
+you: it means running Claude Code, and varnick starts exactly one agent process
+and starts it inside the Sandbox ([ADR-0003](docs/adr/0003-containment-wraps-the-process-tree.md)).
+So run this once, and paste what it prints into the setup screen:
+
+```
+claude setup-token
+```
+
+The terminal route still works and is the right one for a machine with no
+window — CI has neither a window nor a keychain. For a subscription:
 
 ```
 claude setup-token
@@ -42,13 +56,13 @@ For an API key:
 security add-generic-password -s varnick -a anthropic-api-key -w
 ```
 
-varnick works out which kind it is holding from what it found; there is nothing
-to declare. Exported `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` variables
-also work. The keychain wins over the environment, and within either store a
-subscription wins over a key — a plan you already pay for should not sit unused
-while varnick bills per request. Nothing else is configured, and there is
-nothing to fill in on first launch — an empty chat is the first frame, and
-anything that went wrong is one sentence naming what to do about it.
+Whichever way it got there, varnick works out which kind it is holding from what
+it found; there is nothing to declare, and the setup screen's choice of kind
+picks the item to *write* rather than recording a preference. Exported
+`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` variables also work. The
+keychain wins over the environment, and within either store a subscription wins
+over a key — a plan you already pay for should not sit unused while varnick
+bills per request. Nothing else is configured.
 
 varnick does not read Claude Code's own credential store. That item holds an
 access token that expires in about an hour, so consuming it would mean varnick

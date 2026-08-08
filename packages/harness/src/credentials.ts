@@ -10,14 +10,26 @@
  * `denyRead` on the home directory, which is where its file lives. See the
  * Correction in docs/adr/0003-containment-wraps-the-process-tree.md.
  *
- * **The value is not representable here.** Nothing in this module has a field
- * that could hold it, and no function returns one. A read answers with two
+ * **No value comes back out of here.** No function in this module returns one
+ * and no type in it can hold one on the way back. A read answers with two
  * facts — which store replied (`keychain` or `env`) and what was in it
- * (`api-key` or `subscription`) — and that is the whole vocabulary. The value
- * never crosses the IPC boundary into the webview, so it can never reach the
+ * (`api-key` or `subscription`) — and that is the whole vocabulary. A value
+ * never crosses the IPC boundary *into* the webview, so it can never reach the
  * transcript, a log line, or the Session mirror. That is a property of the
  * types rather than a rule someone has to remember; see src-tauri/src/credential.rs
  * for the other half, where the value does exist and cannot be printed.
+ *
+ * **One value goes the other way**, and it is the whole of {@link storeCredential}.
+ * A developer pastes a key or a subscription token into the window and it
+ * crosses once, inbound, into the process that owns the keychain. It has to:
+ * the window is where a person types and the keychain is reachable only from
+ * the host, and the alternative — telling a stranger with a fresh clone to go
+ * and run two `security` commands somewhere else — is the thing this replaced.
+ * What keeps it honest is that the traffic is one-way. `storeCredential` takes
+ * the value as an argument, hands it to a {@link CredentialWriter}, and returns
+ * `void`; it keeps no reference, the machine holds it in an actor's input rather
+ * than in context, and the host answers with a tag. Nothing between the field
+ * and the keychain can say it back.
  *
  * The kind is the second fact rather than a setting: the host decides it from
  * what it resolved, and it decides which variable the agent is spawned with —
@@ -248,6 +260,151 @@ export async function readCredential(
   // context, from where they would reach the Session mirror. Two facts is the
   // whole vocabulary, and neither of them is the value.
   return { source, kind }
+}
+
+/**
+ * Why a store did not happen.
+ *
+ * Five, kept apart because each has a different single next action — the same
+ * reason {@link CredentialAbsence} has three. The first two are about what was
+ * pasted and the developer fixes them by pasting something else; the last three
+ * are about the machine.
+ *
+ * Every one of them is a `&'static str` chosen by a match arm in
+ * src-tauri/src/credential.rs, except `no-host`, which never reaches a host at
+ * all. None of them can hold a value: there is no `String` on that error path.
+ */
+export const CREDENTIAL_STORE_FAILURES = [
+  /** There is no host process to write it. A browser tab has no keychain. */
+  'no-host',
+  /** The field was empty, or held nothing but whitespace. */
+  'nothing-pasted',
+  /** A value the keychain would not hand back intact. See the guidance. */
+  'unstorable-value',
+  /** The keychain was asked and said no. */
+  'store-refused',
+  /** There is no `security` on this machine — a platform with no keychain. */
+  'no-keychain',
+] as const
+
+export type CredentialStoreFailure = (typeof CREDENTIAL_STORE_FAILURES)[number]
+
+/**
+ * What to do about a store that did not happen, in one sentence.
+ *
+ * Authored here and selected by the tag, like every other message in this
+ * module. Nothing a host said is interpolated into one, and neither is the
+ * value: a store is the one moment Core has a credential in hand, and an error
+ * that quoted it would put it on screen and into whatever reads the screen.
+ */
+export function credentialStoreGuidance(failure: CredentialStoreFailure): string {
+  switch (failure) {
+    case 'no-host':
+      return 'There is no host process here to store it. varnick writes the credential in the desktop app — run `bun tauri dev` rather than opening the dev server in a browser.'
+    case 'nothing-pasted':
+      return 'Nothing was pasted. Paste the key or token itself — varnick stores exactly what is in the field and never sees it again.'
+    case 'unstorable-value':
+      return `That value has a line break, a tab, or a character outside plain ASCII in it. Keys and tokens are one line of plain text, and varnick refuses rather than storing something the keychain would hand back in a different form later — which fails as an authentication error far from here. Check for a stray newline, or store it from the terminal with \`${CREDENTIAL_SETUP_COMMANDS['api-key']}\`.`
+    case 'store-refused':
+      return `The keychain refused to store it, and nothing was changed. Open Keychain Access and allow varnick to write the "${CREDENTIAL_KEYCHAIN_SERVICE}" item, then try again.`
+    case 'no-keychain':
+      return 'There is no system keychain on this machine for varnick to write to. Export `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` in the environment varnick is launched from instead.'
+  }
+}
+
+/**
+ * A store that did not happen, carrying which failure it was.
+ *
+ * `message` is the guidance verbatim, because the machine's `onError` records
+ * `error.message` into `credentialError` and the surface renders that string.
+ * Same shape as {@link CredentialUnavailable}, so a failed store and a failed
+ * read reach `credential.absent` looking like one another.
+ */
+export class CredentialNotStored extends Error {
+  readonly failure: CredentialStoreFailure
+
+  constructor(failure: CredentialStoreFailure) {
+    super(credentialStoreGuidance(failure))
+    this.name = 'CredentialNotStored'
+    this.failure = failure
+  }
+}
+
+/**
+ * The host that does the writing.
+ *
+ * An interface rather than a direct `invoke`, and the reason is stronger than
+ * it is for {@link CredentialHost}: a test that forgot to supply one would write
+ * into the developer's own login Keychain. No test may touch a real keychain,
+ * and this is the seam that makes that structural instead of aspirational — the
+ * same reason `openSecretsStore` takes a `SecretsKeychain` with no default, and
+ * the same reason `store_credential` in src-tauri/src/credential.rs takes a
+ * `Security`.
+ *
+ * `store` resolves with nothing. There is deliberately no answer type here: a
+ * store has nothing to report, so there is no shape a value could come back in.
+ */
+export interface CredentialWriter {
+  store(request: { kind: CredentialKind; value: string }): Promise<void>
+}
+
+/**
+ * The Tauri host, or `null` when there is not one.
+ *
+ * The same value-rather-than-exception as {@link tauriCredentialHost}, for the
+ * same first-run path: the dev server in a browser has no Tauri IPC, and a
+ * developer who opened it there gets a sentence rather than a stack trace.
+ */
+export function tauriCredentialWriter(): CredentialWriter | null {
+  const bridge = tauriHarnessBridge()
+  if (bridge === null) return null
+  return {
+    store: async ({ kind, value }) => {
+      await callHarness({ kind: 'store-credential', credentialKind: kind, value }, bridge)
+    },
+  }
+}
+
+/** Pull a failure out of whatever a writer rejected with, without quoting it. */
+function storeFailureOf(rejection: unknown): CredentialStoreFailure {
+  if (rejection instanceof HarnessUnavailable && rejection.failure === 'refused') {
+    const tag = rejection.detail
+    if ((CREDENTIAL_STORE_FAILURES as readonly string[]).includes(tag ?? '')) {
+      return tag as CredentialStoreFailure
+    }
+  }
+  // Anything else — a panic, a bridge that never reached the host, a tag this
+  // build does not know — is a store that did not happen. Deliberately not
+  // reported verbatim: an unrecognised payload is exactly the payload nobody
+  // has checked for a secret, and on this path the value is right there.
+  return 'store-refused'
+}
+
+/**
+ * Ask the host to store a credential, and forget it.
+ *
+ * Realizes the `storeCredential` actor contract: input `{ kind, value }`,
+ * output nothing, error a thrown {@link CredentialNotStored}. The value crosses
+ * the bridge once and this function keeps no reference to it — the machine holds
+ * none either, because the actor's input is not context.
+ *
+ * `kind` says which keychain item is written. It is not a preference and nothing
+ * records it: the host resolves which credential to *use* by what it finds on
+ * the next read, which is why the machine follows a successful store with one.
+ * ADR-0011 is unchanged by this.
+ */
+export async function storeCredential(
+  input: { kind: CredentialKind; value: string },
+  writer: CredentialWriter | null = tauriCredentialWriter(),
+): Promise<void> {
+  if (writer === null) throw new CredentialNotStored('no-host')
+  try {
+    await writer.store({ kind: input.kind, value: input.value })
+  } catch (rejection) {
+    throw new CredentialNotStored(storeFailureOf(rejection))
+  }
+  // Nothing is returned, and nothing the writer resolved with is read. A writer
+  // that answered with the value has no way to hand it on.
 }
 
 /**

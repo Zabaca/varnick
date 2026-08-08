@@ -2423,6 +2423,224 @@ type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded'
 }
 
 // ---------------------------------------------------------------------------
+// The credential, stored from inside the window
+//
+// `credential.absent` is the state a stranger's fresh clone opens in, and until
+// now the only way out of it was a terminal. These are the machine facts of the
+// way out that is not: which states accept a paste, what a store does on its
+// way through, and — the one that matters most — that the value it carries
+// exists nowhere afterwards.
+// ---------------------------------------------------------------------------
+
+type StoreInput = { kind: 'api-key' | 'subscription'; value: string }
+
+/** A value shaped like a real token, so "it is nowhere" is worth asserting. */
+const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
+
+{
+  // Only `absent` takes one. A paste is how a developer gets *out* of having no
+  // credential; offering it over one that is present would be a way to replace
+  // a working credential by accident, and offering it mid-read would race the
+  // read it is about to invalidate.
+  const storing = { type: 'STORE_CREDENTIAL' as const, kind: 'api-key' as const, value: 'a-key' }
+
+  const fresh = createActor(harnessMachine, { input: { policy: seedPolicy } }).start()
+  check('a fresh clone accepts a pasted credential', fresh.getSnapshot().can(storing))
+  check(
+    'and refuses an empty one, so the control is off rather than the store failing',
+    !fresh.getSnapshot().can({ ...storing, value: '   ' }),
+  )
+  fresh.stop()
+
+  for (const enterCredential of ['reading', 'present', 'rejected'] as const) {
+    const actor = createActor(harnessMachine, {
+      input: { policy: seedPolicy, enterCredential, credentialKind: 'api-key' },
+    }).start()
+    check(
+      `credential.${enterCredential} refuses a paste`,
+      !actor.getSnapshot().can(storing),
+    )
+    // The kind and the paste appear and disappear together. A choice offered
+    // where nothing can be stored is a control with nothing to control.
+    check(
+      `credential.${enterCredential} offers no kind to choose`,
+      !actor.getSnapshot().can({ type: 'CHOOSE_CREDENTIAL_KIND', kind: 'api-key' }),
+    )
+    actor.stop()
+  }
+}
+
+{
+  /*
+    Which kind is being written is machine state, not a component's.
+
+    The view is a pure function of `(snapshot, send)` — ADR-0001 — so a radio
+    selection in a `useState` would be a piece of the setup screen the states
+    page could not park in, and the card would show a choice that could not be
+    made. It defaults to a subscription for the same reason `resolve` prefers
+    one: a developer already paying for a plan should not be shown a
+    bill-per-request key as the obvious option.
+  */
+  const actor = createActor(harnessMachine, { input: { policy: seedPolicy } }).start()
+  check('a fresh clone is set to write a subscription', actor.getSnapshot().context.storingKind === 'subscription')
+  check(
+    'and the choice is a control the machine offers',
+    actor.getSnapshot().can({ type: 'CHOOSE_CREDENTIAL_KIND', kind: 'api-key' }),
+  )
+
+  actor.send({ type: 'CHOOSE_CREDENTIAL_KIND', kind: 'api-key' })
+  check('choosing the other kind changes what a store would write', actor.getSnapshot().context.storingKind === 'api-key')
+  check(
+    'and changes nothing else — it is not a credential',
+    regionOf(actor.getSnapshot().value, 'credential') === 'absent' &&
+      actor.getSnapshot().context.credentialKind === null,
+  )
+  actor.stop()
+}
+
+{
+  /*
+    A store that worked re-reads, and lands where any other launch lands.
+
+    The re-read is the point rather than a flourish: one code path establishes
+    the credential whether it was stored a minute ago or a year ago, so a write
+    that somehow produced an unreadable item is caught now instead of at the
+    next launch. It is also what keeps ADR-0011 true — the developer chose which
+    item to write, and the host still decides what it is holding by resolving.
+  */
+  // Both kinds, because the checklist this realizes is about a fresh clone with
+  // an empty keychain reaching a working agent — and there are two ways to have
+  // one. The write differs only in which item it addresses.
+  for (const kind of ['subscription', 'api-key'] as const) {
+    let written: StoreInput | null = null
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          storeCredential: fromPromise<void, StoreInput>(async ({ input }) => {
+            written = { ...input }
+          }),
+          readCredential: resolves<CredentialReading, Record<string, never>>({
+            source: 'keychain',
+            kind,
+          }),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+
+    actor.send({ type: 'CHOOSE_CREDENTIAL_KIND', kind })
+    actor.send({ type: 'STORE_CREDENTIAL', kind, value: PASTED })
+    check(`a pasted ${kind} enters storing`, regionOf(actor.getSnapshot().value, 'credential') === 'storing')
+    check(
+      `and storing says it is writing the ${kind} item, which is not a secret`,
+      actor.getSnapshot().context.storingKind === kind,
+    )
+
+    await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+    check(`a stored ${kind} is read back rather than assumed`, written !== null)
+    check(`the host is handed the kind the developer chose (${kind})`, written!.kind === kind)
+    check(`and the value, once (${kind})`, written!.value === PASTED)
+    check(
+      `the kind that lands in context is the one the read resolved (${kind})`,
+      actor.getSnapshot().context.credentialKind === kind,
+    )
+
+    /*
+      The assertion this whole path exists for, and it is an assertion rather
+      than an inspection: after a store, the value is in no field of the machine.
+      That covers the transcript and the Session mirror at once — the mirror is
+      handed `context.messages`, and everything the surface renders comes from
+      here.
+    */
+    check(
+      `nothing in the machine holds what was pasted (${kind})`,
+      !JSON.stringify(actor.getSnapshot().context, (_k, v) =>
+        typeof v === 'object' && v !== null && 'send' in (v as object) ? undefined : v,
+      ).includes(PASTED),
+    )
+    actor.stop()
+  }
+}
+
+{
+  // A store that failed comes back to `absent` carrying the reason, exactly as
+  // a failed read does — so the surface has one place to look and one sentence
+  // to render, whichever of the two went wrong.
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        storeCredential: rejects<void, StoreInput>('The keychain refused to store it.'),
+        readCredential: rejects<CredentialReading, Record<string, never>>('nothing is stored'),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  actor.send({ type: 'STORE_CREDENTIAL', kind: 'api-key', value: PASTED })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'absent')
+  check(
+    'a failed store says why',
+    actor.getSnapshot().context.credentialError === 'The keychain refused to store it.',
+  )
+  check(
+    'a failed store leaves no kind standing',
+    actor.getSnapshot().context.credentialKind === null,
+  )
+  check(
+    'and nothing that failed kept the value',
+    !JSON.stringify(actor.getSnapshot().context, (_k, v) =>
+      typeof v === 'object' && v !== null && 'send' in (v as object) ? undefined : v,
+    ).includes(PASTED),
+  )
+  check('a failed store can be tried again', actor.getSnapshot().can({ type: 'STORE_CREDENTIAL', kind: 'api-key', value: 'again' }))
+  actor.stop()
+}
+
+{
+  // The value never reaches the Session mirror, asserted at the mirror rather
+  // than argued from where it is not. A store while an agent is running, then a
+  // Turn boundary, then everything the store was handed.
+  const { spy, actor: persistSession } = saveSpy(true)
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        storeCredential: fromPromise<void, StoreInput>(async () => {}),
+        readCredential: resolves<CredentialReading, Record<string, never>>({
+          source: 'keychain',
+          kind: 'api-key',
+        }),
+        checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+        spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 3 }),
+        session: sessionMachine.provide({
+          actors: { runTurn: resolves<TurnOutput, TurnInput>({ text: 'ok', tokensUsed: 1 }), persistSession },
+        }),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  actor.send({ type: 'STORE_CREDENTIAL', kind: 'api-key', value: PASTED })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+  actor.send({ type: 'CHECK_SANDBOX' })
+  await waitFor(actor, (s) => regionOf(s.value, 'sandbox') === 'available')
+  actor.send({ type: 'START' })
+  await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
+
+  const session = actor.getSnapshot().context.session!
+  session.send({ type: 'EDIT_DRAFT', text: 'first thing after storing a credential' })
+  session.send({ type: 'SEND' })
+  check(
+    'the turn after a store reaches the mirror',
+    await reaches(waitFor(session, (s) => regionOf(s.value, 'turn') === 'idle' && spy.calls > 0, soon)),
+  )
+  check(
+    'and what the mirror was handed holds no credential',
+    !JSON.stringify(spy.last).includes(PASTED),
+  )
+  actor.stop()
+}
+
+// ---------------------------------------------------------------------------
 // Surface briefs — a state is named in exactly one place
 // ---------------------------------------------------------------------------
 

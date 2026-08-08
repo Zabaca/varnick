@@ -120,10 +120,15 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // model call on the Session the agent process is already holding, and
         // answering it in the runtime — the process with a filesystem, and the
         // obvious home for "do some work" — would mean opening a session there.
-        "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" | "run-turn"
-        | "next-turn-event" | "interrupt-turn" | "read-plan-usage" | "compact-session" => {
-            Some(Route::Host)
-        }
+        //
+        // Storing one is here for the first reason, in the other direction and
+        // more sharply than any of the rest: it is the one call that carries a
+        // value *into* the host, from the window a developer pasted it into.
+        // Forwarding it would put a credential on the pipe to the Node runtime,
+        // which is a second process holding one.
+        "read-credential" | "store-credential" | "spawn-agent" | "stop-agent"
+        | "await-agent-exit" | "run-turn" | "next-turn-event" | "interrupt-turn"
+        | "read-plan-usage" | "compact-session" => Some(Route::Host),
         "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
@@ -343,6 +348,40 @@ pub fn harness_call(
                     crate::credential::read_credential(&credentials).map_err(Failure::refused)?;
                 serde_json::to_value(reading).map_err(|_| Failure::of("malformed"))
             }
+            /*
+              The credential written, in the one process allowed to hold one.
+
+              This is the only request on the bridge with a secret in it, and it
+              travels in one direction: the value goes into `Secret` before
+              anything else is done with it, `store_credential` answers `Ok(())`
+              or a `&'static str` tag, and the reply below is a constant. There
+              is no shape on either path a value could come back in, and nothing
+              between here and the keychain prints one — see credential.rs.
+
+              Which item is written is the developer's choice, made in the
+              window. Which credential is *resolved* is still the host's, decided
+              by what it finds on the next read: nothing here records a
+              preference, and ADR-0011 is unchanged.
+            */
+            "store-credential" => {
+                let Some(kind) = request
+                    .get("credentialKind")
+                    .and_then(Value::as_str)
+                    .and_then(crate::credential::kind_of)
+                else {
+                    return Err(Failure::of("malformed"));
+                };
+                let Some(value) = request.get("value").and_then(Value::as_str) else {
+                    return Err(Failure::of("malformed"));
+                };
+                crate::credential::store_credential(
+                    &crate::credential::SystemSecurity,
+                    kind,
+                    crate::credential::Secret::new(value.to_string()),
+                )
+                .map_err(Failure::refused)?;
+                Ok(serde_json::json!({ "ok": true }))
+            }
             // Two steps, in this order, with no third: ask the runtime how to
             // run the agent under the Sandbox it established, then run that with
             // the credential added. A runtime that refuses the first step ends
@@ -395,6 +434,22 @@ mod tests {
     #[test]
     fn the_credential_is_answered_by_this_process_and_never_forwarded() {
         assert_eq!(route_of("read-credential"), Some(Route::Host));
+    }
+
+    #[test]
+    fn storing_a_credential_is_answered_by_this_process_and_never_forwarded() {
+        /*
+          The one call that carries a secret *into* the host, and the only route
+          it may take. Forwarding it would put the value on the pipe to the
+          Harness runtime — a second process holding a credential, which is
+          exactly what ADR-0008 exists to prevent, and it would be one line in
+          `route_of` away at all times.
+
+          This is why `route_of` is a unit test rather than a convention: a
+          `cargo build` once found two arms for the same kind that fifty-nine
+          passing tests could not see.
+        */
+        assert_eq!(route_of("store-credential"), Some(Route::Host));
     }
 
     #[test]
