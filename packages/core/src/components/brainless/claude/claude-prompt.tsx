@@ -97,13 +97,14 @@ export function ClaudePrompt({
   onChange?: React.ChangeEventHandler<HTMLInputElement>;
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
   placeholder?: string;
-  mode?: ClaudeMode;
+  /** Pass `false` to hide the mode line, as `effort` already allows. */
+  mode?: ClaudeMode | false;
   /** Effort chip above the prompt. Pass `false` to hide. */
   effort?: ClaudeEffort | false;
   className?: string;
   inputClassName?: string;
 }) {
-  const m = MODES[mode];
+  const m = mode === false ? null : MODES[mode];
   const e = effort === false ? null : EFFORTS[effort];
   const controlled = value !== undefined;
   const rainbow = Boolean(e?.rainbow);
@@ -155,13 +156,15 @@ export function ClaudePrompt({
         />
       </div>
 
-      <div className="mt-1.5 min-w-0 break-words px-1 text-[12px]">
-        <span style={{ color: m.color }}>
-          <span aria-hidden>{m.glyph} </span>
-          {m.label}
-        </span>
-        {m.hint ? <span style={{ color: GRAY }}> {m.hint}</span> : null}
-      </div>
+      {m ? (
+        <div className="mt-1.5 min-w-0 break-words px-1 text-[12px]">
+          <span style={{ color: m.color }}>
+            <span aria-hidden>{m.glyph} </span>
+            {m.label}
+          </span>
+          {m.hint ? <span style={{ color: GRAY }}> {m.hint}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

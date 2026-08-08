@@ -239,7 +239,9 @@ export function DesignedPage() {
                 working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
               }
               effort="xhigh"
-              mode="auto"
+              // No mode cycling in varnick, so the mode line would describe a
+              // control that does not exist.
+              mode={false}
               onChange={(e) => {
                 setDraft(e.target.value)
                 session?.send({ type: 'EDIT_DRAFT', text: e.target.value })
