@@ -1,56 +1,173 @@
 @import 'tailwindcss';
 
 /*
-  PLACEHOLDER TOKENS.
+  Orizuru Fold Sequence — the committed world.
 
-  These are shadcn's neutral defaults, present only so components render while
-  the machines are being built. They are not a design decision and no visual
-  world has been chosen yet — that happens at stage 3 phase 5 via impeccable's
-  new-work flow, which replaces this block wholesale. Do not extend this palette
-  or treat any value here as established.
+  One continuous sheet that keeps every crease it has taken. Vermilion owns the
+  rail as a whole field; sumi washi owns the sheet. Fold-white is crease and
+  text; gold marks the active fold and nothing else. Chosen by the user over the
+  assigned direction and over the category standard; seed key 3a224cf1.
 
-  See docs/agents/workflow.md and docs/agents/stage-contracts.md.
+  Vermilion is the identity, so it is never the alarm. Refusal and failure read
+  through crease language — an unclosed square, a released fold.
 */
 
+@font-face {
+  font-family: 'Jost';
+  src: url('/fonts/jost-variable.woff2') format('woff2-variations');
+  font-weight: 300 500;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-border: var(--border);
-  --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
+  --color-vermilion: var(--vermilion);
+  --color-vermilion-wash: var(--vermilion-wash);
+  --color-vermilion-deep: var(--vermilion-deep);
+  --color-fold: var(--fold);
+  --color-fold-dim: var(--fold-dim);
+  --color-gold: var(--gold);
+  --color-sumi: var(--sumi);
+  --color-sumi-raised: var(--sumi-raised);
+  --color-crease: var(--crease);
+  --color-paper-grey: var(--paper-grey);
+
+  --font-display: 'Jost', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --border: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-}
+  /* From the world's board, unmodified. */
+  --vermilion: #d83c2e;
+  --vermilion-wash: #e07a6e;
+  --gold: #d4af37;
+  --sumi: #1a1a1a;
+  --fold: #f7f3ee;
+  --paper-grey: #e6e2da;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --border: oklch(1 0 0 / 10%);
-    --ring: oklch(0.556 0 0);
-  }
+  /*
+    Derived for the fields the board does not specify.
+
+    The rail ground is vermilion-deep, not the board's #d83c2e: fold-white on
+    #d83c2e measures 4.13:1, under the floor for body text, and the rail is all
+    body text. #ab2b20 is the same hue held darker and measures 6.14:1. The
+    board's vermilion stays the identity on the sheet side.
+  */
+  --vermilion-deep: #ab2b20;
+  --sumi-raised: #232321;
+  --crease: #3a3936;
+  /* Secondary text, tinted from the ground rather than grey. 7.02:1 on sumi. */
+  --fold-dim: #a9a49b;
+  /* Secondary text on the vermilion field. 4.67:1 on #ab2b20. */
+  --fold-on-vermilion: #f0cfc9;
+  /* Agent prose on the sheet: a step back from the user's own words. 12.6:1. */
+  --fold-agent: #ddd9d3;
+  --rail-rule: rgba(247, 243, 238, 0.26);
+  --rail-raised: rgba(247, 243, 238, 0.14);
+
+  --rail-w: 264px;
+  --sheet-measure: 52ch; /* ch is the width of a zero; a proportional face fits ~1.25x that, landing the real measure near 65 characters. */
 }
 
 @layer base {
-  * {
-    border-color: var(--color-border);
+  html,
+  body,
+  #root {
+    height: 100%;
   }
+
   body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
+    margin: 0;
+    background-color: var(--sumi);
+    color: var(--fold);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The surfaces we did not draw still carry the world. */
+  ::selection {
+    background: var(--gold);
+    color: var(--sumi);
+  }
+
+  * {
+    caret-color: var(--gold);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--crease);
+    border: 3px solid var(--sumi);
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--fold-dim);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 2px;
+    border-radius: 1px;
+  }
+
+  a {
+    color: inherit;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+
+  /* Tabular figures wherever a number is a measurement. */
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+}
+
+/*
+  The crease lattice. A folded square remembers its diagonals and its halves;
+  this is that memory, at the threshold of visible, behind the sheet.
+*/
+.crease-ground {
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      transparent 0 119px,
+      rgba(247, 243, 238, 0.028) 119px 120px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      transparent 0 119px,
+      rgba(247, 243, 238, 0.028) 119px 120px
+    );
+}
+
+/* The one authored moment: a fold taking, from an already-visible default. */
+@keyframes crease-take {
+  from {
+    clip-path: inset(0 0 100% 0);
+    opacity: 0.4;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+
+.fold-taking {
+  animation: crease-take 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fold-taking {
+    animation: none;
   }
 }

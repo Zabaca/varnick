@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BarePage } from './pages/BarePage.tsx'
+import { DesignedPage } from './pages/DesignedPage.tsx'
 
 const ROUTES = ['#/bare', '#/designed', '#/states'] as const
 type Route = (typeof ROUTES)[number]
@@ -19,6 +20,7 @@ export function App() {
   }, [])
 
   if (route === '#/bare') return <BarePage />
+  if (route === '#/designed') return <DesignedPage />
 
   // Designed and states come after the bare page proves the behaviour is
   // complete. Nothing visual is decided until then.
