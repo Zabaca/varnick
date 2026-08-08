@@ -1,6 +1,7 @@
 import { setup, assign, fromPromise } from 'xstate'
 import type { Message } from '../domain.ts'
 import { isCommandDraft } from '../domain.ts'
+import type { Effort, ModelId } from '../domain.ts'
 
 /**
  * One durable conversation.
@@ -43,6 +44,12 @@ export interface SessionContext {
   menuIndex: number
   /** Escape closes the menu without clearing a draft that still starts with `/`. */
   menuDismissed: boolean
+  /** Supplied by the view; the machine derives menu state from it rather than
+   *  being told when to open. */
+  commandNames: readonly string[]
+  /** What the next turn runs on. Settable mid-session; applies to the next turn. */
+  model: ModelId
+  effort: Effort
   readonly enterTurn: string | null
   readonly enterPersistence: string | null
 }
@@ -56,6 +63,9 @@ export interface SessionInput {
   saveError?: string | null
   menuOpen?: boolean
   menuIndex?: number
+  commandNames?: readonly string[]
+  model?: ModelId
+  effort?: Effort
   enterTurn?: string | null
   enterPersistence?: string | null
 }
@@ -76,6 +86,9 @@ export type SessionEvent =
   | { type: 'MENU_COMPLETE'; name: string }
   | { type: 'MENU_DISMISS' }
   | { type: 'CLEAR' }
+  | { type: 'SET_MODEL'; model: ModelId }
+  | { type: 'SET_EFFORT'; effort: Effort }
+  | { type: 'SET_COMMANDS'; names: readonly string[] }
 
 /**
  * Real-service contracts:
@@ -93,9 +106,10 @@ export const sessionMachine = setup({
     input: {} as SessionInput,
   },
   actors: {
-    runTurn: fromPromise<{ text: string }, { sessionId: string; prompt: string }>(
-      async () => ({ text: '' }),
-    ),
+    runTurn: fromPromise<
+      { text: string },
+      { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+    >(async () => ({ text: '' })),
     persistSession: fromPromise<
       { ok: true },
       { sessionId: string; messages: readonly Message[] }
@@ -124,6 +138,9 @@ export const sessionMachine = setup({
     menuOpen: input.menuOpen ?? false,
     menuIndex: input.menuIndex ?? 0,
     menuDismissed: false,
+    commandNames: input.commandNames ?? [],
+    model: input.model ?? 'claude-opus-5',
+    effort: input.effort ?? 'xhigh',
     enterTurn: input.enterTurn ?? null,
     enterPersistence: input.enterPersistence ?? null,
   }),
@@ -136,6 +153,11 @@ export const sessionMachine = setup({
     opens during a live turn.
   */
   on: {
+    // Legal at any time. Changing either mid-turn does not disturb the turn in
+    // flight; it is what the next one runs on.
+    SET_COMMANDS: { actions: assign({ commandNames: ({ event }) => event.names }) },
+    SET_MODEL: { actions: assign({ model: ({ event }) => event.model }) },
+    SET_EFFORT: { actions: assign({ effort: ({ event }) => event.effort }) },
     EDIT_DRAFT: {
       actions: assign({
         draft: ({ event }) => event.text,
@@ -191,6 +213,8 @@ export const sessionMachine = setup({
             input: ({ context }) => ({
               sessionId: context.sessionId,
               prompt: context.messages[context.messages.length - 1]?.text ?? '',
+              model: context.model,
+              effort: context.effort,
             }),
             onDone: {
               target: 'idle',
@@ -228,6 +252,8 @@ export const sessionMachine = setup({
             input: ({ context }) => ({
               sessionId: context.sessionId,
               prompt: context.messages[context.messages.length - 1]?.text ?? '',
+              model: context.model,
+              effort: context.effort,
             }),
             onDone: {
               target: 'idle',
@@ -351,14 +377,16 @@ export const sessionMachine = setup({
           entry: assign({ menuOpen: false }),
           always: {
             target: 'menu',
-            guard: ({ context }) => isCommandDraft(context.draft) && !context.menuDismissed,
+            guard: ({ context }) =>
+              isCommandDraft(context.draft, context.commandNames) && !context.menuDismissed,
           },
         },
         menu: {
           entry: assign({ menuOpen: true }),
           always: {
             target: 'typing',
-            guard: ({ context }) => !isCommandDraft(context.draft) || context.menuDismissed,
+            guard: ({ context }) =>
+              !isCommandDraft(context.draft, context.commandNames) || context.menuDismissed,
           },
           on: {
             MENU_MOVE: {

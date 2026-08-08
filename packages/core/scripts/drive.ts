@@ -12,9 +12,9 @@ import { createActor, fromPromise, waitFor } from 'xstate'
 import { harnessMachine } from '../src/machines/harness.ts'
 import { sessionMachine } from '../src/machines/session.ts'
 import { surfaceMachine } from '../src/machines/surface.ts'
-import { regionOf, canStartAgent, invokedCommand } from '../src/domain.ts'
+import { regionOf, canStartAgent, invokedCommand, isCommandDraft } from '../src/domain.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
-import type { SandboxPolicy } from '../src/domain.ts'
+import type { Effort, ModelId, SandboxPolicy } from '../src/domain.ts'
 
 let passed = 0
 const failures: string[] = []
@@ -39,6 +39,9 @@ const rejects = <TOut = never, TIn = Record<string, unknown>>(message: string) =
 
 const never = <TOut = never, TIn = Record<string, unknown>>() =>
   fromPromise<TOut, TIn>(() => new Promise<TOut>(() => {}))
+
+type TurnInput = { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+const turnNever = () => never<{ text: string }, TurnInput>()
 
 // ---------------------------------------------------------------------------
 // Harness — the start gate
@@ -232,7 +235,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 
 {
   const actor = createActor(
-    sessionMachine.provide({ actors: { runTurn: never() } }),
+    sessionMachine.provide({ actors: { runTurn: turnNever() } }),
     { input: { sessionId: 's2' } },
   ).start()
 
@@ -257,7 +260,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 {
   // An interrupted turn keeps what already arrived.
   const actor = createActor(
-    sessionMachine.provide({ actors: { runTurn: never() }, delays: { interruptGrace: 1 } }),
+    sessionMachine.provide({ actors: { runTurn: turnNever() }, delays: { interruptGrace: 1 } }),
     { input: { sessionId: 's3' } },
   ).start()
 
@@ -280,7 +283,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   const actor = createActor(
     sessionMachine.provide({
       actors: {
-        runTurn: fromPromise(async () => {
+        runTurn: fromPromise<{ text: string }, TurnInput>(async () => {
           turnAttempts++
           if (turnAttempts === 1) throw new Error('stream closed')
           return { text: 'second time' }
@@ -307,7 +310,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   const actor = createActor(
     sessionMachine.provide({
       actors: {
-        runTurn: never(),
+        runTurn: turnNever(),
         persistSession: fromPromise(async () => {
           saveAttempts++
           if (saveAttempts === 1) throw new Error('disk full')
@@ -335,7 +338,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 // ---------------------------------------------------------------------------
 
 {
-  const actor = createActor(sessionMachine, { input: { sessionId: 's6' } }).start()
+  const actor = createActor(sessionMachine, { input: { sessionId: 's6', commandNames: ['/clear', '/retry', '/save', '/effort low', '/effort max', '/model opus-5', '/model sonnet-5'] } }).start()
   const composer = () => regionOf(actor.getSnapshot().value, 'composer')
 
   check('the composer starts typing', composer() === 'typing')
@@ -349,8 +352,16 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   check('typing the command keeps the menu open', composer() === 'menu')
 
   // A space means the slash text is an argument, not a query.
+  // A space no longer closes the menu by itself — `/model son` must keep it —
+  // so the test is whether anything still matches.
   actor.send({ type: 'EDIT_DRAFT', text: '/clear now' })
-  check('a space closes the menu', composer() === 'typing')
+  check('a draft matching no command closes the menu', composer() === 'typing')
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/model son' })
+  check('a partial multi-word command keeps the menu open', composer() === 'menu')
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/model sonnet-5 ' })
+  check('the trailing space after a full name closes it', composer() === 'typing')
 
   // Ordinary text never opens it.
   actor.send({ type: 'EDIT_DRAFT', text: 'build me a thing' })
@@ -359,7 +370,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 }
 
 {
-  const actor = createActor(sessionMachine, { input: { sessionId: 's7' } }).start()
+  const actor = createActor(sessionMachine, { input: { sessionId: 's7', commandNames: ['/clear', '/retry', '/save', '/effort low', '/effort max', '/model opus-5', '/model sonnet-5'] } }).start()
   actor.send({ type: 'EDIT_DRAFT', text: '/c' })
 
   actor.send({ type: 'MENU_MOVE', delta: 1, count: 3 })
@@ -378,7 +389,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   // Escape closes the menu without eating the draft — and it must stay closed,
   // which is the whole reason menuDismissed exists. Without it the eventless
   // transition reopens the menu on the next microstep.
-  const actor = createActor(sessionMachine, { input: { sessionId: 's8' } }).start()
+  const actor = createActor(sessionMachine, { input: { sessionId: 's8', commandNames: ['/clear', '/retry', '/save', '/effort low', '/effort max', '/model opus-5', '/model sonnet-5'] } }).start()
   const composer = () => regionOf(actor.getSnapshot().value, 'composer')
 
   actor.send({ type: 'EDIT_DRAFT', text: '/clear' })
@@ -397,7 +408,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 {
   // Tab completes into the draft. It does not run the command — Enter does,
   // and only because the completed draft then names one.
-  const actor = createActor(sessionMachine, { input: { sessionId: 's9' } }).start()
+  const actor = createActor(sessionMachine, { input: { sessionId: 's9', commandNames: ['/clear', '/retry', '/save', '/effort low', '/effort max', '/model opus-5', '/model sonnet-5'] } }).start()
   actor.send({ type: 'EDIT_DRAFT', text: '/cl' })
   actor.send({ type: 'MENU_MOVE', delta: 1, count: 4 })
   actor.send({ type: 'MENU_COMPLETE', name: '/clear' })
@@ -433,8 +444,8 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   // The composer is its own region: a menu open during a live turn must not
   // touch the turn, and must not become a way to send.
   const actor = createActor(
-    sessionMachine.provide({ actors: { runTurn: never() } }),
-    { input: { sessionId: 's10' } },
+    sessionMachine.provide({ actors: { runTurn: turnNever() } }),
+    { input: { sessionId: 's10', commandNames: ['/clear', '/retry', '/save', '/effort low', '/effort max', '/model opus-5', '/model sonnet-5'] } },
   ).start()
 
   actor.send({ type: 'EDIT_DRAFT', text: 'go' })
@@ -458,7 +469,7 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   // Clearing is only legal once a turn has settled. Wiping the transcript
   // mid-stream would drop the reply that is still arriving.
   const actor = createActor(
-    sessionMachine.provide({ actors: { runTurn: never() } }),
+    sessionMachine.provide({ actors: { runTurn: turnNever() } }),
     { input: { sessionId: 's11' } },
   ).start()
 
@@ -476,6 +487,72 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   check('clearing empties the transcript', actor.getSnapshot().context.messages.length === 0)
   check('clearing empties the draft', actor.getSnapshot().context.draft === '')
   actor.stop()
+}
+
+{
+  // Model and effort are settings, not modes: legal at any time, applied to the
+  // next turn, and never disturbing a turn already in flight.
+  const actor = createActor(
+    sessionMachine.provide({ actors: { runTurn: turnNever() } }),
+    { input: { sessionId: 's12' } },
+  ).start()
+
+  check('a session starts on opus-5', actor.getSnapshot().context.model === 'claude-opus-5')
+  check('and at xhigh effort', actor.getSnapshot().context.effort === 'xhigh')
+
+  actor.send({ type: 'SET_MODEL', model: 'claude-haiku-4-5' })
+  actor.send({ type: 'SET_EFFORT', effort: 'low' })
+  check('the model changes', actor.getSnapshot().context.model === 'claude-haiku-4-5')
+  check('the effort changes', actor.getSnapshot().context.effort === 'low')
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'do a thing' })
+  actor.send({ type: 'SEND' })
+  check('a turn is running', regionOf(actor.getSnapshot().value, 'turn') === 'sending')
+
+  actor.send({ type: 'SET_EFFORT', effort: 'max' })
+  check('changing effort mid-turn is accepted', actor.getSnapshot().context.effort === 'max')
+  check(
+    'and does not disturb the turn',
+    regionOf(actor.getSnapshot().value, 'turn') === 'sending',
+  )
+  actor.stop()
+}
+
+{
+  // The turn runs on what the session says, not on a default baked into the
+  // actor. Asserted by reading the input the actor was handed.
+  let seen: { model: string; effort: string } | undefined
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: fromPromise<{ text: string }, TurnInput>(async ({ input }) => {
+          seen = { model: input.model, effort: input.effort }
+          return { text: 'ok' }
+        }),
+      },
+    }),
+    { input: { sessionId: 's13', model: 'claude-sonnet-5', effort: 'medium' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+  actor.send({ type: 'SEND' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+
+  check('the turn receives the session model', seen !== undefined && seen.model === 'claude-sonnet-5')
+  check('the turn receives the session effort', seen !== undefined && seen.effort === 'medium')
+  actor.stop()
+}
+
+{
+  // Command names contain spaces, so resolution takes the longest match. First
+  // word would resolve "/effort xhigh" to a bare "/effort" meaning something else.
+  const names = ['/clear', '/effort', '/effort xhigh', '/model sonnet-5']
+  check('the longest matching name wins', invokedCommand('/effort xhigh', names) === '/effort xhigh')
+  check('a partial multi-word draft still matches a name prefix', isCommandDraft('/model son', names))
+  check('an unmatched draft does not', !isCommandDraft('/clear everything', names))
+  check('a shorter name still resolves alone', invokedCommand('/effort', names) === '/effort')
+  check('trailing text does not break the match', invokedCommand('/model sonnet-5 ', names) === '/model sonnet-5')
+  check('an unknown value does not resolve', invokedCommand('/effort turbo', names) === '/effort')
 }
 
 // ---------------------------------------------------------------------------

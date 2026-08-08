@@ -1,5 +1,5 @@
 import { fromPromise } from 'xstate'
-import type { Message, SandboxPolicy } from '../domain.ts'
+import type { Effort, Message, ModelId, SandboxPolicy } from '../domain.ts'
 import { brokenSurfaceError } from '../data/seed.ts'
 
 /**
@@ -55,13 +55,16 @@ export function seededActors(controls: SeedControls) {
       return { pid: 4242 }
     }),
 
-    runTurn: fromPromise<{ text: string }, { sessionId: string; prompt: string }>(
-      async ({ input }) => {
-        await wait(600)
-        if (controls.failTurn) throw new Error('stream closed unexpectedly')
-        return { text: `Acknowledged: ${input.prompt}` }
-      },
-    ),
+    runTurn: fromPromise<
+      { text: string },
+      { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+    >(async ({ input }) => {
+      await wait(600)
+      if (controls.failTurn) throw new Error('stream closed unexpectedly')
+      // Echoes what it ran on, so a /model or /effort change is visible even
+      // while the agent itself is still a stub.
+      return { text: `Acknowledged on ${input.model} at ${input.effort} effort: ${input.prompt}` }
+    }),
 
     persistSession: fromPromise<
       { ok: true },

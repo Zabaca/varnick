@@ -6,7 +6,7 @@ import { ClaudeMessage } from '../components/brainless/claude/claude-message.tsx
 import { ClaudeThinking } from '../components/brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from '../components/brainless/claude/claude-prompt.tsx'
 import { SlashMenu, type Command } from '../components/slash-menu.tsx'
-import { commandQuery, invokedCommand } from '../domain.ts'
+import { commandQuery, invokedCommand, EFFORTS, MODELS } from '../domain.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
 /**
@@ -104,14 +104,45 @@ export function DesignedPage() {
       available: snapshot.can({ type: 'STOP' }),
       run: () => send({ type: 'STOP' }),
     },
+    /*
+      Values are separate entries rather than an argument to parse. Typing
+      `/eff` filters to the five levels, Tab completes one, Enter runs it — no
+      argument parsing, and no error surface for a value that was never typed.
+
+      Every value is listed, including the one in force, marked rather than
+      hidden: the list doubles as the answer to "what is this set to", which is
+      most of why anyone types /model.
+    */
+    ...EFFORTS.map((e) => ({
+      name: `/effort ${e}`,
+      description:
+        e === s?.context.effort ? `Current — next turn runs at ${e}` : `Run the next turn at ${e} effort`,
+      available: Boolean(session),
+      run: () => session?.send({ type: 'SET_EFFORT', effort: e }),
+    })),
+    ...MODELS.map((m) => ({
+      name: `/model ${m.label}`,
+      description:
+        m.id === s?.context.model ? `Current — next turn runs on ${m.label}` : `Run the next turn on ${m.label}`,
+      available: Boolean(session),
+      run: () => session?.send({ type: 'SET_MODEL', model: m.id }),
+    })),
   ]
 
   const query = commandQuery(draft).toLowerCase()
   const commands = allCommands.filter(
-    (c) => c.available && c.name.slice(1).toLowerCase().startsWith(query),
+    (c) => c.available && c.name.toLowerCase().startsWith(query),
   )
+  const availableNames = allCommands.filter((c) => c.available).map((c) => c.name)
   const menuOpen = Boolean(s?.context.menuOpen)
   const menuIndex = Math.min(s?.context.menuIndex ?? 0, Math.max(commands.length - 1, 0))
+
+  // The machine derives menu state from the names, so they have to stay current
+  // as availability changes.
+  const nameKey = availableNames.join('\u0000')
+  useEffect(() => {
+    session?.send({ type: 'SET_COMMANDS', names: nameKey ? nameKey.split('\u0000') : [] })
+  }, [nameKey, session])
 
   /** Tab, or a click: put the command in the draft and stop there. */
   const complete = (i: number) => {
@@ -238,7 +269,7 @@ export function DesignedPage() {
               placeholder={
                 working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
               }
-              effort="xhigh"
+              effort={s?.context.effort ?? 'xhigh'}
               // No mode cycling in varnick, so the mode line would describe a
               // control that does not exist.
               mode={false}

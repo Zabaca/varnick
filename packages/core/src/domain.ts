@@ -78,12 +78,20 @@ export function refusalFor(input: {
 }
 
 /**
- * A draft is addressing the command menu when it opens with `/` and has not yet
- * reached a space. `/re` is still choosing; `/review src` is an argument to a
- * command already chosen, and the menu is no longer what the keyboard means.
+ * A draft is addressing the command menu while some command name still starts
+ * with what has been typed.
+ *
+ * The first version closed the menu at the first space, which was right when
+ * every command was one word and wrong the moment `/model sonnet-5` existed —
+ * you could never filter past `/model `. Asking whether anything still matches
+ * handles both: `/model son` keeps the menu, `/model sonnet-5 ` closes it
+ * because the trailing space matches no name, and `/clear everything` closes it
+ * for the same reason.
  */
-export function isCommandDraft(draft: string): boolean {
-  return draft.startsWith('/') && !draft.includes(' ')
+export function isCommandDraft(draft: string, names: readonly string[]): boolean {
+  if (!draft.startsWith('/')) return false
+  const typed = draft.toLowerCase()
+  return names.some((n) => n.toLowerCase().startsWith(typed))
 }
 
 /**
@@ -92,15 +100,41 @@ export function isCommandDraft(draft: string): boolean {
  * Sending is how a command runs: `/clear` typed and sent runs the command
  * rather than posting the word. Anything that does not name a known command is
  * an ordinary message, including a half-typed `/cl`.
+ *
+ * Names may contain spaces — `/effort xhigh` is one command, not a command and
+ * an argument — so the longest matching name wins. Matching the first word
+ * would resolve `/effort xhigh` to a bare `/effort` that means something else.
  */
 export function invokedCommand(draft: string, names: readonly string[]): string | null {
-  const first = draft.trim().split(/\s+/)[0] ?? ''
-  return names.includes(first) ? first : null
+  const text = draft.trim()
+  let best: string | null = null
+  for (const name of names) {
+    if (text !== name && !text.startsWith(`${name} `)) continue
+    if (best === null || name.length > best.length) best = name
+  }
+  return best
 }
 
-/** The query a command draft is filtering by — the text after the slash. */
+/** Effort levels the Agent SDK accepts, cheapest first. */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+export type Effort = (typeof EFFORTS)[number]
+
+/**
+ * Models this session can run on.
+ *
+ * Real ids, because a picker offering something the API would reject is the
+ * same class of lie as a status line reporting on a timer.
+ */
+export const MODELS = [
+  { id: 'claude-opus-5', label: 'opus-5' },
+  { id: 'claude-sonnet-5', label: 'sonnet-5' },
+  { id: 'claude-haiku-4-5', label: 'haiku-4.5' },
+] as const
+export type ModelId = (typeof MODELS)[number]['id']
+
+/** The query a command draft is filtering by — everything typed so far. */
 export function commandQuery(draft: string): string {
-  return isCommandDraft(draft) ? draft.slice(1) : ''
+  return draft.startsWith('/') ? draft : ''
 }
 
 /** Deterministic id source. `Math.random()` and a live clock make the states
