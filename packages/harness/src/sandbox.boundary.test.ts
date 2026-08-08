@@ -174,6 +174,102 @@ test.skipIf(blocked !== null)(
   120_000,
 )
 
+test.skipIf(blocked !== null)(
+  'the machine-wide keychains cannot be opened or dumped either',
+  async () => {
+    /*
+      The other keychain, and the one `denyRead` on $HOME never covered:
+      /Library/Keychains sits outside every home directory. ADR-0003 recorded it
+      as readable and called its contents "system certificates, not user
+      secrets". That was wrong on this machine — dumping it listed 37 generic
+      passwords, and the Wi-Fi networks this laptop has joined were among the
+      labels. So it is denied outright now, and this is the probe that says so.
+
+      Denying it costs nothing measurable: TLS to both allowlisted hosts still
+      completes, and `codesign -v` already failed inside the Sandbox for an
+      unrelated reason before this entry existed. The measurements are in
+      ADR-0003.
+
+      Read-only throughout. Nothing here creates or modifies a keychain item.
+    */
+
+    // The control, outside the sandbox: the file is there and is world-readable,
+    // so a denial below means the policy did it and not the filesystem.
+    accessSync('/Library/Keychains/System.keychain', constants.R_OK)
+
+    const opened = await run('cat /Library/Keychains/System.keychain')
+    expect(opened.code).not.toBe(0)
+    expect(opened.stderr).toMatch(/not permitted|Permission denied|No such file/i)
+
+    // The path that does not need the file to be openable by name: `security`
+    // runs, and asking it to dump the keychain is how the contents leaked
+    // before. It must come back with nothing.
+    const dumped = await run('/usr/bin/security dump-keychain /Library/Keychains/System.keychain')
+    expect(dumped.stdout).not.toContain('genp')
+    expect(dumped.stdout).not.toContain('System.keychain')
+
+    // The positive control for the two assertions above: `security` still runs
+    // under the policy and still answers. Without this, a wrapper that silently
+    // produced nothing at all would pass every "not.toContain" here.
+    const listed = await run('/usr/bin/security list-keychains')
+    expect(listed.code).toBe(0)
+    expect(listed.stdout).toContain('System.keychain')
+
+    // And the login Keychain is still absent from the search list — the deny
+    // added here must not have changed how that is reached.
+    expect(listed.stdout).not.toContain('login.keychain')
+
+    console.log(
+      'boundary probe: /Library/Keychains is denied — System.keychain cannot be opened' +
+        ' and dump-keychain returns nothing. It is not covered by denyRead on $HOME.',
+    )
+  },
+  120_000,
+)
+
+/*
+  The one probe here that needs the internet. Measured against the host first,
+  outside the sandbox: on a machine that is offline, or behind a proxy that eats
+  these hosts, a red test would say "the policy broke TLS" when it did not. Same
+  reasoning as `blocked` above — skip loudly, do not fail misleadingly.
+*/
+const offline = blocked
+  ? 'the sandbox itself is unrunnable'
+  : await fetch('https://registry.npmjs.org/left-pad', { method: 'HEAD' }).then(
+      () => null,
+      (cause) => `the host cannot reach registry.npmjs.org: ${cause}`,
+    )
+
+test.skipIf(offline !== null)(
+  'the allowlisted hosts stay reachable with the keychains denied',
+  async () => {
+    /*
+      The other half of the System.keychain decision. Denying a keychain that
+      the TLS stack might consult is the kind of change that breaks the product
+      quietly — the agent stops being able to authenticate, weeks later, and the
+      policy is the last place anyone looks. So the deny ships with the check.
+
+      405 rather than 200 from api.anthropic.com is the point: an HTTP status at
+      all means the TLS handshake completed. The request is unauthenticated and
+      carries no credential.
+    */
+    const anthropic = await run(
+      'curl -sS -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages',
+    )
+    expect(anthropic.code).toBe(0)
+    expect(anthropic.stdout.trim()).toMatch(/^[45]\d\d$/)
+
+    const npm = await run(
+      'curl -sS -o /dev/null -w "%{http_code}" https://registry.npmjs.org/left-pad',
+    )
+    expect(npm.code).toBe(0)
+    expect(npm.stdout.trim()).toBe('200')
+  },
+  120_000,
+)
+
 if (blocked) {
   console.log(`sandbox boundary probe skipped — ${blocked}`)
+} else if (offline) {
+  console.log(`sandbox network probe skipped — ${offline}`)
 }

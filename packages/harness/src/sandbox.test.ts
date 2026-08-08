@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import {
   DEFAULT_ALLOWED_HOSTS,
-  DENIED_BINARIES,
+  MACHINE_KEYCHAIN_DIR,
   SANDBOX_POLICY_FILENAME,
+  UNREADABLE_BINARIES,
   describeSandboxPolicy,
   ensureSandboxPolicy,
   readSandboxPolicy,
@@ -48,7 +49,7 @@ describe('what the policy denies', () => {
     expect(allowRead).toContain(CLONE)
   })
 
-  test('security, osascript, open and sudo are denied by denying read', () => {
+  test('security, osascript, open and sudo cannot be opened for reading', () => {
     const { denyRead } = policy().filesystem
     for (const binary of [
       '/usr/bin/security',
@@ -58,18 +59,33 @@ describe('what the policy denies', () => {
     ]) {
       expect(denyRead).toContain(binary)
     }
-    expect(DENIED_BINARIES.length).toBe(4)
+    expect(UNREADABLE_BINARIES.length).toBe(4)
   })
 
-  test('no allowRead entry re-opens a denied binary', () => {
-    // srt has no execute allowlist, so the deny *is* the block. allowRead beats
-    // denyRead, so a broad allow of `/` or `/usr` would silently hand every one
-    // of them back.
+  test('no allowRead entry re-opens an unreadable binary', () => {
+    // allowRead beats denyRead, so a broad allow of `/` or `/usr` would silently
+    // hand every one of them back. This asserts the read denial only — three of
+    // the four still execute, measured in sandbox.boundary.test.ts.
     const { allowRead } = policy().filesystem
     for (const allowed of allowRead) {
-      for (const binary of DENIED_BINARIES) {
+      for (const binary of UNREADABLE_BINARIES) {
         expect(reopens(allowed, binary)).toBe(false)
       }
+    }
+  })
+
+  test('the machine-wide keychain directory is unreadable', () => {
+    // /Library/Keychains is outside $HOME, so the denial that covers the login
+    // Keychain does not reach it. Without this entry System.keychain — 37
+    // generic-password items on this machine, Wi-Fi network passwords among
+    // them — is readable and dumpable from inside. See ADR-0003.
+    expect(policy().filesystem.denyRead).toContain(MACHINE_KEYCHAIN_DIR)
+    expect(MACHINE_KEYCHAIN_DIR).toBe('/Library/Keychains')
+  })
+
+  test('no allowRead entry re-opens the machine-wide keychains', () => {
+    for (const allowed of policy().filesystem.allowRead) {
+      expect(reopens(allowed, MACHINE_KEYCHAIN_DIR)).toBe(false)
     }
   })
 
@@ -145,6 +161,15 @@ describe('readable without reading the source', () => {
     expect(text).toContain('/usr/bin/security')
     // The honest limit, stated where the allowlist is read.
     expect(text.toLowerCase()).toContain('exfiltration')
+  })
+
+  test('the description does not claim the denied binaries cannot run', () => {
+    // The wording this replaced said they were "blocked", which a reader would
+    // take as an execute denial. Three of the four run. A description that
+    // overstates the boundary is the one failure mode this file exists to stop.
+    const text = describeSandboxPolicy(policy()).toLowerCase()
+    expect(text).toContain('still run')
+    expect(text).not.toContain('denying execution')
   })
 })
 

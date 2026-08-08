@@ -43,8 +43,9 @@ export {
 
 export {
   DEFAULT_ALLOWED_HOSTS,
-  DENIED_BINARIES,
+  MACHINE_KEYCHAIN_DIR,
   SANDBOX_POLICY_FILENAME,
+  UNREADABLE_BINARIES,
   describeSandboxPolicy,
   ensureSandboxPolicy,
   establishSandbox,

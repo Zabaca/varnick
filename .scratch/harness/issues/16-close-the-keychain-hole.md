@@ -4,7 +4,7 @@
 
 **Blocked by:** None. The measurements exist and the load-bearing assertion is already written.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** no state path.
 
@@ -31,10 +31,37 @@ cat ~/Library/Keychains/login.keychain-db  -> Operation not permitted
 
 Ticket 03 has to widen `allowRead` so a runtime under `~/.bun` or `~/.nvm` can be executed — unreadable today for exactly the same reason the Keychain is. **A wide enough addition there removes the Keychain's protection as a side effect.** The addition must be narrow, must not be an ancestor of the denied binaries, and must leave the boundary test green.
 
-- [ ] `DENIED_BINARIES` is renamed or re-commented so it does not read as an execute denial — it is a read denial and that is all it is
-- [ ] Whether an execute denial is worth pursuing in `srt` is decided and recorded; it would fix `osascript` and `open`, and would do nothing for the Keychain
-- [ ] `System.keychain` readability is either denied or written down in ticket 13
-- [ ] `README.md` and `PRODUCT.md` describe the boundary that was measured — including that the Keychain protection follows from `denyRead` on `$HOME` rather than from the deny list
-- [ ] The boundary test's login-Keychain assertion survives whatever ticket 03 adds to `allowRead`
+- [x] `DENIED_BINARIES` is renamed or re-commented so it does not read as an execute denial — it is a read denial and that is all it is
+- [x] Whether an execute denial is worth pursuing in `srt` is decided and recorded; it would fix `osascript` and `open`, and would do nothing for the Keychain
+- [x] `System.keychain` readability is either denied or written down in ticket 13
+- [x] `README.md` and `PRODUCT.md` describe the boundary that was measured — including that the Keychain protection follows from `denyRead` on `$HOME` rather than from the deny list
+- [ ] The boundary test's login-Keychain assertion survives whatever ticket 03 adds to `allowRead` — **carried to ticket 03**, which is the change that could break it
 
 Relates to stories 16, 17, 19, 20, and to ticket 13, which writes down where confinement stops.
+
+## What was done
+
+`DENIED_BINARIES` is now `UNREADABLE_BINARIES`, with a comment that says in its
+first line that the four binaries still run. The four entries are unchanged.
+Call sites: `packages/harness/src/sandbox.ts` (definition and `denyRead`),
+`packages/harness/src/index.ts` (re-export), `packages/harness/src/sandbox.test.ts`
+(three), and the prose in `describeSandboxPolicy`, which is what a developer
+reads in the generated `sandbox-policy.json`. The comment on `denyRead` in
+`packages/core/src/domain.ts` carried the same wrong claim and was corrected too.
+
+**An execute denial is not pursued.** `(allow process-exec)` is a literal in
+`srt`'s profile generator with no field in its config schema, so it would mean
+an upstream change; and it would not close the Keychain (in-process framework)
+or `open`/`osascript` (a compiled program calls `NSWorkspace` directly). The
+reasoning is a paragraph in ADR-0003's correction section.
+
+**`/Library/Keychains` is denied**, the directory rather than the one file, so
+`apsd.keychain` and any later admin-installed keychain are covered. The
+description in ADR-0003 was wrong about what was at stake: `System.keychain`
+holds 37 generic passwords, not system certificates, and the labels are joined
+Wi-Fi networks. Denying it costs nothing measurable — TLS to both allowlisted
+hosts is unchanged, and `codesign -v` fails identically with and without the
+entry. Both halves are now probed in `sandbox.boundary.test.ts`.
+
+Ticket 13 no longer has a `System.keychain` edge to write down. What it still
+owns is the network half of the README's claims, which needs ticket 04's probes.

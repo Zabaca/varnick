@@ -20,7 +20,10 @@ export interface SandboxPolicy {
   readonly denyWrite: readonly string[]
   /** Hosts the agent may reach. Every entry is an exfiltration path. */
   readonly allowedHosts: readonly string[]
-  /** Binaries denied by making them unreadable — srt has no exec allowlist. */
+  /**
+   * Paths the agent may not read: the home directory, the machine-wide
+   * keychains, and four binaries. Read only — the binaries still execute.
+   */
   readonly denyRead: readonly string[]
 }
 
