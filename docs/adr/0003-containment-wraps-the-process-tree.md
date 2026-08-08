@@ -47,7 +47,7 @@ security list-keychains              -> only /Library/Keychains/System.keychain
 cat ~/Library/Keychains/login.keychain-db -> Operation not permitted
 ```
 
-The login Keychain is invisible from inside the Sandbox. What gates it is `denyRead` on `$HOME` — the same kernel-enforced file denial that covers SSH keys and other repositories — because that is where the Keychain file lives. Both things varnick stores there, the credential and the Secrets Store, are covered.
+The login Keychain is invisible from inside the Sandbox. What gates it is `denyRead` on `$HOME` — the same kernel-enforced file denial that covers SSH keys and any repository kept under a home directory — because that is where the Keychain file lives. Both things varnick stores there, the credential and the Secrets Store, are covered.
 
 Removing `com.apple.securityd.xpc` from `srt`'s Mach allowlist changes none of the above. It was measured because the allowlist looked like the cause; it is not.
 

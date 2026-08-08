@@ -764,6 +764,65 @@ test.skipIf(toolProbeBlocked !== null)(
   600_000,
 )
 
+test.skipIf(blocked !== null)(
+  'a repository outside a home directory is readable, and writes to it are not',
+  async () => {
+    /*
+      The fourth thing this project believed without measuring. Three documents
+      said the Sandbox put "other repositories" out of reach. It puts
+      repositories *under a home directory* out of reach, which is where they
+      usually are and not where they must be.
+
+      srt's reads are allow-by-default: `denyRead` is a deny list — /Users, the
+      home directory, /Library/Keychains, and four binaries — and everything
+      outside it is readable. Probe 2b already demonstrated this without anyone
+      noticing, since lifting /usr/bin/security out of denyRead only makes `cat`
+      work if /usr/bin was readable all along.
+
+      Writes are the opposite and hold: `allowWrite` is a genuine allowlist, so
+      the clone and the temp directory are writable and nothing else is.
+
+      This probe exists so the asymmetry is measured rather than derivable. It
+      is not an argument for widening anything — it is the claim the README now
+      makes, held to the kernel.
+    */
+    const outside = mkdtempSync('/private/tmp/varnick-outside-home-')
+    try {
+      mkdirSync(join(outside, '.git'), { recursive: true })
+      writeFileSync(join(outside, 'secret.txt'), SELFTEST_MARKER, 'utf8')
+
+      const run = runner(await establishSandbox({ cloneRoot: repoRoot }))
+
+      // The read, which succeeds. A repository here is not protected.
+      const read = await run(`cat ${JSON.stringify(join(outside, 'secret.txt'))}`)
+      expect(read.code).toBe(0)
+      expect(read.stdout).toContain(SELFTEST_MARKER)
+
+      // The control that makes the line above mean something: the same read
+      // under a home directory is refused, so this is about location and not
+      // about the wrapper being broken.
+      const underHome = await run(`cat ${JSON.stringify(join(homedir(), '.zshrc'))}`)
+      expect(underHome.code).not.toBe(0)
+
+      // And the write, which is refused. allowWrite is a real allowlist.
+      const write = await run(`touch ${JSON.stringify(join(outside, 'written'))}`)
+      expect(write.code).not.toBe(0)
+      expect(write.stderr).toMatch(/not permitted|Permission denied/i)
+      expect(existsSync(join(outside, 'written'))).toBe(false)
+
+      report('probe 7 — a repository outside a home directory', [
+        ['read  secret.txt', `${read.code === 0 ? 'READABLE' : 'denied'} — exit ${read.code}`],
+        ['read  under $HOME  (control)', `${underHome.code === 0 ? 'READABLE' : 'denied'} — exit ${underHome.code}`],
+        ['write into it', `${write.code === 0 ? 'WRITABLE' : 'refused'} — exit ${write.code}`],
+      ])
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+      await releaseSandbox()
+    }
+  },
+  120_000,
+)
+
 if (blocked) {
   console.log(`containment probes skipped — ${blocked}`)
 } else if (toolProbeBlocked) {

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (sandbox), 02 (credential) — the start gate reads both — and 15 (the renderer cannot reach the host without it).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** `agent.starting`, `agent.running`, `agent.crashed`
 

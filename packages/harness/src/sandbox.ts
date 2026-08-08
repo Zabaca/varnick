@@ -193,7 +193,10 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
     filesystem: {
       denyRead: [
         // Home first, then the region that holds it. My SSH keys, my cloud
-        // credentials, my age keys, and every repository that is not this one.
+        // credentials, my age keys, and every repository kept under a home
+        // directory. Reads are allow-by-default outside this list, so a
+        // repository somewhere else — /opt, /srv, /Volumes, an external disk —
+        // is readable. Measured; see ADR-0003's fourth correction.
         usersRootOf(home),
         home,
         // The keychains that live outside every home directory, and are
