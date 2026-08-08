@@ -45,7 +45,8 @@ export function actorsFor(mode: ActorMode, controls: SeedControls = defaultSeedC
  * Mode for this run.
  *
  * `?actors=live` in the URL overrides, so the failure of an unwired live actor
- * can be seen without a rebuild. Default is seeded, because nothing is wired.
+ * can be seen without a rebuild. Default is seeded, because almost nothing is
+ * wired — see LIVE_NOT_IMPLEMENTED for exactly how much.
  */
 export function resolveActorMode(): ActorMode {
   if (typeof window === 'undefined') return 'seeded'
