@@ -1,4 +1,4 @@
-import { query, type SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk'
+import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk'
 
 /**
  * Plan usage across the rolling windows, read from the plan itself.
@@ -51,7 +51,18 @@ export interface PlanUsage {
   readonly source: 'live'
 }
 
-/** How the report is obtained. Injected so the seam under test is this file. */
+/**
+ * How the report is obtained. Always supplied by the caller — there is no
+ * default, and that is a containment rule rather than a testing convenience.
+ *
+ * The control request rides a live Agent SDK session, and `query()` spawns a
+ * Claude Code executable. Opening one here would put an agent process on the
+ * host outside srt, on launch, in a clone where the agent can write
+ * `.claude/settings.json` — and a SessionStart hook there would then run
+ * unconfined. That is the one thing this product claims cannot happen
+ * (ADR-0003). So the session is never created here: it is the confined one
+ * ticket 03 establishes, passed in.
+ */
 export type ReadPlanUsageReport = () => Promise<PlanUsageReport>
 
 class PlanUsageUnavailable extends Error {
@@ -84,9 +95,7 @@ function utilizationOf(window: PlanUsageWindow | null | undefined, name: string)
  * `subscription` region sends a failed read back to `unread` with context
  * untouched, so throwing is how "leave whatever was last known" is spelled.
  */
-export async function readSubscriptionUsage(
-  read: ReadPlanUsageReport = readReportFromAgentSession,
-): Promise<PlanUsage> {
+export async function readSubscriptionUsage(read: ReadPlanUsageReport): Promise<PlanUsage> {
   const report = await read()
 
   // False for API-key, Bedrock, and Vertex sessions, where no plan exists to
@@ -103,17 +112,23 @@ export async function readSubscriptionUsage(
 }
 
 /**
- * The real read: open an agent session, ask it, close it.
+ * Take the report from a session that is already running under the Sandbox.
  *
- * The control request needs a live session because that is the only channel
- * the SDK exposes it on. The session is closed in `finally` so a read that
- * throws does not leave a Claude Code process behind.
+ * `usage_EXPERIMENTAL_…` is the SDK method, called in exactly one place because
+ * the SDK says its name will change. The session is a parameter and is never
+ * created here: see {@link ReadPlanUsageReport} for why opening one would be an
+ * unconfined agent process rather than an implementation detail.
+ *
+ * Nothing calls this yet — ticket 03 is what will own a confined session to
+ * hand it. Until then `readSubscriptionUsage` has no reader and the strip stays
+ * seeded, which is the honest state rather than a chore left undone.
  */
-export async function readReportFromAgentSession(): Promise<PlanUsageReport> {
-  const session = query({ prompt: '', options: { maxTurns: 0 } })
-  try {
-    return assignable(await session.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET())
-  } finally {
-    await session.return(undefined)
-  }
+export function reportFromSession(session: UsageCapableSession): ReadPlanUsageReport {
+  return async () =>
+    assignable(await session.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET())
+}
+
+/** The one method this module needs from a running session. */
+export interface UsageCapableSession {
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(): Promise<SDKControlGetUsageResponse>
 }
