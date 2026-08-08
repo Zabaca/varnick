@@ -1,5 +1,5 @@
 import { fromPromise } from 'xstate'
-import type { Effort, Message, ModelId, SandboxPolicy } from '../domain.ts'
+import type { Effort, Message, ModelId, SandboxPolicy, SubscriptionUsage } from '../domain.ts'
 import { brokenSurfaceError } from '../data/seed.ts'
 
 /**
@@ -16,6 +16,9 @@ import { brokenSurfaceError } from '../data/seed.ts'
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** Cumulative token cost of the seeded conversation. */
+let turnTokens = 0
+
 export interface SeedControls {
   /** Make checkSandbox fail, as srt does when it cannot be established. */
   failSandbox: boolean
@@ -25,6 +28,8 @@ export interface SeedControls {
   failTurn: boolean
   /** Make persistence fail. */
   failSave: boolean
+  /** Make compaction fail. */
+  failCompact: boolean
 }
 
 export const defaultSeedControls: SeedControls = {
@@ -32,6 +37,7 @@ export const defaultSeedControls: SeedControls = {
   failCredential: false,
   failTurn: false,
   failSave: false,
+  failCompact: false,
 }
 
 export function seededActors(controls: SeedControls) {
@@ -55,15 +61,47 @@ export function seededActors(controls: SeedControls) {
       return { pid: 4242 }
     }),
 
+    /*
+      There is no implementation of this. Claude Code surfaces plan usage from
+      an account endpoint this project does not have, so the seed returns zeros
+      marked 'unwired' rather than plausible percentages. The view renders the
+      marker, never a number dressed as a measurement.
+    */
+    readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(async () => {
+      await wait(200)
+      return { fiveHourPct: 0, weeklyPct: 0, source: 'unwired' }
+    }),
+
     runTurn: fromPromise<
-      { text: string },
+      { text: string; tokensUsed: number },
       { sessionId: string; prompt: string; model: ModelId; effort: Effort }
     >(async ({ input }) => {
       await wait(600)
       if (controls.failTurn) throw new Error('stream closed unexpectedly')
       // Echoes what it ran on, so a /model or /effort change is visible even
-      // while the agent itself is still a stub.
-      return { text: `Acknowledged on ${input.model} at ${input.effort} effort: ${input.prompt}` }
+      // while the agent itself is still a stub. Token growth is derived from
+      // the prompt so the context meter moves with real input rather than a
+      // number that climbs on its own.
+      turnTokens += 240 + input.prompt.length * 4
+      return {
+        text: `Acknowledged on ${input.model} at ${input.effort} effort: ${input.prompt}`,
+        tokensUsed: turnTokens,
+      }
+    }),
+
+    compactSession: fromPromise<
+      { messages: Message[]; tokensUsed: number },
+      { sessionId: string; messages: readonly Message[]; model: ModelId }
+    >(async ({ input }) => {
+      await wait(700)
+      if (controls.failCompact) throw new Error('could not summarise the conversation')
+      const summary: Message = {
+        id: 'compact',
+        role: 'agent',
+        text: `Summary of ${input.messages.length} earlier messages.`,
+      }
+      turnTokens = 300
+      return { messages: [summary], tokensUsed: turnTokens }
     }),
 
     persistSession: fromPromise<

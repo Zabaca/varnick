@@ -46,9 +46,14 @@ export function useHarness(controls: SeedControls = defaultSeedControls) {
           checkSandbox: seeds.checkSandbox,
           readCredential: seeds.readCredential,
           spawnAgent: seeds.spawnAgent,
+          readSubscriptionUsage: seeds.readSubscriptionUsage,
           surface: surfaceMachine.provide({ actors: { loadSurface: seeds.loadSurface } }),
           session: sessionMachine.provide({
-            actors: { runTurn: seeds.runTurn, persistSession: seeds.persistSession },
+            actors: {
+              runTurn: seeds.runTurn,
+              persistSession: seeds.persistSession,
+              compactSession: seeds.compactSession,
+            },
           }),
         },
       }),

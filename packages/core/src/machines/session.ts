@@ -19,6 +19,7 @@ export const SESSION_STATE_PATHS = [
   'turn.streaming',
   'turn.interrupting',
   'turn.failed',
+  'turn.compacting',
   'persistence.saved',
   'persistence.saving',
   'persistence.saveFailed',
@@ -50,6 +51,9 @@ export interface SessionContext {
   /** What the next turn runs on. Settable mid-session; applies to the next turn. */
   model: ModelId
   effort: Effort
+  /** Cumulative tokens the conversation currently occupies. */
+  tokensUsed: number
+  compactError: string | null
   readonly enterTurn: string | null
   readonly enterPersistence: string | null
 }
@@ -66,6 +70,7 @@ export interface SessionInput {
   commandNames?: readonly string[]
   model?: ModelId
   effort?: Effort
+  tokensUsed?: number
   enterTurn?: string | null
   enterPersistence?: string | null
 }
@@ -89,6 +94,7 @@ export type SessionEvent =
   | { type: 'SET_MODEL'; model: ModelId }
   | { type: 'SET_EFFORT'; effort: Effort }
   | { type: 'SET_COMMANDS'; names: readonly string[] }
+  | { type: 'COMPACT' }
 
 /**
  * Real-service contracts:
@@ -107,9 +113,19 @@ export const sessionMachine = setup({
   },
   actors: {
     runTurn: fromPromise<
-      { text: string },
+      { text: string; tokensUsed: number },
       { sessionId: string; prompt: string; model: ModelId; effort: Effort }
-    >(async () => ({ text: '' })),
+    >(async () => ({ text: '', tokensUsed: 0 })),
+    /*
+      Real-service contract for compactSession:
+        input  { sessionId, messages, model }
+        output { messages, tokensUsed } — the summarised history and its new cost
+        error  thrown Error, shown in turn.compacting's failure path
+    */
+    compactSession: fromPromise<
+      { messages: Message[]; tokensUsed: number },
+      { sessionId: string; messages: readonly Message[]; model: ModelId }
+    >(async ({ input }) => ({ messages: [...input.messages], tokensUsed: 0 })),
     persistSession: fromPromise<
       { ok: true },
       { sessionId: string; messages: readonly Message[] }
@@ -141,6 +157,8 @@ export const sessionMachine = setup({
     commandNames: input.commandNames ?? [],
     model: input.model ?? 'claude-opus-5',
     effort: input.effort ?? 'xhigh',
+    tokensUsed: input.tokensUsed ?? 0,
+    compactError: null,
     enterTurn: input.enterTurn ?? null,
     enterPersistence: input.enterPersistence ?? null,
   }),
@@ -189,10 +207,13 @@ export const sessionMachine = setup({
               messages: [],
               partial: '',
               turnError: null,
+              compactError: null,
               draft: '',
               menuIndex: 0,
+              tokensUsed: 0,
             }),
           },
+          COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             // Guarded with no fallback: an empty draft is not a refusal worth
             // explaining, it is a button that should read as inert.
             SEND: { target: 'sending', guard: 'hasDraft' },
@@ -228,6 +249,7 @@ export const sessionMachine = setup({
                   },
                 ],
                 partial: '',
+                tokensUsed: ({ event }) => event.output.tokensUsed,
               }),
             },
             onError: {
@@ -267,6 +289,7 @@ export const sessionMachine = setup({
                   },
                 ],
                 partial: '',
+                tokensUsed: ({ event }) => event.output.tokensUsed,
               }),
             },
             onError: {
@@ -308,6 +331,31 @@ export const sessionMachine = setup({
             },
           },
         },
+        compacting: {
+          invoke: {
+            src: 'compactSession',
+            input: ({ context }) => ({
+              sessionId: context.sessionId,
+              messages: context.messages,
+              model: context.model,
+            }),
+            onDone: {
+              target: 'idle',
+              actions: assign({
+                messages: ({ event }) => event.output.messages,
+                tokensUsed: ({ event }) => event.output.tokensUsed,
+                compactError: null,
+              }),
+            },
+            onError: {
+              target: 'idle',
+              actions: assign({
+                compactError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+              }),
+            },
+          },
+        },
         failed: {
           on: {
           CLEAR: {
@@ -315,10 +363,13 @@ export const sessionMachine = setup({
               messages: [],
               partial: '',
               turnError: null,
+              compactError: null,
               draft: '',
               menuIndex: 0,
+              tokensUsed: 0,
             }),
           },
+          COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             RETRY_TURN: 'sending',
             DISMISS_TURN_ERROR: { target: 'idle', actions: assign({ turnError: null }) },
           },

@@ -12,9 +12,15 @@ import { createActor, fromPromise, waitFor } from 'xstate'
 import { harnessMachine } from '../src/machines/harness.ts'
 import { sessionMachine } from '../src/machines/session.ts'
 import { surfaceMachine } from '../src/machines/surface.ts'
-import { regionOf, canStartAgent, invokedCommand, isCommandDraft } from '../src/domain.ts'
+import {
+  regionOf,
+  canStartAgent,
+  invokedCommand,
+  isCommandDraft,
+  formatContext,
+} from '../src/domain.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
-import type { Effort, ModelId, SandboxPolicy } from '../src/domain.ts'
+import type { Effort, Message, ModelId, SandboxPolicy } from '../src/domain.ts'
 
 let passed = 0
 const failures: string[] = []
@@ -41,7 +47,11 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   fromPromise<TOut, TIn>(() => new Promise<TOut>(() => {}))
 
 type TurnInput = { sessionId: string; prompt: string; model: ModelId; effort: Effort }
-const turnNever = () => never<{ text: string }, TurnInput>()
+type TurnOutput = { text: string; tokensUsed: number }
+const turnNever = () => never<TurnOutput, TurnInput>()
+
+type CompactInput = { sessionId: string; messages: readonly Message[]; model: ModelId }
+type CompactOutput = { messages: Message[]; tokensUsed: number }
 
 // ---------------------------------------------------------------------------
 // Harness — the start gate
@@ -283,10 +293,10 @@ const turnNever = () => never<{ text: string }, TurnInput>()
   const actor = createActor(
     sessionMachine.provide({
       actors: {
-        runTurn: fromPromise<{ text: string }, TurnInput>(async () => {
+        runTurn: fromPromise<TurnOutput, TurnInput>(async () => {
           turnAttempts++
           if (turnAttempts === 1) throw new Error('stream closed')
-          return { text: 'second time' }
+          return { text: 'second time', tokensUsed: 120 }
         }),
       },
     }),
@@ -525,9 +535,9 @@ const turnNever = () => never<{ text: string }, TurnInput>()
   const actor = createActor(
     sessionMachine.provide({
       actors: {
-        runTurn: fromPromise<{ text: string }, TurnInput>(async ({ input }) => {
+        runTurn: fromPromise<TurnOutput, TurnInput>(async ({ input }) => {
           seen = { model: input.model, effort: input.effort }
-          return { text: 'ok' }
+          return { text: 'ok', tokensUsed: 42 }
         }),
       },
     }),
@@ -553,6 +563,74 @@ const turnNever = () => never<{ text: string }, TurnInput>()
   check('a shorter name still resolves alone', invokedCommand('/effort', names) === '/effort')
   check('trailing text does not break the match', invokedCommand('/model sonnet-5 ', names) === '/model sonnet-5')
   check('an unknown value does not resolve', invokedCommand('/effort turbo', names) === '/effort')
+}
+
+{
+  // Compaction replaces the history with a summary and resets what the
+  // conversation costs. Like CLEAR it is only legal on a settled turn.
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: fromPromise<TurnOutput, TurnInput>(async () => ({
+          text: 'reply',
+          tokensUsed: 8_000,
+        })),
+        compactSession: fromPromise<CompactOutput, CompactInput>(async ({ input }) => ({
+          messages: [{ id: 'c', role: 'agent' as const, text: `Summary of ${input.messages.length}` }],
+          tokensUsed: 300,
+        })),
+      },
+    }),
+    { input: { sessionId: 's14' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'first' })
+  actor.send({ type: 'SEND' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+  check('a completed turn records what it cost', actor.getSnapshot().context.tokensUsed === 8_000)
+
+  check('compacting is possible once settled', actor.getSnapshot().can({ type: 'COMPACT' }))
+  actor.send({ type: 'COMPACT' })
+  check('compacting is its own state', regionOf(actor.getSnapshot().value, 'turn') === 'compacting')
+  check('and refuses SEND while it runs', !actor.getSnapshot().can({ type: 'SEND' }))
+
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+  check('compaction replaces the history', actor.getSnapshot().context.messages.length === 1)
+  check('and resets the cost', actor.getSnapshot().context.tokensUsed === 300)
+  actor.stop()
+}
+
+{
+  // A failed compaction must leave the conversation alone. Losing the history
+  // to a failed summarisation is the one outcome worse than a full context.
+  const before = [
+    { id: 'm1', role: 'user' as const, text: 'one' },
+    { id: 'm2', role: 'agent' as const, text: 'two' },
+  ]
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: turnNever(),
+        compactSession: rejects<CompactOutput, CompactInput>('could not summarise'),
+      },
+    }),
+    { input: { sessionId: 's15', messages: before, tokensUsed: 5_000 } },
+  ).start()
+
+  actor.send({ type: 'COMPACT' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+
+  check('a failed compaction keeps the messages', actor.getSnapshot().context.messages.length === 2)
+  check('a failed compaction keeps the cost', actor.getSnapshot().context.tokensUsed === 5_000)
+  check('and says why', actor.getSnapshot().context.compactError === 'could not summarise')
+  actor.stop()
+}
+
+{
+  check('context reads as used over window', formatContext(12_400, 1_000_000) === '12.4k/1M (1%)')
+  check('and rounds the percentage', formatContext(500_000, 1_000_000) === '500k/1M (50%)')
+  check('a small window still reads correctly', formatContext(20_000, 200_000) === '20k/200k (10%)')
+  check('an empty session reads zero', formatContext(0, 1_000_000) === '0/1M (0%)')
 }
 
 // ---------------------------------------------------------------------------

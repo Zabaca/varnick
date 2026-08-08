@@ -1,6 +1,11 @@
 import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
 import { canStartAgent, refusalFor, regionOf } from '../domain.ts'
-import type { SandboxPolicy, StartRefusal, SurfaceDescriptor } from '../domain.ts'
+import type {
+  SandboxPolicy,
+  StartRefusal,
+  SubscriptionUsage,
+  SurfaceDescriptor,
+} from '../domain.ts'
 import { surfaceMachine } from './surface.ts'
 import { sessionMachine } from './session.ts'
 
@@ -51,6 +56,12 @@ export interface HarnessContext {
   agentError: string | null
   surfaces: ActorRefFrom<typeof surfaceMachine>[]
   session: ActorRefFrom<typeof sessionMachine> | null
+  /**
+   * Plan usage across the rolling windows. Null until something reads it, and
+   * carrying its own provenance so the view can refuse to present an unwired
+   * number as a measurement.
+   */
+  subscription: SubscriptionUsage | null
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
@@ -76,6 +87,7 @@ export type HarnessEvent =
   | { type: 'AGENT_EXIT'; detail: string }
   | { type: 'DISCOVER_SURFACES'; descriptors: SurfaceDescriptor[] }
   | { type: 'UNLOAD_SURFACE'; id: string }
+  | { type: 'READ_SUBSCRIPTION' }
 
 /**
  * Real-service contracts:
@@ -122,6 +134,20 @@ export const harnessMachine = setup({
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
     })),
+    /*
+      Real-service contract for readSubscriptionUsage:
+        input  {}
+        output SubscriptionUsage — percentages plus where they came from
+        error  thrown Error; the view shows nothing rather than a stale number
+
+      No implementation reads real plan usage yet. Until one does, the seeded
+      actor returns source: 'unwired' and the view labels it, because a
+      percentage presented as a measurement is the failure this project keeps
+      having to undo.
+    */
+    readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(
+      async () => ({ fiveHourPct: 0, weeklyPct: 0, source: 'unwired' as const }),
+    ),
   },
   guards: {
     canStart: ({ context }) =>
@@ -148,6 +174,7 @@ export const harnessMachine = setup({
     agentError: input.agentError ?? null,
     surfaces: [],
     session: null,
+    subscription: null,
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
@@ -265,6 +292,31 @@ export const harnessMachine = setup({
           entry: assign({ sandboxState: 'unavailable' as const }),
           on: { CHECK_SANDBOX: 'checking' },
         },
+      },
+    },
+
+    subscription: {
+      initial: 'unread',
+      states: {
+        // READ_SUBSCRIPTION is handled inside the region, never at the machine
+        // root. A root-level transition with a target is external: it exits and
+        // re-enters every parallel region, which tore down the Session actor —
+        // and with it the whole conversation — on first load.
+        unread: { on: { READ_SUBSCRIPTION: 'reading' } },
+        reading: {
+          invoke: {
+            src: 'readSubscriptionUsage',
+            input: () => ({}) as Record<string, never>,
+            onDone: {
+              target: 'read',
+              actions: assign({ subscription: ({ event }) => event.output }),
+            },
+            // A failed read leaves whatever was last known, which may be
+            // nothing. It never invents a figure.
+            onError: 'unread',
+          },
+        },
+        read: { on: { READ_SUBSCRIPTION: 'reading' } },
       },
     },
 

@@ -132,6 +132,38 @@ export const MODELS = [
 ] as const
 export type ModelId = (typeof MODELS)[number]['id']
 
+/** Context window per model, in tokens. */
+export const CONTEXT_WINDOW: Record<ModelId, number> = {
+  'claude-opus-5': 1_000_000,
+  'claude-sonnet-5': 1_000_000,
+  'claude-haiku-4-5': 200_000,
+}
+
+/** `12.4k/1M (1%)` — the shape Claude Code uses. */
+export function formatContext(used: number, total: number): string {
+  const short = (n: number) =>
+    n >= 1_000_000
+      ? `${+(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
+      : n >= 1_000
+        ? `${+(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}k`
+        : String(n)
+  const pct = total > 0 ? Math.round((used / total) * 100) : 0
+  return `${short(used)}/${short(total)} (${pct}%)`
+}
+
+/**
+ * Subscription usage across the plan's rolling windows.
+ *
+ * `source` is deliberately part of the shape. Nothing in this repository knows
+ * how to read these numbers yet, and a percentage rendered without saying where
+ * it came from is indistinguishable from one that was invented.
+ */
+export interface SubscriptionUsage {
+  fiveHourPct: number
+  weeklyPct: number
+  source: 'live' | 'unwired'
+}
+
 /** The query a command draft is filtering by — everything typed so far. */
 export function commandQuery(draft: string): string {
   return draft.startsWith('/') ? draft : ''

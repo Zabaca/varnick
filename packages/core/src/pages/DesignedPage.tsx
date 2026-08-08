@@ -6,8 +6,16 @@ import { ClaudeMessage } from '../components/brainless/claude/claude-message.tsx
 import { ClaudeThinking } from '../components/brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from '../components/brainless/claude/claude-prompt.tsx'
 import { SlashMenu, type Command } from '../components/slash-menu.tsx'
-import { commandQuery, invokedCommand, EFFORTS, MODELS } from '../domain.ts'
+import {
+  commandQuery,
+  invokedCommand,
+  formatContext,
+  CONTEXT_WINDOW,
+  EFFORTS,
+  MODELS,
+} from '../domain.ts'
 import type { SessionEvent } from '../machines/session.ts'
+import type { SubscriptionUsage } from '../domain.ts'
 
 /**
  * The chat surface: a Claude Code session, rendered with brainless.
@@ -45,6 +53,10 @@ export function DesignedPage() {
   }, [ctx.credentialState, send])
 
   useEffect(() => {
+    send({ type: 'READ_SUBSCRIPTION' })
+  }, [send])
+
+  useEffect(() => {
     if (ctx.credentialState === 'present' && ctx.sandboxState === 'unchecked') {
       send({ type: 'CHECK_SANDBOX' })
     }
@@ -73,6 +85,12 @@ export function DesignedPage() {
       description: 'Clear the conversation',
       available: sessionCan({ type: 'CLEAR' }) && (s?.context.messages.length ?? 0) > 0,
       run: () => session?.send({ type: 'CLEAR' }),
+    },
+    {
+      name: '/compact',
+      description: 'Summarise the conversation to free context',
+      available: sessionCan({ type: 'COMPACT' }) && (s?.context.messages.length ?? 0) > 0,
+      run: () => session?.send({ type: 'COMPACT' }),
     },
     {
       name: '/retry',
@@ -162,6 +180,7 @@ export function DesignedPage() {
 
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
+      <PlanUsage usage={ctx.subscription} />
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
@@ -204,6 +223,17 @@ export function DesignedPage() {
               {s?.context.partial && <ClaudeMessage>{s.context.partial}</ClaudeMessage>}
 
               {working && <ClaudeThinking running showTokens={false} />}
+
+              {turn === 'compacting' && (
+                <div style={{ color: 'var(--fg-dim)' }}>Summarising the conversation…</div>
+              )}
+
+              {s?.context.compactError && turn !== 'compacting' && (
+                <div style={{ color: 'var(--warn)' }}>
+                  <span aria-hidden>⚠ </span>
+                  Could not compact — {s.context.compactError}. The conversation is unchanged.
+                </div>
+              )}
 
               {turn === 'failed' && s?.context.turnError && (
                 <div className="flex flex-wrap items-baseline gap-x-3" style={{ color: 'var(--bad)' }}>
@@ -258,7 +288,10 @@ export function DesignedPage() {
                 working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
               }
               effort={s?.context.effort ?? 'xhigh'}
-              model={MODELS.find((m) => m.id === s?.context.model)?.label ?? 'opus-5'}
+              model={`${MODELS.find((m) => m.id === s?.context.model)?.label ?? 'opus-5'} · ${formatContext(
+                s?.context.tokensUsed ?? 0,
+                CONTEXT_WINDOW[s?.context.model ?? 'claude-opus-5'],
+              )}`}
               // No mode cycling in varnick, so the mode line would describe a
               // control that does not exist.
               mode={false}
@@ -303,6 +336,40 @@ export function DesignedPage() {
         </div>
 
       </div>
+    </div>
+  )
+}
+
+/**
+ * Plan usage, outside the chat shell.
+ *
+ * Renders the windows only when something actually measured them. Nothing in
+ * this repository does yet, so the strip says so instead of showing zeros that
+ * would read as "barely used".
+ */
+function PlanUsage({ usage }: { usage: SubscriptionUsage | null }) {
+  if (!usage) return null
+  const unwired = usage.source === 'unwired'
+  return (
+    <div
+      className="flex items-center gap-5 px-6 py-1.5 text-[11.5px]"
+      style={{ borderBottom: '1px solid var(--rule)', color: 'var(--fg-faint)' }}
+    >
+      <span>plan usage</span>
+      {unwired ? (
+        <span style={{ color: 'var(--warn)' }}>
+          not wired — no source for 5-hour or weekly windows yet
+        </span>
+      ) : (
+        <>
+          <span>
+            5h <span data-numeric style={{ color: 'var(--fg-dim)' }}>{usage.fiveHourPct}%</span>
+          </span>
+          <span>
+            week <span data-numeric style={{ color: 'var(--fg-dim)' }}>{usage.weeklyPct}%</span>
+          </span>
+        </>
+      )}
     </div>
   )
 }
