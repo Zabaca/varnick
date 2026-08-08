@@ -76,14 +76,14 @@ describe('the reply is one line, always', () => {
   })
 
   test('the id comes back so a desynchronised pipe is detectable', async () => {
-    expect(await reply(call(17, { kind: 'check-sandbox' }))).toMatchObject({ id: 17, ok: {} })
+    expect(await reply(call(17, { kind: 'check-sandbox' }))).toMatchObject({ id: 17, ok: { ok: true } })
   })
 })
 
 describe('check-sandbox establishes the real sandbox', () => {
   test('the capability is called and the answer carries nothing from it', async () => {
     const caps = capabilities({ establishSandbox: async () => ({ policy: { denyRead: ['/Users'] } }) })
-    expect(await reply(call(1, { kind: 'check-sandbox' }), caps)).toEqual({ id: 1, ok: {} })
+    expect(await reply(call(1, { kind: 'check-sandbox' }), caps)).toEqual({ id: 1, ok: { ok: true } })
   })
 
   test('a sandbox that cannot be established answers with the reason, never with ok', async () => {
@@ -103,7 +103,7 @@ describe('persist-session writes through the mirror', () => {
     const caps = capabilities()
     const messages: StoredMessage[] = [{ id: 'm1', role: 'user', text: 'hello' }]
     const answer = await reply(call(1, { kind: 'persist-session', sessionId: 'abc', messages }), caps)
-    expect(answer).toEqual({ id: 1, ok: {} })
+    expect(answer).toEqual({ id: 1, ok: { ok: true } })
     expect(caps.recorded.saves).toEqual([{ sessionId: 'abc', messages }])
   })
 

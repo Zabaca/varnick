@@ -215,7 +215,12 @@ async function answer(
   switch (kind) {
     case 'check-sandbox':
       await capabilities.establishSandbox()
-      return {}
+      // `{ ok: true }`, not `{}`. The bridge's okAnswer rejects anything else as
+      // malformed, and an empty object here made every launch report the Sandbox
+      // unavailable with a message blaming a version mismatch. Both sides' tests
+      // agreed with themselves and disagreed with each other; nothing drove the
+      // join until it was driven by hand.
+      return { ok: true }
 
     case 'wrap-agent-command': {
       const { argv, env, cwd } = await capabilities.wrapAgentCommand()
@@ -237,7 +242,7 @@ async function answer(
         )
       }
       await capabilities.persist({ sessionId, messages: stored })
-      return {}
+      return { ok: true }
     }
 
     case 'read-session': {

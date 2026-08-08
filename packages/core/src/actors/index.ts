@@ -106,14 +106,24 @@ export function agentControlFor(mode: ActorMode): AgentControl {
 /**
  * Mode for this run.
  *
- * `?actors=live` in the URL overrides, so the failure of an unwired live actor
- * can be seen without a rebuild. Default is seeded, because almost nothing is
- * wired — see LIVE_NOT_IMPLEMENTED for exactly how much.
+ * **Live by default**, because every actor is now real — `LIVE_NOT_IMPLEMENTED`
+ * is empty. It defaulted to seeded for as long as that list had entries, and the
+ * comment here justified it by pointing at the list; the list emptied one ticket
+ * at a time and nobody owned the moment it hit zero, so the running app went on
+ * showing invented numbers with a real host behind it.
+ *
+ * `?actors=seeded` is the override, and it keeps two jobs worth having: design
+ * work against plausible data, and a browser tab, which has no host and would
+ * otherwise fail every call. Both are the exception now rather than the rule.
+ *
+ * Headless stays seeded. `drive.ts` drives the machines with no window, and a
+ * live default there would have a test suite establishing kernel sandboxes and
+ * spawning agents.
  */
 export function resolveActorMode(): ActorMode {
   if (typeof window === 'undefined') return 'seeded'
   const requested = new URLSearchParams(window.location.search).get('actors')
-  return requested === 'live' ? 'live' : 'seeded'
+  return requested === 'seeded' ? 'seeded' : 'live'
 }
 
 export { seededActors, defaultSeedControls, type SeedControls } from './seeded.ts'
