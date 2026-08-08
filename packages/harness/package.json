@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./bridge": "./src/bridge.ts",
+    "./runtime": "./src/runtime.ts",
     "./sandbox": "./src/sandbox.ts",
     "./credentials": "./src/credentials.ts",
     "./secrets": "./src/secrets.ts",

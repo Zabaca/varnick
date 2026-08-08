@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { HarnessUnavailable } from './bridge.ts'
 import {
   CREDENTIAL_ENV_VAR,
   CREDENTIAL_KEYCHAIN_ACCOUNT,
@@ -26,12 +27,15 @@ const answers = (source: unknown): CredentialHost => ({
   read: async () => ({ source }),
 })
 
-/** A host that rejects the way Tauri rejects a command returning `Err`. */
+/** A host that rejects the way the bridge rejects a refused call. */
 const refuses = (payload: unknown): CredentialHost => ({
   read: async () => {
     throw payload
   },
 })
+
+/** The bridge's own refusal, carrying the tag the Rust host chose. */
+const refusal = (tag: string) => new HarnessUnavailable('refused', tag)
 
 /** A value shaped like a real key, used to prove it never comes back out. */
 const LOOKS_LIKE_A_KEY = 'sk-" + "ant-api03-NEVER-LET-THIS-OUT'
@@ -67,11 +71,15 @@ describe('a failed read records which failure it was', () => {
   })
 
   test('nothing stored — the first-run case', async () => {
-    expect(await absenceOf(refuses({ absence: 'nothing-stored' }))).toBe('nothing-stored')
+    expect(await absenceOf(refuses(refusal('nothing-stored')))).toBe('nothing-stored')
   })
 
   test('a store that exists and would not answer', async () => {
-    expect(await absenceOf(refuses({ absence: 'store-unreadable' }))).toBe('store-unreadable')
+    expect(await absenceOf(refuses(refusal('store-unreadable')))).toBe('store-unreadable')
+  })
+
+  test('a bridge that never reached the host is an absence too, not a crash', async () => {
+    expect(await absenceOf(refuses(new HarnessUnavailable('no-runtime')))).toBe('store-unreadable')
   })
 
   test('an absence the host does not name is still an absence, never a crash', async () => {
@@ -83,7 +91,7 @@ describe('a failed read records which failure it was', () => {
   })
 
   test('every failure is a CredentialUnavailable, so nothing rejects unhandled', async () => {
-    for (const host of [null, refuses({ absence: 'nothing-stored' }), answers(undefined)]) {
+    for (const host of [null, refuses(refusal('nothing-stored')), answers(undefined)]) {
       await expect(readCredential(host)).rejects.toBeInstanceOf(CredentialUnavailable)
     }
   })
@@ -133,7 +141,7 @@ describe('nothing the host said can reach a message', () => {
   }
 
   test('an unrecognised rejection payload is not quoted', async () => {
-    const message = await messageOf(refuses({ absence: LOOKS_LIKE_A_KEY }))
+    const message = await messageOf(refuses(refusal(LOOKS_LIKE_A_KEY)))
     expect(message).not.toContain(LOOKS_LIKE_A_KEY)
   })
 
@@ -189,9 +197,28 @@ describe('a rejection by the API is its own outcome', () => {
   })
 })
 
-describe('the host bridge', () => {
+describe('the read rides the one bridge, like every other Harness call', () => {
+  afterEach(() => {
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
   test('a plain browser tab has no host, and that is a value rather than a throw', () => {
     expect(tauriCredentialHost()).toBeNull()
+  })
+
+  test('a read is a bridge call, and asks for nothing but the credential', async () => {
+    const invoked: unknown[] = []
+    ;(globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (command: string, payload?: unknown) => {
+        invoked.push([command, payload])
+        return { source: 'keychain' }
+      },
+    }
+
+    const host = tauriCredentialHost()
+    expect(host).not.toBeNull()
+    expect(await readCredential(host)).toEqual({ source: 'keychain' })
+    expect(invoked).toEqual([['harness_call', { request: { kind: 'read-credential' } }]])
   })
 
   test('the env var the host injects is the one the Agent SDK reads', () => {
