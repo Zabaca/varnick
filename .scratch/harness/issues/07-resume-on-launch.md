@@ -2,7 +2,7 @@
 
 **What to build:** Quitting and relaunching continues the conversation instead of starting over. A day's work is not a day's conversation lost, a crashed unattended run is recoverable rather than opaque, and the transcript is intact after the agent writes code that does not compile — that last case is the one the mirror exists for.
 
-**Blocked by:** 06 (needs the mirror to read from).
+**Blocked by:** 06 (needs the mirror to read from), 15 (the renderer cannot reach the mirror without it).
 
 **Status:** ready-for-agent
 
@@ -18,3 +18,15 @@ The entry point already exists: the Harness spawns the Session from an input the
 - [ ] The in-flight-at-crash decision is recorded, not just implemented
 
 Covers stories 22, 23, 24, 25.
+
+## Comments
+
+**Decide which store the resumed conversation comes from, and say so.** The
+mirror is deliberately not a byte-faithful copy: ticket 06 redacts secret values
+and credential shapes on the write path, so a message in the mirror can differ
+from what was actually said. Reading the conversation back out of the mirror
+therefore replaces the original text with `[redacted]` in the live Session —
+which may be right, but nobody has decided it. The Agent SDK keeps its own copy
+for resumption; the mirror exists to survive a build the agent just broke. Name
+which one resumption reads, and if it is the mirror, say in the surface what a
+developer is looking at.

@@ -1,4 +1,4 @@
-import { setup, assign, fromPromise } from 'xstate'
+import { setup, assign, fromPromise, raise } from 'xstate'
 import type { Message } from '../domain.ts'
 import { isCommandDraft } from '../domain.ts'
 import type { Effort, ModelId } from '../domain.ts'
@@ -132,6 +132,17 @@ export const sessionMachine = setup({
       { sessionId: string; messages: readonly Message[] }
     >(async () => ({ ok: true })),
   },
+  actions: {
+    /**
+     * A Turn boundary — the moment the transcript stops changing.
+     *
+     * Raised rather than left to a caller, so the mirror is written by the
+     * machine that owns the transcript instead of by whoever remembered to ask.
+     * `raise` goes to the machine, so it crosses into `persistence` without
+     * either region reaching into the other.
+     */
+    saveTranscript: raise({ type: 'SAVE' }),
+  },
   guards: {
     // Enter always sends, menu or not. Completing a command is Tab's job, and
     // a sent draft that names a command runs it — see invokedCommand.
@@ -241,25 +252,34 @@ export const sessionMachine = setup({
             }),
             onDone: {
               target: 'idle',
-              actions: assign({
-                messages: ({ context, event }) => [
-                  ...context.messages,
-                  {
-                    id: `m${context.messages.length + 1}`,
-                    role: 'agent' as const,
-                    text: event.output.text,
-                  },
-                ],
-                partial: '',
-                tokensUsed: ({ event }) => event.output.tokensUsed,
-              }),
+              actions: [
+                assign({
+                  messages: ({ context, event }) => [
+                    ...context.messages,
+                    {
+                      id: `m${context.messages.length + 1}`,
+                      role: 'agent' as const,
+                      text: event.output.text,
+                    },
+                  ],
+                  partial: '',
+                  tokensUsed: ({ event }) => event.output.tokensUsed,
+                }),
+                'saveTranscript',
+              ],
             },
             onError: {
               target: 'failed',
-              actions: assign({
-                turnError: ({ event }) =>
-                  event.error instanceof Error ? event.error.message : String(event.error),
-              }),
+              // A failed Turn is still a boundary: the user's message is in the
+              // transcript whether or not an answer ever arrived, and losing it
+              // to the failure is the case the mirror exists for.
+              actions: [
+                assign({
+                  turnError: ({ event }) =>
+                    event.error instanceof Error ? event.error.message : String(event.error),
+                }),
+                'saveTranscript',
+              ],
             },
           },
           on: {
@@ -281,25 +301,34 @@ export const sessionMachine = setup({
             }),
             onDone: {
               target: 'idle',
-              actions: assign({
-                messages: ({ context, event }) => [
-                  ...context.messages,
-                  {
-                    id: `m${context.messages.length + 1}`,
-                    role: 'agent' as const,
-                    text: event.output.text,
-                  },
-                ],
-                partial: '',
-                tokensUsed: ({ event }) => event.output.tokensUsed,
-              }),
+              actions: [
+                assign({
+                  messages: ({ context, event }) => [
+                    ...context.messages,
+                    {
+                      id: `m${context.messages.length + 1}`,
+                      role: 'agent' as const,
+                      text: event.output.text,
+                    },
+                  ],
+                  partial: '',
+                  tokensUsed: ({ event }) => event.output.tokensUsed,
+                }),
+                'saveTranscript',
+              ],
             },
             onError: {
               target: 'failed',
-              actions: assign({
-                turnError: ({ event }) =>
-                  event.error instanceof Error ? event.error.message : String(event.error),
-              }),
+              // A failed Turn is still a boundary: the user's message is in the
+              // transcript whether or not an answer ever arrived, and losing it
+              // to the failure is the case the mirror exists for.
+              actions: [
+                assign({
+                  turnError: ({ event }) =>
+                    event.error instanceof Error ? event.error.message : String(event.error),
+                }),
+                'saveTranscript',
+              ],
             },
           },
           on: {
@@ -316,20 +345,23 @@ export const sessionMachine = setup({
           after: {
             interruptGrace: {
               target: 'idle',
-              actions: assign({
-                messages: ({ context }) =>
-                  context.partial
-                    ? [
-                        ...context.messages,
-                        {
-                          id: `m${context.messages.length + 1}`,
-                          role: 'agent' as const,
-                          text: context.partial,
-                        },
-                      ]
-                    : context.messages,
-                partial: '',
-              }),
+              actions: [
+                assign({
+                  messages: ({ context }) =>
+                    context.partial
+                      ? [
+                          ...context.messages,
+                          {
+                            id: `m${context.messages.length + 1}`,
+                            role: 'agent' as const,
+                            text: context.partial,
+                          },
+                        ]
+                      : context.messages,
+                  partial: '',
+                }),
+                'saveTranscript',
+              ],
             },
           },
         },
@@ -343,11 +375,17 @@ export const sessionMachine = setup({
             }),
             onDone: {
               target: 'idle',
-              actions: assign({
-                messages: ({ event }) => event.output.messages,
-                tokensUsed: ({ event }) => event.output.tokensUsed,
-                compactError: null,
-              }),
+              // Compaction rewrites history rather than extending it, which the
+              // mirror has to be told about — an append-only file would keep
+              // both the summary and everything it replaced.
+              actions: [
+                assign({
+                  messages: ({ event }) => event.output.messages,
+                  tokensUsed: ({ event }) => event.output.tokensUsed,
+                  compactError: null,
+                }),
+                'saveTranscript',
+              ],
             },
             onError: {
               target: 'idle',
@@ -394,6 +432,11 @@ export const sessionMachine = setup({
         },
         saved: { on: { SAVE: 'saving' } },
         saving: {
+          // A Turn boundary reached while a save is in flight restarts the save
+          // with the transcript as it now is. Ignoring it would leave the mirror
+          // one Turn behind and `persistence.saved` would be a lie — the state
+          // says the transcript is on disk, so it has to mean the current one.
+          on: { SAVE: { target: 'saving', reenter: true } },
           invoke: {
             src: 'persistSession',
             input: ({ context }) => ({

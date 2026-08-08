@@ -2,7 +2,7 @@
 
 **What to build:** The real Claude Agent SDK process starts with the established sandbox wrapping its whole process tree, and the surface reflects what the process actually does. Killing it externally shows the agent stopped and why; restarting brings it back with the conversation intact.
 
-**Blocked by:** 01 (sandbox), 02 (credential) — the start gate reads both.
+**Blocked by:** 01 (sandbox), 02 (credential) — the start gate reads both — and 15 (the renderer cannot reach the host without it).
 
 **Status:** ready-for-agent
 

@@ -21,3 +21,22 @@ Spawning the Session from `agent.running` rather than owning it in the parent st
 - **Delays are named, never numeric literals.** `interruptGrace` and `refusalTimeout` are overridden by the frozen build; a literal in `after` cannot be, and an explorer card that expires while it is being read is not showing the state it claims.
 
 - **Pairs with [ADR-0001](./0001-pure-view-layer.md).** The machines declare actor contracts and never import an implementation, so the live app, the bare page, and the states page differ only in which implementations are provided and who owns start-up.
+
+## Amended while building the mirror
+
+`persistence` had no trigger. The region was complete and nothing ever sent it
+`SAVE` — only the bare page's buttons did, which meant the transcript was
+mirrored exactly when a developer clicked. Ticket 06 added a `saveTranscript`
+action, raised at each Turn boundary: turn done, turn failed, an interrupt
+folding its partial in, and a Compaction rewriting history. `saving` now also
+accepts `SAVE` and re-enters, so a boundary reached while a save is in flight
+restarts it rather than being dropped — otherwise `persistence.saved` would mean
+"some earlier transcript is on disk", which is not what the state says.
+
+This is a machine change made during stage 6, which the stage contract says
+should not happen. It is recorded rather than waived: no state was added or
+removed, `SESSION_STATE_PATHS` and the states-page cards are untouched, and the
+model was not wrong — the wire was simply never run, because until the mirror
+existed there was nothing to save to. A failed Turn saving is the case worth
+keeping in mind: the user's message is in the transcript whether or not an
+answer ever arrived, and that is the loss the mirror exists to prevent.
