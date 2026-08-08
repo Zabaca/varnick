@@ -119,11 +119,9 @@ export async function readSubscriptionUsage(read: ReadPlanUsageReport): Promise<
  * created here: see {@link ReadPlanUsageReport} for why opening one would be an
  * unconfined agent process rather than an implementation detail.
  *
- * Nothing calls this yet. The confined session exists and now takes control
- * requests — a Turn is one — so what is left is a `TurnControl` kind that asks
- * for usage and a route for the answer. Until then `readSubscriptionUsage` has
- * no reader and the strip stays seeded, which is the honest state rather than a
- * chore left undone.
+ * The one caller is `runAgentHost` in ./agent.ts, which hands it the session it
+ * is already holding, inside `srt`. That is the whole of the wiring: the read
+ * happens where the session is, and only the two figures come back out.
  */
 export function reportFromSession(session: UsageCapableSession): ReadPlanUsageReport {
   return async () =>
@@ -133,4 +131,87 @@ export function reportFromSession(session: UsageCapableSession): ReadPlanUsageRe
 /** The one method this module needs from a running session. */
 export interface UsageCapableSession {
   usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(): Promise<SDKControlGetUsageResponse>
+}
+
+// ---------------------------------------------------------------------------
+// The answer, on its way back out of the Sandbox
+// ---------------------------------------------------------------------------
+
+/**
+ * What the confined process says about one read.
+ *
+ * `usage` is `null` for every way the read did not produce two figures — no
+ * plan, a missing window, a session that threw. It is a value rather than an
+ * absent line on purpose: a read that is simply never answered leaves the host
+ * waiting out its patience, and a wait that times out is indistinguishable from
+ * a slow agent. Answering with nothing fails the read immediately and leaves
+ * whatever was last known on screen.
+ *
+ * There is no field for a reason. The failure happens against the API, so its
+ * prose is where a rejected credential would be — the same rule
+ * `turnFailureMessage` follows in ./turn.ts, applied to a read that has exactly
+ * one thing to say.
+ */
+export interface PlanUsageAnswer {
+  readonly requestId: string
+  readonly usage: PlanUsage | null
+}
+
+/** The wire's own name for this line, so nothing else is read as one. */
+const PLAN_USAGE_ANSWER_KIND = 'plan-usage'
+
+/**
+ * What to tell the developer when a read produced no figures.
+ *
+ * Authored here, selected by nothing: there is one sentence because there is one
+ * outcome. It names what is on screen rather than what went wrong, because the
+ * developer's question when a read fails is whether the number they can still
+ * see is a number they can still trust.
+ */
+export const PLAN_USAGE_UNAVAILABLE =
+  'The agent session did not report plan usage, so nothing was measured. Any figures shown are the last ones that were.'
+
+/**
+ * One answer, as one line.
+ *
+ * `JSON.stringify` escapes newlines, so nothing here can split the line and
+ * desynchronise the pipe — the same framing every other channel in this codebase
+ * uses, for the same reason.
+ */
+export function encodePlanUsageAnswer(answer: PlanUsageAnswer): string {
+  return `${JSON.stringify({ kind: PLAN_USAGE_ANSWER_KIND, ...answer })}\n`
+}
+
+/** One window's figure, or nothing. Not a rounding question — see below. */
+function figureOf(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/**
+ * Read an answer back, or refuse it.
+ *
+ * Rebuilt rather than passed through, like every answer that crosses into Core.
+ * Two things this does beyond checking shape:
+ *
+ *   * `source` is *stamped* rather than read. Everything arriving through this
+ *     codec came from the plan through the confined session, so `live` is
+ *     structural — and a line claiming otherwise must not be able to make a
+ *     measurement look seeded, or a seed look measured.
+ *   * a figure that is not a finite number makes the whole answer unreadable
+ *     rather than half of one. This renders beside the words "plan usage", and
+ *     the one rule the surface has is that a number there was measured.
+ */
+export function parsePlanUsageAnswer(value: unknown): PlanUsageAnswer | null {
+  const { kind, requestId, usage } = (value ?? {}) as Record<string, unknown>
+  if (kind !== PLAN_USAGE_ANSWER_KIND) return null
+  if (typeof requestId !== 'string' || requestId.length === 0) return null
+  if (usage === null) return { requestId, usage: null }
+  if (usage === undefined || typeof usage !== 'object') return null
+
+  const { fiveHourPct, weeklyPct } = usage as Record<string, unknown>
+  const fiveHour = figureOf(fiveHourPct)
+  const weekly = figureOf(weeklyPct)
+  if (fiveHour === null || weekly === null) return null
+
+  return { requestId, usage: { fiveHourPct: fiveHour, weeklyPct: weekly, source: 'live' } }
 }

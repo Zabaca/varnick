@@ -43,11 +43,22 @@ import type { NonNullableUsage, SDKMessage } from '@anthropic-ai/claude-agent-sd
 /**
  * A control request, as one line on the agent host's stdin.
  *
- * Two, and there is deliberately no third. The agent host is a Claude Code
- * session inside the Sandbox; every additional thing it can be asked to do is
- * another thing something outside the Sandbox can make it do.
+ * Three, and each one is a decision rather than a convenience. The agent host is
+ * a Claude Code session inside the Sandbox; every additional thing it can be
+ * asked to do is another thing something outside the Sandbox can make it do.
+ *
+ * Two of them are a Turn. The third is a plan-usage read, and it is here rather
+ * than anywhere else because of ADR-0003's last consequence: the SDK's
+ * `get_usage` control request rides a live session, and the only session varnick
+ * ever has is the confined one this channel reaches. A read that opened its own
+ * would be a Claude Code process on the host, outside `srt`, running whatever
+ * `SessionStart` hook the agent last wrote into the clone. So it is a kind here,
+ * or it does not happen.
+ *
+ * The type is no longer called `TurnControl` for that reason: the channel
+ * carries control requests, of which a Turn is two.
  */
-export type TurnControl =
+export type ControlRequest =
   | {
       readonly kind: 'run-turn'
       readonly turnId: string
@@ -56,6 +67,16 @@ export type TurnControl =
       readonly effort: string
     }
   | { readonly kind: 'interrupt'; readonly turnId: string }
+  /**
+   * Ask the session this process is holding what the plan has left.
+   *
+   * `requestId` rather than `turnId` because it is not a Turn and never becomes
+   * one — nothing about it reaches the transcript. It is required for the same
+   * reason a Turn's id is: an answer nobody can match to a read is an answer
+   * that could be handed to a different read, and a stale figure that looks
+   * fresh is exactly what this ticket rules out.
+   */
+  | { readonly kind: 'read-plan-usage'; readonly requestId: string }
 
 /**
  * Read a control request, or refuse it.
@@ -64,7 +85,7 @@ export type TurnControl =
  * confined, and a request shape it accepts loosely is a request shape something
  * can put an extra field on.
  */
-export function parseTurnControl(line: string): TurnControl | null {
+export function parseControlRequest(line: string): ControlRequest | null {
   let value: unknown
   try {
     value = JSON.parse(line)
@@ -72,7 +93,14 @@ export function parseTurnControl(line: string): TurnControl | null {
     return null
   }
 
-  const { kind, turnId, prompt, model, effort } = (value ?? {}) as Record<string, unknown>
+  const { kind, turnId, requestId, prompt, model, effort } = (value ?? {}) as Record<string, unknown>
+
+  // Each kind names its own id. One shared field would have made a Turn and a
+  // read interchangeable to anything reading only the id.
+  if (kind === 'read-plan-usage') {
+    return typeof requestId === 'string' && requestId.length > 0 ? { kind, requestId } : null
+  }
+
   if (typeof turnId !== 'string' || turnId.length === 0) return null
 
   if (kind === 'interrupt') return { kind, turnId }

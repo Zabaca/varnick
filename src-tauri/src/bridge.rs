@@ -109,8 +109,14 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // Turn anywhere else would mean a second Claude Code session, which is
         // ADR-0003's last consequence and the rule most likely to be broken by
         // accident.
+        //
+        // A plan-usage read is here for exactly that second reason and nothing
+        // else. It looks like a question the runtime could answer — it needs no
+        // credential and returns two numbers — and that is the trap: the figures
+        // come from an SDK control request, which rides a live Session, and
+        // asking for one anywhere but here means opening one.
         "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" | "run-turn"
-        | "next-turn-event" | "interrupt-turn" => Some(Route::Host),
+        | "next-turn-event" | "interrupt-turn" | "read-plan-usage" => Some(Route::Host),
         "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
@@ -360,6 +366,11 @@ pub fn harness_call(
             // `null` is "nothing yet", which is a working Turn rather than a
             // failed one.
             "next-turn-event" => Ok(serde_json::json!({ "event": agent.next_event() })),
+            // Waits too, and unlike the one above a wait that runs out is a
+            // failed read rather than "nothing yet". With no agent running it
+            // refuses at once: there is no session to ask, and the answer to
+            // that is to say so — never to start one to have something to ask.
+            "read-plan-usage" => agent.read_plan_usage(&request),
             // Unreachable while `route_of` and this match agree, and a closed
             // default rather than a forward if they ever stop agreeing.
             _ => Err(Failure::of("malformed")),
@@ -432,6 +443,15 @@ mod tests {
         assert_eq!(route_of("run-turn"), Some(Route::Host));
         assert_eq!(route_of("next-turn-event"), Some(Route::Host));
         assert_eq!(route_of("interrupt-turn"), Some(Route::Host));
+    }
+
+    #[test]
+    fn a_plan_usage_read_is_answered_where_the_agent_process_is() {
+        // For the same reason a Turn is, and it is the reason ADR-0003's last
+        // consequence was amended: the figures come from a control request on a
+        // live Session, and the only Session varnick has is the confined one
+        // this process spawned. Anywhere else would mean opening a second.
+        assert_eq!(route_of("read-plan-usage"), Some(Route::Host));
     }
 
     #[test]

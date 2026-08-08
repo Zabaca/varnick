@@ -18,7 +18,7 @@ import type { SessionInput } from '../machines/session.ts'
 /**
  * The real implementations.
  *
- * Most of them do not exist yet. Each of those throws with the same shape of
+ * Two of them do not exist yet. Each of those throws with the same shape of
  * message, so switching to live mode fails loudly and immediately at the actor
  * that is missing, rather than appearing to work — which is what a silent stub
  * does, and what a missing `provide()` entry did once already in this project.
@@ -51,11 +51,7 @@ const notImplemented = (name: string, what: string) => (): never => {
   )
 }
 
-export const LIVE_NOT_IMPLEMENTED = [
-  'readSubscriptionUsage',
-  'compactSession',
-  'loadSurface',
-] as const
+export const LIVE_NOT_IMPLEMENTED = ['compactSession', 'loadSurface'] as const
 
 /**
  * What a running Turn says that is not its result.
@@ -110,6 +106,19 @@ const silentObserver: TurnObserver = {
 let turnsStarted = 0
 const nextTurnId = () => `turn-${++turnsStarted}`
 
+/**
+ * A name for one plan-usage read, unique within this window.
+ *
+ * The same counter argument as {@link nextTurnId}, for a different consequence.
+ * The host matches an answer to the read that asked for it, and an answer it
+ * cannot match is discarded rather than handed to whoever is waiting — so a
+ * repeated id would mean a figure measured for one read arriving as another's.
+ * That is a stale number wearing a fresh one's clothes, which is the failure
+ * this whole path is built to make impossible.
+ */
+let usageReadsStarted = 0
+const nextUsageReadId = () => `usage-${++usageReadsStarted}`
+
 export function liveActors(observer: TurnObserver = silentObserver) {
   return {
     /*
@@ -147,25 +156,28 @@ export function liveActors(observer: TurnObserver = silentObserver) {
     ),
 
     /*
-      The source question is answered — the plan's own 5-hour and weekly
-      windows, through the Agent SDK's `get_usage` control request, parsed by
-      packages/harness/src/subscription.ts.
+      Real. The plan's own 5-hour and weekly windows, measured server-side by
+      claude.ai across every device on the plan — not a tally of what this
+      application has seen. A local count would move with one machine's traffic
+      while the plan window counts claude.ai too, and a figure that close to
+      right is worse than none.
 
-      What was missing was a way to ask the confined session anything at all.
-      That now exists: the agent process listens on a control channel and a Turn
-      rides it. `get_usage` is a control request on the same session and would
-      ride the same channel — it needs a third `TurnControl` kind and a route
-      for the answer, which is ticket 09's work rather than a line missing here.
-      What must not happen either way is a session opened on this side to ask:
-      that is a Claude Code process on the host outside the Sandbox, and
-      ADR-0003's last consequence exists because that code does not look like it
-      starts an agent.
+      One call, and it goes the same way a Turn does: to the confined session the
+      agent process is already holding. That is the whole design rather than a
+      detail of it. `get_usage` rides a live Agent SDK session, `query()` starts
+      a Claude Code executable, and a session runs `SessionStart` hooks from the
+      clone's `.claude/settings.json` — which the agent can write. So a session
+      opened on this side to read a number would execute agent-authored code
+      unconfined. ADR-0003's last consequence exists because that code does not
+      look like it starts an agent, and this ticket is what it was written about.
+
+      Which is why a read with no agent running fails rather than starting one.
+      The machine's `subscription` region sends a failed read back to `unread`
+      with context untouched, so the strip keeps whatever was last measured —
+      nothing at all, before the agent has ever run.
     */
-    readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(
-      notImplemented(
-        'readSubscriptionUsage',
-        'no control request asks the confined session for its plan usage yet',
-      ),
+    readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(() =>
+      callHarness({ kind: 'read-plan-usage', requestId: nextUsageReadId() }),
     ),
 
     /*

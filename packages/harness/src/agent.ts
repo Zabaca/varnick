@@ -45,9 +45,15 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { credentialRejection } from './credentials.ts'
 import {
+  encodePlanUsageAnswer,
+  readSubscriptionUsage,
+  reportFromSession,
+  type ReadPlanUsageReport,
+} from './subscription.ts'
+import {
   beginTurn,
   encodeTurnEvent,
-  parseTurnControl,
+  parseControlRequest,
   type TurnEvent,
   type TurnFailure,
   type TurnRun,
@@ -625,7 +631,7 @@ async function toolProbe(
 // ---------------------------------------------------------------------------
 
 /**
- * What a Turn needs from the Session, and nothing else.
+ * What the control channel needs from the Session, and nothing else.
  *
  * A port rather than the SDK's `Query`, so the loop below can be driven by a
  * test with no Claude Code process anywhere. That is not a testing convenience:
@@ -633,10 +639,13 @@ async function toolProbe(
  * `srt` on a developer's machine, which is exactly what ADR-0003's last
  * consequence forbids.
  *
- * Four methods, and deliberately no fifth. This is the surface something outside
- * the Sandbox can reach into the Sandbox with.
+ * Five methods, and each one was a decision. This is the surface something
+ * outside the Sandbox can reach into the Sandbox with — and, read the other way,
+ * it is the whole list of questions that do not need a second session to answer.
+ * Nothing here can create one: there is no `query` in this interface and no way
+ * to get at the one `runAgentHost` holds.
  */
-export interface TurnSessionPort {
+export interface AgentSessionPort {
   /** Put a prompt on the Session's streaming input. */
   prompt(text: string): void
   /** What the *next* answer runs on. Applied before the prompt goes out. */
@@ -644,6 +653,15 @@ export interface TurnSessionPort {
   setEffort(effort: string): Promise<void>
   /** Stop the answer in flight. What has arrived stays arrived. */
   interrupt(): Promise<void>
+  /**
+   * What the plan has left, as the plan reports it.
+   *
+   * The fifth method, and the one ADR-0003's amendment was written for. It is
+   * the SDK's `get_usage` control request on this Session — measured
+   * server-side, across every device on the plan — rather than anything this
+   * process counted.
+   */
+  readonly usage: ReadPlanUsageReport
 }
 
 export interface ServeTurnsInput {
@@ -651,7 +669,7 @@ export interface ServeTurnsInput {
   readonly control: AsyncIterable<Uint8Array | string>
   /** The Session's messages. One stream for the life of the process. */
   readonly messages: AsyncIterable<unknown>
-  readonly session: TurnSessionPort
+  readonly session: AgentSessionPort
   /** One event, already newline-terminated. The process's stdout. */
   readonly write: (line: string) => void
 }
@@ -703,13 +721,48 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     }
   }
 
+  /**
+   * Answer one plan-usage read off the Session this process is holding.
+   *
+   * The whole of ADR-0003's last consequence, in one function: the reader handed
+   * to `readSubscriptionUsage` is the Session that already exists, so there is
+   * nothing here that could open a second one even by accident.
+   *
+   * Always answers. A read that produced no figures answers with `null` rather
+   * than staying quiet, because silence is what a slow agent also looks like and
+   * the caller would wait out its whole patience before failing. Nothing the
+   * failure said is carried: the read runs against the API, so its prose is
+   * exactly where a rejected credential would be.
+   */
+  async function answerUsage(requestId: string): Promise<void> {
+    let usage = null
+    try {
+      usage = await readSubscriptionUsage(session.usage)
+    } catch {
+      // Deliberately empty. `null` is the answer, and there is no second thing
+      // to say about a figure that does not exist.
+    }
+    try {
+      write(encodePlanUsageAnswer({ requestId, usage }))
+    } catch {
+      // The pipe is gone, which means so is whoever asked.
+    }
+  }
+
   async function handle(line: string): Promise<void> {
-    const request = parseTurnControl(line)
+    const request = parseControlRequest(line)
     // A line this host does not understand is dropped rather than guessed at.
     // It runs inside the Sandbox holding a live agent, so a loosely-read control
     // channel is a way in rather than a robustness feature.
     if (request === null) return
     if (request.kind === 'run-turn') return start(request)
+    if (request.kind === 'read-plan-usage') {
+      // Started, not awaited. A usage read is a round-trip to the Claude Code
+      // process, and holding the control loop for it would make an interrupt
+      // cost that round-trip — the exact delay interrupting exists to avoid.
+      void answerUsage(request.requestId)
+      return
+    }
     // A stale interrupt from an abandoned Turn must not stop the one that
     // replaced it, so it has to name the Turn it means.
     if (running !== null && !running.finished && running.turnId === request.turnId) {
@@ -855,6 +908,12 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       interrupt: async () => {
         await session.interrupt()
       },
+      // The plan's own windows, off this Session. `reportFromSession` is the one
+      // place the SDK's experimental usage method is named, and the session it
+      // adapts is the one above — created here, inside `srt`, once. There is no
+      // other `query()` in the Harness and this is why: a read that opened its
+      // own would run the clone's `SessionStart` hooks unconfined (ADR-0003).
+      usage: reportFromSession(session),
     },
   })
 }

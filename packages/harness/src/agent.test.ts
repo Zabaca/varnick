@@ -18,8 +18,9 @@ import {
   failureOfThrown,
   sandboxEnvOverlay,
   serveTurns,
-  type TurnSessionPort,
+  type AgentSessionPort,
 } from './agent.ts'
+import { parsePlanUsageAnswer, type PlanUsageReport } from './subscription.ts'
 import { parseTurnEvent, turnFailureMessage, type TurnEvent } from './turn.ts'
 
 /** A value shaped like a real key, used to prove it never comes back out. */
@@ -347,10 +348,16 @@ function pushable<T>() {
   }
 }
 
+/** What a session that has a plan reports about its windows. */
+const BOTH_WINDOWS: PlanUsageReport = {
+  rate_limits_available: true,
+  rate_limits: { five_hour: { utilization: 11 }, seven_day: { utilization: 54 } },
+}
+
 /** A Session that records what was asked of it and answers nothing. */
-function fakeSession() {
+function fakeSession(usage: () => Promise<PlanUsageReport> = async () => BOTH_WINDOWS) {
   const asked: string[] = []
-  const port: TurnSessionPort = {
+  const port: AgentSessionPort = {
     prompt: (text) => {
       asked.push(`prompt:${text}`)
     },
@@ -362,6 +369,10 @@ function fakeSession() {
     },
     interrupt: async () => {
       asked.push('interrupt')
+    },
+    usage: async () => {
+      asked.push('usage')
+      return usage()
     },
   }
   return { port, asked }
@@ -390,17 +401,22 @@ async function serve(
     messages: ReturnType<typeof pushable<unknown>>
     asked: string[]
   }) => Promise<void>,
+  usage?: () => Promise<PlanUsageReport>,
 ) {
   const control = pushable<string>()
   const messages = pushable<unknown>()
-  const { port, asked } = fakeSession()
+  const { port, asked } = fakeSession(usage)
   const written: TurnEvent[] = []
+  // Everything the loop wrote, unfiltered. The channel carries more than Turn
+  // events now, and a helper that only kept those could not see the rest.
+  const lines: string[] = []
 
   const served = serveTurns({
     control,
     messages,
     session: port,
     write: (line) => {
+      lines.push(line)
       const event = parseTurnEvent(JSON.parse(line))
       if (event !== null) written.push(event)
     },
@@ -410,8 +426,15 @@ async function serve(
   control.close()
   messages.close()
   await served
-  return { written, asked }
+  return { written, asked, lines }
 }
+
+const readUsageLine = (requestId: string) =>
+  `${JSON.stringify({ kind: 'read-plan-usage', requestId })}\n`
+
+/** The plan-usage answers the loop wrote, in order. */
+const usageAnswers = (lines: readonly string[]) =>
+  lines.map((line) => parsePlanUsageAnswer(JSON.parse(line))).filter((answer) => answer !== null)
 
 /** Let the loops run until they have nothing left to do. */
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 5))
@@ -519,6 +542,134 @@ describe('interrupting', () => {
   })
 })
 
+/*
+  Plan usage, on the same channel, for the same reason.
+
+  These tests are the shape of ADR-0003's last consequence: the loop is handed a
+  session it did not create, and the only way it can answer a usage read is to
+  ask that one. There is no `query()` in reach — the port has five methods and
+  none of them opens anything — so a test proving the answer came back is a test
+  proving no second session was needed to get it.
+*/
+describe('plan usage rides the session that is already open', () => {
+  test('a read asks the running session and answers with what the plan said', async () => {
+    const { asked, lines } = await serve(async ({ control }) => {
+      control.push(readUsageLine('u1'))
+      await settle()
+    })
+    expect(asked).toEqual(['usage'])
+    expect(usageAnswers(lines)).toEqual([
+      { requestId: 'u1', usage: { fiveHourPct: 11, weeklyPct: 54, source: 'live' } },
+    ])
+  })
+
+  test('the answer names the read it belongs to', async () => {
+    const { lines } = await serve(async ({ control }) => {
+      control.push(readUsageLine('u1'))
+      await settle()
+      control.push(readUsageLine('u2'))
+      await settle()
+    })
+    expect(usageAnswers(lines).map((answer) => answer.requestId)).toEqual(['u1', 'u2'])
+  })
+
+  test('a session with no plan to report answers nothing rather than a figure', async () => {
+    // API key, Bedrock and Vertex sessions have no plan windows. The read fails
+    // and the machine keeps whatever was last known, which may be nothing.
+    const { lines } = await serve(
+      async ({ control }) => {
+        control.push(readUsageLine('u1'))
+        await settle()
+      },
+      async () => ({ rate_limits_available: false, rate_limits: null }),
+    )
+    expect(usageAnswers(lines)).toEqual([{ requestId: 'u1', usage: null }])
+  })
+
+  test('a session that threw is still answered, so nobody waits on a reply that is not coming', async () => {
+    const { lines } = await serve(
+      async ({ control }) => {
+        control.push(readUsageLine('u1'))
+        await settle()
+      },
+      async () => {
+        throw new Error('the session is gone')
+      },
+    )
+    expect(usageAnswers(lines)).toEqual([{ requestId: 'u1', usage: null }])
+  })
+
+  test('nothing the session threw is quoted back', async () => {
+    // The same rule as a failed Turn. This one runs against the API, so the
+    // prose it throws is where a rejected key would be.
+    const { lines } = await serve(
+      async ({ control }) => {
+        control.push(readUsageLine('u1'))
+        await settle()
+      },
+      async () => {
+        throw new Error(`401 unauthorized: ${LOOKS_LIKE_A_KEY}`)
+      },
+    )
+    expect(lines.join('')).not.toContain('sk-ant')
+    expect(lines.join('')).not.toContain('401')
+  })
+
+  test('a read does not disturb the turn that is streaming', async () => {
+    const { written, lines } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(textDelta('Hel'))
+      control.push(readUsageLine('u1'))
+      await settle()
+      messages.push(textDelta('lo'))
+      messages.push(result('Hello'))
+      await settle()
+    })
+    expect(written.map((e) => e.kind)).toEqual(['delta', 'delta', 'done'])
+    expect(written.at(-1)).toMatchObject({ kind: 'done', turnId: 't1', text: 'Hello' })
+    expect(usageAnswers(lines)).toHaveLength(1)
+  })
+
+  test('an interrupt is still answered while a read is in flight', async () => {
+    /*
+      The control loop must not be held by a read. An interrupt costing the rest
+      of a usage round-trip is the same failure interrupting was built to avoid,
+      so the read is started and not waited on.
+    */
+    let release: (() => void) | null = null
+    const { asked } = await serve(
+      async ({ control, asked: sofar }) => {
+        control.push(runTurnLine('t1', 'hello'))
+        await settle()
+        control.push(readUsageLine('u1'))
+        await settle()
+        control.push(`${JSON.stringify({ kind: 'interrupt', turnId: 't1' })}\n`)
+        await settle()
+        // The read has not answered yet and the interrupt has already landed.
+        expect(sofar).toContain('interrupt')
+        release?.()
+        await settle()
+      },
+      () =>
+        new Promise<PlanUsageReport>((resolve) => {
+          release = () => resolve(BOTH_WINDOWS)
+        }),
+    )
+    expect(asked).toEqual(['model:claude-opus-5', 'effort:xhigh', 'prompt:hello', 'usage', 'interrupt'])
+  })
+
+  test('a read is not a turn, and does not become one', async () => {
+    // Nothing about a usage read may reach the Session's transcript. It is a
+    // question about the plan, not something the developer said or was told.
+    const { written } = await serve(async ({ control }) => {
+      control.push(readUsageLine('u1'))
+      await settle()
+    })
+    expect(written).toEqual([])
+  })
+})
+
 describe('the control channel refuses what it does not understand', () => {
   test('a line that is not a control request is ignored rather than acted on', async () => {
     const { asked } = await serve(async ({ control }) => {
@@ -554,6 +705,7 @@ describe('the control channel refuses what it does not understand', () => {
         setModel: async () => {},
         setEffort: async () => {},
         interrupt: async () => {},
+        usage: async () => BOTH_WINDOWS,
       },
       write: (line) => {
         const event = parseTurnEvent(JSON.parse(line))
