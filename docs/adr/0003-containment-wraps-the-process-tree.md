@@ -81,4 +81,23 @@ TLS is unaffected: the roots the handshake needs are in `/System/Library/Keychai
 
 `packages/harness/src/sandbox.boundary.test.ts` now asserts both halves — the keychains unreachable, and both allowlisted hosts still reachable — so a future widening cannot quietly trade one for the other.
 
+## Correction, third part: the fix above did not reach this repository
+
+The deny shipped and the probe for it failed on merge, in this repository, because `sandbox-policy.json` had been generated an hour earlier without it. `ensureSandboxPolicy` wrote the file when absent and read it when present, so a clone kept the policy it was born with and every strengthening reached new clones only. Deleting the file made the probe pass. **Nobody deletes that file in a real clone**, and the failure is silent from both ends: the surface says `sandbox.available`, the policy is a policy, and it is simply not the one anyone thinks is running.
+
+The file cannot just be overwritten — it is deliberately editable, because the thing a fork most wants to change is the boundary, which is why it lives in the clone rather than in the package. Nor can a difference be refused outright: it holds absolute paths for one machine, so a clone moved between laptops or home directories differs legitimately. And a version number cannot separate "I edited this" from "the generator moved on", because both are a diff.
+
+**So what the generator produced is recorded beside what is in force**, in `sandbox-policy.baseline.json`, and a difference is attributed rather than guessed at:
+
+```
+policy   vs. baseline    -> your edit
+baseline vs. generator   -> varnick's strengthening
+```
+
+The merge is per field, not per file, so an edit to the allowlist does not hold back a denial that has nothing to do with it. A field you did not touch takes the generator's current value — that is the whole fix. A field you did touch, and varnick did not, is kept exactly. A field both moved resolves to the **stronger** of the two, never the weaker: a narrowing of yours therefore survives a strengthening of varnick's, and a widening of yours does not, and is reported so you can put it back deliberately. Everything is reported on stderr on every launch, which `src-tauri/src/bridge.rs` inherits, and the file is the last place it is said rather than the only one.
+
+Paths are compared with the four machine roots — clone, home, users root, temp — replaced by tokens, and the baseline records the roots the policy file was last written against. That is what makes a moved clone a rewrite of the paths and not a report of tampering; without the recorded roots it reads as half of `denyRead` added and half removed, which the test caught before the code shipped.
+
+A clone that carries a policy but no baseline — every clone in existence when this shipped — can attribute nothing, so it assumes nothing: the stronger side of every difference wins, once, and the report says why it could not do better. `packages/harness/src/sandbox.boundary.test.ts` plants exactly that clone and asks the kernel whether `/Library/Keychains` is refused, with nothing deleted by hand.
+
 This adopts the design and the measurements from `zbc/packages/agent/docs/adr/0002-containment-wraps-the-cli-process.md`.

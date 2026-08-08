@@ -5,8 +5,11 @@ import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { agentCommand } from './agent.ts'
 import {
+  MACHINE_KEYCHAIN_DIR,
   establishSandbox,
   releaseSandbox,
+  sandboxBaselinePath,
+  sandboxPolicyFor,
   sandboxPolicyPath,
   type EstablishedSandbox,
 } from './sandbox.ts'
@@ -56,6 +59,23 @@ const outsideClone = join(homedir(), `.varnick-boundary-probe-${process.pid}.txt
  */
 const repoRoot = resolve(import.meta.dir, '../../..')
 const hadPolicy = blocked ? true : existsSync(sandboxPolicyPath(repoRoot))
+const hadBaseline = blocked ? true : existsSync(sandboxBaselinePath(repoRoot))
+
+/**
+ * A clone as it stood before `/Library/Keychains` was denied.
+ *
+ * Ticket 17's regression, planted rather than described. This is the exact
+ * state this repository was in when ticket 16's probe failed on merge: a policy
+ * generated an hour before the strengthening, with no baseline beside it
+ * because baselines did not exist yet either. The old fix was to delete the
+ * file, and nobody deletes that file in a real clone.
+ */
+const staleClone = blocked ? '' : mkdtempSync(join(homedir(), '.varnick-boundary-stale-'))
+if (!blocked) {
+  const older = sandboxPolicyFor({ cloneRoot: staleClone })
+  older.filesystem.denyRead = older.filesystem.denyRead.filter((p) => p !== MACHINE_KEYCHAIN_DIR)
+  writeFileSync(sandboxPolicyPath(staleClone), `${JSON.stringify(older, null, 2)}\n`, 'utf8')
+}
 
 /**
  * Run a command the way the Rust host runs the agent.
@@ -87,8 +107,13 @@ afterAll(async () => {
   if (blocked) return
   await releaseSandbox()
   rmSync(clone, { recursive: true, force: true })
+  rmSync(staleClone, { recursive: true, force: true })
   rmSync(outsideClone, { force: true })
   if (!hadPolicy) rmSync(sandboxPolicyPath(repoRoot), { force: true })
+  // Generated beside the policy, and removed on the same condition. Left
+  // behind, it would tell the *next* run that this repository's policy was
+  // hand-edited into whatever this suite last established.
+  if (!hadBaseline) rmSync(sandboxBaselinePath(repoRoot), { force: true })
 })
 
 test.skipIf(blocked !== null)(
@@ -314,6 +339,63 @@ test.skipIf(offline !== null)(
     )
     expect(npm.code).toBe(0)
     expect(npm.stdout.trim()).toBe('200')
+  },
+  120_000,
+)
+
+test.skipIf(blocked !== null)(
+  'a clone whose policy predates the keychain deny is contained by it anyway',
+  async () => {
+    /*
+      Ticket 17, measured against the kernel rather than against the generator.
+
+      The unit suite proves `ensureSandboxPolicy` puts /Library/Keychains back
+      into a policy that lacks it. That is the policy *saying* the right thing.
+      This asks the only question that settles it: with a pre-strengthening
+      `sandbox-policy.json` sitting in the clone — not deleted, not edited, not
+      touched by anybody — does the kernel refuse the read?
+
+      That is the regression the ticket is named after. Ticket 16's probe failed
+      here, on a real repository, for exactly this reason, and passed once
+      someone deleted the file by hand.
+
+      Read-only throughout. Nothing here creates or modifies a keychain item.
+    */
+    accessSync('/Library/Keychains/System.keychain', constants.R_OK)
+
+    // One Sandbox per process, and `initialize` returns early rather than
+    // replacing the policy — see the note in the agent probe above.
+    await releaseSandbox()
+
+    const sandbox = await establishSandbox({ cloneRoot: staleClone })
+    const run = runner(sandbox)
+
+    // What the merge did, before asking the kernel whether it took.
+    expect(sandbox.policy.filesystem.denyRead).toContain(MACHINE_KEYCHAIN_DIR)
+    // Nothing was discarded to get there: the clone is still readable, which is
+    // the allowance every other probe in this file depends on.
+    expect(sandbox.policy.filesystem.allowRead).toContain(staleClone)
+    // And the developer is told, in words, on stderr — not only in the file.
+    expect(sandbox.report.unattributed).toBe(true)
+    expect(sandbox.report.lines.join('\n')).toContain(MACHINE_KEYCHAIN_DIR)
+
+    const opened = await run('cat /Library/Keychains/System.keychain')
+    expect(opened.code).not.toBe(0)
+    expect(opened.stderr).toMatch(/not permitted|Permission denied|No such file/i)
+
+    const dumped = await run('/usr/bin/security dump-keychain /Library/Keychains/System.keychain')
+    expect(dumped.stdout).not.toContain('genp')
+
+    // The positive control, as above: `security` still runs and still answers,
+    // so the two denials mean something.
+    const listed = await run('/usr/bin/security list-keychains')
+    expect(listed.code).toBe(0)
+    expect(listed.stdout).toContain('System.keychain')
+
+    console.log(
+      'boundary probe: a clone carrying a policy generated before the keychain deny' +
+        ' is contained by it on the next launch, with nothing deleted by hand.',
+    )
   },
   120_000,
 )
