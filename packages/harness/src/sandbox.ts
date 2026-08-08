@@ -34,17 +34,23 @@ import { sandboxEnvOverlay } from './agent.ts'
  * execute denial. It is not one, and cannot be made into one here: srt's
  * generated Seatbelt profile carries an unconditional `(allow process-exec)`
  * with no configuration knob, while `denyRead` emits `file-read-data` denials.
- * Those are different kernel operations. Measured — `cat /usr/bin/osascript`
- * is refused and `osascript -e 'return 6*7'` prints 42 in the same sandbox.
- * See the correction in docs/adr/0003-containment-wraps-the-process-tree.md.
+ * Those are different kernel operations.
  *
- * `sudo` is the exception, and not because of this list: it is setuid, and the
- * kernel refuses to honour that inside a sandbox for its own reasons.
+ * Measured in `containment.probe.test.ts`, probes 2 and 2b:
+ *
+ *   * `security`, `osascript` and `open` are unreadable and execute anyway —
+ *     `cat /usr/bin/osascript` is refused and `osascript -e 'return 6*7'`
+ *     prints 42 in the same sandbox.
+ *   * `sudo` is refused, and **not because of this list**. Lifting all four
+ *     entries out of `denyRead` leaves it refused: it is setuid, and its file
+ *     mode `-r-s--x--x` already forbids the read before any policy applies.
+ *     Its entry here denies nothing that was not already denied.
  *
  * So why keep the list? Because a binary the agent cannot read is one it cannot
- * copy, patch, or inspect, and because these four are the ones worth noticing
- * in a violation log. It is a tripwire and a small friction, not a boundary.
- * Nothing may depend on these programs being unable to execute.
+ * copy, patch, or inspect, and because these four are worth noticing in a
+ * violation log. It is a tripwire and a small friction, not a boundary, and
+ * removing entries to make a comment true would be changing the fence to fit
+ * its label. Nothing may depend on these programs being unable to execute.
  */
 export const UNREADABLE_BINARIES = [
   '/usr/bin/security',
@@ -798,7 +804,9 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     '',
     '  security, osascript, open and sudo are made unreadable. They still run:',
     '  srt allows process-exec unconditionally, and denying read is a different',
-    '  kernel operation. Treat the list as a tripwire, not as a boundary.',
+    '  kernel operation. Measured — only sudo is refused, and that is its own',
+    '  setuid file mode rather than this list. Treat it as a tripwire, not as a',
+    '  boundary, and never as an execute allowlist; srt has none.',
     '',
     '  Both keychains are unreachable, by two different mechanisms. The login',
     '  Keychain lives under the denied home directory; /Library/Keychains is',

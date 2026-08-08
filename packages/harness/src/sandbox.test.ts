@@ -70,8 +70,11 @@ describe('what the policy denies', () => {
 
   test('no allowRead entry re-opens an unreadable binary', () => {
     // allowRead beats denyRead, so a broad allow of `/` or `/usr` would silently
-    // hand every one of them back. This asserts the read denial only — three of
-    // the four still execute, measured in sandbox.boundary.test.ts.
+    // hand every one of these back. The deny is not what stops them running —
+    // containment.probe.test.ts measures that three of the four execute anyway —
+    // but it is what keeps their contents out of reach, and an allow that
+    // reopened them would undo the one thing the entry does achieve.
+
     const { allowRead } = policy().filesystem
     for (const allowed of allowRead) {
       for (const binary of UNREADABLE_BINARIES) {

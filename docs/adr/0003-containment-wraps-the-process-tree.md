@@ -101,3 +101,30 @@ Paths are compared with the four machine roots — clone, home, users root, temp
 A clone that carries a policy but no baseline — every clone in existence when this shipped — can attribute nothing, so it assumes nothing: the stronger side of every difference wins, once, and the report says why it could not do better. `packages/harness/src/sandbox.boundary.test.ts` plants exactly that clone and asks the kernel whether `/Library/Keychains` is refused, with nothing deleted by hand.
 
 This adopts the design and the measurements from `zbc/packages/agent/docs/adr/0002-containment-wraps-the-cli-process.md`.
+
+## Second correction: `sudo` is not stopped by the denied list either
+
+The sentence above — sudo is refused "setuid, its own reason" — was still reasoned rather than measured. `packages/harness/src/containment.probe.test.ts` measures it, by generating the same policy with all four `DENIED_BINARIES` entries lifted out of `denyRead` into a throwaway clone and running the probe against that. Darwin 25.5, `srt` 0.0.67:
+
+```
+                          denied list on      denied list lifted
+/usr/bin/security  read   not permitted       the binary's bytes
+/usr/bin/sudo      read   not permitted       Permission denied   (EACCES, not EPERM)
+/usr/bin/sudo      exec   not permitted       not permitted
+```
+
+Two things follow. Sudo's refusal survives removing every entry, so `denyRead` is not what causes it. And sudo is mode `-r-s--x--x`, unreadable to every non-root process on the machine before any policy applies — so its entry in `DENIED_BINARIES` denies nothing that was not already denied, and the two different errnos are the tell.
+
+The list is kept anyway. It does deny the *contents* of `security`, `osascript` and `open`, which is worth having; what it never did was deny execution. Removing entries to make the documentation true would be editing the fence to fit its label.
+
+## What the probes measure, and what they do not
+
+`containment.probe.test.ts` is ticket 04. Five probes, each with a positive control beside it, run against the real policy on the real machine:
+
+1. one file under `$HOME`, asked for four ways — `Bash`, and the `Read`, `Grep` and `Glob` *shapes* run in-process inside the real agent entry. All four denied; all four permitted against the same file inside the clone.
+2. every `DENIED_BINARIES` entry, read and executed, with the same command run unconfined as the control.
+3. an allowlisted host answers; an unlisted one gets `CONNECT tunnel failed, response 403`.
+4. a clone whose policy the schema rejects raises rather than proceeding.
+5. the SDK's *own* `Read`, `Grep` and `Glob` tools, driven by a real Session.
+
+Probe 5 is the only one needing a credential, and it skips with a printed reason without one. That is a real gap and it is named here rather than papered over: probe 1 runs the syscalls those tools make, in the agent process, under the same kernel policy and inside the same process tree — which is why it is the load-bearing measurement and probe 5 is confirmation. There is deliberately no faked substitute, because the Sandbox denies local binding and every unlisted host, so a stub API is unreachable from inside and widening the policy to reach one would be widening the policy to make a probe pass.

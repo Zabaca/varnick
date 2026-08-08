@@ -22,8 +22,10 @@ export interface SandboxPolicy {
   readonly allowedHosts: readonly string[]
   /**
    * Paths the agent may not read: the home directory, the machine-wide
-   * keychains, and four binaries. Read only — the binaries still execute.
+   * keychains, and four binaries. Read only — three of the four binaries still
+   * execute. See UNREADABLE_BINARIES in the Harness.
    */
+
   readonly denyRead: readonly string[]
 }
 
