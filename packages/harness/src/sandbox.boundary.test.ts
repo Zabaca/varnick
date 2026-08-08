@@ -1,9 +1,15 @@
 import { afterAll, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { establishSandbox, releaseSandbox } from './sandbox.ts'
+import { agentCommand } from './agent.ts'
+import {
+  establishSandbox,
+  releaseSandbox,
+  sandboxPolicyPath,
+  type EstablishedSandbox,
+} from './sandbox.ts'
 
 /*
   The slow suite. Everything here runs a real process under a real kernel
@@ -40,11 +46,49 @@ const clone = blocked ? '' : mkdtempSync(join(homedir(), '.varnick-boundary-'))
 const insideClone = join(clone, 'inside.txt')
 const outsideClone = join(homedir(), `.varnick-boundary-probe-${process.pid}.txt`)
 
+/**
+ * This repository, used as the clone for the agent probe.
+ *
+ * The agent entry needs its dependencies, so a `mkdtemp` with nothing in it
+ * cannot host it. Establishing a Sandbox here generates `sandbox-policy.json`
+ * exactly as a first launch does — it is gitignored, and removed below if this
+ * run is what created it.
+ */
+const repoRoot = resolve(import.meta.dir, '../../..')
+const hadPolicy = blocked ? true : existsSync(sandboxPolicyPath(repoRoot))
+
+/**
+ * Run a command the way the Rust host runs the agent.
+ *
+ * The overlay is *added* to this process's environment rather than replacing
+ * it, and the working directory is the one the wrapper named — both of which
+ * are the contract src-tauri/src/agent.rs spawns against. A probe that spawned
+ * differently would be measuring a boundary nothing else crosses.
+ */
+function runner(sandbox: EstablishedSandbox) {
+  return async (command: string) => {
+    const { argv, env, cwd } = await sandbox.wrap(command)
+    const child = Bun.spawn({
+      cmd: argv,
+      cwd,
+      env: { ...process.env, ...env },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ])
+    return { code: await child.exited, stdout, stderr }
+  }
+}
+
 afterAll(async () => {
   if (blocked) return
   await releaseSandbox()
   rmSync(clone, { recursive: true, force: true })
   rmSync(outsideClone, { force: true })
+  if (!hadPolicy) rmSync(sandboxPolicyPath(repoRoot), { force: true })
 })
 
 test.skipIf(blocked !== null)(
@@ -54,16 +98,7 @@ test.skipIf(blocked !== null)(
     writeFileSync(outsideClone, SECRET, 'utf8')
 
     const sandbox = await establishSandbox({ cloneRoot: clone })
-
-    const run = async (command: string) => {
-      const { argv, env } = await sandbox.wrap(command)
-      const child = Bun.spawn({ cmd: argv, env, stdout: 'pipe', stderr: 'pipe' })
-      const [stdout, stderr] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ])
-      return { code: await child.exited, stdout, stderr }
-    }
+    const run = runner(sandbox)
 
     // The control. Without it, a denial proves only that the wrapper is broken.
     const allowed = await run(`cat ${JSON.stringify(insideClone)}`)
@@ -77,6 +112,53 @@ test.skipIf(blocked !== null)(
     expect(denied.stderr).toMatch(/not permitted|No such file|Permission denied/i)
   },
   120_000,
+)
+
+test.skipIf(blocked !== null)(
+  'the real agent entry runs under the policy, and is contained when it does',
+  async () => {
+    // The probe ticket 03 owes. Every earlier boundary measurement here ran
+    // `cat`, which proves the wrapper works and nothing about the thing the
+    // product actually starts. This runs the real agent host — the same entry,
+    // the same interpreter, the same wrapping the Rust host spawns — and asks
+    // it what it can reach.
+    //
+    // `--selftest` opens no session and needs no credential, so this runs on a
+    // machine that has never stored one. What it proves is the pair that
+    // matters: the process can load the Agent SDK inside the Sandbox, and it
+    // still cannot read outside the clone once it has.
+    writeFileSync(outsideClone, SECRET, 'utf8')
+
+    // One Sandbox per process, and `SandboxManager.initialize` returns early
+    // once there is one — it does not replace the policy. The previous test
+    // established a Sandbox for a different clone, so without this the probe
+    // would run against that policy and fail for the wrong reason. Worth
+    // knowing beyond this file: a second `check-sandbox` keeps the first
+    // policy rather than adopting an edited one.
+    await releaseSandbox()
+
+    const sandbox = await establishSandbox({ cloneRoot: repoRoot })
+    const run = runner(sandbox)
+
+    const probe = await run(
+      `${agentCommand({ cloneRoot: repoRoot })} --selftest ${JSON.stringify(outsideClone)}`,
+    )
+    if (probe.stdout.trim() === '') throw new Error(`the agent probe said nothing: ${probe.stderr}`)
+
+    const report = JSON.parse(probe.stdout.trim().split('\n').at(-1) ?? '{}') as Record<
+      string,
+      string
+    >
+
+    // The control: the interpreter ran, and the Agent SDK loaded from inside
+    // the Sandbox. Without this a denial below would only prove the process
+    // never started.
+    expect(report.sdk).toBe('loaded')
+    // The boundary, measured from inside the real agent process.
+    expect(report.read).toBe('denied')
+    expect(probe.stdout).not.toContain(SECRET)
+  },
+  180_000,
 )
 
 if (blocked) {

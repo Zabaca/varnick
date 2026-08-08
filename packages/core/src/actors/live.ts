@@ -47,7 +47,6 @@ const notImplemented = (name: string, what: string) => (): never => {
 }
 
 export const LIVE_NOT_IMPLEMENTED = [
-  'spawnAgent',
   'readSubscriptionUsage',
   'runTurn',
   'compactSession',
@@ -76,22 +75,34 @@ export function liveActors() {
       readCredentialFromHost(),
     ),
 
-    spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(
-      notImplemented('spawnAgent', 'no agent process is spawned under srt'),
+    /*
+      Real. The host asks the Harness runtime how to run the agent under the
+      Sandbox it established, then spawns that with the credential in the
+      child's environment — see src-tauri/src/agent.rs and ADR-0008.
+
+      The refusal path is the important one: a runtime with no Sandbox
+      established refuses to answer the wrapping, and the host returns that
+      rather than spawning. So `agent.starting` reaches `agent.crashed` carrying
+      the reason, and there is no state in which a process starts unconfined.
+    */
+    spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(() =>
+      callHarness({ kind: 'spawn-agent' }),
     ),
 
     /*
       The source question is answered — the plan's own 5-hour and weekly
       windows, through the Agent SDK's `get_usage` control request, parsed by
-      packages/harness/src/subscription.ts. What is missing is a session to ask
-      it on: that request rides a live Agent SDK session, and opening one here
-      would put a Claude Code process on the host outside the Sandbox. Ticket 03
-      owns the confined session; this is wired to it there.
+      packages/harness/src/subscription.ts. What is missing is a way to ask on
+      the session that now exists: the control request rides the Agent SDK
+      session held open inside the Sandbox, and nothing yet carries a request to
+      it. Ticket 09 owns that wire; opening a second session here would put a
+      Claude Code process on the host outside the Sandbox, which ADR-0003's last
+      consequence forbids.
     */
     readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(
       notImplemented(
         'readSubscriptionUsage',
-        'the read needs a Sandboxed agent session to ask, and none is spawned yet',
+        'nothing carries a control request to the confined session yet',
       ),
     ),
 
@@ -128,3 +139,35 @@ export function liveActors() {
 
 /** Descriptors a live discovery would return. Nothing scans the filesystem yet. */
 export const liveSurfaces: SurfaceDescriptor[] = []
+
+/**
+ * Wait for the agent process to end, and answer with why.
+ *
+ * Not an actor, because the machine has none for it: an exit is something the
+ * world did, so it arrives as an event (`AGENT_EXIT`) rather than as a promise a
+ * state is waiting on. Whoever owns the machine calls this on each entry to
+ * `agent.running` and sends the event when it settles — see hooks.ts.
+ *
+ * It waits rather than polls. The host holds the exit as state and answers
+ * immediately if the process has already gone, which matters more than it
+ * sounds: a process that dies on startup is the common failure, and the machine
+ * reaches `running` before anyone can ask.
+ *
+ * A reason is always a real one — how the process ended, observed by the host
+ * that spawned it. Nothing the agent printed is in it.
+ */
+export async function liveAgentExit(): Promise<string> {
+  const { reason } = await callHarness({ kind: 'await-agent-exit' })
+  return reason
+}
+
+/**
+ * Stop the agent's whole process tree.
+ *
+ * `STOP` is a state the machine reaches on its own; without this the process
+ * behind it would keep running, which would make `agent.down` a claim about the
+ * UI rather than about the machine's world.
+ */
+export async function liveStopAgent(): Promise<void> {
+  await callHarness({ kind: 'stop-agent' })
+}

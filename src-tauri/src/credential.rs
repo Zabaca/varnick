@@ -159,17 +159,17 @@ pub fn read_credential(store: &CredentialStore) -> Result<Reading, &'static str>
 /// The environment the agent subprocess is spawned with.
 ///
 /// The one way the value leaves this module, and it goes into a child process's
-/// environment rather than into any string the host keeps. Used by the spawn
-/// (ticket 03); nothing else may call it.
+/// environment rather than into any string the host keeps. Called from exactly
+/// one place — the spawn in agent.rs — and nothing else may call it.
 ///
-/// A note for that spawn, since the bridge makes it a live question: the Harness
-/// runtime holds the Sandbox, so the obvious reading is that it should also
-/// spawn the agent — which would mean sending the credential across the bridge,
-/// and that is exactly what may never happen. `EstablishedSandbox.wrap()` hands
-/// back argv and env for a `{ shell: false }` spawn, so the runtime can compute
-/// the wrapping (no secret) and this process can do the spawning (the secret,
-/// still here). The agent stays inside srt either way.
-#[allow(dead_code)]
+/// The split that spawn implements, recorded here because this is the function
+/// that would be misused: the Harness runtime holds the Sandbox, so the obvious
+/// reading is that it should also spawn the agent — which would mean sending
+/// the credential across the bridge, and that is exactly what may never happen.
+/// `EstablishedSandbox.wrap()` hands back argv, an environment overlay and a
+/// working directory, so the runtime computes the wrapping (no secret) and this
+/// process does the spawning (the secret, still here). The agent stays inside
+/// srt either way, because the wrapping is in the argv.
 pub fn credential_env(store: &CredentialStore) -> Option<(&'static str, String)> {
     let held = store.0.lock().ok()?;
     held.as_ref().map(|(_, secret)| (ENV_VAR, secret.0.clone()))

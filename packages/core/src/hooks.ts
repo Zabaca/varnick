@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { useMachine } from '@xstate/react'
 import type { AnyActorRef, InspectionEvent } from 'xstate'
-import { harnessMachine } from './machines/harness.ts'
+import { harnessMachine, type HarnessEvent } from './machines/harness.ts'
 import { surfaceMachine } from './machines/surface.ts'
 import { sessionMachine } from './machines/session.ts'
 import {
   actorsFor,
+  agentControlFor,
   resolveActorMode,
   defaultSeedControls,
   type ActorMode,
   type SeedControls,
 } from './actors/index.ts'
+import { regionOf } from './domain.ts'
 import { seedPolicy } from './data/seed.ts'
 
 /** Flatten a nested state value to a dotted path. */
@@ -91,7 +93,62 @@ export function useHarness(
     inspect,
   })
 
-  return { snapshot, send, actorRef, mode, transitions: log.current }
+  /*
+    The agent process's own exit, turned into the event that names it.
+
+    Watched per entry to `agent.running` rather than once, because a restart is
+    a new process with a new way to die — watching only the first would make the
+    second crash invisible, and `agent.running` would keep claiming a process
+    that had gone. A restart passes through `starting`, so `running` goes false
+    and back to true, and the effect runs again for the new process.
+
+    `cancelled` matters for the same reason in reverse: a STOP or an unmount
+    leaves a wait outstanding, and delivering its answer later would report an
+    exit against a machine that had moved on.
+  */
+  const agent = useMemo(() => agentControlFor(mode), [mode])
+  const running = regionOf(snapshot.value, 'agent') === 'running'
+  useEffect(() => {
+    if (!running) return
+    let cancelled = false
+    agent
+      .exit()
+      .then((detail) => {
+        if (!cancelled) send({ type: 'AGENT_EXIT', detail })
+      })
+      .catch((error: unknown) => {
+        // A watch that could not be established is itself a reason the agent
+        // cannot be reported on. Saying so beats leaving `running` up forever.
+        if (!cancelled) {
+          send({
+            type: 'AGENT_EXIT',
+            detail: error instanceof Error ? error.message : String(error),
+          })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [agent, running, send])
+
+  /*
+    STOP is the one event with a process behind it.
+
+    Sent through here rather than handled by an effect on `agent.down`, because
+    `down` is also where a run starts: an effect would kill an agent on first
+    load, and in a browser tab it would call a host that is not there. Wrapping
+    the send keeps "stopping means stopping the process tree" attached to the
+    act rather than to the state.
+  */
+  const sendToHarness = useCallback(
+    (event: HarnessEvent) => {
+      if (event.type === 'STOP') void agent.stop().catch(() => {})
+      send(event)
+    },
+    [agent, send],
+  )
+
+  return { snapshot, send: sendToHarness, actorRef, mode, transitions: log.current }
 }
 
 /**

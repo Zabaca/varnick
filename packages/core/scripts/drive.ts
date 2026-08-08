@@ -229,6 +229,61 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
 
   check('the same Session survives an agent restart', actor.getSnapshot().context.session === first)
+  check('a restart clears the previous crash', actor.getSnapshot().context.agentError === null)
+  actor.stop()
+}
+
+{
+  // AGENT_EXIT arrives from a real process now, which makes *where it is
+  // refused* load-bearing rather than incidental. Every stop produces one: the
+  // host kills the tree, the process dies, and the exit is reported. If any
+  // state below accepted it, a deliberate stop would be indistinguishable from
+  // a crash — and `down` means "stopped on purpose" (CONTEXT.md).
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        readCredential: resolves<{ source: 'keychain' | 'env' }, Record<string, never>>({
+          source: 'keychain',
+        }),
+        checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+        spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 99 }),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  check('a machine with no agent refuses AGENT_EXIT', !actor.getSnapshot().can({ type: 'AGENT_EXIT', detail: 'x' }))
+
+  actor.send({ type: 'READ_CREDENTIAL' })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+  actor.send({ type: 'CHECK_SANDBOX' })
+  await waitFor(actor, (s) => regionOf(s.value, 'sandbox') === 'available')
+  actor.send({ type: 'START' })
+  await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
+
+  check('a running agent accepts AGENT_EXIT', actor.getSnapshot().can({ type: 'AGENT_EXIT', detail: 'x' }))
+
+  actor.send({ type: 'STOP' })
+  check('STOP stops on purpose', regionOf(actor.getSnapshot().value, 'agent') === 'down')
+  actor.send({ type: 'AGENT_EXIT', detail: 'The agent process was killed by signal 9.' })
+  check(
+    'the exit a deliberate stop causes does not read as a crash',
+    regionOf(actor.getSnapshot().value, 'agent') === 'down',
+  )
+  check('a stop leaves no crash reason behind it', actor.getSnapshot().context.agentError === null)
+
+  actor.send({ type: 'START' })
+  await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
+  actor.send({ type: 'AGENT_EXIT', detail: 'The agent process exited with code 71.' })
+  check('a crash keeps the first reason', actor.getSnapshot().context.agentError === 'The agent process exited with code 71.')
+  // A dying process can report more than once — the watcher for a replaced
+  // generation, a stop racing an exit. The first reason is the one that
+  // explains the crash; a later one would overwrite it with something vaguer.
+  actor.send({ type: 'AGENT_EXIT', detail: 'The agent process could not be waited on.' })
+  check(
+    'a second exit does not overwrite the reason for the first',
+    actor.getSnapshot().context.agentError === 'The agent process exited with code 71.',
+  )
   actor.stop()
 }
 
