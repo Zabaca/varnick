@@ -1,73 +1,51 @@
 @import 'tailwindcss';
 
 /*
-  Orizuru Fold Sequence — the committed world.
+  The world is brainless — a faithful Claude Code session.
 
-  One continuous sheet that keeps every crease it has taken. Vermilion owns the
-  rail as a whole field; sumi washi owns the sheet. Fold-white is crease and
-  text; gold marks the active fold and nothing else. Chosen by the user over the
-  assigned direction and over the category standard; seed key 3a224cf1.
+  Pinned by the user, replacing the Orizuru Fold Sequence outright rather than
+  polishing it: the fold vocabulary read as confusing, and v1 of varnick is a
+  Claude Code client. See PRODUCT.md → Positioning.
 
-  Vermilion is the identity, so it is never the alarm. Refusal and failure read
-  through crease language — an unclosed square, a released fold.
+  brainless components carry their own colours inline; this file supplies the
+  ground they sit on and the chrome varnick adds around them. Values below are
+  read off those components rather than invented, so the app and the transcript
+  are one surface instead of two.
 */
 
-@font-face {
-  font-family: 'Jost';
-  src: url('/fonts/jost-variable.woff2') format('woff2-variations');
-  font-weight: 300 500;
-  font-style: normal;
-  font-display: swap;
-}
-
 @theme inline {
-  --color-vermilion: var(--vermilion);
-  --color-vermilion-wash: var(--vermilion-wash);
-  --color-vermilion-deep: var(--vermilion-deep);
-  --color-fold: var(--fold);
-  --color-fold-dim: var(--fold-dim);
-  --color-gold: var(--gold);
-  --color-sumi: var(--sumi);
-  --color-sumi-raised: var(--sumi-raised);
-  --color-crease: var(--crease);
-  --color-paper-grey: var(--paper-grey);
+  --color-ground: var(--ground);
+  --color-ground-raised: var(--ground-raised);
+  --color-rule: var(--rule);
+  --color-fg: var(--fg);
+  --color-fg-dim: var(--fg-dim);
+  --color-fg-faint: var(--fg-faint);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-accent: var(--accent);
 
-  --font-display: 'Jost', ui-sans-serif, system-ui, sans-serif;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 :root {
-  /* From the world's board, unmodified. */
-  --vermilion: #d83c2e;
-  --vermilion-wash: #e07a6e;
-  --gold: #d4af37;
-  --sumi: #1a1a1a;
-  --fold: #f7f3ee;
-  --paper-grey: #e6e2da;
+  /* Ground: the terminal these components were captured from. */
+  --ground: #1a1b26;
+  --ground-raised: #1f2030;
+  --rule: #2c2e40;
 
-  /*
-    Derived for the fields the board does not specify.
+  /* Foreground, read off the brainless components. */
+  --fg: #c0caf5;
+  --fg-dim: #8b8fa3;
+  --fg-faint: #565f89;
 
-    The rail ground is vermilion-deep, not the board's #d83c2e: fold-white on
-    #d83c2e measures 4.13:1, under the floor for body text, and the rail is all
-    body text. #ab2b20 is the same hue held darker and measures 6.14:1. The
-    board's vermilion stays the identity on the sheet side.
-  */
-  --vermilion-deep: #ab2b20;
-  --sumi-raised: #232321;
-  --crease: #3a3936;
-  /* Secondary text, tinted from the ground rather than grey. 7.02:1 on sumi. */
-  --fold-dim: #a9a49b;
-  /* Secondary text on the vermilion field. 4.67:1 on #ab2b20. */
-  --fold-on-vermilion: #f0cfc9;
-  /* Agent prose on the sheet: a step back from the user's own words. 12.6:1. */
-  --fold-agent: #ddd9d3;
-  --rail-rule: rgba(247, 243, 238, 0.26);
-  --rail-raised: rgba(247, 243, 238, 0.14);
+  /* Semantic. Also theirs — as Claude Code uses them. */
+  --ok: #4ea96f;
+  --warn: #e0af68;
+  --bad: #f7768e;
+  --accent: #7dcfff;
 
-  --rail-w: 264px;
-  --sheet-measure: 52ch; /* ch is the width of a zero; a proportional face fits ~1.25x that, landing the real measure near 65 characters. */
+  --measure: 92ch;
 }
 
 @layer base {
@@ -79,22 +57,22 @@
 
   body {
     margin: 0;
-    background-color: var(--sumi);
-    color: var(--fold);
-    font-family: var(--font-sans);
-    font-size: 14px;
+    background-color: var(--ground);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
   }
 
   /* The surfaces we did not draw still carry the world. */
   ::selection {
-    background: var(--gold);
-    color: var(--sumi);
+    background: var(--fg-faint);
+    color: var(--fg);
   }
 
   * {
-    caret-color: var(--gold);
+    caret-color: var(--accent);
   }
 
   ::-webkit-scrollbar {
@@ -105,18 +83,17 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--crease);
-    border: 3px solid var(--sumi);
+    background: var(--rule);
+    border: 3px solid var(--ground);
     border-radius: 6px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--fold-dim);
+    background: var(--fg-faint);
   }
 
   :focus-visible {
-    outline: 2px solid var(--gold);
+    outline: 1px solid var(--accent);
     outline-offset: 2px;
-    border-radius: 1px;
   }
 
   a {
@@ -125,49 +102,8 @@
     text-decoration-thickness: 1px;
   }
 
-  /* Tabular figures wherever a number is a measurement. */
   [data-numeric] {
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum' 1;
-  }
-}
-
-/*
-  The crease lattice. A folded square remembers its diagonals and its halves;
-  this is that memory, at the threshold of visible, behind the sheet.
-*/
-.crease-ground {
-  background-image:
-    repeating-linear-gradient(
-      45deg,
-      transparent 0 119px,
-      rgba(247, 243, 238, 0.028) 119px 120px
-    ),
-    repeating-linear-gradient(
-      -45deg,
-      transparent 0 119px,
-      rgba(247, 243, 238, 0.028) 119px 120px
-    );
-}
-
-/* The one authored moment: a fold taking, from an already-visible default. */
-@keyframes crease-take {
-  from {
-    clip-path: inset(0 0 100% 0);
-    opacity: 0.4;
-  }
-  to {
-    clip-path: inset(0 0 0 0);
-    opacity: 1;
-  }
-}
-
-.fold-taking {
-  animation: crease-take 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .fold-taking {
-    animation: none;
   }
 }

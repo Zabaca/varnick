@@ -32,6 +32,8 @@ Success is that a person can hand an agent real autonomy on their own machine an
 
 **The harness is the product; the chat is its first surface.** Agent UIs treat conversation as the destination — you talk to the tool and receive output. Here the conversation exists to extend the application around it, and the application is what accumulates value.
 
+**v1 is a Claude Code client, and says so.** An earlier draft of this file claimed varnick is "explicitly not a terminal embedded in a window." That was aspiration about where the product goes, stated as though it were true of what ships, and it made the first surface harder to read for no gain. At v1 the chat is a faithful representation of a Claude Code session — the same transcript, tool calls, and composer a developer already knows — because familiarity is the right starting point for a surface whose job is to construct everything else. What varnick adds is the harness around it and the Workspace that grows from it, not a different way to hold a conversation.
+
 The claim a competitor cannot copy by shipping a nicer chat window is the containment story: the agent runs under a kernel sandbox covering its entire process tree, authenticates without ever touching the keychain, uses secrets it cannot read, and cannot write the code that holds the conversation. That is a set of decisions with measurements behind them, not a feature list.
 
 The second half of the position is the refusal to build a plugin API. Extension is by clone: you fork, you edit, the seam is filesystem discovery rather than a versioned contract. That is only credible because the harness is small enough to read.
