@@ -73,7 +73,7 @@ Still out: the canvas or artifact panel, multiple sessions, session forking, a s
 
 Explicitly undecided — record, do not invent:
 
-- **Persistence mechanism** for the host-side session mirror and the Secrets Store.
+- **Persistence mechanism** for the Secrets Store. *(The host-side session mirror is decided: JSON Lines, one file per Session, under the app-data directory — see the spec's Implementation Decisions.)*
 - **Open-source licence.**
 - **Distribution.** Whether built binaries are released, or the project is source-only.
 - **Whether the dev server can run inside the sandbox.** If it can, the remaining escape in `docs/adr/0002-core-userspace-boundary.md` closes; nobody has checked.

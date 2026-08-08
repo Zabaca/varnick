@@ -149,7 +149,9 @@ which events are legal, so each looped back through the machines.
 
 **Secrets resolve at the point the host runs built code**, never inside the agent's process. The agent is given the list of names and no values. Egress substitution was considered and rejected — it requires owning a proxy, and clients that validate credential format locally break on a placeholder. This is [ADR-0006](../../docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
 
-**The Session is persisted twice**: by the Agent SDK for resumption, and mirrored host-side so it survives a broken build and gives the UI a queryable store. The storage mechanism for the host-side mirror is an open decision.
+**The Session is persisted twice**: by the Agent SDK for resumption, and mirrored host-side so it survives a broken build and gives the UI a queryable store.
+
+**The mirror is JSON Lines, one file per Session** *(stage 6)*, under the Tauri app-data directory with the root injectable so no test writes to a developer's real transcripts. Chosen on the criterion the decision was carried for: durable that cannot be read is a claim taken on faith. `cat` and `jq` are the whole reading procedure and copying a file is the whole backup procedure, which SQLite and a single JSON blob both fail. A save appends when what is on disk is a prefix of what is being saved and replaces the file through a rename when history was rewritten — Compaction and `/clear` rewrite it, and an append-only file would keep both versions. Secrets are removed inside the store on the write path, so no caller can forget: exact values from the Secrets Store, plus credential shapes for the keys no exact-value list can know about.
 
 **The network allowlist is a configuration file in v1**, not a UI. Its contents are readable and editable, and the honest limit is documented: any allowed host is an exfiltration path, so the allowlist bounds blast radius rather than data egress.
 
@@ -222,4 +224,6 @@ Four tickets deliberately name no state path — 04 (containment probes), 10 and
 
 **Platform confinement is macOS-only until proven otherwise.** `sandbox-runtime` has bubblewrap and Windows backends; neither has been exercised here, and the README should claim only what has been measured.
 
-Open decisions carried from `PRODUCT.md`: the persistence mechanism for the host-side Session mirror and the Secrets Store, the open-source licence, and whether built binaries are distributed.
+Open decisions carried from `PRODUCT.md`: the persistence mechanism for the Secrets Store, the open-source licence, and whether built binaries are distributed. The Session mirror's mechanism is no longer among them — it was settled in stage 6 and is recorded under Implementation Decisions.
+
+**Nothing carries a Harness call from the renderer to the host yet** *(stage 6)*. Core's live actors run in the Tauri webview and the Harness needs a host process: a filesystem for the mirror, a keychain for the credential, a subprocess for the agent. `persistSession` calls the real store through a filesystem port and works from any host process; in the webview it throws into `persistence.saveFailed` with a message naming the missing bridge. Every ticket that wires a live actor meets this, so the bridge wants to be one piece of work rather than five.
