@@ -324,7 +324,7 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   check('sending accepts INTERRUPT', actor.getSnapshot().can({ type: 'INTERRUPT' }))
 
   actor.send({ type: 'STREAM_DELTA', text: 'wor' })
-  check('a delta moves the turn to streaming', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('a delta moves the turn to streaming', regionOf(actor.getSnapshot().value, 'turn') === 'answering.streaming')
   actor.send({ type: 'STREAM_DELTA', text: 'king' })
   check('deltas accumulate', actor.getSnapshot().context.partial === 'working')
 
@@ -569,7 +569,7 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   check('a running turn does not block a save', regionOf(actor.getSnapshot().value, 'persistence') === 'saving')
 
   await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saveFailed')
-  check('a save can fail while a turn streams', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('a save can fail while a turn streams', regionOf(actor.getSnapshot().value, 'turn') === 'answering.streaming')
   check('a failed save does not cancel the turn in flight', actor.getSnapshot().context.partial === 'arriving')
   check('a failed save is not a failed turn', actor.getSnapshot().context.turnError === null)
   check('a failed save leaves the turn interruptible', actor.getSnapshot().can({ type: 'INTERRUPT' }))
@@ -577,7 +577,7 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   const before = actor.getSnapshot().context.messages
   actor.send({ type: 'RETRY_SAVE' })
   await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saved')
-  check('retrying the save leaves the turn streaming', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('retrying the save leaves the turn streaming', regionOf(actor.getSnapshot().value, 'turn') === 'answering.streaming')
   check('retrying the save does not touch the conversation', actor.getSnapshot().context.messages === before)
   check('retrying the save does not touch the partial', actor.getSnapshot().context.partial === 'arriving')
   actor.stop()
@@ -831,7 +831,7 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 
   actor.send({ type: 'EDIT_DRAFT', text: 'go' })
   actor.send({ type: 'SEND' })
-  check('a turn is running', regionOf(actor.getSnapshot().value, 'turn') === 'sending')
+  check('a turn is running', regionOf(actor.getSnapshot().value, 'turn') === 'answering.sending')
 
   actor.send({ type: 'EDIT_DRAFT', text: '/c' })
   check(
@@ -840,7 +840,7 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   )
   check(
     'and the turn is untouched by it',
-    regionOf(actor.getSnapshot().value, 'turn') === 'sending',
+    regionOf(actor.getSnapshot().value, 'turn') === 'answering.sending',
   )
   check('interrupting is still possible', actor.getSnapshot().can({ type: 'INTERRUPT' }))
   actor.stop()
@@ -915,13 +915,13 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 
   actor.send({ type: 'EDIT_DRAFT', text: 'do a thing' })
   actor.send({ type: 'SEND' })
-  check('a turn is running', regionOf(actor.getSnapshot().value, 'turn') === 'sending')
+  check('a turn is running', regionOf(actor.getSnapshot().value, 'turn') === 'answering.sending')
 
   actor.send({ type: 'SET_EFFORT', effort: 'max' })
   check('changing effort mid-turn is accepted', actor.getSnapshot().context.effort === 'max')
   check(
     'and does not disturb the turn',
-    regionOf(actor.getSnapshot().value, 'turn') === 'sending',
+    regionOf(actor.getSnapshot().value, 'turn') === 'answering.sending',
   )
   actor.stop()
 }
@@ -1552,15 +1552,35 @@ export default function Billing() {
     const snap = actor.getSnapshot()
     const session = snap.context.session
 
+    /*
+      Flattened rather than String()'d. A region whose state is compound reads as
+      an object, and `String({answering:'sending'})` is "[object Object]", so a
+      nested path silently failed to match instead of failing loudly.
+
+      Written here rather than imported from hooks.ts: that module reaches the
+      Surface loader, which calls `import.meta.glob`, which only exists under
+      Vite. Importing it would break this script, which is the whole reason
+      surfaces.ts takes its record as an argument.
+    */
+    const pathOf = (value: unknown): string => {
+      if (typeof value === 'string') return value
+      const [key] = Object.keys(value as Record<string, unknown>)
+      if (key === undefined) return ''
+      return `${key}.${pathOf((value as Record<string, unknown>)[key])}`
+    }
+
+    // `pathOf` rather than String(): a region whose state is compound reads as
+    // an object, and `String({answering:'sending'})` is "[object Object]" — so
+    // every nested path silently failed to match rather than failing loudly.
     const reached = new Set<string>()
     for (const [region, value] of Object.entries(snap.value as Record<string, unknown>)) {
-      reached.add(`${region}.${String(value)}`)
+      reached.add(`${region}.${pathOf(value)}`)
     }
     if (session) {
       for (const [region, value] of Object.entries(
         session.getSnapshot().value as Record<string, unknown>,
       )) {
-        reached.add(`${region}.${String(value)}`)
+        reached.add(`${region}.${pathOf(value)}`)
       }
     }
     // Surfaces are children rather than regions, so they are read off the
@@ -1583,7 +1603,8 @@ export default function Billing() {
   await new Promise((r) => setTimeout(r, 50))
   check(
     'a frozen card does not advance on its own',
-    String(actor.getSnapshot().context.session?.getSnapshot().value.turn) === 'sending',
+    JSON.stringify(actor.getSnapshot().context.session?.getSnapshot().value.turn) ===
+      '{"answering":"sending"}',
   )
   actor.stop()
 }
@@ -1674,6 +1695,45 @@ async function turnPath(
 
 {
   /*
+    One Turn, one actor — the assertion that was missing.
+
+    `sending` and `streaming` each used to invoke `runTurn`. An invoke is bound
+    to the state it sits on, so the first streamed token stopped the first actor
+    and started a second: the developer's Turn was aborted at its first token,
+    the host was told to interrupt it, and the same prompt was posted again —
+    billed twice, answered once.
+
+    Nothing caught it. The state census compared the two states' accepted events
+    and passed *because* the blocks were byte-identical, which is the shape a bad
+    merge leaves behind. Counting invocations is what tells "these two states
+    agree" apart from "this is one state written twice".
+  */
+  const prompts: string[] = []
+  const aborts: string[] = []
+  const counted = fromPromise<TurnOutput, TurnInput>(async ({ input, signal }) => {
+    prompts.push(input.prompt)
+    signal.addEventListener('abort', () => aborts.push(input.prompt))
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    return { text: 'done', tokensUsed: 12 }
+  })
+
+  const actor = createActor(sessionMachine.provide({ actors: { runTurn: counted } }), {
+    input: { sessionId: 'once' },
+  }).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'the real question' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'STREAM_DELTA', text: 'partial' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+  actor.stop()
+
+  check('a streamed turn runs its actor exactly once', prompts.length === 1)
+  check('and the prompt it ran with is the one that was asked', prompts[0] === 'the real question')
+  check('and nothing aborted the turn on the way', aborts.length === 0)
+}
+
+{
+  /*
     The binary criterion the ticket ends on: if wiring the Agent SDK in changed
     a state, a guard or a transition, the model was wrong and the change belongs
     back in the machine stage rather than here.
@@ -1694,7 +1754,10 @@ async function turnPath(
   const seeded = await turnPath(echo, 'x1')
   const live = await turnPath(streamed, 'x2')
 
-  check('a turn walks sending → streaming → idle', seeded.path.join('→') === 'idle→sending→streaming→idle')
+  check(
+    'a turn walks sending → streaming → idle',
+    seeded.path.join('→') === 'idle→answering.sending→answering.streaming→idle',
+  )
   check('swapping the turn actor changes no state and no transition', seeded.path.join('→') === live.path.join('→'))
   check(
     'the transcript shape is the actor-independent part',
@@ -1868,11 +1931,11 @@ async function turnPath(
   actor.send({ type: 'EDIT_DRAFT', text: 'go' })
   actor.send({ type: 'SEND' })
   actor.send({ type: 'STREAM_DELTA', text: 'half an ans' })
-  check('the turn is streaming', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('the turn is streaming', regionOf(actor.getSnapshot().value, 'turn') === 'answering.streaming')
 
   actor.send({ type: 'EDIT_DRAFT', text: 'the next instruction' })
   check('the composer accepts a draft mid-stream', actor.getSnapshot().context.draft === 'the next instruction')
-  check('and the turn is untouched', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('and the turn is untouched', regionOf(actor.getSnapshot().value, 'turn') === 'answering.streaming')
   check('and the partial is untouched', actor.getSnapshot().context.partial === 'half an ans')
 
   actor.send({ type: 'EDIT_DRAFT', text: '/c' })

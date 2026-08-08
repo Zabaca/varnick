@@ -90,8 +90,8 @@ _Avoid_: stopped, idle, dead, paused, blocked
 
 **Harness — `subscription`**: `unread`, `reading`, `read`. Plan usage across the rolling windows. A failed read leaves whatever was last known and never invents a figure.
 
-**Session — `turn`**: `idle`, `sending`, `streaming`, `interrupting`, `compacting`, `failed`.
-`sending` is posted with nothing back yet; `streaming` is output arriving. `interrupting` keeps the partial — an interrupted Turn still said something. A Session resumed on launch enters `idle`: a Turn in flight when the process died is an answer that stopped early, which is what an interrupt already is, and nothing observed a failure to report.
+**Session — `turn`**: `idle`, `answering.sending`, `answering.streaming`, `interrupting`, `compacting`, `failed`.
+`answering` is a Turn in flight, and it is one state because it runs one actor. Its children say how far along the answer is: `sending` is posted with nothing back yet, `streaming` is output arriving. They were siblings once, and each invoked the Turn — so the first streamed token aborted the Turn and started it again. `interrupting` keeps the partial — an interrupted Turn still said something. A Session resumed on launch enters `idle`: a Turn in flight when the process died is an answer that stopped early, which is what an interrupt already is, and nothing observed a failure to report.
 
 **Session — `persistence`**: `saved`, `saving`, `saveFailed`. Independent of `turn`, which is the point: a failed save must not cancel a Turn.
 

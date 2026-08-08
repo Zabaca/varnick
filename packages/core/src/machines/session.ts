@@ -15,8 +15,8 @@ import type { Effort, ModelId } from '../domain.ts'
 
 export const SESSION_STATE_PATHS = [
   'turn.idle',
-  'turn.sending',
-  'turn.streaming',
+  'turn.answering.sending',
+  'turn.answering.streaming',
   'turn.interrupting',
   'turn.failed',
   'turn.compacting',
@@ -202,8 +202,8 @@ export const sessionMachine = setup({
       states: {
         routing: {
           always: [
-            { target: 'sending', guard: ({ context }) => context.enterTurn === 'sending' },
-            { target: 'streaming', guard: ({ context }) => context.enterTurn === 'streaming' },
+            { target: 'answering', guard: ({ context }) => context.enterTurn === 'sending' },
+            { target: 'answering.streaming', guard: ({ context }) => context.enterTurn === 'streaming' },
             {
               target: 'interrupting',
               guard: ({ context }) => context.enterTurn === 'interrupting',
@@ -229,19 +229,45 @@ export const sessionMachine = setup({
           COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             // Guarded with no fallback: an empty draft is not a refusal worth
             // explaining, it is a button that should read as inert.
-            SEND: { target: 'sending', guard: 'hasDraft' },
+            SEND: {
+              target: 'answering',
+              guard: 'hasDraft',
+              actions: assign({
+                messages: ({ context }) => [
+                  ...context.messages,
+                  {
+                    id: `m${context.messages.length + 1}`,
+                    role: 'user' as const,
+                    text: context.draft,
+                  },
+                ],
+                draft: '',
+              }),
+            },
           },
         },
-        sending: {
-          entry: assign({
-            messages: ({ context }) => [
-              ...context.messages,
-              { id: `m${context.messages.length + 1}`, role: 'user' as const, text: context.draft },
-            ],
-            draft: '',
-            partial: '',
-            turnError: null,
-          }),
+        /*
+          One Turn, one actor.
+
+          `sending` and `streaming` used to be siblings and each invoked
+          `runTurn`. An invoke is bound to the state it sits on, so the first
+          streamed token stopped the first actor and started a second: in live
+          mode that aborted the developer's Turn at its first token, told the
+          host to interrupt it, and posted the same prompt again — billed twice,
+          answered once. The two blocks were byte-identical, which is why the
+          census assertion in drive.ts passed; it compared them to each other.
+
+          Wrapping them says the true thing once: a Turn is in flight, and
+          whether anything has come back yet is a detail of how it is going.
+        */
+        answering: {
+          initial: 'sending',
+          // Deliberately no entry that appends the prompt. `RETRY_TURN` re-enters
+          // this state, and by then the draft has been consumed and cleared — an
+          // entry action would append an empty user message and retry with an
+          // empty prompt, writing the empty message to the mirror on the way.
+          // The append belongs to SEND, which is the only event that has a draft.
+          entry: assign({ partial: '', turnError: null }),
           invoke: {
             src: 'runTurn',
             input: ({ context }) => ({
@@ -282,60 +308,27 @@ export const sessionMachine = setup({
               ],
             },
           },
-          on: {
-            STREAM_DELTA: {
-              target: 'streaming',
-              actions: assign({ partial: ({ event }) => event.text }),
+          on: { INTERRUPT: 'interrupting' },
+          states: {
+            /** Posted, and nothing back yet. */
+            sending: {
+              on: {
+                STREAM_DELTA: {
+                  target: 'streaming',
+                  actions: assign({ partial: ({ event }) => event.text }),
+                },
+              },
             },
-            INTERRUPT: 'interrupting',
-          },
-        },
-        streaming: {
-          invoke: {
-            src: 'runTurn',
-            input: ({ context }) => ({
-              sessionId: context.sessionId,
-              prompt: context.messages[context.messages.length - 1]?.text ?? '',
-              model: context.model,
-              effort: context.effort,
-            }),
-            onDone: {
-              target: 'idle',
-              actions: [
-                assign({
-                  messages: ({ context, event }) => [
-                    ...context.messages,
-                    {
-                      id: `m${context.messages.length + 1}`,
-                      role: 'agent' as const,
-                      text: event.output.text,
-                    },
-                  ],
-                  partial: '',
-                  tokensUsed: ({ event }) => event.output.tokensUsed,
-                }),
-                'saveTranscript',
-              ],
+            /** Output arriving. Same actor, same Turn. */
+            streaming: {
+              on: {
+                STREAM_DELTA: {
+                  actions: assign({
+                    partial: ({ context, event }) => context.partial + event.text,
+                  }),
+                },
+              },
             },
-            onError: {
-              target: 'failed',
-              // A failed Turn is still a boundary: the user's message is in the
-              // transcript whether or not an answer ever arrived, and losing it
-              // to the failure is the case the mirror exists for.
-              actions: [
-                assign({
-                  turnError: ({ event }) =>
-                    event.error instanceof Error ? event.error.message : String(event.error),
-                }),
-                'saveTranscript',
-              ],
-            },
-          },
-          on: {
-            STREAM_DELTA: {
-              actions: assign({ partial: ({ context, event }) => context.partial + event.text }),
-            },
-            INTERRUPT: 'interrupting',
           },
         },
         interrupting: {
@@ -432,7 +425,7 @@ export const sessionMachine = setup({
             }),
           },
           COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
-            RETRY_TURN: 'sending',
+            RETRY_TURN: 'answering',
             DISMISS_TURN_ERROR: { target: 'idle', actions: assign({ turnError: null }) },
           },
         },

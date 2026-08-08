@@ -86,7 +86,8 @@ export function ChatSurface({
 
   const agentState = toPath((snapshot.value as Record<string, unknown>).agent)
   const turn = s ? toPath((s.value as Record<string, unknown>).turn) : null
-  const working = turn === 'sending' || turn === 'streaming'
+  // One check, because there is one state: a Turn is in flight or it is not.
+  const working = turn?.startsWith('answering') ?? false
   const sessionCan = (e: SessionEvent) => Boolean(s?.can(e))
 
   /*

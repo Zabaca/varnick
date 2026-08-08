@@ -213,7 +213,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: 'Sending',
     blurb: 'The prompt is posted and the agent has not produced a token yet.',
     question: 'Is the gap between sending and the first token accounted for?',
-    covers: ['turn.sending'],
+    covers: ['turn.answering.sending'],
     input: {
       ...up,
       sessionInput: {
@@ -229,7 +229,7 @@ export const SCENARIOS: readonly Scenario[] = [
     title: 'Streaming',
     blurb: 'Output is arriving. The partial is rendered as a message, not as a placeholder.',
     question: 'Does a half-arrived answer read as an answer?',
-    covers: ['turn.streaming'],
+    covers: ['turn.answering.streaming'],
     input: {
       ...up,
       sessionInput: {

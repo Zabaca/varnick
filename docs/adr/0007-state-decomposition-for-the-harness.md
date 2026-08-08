@@ -65,3 +65,13 @@ Recorded for the same reason as the amendment above: no state was added or
 removed, `SESSION_STATE_PATHS` and the states-page cards are untouched, and the
 `#/states` cards for `compacting` and the failure after it render exactly as
 they did.
+
+## Amended again: a Turn is one state because it is one actor
+
+`sending` and `streaming` were siblings, and each carried `invoke: { src: 'runTurn' }`. An invoke is bound to the state node it sits on, so the transition between them stopped the first actor and started a second — meaning the first streamed token aborted the developer's Turn, told the host to interrupt it, and posted the same prompt again. Billed twice, answered once.
+
+They are now children of an `answering` state that holds the invoke. The state paths changed with them, because the machines are where a state is named: `turn.answering.sending` and `turn.answering.streaming`.
+
+Two things worth keeping from how this was missed. The two blocks were byte-identical — the fingerprint of a bad conflict resolution, and this run produced four of those. And `drive.ts` had a census asserting that `sending` and `streaming` accept the same events, which passed *because* they were duplicates: it compared them to each other rather than to the model. The assertion that catches it counts actor invocations across a streamed Turn, and fails the moment a second invoke reappears.
+
+The same change moved the prompt-append out of the state's entry and onto `SEND`. `RETRY_TURN` re-enters `answering`, and by then the draft has been consumed — an entry action appended an empty user message and retried with an empty prompt, writing the empty message to the mirror on the way.
