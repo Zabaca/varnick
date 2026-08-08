@@ -184,6 +184,10 @@ export function ChatSurface({
     if (sessionCan({ type: 'SEND' })) session?.send({ type: 'SEND' })
   }
 
+  // One label, read by the welcome box and by the composer, so the two cannot
+  // disagree about what the next turn runs on.
+  const modelLabel = MODELS.find((m) => m.id === s?.context.model)?.label ?? 'opus-5'
+
   // Only what is actually wrong, and only while it is wrong.
   const problem = harnessProblem(ctx, agentState)
   const starting = !session && !problem
@@ -199,10 +203,21 @@ export function ChatSurface({
                 Every prop is passed explicitly. The component's defaults carry
                 another project's user, org and release notes, and PRODUCT.md is
                 clear that nothing fabricated ships.
+
+                `cwd` and `org` are empty for the same reason, one step further
+                on: a stranger's clone is not the author's. This surface is a
+                pure function of `(snapshot, send)` — ADR-0001 — so it has no
+                filesystem to ask and nothing true to put here. An invented path
+                would be a lie on the first frame of a fresh clone, which is
+                exactly what it used to be.
+
+                The model is read from the Session rather than written down, so
+                the welcome box and the composer cannot disagree about what the
+                next turn runs on.
               */}
               <ClaudeHeader
-                cwd="~/Projects/zabaca/varnick"
-                model="Opus 5"
+                cwd=""
+                model={modelLabel}
                 user="you"
                 org=""
                 version="v0.0.0"
@@ -325,7 +340,7 @@ export function ChatSurface({
                 working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
               }
               effort={s?.context.effort ?? 'xhigh'}
-              model={`${MODELS.find((m) => m.id === s?.context.model)?.label ?? 'opus-5'} · ${formatContext(
+              model={`${modelLabel} · ${formatContext(
                 s?.context.tokensUsed ?? 0,
                 CONTEXT_WINDOW[s?.context.model ?? 'claude-opus-5'],
               )}`}

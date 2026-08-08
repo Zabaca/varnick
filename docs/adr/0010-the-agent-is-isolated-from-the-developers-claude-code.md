@@ -1,0 +1,124 @@
+# The agent is isolated from the developer's own Claude Code, and takes a flag to inherit it
+
+varnick starts a Claude Code process. Left alone, that process reads settings,
+`CLAUDE.md`, MCP servers, plugins and hooks off the filesystem, and reads a good
+deal more out of the environment it was handed. All of it belongs to whoever is
+running varnick, most of it was configured for other work, and some of it was
+configured months ago and forgotten. Behaviour assembled out of that is
+behaviour nobody else can reproduce — including the person it belongs to.
+
+So the session is isolated by default, and
+`VARNICK_INHERIT_CLAUDE_CONFIG=1 bun tauri dev` is the way out.
+
+## What isolation is, exactly
+
+Two Agent SDK options and one environment rule, all of them in
+`packages/harness/src/agent.ts` and all of them pure functions with tests:
+
+- **`settingSources: []`** — the SDK's own isolation mode. No
+  `~/.claude/settings.json`, no `.claude/settings.json`, no
+  `.claude/settings.local.json`, and no `CLAUDE.md`, which loads with the
+  project source. Hooks are declared in those settings, so they go with them.
+- **`strictMcpConfig: true`** — no `.mcp.json`, no MCP servers from user
+  settings, none contributed by plugins. Only servers varnick passes itself,
+  and today it passes none.
+- **Every `CLAUDE*` and `ANTHROPIC_*` variable is dropped** from the
+  subprocess environment, except `ANTHROPIC_API_KEY`, which is the credential
+  the host injected and the only reason the agent can authenticate. A prefix
+  rule rather than a list, because a list is right today and stale on the next
+  release, and a stale list fails silently.
+
+That last one is not hypothetical tidying. Probed under the real generated
+policy, from a terminal that happened to be a Claude Code session:
+
+```
+env | grep -c '^CLAUDE'   -> 9
+```
+
+Nine variables — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_EFFORT`,
+`CLAUDE_CODE_SESSION_ID` and the rest — reaching the confined process, none
+chosen by varnick, all of them an accident of which terminal the app was
+launched from.
+
+The scrub is measured in the same place rather than only in a unit test.
+`--selftest` in the real agent entry, under the real wrapper, now reports both
+counts, and `sandbox.boundary.test.ts` asserts the second:
+
+```
+boundary probe: the confined process was handed 9 inherited Claude Code /
+Anthropic variables, and isolation left 0.
+```
+
+The first number is reported and not asserted — it depends entirely on the
+terminal varnick was launched from. The second is the claim, and it is the one
+figure here that does not vary by machine.
+
+`agentConfigurationOptions(true)` returns `{}`. Inheriting is the *absence* of
+the two options rather than an option asking for the opposite: what the flag
+restores is the CLI's own default, and stating it any other way would be varnick
+deciding what "inherit" means on Claude Code's behalf.
+
+## `CLAUDE_CONFIG_DIR` moves in both modes, and that is containment rather than configuration
+
+Measured under the policy `sandboxPolicyFor` generates:
+
+```
+mkdir ~/.varnick-write-probe   -> Operation not permitted
+ls    ~/.claude                -> Operation not permitted
+write inside the clone         -> ok
+write inside the temp directory-> ok
+```
+
+`allowWrite` is the clone and the temp directory. A Claude Code process pointed
+at `~/.claude` cannot write its own session store, so redirecting the config
+directory is a condition of the agent running at all — not only of it running
+isolated. It goes to `<clone>/.varnick/claude`, gitignored, one per clone.
+
+## Consequences
+
+- **The flag cannot restore anything under `$HOME`, and must not be made to.**
+  `denyRead` covers the home directory, so `~/.claude` — user settings, user
+  `CLAUDE.md`, skills, plugins, and any stdio MCP server installed there — stays
+  unreachable with the flag or without it. What the flag actually restores is
+  the clone's own configuration and the developer's environment. Widening
+  `allowRead` to reach the rest is not on the table: `~/.claude.json` holds MCP
+  server credentials, and a read-allow over the home directory is the exact
+  mistake [ADR-0003](./0003-containment-wraps-the-process-tree.md) records
+  twice — it is also what keeps the login Keychain shut.
+
+  This narrows story 45 in `.scratch/harness/spec.md`, which asks for "my
+  existing skills and MCP servers" to be available under the flag. Under the
+  Sandbox, the ones installed under the home directory are not, and cannot be
+  without weakening the policy. The flag is honest about the half it can do.
+
+- **None of this creates a path for agent-authored configuration to run
+  unconfined.** The rule is
+  [ADR-0003](./0003-containment-wraps-the-process-tree.md)'s last consequence:
+  a session runs `SessionStart` hooks from settings the agent can write, so a
+  Claude Code process started host-side would execute agent-authored code
+  outside the Sandbox. Nothing here starts one. `agentEnvironment` and
+  `agentConfigurationOptions` compute strings; the Harness never opens a
+  settings file, never reads `<clone>/.varnick/claude`, and never resolves a
+  hook. The single `query()` call lives in `runAgentHost`, which is already
+  inside `srt`, so everything those strings select is read by a confined
+  process. The isolated default makes this *smaller* than it was: with
+  `settingSources: []` the clone's `.claude/settings.json` is not read at all,
+  so the hooks ADR-0003 warns about do not run even inside the Sandbox unless
+  the flag is set.
+
+- **The agent can write its own config directory, and it makes no difference.**
+  `<clone>/.varnick/claude` is inside the clone, which is the agent's writable
+  tree. Isolated, nothing there is read. Inherited, it is read by the confined
+  Claude Code process — the same class of thing as the clone's
+  `.claude/settings.json`, with the same containment, and already recorded in
+  ADR-0003. It is not a new escape; it is the existing one, unchanged.
+
+- **The flag never reaches the agent.** `VARNICK_INHERIT_CLAUDE_CONFIG` is
+  stripped from the subprocess environment in both modes. It is varnick's
+  switch, and an agent that can read it is an agent whose behaviour depends on
+  it.
+
+- **It is an environment variable, not a setting in the clone.** Same class as
+  `VARNICK_HOST` and `VARNICK_HARNESS_ENTRY`: a property of one launch, read
+  before anything renders. A setting stored in the clone would be a setting the
+  agent can write, which is the whole problem restated.
