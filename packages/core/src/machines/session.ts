@@ -370,7 +370,20 @@ export const sessionMachine = setup({
             src: 'compactSession',
             input: ({ context }) => ({
               sessionId: context.sessionId,
-              messages: context.messages,
+              /*
+                A copy, and the one line that makes "the conversation is
+                explicitly unchanged" structural rather than a rule an
+                implementation has to remember.
+
+                `readonly Message[]` is a compile-time claim and nothing at run
+                time: a compaction that assembled the replacement in the array
+                it was handed and then threw would leave a half-rewritten
+                conversation behind a state that says nothing happened. Handing
+                over a copy means the replacement can only arrive as the
+                actor's *result*, so there is no way to change the transcript
+                except by finishing.
+              */
+              messages: [...context.messages],
               model: context.model,
             }),
             onDone: {
@@ -389,6 +402,15 @@ export const sessionMachine = setup({
             },
             onError: {
               target: 'idle',
+              /*
+                No boundary, deliberately. Every other exit from a Turn raises
+                SAVE; this one must not. A compaction that failed changed
+                nothing, and the transcript it would hand the store is the one
+                already on disk — but Compaction is the boundary that takes the
+                store's *replace* path, and a failure that reached it would put
+                the mirror one atomic rewrite away from a conversation nobody
+                rewrote. Nothing happened, so nothing is written.
+              */
               actions: assign({
                 compactError: ({ event }) =>
                   event.error instanceof Error ? event.error.message : String(event.error),

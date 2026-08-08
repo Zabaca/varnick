@@ -43,17 +43,17 @@ import type { NonNullableUsage, SDKMessage } from '@anthropic-ai/claude-agent-sd
 /**
  * A control request, as one line on the agent host's stdin.
  *
- * Three, and each one is a decision rather than a convenience. The agent host is
+ * Four, and each one is a decision rather than a convenience. The agent host is
  * a Claude Code session inside the Sandbox; every additional thing it can be
  * asked to do is another thing something outside the Sandbox can make it do.
  *
- * Two of them are a Turn. The third is a plan-usage read, and it is here rather
- * than anywhere else because of ADR-0003's last consequence: the SDK's
- * `get_usage` control request rides a live session, and the only session varnick
- * ever has is the confined one this channel reaches. A read that opened its own
- * would be a Claude Code process on the host, outside `srt`, running whatever
- * `SessionStart` hook the agent last wrote into the clone. So it is a kind here,
- * or it does not happen.
+ * Two of them are a Turn. The other two are here for the same reason, which is
+ * ADR-0003's last consequence: a plan-usage read rides a live session, and
+ * summarising a conversation is a model call on *this* session. Either one
+ * implemented the obvious way — `query()` on the host — would be a second
+ * Claude Code process outside `srt`, running whatever `SessionStart` hook the
+ * agent last wrote into the clone. So they are kinds here, or they do not
+ * happen.
  *
  * The type is no longer called `TurnControl` for that reason: the channel
  * carries control requests, of which a Turn is two.
@@ -77,6 +77,21 @@ export type ControlRequest =
    * fresh is exactly what this ticket rules out.
    */
   | { readonly kind: 'read-plan-usage'; readonly requestId: string }
+  /** Summarise the conversation on this session. Carries a Turn id and nothing
+   *  else — there is no prompt on it to smuggle anything through, because the
+   *  prompt is a constant this module owns ({@link COMPACT_COMMAND}). */
+  | { readonly kind: 'compact'; readonly turnId: string }
+
+/**
+ * What asks the Session to summarise itself.
+ *
+ * The CLI's own command, sent as a prompt on the streaming input that is
+ * already open. Not a second session, not a hand-written "please summarise"
+ * that would be an ordinary Turn producing an ordinary answer and freeing no
+ * context at all: the point of Compaction is that the *Session's* context is
+ * rewritten, which only the thing holding it can do.
+ */
+export const COMPACT_COMMAND = '/compact'
 
 /**
  * Read a control request, or refuse it.
@@ -104,6 +119,9 @@ export function parseControlRequest(line: string): ControlRequest | null {
   if (typeof turnId !== 'string' || turnId.length === 0) return null
 
   if (kind === 'interrupt') return { kind, turnId }
+  // Rebuilt to two fields, so a `prompt` sent alongside a compaction is not a
+  // prompt at all — it is a field that was never read.
+  if (kind === 'compact') return { kind, turnId }
 
   if (kind === 'run-turn') {
     if (typeof prompt !== 'string' || typeof model !== 'string' || typeof effort !== 'string') {
@@ -142,6 +160,23 @@ export const TURN_FAILURES = [
   'structured-output',
   /** The process holding the Session ended while the Turn was running. */
   'agent-ended',
+  /**
+   * The Session did not summarise the conversation.
+   *
+   * Its own tag rather than `execution`, because the two mean different things
+   * to the only person reading them: a Compaction that did not happen leaves
+   * the conversation exactly as it was, and saying so is the point.
+   */
+  'compaction',
+  /**
+   * The Session summarised the conversation and could not say what it now costs.
+   *
+   * Separate from `compaction` because the sentence differs: this one did
+   * summarise. varnick declines the rewrite anyway rather than showing a meter
+   * it did not measure — the same rule `subscription` follows, which never
+   * invents a figure.
+   */
+  'compaction-unmeasured',
   'unknown',
 ] as const
 
@@ -157,6 +192,15 @@ export type TurnUpdate =
   | { readonly kind: 'done'; readonly text: string; readonly tokensUsed: number }
   /** The Turn did not finish. The `runTurn` actor throws this. */
   | { readonly kind: 'failed'; readonly failure: TurnFailure }
+  /**
+   * The Session summarised itself. The `compactSession` actor's output, in part.
+   *
+   * `summary` is the text the Session produced, not text this module composed,
+   * and `tokensUsed` is what the context now measures rather than what a
+   * summary was assumed to cost. Core turns the two into the replacement
+   * transcript and the meter — see packages/core/src/actors/live.ts.
+   */
+  | { readonly kind: 'compacted'; readonly summary: string; readonly tokensUsed: number }
 
 /** A {@link TurnUpdate} and the Turn it belongs to. */
 export type TurnEvent = TurnUpdate & { readonly turnId: string }
@@ -202,8 +246,66 @@ export function turnFailureMessage(failure: TurnFailure): string {
       return 'The agent could not produce an answer in the shape that was asked for.'
     case 'agent-ended':
       return 'The agent process ended while the turn was running.'
+    case 'compaction':
+      return 'The conversation was not summarised, so nothing about it changed.'
+    case 'compaction-unmeasured':
+      return 'The conversation was summarised, but how much context it now occupies could not be read — so the conversation was left exactly as it was rather than shown against a figure nobody measured.'
     case 'unknown':
       return 'The turn failed for a reason the Agent SDK did not name.'
+  }
+}
+
+/**
+ * The same failures, as the sentence a *Compaction* is reported inside.
+ *
+ * A second table rather than a second use of {@link turnFailureMessage}, and
+ * the reason is what the surface does with it: `turn.failed` renders a Turn's
+ * sentence on its own, while a failed Compaction is rendered inside one the
+ * surface owns — *Could not compact — {this}. The conversation is unchanged.*
+ * Feeding a full sentence into that produces two full stops and says "the
+ * conversation is unchanged" twice.
+ *
+ * So these are clauses: lower case, no full stop. Same rule as everywhere else
+ * — every one is authored here and selected by the tag, and nothing the API
+ * said is interpolated into one. `compact_error` from the CLI is read as a
+ * fact and never as prose, for the same reason a 401 body is.
+ */
+export function compactionFailureMessage(failure: TurnFailure): string {
+  switch (failure) {
+    case 'authentication':
+      return 'the API refused the credential'
+    case 'org-not-allowed':
+      return 'this organisation is not allowed to use the credential'
+    case 'billing':
+      return 'the account has a billing problem'
+    case 'rate-limit':
+      return 'the rate limit was reached'
+    case 'overloaded':
+      return 'the API was overloaded'
+    case 'invalid-request':
+      return 'the API refused the request as invalid, which is a bug in varnick'
+    case 'model-not-found':
+      return 'the selected model is not available to this account'
+    case 'server-error':
+      return 'the API failed on its side'
+    case 'max-output-tokens':
+      return 'the summary hit the model’s output limit'
+    case 'execution':
+      return 'it ended with an error before it finished'
+    case 'max-turns':
+      return 'the agent reached its limit on how many steps one turn may take'
+    case 'budget':
+      return 'it reached its spending limit'
+    case 'structured-output':
+      return 'the agent could not produce an answer in the shape that was asked for'
+    case 'agent-ended':
+      return 'the agent process ended while it was running'
+    case 'compaction':
+      return 'the conversation was not summarised'
+    case 'compaction-unmeasured':
+      return 'the summary arrived but the context it freed could not be measured'
+    case 'unknown':
+      return 'the Agent SDK did not say why'
   }
 }
 
@@ -241,7 +343,10 @@ export function encodeTurnEvent(event: TurnEvent): string {
  * where it would reach the Session mirror.
  */
 export function parseTurnEvent(value: unknown): TurnEvent | null {
-  const { kind, turnId, text, tokensUsed, failure } = (value ?? {}) as Record<string, unknown>
+  const { kind, turnId, text, summary, tokensUsed, failure } = (value ?? {}) as Record<
+    string,
+    unknown
+  >
   if (typeof turnId !== 'string' || turnId.length === 0) return null
 
   switch (kind) {
@@ -251,6 +356,17 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
     case 'done':
       return typeof text === 'string' && typeof tokensUsed === 'number' && Number.isFinite(tokensUsed)
         ? { kind, turnId, text, tokensUsed }
+        : null
+    case 'compacted':
+      // Both fields required. A compaction with no figure would leave the meter
+      // saying whatever it said before over a conversation that has been
+      // replaced, and a compaction with no summary would replace it with
+      // nothing at all.
+      return typeof summary === 'string' &&
+        summary.length > 0 &&
+        typeof tokensUsed === 'number' &&
+        Number.isFinite(tokensUsed)
+        ? { kind, turnId, summary, tokensUsed }
         : null
     case 'failed':
       return typeof failure === 'string' && (TURN_FAILURES as readonly string[]).includes(failure)
@@ -364,6 +480,141 @@ export interface TurnRun {
   accept(message: unknown): TurnEvent[]
   /** True once a `done` or `failed` has been emitted. Nothing follows one. */
   readonly finished: boolean
+}
+
+/**
+ * What a Compaction became.
+ *
+ * `postTokens` is the figure the Session's own boundary reported, and `null`
+ * means it reported none — not that it reported zero. Turning that into an
+ * event is {@link ServeTurnsInput}'s job, because the fallback is a question
+ * for the Session and this module never asks anything.
+ */
+export type CompactionSettlement =
+  | {
+      readonly kind: 'compacted'
+      readonly summary: string
+      readonly postTokens: number | null
+    }
+  | { readonly kind: 'failed'; readonly failure: TurnFailure }
+
+/**
+ * A Compaction in progress.
+ *
+ * The counterpart of {@link TurnRun}, and shaped differently on purpose: a Turn
+ * emits as it goes, because watching an answer arrive is the point. A
+ * Compaction emits nothing until it is whole, because a half-observed
+ * compaction is the failure this ticket exists to prevent.
+ *
+ * It needs two facts from two places, and neither arrives first reliably:
+ *
+ *   * the **boundary** — the Session's own `compact_boundary` message, which is
+ *     the only proof that its context was actually rewritten. Without it,
+ *     whatever else happened was an ordinary Turn.
+ *   * the **summary** — the text the compaction produced, which reaches the
+ *     agent host through the SDK's `PostCompact` hook rather than on the
+ *     message stream. {@link summarised} is where it comes in.
+ *
+ * Missing either one is a failed Compaction. That is the conservative side of
+ * the only decision here that can lose work: a Compaction that fails costs a
+ * full context window, and a Compaction that half-succeeds costs the
+ * conversation. `CONTEXT.md` says the same thing about the word itself —
+ * *Avoid: truncate, prune (both lose the fact that nothing is discarded
+ * blindly)*.
+ */
+export interface CompactionRun {
+  /** Which Turn this is. Its events are stamped with it like any other. */
+  readonly turnId: string
+  /** The summary the compaction produced, from the `PostCompact` hook. */
+  summarised(summary: string): void
+  /** What this Session message means for the Compaction. */
+  accept(message: unknown): void
+  /** What it became, or `null` while it is still running. */
+  readonly settled: CompactionSettlement | null
+}
+
+export function beginCompaction(turnId: string): CompactionRun {
+  let summary: string | null = null
+  let boundary = false
+  let postTokens: number | null = null
+  let settlement: CompactionSettlement | null = null
+
+  /** First answer wins. A failure is never talked back into a success. */
+  const fail = (failure: TurnFailure) => {
+    settlement ??= { kind: 'failed', failure }
+  }
+
+  const conclude = () => {
+    if (settlement !== null || !boundary || summary === null) return
+    settlement = { kind: 'compacted', summary, postTokens }
+  }
+
+  return {
+    turnId,
+
+    get settled() {
+      return settlement
+    },
+
+    summarised(text: string) {
+      if (settlement !== null || summary !== null) return
+      // Whitespace is not a summary. A transcript replaced by one would be a
+      // transcript discarded, reported as a success.
+      if (typeof text !== 'string' || text.trim().length === 0) return
+      summary = text
+      conclude()
+    },
+
+    accept(message: unknown) {
+      if (settlement !== null) return
+      const sdk = message as Partial<SDKMessage> & Record<string, unknown>
+      if (sdk === null || typeof sdk !== 'object') return
+
+      switch (sdk.type) {
+        case 'system': {
+          if (sdk.subtype === 'compact_boundary') {
+            boundary = true
+            const metadata = sdk.compact_metadata as Record<string, unknown> | undefined
+            const post = metadata?.post_tokens
+            // A figure or nothing. `post_tokens` is optional on the SDK's own
+            // type, and a missing one must not read as a context of zero.
+            postTokens =
+              typeof post === 'number' && Number.isFinite(post) && post >= 0 ? post : null
+            conclude()
+            return
+          }
+          // The CLI's verdict on the compaction it was asked for. `compact_error`
+          // sits beside this and is deliberately not read: it is prose from the
+          // API, which is where a credential would be.
+          if (sdk.subtype === 'status' && sdk.compact_result === 'failed') fail('compaction')
+          return
+        }
+
+        // The same two failure sources a Turn reads, for the same reason: a
+        // Compaction is a model call, and it fails the ways a model call fails.
+        case 'assistant': {
+          if (typeof sdk.error === 'string') fail(failureOfAssistantError(sdk.error))
+          return
+        }
+
+        case 'result': {
+          if (sdk.subtype !== 'success' || sdk.is_error === true) {
+            fail(failureOfResultSubtype(sdk.subtype))
+            return
+          }
+          // The Session has stopped talking. Whatever has not arrived by now is
+          // not going to, so a Compaction still missing a half is a failure
+          // rather than a wait with no end.
+          conclude()
+          if (settlement === null) fail('compaction')
+          return
+        }
+
+        default:
+          return
+      }
+    },
+  }
 }
 
 export function beginTurn(turnId: string): TurnRun {

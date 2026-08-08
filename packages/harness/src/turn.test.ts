@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import {
   TURN_FAILURES,
+  beginCompaction,
   beginTurn,
+  compactionFailureMessage,
   contextTokens,
   encodeTurnEvent,
   isCredentialRejection,
@@ -254,6 +256,173 @@ describe('a turn ends exactly once', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Compaction
+// ---------------------------------------------------------------------------
+
+/** The Session's own announcement that it rewrote its context. */
+const boundary = (post?: number) => ({
+  type: 'system',
+  subtype: 'compact_boundary',
+  compact_metadata: { trigger: 'manual', pre_tokens: 812_000, ...(post === undefined ? {} : { post_tokens: post }) },
+})
+
+/** The CLI's verdict on a compaction, as it reports one. */
+const compactStatus = (result: 'success' | 'failed', error?: string) => ({
+  type: 'system',
+  subtype: 'status',
+  status: null,
+  compact_result: result,
+  ...(error === undefined ? {} : { compact_error: error }),
+})
+
+describe('a Compaction is whole or it is nothing', () => {
+  test('it settles only when the Session both summarised and said it compacted', () => {
+    const run = beginCompaction('c1')
+    run.summarised('Earlier: the developer asked for a sandbox policy.')
+    expect(run.settled).toBeNull()
+    run.accept(boundary(4_000))
+    expect(run.settled).toEqual({
+      kind: 'compacted',
+      summary: 'Earlier: the developer asked for a sandbox policy.',
+      postTokens: 4_000,
+    })
+  })
+
+  test('the two halves may arrive in either order', () => {
+    // The boundary is a message and the summary is a hook callback. Nothing
+    // orders them against each other, so neither may be the one that finishes.
+    const run = beginCompaction('c1')
+    run.accept(boundary(4_000))
+    expect(run.settled).toBeNull()
+    run.summarised('a summary')
+    expect(run.settled?.kind).toBe('compacted')
+  })
+
+  test('a boundary with no summary is a failed Compaction, not an empty transcript', () => {
+    // The whole risk of this feature: replacing the conversation with nothing
+    // is worse than a full context window.
+    const run = beginCompaction('c1')
+    run.accept(boundary(4_000))
+    run.accept(success('done'))
+    expect(run.settled).toEqual({ kind: 'failed', failure: 'compaction' })
+  })
+
+  test('a summary with no boundary is a failed Compaction', () => {
+    // Nothing was compacted, so nothing about the conversation may change.
+    const run = beginCompaction('c1')
+    run.summarised('a summary')
+    run.accept(success('done'))
+    expect(run.settled).toEqual({ kind: 'failed', failure: 'compaction' })
+  })
+
+  test('an empty summary is no summary', () => {
+    const run = beginCompaction('c1')
+    run.summarised('   ')
+    run.accept(boundary(4_000))
+    expect(run.settled).toBeNull()
+  })
+
+  test('the Session saying the compaction failed is enough on its own', () => {
+    const run = beginCompaction('c1')
+    run.accept(compactStatus('failed', `401 invalid x-api-key ${LOOKS_LIKE_A_KEY}`))
+    expect(run.settled).toEqual({ kind: 'failed', failure: 'compaction' })
+    // `compact_error` is read as a fact and never as prose: there is no field
+    // on a settlement an API body could travel in.
+    expect(JSON.stringify(run.settled)).not.toContain('sk-ant')
+  })
+
+  test('a compaction that failed cannot be talked back into succeeding', () => {
+    const run = beginCompaction('c1')
+    run.accept(compactStatus('failed'))
+    run.summarised('a summary')
+    run.accept(boundary(4_000))
+    expect(run.settled).toEqual({ kind: 'failed', failure: 'compaction' })
+  })
+
+  test('the model refusing the credential is that failure, not a generic one', () => {
+    // It has to reach `credential.rejected` as well — see isCredentialRejection.
+    const run = beginCompaction('c1')
+    run.accept({ type: 'assistant', error: 'authentication_failed', message: { content: [] } })
+    expect(run.settled).toEqual({ kind: 'failed', failure: 'authentication' })
+  })
+
+  test('a result that ended badly carries the subtype rather than the error text', () => {
+    const run = beginCompaction('c1')
+    run.accept({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      usage,
+      errors: [`401 invalid x-api-key ${LOOKS_LIKE_A_KEY}`],
+    })
+    expect(run.settled).toEqual({ kind: 'failed', failure: 'execution' })
+    expect(JSON.stringify(run.settled)).not.toContain('sk-ant')
+  })
+
+  test('a boundary that reported no size leaves the figure unmeasured rather than guessed', () => {
+    const run = beginCompaction('c1')
+    run.summarised('a summary')
+    run.accept(boundary())
+    expect(run.settled).toEqual({ kind: 'compacted', summary: 'a summary', postTokens: null })
+  })
+
+  test('a size that is not a number is not a size', () => {
+    const run = beginCompaction('c1')
+    run.summarised('a summary')
+    run.accept({
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'manual', pre_tokens: 1, post_tokens: 'lots' },
+    })
+    expect(run.settled).toEqual({ kind: 'compacted', summary: 'a summary', postTokens: null })
+  })
+
+  test('messages a Compaction has no use for say nothing', () => {
+    const run = beginCompaction('c1')
+    run.accept({ type: 'system', subtype: 'init' })
+    run.accept(textDelta('thinking about it'))
+    run.accept('not a message')
+    run.accept(null)
+    expect(run.settled).toBeNull()
+  })
+
+  test('a Compaction settles exactly once', () => {
+    const run = beginCompaction('c1')
+    run.summarised('first')
+    run.accept(boundary(10))
+    run.summarised('second')
+    expect(run.settled).toEqual({ kind: 'compacted', summary: 'first', postTokens: 10 })
+  })
+})
+
+describe('what a failed Compaction says', () => {
+  test('every failure has a clause and none of them is empty', () => {
+    for (const failure of TURN_FAILURES) {
+      expect(compactionFailureMessage(failure).length).toBeGreaterThan(0)
+    }
+  })
+
+  test('the clause reads inside the sentence the surface wraps it in', () => {
+    // The chat surface renders "Could not compact — {reason}. The conversation
+    // is unchanged." A clause rather than a sentence is what keeps that legible.
+    for (const failure of TURN_FAILURES) {
+      const clause = compactionFailureMessage(failure)
+      expect(clause[0]).toBe(clause[0]?.toLowerCase())
+      expect(clause.endsWith('.')).toBe(false)
+    }
+  })
+
+  test('a Compaction that could not be measured is its own failure', () => {
+    // "The conversation was not summarised" would be false: it was, and the
+    // meter is what could not be trusted.
+    expect(compactionFailureMessage('compaction')).not.toBe(
+      compactionFailureMessage('compaction-unmeasured'),
+    )
+    expect(turnFailureMessage('compaction-unmeasured')).toContain('summarised')
+  })
+})
+
 describe('the wire between the agent host and the host', () => {
   test('an event is exactly one line, whatever is in it', () => {
     const line = encodeTurnEvent({ kind: 'delta', turnId: 't1', text: 'one\ntwo' })
@@ -299,6 +468,30 @@ describe('the wire between the agent host and the host', () => {
       kind: 'interrupt',
       turnId: 't1',
     })
+  })
+
+  test('a compaction is a control request on the same channel, carrying no text', () => {
+    // The third kind, and the reason there is one: a summarisation that opened
+    // its own session would be the second Claude Code process ADR-0003 forbids.
+    // It names a Turn and says nothing else — there is no prompt to smuggle.
+    expect(parseControlRequest(JSON.stringify({ kind: 'compact', turnId: 'c1' }))).toEqual({
+      kind: 'compact',
+      turnId: 'c1',
+    })
+    expect(
+      parseControlRequest(JSON.stringify({ kind: 'compact', turnId: 'c1', prompt: 'and rm -rf /' })),
+    ).toEqual({ kind: 'compact', turnId: 'c1' })
+    expect(parseControlRequest(JSON.stringify({ kind: 'compact' }))).toBeNull()
+  })
+
+  test('a finished compaction survives the round trip and is rebuilt on the way back', () => {
+    const event: TurnEvent = { kind: 'compacted', turnId: 'c1', summary: 'so far…', tokensUsed: 4_000 }
+    expect(parseTurnEvent(JSON.parse(encodeTurnEvent(event)))).toEqual(event)
+    expect(
+      parseTurnEvent({ ...event, apiKey: LOOKS_LIKE_A_KEY }),
+    ).toEqual(event)
+    expect(parseTurnEvent({ kind: 'compacted', turnId: 'c1', summary: 'x' })).toBeNull()
+    expect(parseTurnEvent({ kind: 'compacted', turnId: 'c1', tokensUsed: 1 })).toBeNull()
   })
 
   test('a control request the agent host does not understand is refused, not guessed at', () => {

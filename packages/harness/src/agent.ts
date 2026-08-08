@@ -51,9 +51,13 @@ import {
   type ReadPlanUsageReport,
 } from './subscription.ts'
 import {
+  beginCompaction,
   beginTurn,
+  COMPACT_COMMAND,
   encodeTurnEvent,
   parseControlRequest,
+  type CompactionRun,
+  type CompactionSettlement,
   type TurnEvent,
   type TurnFailure,
   type TurnRun,
@@ -644,6 +648,15 @@ async function toolProbe(
  * it is the whole list of questions that do not need a second session to answer.
  * Nothing here can create one: there is no `query` in this interface and no way
  * to get at the one `runAgentHost` holds.
+ * Five methods, and every one of them is something a Turn or a Compaction
+ * cannot do without. This is the surface something outside the Sandbox can
+ * reach into the Sandbox with, so it grows one method at a time and each one
+ * has to be argued for.
+ *
+ * {@link contextTokens} is the one added for Compaction. It reads and cannot
+ * write, takes no argument, and answers with a number — and the alternative to
+ * having it is a context meter showing a figure nobody measured, which is the
+ * thing story 69 exists to prevent.
  */
 export interface AgentSessionPort {
   /** Put a prompt on the Session's streaming input. */
@@ -662,6 +675,14 @@ export interface AgentSessionPort {
    * process counted.
    */
   readonly usage: ReadPlanUsageReport
+  /**
+   * How much context the Session now holds, or `null` if it would not say.
+   *
+   * The same measurement `/context` shows, asked of the Session rather than
+   * derived from a message — which is what makes the meter after a Compaction a
+   * reading rather than an estimate.
+   */
+  contextTokens(): Promise<number | null>
 }
 
 export interface ServeTurnsInput {
@@ -672,6 +693,19 @@ export interface ServeTurnsInput {
   readonly session: AgentSessionPort
   /** One event, already newline-terminated. The process's stdout. */
   readonly write: (line: string) => void
+  /**
+   * Where a compaction summary comes in, for whoever has one to give.
+   *
+   * The Agent SDK reports the summary through its `PostCompact` hook rather
+   * than on the message stream, so it cannot ride `messages` and this loop
+   * cannot go and fetch it. The caller is handed a reporter to call — see
+   * `runAgentHost`, which registers an in-process hook callback and forwards it.
+   *
+   * Optional because the loop is complete without it: a Compaction with no
+   * summary fails, which is the outcome that costs a context window rather than
+   * a conversation.
+   */
+  readonly compactionSummaries?: (report: (summary: string) => void) => void
 }
 
 /**
@@ -692,9 +726,86 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
 
   /** The Turn currently running, and the only state these two loops share. */
   let running: TurnRun | null = null
+  /** The Compaction currently running. Never both at once — see `start`. */
+  let compacting: CompactionRun | null = null
 
   const emit = (events: readonly TurnEvent[]) => {
     for (const event of events) write(encodeTurnEvent(event))
+  }
+
+  /**
+   * Turn a settled Compaction into the one event it is worth.
+   *
+   * The only asynchronous step in either loop, and it is here rather than
+   * inside {@link beginCompaction} because it is a *question for the Session*:
+   * a boundary that did not report its size is measured by asking, and a
+   * measurement nobody could take fails the Compaction rather than reporting a
+   * figure that was assumed. `turn.compacting` returns to `idle` either way, so
+   * the cost of failing is a full context window; the cost of guessing is a
+   * meter that disagrees with the screen.
+   */
+  async function concluded(
+    turnId: string,
+    settlement: CompactionSettlement,
+  ): Promise<readonly TurnEvent[]> {
+    if (settlement.kind === 'failed') {
+      return [{ kind: 'failed', turnId, failure: settlement.failure }]
+    }
+    const measured =
+      settlement.postTokens ?? (await session.contextTokens().catch(() => null))
+    if (measured === null || !Number.isFinite(measured)) {
+      return [{ kind: 'failed', turnId, failure: 'compaction-unmeasured' }]
+    }
+    return [{ kind: 'compacted', turnId, summary: settlement.summary, tokensUsed: measured }]
+  }
+
+  /**
+   * Report a Compaction once, whichever half completed it.
+   *
+   * `compacting` is cleared before the await rather than after, so a summary
+   * arriving while the size is being measured cannot settle the same Compaction
+   * a second time.
+   */
+  async function settle(run: CompactionRun): Promise<void> {
+    const settlement = run.settled
+    if (settlement === null || compacting !== run) return
+    compacting = null
+    emit(await concluded(run.turnId, settlement))
+  }
+
+  // The summary arrives out of band, from the SDK's `PostCompact` hook. A
+  // report with no Compaction running is dropped: the same hook fires for an
+  // auto-compaction, and a conversation nobody asked to compact must not be
+  // rewritten because the window filled up.
+  input.compactionSummaries?.((summary) => {
+    const run = compacting
+    if (run === null) return
+    run.summarised(summary)
+    void settle(run)
+  })
+
+  /**
+   * Ask the Session to summarise itself.
+   *
+   * One prompt, onto the streaming input that is already open — the same pipe a
+   * Turn uses, which is the whole of why this is a control request rather than
+   * a `query()` on the host (ADR-0003's last consequence). The command is a
+   * constant this module owns; nothing the caller sent becomes part of it.
+   */
+  async function compact(request: { turnId: string }): Promise<void> {
+    const run = beginCompaction(request.turnId)
+    compacting = run
+    // A Turn cannot be running — the machine only sends COMPACT from a settled
+    // turn — but if one somehow were, its messages belong to it and not here.
+    running = null
+    try {
+      session.prompt(COMPACT_COMMAND)
+    } catch (error) {
+      // Same reason as a Turn: a compaction that was asked for and never
+      // answered leaves `turn.compacting` for ever, with nothing to dismiss.
+      if (compacting === run) compacting = null
+      emit([{ kind: 'failed', turnId: request.turnId, failure: failureOfThrown(error) }])
+    }
   }
 
   async function start(request: {
@@ -705,6 +816,10 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   }): Promise<void> {
     const run = beginTurn(request.turnId)
     running = run
+    // Symmetric with `compact`: one thing at a time on one Session, so a Turn
+    // that somehow arrived during a Compaction takes the stream rather than
+    // leaving both waiting on messages the other is reading.
+    compacting = null
     try {
       // Before the prompt, so the Turn runs on what it was started with. A
       // SET_MODEL that arrives mid-Turn belongs to the next one, and applying
@@ -763,11 +878,21 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       void answerUsage(request.requestId)
       return
     }
-    // A stale interrupt from an abandoned Turn must not stop the one that
-    // replaced it, so it has to name the Turn it means.
-    if (running !== null && !running.finished && running.turnId === request.turnId) {
-      await session.interrupt()
-    }
+    if (request.kind === 'compact') return compact(request)
+    /*
+      A stale interrupt from an abandoned Turn must not stop the one that
+      replaced it, so it has to name the Turn it means.
+
+      A Compaction is answerable on the same terms. Nothing sends one today —
+      `turn.compacting` has no INTERRUPT, because half a summary is worth
+      nothing and there would be no partial to keep — but a channel where every
+      request names a Turn and one kind of Turn silently ignores it is an
+      asymmetry the next person has to discover.
+    */
+    const named =
+      (running !== null && !running.finished && running.turnId === request.turnId) ||
+      (compacting !== null && compacting.turnId === request.turnId)
+    if (named) await session.interrupt()
   }
 
   async function readControl(): Promise<void> {
@@ -789,6 +914,17 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
 
   async function readMessages(): Promise<void> {
     for await (const message of messages) {
+      // A Compaction takes the stream while it runs. Its messages are the
+      // Session talking about its own context, not an answer to anything, and
+      // attributing them to a Turn would put the summarisation's chatter into
+      // the transcript.
+      const compaction = compacting
+      if (compaction !== null) {
+        compaction.accept(message)
+        await settle(compaction)
+        continue
+      }
+
       const run = running
       if (run === null || run.finished) continue
       emit(run.accept(message))
@@ -836,6 +972,22 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
   const cloneRoot = process.cwd()
   const inherit = inheritsClaudeConfig(process.env)
 
+  /*
+    Where a compaction summary comes from.
+
+    The SDK reports it through `PostCompact` and nowhere else — it is not on the
+    message stream, which carries only the `compact_boundary` that says a
+    compaction happened. This callback is registered *here*, in process, as an
+    option on the query: it is varnick's own code, not a hook out of
+    `.claude/settings.json`, so `settingSources: []` neither removes it nor is
+    weakened by it and no agent-authored code runs because of it.
+
+    Only a manual compaction is reported. `PostCompact` fires for auto-compaction
+    too, and rewriting varnick's transcript because the window filled up would be
+    a rewrite nobody asked for.
+  */
+  let reportSummary: ((summary: string) => void) | null = null
+
   // Created rather than assumed. Claude Code writes its own state here, and a
   // directory it cannot create is a start that fails with an error about
   // something else. Inside the clone, which is writable — see
@@ -873,6 +1025,19 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       // flag out. `env` replaces the subprocess environment outright, which is
       // why agentEnvironment returns the whole of it rather than an overlay.
       env: agentEnvironment(process.env, { cloneRoot, inherit }),
+      hooks: {
+        PostCompact: [
+          {
+            hooks: [
+              async (hook) => {
+                if (hook.hook_event_name !== 'PostCompact') return {}
+                if (hook.trigger === 'manual') reportSummary?.(hook.compact_summary)
+                return {}
+              },
+            ],
+          },
+        ],
+      },
       ...agentConfigurationOptions(inherit),
     },
   })
@@ -887,6 +1052,9 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     control: process.stdin,
     messages: session,
     write: (line) => process.stdout.write(line),
+    compactionSummaries: (report) => {
+      reportSummary = report
+    },
     session: {
       prompt: (text) => {
         queued.push({
@@ -914,6 +1082,15 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       // other `query()` in the Harness and this is why: a read that opened its
       // own would run the clone's `SessionStart` hooks unconfined (ADR-0003).
       usage: reportFromSession(session),
+      // What `/context` shows, asked of the Session itself. A control request
+      // on the session already open — the same rule the whole channel exists
+      // for — and the reason the meter after a Compaction is a reading rather
+      // than a subtraction someone worked out.
+      contextTokens: async () => {
+        const usage = await session.getContextUsage()
+        const total = usage?.totalTokens
+        return typeof total === 'number' && Number.isFinite(total) ? total : null
+      },
     },
   })
 }

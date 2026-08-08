@@ -117,6 +117,12 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // asking for one anywhere but here means opening one.
         "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" | "run-turn"
         | "next-turn-event" | "interrupt-turn" | "read-plan-usage" => Some(Route::Host),
+        // A Compaction is on this list for the same reason: it is a model call
+        // on the Session the agent process is already holding, and answering it
+        // in the runtime — the process with a filesystem, and the obvious home
+        // for "do some work" — would mean opening a session there.
+        "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" | "run-turn"
+        | "next-turn-event" | "interrupt-turn" | "compact-session" => Some(Route::Host),
         "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
@@ -353,10 +359,10 @@ pub fn harness_call(
                 let reason = agent.await_exit()?;
                 Ok(serde_json::json!({ "reason": reason }))
             }
-            // A prompt and an interrupt are the same act from here: one control
-            // line onto the pipe the agent process is listening on. The Turn's
-            // answer does not come back through this call.
-            "run-turn" | "interrupt-turn" => {
+            // A prompt, an interrupt and a compaction are the same act from
+            // here: one control line onto the pipe the agent process is
+            // listening on. None of their answers comes back through this call.
+            "run-turn" | "interrupt-turn" | "compact-session" => {
                 agent.run_turn(&request)?;
                 Ok(serde_json::json!({ "ok": true }))
             }
@@ -455,8 +461,17 @@ mod tests {
     }
 
     #[test]
+    fn a_compaction_is_answered_where_the_agent_process_is() {
+        // Summarising is a model call on the Session the agent already holds.
+        // Routing it to the runtime — the process that has a filesystem, and
+        // the obvious home for "do some work" — would mean opening a session
+        // there, which is the second Claude Code process ADR-0003 forbids.
+        assert_eq!(route_of("compact-session"), Some(Route::Host));
+    }
+
+    #[test]
     fn a_kind_this_host_does_not_know_is_routed_nowhere() {
-        assert_eq!(route_of("compact-session"), None);
+        assert_eq!(route_of("summarise"), None);
         assert_eq!(route_of(""), None);
     }
 
