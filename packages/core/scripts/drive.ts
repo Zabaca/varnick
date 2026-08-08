@@ -347,6 +347,204 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
 }
 
 // ---------------------------------------------------------------------------
+// Session — the host-side mirror
+//
+// The transcript is written at every Turn boundary, and the two regions stay
+// independent while it happens. These are machine facts: what the mirror does
+// with the messages is tested in packages/harness/src/session.test.ts.
+// ---------------------------------------------------------------------------
+
+type SaveInput = { sessionId: string; messages: readonly Message[] }
+
+/**
+ * Did the wait finish?
+ *
+ * The mirror is written by an event the machine raises, so the regression to
+ * guard against is that nobody ever raises it — and a bare `waitFor` for an
+ * event that never comes hangs the script instead of failing it. A hang reads
+ * as a broken build rather than a broken machine, which is the wrong signal.
+ */
+const reaches = (wait: Promise<unknown>): Promise<boolean> => wait.then(() => true, () => false)
+const soon = { timeout: 2_000 }
+
+/** Records what the mirror was handed. `settle: false` holds `persistence` in
+ *  `saving` so a save in flight can be observed rather than inferred. */
+function saveSpy(settle: boolean) {
+  const spy = { calls: 0, last: [] as readonly Message[] }
+  const actor = fromPromise<{ ok: true }, SaveInput>(({ input }) => {
+    spy.calls++
+    spy.last = input.messages
+    return settle ? Promise.resolve({ ok: true as const }) : new Promise<{ ok: true }>(() => {})
+  })
+  return { spy, actor }
+}
+
+const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).join('|')
+
+{
+  // A completed turn writes the transcript without anything outside the machine
+  // remembering to ask.
+  const { spy, actor: persistSession } = saveSpy(true)
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: { runTurn: resolves<TurnOutput, TurnInput>({ text: 'done', tokensUsed: 42 }), persistSession },
+    }),
+    { input: { sessionId: 'p1' } },
+  ).start()
+
+  check('a session saves nothing before a turn', spy.calls === 0)
+  actor.send({ type: 'EDIT_DRAFT', text: 'mirror this' })
+  actor.send({ type: 'SEND' })
+  check(
+    'a completed turn saves without being asked',
+    await reaches(waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle' && spy.calls > 0, soon)),
+  )
+  check('a completed turn saves exactly once', spy.calls === 1)
+  check('the mirror is handed the transcript the turn produced', textsOf(spy.last) === 'mirror this|done')
+  await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saved')
+  check('the save settles back to saved', regionOf(actor.getSnapshot().value, 'persistence') === 'saved')
+  actor.stop()
+}
+
+{
+  // A failed turn is still a boundary. The user's message is in the transcript
+  // whether or not an answer arrived, and it is the failure case the mirror
+  // exists for.
+  const { spy, actor: persistSession } = saveSpy(false)
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: { runTurn: rejects<TurnOutput, TurnInput>('stream closed'), persistSession },
+    }),
+    { input: { sessionId: 'p2' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'this one fails' })
+  actor.send({ type: 'SEND' })
+  check(
+    'a failed turn still mirrors the transcript',
+    await reaches(waitFor(actor, (s) => regionOf(s.value, 'turn') === 'failed' && spy.calls > 0, soon)),
+  )
+  check('the failed turn keeps the user message in the mirror', textsOf(spy.last) === 'this one fails')
+  check('mirroring a failed turn does not clear the turn error', actor.getSnapshot().context.turnError === 'stream closed')
+  actor.stop()
+}
+
+{
+  // An interrupted turn said something, and what it said is mirrored.
+  const { spy, actor: persistSession } = saveSpy(false)
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: { runTurn: turnNever(), persistSession },
+      delays: { interruptGrace: 1 },
+    }),
+    { input: { sessionId: 'p3' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'STREAM_DELTA', text: 'half an answer' })
+  actor.send({ type: 'INTERRUPT' })
+  check(
+    'an interrupted turn reaches the mirror',
+    await reaches(waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle' && spy.calls > 0, soon)),
+  )
+  check('an interrupted turn mirrors the partial it kept', textsOf(spy.last) === 'go|half an answer')
+  actor.stop()
+}
+
+{
+  // Compaction rewrites history rather than extending it, so the boundary has
+  // to be reported or the mirror keeps the summary and everything it replaced.
+  const { spy, actor: persistSession } = saveSpy(false)
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: turnNever(),
+        compactSession: resolves<CompactOutput, CompactInput>({
+          messages: [{ id: 'c1', role: 'agent', text: 'summary so far' }],
+          tokensUsed: 10,
+        }),
+        persistSession,
+      },
+    }),
+    { input: { sessionId: 'p4', messages: [{ id: 'm1', role: 'user', text: 'one' }] } },
+  ).start()
+
+  actor.send({ type: 'COMPACT' })
+  check(
+    'a compaction reaches the mirror',
+    await reaches(waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle' && spy.calls > 0, soon)),
+  )
+  check('a compaction mirrors the rewritten history', textsOf(spy.last) === 'summary so far')
+  actor.stop()
+}
+
+{
+  // The independence claim in both directions: a save can fail while a turn
+  // streams, and the running turn never blocks the save.
+  let saveAttempts = 0
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: turnNever(),
+        persistSession: fromPromise<{ ok: true }, SaveInput>(async () => {
+          saveAttempts++
+          if (saveAttempts === 1) throw new Error('read-only filesystem')
+          return { ok: true as const }
+        }),
+      },
+    }),
+    { input: { sessionId: 'p5' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'keep streaming' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'STREAM_DELTA', text: 'arriving' })
+  actor.send({ type: 'SAVE' })
+  check('a running turn does not block a save', regionOf(actor.getSnapshot().value, 'persistence') === 'saving')
+
+  await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saveFailed')
+  check('a save can fail while a turn streams', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('a failed save does not cancel the turn in flight', actor.getSnapshot().context.partial === 'arriving')
+  check('a failed save is not a failed turn', actor.getSnapshot().context.turnError === null)
+  check('a failed save leaves the turn interruptible', actor.getSnapshot().can({ type: 'INTERRUPT' }))
+
+  const before = actor.getSnapshot().context.messages
+  actor.send({ type: 'RETRY_SAVE' })
+  await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saved')
+  check('retrying the save leaves the turn streaming', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('retrying the save does not touch the conversation', actor.getSnapshot().context.messages === before)
+  check('retrying the save does not touch the partial', actor.getSnapshot().context.partial === 'arriving')
+  actor.stop()
+}
+
+{
+  // A turn boundary reached while a save is still in flight must not be
+  // dropped: `saved` would then claim a transcript that is one turn old.
+  const { spy, actor: persistSession } = saveSpy(false)
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: { runTurn: resolves<TurnOutput, TurnInput>({ text: 'answer', tokensUsed: 1 }), persistSession },
+    }),
+    { input: { sessionId: 'p6' } },
+  ).start()
+
+  actor.send({ type: 'SAVE' })
+  check('a save in flight sits in saving', regionOf(actor.getSnapshot().value, 'persistence') === 'saving')
+  check('saving still accepts a save', actor.getSnapshot().can({ type: 'SAVE' }))
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'while the save hangs' })
+  actor.send({ type: 'SEND' })
+  check(
+    'a boundary during an in-flight save is not dropped',
+    await reaches(waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle' && spy.calls > 1, soon)),
+  )
+  check('the in-flight save is restarted, not duplicated', spy.calls === 2)
+  check('the restarted save carries the newer transcript', textsOf(spy.last) === 'while the save hangs|answer')
+  actor.stop()
+}
+
+// ---------------------------------------------------------------------------
 // Session — the command menu
 // ---------------------------------------------------------------------------
 

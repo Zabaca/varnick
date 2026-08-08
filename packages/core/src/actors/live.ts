@@ -1,4 +1,5 @@
 import { fromPromise } from 'xstate'
+import { createSessionStore, defaultSessionRoot, type SessionStore } from '@varnick/harness/session'
 import type {
   Effort,
   Message,
@@ -21,6 +22,23 @@ import type {
  * reads, so the UI stops claiming a thing is fake the moment it stops being.
  */
 
+/**
+ * The Session mirror, made once and kept.
+ *
+ * Built lazily rather than at module load: `defaultSessionRoot()` needs a host
+ * process, and constructing it eagerly would make importing this module fail
+ * everywhere instead of failing at the one actor that needs a filesystem.
+ *
+ * No `secretValues` yet — there is no Secrets Store to read them from until
+ * ticket 10. Until then the mirror redacts by credential shape only, which is
+ * the weaker half of the mechanism; wiring the store in here closes it.
+ */
+let mirror: SessionStore | null = null
+function sessionMirror(): SessionStore {
+  mirror ??= createSessionStore({ root: defaultSessionRoot() })
+  return mirror
+}
+
 const notImplemented = (name: string, what: string) => (): never => {
   throw new Error(
     `${name} has no live implementation yet — ${what}. Run without ?actors=live to use seeded data.`,
@@ -33,7 +51,6 @@ export const LIVE_NOT_IMPLEMENTED = [
   'spawnAgent',
   'readSubscriptionUsage',
   'runTurn',
-  'persistSession',
   'compactSession',
   'loadSurface',
 ] as const
@@ -61,10 +78,13 @@ export function liveActors() {
       { sessionId: string; prompt: string; model: ModelId; effort: Effort }
     >(notImplemented('runTurn', 'the Claude Agent SDK is not wired in')),
 
+    // The host-side mirror, alongside the Agent SDK's own persistence. One
+    // JSON Lines file per Session under the app-data directory, which a
+    // developer can read and back up with varnick not running.
     persistSession: fromPromise<
       { ok: true },
       { sessionId: string; messages: readonly Message[] }
-    >(notImplemented('persistSession', 'no host-side session store exists')),
+    >(({ input }) => sessionMirror().persist(input)),
 
     compactSession: fromPromise<
       { messages: Message[]; tokensUsed: number },
