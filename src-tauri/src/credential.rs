@@ -1,8 +1,15 @@
 // The credential, host-side.
 //
-// This is the half where the value exists. The agent cannot reach it: srt
-// denies it read on /usr/bin/security, and this process is outside that sandbox
-// by construction (docs/adr/0003-containment-wraps-the-process-tree.md).
+// This is the half where the value exists, and this process is outside the
+// Sandbox by construction.
+//
+// What keeps the agent out of the Keychain is `denyRead` on $HOME, because that
+// is where the Keychain file lives — *not* the deny on /usr/bin/security, which
+// stops the binary being read and does not stop it running, and would not help
+// anyway since the Security framework links in-process. That reasoning was
+// believed for two rounds and is corrected in
+// docs/adr/0003-containment-wraps-the-process-tree.md; the TypeScript half of
+// this subsystem already says so and this one did not.
 //
 // The value leaves this module in exactly one direction — into the environment
 // of the agent subprocess, through `credential_env`. It cannot leave in any

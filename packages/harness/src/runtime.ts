@@ -11,9 +11,10 @@
  *     A process that established the Sandbox and then exited would leave
  *     `checkSandbox` answering `ok` about a sandbox that no longer exists, which
  *     is the one lie this product cannot tell.
- *   * containment wraps the agent's *process tree* (ADR-0003), so the agent must
- *     be a child of the process holding the Sandbox. Only a process that outlives
- *     the call that established it can be that parent.
+ *   * the wrapping srt computes is only good while the proxies that back it are
+ *     alive, and they live in this process. The agent is spawned by the Rust
+ *     host, not by this one — containment travels in the argv, not through
+ *     parentage.
  *   * the Session mirror serialises saves through a per-store queue. Two
  *     overlapping saves in two processes have no queue between them and would
  *     both append the same message.

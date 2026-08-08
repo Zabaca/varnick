@@ -29,9 +29,11 @@ const USAGE = `varnick secrets — keys the agent can name and never read.
 Values are kept in the system keychain under the "${SECRETS_KEYCHAIN_SERVICE}"
 service, one item per secret. The agent is told the names and never a value.
 
-Known gap, measured rather than assumed: the Sandbox policy does not stop the
-agent running /usr/bin/security, so a determined agent can still reach the
-keychain. See packages/harness/src/sandbox.boundary.test.ts and ADR-0003.`
+Measured rather than assumed: inside the Sandbox the login keychain is not in
+the search list and its file cannot be opened, because it lives under the denied
+home directory. Note what that does *not* say — the Sandbox does not stop the
+agent running /usr/bin/security, and denying a binary's bytes never stopped it
+running. See packages/harness/src/sandbox.boundary.test.ts and ADR-0003.`
 
 /**
  * Read the value.

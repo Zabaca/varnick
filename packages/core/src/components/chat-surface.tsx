@@ -415,7 +415,12 @@ export function ChatSurface({
             style={{ borderLeft: '1px solid var(--rule)' }}
           >
             {ctx.surfaces.map((ref) => (
-              <SurfacePanel key={ref.id} surface={ref} resolveSurface={resolveSurface} />
+              <SurfacePanel
+                key={ref.id}
+                surface={ref}
+                resolveSurface={resolveSurface}
+                onUnload={(id) => send({ type: 'UNLOAD_SURFACE', id })}
+              />
             ))}
           </aside>
         )}
@@ -434,9 +439,11 @@ export function ChatSurface({
 function SurfacePanel({
   surface,
   resolveSurface,
+  onUnload,
 }: {
   surface: ActorRefFrom<typeof surfaceMachine>
   resolveSurface?: (modulePath: string) => ComponentType | undefined
+  onUnload: (id: string) => void
 }) {
   const snap = surface.getSnapshot()
   const { descriptor, error, attempts } = snap.context
@@ -448,10 +455,16 @@ function SurfacePanel({
       <div className="flex items-baseline gap-2 text-[12px]">
         <h2 style={{ color: 'var(--fg)' }}>{descriptor.name}</h2>
         <code style={{ color: 'var(--fg-faint)' }}>{state}</code>
+        {/*
+          UNLOAD_SURFACE to the parent, not UNLOAD to the child. The child event
+          drives the Surface to `unloaded`, which is final — but the parent keeps
+          the ref, so the id stays in the set discovery treats as already known
+          and the panel can never come back. One dead panel until relaunch.
+        */}
         {snap.can({ type: 'UNLOAD' }) && (
           <button
             className="ml-auto"
-            onClick={() => surface.send({ type: 'UNLOAD' })}
+            onClick={() => onUnload(descriptor.id)}
             style={{ color: 'var(--fg-faint)' }}
           >
             unload

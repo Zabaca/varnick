@@ -10,20 +10,29 @@
 // not reused: a file you can read is exactly right for a transcript and exactly
 // wrong for a key.
 //
-// ## The keychain does not currently keep the agent out, and that was measured
+// ## The keychain does keep the agent out, but not for the reason first given
 //
-// The keychain was chosen partly because the Sandbox denies the agent read on
-// `/usr/bin/security`, so it could not run the one program that opens the store.
-// The first half is true and the second does not follow: srt allows `process-exec`
-// unconditionally, and `security` reaches securityd over Mach rather than by
-// reading the keychain files that the home-directory denial covers. A command
-// under the real policy read a stored value back in plaintext. The measurement
-// and what it would take to close it are in sandbox.boundary.test.ts and in the
-// correction appended to ADR-0003.
+// It was chosen partly because the Sandbox denies read on `/usr/bin/security`,
+// so the agent supposedly could not run the one program that opens the store.
+// That reasoning is wrong twice over: srt allows `process-exec` unconditionally
+// so the binary runs, and the Security framework links in-process so no binary
+// is needed at all.
 //
-// Nothing in this module can fix that, and nothing in it pretends to. What it
-// still does is keep values out of everywhere else — out of the renderer, out of
-// argv, out of an error message, and out of the Session mirror.
+// The store is out of reach anyway, and it is worth knowing why: the login
+// Keychain file lives under `$HOME`, which `denyRead` covers. Measured — inside
+// the Sandbox, `security list-keychains` does not even list it, and the file
+// cannot be opened. An earlier measurement here claimed the opposite; it used a
+// throwaway keychain in /private/tmp, a readable location, and so proved only
+// that a keychain somewhere readable can be read. Both measurements are in
+// sandbox.boundary.test.ts and the corrections are in ADR-0003.
+//
+// The protection is therefore incidental — it follows from where Apple puts the
+// file, not from anything decided here — which is why the boundary suite asserts
+// it, so a policy that widens `allowRead` over $HOME fails loudly.
+//
+// What this module does regardless is keep values out of everywhere else — out
+// of the renderer, out of argv, out of an error message, and out of the Session
+// mirror.
 //
 // Nothing here imports from `packages/core`; the dependency runs Core -> Harness.
 //
