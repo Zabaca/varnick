@@ -348,8 +348,13 @@ export async function openSecretsStore(options: SecretsStoreOptions): Promise<Se
  * through which a value could arrive.
  */
 export function describeSecretsForAgent(names: readonly string[]): string {
+  // Says *where* as well as *that*, because the where is not obvious and getting
+  // it wrong is silent. A resolution binds names into a host process's
+  // environment; a Surface rendering in the webview has no such environment and
+  // reads `undefined`. An agent told only "the host substitutes the value" will
+  // write the renderer version, see nothing, and have no way to tell why.
   const rule =
-    'You cannot read a secret value, and no tool will return one. Reference a secret by name only; the host substitutes the value when it runs the code you wrote.'
+    'You cannot read a secret value, and no tool will return one. Reference a secret by name only, as `process.env.NAME`, in code that runs host-side — the host substitutes the value at the moment it runs that code. Code rendering in the window has no environment to substitute into and will read `undefined` there.'
 
   if (names.length === 0) {
     return [
