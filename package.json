@@ -7,6 +7,7 @@
     "dev": "bun run --filter @varnick/core dev",
     "build": "bun run --filter @varnick/core build",
     "drive": "bun run --filter @varnick/core drive",
+    "secret": "bun run packages/harness/src/secrets-cli.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun test packages"
   },

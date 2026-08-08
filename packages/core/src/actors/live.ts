@@ -36,13 +36,52 @@ import type {
  * process, and constructing it eagerly would make importing this module fail
  * everywhere instead of failing at the one actor that needs a filesystem.
  *
- * No `secretValues` yet — there is no Secrets Store to read them from until
- * ticket 10. Until then the mirror redacts by credential shape only, which is
- * the weaker half of the mechanism; wiring the store in here closes it.
+ * The Secrets Store is opened first and handed to the mirror as `secretValues`,
+ * which is what turns "no secret reaches the transcript" from a pattern match
+ * into an exact-value match. Both halves are host-side by construction — the
+ * mirror needs a filesystem and the store needs `/usr/bin/security` — so they
+ * are built together, in the same process, and the store is reached through a
+ * dynamic import with a hidden specifier for the same reason the sandbox is.
+ *
+ * `secretValues` is a function, not a snapshot, and `refreshSecrets` re-reads
+ * the keychain before every save. That is what makes "no restart" true from the
+ * mirror's side as well as the store's: `bun run secret add` runs in a different
+ * process, so a running varnick would otherwise redact against the secrets it
+ * knew at launch and write the new one into the transcript verbatim. A refresh
+ * that fails is swallowed — the previous snapshot is still every secret the last
+ * successful read knew about, and redacting against it beats refusing to save.
+ *
+ * A keychain that refuses at open makes this reject, and the promise is dropped
+ * so a `RETRY_SAVE` genuinely retries rather than replaying a cached failure.
+ * That one is deliberate the other way: a mirror that never learned any secret
+ * values would write a transcript it cannot promise is clean, and
+ * `persistence.saveFailed` says so.
  */
-let mirror: SessionStore | null = null
-function sessionMirror(): SessionStore {
-  mirror ??= createSessionStore({ root: defaultSessionRoot() })
+interface Mirror {
+  store: SessionStore
+  refreshSecrets: () => Promise<void>
+}
+
+let mirror: Promise<Mirror> | null = null
+function sessionMirror(): Promise<Mirror> {
+  mirror ??= (async (): Promise<Mirror> => {
+    const specifier = '@varnick/harness/secrets'
+    type HarnessSecrets = typeof import('@varnick/harness/secrets')
+    const secretsModule = (await import(/* @vite-ignore */ specifier)) as HarnessSecrets
+    const secrets = await secretsModule.openSecretsStore({
+      keychain: secretsModule.securityKeychain(),
+    })
+    return {
+      store: createSessionStore({
+        root: defaultSessionRoot(),
+        secretValues: () => secrets.secretValues(),
+      }),
+      refreshSecrets: () => secrets.reload().catch(() => undefined),
+    }
+  })().catch((error: unknown) => {
+    mirror = null
+    throw error
+  })
   return mirror
 }
 
@@ -120,7 +159,11 @@ export function liveActors() {
     persistSession: fromPromise<
       { ok: true },
       { sessionId: string; messages: readonly Message[] }
-    >(({ input }) => sessionMirror().persist(input)),
+    >(async ({ input }) => {
+      const { store, refreshSecrets } = await sessionMirror()
+      await refreshSecrets()
+      return store.persist(input)
+    }),
 
     compactSession: fromPromise<
       { messages: Message[]; tokensUsed: number },
