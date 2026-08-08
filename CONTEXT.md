@@ -46,6 +46,16 @@ Host-side storage the agent cannot read. The agent authors code that names a sec
 It is worth knowing *why* it cannot, because the obvious answer is wrong and was believed for a while: not because `/usr/bin/security` is denied — that binary still runs, and the Security framework links in-process anyway — but because the Keychain file lives under `$HOME`, which `denyRead` covers. The protection is real and kernel-enforced, and it is incidental to where Apple puts the file. Widening `allowRead` over `$HOME` would remove it silently. See the first correction in [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md).
 _Avoid_: vault, keychain, credentials (credentials are what authenticate the agent itself, which is a separate path)
 
+**Credential**:
+What authenticates the agent itself — distinct from a Secret, which is what the agent's code uses. Read by the Tauri host, held only there, and injected into the agent subprocess. Nothing about it crosses into the webview except two facts about the reading.
+
+**Credential Kind**:
+Which of the two things the Credential is: an `api-key` (an Anthropic API key) or a `subscription` (a Claude subscription token from `claude setup-token`). Decided by the host from what it resolved, never configured, and it decides both which variable the agent is spawned with and whether plan usage exists to read. varnick never reads Claude Code's own credential store; see [ADR-0011](./docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md).
+_Avoid_: auth mode, provider, account type
+
+**Credential Source**:
+Which store answered — `keychain` or `env`. Orthogonal to Kind: either Kind can come from either Source.
+
 ### Changing Core
 
 **Clone**:
@@ -78,8 +88,8 @@ _Avoid_: summarise (the mechanism), truncate, prune (both lose the fact that not
 
 These are machine state names before they are UI words, and the two must not diverge. Every one below is addressable at `#/states`; the single state that is not is named as such where it appears.
 
-**Harness — `credential`**: `absent`, `reading`, `present`, `rejected`.
-`absent` means no credential is available, whether or not a read was attempted; a read that failed also records why. `rejected` means one exists and the API refused it — a different problem with a different fix.
+**Harness — `credential`**: `absent`, `reading`, `storing`, `present`, `rejected`.
+`absent` means no credential is available, whether or not a read was attempted; a read that failed also records why. `storing` is a value on its way into the Keychain, entered from `absent` when the developer supplies one in the window. `rejected` means one exists and the API refused it — a different problem with a different fix.
 
 **Harness — `sandbox`**: `unchecked`, `checking`, `available`, `unavailable`.
 `unavailable` has no path forward except an explicit re-check. There is deliberately no state meaning "running without confinement".
@@ -88,7 +98,7 @@ These are machine state names before they are UI words, and the two must not div
 `down` is stopped on purpose; `crashed` is stopped on its own and carries a reason. `startRefused` is a start that was asked for and declined, holding the refusal so it can be read.
 _Avoid_: stopped, idle, dead, paused, blocked
 
-**Harness — `subscription`**: `unread`, `reading`, `read`. Plan usage across the rolling windows. A failed read leaves whatever was last known and never invents a figure.
+**Harness — `subscription`**: `unread`, `reading`, `read`. Plan usage across the rolling windows. A failed read leaves whatever was last known and never invents a figure. The region only runs under a Credential Kind of `subscription` — an API key has no plan to have windows, so `unread` is where it stays and nothing is rendered.
 
 **Session — `turn`**: `idle`, `answering.sending`, `answering.streaming`, `interrupting`, `compacting`, `failed`.
 `answering` is a Turn in flight, and it is one state because it runs one actor. Its children say how far along the answer is: `sending` is posted with nothing back yet, `streaming` is output arriving. They were siblings once, and each invoked the Turn — so the first streamed token aborted the Turn and started it again. `interrupting` keeps the partial — an interrupted Turn still said something. A Session resumed on launch enters `idle`: a Turn in flight when the process died is an answer that stopped early, which is what an interrupt already is, and nothing observed a failure to report.
@@ -103,6 +113,6 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 
 ### Event names
 
-`READ_CREDENTIAL`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `READ_SUBSCRIPTION`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
+`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `READ_SUBSCRIPTION`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
