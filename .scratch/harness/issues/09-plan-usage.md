@@ -10,7 +10,7 @@
 
 **The source is the open question and it is most of the ticket.** Answer it before writing code. If no source exists, the honest outcome is deleting the strip rather than shipping a number that looks measured — and that is an acceptable way to close this ticket.
 
-- [x] A real source is identified and proven, and the read reports itself as live — wiring it to a Sandboxed session is what ticket 03 completes
+- [x] A real source is identified and proven, and the read reports itself as live — wiring it to a Sandboxed session is what ticket 03 completes. **Proven against a session varnick does not spawn**; see the amendment at the foot of this file
 - [x] A failed read leaves whatever was last known — which may be nothing — and never invents a figure
 - [x] `readSubscriptionUsage` is removed from the unimplemented list
 - [x] The strip stops being marked as seeded when the run stops being seeded. Not because the marker reads the unimplemented list — it does not, it gates on the actor mode and reads the list only to name what is stubbed
@@ -77,3 +77,34 @@ otherwise. The behaviour is right and the comments were wrong: in seeded mode th
 warning is true whatever the list holds, and a list-driven marker would go quiet
 on the last wiring while the surface still rendered seeded numbers. The fourth
 acceptance box is reworded below to say what actually has to be true.
+
+**Amended by ticket 23 — what the measurement actually measured.** The
+`subscription_type: max` with both windows populated, above, was read by calling
+`get_usage` against **the developer's own Claude Code session on this machine**,
+which is authenticated by a Claude subscription. varnick was not, and could not
+be: it spawned its agent with `ANTHROPIC_API_KEY` and nothing else, and an
+API-key session reports `rate_limits_available: false` — which
+`packages/harness/src/subscription.ts` correctly refuses, and always did.
+
+So the source is real and the parser is right, and both were verified against a
+configuration the product did not ship. Every criterion above still holds on its
+own terms; what did not hold is the sentence a reader takes away from them, that
+the strip could show a figure. In the shipped v1 it could not, in any
+circumstance, and nothing said so.
+
+The wire was measured; the plan behind it was not. That distinction is the
+lesson worth keeping: a read proven end-to-end against a session that was to
+hand is not proven against the session the product opens, and the two differed
+in the one property the whole feature depends on.
+
+ADR-0011 gives varnick a subscription token, ticket 22 gave a Credential a Kind,
+and ticket 23 makes the read conditional on it — so the refusal path stops being
+the only reachable outcome. The measurement that closes this properly is ticket
+23's, taken against what varnick spawns.
+
+One paragraph above is now out of date rather than wrong: `DesignedPage` still
+asks twice, but the first ask has moved off mount and onto the credential
+turning out to be a subscription. It was sent before anything had been read,
+which was free when the read was possible in every configuration and possible in
+none — and the moment the kind decides the answer, the first moment there is an
+answer is the moment to ask.

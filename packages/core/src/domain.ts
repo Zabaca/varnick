@@ -145,6 +145,29 @@ export function canStartAgent(input: {
   return input.credential === 'present' && input.sandbox === 'available'
 }
 
+/**
+ * Whether there is a plan for plan usage to be about.
+ *
+ * Rolling windows are a property of a plan. An API key has none — the API says
+ * so itself, with `rate_limits_available: false` — and a credential nobody has
+ * read yet has nothing to say either way, so both answer no.
+ *
+ * One predicate because two readers need the same rule and must not answer
+ * differently: the `subscription` region's gate, which decides whether
+ * `readSubscriptionUsage` runs at all, and the plan-usage strip, which decides
+ * whether it is rendered. Exported for the same reason `canStartAgent` is.
+ *
+ * What it deliberately is not is a fourth state. Under an API key the region
+ * stays `unread`; the kind is already a fact in context, and a state standing
+ * for a fact that is not a state is what CONTEXT.md's naming discipline exists
+ * to prevent. And what it decides is absence rather than emptiness: an empty
+ * strip reads as "we measured, and got nothing", which is also exactly what a
+ * broken read looks like. See ADR-0011.
+ */
+export function hasPlanUsage(kind: CredentialKind | null): boolean {
+  return kind === 'subscription'
+}
+
 export function refusalFor(input: {
   credential: string
   sandbox: string

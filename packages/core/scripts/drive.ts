@@ -22,6 +22,7 @@ import {
 import {
   regionOf,
   canStartAgent,
+  hasPlanUsage,
   compactedTranscript,
   invokedCommand,
   isCommandDraft,
@@ -2111,6 +2112,139 @@ async function turnPath(
 type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded' }
 
 {
+  /*
+    The read only happens where there is a plan for it to be about — ADR-0011.
+
+    Under an API key the `subscription` region stays `unread`. That is not a
+    broken region and it is not a fourth state meaning "not applicable": the
+    kind is a fact in context, and a state for a fact that is not a state is
+    what CONTEXT.md's naming discipline exists to prevent.
+
+    **Counted, not looked at.** "The strip was empty" is equally true of a read
+    that ran and failed, which is precisely the outcome that shipped and could
+    never have been anything else — so an assertion phrased that way would pass
+    on the bug. What ADR-0011 claims is that the actor does not run, so that is
+    what is counted. One counter, both kinds, in one loop: an assertion that
+    zero calls happened cannot pass by counting a call that could never have
+    been made, because the same counter has to reach one on the branch above it.
+  */
+  for (const [kind, wanted] of [
+    ['subscription', 1],
+    ['api-key', 0],
+  ] as const) {
+    const under = kind === 'api-key' ? 'an API key' : 'a subscription'
+    let invocations = 0
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          readSubscriptionUsage: fromPromise<Usage, Record<string, never>>(async () => {
+            invocations++
+            return { fiveHourPct: 11, weeklyPct: 54, source: 'live' as const }
+          }),
+        },
+      }),
+      { input: { policy: seedPolicy, credentialKind: kind } },
+    ).start()
+
+    // The event, and the strip, read one rule. `hasPlanUsage` is that rule —
+    // exported for the same reason `canStartAgent` is, so the affordance and
+    // the gate cannot drift into two answers to one question.
+    check(
+      `under ${under}, READ_SUBSCRIPTION is ${wanted === 1 ? 'accepted' : 'refused'}`,
+      actor.getSnapshot().can({ type: 'READ_SUBSCRIPTION' }) === (wanted === 1),
+    )
+    check(
+      `and under ${under} the strip's rule agrees with the region's`,
+      hasPlanUsage(actor.getSnapshot().context.credentialKind) === (wanted === 1),
+    )
+
+    actor.send({ type: 'READ_SUBSCRIPTION' })
+    if (wanted === 1) {
+      await reaches(waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'read', soon))
+    } else {
+      // Nothing to wait for, which is the claim. A macrotask is more than an
+      // immediately-resolved actor needs to have run and reported.
+      await new Promise((r) => setTimeout(r, 20))
+    }
+
+    check(
+      `under ${under} the plan-usage actor runs ${wanted === 1 ? 'once' : 'not at all'}`,
+      invocations === wanted,
+    )
+    check(
+      `and under ${under} the region lands in ${wanted === 1 ? 'read' : 'unread'}`,
+      regionOf(actor.getSnapshot().value, 'subscription') === (wanted === 1 ? 'read' : 'unread'),
+    )
+    actor.stop()
+  }
+}
+
+{
+  /*
+    A credential re-read that turns out to be an API key takes the strip away.
+
+    The figures stay in context, and deliberately: they were measured, nothing
+    unmeasured them, and a machine that blanked them on a credential event would
+    be reporting a failed read that never happened. What changed is that there is
+    no longer a plan for them to be about — which is the strip's question, not
+    the region's, and `hasPlanUsage` is where both ask it.
+
+    The actor here throws on sight. If the gate were removed, the re-read below
+    would run it, fail, and drop the region out of `read` — so this block fails
+    from two directions rather than one.
+  */
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        readCredential: resolves<CredentialReading, Record<string, never>>({
+          source: 'keychain',
+          kind: 'api-key',
+        }),
+        readSubscriptionUsage: rejects<Usage, Record<string, never>>('there is no plan to ask'),
+      },
+    }),
+    {
+      input: {
+        policy: seedPolicy,
+        enterCredential: 'present',
+        credentialKind: 'subscription',
+        enterSubscription: 'read',
+        subscription: { fiveHourPct: 11, weeklyPct: 54, source: 'live' },
+      },
+    },
+  ).start()
+
+  check(
+    'a subscription harness with figures shows the strip',
+    hasPlanUsage(actor.getSnapshot().context.credentialKind),
+  )
+
+  actor.send({ type: 'READ_CREDENTIAL' })
+  await waitFor(actor, (s) => s.context.credentialKind === 'api-key', soon)
+
+  check(
+    'a credential that turns out to be an API key takes the strip away',
+    !hasPlanUsage(actor.getSnapshot().context.credentialKind),
+  )
+  check(
+    'without discarding what was measured while there was a plan',
+    actor.getSnapshot().context.subscription?.fiveHourPct === 11,
+  )
+  check(
+    'and a re-read is refused from `read` as well as from `unread`',
+    !actor.getSnapshot().can({ type: 'READ_SUBSCRIPTION' }),
+  )
+
+  actor.send({ type: 'READ_SUBSCRIPTION' })
+  await new Promise((r) => setTimeout(r, 20))
+  check(
+    'so the region stays where it was rather than failing a read nobody could make',
+    regionOf(actor.getSnapshot().value, 'subscription') === 'read',
+  )
+  actor.stop()
+}
+
+{
   const actor = createActor(
     harnessMachine.provide({
       actors: {
@@ -2121,7 +2255,11 @@ type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded'
         }),
       },
     }),
-    { input: { policy: seedPolicy } },
+    // Every block below runs under a subscription, because that is the only
+    // configuration in which a plan-usage read happens at all. They were
+    // written without a kind, when there was no kind — which made them the
+    // measurement of a configuration the product does not ship.
+    { input: { policy: seedPolicy, credentialKind: 'subscription' } },
   ).start()
 
   check('plan usage starts unread', regionOf(actor.getSnapshot().value, 'subscription') === 'unread')
@@ -2147,7 +2285,7 @@ type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded'
     harnessMachine.provide({
       actors: { readSubscriptionUsage: rejects<Usage, Record<string, never>>('no session to ask') },
     }),
-    { input: { policy: seedPolicy } },
+    { input: { policy: seedPolicy, credentialKind: 'subscription' } },
   ).start()
 
   actor.send({ type: 'READ_SUBSCRIPTION' })
@@ -2170,6 +2308,7 @@ type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded'
     {
       input: {
         policy: seedPolicy,
+        credentialKind: 'subscription',
         subscription: { fiveHourPct: 11, weeklyPct: 54, source: 'live' },
         enterSubscription: 'read',
       },
