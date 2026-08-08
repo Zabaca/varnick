@@ -1,0 +1,45 @@
+# 27 — Every Bash command fails, because the agent cannot create its scratch directory
+
+**What to build:** An agent running under varnick can run a shell command. Today every one of them fails before it starts.
+
+**Blocked by:** None.
+
+**Status:** ready-for-agent — but the fix is a policy change, so read "The decision" first.
+
+**Realizes:** no state path.
+
+## What the agent said, unprompted
+
+The first Turn ever run in the application, under a real subscription credential, asked what the agent could see. It answered with a caveat before answering the question:
+
+> One important caveat first: **my Bash tool is broken in this session.** Every command fails before it runs: `EPERM: operation not permitted, mkdir '/private/tmp/claude-501/-Users-uptown-Projects-zabaca-varnick/...'` It can't create its scratch directory under `/private/tmp` — so I can't actually `ls` anything.
+
+It then read `package.json`, `README.md`, `CONTEXT.md` and `CLAUDE.md` directly and produced an accurate account of the repository from those alone. So the agent works; three of its tools do not.
+
+It also noticed the irony itself: *"Fitting, given your own README documents that `/private/tmp` writes get refused under varnick's sandbox policy."* The policy was documented. The consequence — that this makes Bash unusable — was not, by anyone.
+
+## Why
+
+`allowWrite` is exactly two entries: the clone, and the OS per-user temp directory, which on this machine is `/var/folders/vf/…/T`. Claude Code creates a scratch directory under `/tmp` instead — `/private/tmp/claude-<uid>/<project>/<session>` — and `/tmp` is not `os.tmpdir()`. It is not in `allowWrite`, so the `mkdir` is refused, so the tool that needs it never gets to run a command.
+
+This is not the same defect as ticket 26. That one is `Grep` shelling out to a binary under `$HOME`; this one is a directory the policy does not name. Same symptom class, unrelated fixes.
+
+## The decision
+
+The narrow fix is one path in `allowWrite`, and it is genuinely narrow: `/private/tmp/claude-<uid>/**` is a per-user scratch directory outside the clone, and the policy already grants exactly this for `os.tmpdir()`. It grants no new *kind* of access — it grants the same kind in the place the tool actually looks.
+
+The alternative worth measuring first is whether Claude Code honours `TMPDIR`. If it does, the agent's environment can point it at the temp directory that is already allowed and **the policy does not change at all**, which is strictly better. The path in the error is a fixed `/tmp` rather than a resolved temp dir, which suggests it does not, but that is an inference and this ticket exists because inference has been expensive here.
+
+What must not happen is widening `allowWrite` to `/tmp` wholesale. That is a world-writable directory shared with every other process on the machine, and the agent having free rein there is a different proposition from having its own subdirectory in it.
+
+- [ ] Whether Claude Code honours `TMPDIR` is measured and recorded
+- [ ] If it does, the agent's environment is pointed at the already-allowed temp and the policy is untouched
+- [ ] If it does not, `allowWrite` gains the per-user scratch path and nothing broader — never `/tmp` itself
+- [ ] A Bash command runs end to end under a real Turn, and that is what closes this rather than a unit test
+- [ ] The boundary probes gain a case for it, so a policy that loses this entry fails something
+
+## What this says about the probes
+
+The containment suite runs commands *it* wraps, with `runner()`, and they work — `python3 -c "print(6*7)"` passes in probe 10. What it never did was let the agent's own Bash tool try, because that needs a Session, and the only probe with a Session is probe 6, which skipped for want of a credential from the day it was written.
+
+Two defects were behind that skip. Both were found in the first ten minutes of the product actually running.

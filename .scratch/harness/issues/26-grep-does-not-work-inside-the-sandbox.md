@@ -29,7 +29,7 @@ So: Grep shells out to a binary the policy makes unrunnable. Read is pure `fs` a
 
 ## Two things to check before choosing a fix
 
-- **Whether `Glob` is affected too.** The assertion failed at Grep, so Glob was never reached. It may be in-process like Read, or shell out like Grep.
+- ~~Whether `Glob` is affected too.~~ **It is.** The first Turn run in the real application reported "I also have no Glob/Grep in this session" and fell back to reading known paths, which is a stronger signal than the probe gave — the probe stopped at Grep's control before reaching Glob. So both search tools are gone and only `Read` survives, which means the agent can read a file it is told about and cannot find one it is not.
 - **Whether ADR-0003's central claim needs updating.** It says the SDK's `Read`, `Grep` and `Glob` "run inside the process without ever shelling out", measured against SDK 0.3.220 in another repository. If Grep now shells out, that sentence is stale. **The ADR's conclusion is unaffected** — `srt` wraps the process tree, so it covers a tool whether it shells out or not, which is precisely the argument for wrapping the tree. But the supporting detail should say what is true today.
 
 ## The fix is a decision, not an obvious edit
@@ -45,6 +45,10 @@ Each option gives something up, and this is the developer's call rather than the
 - [ ] Whatever is chosen, `README.md` says what the agent can and cannot do inside the Sandbox
 - [ ] ADR-0003's description of how the SDK's tools run matches what was measured today
 - [ ] The Sandbox policy is not widened over `$HOME` under any option
+
+## Not the only one
+
+Ticket 27 is the sibling: every Bash command fails too, for an unrelated reason — Claude Code's scratch directory lives under `/tmp`, which `allowWrite` does not name. Between the two, an agent running under varnick today has `Read` and nothing else. Neither defect is in the credential work; both were simply never visible until something ran a Turn.
 
 ## And the thing this proves about the suite
 
