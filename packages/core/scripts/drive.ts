@@ -407,7 +407,13 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saveFailed')
   check('a failed save keeps its error', actor.getSnapshot().context.saveError === 'disk full')
   check('a failed save leaves the turn idle', regionOf(actor.getSnapshot().value, 'turn') === 'idle')
-  check('the transcript is still sendable while a save is failing', actor.getSnapshot().can({ type: 'EDIT_DRAFT', text: 'x' }))
+  // `can({ type: 'EDIT_DRAFT' })` used to stand here and could not fail — the
+  // event is handled unconditionally at the root, so it is true in every state
+  // of every Session. `SEND` is the one that is gated: `turn.idle` plus a draft.
+  // That is what "still sendable" was trying to say.
+  actor.send({ type: 'EDIT_DRAFT', text: 'still typing' })
+  check('the transcript is still sendable while a save is failing', actor.getSnapshot().can({ type: 'SEND' }))
+  actor.send({ type: 'EDIT_DRAFT', text: '' })
 
   actor.send({ type: 'RETRY_SAVE' })
   await waitFor(actor, (s) => regionOf(s.value, 'persistence') === 'saved')
@@ -674,12 +680,16 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   check('a resumed Session carries no partial, because the mirror holds none', resumed.context.partial === '')
   check('a resumed Session is saved, not dirty', regionOf(resumed.value, 'persistence') === 'saved')
   check('resuming is not a Turn boundary and writes nothing', spy.calls === 0)
-  check('a resumed Session can be talked to immediately', session!.getSnapshot().can({ type: 'EDIT_DRAFT', text: 'x' }))
+  // Same substitution as above, and here it buys a second assertion: an empty
+  // draft is refused, so "can be talked to" is a fact about the guard rather
+  // than about an event the root always accepts.
+  check('a resumed Session refuses a send with nothing typed', !session!.getSnapshot().can({ type: 'SEND' }))
 
   // The reason a restore has to be read before a Session runs on that id: the
   // next save has to *extend* the mirror. A Session that started empty over a
   // transcript that is not empty would rewrite the file instead.
   session!.send({ type: 'EDIT_DRAFT', text: 'carry on' })
+  check('a resumed Session can be talked to immediately', session!.getSnapshot().can({ type: 'SEND' }))
   session!.send({ type: 'SEND' })
   check(
     'the first Turn after a resume reaches the mirror',
@@ -1457,7 +1467,11 @@ export default function Billing() {
 
   actor.send({ type: 'UNLOAD' })
   check('an unloaded Surface is final', actor.getSnapshot().status === 'done')
-  check('a final Surface accepts nothing', !actor.getSnapshot().can({ type: 'RETRY' }))
+  // Not `!can({ type: 'RETRY' })`, which stood here: XState answers false from
+  // `can()` for *any* stopped actor, so that held for a machine with a RETRY
+  // handler on every state. Where it stopped is the fact — `unloaded` rather
+  // than `failed`, which is the state a stray UNLOAD during a load would reach.
+  check('an unloaded Surface stopped in unloaded', actor.getSnapshot().value === 'unloaded')
   actor.stop()
 }
 
@@ -1882,7 +1896,21 @@ async function turnPath(
     at.get('compacting')?.includes('INTERRUPT') === false,
   )
   check('the composer and the model are legal in every turn state', [...at.values()].every((set) => set.startsWith('EDIT_DRAFT') && set.includes('SET_MODEL')))
-  check('every turn state the harness realizes was reached to be measured', at.size === 6)
+  /*
+    This asserted `at.size === 6` and could not fail: `at` is filled by six
+    literal `at.set` calls with distinct keys, so its size is six whatever the
+    machine does. The fact worth holding is that the six measured here are
+    *exactly* the turn states the machine declares — so adding a turn state
+    without measuring what it accepts fails this line rather than passing it.
+  */
+  const declaredTurnStates = SESSION_STATE_PATHS.filter((path) => path.startsWith('turn.'))
+    .map((path) => path.split('.').at(-1)!)
+    .sort()
+    .join(' ')
+  check(
+    'every turn state the machine declares was reached to be measured',
+    [...at.keys()].sort().join(' ') === declaredTurnStates,
+  )
 }
 
 {
@@ -1985,7 +2013,13 @@ async function turnPath(
   // no service behind an import to stand in for. Listing it would tell a reader
   // the panel beside the chat is showing something invented.
   check('the Surface loader is not listed as unimplemented', !UNIMPLEMENTED.includes('loadSurface'))
+  // `UNIMPLEMENTED.every(...)` stood here, and an `every` over an empty list is
+  // true by definition — the list emptied and the assertion went on passing
+  // without reading anything. Both halves below can fail: the subset property
+  // for whenever a name goes back on, and the count, which is the fact the
+  // seeded marker actually renders.
   check('every unimplemented name is a real actor', UNIMPLEMENTED.every((name) => (ACTOR_NAMES as readonly string[]).includes(name)))
+  check('no actor is listed as unimplemented, so the seeded marker claims nothing', UNIMPLEMENTED.length === 0)
 }
 
 // ---------------------------------------------------------------------------
