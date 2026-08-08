@@ -286,6 +286,30 @@ export function agentConfigurationOptions(inherit: boolean): {
   return inherit ? {} : { settingSources: [], strictMcpConfig: true }
 }
 
+/**
+ * Variables in Claude Code's namespace that varnick did not put there.
+ *
+ * Two are varnick's own and are therefore not "inherited" whatever their names
+ * look like: the credential, which the host read and injected and which
+ * isolation must never take away, and the config directory, which varnick sets
+ * because the Sandbox leaves nowhere else writable. Everything else matching
+ * the prefixes came from whoever launched the app.
+ *
+ * Exported so the boundary probe counts the same set the scrub uses, rather
+ * than a second definition that could drift from it.
+ */
+const VARNICK_OWNED_VARIABLES = [CREDENTIAL_ENV_VAR_NAME, CLAUDE_CONFIG_DIR_ENV_VAR] as const
+
+export function inheritedConfigVariables(
+  env: Record<string, string | undefined>,
+): readonly string[] {
+  return Object.keys(env).filter(
+    (key) =>
+      !(VARNICK_OWNED_VARIABLES as readonly string[]).includes(key) &&
+      INHERITED_CONFIG_PREFIXES.some((prefix) => key.startsWith(prefix)),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // The agent host, as a process
 // ---------------------------------------------------------------------------
@@ -300,8 +324,17 @@ export function agentConfigurationOptions(inherit: boolean): {
  * interpreter and the SDK's own files are reachable inside the Sandbox — and
  * then tries to read a path it should not be able to.
  *
+ * It also reports what isolation does to this process's own environment. That
+ * is here rather than only in a unit test because the number that started this
+ * work was measured, not imagined: nine `CLAUDE*` variables reached the
+ * confined process from whichever terminal launched varnick. `inherited` is
+ * whatever this run happened to be handed — it varies with how varnick was
+ * started, so nothing asserts a figure — and `isolated` is what survives the
+ * scrub, which must be none.
+ *
  * No session is opened and no credential is needed, so the probe runs on a
- * machine that has never stored one.
+ * machine that has never stored one. Nothing here reads a settings file: the
+ * environment is computed, and no Claude Code process is started.
  */
 async function selfTest(sdkEntry: string, deniedPath: string): Promise<void> {
   const report: Record<string, string> = {}
@@ -320,6 +353,14 @@ async function selfTest(sdkEntry: string, deniedPath: string): Promise<void> {
   } catch {
     report.read = 'denied'
   }
+
+  const isolated = agentEnvironment(process.env, {
+    cloneRoot: process.cwd(),
+    inherit: false,
+  })
+  report.inherited = String(inheritedConfigVariables(process.env).length)
+  report.isolated = String(inheritedConfigVariables(isolated).length)
+  report.configDir = isolated[CLAUDE_CONFIG_DIR_ENV_VAR] ?? ''
 
   process.stdout.write(`${JSON.stringify(report)}\n`)
 }

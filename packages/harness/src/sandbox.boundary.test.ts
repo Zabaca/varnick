@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, mkdtempSync, rmSync, writeFileSync }
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { agentCommand } from './agent.ts'
+import { CLAUDE_CONFIG_RELATIVE_PATH, agentCommand } from './agent.ts'
 import {
   establishSandbox,
   releaseSandbox,
@@ -157,6 +157,29 @@ test.skipIf(blocked !== null)(
     // The boundary, measured from inside the real agent process.
     expect(report.read).toBe('denied')
     expect(probe.stdout).not.toContain(SECRET)
+
+    /*
+      Configuration isolation, measured in the same process rather than only in
+      a unit test — ADR-0010.
+
+      `inherited` counts the variables named for Claude Code or the Anthropic
+      client that this run was handed. It is reported rather than asserted: it
+      depends entirely on the terminal varnick was launched from, and the run
+      that started this work saw nine. `isolated` is what survives the scrub,
+      and it must be none — that is the claim, and it is the one thing here
+      that does not vary by machine.
+    */
+    expect(report.isolated).toBe('0')
+    expect(Number(report.inherited)).toBeGreaterThanOrEqual(0)
+
+    // And the config directory is inside the clone, which is the only place the
+    // Sandbox lets Claude Code write one. A default of ~/.claude is a process
+    // that cannot write its own state.
+    expect(report.configDir).toBe(join(repoRoot, CLAUDE_CONFIG_RELATIVE_PATH))
+    console.log(
+      `boundary probe: the confined process was handed ${report.inherited} inherited` +
+        ` Claude Code / Anthropic variables, and isolation left ${report.isolated}.`,
+    )
   },
   180_000,
 )

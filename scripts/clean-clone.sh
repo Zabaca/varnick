@@ -94,14 +94,48 @@ record $?
 tail -3 "$work/install.log"
 
 for task in typecheck test build drive; do
-  step "bun run $task"
   case "$task" in
-    test) (cd "$clone" && scrubbed "$bun_bin" test packages) >"$work/$task.log" 2>&1 ;;
-    *) (cd "$clone" && scrubbed "$bun_bin" run "$task") >"$work/$task.log" 2>&1 ;;
+    test)
+      step "bun test packages"
+      (cd "$clone" && scrubbed "$bun_bin" test packages) >"$work/$task.log" 2>&1
+      ;;
+    *)
+      step "bun run $task"
+      (cd "$clone" && scrubbed "$bun_bin" run "$task") >"$work/$task.log" 2>&1
+      ;;
   esac
   record $?
   tail -4 "$work/$task.log"
 done
+
+# The closest a script gets to a first launch. The Rust host starts the Harness
+# runtime and speaks newline-delimited JSON to it; this does the same two calls
+# a launch makes, in a clone that has never been run:
+#
+#   check-sandbox        generates sandbox-policy.json for this clone and
+#                        establishes the kernel sandbox, or fails
+#   wrap-agent-command   computes argv, an environment overlay and a working
+#                        directory for the agent, which the host would spawn
+#
+# No agent is started and no credential is read — that is the host's half, and
+# it needs a keychain this script may not touch.
+step "the Harness runtime establishes a Sandbox in a clone that has never run"
+printf '%s\n%s\n' \
+  '{"id":1,"request":{"kind":"check-sandbox"}}' \
+  '{"id":2,"request":{"kind":"wrap-agent-command"}}' |
+  (cd "$clone" && scrubbed "$bun_bin" packages/harness/src/serve.ts) >"$work/runtime.log" 2>&1
+runtime_status=$?
+if [ "$runtime_status" -eq 0 ] &&
+  /usr/bin/grep -q '"id":1,"ok"' "$work/runtime.log" &&
+  /usr/bin/grep -q 'sandbox-exec' "$work/runtime.log"; then
+  record 0
+else
+  record 1
+fi
+# argv and the overlay only; the wrapping is long and holds this machine's paths.
+/usr/bin/sed -e 's/\(.\{200\}\).*/\1…/' "$work/runtime.log" | /usr/bin/head -4
+printf '    sandbox-policy.json generated: %s\n' \
+  "$([ -f "$clone/sandbox-policy.json" ] && echo yes || echo no)"
 
 # The dev server, which is what `bun run dev` gives a stranger before they have
 # a desktop app. Started, asked for the page, stopped. Nothing here proves the
@@ -111,7 +145,9 @@ step "bun run dev serves the page"
 dev_pid=$!
 served=1
 for _ in $(seq 1 40); do
-  if /usr/bin/curl -fsS -o /dev/null http://localhost:1420/; then
+  # Errors are swallowed on purpose: every attempt before the server is up
+  # fails, and printing those would make a healthy run look broken.
+  if /usr/bin/curl -fsS http://localhost:1420/ 2>/dev/null | /usr/bin/grep -q 'id="root"'; then
     served=0
     break
   fi
@@ -143,7 +179,9 @@ cat <<'NOTE'
         build all pass with no varnick-, Claude Code- or shell-specific
         variable in the environment, and a HOME that has never held any of them
       * the tracked source names no author path
-      * the dev server starts and serves on a clone that has never been run
+      * a clone that has never been run generates its own sandbox-policy.json,
+        establishes the kernel sandbox, and computes the wrapping for its agent
+      * the dev server starts and serves the page on that same clone
 
     Approximated, not established:
       * this is one machine that HAS run varnick. The kernel, the installed

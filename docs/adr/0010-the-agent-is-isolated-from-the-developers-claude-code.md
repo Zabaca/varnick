@@ -40,6 +40,19 @@ Nine variables — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_EFFORT`,
 chosen by varnick, all of them an accident of which terminal the app was
 launched from.
 
+The scrub is measured in the same place rather than only in a unit test.
+`--selftest` in the real agent entry, under the real wrapper, now reports both
+counts, and `sandbox.boundary.test.ts` asserts the second:
+
+```
+boundary probe: the confined process was handed 9 inherited Claude Code /
+Anthropic variables, and isolation left 0.
+```
+
+The first number is reported and not asserted — it depends entirely on the
+terminal varnick was launched from. The second is the claim, and it is the one
+figure here that does not vary by machine.
+
 `agentConfigurationOptions(true)` returns `{}`. Inheriting is the *absence* of
 the two options rather than an option asking for the opposite: what the flag
 restores is the CLI's own default, and stating it any other way would be varnick

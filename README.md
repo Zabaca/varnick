@@ -95,6 +95,11 @@ established, the agent does not start.
   does not, so it is denied on its own line — it holds `System.keychain`, whose
   generic-password items include the Wi-Fi networks the machine has joined.
 - `api.anthropic.com` and `registry.npmjs.org` are reachable, over working TLS.
+- The agent process inherits none of your Claude Code environment. The probe
+  reports how many `CLAUDE*` and `ANTHROPIC_*` variables the confined process
+  was handed — nine, on the run that prompted this — and asserts that isolation
+  leaves none of them. The first number varies with the terminal you launched
+  from; the second does not.
 
 **Asserted by the policy, but not yet probed against a running kernel:**
 

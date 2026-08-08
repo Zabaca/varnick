@@ -13,6 +13,7 @@ import {
   agentEnvironment,
   agentSdkEntry,
   claudeConfigDir,
+  inheritedConfigVariables,
   inheritsClaudeConfig,
   sandboxEnvOverlay,
 } from './agent.ts'
@@ -249,6 +250,25 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
       )
       expect(env[INHERIT_CLAUDE_CONFIG_ENV_VAR]).toBeUndefined()
     }
+  })
+
+  test('what counts as inherited is what varnick did not put there', () => {
+    // The two varnick owns are not the developer's, whatever their names look
+    // like: the credential the host injected, and the config directory the
+    // Sandbox forces. The boundary probe counts this set inside the real
+    // confined process, so a second definition here would be one that drifts.
+    expect(inheritedConfigVariables(developerEnvironment)).toEqual([
+      'CLAUDECODE',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'CLAUDE_CODE_SESSION_ID',
+      'CLAUDE_EFFORT',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_MODEL',
+    ])
+
+    // The claim, stated as the probe states it: after the scrub, none.
+    const env = agentEnvironment(developerEnvironment, { cloneRoot: CLONE, inherit: false })
+    expect(inheritedConfigVariables(env)).toEqual([])
   })
 
   test('the config directory is a path, not a place anything is read from here', () => {
