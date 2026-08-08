@@ -176,6 +176,15 @@ describe('a rejection by the API is its own outcome', () => {
     expect(credentialRejection(new Error('authentication_error: invalid x-api-key'))).not.toBeNull()
   })
 
+  test('the Agent SDK’s own name for it is a rejected credential too', () => {
+    // The SDK reports a refused credential as `authentication_failed` rather
+    // than as an HTTP status. A classifier that missed it would let the one
+    // failure meaning `credential.rejected` land as an ordinary failed turn,
+    // and a developer would retry the conversation instead of fixing the key.
+    expect(credentialRejection(new Error('authentication_failed'))).not.toBeNull()
+    expect(credentialRejection('authentication_failed')).not.toBeNull()
+  })
+
   test('a 500 is not — that is the agent being broken, which is a different fix', () => {
     expect(credentialRejection({ status: 500 })).toBeNull()
   })

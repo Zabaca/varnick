@@ -11,6 +11,7 @@ import {
   defaultSeedControls,
   type ActorMode,
   type SeedControls,
+  type TurnObserver,
 } from './actors/index.ts'
 import { regionOf } from './domain.ts'
 import { seedPolicy } from './data/seed.ts'
@@ -54,7 +55,31 @@ export function useHarness(
   sessionInput?: SessionInput,
 ) {
   const mode = requestedMode ?? resolveActorMode()
-  const seeds = useMemo(() => actorsFor(mode, controls), [mode, controls])
+
+  /*
+    What a running Turn says, delivered to whichever machine it is about.
+
+    Indirect through a ref because of an ordering problem that is real rather
+    than incidental: the actors are built before `useMachine` runs, and the way
+    to send an event only exists after it. The observer handed to the actors is
+    therefore stable and the thing it calls is replaced once the machine exists.
+
+    This is the same shape `AGENT_EXIT` already has below. An actor resolves
+    once, and a delta and a rejected credential both happen while it is still
+    running — so neither can travel back as its result, and neither is
+    addressed to the machine that invoked it. A delta is the Session's; a
+    rejected credential is the Harness's.
+  */
+  const signals = useRef<TurnObserver>({ delta: () => {}, credentialRejected: () => {} })
+  const observer = useMemo<TurnObserver>(
+    () => ({
+      delta: (text) => signals.current.delta(text),
+      credentialRejected: (detail) => signals.current.credentialRejected(detail),
+    }),
+    [],
+  )
+
+  const seeds = useMemo(() => actorsFor(mode, controls, observer), [mode, controls, observer])
   const log = useRef<Transition[]>([])
   const last = useRef<Record<string, string>>({})
   const [, bumpLog] = useReducer((n: number) => n + 1, 0)
@@ -99,6 +124,31 @@ export function useHarness(
     input: { policy: seedPolicy, sessionInput },
     inspect,
   })
+
+  /*
+    Where a running Turn's two signals land.
+
+    A delta goes to the Session, which is a spawned child — read off the
+    parent's context rather than held here, so a restart cannot leave this
+    pointing at a Session that has been replaced.
+
+    `CREDENTIAL_REJECTED` goes to the Harness, and this is the whole route from
+    a Turn's 401 to `credential.rejected`. The Session cannot send it: it is a
+    child, and a child does not send to its parent. Nothing about the machines
+    changed to make this work — the event already existed, and this is the same
+    place `AGENT_EXIT` is raised from, for the same reason. A Turn that failed
+    on authentication says something about the credential rather than about the
+    conversation, and a developer who retries the Turn instead of fixing the key
+    is retrying the wrong thing.
+  */
+  useEffect(() => {
+    signals.current = {
+      delta: (text) => {
+        actorRef.getSnapshot().context.session?.send({ type: 'STREAM_DELTA', text })
+      },
+      credentialRejected: (detail) => send({ type: 'CREDENTIAL_REJECTED', detail }),
+    }
+  }, [actorRef, send])
 
   /*
     The agent process's own exit, turned into the event that names it.

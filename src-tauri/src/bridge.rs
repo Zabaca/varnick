@@ -99,10 +99,18 @@ pub enum Route {
 /// build, and forwarding it would turn that into a timeout.
 pub fn route_of(kind: &str) -> Option<Route> {
     match kind {
-        // The credential, and the three calls that need it or the process it
-        // was injected into. All of them are this process's, because this is
-        // where the value is — see agent.rs.
-        "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" => Some(Route::Host),
+        // The credential, and every call that needs it or the process it was
+        // injected into. All of them are this process's, because this is where
+        // the value is — see agent.rs.
+        //
+        // A Turn is on this list for the second reason rather than the first.
+        // It carries no secret, but it rides the Session the agent process is
+        // already holding, and this is the process that spawned it. Answering a
+        // Turn anywhere else would mean a second Claude Code session, which is
+        // ADR-0003's last consequence and the rule most likely to be broken by
+        // accident.
+        "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" | "run-turn"
+        | "next-turn-event" | "interrupt-turn" => Some(Route::Host),
         "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
@@ -339,6 +347,19 @@ pub fn harness_call(
                 let reason = agent.await_exit()?;
                 Ok(serde_json::json!({ "reason": reason }))
             }
+            // A prompt and an interrupt are the same act from here: one control
+            // line onto the pipe the agent process is listening on. The Turn's
+            // answer does not come back through this call.
+            "run-turn" | "interrupt-turn" => {
+                agent.run_turn(&request)?;
+                Ok(serde_json::json!({ "ok": true }))
+            }
+            // Waits, like `await-agent-exit`, and for the same reason: a
+            // request/response seam cannot push, and a poll would deliver a
+            // streamed answer in the poll's rhythm rather than the agent's.
+            // `null` is "nothing yet", which is a working Turn rather than a
+            // failed one.
+            "next-turn-event" => Ok(serde_json::json!({ "event": agent.next_event() })),
             // Unreachable while `route_of` and this match agree, and a closed
             // default rather than a forward if they ever stop agreeing.
             _ => Err(Failure::of("malformed")),
@@ -403,8 +424,19 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_is_answered_where_the_agent_process_is() {
+        // A Turn rides the Session the agent process is already holding, and
+        // this host is the process that spawned it — so the three calls about a
+        // Turn go the same way as the three about the process. The alternative
+        // is a second Claude Code session, which ADR-0003 forbids.
+        assert_eq!(route_of("run-turn"), Some(Route::Host));
+        assert_eq!(route_of("next-turn-event"), Some(Route::Host));
+        assert_eq!(route_of("interrupt-turn"), Some(Route::Host));
+    }
+
+    #[test]
     fn a_kind_this_host_does_not_know_is_routed_nowhere() {
-        assert_eq!(route_of("run-turn"), None);
+        assert_eq!(route_of("compact-session"), None);
         assert_eq!(route_of(""), None);
     }
 

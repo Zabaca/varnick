@@ -43,6 +43,30 @@
 
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { credentialRejection } from './credentials.ts'
+import {
+  beginTurn,
+  encodeTurnEvent,
+  parseTurnControl,
+  type TurnEvent,
+  type TurnFailure,
+  type TurnRun,
+} from './turn.ts'
+
+/**
+ * Classify something the Session *threw* rather than reported.
+ *
+ * The SDK names most failures itself, in an enum ./turn.ts maps. An exception
+ * out of the stream carries only prose, and prose is where a 401 body would be —
+ * so it is handed to {@link credentialRejection}, the shared classifier, and
+ * nothing but its verdict is kept. This is the caller that classifier was
+ * written for, and it lives here rather than in ./turn.ts because ./turn.ts has
+ * to stay importable from the webview bundle without reaching back through the
+ * bridge — see the note at the top of that file.
+ */
+export function failureOfThrown(error: unknown): TurnFailure {
+  return credentialRejection(error) === null ? 'execution' : 'authentication'
+}
 
 /** Where the agent host lives inside a clone. */
 export const AGENT_ENTRY_RELATIVE_PATH = 'packages/harness/src/agent.ts'
@@ -596,6 +620,132 @@ async function toolProbe(
   process.stdout.write(`${JSON.stringify(report)}\n`)
 }
 
+// ---------------------------------------------------------------------------
+// Turns, on the Session that is already open
+// ---------------------------------------------------------------------------
+
+/**
+ * What a Turn needs from the Session, and nothing else.
+ *
+ * A port rather than the SDK's `Query`, so the loop below can be driven by a
+ * test with no Claude Code process anywhere. That is not a testing convenience:
+ * a test that opened a session to exercise a Turn would be a session outside
+ * `srt` on a developer's machine, which is exactly what ADR-0003's last
+ * consequence forbids.
+ *
+ * Four methods, and deliberately no fifth. This is the surface something outside
+ * the Sandbox can reach into the Sandbox with.
+ */
+export interface TurnSessionPort {
+  /** Put a prompt on the Session's streaming input. */
+  prompt(text: string): void
+  /** What the *next* answer runs on. Applied before the prompt goes out. */
+  setModel(model: string): Promise<void>
+  setEffort(effort: string): Promise<void>
+  /** Stop the answer in flight. What has arrived stays arrived. */
+  interrupt(): Promise<void>
+}
+
+export interface ServeTurnsInput {
+  /** Control requests, as newline-delimited JSON. The process's stdin. */
+  readonly control: AsyncIterable<Uint8Array | string>
+  /** The Session's messages. One stream for the life of the process. */
+  readonly messages: AsyncIterable<unknown>
+  readonly session: TurnSessionPort
+  /** One event, already newline-terminated. The process's stdout. */
+  readonly write: (line: string) => void
+}
+
+/**
+ * Run Turns on one Session until both streams end.
+ *
+ * Two loops over one piece of state — the Turn currently running. The control
+ * loop starts and interrupts Turns; the message loop reads the Session and turns
+ * what it says into events. They are separate because they are separate facts: a
+ * control request must be answerable while an answer is streaming, which is what
+ * makes interrupting cost seconds rather than the rest of the Turn.
+ *
+ * A message arriving with no Turn running is dropped. The Session emits its own
+ * init and status messages, and a stray delta attributed to the next Turn would
+ * become that Turn's first word.
+ */
+export async function serveTurns(input: ServeTurnsInput): Promise<void> {
+  const { control, messages, session, write } = input
+
+  /** The Turn currently running, and the only state these two loops share. */
+  let running: TurnRun | null = null
+
+  const emit = (events: readonly TurnEvent[]) => {
+    for (const event of events) write(encodeTurnEvent(event))
+  }
+
+  async function start(request: {
+    turnId: string
+    prompt: string
+    model: string
+    effort: string
+  }): Promise<void> {
+    const run = beginTurn(request.turnId)
+    running = run
+    try {
+      // Before the prompt, so the Turn runs on what it was started with. A
+      // SET_MODEL that arrives mid-Turn belongs to the next one, and applying
+      // it here rather than reconfiguring a Turn in flight is what makes that
+      // true rather than likely.
+      await session.setModel(request.model)
+      await session.setEffort(request.effort)
+      session.prompt(request.prompt)
+    } catch (error) {
+      // A Turn that was sent and never answered is the worst available state:
+      // `sending` for ever, with nothing to retry and nothing to dismiss.
+      emit([{ kind: 'failed', turnId: request.turnId, failure: failureOfThrown(error) }])
+      if (running === run) running = null
+    }
+  }
+
+  async function handle(line: string): Promise<void> {
+    const request = parseTurnControl(line)
+    // A line this host does not understand is dropped rather than guessed at.
+    // It runs inside the Sandbox holding a live agent, so a loosely-read control
+    // channel is a way in rather than a robustness feature.
+    if (request === null) return
+    if (request.kind === 'run-turn') return start(request)
+    // A stale interrupt from an abandoned Turn must not stop the one that
+    // replaced it, so it has to name the Turn it means.
+    if (running !== null && !running.finished && running.turnId === request.turnId) {
+      await session.interrupt()
+    }
+  }
+
+  async function readControl(): Promise<void> {
+    const decoder = new TextDecoder()
+    let pending = ''
+
+    for await (const chunk of control) {
+      pending += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true })
+      let newline = pending.indexOf('\n')
+      while (newline !== -1) {
+        const line = pending.slice(0, newline)
+        pending = pending.slice(newline + 1)
+        if (line.trim().length > 0) await handle(line)
+        newline = pending.indexOf('\n')
+      }
+    }
+    if (pending.trim().length > 0) await handle(pending)
+  }
+
+  async function readMessages(): Promise<void> {
+    for await (const message of messages) {
+      const run = running
+      if (run === null || run.finished) continue
+      emit(run.accept(message))
+      if (run.finished && running === run) running = null
+    }
+  }
+
+  await Promise.all([readControl(), readMessages()])
+}
+
 /**
  * Open the confined Session and hold it.
  *
@@ -617,6 +767,18 @@ async function toolProbe(
 async function runAgentHost(sdkEntry: string): Promise<void> {
   const { query } = (await import(sdkEntry)) as typeof import('@anthropic-ai/claude-agent-sdk')
   type Prompt = Parameters<typeof query>[0]['prompt']
+  type UserMessage = { type: 'user'; message: { role: 'user'; content: string }; parent_tool_use_id: null; session_id: string }
+
+  /*
+    Streaming input, held open, fed by the control channel.
+
+    The queue is what makes a Turn a Turn: the generator never returns, so the
+    Claude Code process stays up between Turns and `agent.running` keeps meaning
+    "a process is there" rather than "a process was there once". A `prompt`
+    string instead would run one Turn and exit.
+  */
+  const queued: UserMessage[] = []
+  let wake: (() => void) | null = null
 
   const cloneRoot = process.cwd()
   const inherit = inheritsClaudeConfig(process.env)
@@ -628,18 +790,27 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
   const { mkdirSync } = await import('node:fs')
   mkdirSync(claudeConfigDir(cloneRoot), { recursive: true })
 
-  // Streaming input, held open. Nothing is sent on it — ticket 08 is what puts
-  // turns on this wire — and it never returns, which is what keeps the Claude
-  // Code process up. A `prompt` string instead would run one turn and exit, and
-  // `agent.running` would come to mean "a process was there once".
+  // Streaming input, held open. Prompts are pushed onto it as Turns arrive and
+  // it never returns, which is what keeps the Claude Code process up. A
+  // `prompt` string instead would run one turn and exit, and `agent.running`
+  // would come to mean "a process was there once".
   const prompt = (async function* () {
-    await new Promise<never>(() => {})
+    for (;;) {
+      while (queued.length > 0) yield queued.shift() as UserMessage
+      await new Promise<void>((resolve) => {
+        wake = resolve
+      })
+    }
   })() as Prompt
 
   const session = query({
     prompt,
     options: {
       cwd: cloneRoot,
+      // What makes an answer arrive in pieces. Without it the SDK reports one
+      // assembled message when the Turn is over, and "working" would be
+      // indistinguishable from "hung" for the whole of it.
+      includePartialMessages: true,
       // ADR-0003: the kernel refuses sandbox_apply inside an existing sandbox,
       // so the SDK's own sandbox must stay off. srt is already around this
       // whole process tree. Set rather than omitted, because "off" belongs in
@@ -653,22 +824,39 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     },
   })
 
-  // Diagnostic only, and deliberately not a gate. `agent.running` is decided by
-  // the spawn succeeding, not by this line: measured against a session held open
-  // with no message sent, the SDK's init does not necessarily arrive, and a
-  // start that waited for it would hang on a working agent. What proves the
-  // process is alive is that it is alive — and what proves it is confined is
-  // sandbox.boundary.test.ts.
-  for await (const message of session) {
-    if (message.type === 'system') {
-      process.stdout.write(`${JSON.stringify({ ready: true })}\n`)
-      break
-    }
-  }
+  // Announced rather than awaited. `agent.running` is decided by the spawn
+  // succeeding, not by this line: measured against a session held open with no
+  // message sent, the SDK's init does not necessarily arrive, and a start that
+  // waited for it would hang on a working agent.
+  process.stdout.write(`${JSON.stringify({ ready: true })}\n`)
 
-  // Stay up. Stopping is the host killing this process tree, which is what
-  // reaches the machine as AGENT_EXIT carrying a real reason.
-  await new Promise<never>(() => {})
+  await serveTurns({
+    control: process.stdin,
+    messages: session,
+    write: (line) => process.stdout.write(line),
+    session: {
+      prompt: (text) => {
+        queued.push({
+          type: 'user',
+          message: { role: 'user', content: text },
+          parent_tool_use_id: null,
+          session_id: '',
+        })
+        wake?.()
+      },
+      setModel: (model) => session.setModel(model),
+      // `effortLevel` through the flag settings layer, which is the only way to
+      // change effort on a session that is already running. `max` is
+      // session-scoped and never persisted, which is what we want: the Session
+      // is varnick's, and writing to the developer's settings files would be a
+      // side effect nobody asked for.
+      setEffort: (effort) =>
+        session.applyFlagSettings({ effortLevel: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' }),
+      interrupt: async () => {
+        await session.interrupt()
+      },
+    },
+  })
 }
 
 // `agent.ts <sdkEntry> [--selftest|--toolprobe <deniedPath> <allowedPath>]`,

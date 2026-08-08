@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { createActor, fromPromise, waitFor } from 'xstate'
 import { harnessMachine, HARNESS_STATE_PATHS } from '../src/machines/harness.ts'
-import { sessionMachine, SESSION_STATE_PATHS } from '../src/machines/session.ts'
+import { sessionMachine, SESSION_STATE_PATHS, type SessionEvent } from '../src/machines/session.ts'
 import { surfaceMachine, SURFACE_STATE_PATHS } from '../src/machines/surface.ts'
 import {
   regionOf,
@@ -23,6 +23,7 @@ import {
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
 import { SCENARIOS, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
 import { frozenHarness } from '../src/actors/frozen.ts'
+import { ACTOR_NAMES, UNIMPLEMENTED } from '../src/actors/index.ts'
 import type { Effort, Message, ModelId, SandboxPolicy } from '../src/domain.ts'
 
 let passed = 0
@@ -1165,6 +1166,266 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
     `Core statically imports no Userspace module (found: ${offenders.length})`,
     offenders.length === 0,
   )
+}
+
+// ---------------------------------------------------------------------------
+// Session — the real Turn actor changes nothing about the machine
+// ---------------------------------------------------------------------------
+
+/**
+ * Every state the turn region passed through, in order.
+ *
+ * The claim being tested is negative — swapping the implementation changes no
+ * state, guard or transition — and a negative claim about a machine is only
+ * checkable by running the same script twice and comparing what it did.
+ */
+async function turnPath(
+  runTurn: ReturnType<typeof fromPromise<TurnOutput, TurnInput>>,
+  sessionId: string,
+): Promise<{ path: string[]; messages: string; tokens: number }> {
+  const path: string[] = []
+  const actor = createActor(sessionMachine.provide({ actors: { runTurn } }), {
+    input: { sessionId },
+  })
+  actor.subscribe((snapshot) => {
+    const turn = regionOf(snapshot.value, 'turn')
+    if (path.at(-1) !== turn) path.push(turn)
+  })
+  actor.start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'STREAM_DELTA', text: 'wor' })
+  actor.send({ type: 'STREAM_DELTA', text: 'king' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+
+  const snapshot = actor.getSnapshot()
+  actor.stop()
+  return {
+    path,
+    messages: snapshot.context.messages.map((m) => `${m.role}:${m.text}`).join('|'),
+    tokens: snapshot.context.tokensUsed,
+  }
+}
+
+{
+  /*
+    The binary criterion the ticket ends on: if wiring the Agent SDK in changed
+    a state, a guard or a transition, the model was wrong and the change belongs
+    back in the machine stage rather than here.
+
+    Both actors below settle the same way from the machine's side — one after a
+    tick, one after a delay, with different text and different token counts —
+    and the machine must not be able to tell them apart.
+  */
+  const echo = fromPromise<TurnOutput, TurnInput>(async ({ input }) => ({
+    text: `Acknowledged: ${input.prompt}`,
+    tokensUsed: 240,
+  }))
+  const streamed = fromPromise<TurnOutput, TurnInput>(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    return { text: 'working', tokensUsed: 9_512 }
+  })
+
+  const seeded = await turnPath(echo, 'x1')
+  const live = await turnPath(streamed, 'x2')
+
+  check('a turn walks sending → streaming → idle', seeded.path.join('→') === 'idle→sending→streaming→idle')
+  check('swapping the turn actor changes no state and no transition', seeded.path.join('→') === live.path.join('→'))
+  check(
+    'the transcript shape is the actor-independent part',
+    seeded.messages.startsWith('user:go|agent:') && live.messages.startsWith('user:go|agent:'),
+  )
+  check('and what the actor answered is the only thing that differs', seeded.messages !== live.messages)
+  check('a real token count reaches the meter unchanged', live.tokens === 9_512)
+}
+
+{
+  /*
+    The same claim, checked structurally rather than by running it.
+
+    Comparing two runs catches a machine whose *path* depends on the actor,
+    which is the weaker half. The stronger half is that no state, guard or
+    transition was added at all — and the way to check that is to write down
+    what each turn state accepts and let the build fail when it changes. A guard
+    relaxed to let the live actor through, an event added so a delta could
+    arrive somewhere new, a state split: each one moves a name in this list.
+
+    If this fails, the honest response is not to update the literal. It is that
+    the model changed, and a model change belongs back in the machine stage.
+  */
+  const everyEvent: SessionEvent[] = [
+    { type: 'EDIT_DRAFT', text: 'go' },
+    { type: 'SEND' },
+    { type: 'STREAM_DELTA', text: 'x' },
+    { type: 'INTERRUPT' },
+    { type: 'RETRY_TURN' },
+    { type: 'DISMISS_TURN_ERROR' },
+    { type: 'SAVE' },
+    { type: 'RETRY_SAVE' },
+    { type: 'MENU_MOVE', delta: 1, count: 1 },
+    { type: 'MENU_COMPLETE', name: '/clear' },
+    { type: 'MENU_DISMISS' },
+    { type: 'CLEAR' },
+    { type: 'SET_MODEL', model: 'claude-opus-5' },
+    { type: 'SET_EFFORT', effort: 'low' },
+    { type: 'SET_COMMANDS', names: [] },
+    { type: 'COMPACT' },
+  ]
+
+  const accepts = (actor: ReturnType<typeof createActor<typeof sessionMachine>>) =>
+    everyEvent
+      .filter((event) => actor.getSnapshot().can(event))
+      .map((event) => event.type)
+      .join(' ')
+
+  const at = new Map<string, string>()
+
+  {
+    const actor = createActor(sessionMachine.provide({ actors: { runTurn: turnNever() } }), {
+      input: { sessionId: 'x6', draft: 'go' },
+    }).start()
+    at.set('idle', accepts(actor))
+    actor.send({ type: 'SEND' })
+    at.set('sending', accepts(actor))
+    actor.send({ type: 'STREAM_DELTA', text: 'partial' })
+    at.set('streaming', accepts(actor))
+    actor.send({ type: 'INTERRUPT' })
+    at.set('interrupting', accepts(actor))
+    actor.stop()
+  }
+
+  {
+    const actor = createActor(
+      sessionMachine.provide({ actors: { runTurn: rejects<TurnOutput, TurnInput>('no') } }),
+      { input: { sessionId: 'x7', draft: 'go' } },
+    ).start()
+    actor.send({ type: 'SEND' })
+    await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'failed')
+    // The draft was consumed by sending, and SEND is guarded on having one.
+    actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+    at.set('failed', accepts(actor))
+    actor.stop()
+  }
+
+  check(
+    'idle accepts what idle has always accepted',
+    at.get('idle') === 'EDIT_DRAFT SEND SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACT',
+  )
+  check(
+    'sending accepts a delta and an interrupt, and nothing else new',
+    at.get('sending') ===
+      'EDIT_DRAFT STREAM_DELTA INTERRUPT SAVE SET_MODEL SET_EFFORT SET_COMMANDS',
+  )
+  check(
+    'streaming accepts exactly the same, which is why a delta needed no new state',
+    at.get('streaming') === at.get('sending'),
+  )
+  check(
+    'interrupting accepts nothing new, not even another interrupt',
+    at.get('interrupting') === 'EDIT_DRAFT SAVE SET_MODEL SET_EFFORT SET_COMMANDS',
+  )
+  check(
+    'turn-failed offers retry and dismiss, and the two settled commands',
+    at.get('failed') ===
+      'EDIT_DRAFT RETRY_TURN DISMISS_TURN_ERROR SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACT',
+  )
+  check('the composer and the model are legal in every turn state', [...at.values()].every((set) => set.startsWith('EDIT_DRAFT') && set.includes('SET_MODEL')))
+  check('every turn state ticket 05 realizes was reached to be measured', at.size === 5)
+}
+
+{
+  /*
+    A model changed mid-turn belongs to the *next* turn. The existing assertion
+    covers half of that — the turn in flight is not disturbed — and this is the
+    other half, which nothing checked: the next turn actually runs on the new
+    value rather than on the one the session started with.
+  */
+  const seen: string[] = []
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: fromPromise<TurnOutput, TurnInput>(async ({ input }) => {
+          seen.push(`${input.model}/${input.effort}`)
+          return { text: 'ok', tokensUsed: 1 }
+        }),
+      },
+    }),
+    { input: { sessionId: 'x3' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'one' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'SET_MODEL', model: 'claude-haiku-4-5' })
+  actor.send({ type: 'SET_EFFORT', effort: 'low' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'two' })
+  actor.send({ type: 'SEND' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle' && seen.length === 2)
+
+  check('the turn in flight keeps what it was started with', seen[0] === 'claude-opus-5/xhigh')
+  check('and the change applies to the next turn', seen[1] === 'claude-haiku-4-5/low')
+  check('a change mid-turn does not re-run the turn', seen.length === 2)
+  actor.stop()
+}
+
+{
+  /*
+    The composer stays live for the whole of a turn, not only while it is
+    `sending`. Streaming is where a developer actually watches an answer arrive
+    and decides to queue the next instruction, and it is a different state with
+    its own `on` block — so it is a different fact and gets its own assertion.
+  */
+  const actor = createActor(sessionMachine.provide({ actors: { runTurn: turnNever() } }), {
+    input: { sessionId: 'x4', commandNames: ['/clear'] },
+  }).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'STREAM_DELTA', text: 'half an ans' })
+  check('the turn is streaming', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'the next instruction' })
+  check('the composer accepts a draft mid-stream', actor.getSnapshot().context.draft === 'the next instruction')
+  check('and the turn is untouched', regionOf(actor.getSnapshot().value, 'turn') === 'streaming')
+  check('and the partial is untouched', actor.getSnapshot().context.partial === 'half an ans')
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/c' })
+  check('the menu opens mid-stream too', regionOf(actor.getSnapshot().value, 'composer') === 'menu')
+  actor.stop()
+}
+
+{
+  /*
+    Tool calls are transcript, not decoration. They reach the machine as
+    `STREAM_DELTA` like any other text, which is what puts them in the partial
+    and therefore in the message an interrupt keeps — the audit trail surviving
+    a turn the developer stopped is the case that matters.
+  */
+  const actor = createActor(
+    sessionMachine.provide({ actors: { runTurn: turnNever() }, delays: { interruptGrace: 1 } }),
+    { input: { sessionId: 'x5' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'read the file' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'STREAM_DELTA', text: '⚙ Read(src/a.ts)\n' })
+  actor.send({ type: 'STREAM_DELTA', text: 'It says hello.' })
+  actor.send({ type: 'INTERRUPT' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+
+  const kept = actor.getSnapshot().context.messages.at(-1)?.text ?? ''
+  check('an interrupted turn keeps the tool calls it made', kept.includes('Read(src/a.ts)'))
+  check('and the words that followed them', kept.includes('It says hello.'))
+}
+
+{
+  // The honest answer to "what does this build actually do". A wired actor that
+  // stayed on the list would keep the seeded marker claiming a real turn is
+  // fake; one that left it while still throwing would claim the opposite.
+  check('the turn actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('runTurn'))
+  check('every unimplemented name is a real actor', UNIMPLEMENTED.every((name) => (ACTOR_NAMES as readonly string[]).includes(name)))
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,10 @@
 import { fromPromise } from 'xstate'
 import { callHarness } from '@varnick/harness/bridge'
-import { readCredential as readCredentialFromHost } from '@varnick/harness/credentials'
+import {
+  CREDENTIAL_REJECTED_DETAIL,
+  readCredential as readCredentialFromHost,
+} from '@varnick/harness/credentials'
+import { isCredentialRejection, turnFailureMessage } from '@varnick/harness/turn'
 import type {
   Effort,
   Message,
@@ -49,12 +53,64 @@ const notImplemented = (name: string, what: string) => (): never => {
 
 export const LIVE_NOT_IMPLEMENTED = [
   'readSubscriptionUsage',
-  'runTurn',
   'compactSession',
   'loadSurface',
 ] as const
 
-export function liveActors() {
+/**
+ * What a running Turn says that is not its result.
+ *
+ * Two things reach the machines from inside a Turn without being the Turn's
+ * answer, and neither of them can travel back through the actor's promise: an
+ * actor resolves once, and both of these happen while it is still running.
+ *
+ * They are also addressed to two different machines — a delta to the Session, a
+ * rejected credential to the Harness — which is the deeper reason this is a
+ * port rather than a return value. It is the same shape `AGENT_EXIT` already
+ * uses: something the world did, delivered as an event by whoever owns the
+ * machine. See hooks.ts, which is where both are sent.
+ */
+export interface TurnObserver {
+  /**
+   * Answer text or a tool call, as it arrives. Sent to the Session as
+   * `STREAM_DELTA`, which is what puts it in `partial` — and therefore in the
+   * message an interrupt keeps.
+   */
+  delta(text: string): void
+  /**
+   * The API refused the credential during a Turn.
+   *
+   * Sent to the Harness as `CREDENTIAL_REJECTED`. It is not enough for this to
+   * fail the Turn: a refused credential is a fact about the credential, and a
+   * developer who retries the Turn instead of fixing the key is retrying the
+   * wrong thing.
+   */
+  credentialRejected(detail: string): void
+}
+
+/** An observer that drops everything. What a run with no owner gets. */
+const silentObserver: TurnObserver = {
+  delta: () => {},
+  credentialRejected: () => {},
+}
+
+/**
+ * A name for one Turn, unique within this window.
+ *
+ * A counter rather than `crypto.randomUUID`, which is only defined in a secure
+ * context: the dev server runs at a tailnet address over plain HTTP, and that is
+ * a real first-run path this codebase already branches on elsewhere. A Turn id
+ * that threw there would fail the Turn with a `TypeError` instead of with the
+ * missing host, which is the wrong problem to report.
+ *
+ * Uniqueness is only ever needed against the Turns this window has run — it
+ * tells this Turn's events from an abandoned one's — so a counter is not a
+ * weaker id, it is the right one.
+ */
+let turnsStarted = 0
+const nextTurnId = () => `turn-${++turnsStarted}`
+
+export function liveActors(observer: TurnObserver = silentObserver) {
   return {
     /*
       Establishes the real srt policy scoped to the clone, or fails.
@@ -93,24 +149,111 @@ export function liveActors() {
     /*
       The source question is answered — the plan's own 5-hour and weekly
       windows, through the Agent SDK's `get_usage` control request, parsed by
-      packages/harness/src/subscription.ts. What is missing is a way to ask on
-      the session that now exists: the control request rides the Agent SDK
-      session held open inside the Sandbox, and nothing yet carries a request to
-      it. Ticket 09 owns that wire; opening a second session here would put a
-      Claude Code process on the host outside the Sandbox, which ADR-0003's last
-      consequence forbids.
+      packages/harness/src/subscription.ts.
+
+      What was missing was a way to ask the confined session anything at all.
+      That now exists: the agent process listens on a control channel and a Turn
+      rides it. `get_usage` is a control request on the same session and would
+      ride the same channel — it needs a third `TurnControl` kind and a route
+      for the answer, which is ticket 09's work rather than a line missing here.
+      What must not happen either way is a session opened on this side to ask:
+      that is a Claude Code process on the host outside the Sandbox, and
+      ADR-0003's last consequence exists because that code does not look like it
+      starts an agent.
     */
     readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(
       notImplemented(
         'readSubscriptionUsage',
-        'nothing carries a control request to the confined session yet',
+        'no control request asks the confined session for its plan usage yet',
       ),
     ),
 
+    /*
+      Real. One Turn on the Session the agent process is already holding.
+
+      Three calls, and none of them starts anything: `run-turn` puts the prompt
+      on the pipe into the confined process, `next-turn-event` waits for what it
+      says back, and `interrupt-turn` stops it. Opening a session here — which
+      is what `query()` would do, and what this actor most obviously wants to do
+      — would put a Claude Code process on the host outside srt, in a clone where
+      the agent can write `.claude/settings.json`. ADR-0003's last consequence
+      exists because that code does not look like it starts an agent.
+
+      The loop is what makes the answer arrive in pieces. A call that returned
+      the finished text could not report anything until there was nothing left
+      to report, and "working" would be indistinguishable from "hung" for the
+      whole of every turn.
+    */
     runTurn: fromPromise<
       { text: string; tokensUsed: number },
       { sessionId: string; prompt: string; model: ModelId; effort: Effort }
-    >(notImplemented('runTurn', 'the Claude Agent SDK is not wired in')),
+    >(async ({ input, signal }) => {
+      // Chosen here so an interrupt can name the Turn it means and a late event
+      // from an abandoned Turn can be told from this one's first word.
+      const turnId = nextTurnId()
+
+      await callHarness({
+        kind: 'run-turn',
+        turnId,
+        prompt: input.prompt,
+        model: input.model,
+        effort: input.effort,
+      })
+
+      /*
+        `INTERRUPT` moves the machine to `turn.interrupting`, which stops this
+        actor and aborts this signal. Passing that on is what makes an interrupt
+        cost seconds rather than the rest of the answer — without it the machine
+        would stop listening while the agent kept working.
+
+        The failure is swallowed on purpose: the machine has already left, and
+        an interrupt that could not be delivered has no state to reach.
+      */
+      signal.addEventListener('abort', () => {
+        void callHarness({ kind: 'interrupt-turn', turnId }).catch(() => {})
+      })
+
+      for (;;) {
+        const { event } = await callHarness({ kind: 'next-turn-event' })
+
+        // The machine stopped this actor. Whatever arrives now belongs to a Turn
+        // nobody is listening to.
+        if (signal.aborted) throw new Error('The turn was interrupted.')
+
+        // Nothing said yet, or something said by a Turn that is not this one.
+        // Both are ordinary: a Turn that is thinking is a working Turn, and an
+        // interrupted Turn's last words are still on the wire behind it.
+        if (event === null || event.turnId !== turnId) continue
+
+        switch (event.kind) {
+          // A tool call is transcript, not decoration: it goes to the same
+          // place the answer does, so it survives into the message an interrupt
+          // keeps and into the mirror.
+          case 'delta':
+          case 'tool':
+            observer.delta(event.text)
+            break
+          case 'done':
+            return { text: event.text, tokensUsed: event.tokensUsed }
+          case 'failed': {
+            /*
+              The one failure that is more than a failed Turn, and the two
+              states it reaches say two different things on purpose:
+              `turn.failed` explains why nothing was answered, and
+              `credential.rejected` explains what is wrong with the credential.
+              Reported before the throw, so the second is reached whether or not
+              anyone ever dismisses the first.
+            */
+            if (isCredentialRejection(event.failure)) {
+              observer.credentialRejected(CREDENTIAL_REJECTED_DETAIL)
+            }
+            // Authored from the tag, never from anything the API said — which
+            // is where a key would be, on exactly this failure.
+            throw new Error(turnFailureMessage(event.failure))
+          }
+        }
+      }
+    }),
 
     // The host-side mirror, alongside the Agent SDK's own persistence. One
     // JSON Lines file per Session under the app-data directory, which a
