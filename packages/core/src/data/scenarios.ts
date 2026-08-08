@@ -90,6 +90,12 @@ export const SCENARIOS: readonly Scenario[] = [
     input: {
       policy: seedPolicy,
       enterCredential: 'reading',
+      // A plan-usage read is in flight, so the kind that let it start is still
+      // in hand — this is a credential being read *again*, which is the only way
+      // both regions are busy at once. Without it the card would be parked in a
+      // context the live machine cannot reach, since `subscription.reading` is
+      // now only entered under a subscription.
+      credentialKind: 'subscription',
       enterSubscription: 'reading',
     },
   },
@@ -196,6 +202,25 @@ export const SCENARIOS: readonly Scenario[] = [
     question: 'Does an empty transcript tell you what to type?',
     covers: ['agent.running', 'subscription.read', 'turn.idle', 'persistence.saved', 'composer.typing'],
     input: { ...up, sessionInput: { sessionId: 'states-idle' } },
+  },
+  {
+    id: 'api-key-no-plan',
+    title: 'Running on an API key',
+    blurb:
+      'The same running session, authenticated by an API key instead of a subscription. There is no plan, so there are no rolling windows and the plan-usage strip is not part of the window — absent, not empty. The `subscription` region stays `unread` and its actor never runs.',
+    question: 'Does the window read as complete, or as one with a row missing from the top?',
+    // No new state, which is the point: this is `subscription.unread` alongside
+    // a running agent, and the only difference from the card above is a fact in
+    // context. A fourth state meaning "not applicable" would have made this a
+    // card about the machine rather than about what a developer sees.
+    covers: ['subscription.unread'],
+    input: {
+      ...up,
+      credentialKind: 'api-key',
+      enterSubscription: 'unread',
+      subscription: null,
+      sessionInput: { sessionId: 'states-api-key' },
+    },
   },
   {
     id: 'resumed',

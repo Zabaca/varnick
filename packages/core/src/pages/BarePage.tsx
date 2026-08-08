@@ -23,6 +23,11 @@ const HARNESS_EVENTS: HarnessEvent[] = [
   { type: 'RESTART' },
   { type: 'AGENT_EXIT', detail: 'killed from the bare page' },
   { type: 'CREDENTIAL_REJECTED', detail: '401 from the API' },
+  // Accepted only under a Credential Kind of `subscription`, so this button is
+  // simply not here under an API key — which is the gate itself, shown on the
+  // one surface with nothing covering for it. The strip's absence in the app
+  // and this button's absence here are the same fact (ADR-0011).
+  { type: 'READ_SUBSCRIPTION' },
   // The real scan, not a seed. The bare page's job is to prove behaviour with
   // nothing covering for it, and a seeded descriptor list would prove that a
   // literal can be spawned from.
@@ -103,6 +108,26 @@ export function BarePage() {
           <dd>{String((snapshot.value as Record<string, unknown>).sandbox)}</dd>
           <dt>agent</dt>
           <dd>{String((snapshot.value as Record<string, unknown>).agent)}</dd>
+          {/*
+            The fourth region, and the fact that gates it.
+
+            Both are here because the one thing plan usage is hard to tell apart
+            from the outside is a read that was refused from a read that was
+            never made: each leaves the strip absent. A region that passed
+            through `reading` was attempted; one sitting in `unread` beside a
+            kind of `api-key` was never asked for. That is the distinction this
+            page exists to make visible.
+          */}
+          <dt>subscription</dt>
+          <dd>{String((snapshot.value as Record<string, unknown>).subscription)}</dd>
+          <dt>credential kind</dt>
+          <dd>{ctx.credentialKind ?? '— none read'}</dd>
+          <dt>plan usage</dt>
+          <dd>
+            {ctx.subscription
+              ? `5h ${ctx.subscription.fiveHourPct}% · week ${ctx.subscription.weeklyPct}% (${ctx.subscription.source})`
+              : '— nothing measured'}
+          </dd>
           <dt>can start</dt>
           <dd>{ready ? 'yes' : 'no — START will be refused and say why'}</dd>
           <dt>refusal</dt>

@@ -12,11 +12,12 @@ import {
   commandQuery,
   invokedCommand,
   formatContext,
+  hasPlanUsage,
   CONTEXT_WINDOW,
   EFFORTS,
   MODELS,
 } from '../domain.ts'
-import type { SubscriptionUsage } from '../domain.ts'
+import type { CredentialKind, SubscriptionUsage } from '../domain.ts'
 import type { harnessMachine, HarnessEvent } from '../machines/harness.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
@@ -210,7 +211,7 @@ export function ChatSurface({
 
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
-      <PlanUsage usage={ctx.subscription} mode={mode} />
+      <PlanUsage usage={ctx.subscription} kind={ctx.credentialKind} mode={mode} />
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
@@ -529,8 +530,29 @@ function SurfacePanel({
  *
  * Whether these numbers are measured or seeded is answered once, by the marker
  * beside them, rather than by this component second-guessing each value.
+ *
+ * Whether there is anything to show is answered before that, by the credential's
+ * kind. Under an API key there is no plan, so there are no rolling windows and
+ * this strip is not part of the window at all. Absent rather than empty, and the
+ * difference is the whole of ticket 23: an empty strip reads as "we asked and
+ * got zero", which is indistinguishable from a read that broke. Nothing here is
+ * hidden — the element is never returned, so `#/bare` and a DOM snapshot agree
+ * with what is on screen.
+ *
+ * `hasPlanUsage` rather than a comparison written out here: the same predicate
+ * gates the `subscription` region's read, so the strip cannot end up rendering a
+ * place for an answer the machine will never go and get.
  */
-function PlanUsage({ usage, mode }: { usage: SubscriptionUsage | null; mode: ActorMode }) {
+function PlanUsage({
+  usage,
+  kind,
+  mode,
+}: {
+  usage: SubscriptionUsage | null
+  kind: CredentialKind | null
+  mode: ActorMode
+}) {
+  if (!hasPlanUsage(kind)) return null
   if (!usage) return null
   return (
     <div

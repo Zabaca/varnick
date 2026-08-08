@@ -1,5 +1,5 @@
 import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
-import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
+import { canStartAgent, hasPlanUsage, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
   CredentialKind,
   CredentialReading,
@@ -198,6 +198,14 @@ export const harnessMachine = setup({
   guards: {
     canStart: ({ context }) =>
       canStartAgent({ credential: context.credentialState, sandbox: context.sandboxState }),
+    /**
+     * There is a plan for plan usage to be about.
+     *
+     * Reads the same context fact the strip reads, through the same predicate —
+     * the region cannot decide the read is pointless while the view still
+     * renders a place for its answer. See `hasPlanUsage` in ../domain.ts.
+     */
+    underSubscription: ({ context }) => hasPlanUsage(context.credentialKind),
   },
   actions: {
     recordRefusal: assign({
@@ -377,11 +385,24 @@ export const harnessMachine = setup({
             { target: 'unread' },
           ],
         },
-        // READ_SUBSCRIPTION is handled inside the region, never at the machine
-        // root. A root-level transition with a target is external: it exits and
-        // re-enters every parallel region, which tore down the Session actor —
-        // and with it the whole conversation — on first load.
-        unread: { on: { READ_SUBSCRIPTION: 'reading' } },
+        /*
+          READ_SUBSCRIPTION is handled inside the region, never at the machine
+          root. A root-level transition with a target is external: it exits and
+          re-enters every parallel region, which tore down the Session actor —
+          and with it the whole conversation — on first load.
+
+          Guarded, and with no fallback: under an API key there is no plan, so
+          the read is refused and the region stays here. `unread` is the whole
+          of what "there was nothing to read" needs to say — a fourth state
+          meaning "not applicable" would name a fact that is already in context
+          and is not a state (ADR-0011, and CONTEXT.md on naming).
+
+          Unlike START, this refusal is silent on purpose. A refused start is a
+          thing the user asked for and must be told about; a plan-usage read is
+          asked for by the page on the user's behalf, and there is nothing to
+          report beyond the strip not being there.
+        */
+        unread: { on: { READ_SUBSCRIPTION: { target: 'reading', guard: 'underSubscription' } } },
         reading: {
           invoke: {
             src: 'readSubscriptionUsage',
@@ -395,7 +416,13 @@ export const harnessMachine = setup({
             onError: 'unread',
           },
         },
-        read: { on: { READ_SUBSCRIPTION: 'reading' } },
+        // Guarded here too, and not only for symmetry: the credential can be
+        // re-read, and one that comes back an API key leaves a `read` region
+        // holding figures from a plan that is no longer in play. Refusing the
+        // re-read is what stops it being replaced by a failed one — the last
+        // measurement stands, and the strip stops being rendered because the
+        // strip asks `hasPlanUsage`, not the region.
+        read: { on: { READ_SUBSCRIPTION: { target: 'reading', guard: 'underSubscription' } } },
       },
     },
 
