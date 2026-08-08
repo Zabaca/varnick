@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately. `persistSession` takes `{ sessionId, messages }` and does not care where the messages came from, so this is demoable against the seeded Turn: send a message, quit, read it off disk. An edge to 05 was considered and dropped — it bought a nicer demo and serialised two independent slices.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** `persistence.saving`, `persistence.saved`, `persistence.saveFailed`
 

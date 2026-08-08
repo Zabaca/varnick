@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (the sandbox policy is what keeps the agent out of the store).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** no state path. The Secrets Store has no machine and no UI in v1 — it is a Harness capability the agent reaches through the code it writes. Named here so the states-page consistency check does not read its absence as missed work.
 

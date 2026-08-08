@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — one criterion carried to ticket 05
 
 **Realizes:** `credential.reading`, `credential.present`, `credential.absent`, `credential.rejected`
 

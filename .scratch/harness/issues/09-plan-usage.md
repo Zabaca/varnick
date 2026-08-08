@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (needs a Sandboxed session to ask), which in turn needs 15. Was unblocked; the research half is done and merged, and the edge to 03 was discovered by doing it — see the comments.
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent — research half merged, wiring waits on 03
 
 **Realizes:** `subscription.reading`, `subscription.read`
 
