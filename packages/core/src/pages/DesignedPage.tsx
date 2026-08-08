@@ -208,7 +208,7 @@ export function DesignedPage() {
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-            <div className="space-y-3" style={{ maxWidth: 'var(--measure)' }}>
+            <div className="space-y-3" style={{ maxWidth: 'var(--prose)' }}>
               {/*
                 Every prop is passed explicitly. The component's defaults carry
                 another project's user, org and release notes, and PRODUCT.md is
@@ -303,7 +303,7 @@ export function DesignedPage() {
             </div>
           </div>
 
-          <div className="px-6 pb-4" style={{ maxWidth: 'var(--measure)' }}>
+          <div className="px-6 pb-4">
             {menuOpen && (
               <SlashMenu
                 commands={commands}

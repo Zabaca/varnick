@@ -45,7 +45,12 @@
   --bad: #f7768e;
   --accent: #7dcfff;
 
-  --measure: 92ch;
+  /*
+    The shell is full width, as a terminal is. Only prose is capped, and
+    generously: a 65ch measure is right for an essay and wrong for a transcript
+    interleaved with tool output, diffs and file paths that must not wrap.
+  */
+  --prose: 110ch;
 }
 
 @layer base {
