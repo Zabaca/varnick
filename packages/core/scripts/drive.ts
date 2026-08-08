@@ -20,6 +20,8 @@ import {
   formatContext,
 } from '../src/domain.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
+import { SCENARIOS, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
+import { frozenHarness } from '../src/actors/frozen.ts'
 import type { Effort, Message, ModelId, SandboxPolicy } from '../src/domain.ts'
 
 let passed = 0
@@ -714,6 +716,54 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   // ...and an unloaded Surface can be discovered again.
   actor.send({ type: 'DISCOVER_SURFACES', descriptors: seedSurfaces })
   check('an unloaded Surface can be rediscovered', actor.getSnapshot().context.surfaces.length === 3)
+  actor.stop()
+}
+
+// ---------------------------------------------------------------------------
+// The states page — coverage, and that every card is what it claims
+// ---------------------------------------------------------------------------
+
+{
+  check('every declared state has a scenario', uncoveredPaths().length === 0)
+  check('no scenario claims a state no machine declares', unknownPaths().length === 0)
+
+  // The list being complete is worth little on its own: a scenario that names
+  // `turn.failed` and lands in `turn.idle` would still count. So each one is
+  // created cold, with the same frozen build the page uses, and asked where it
+  // actually is.
+  for (const scenario of SCENARIOS) {
+    const actor = createActor(frozenHarness(), { input: scenario.input }).start()
+    const snap = actor.getSnapshot()
+    const session = snap.context.session
+
+    const reached = new Set<string>()
+    for (const [region, value] of Object.entries(snap.value as Record<string, unknown>)) {
+      reached.add(`${region}.${String(value)}`)
+    }
+    if (session) {
+      for (const [region, value] of Object.entries(
+        session.getSnapshot().value as Record<string, unknown>,
+      )) {
+        reached.add(`${region}.${String(value)}`)
+      }
+    }
+
+    for (const path of scenario.covers) {
+      check(`scenario "${scenario.id}" actually reaches ${path}`, reached.has(path))
+    }
+    actor.stop()
+  }
+
+  // Frozen means frozen. A card parked mid-flight must still be there after the
+  // event loop has had its chance — an actor that resolves would rewrite the
+  // state the card is captioned with.
+  const sending = SCENARIOS.find((s) => s.id === 'sending')!
+  const actor = createActor(frozenHarness(), { input: sending.input }).start()
+  await new Promise((r) => setTimeout(r, 50))
+  check(
+    'a frozen card does not advance on its own',
+    String(actor.getSnapshot().context.session?.getSnapshot().value.turn) === 'sending',
+  )
   actor.stop()
 }
 

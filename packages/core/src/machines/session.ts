@@ -71,6 +71,7 @@ export interface SessionInput {
   model?: ModelId
   effort?: Effort
   tokensUsed?: number
+  compactError?: string | null
   enterTurn?: string | null
   enterPersistence?: string | null
 }
@@ -158,7 +159,7 @@ export const sessionMachine = setup({
     model: input.model ?? 'claude-opus-5',
     effort: input.effort ?? 'xhigh',
     tokensUsed: input.tokensUsed ?? 0,
-    compactError: null,
+    compactError: input.compactError ?? null,
     enterTurn: input.enterTurn ?? null,
     enterPersistence: input.enterPersistence ?? null,
   }),
@@ -196,6 +197,7 @@ export const sessionMachine = setup({
               target: 'interrupting',
               guard: ({ context }) => context.enterTurn === 'interrupting',
             },
+            { target: 'compacting', guard: ({ context }) => context.enterTurn === 'compacting' },
             { target: 'failed', guard: ({ context }) => context.enterTurn === 'failed' },
             { target: 'idle' },
           ],

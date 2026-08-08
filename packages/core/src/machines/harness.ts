@@ -7,7 +7,7 @@ import type {
   SurfaceDescriptor,
 } from '../domain.ts'
 import { surfaceMachine } from './surface.ts'
-import { sessionMachine } from './session.ts'
+import { sessionMachine, type SessionInput } from './session.ts'
 
 /**
  * The Harness: parent machine, owning the facts that decide whether an agent
@@ -22,8 +22,12 @@ import { sessionMachine } from './session.ts'
 
 export const HARNESS_STATE_PATHS = [
   'credential.absent',
+  'credential.reading',
   'credential.present',
   'credential.rejected',
+  'subscription.unread',
+  'subscription.reading',
+  'subscription.read',
   'sandbox.unchecked',
   'sandbox.checking',
   'sandbox.available',
@@ -63,9 +67,18 @@ export interface HarnessContext {
    * number as a measurement.
    */
   subscription: SubscriptionUsage | null
+  /**
+   * What the Session is spawned with.
+   *
+   * The states page parks a Session in a named turn state, and the only way in
+   * is through the parent that owns the spawn. Held in context rather than read
+   * off the event so the entry point works on a machine created cold.
+   */
+  readonly sessionInput: SessionInput
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
+  readonly enterSubscription: string | null
 }
 
 export interface HarnessInput {
@@ -73,9 +86,13 @@ export interface HarnessInput {
   enterCredential?: string | null
   enterSandbox?: string | null
   enterAgent?: string | null
+  enterSubscription?: string | null
+  sessionInput?: SessionInput
   refusal?: StartRefusal | null
   agentError?: string | null
   sandboxError?: string | null
+  credentialError?: string | null
+  subscription?: SubscriptionUsage | null
 }
 
 export type HarnessEvent =
@@ -171,13 +188,15 @@ export const harnessMachine = setup({
     refusal: input.refusal ?? null,
     sandboxError: input.sandboxError ?? null,
     agentError: input.agentError ?? null,
-    credentialError: null,
+    credentialError: input.credentialError ?? null,
     surfaces: [],
     session: null,
-    subscription: null,
+    subscription: input.subscription ?? null,
+    sessionInput: input.sessionInput ?? { sessionId: 'session-1' },
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
+    enterSubscription: input.enterSubscription ?? null,
   }),
   on: {
     // Surfaces are discovered, never registered — adding one must not require
@@ -219,6 +238,7 @@ export const harnessMachine = setup({
           always: [
             { target: 'present', guard: ({ context }) => context.enterCredential === 'present' },
             { target: 'rejected', guard: ({ context }) => context.enterCredential === 'rejected' },
+            { target: 'reading', guard: ({ context }) => context.enterCredential === 'reading' },
             { target: 'absent' },
           ],
         },
@@ -304,8 +324,15 @@ export const harnessMachine = setup({
     },
 
     subscription: {
-      initial: 'unread',
+      initial: 'routing',
       states: {
+        routing: {
+          always: [
+            { target: 'read', guard: ({ context }) => context.enterSubscription === 'read' },
+            { target: 'reading', guard: ({ context }) => context.enterSubscription === 'reading' },
+            { target: 'unread' },
+          ],
+        },
         // READ_SUBSCRIPTION is handled inside the region, never at the machine
         // root. A root-level transition with a target is external: it exits and
         // re-enters every parallel region, which tore down the Session actor —
@@ -378,7 +405,7 @@ export const harnessMachine = setup({
               spawn('session', {
                 id: 'session',
                 syncSnapshot: true,
-                input: { sessionId: 'session-1' },
+                input: context.sessionInput,
               }),
             agentError: null,
           }),
