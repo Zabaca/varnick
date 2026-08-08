@@ -115,14 +115,15 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // credential and returns two numbers — and that is the trap: the figures
         // come from an SDK control request, which rides a live Session, and
         // asking for one anywhere but here means opening one.
+        //
+        // A Compaction is here for the same reason as a plan-usage read: it is a
+        // model call on the Session the agent process is already holding, and
+        // answering it in the runtime — the process with a filesystem, and the
+        // obvious home for "do some work" — would mean opening a session there.
         "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" | "run-turn"
-        | "next-turn-event" | "interrupt-turn" | "read-plan-usage" => Some(Route::Host),
-        // A Compaction is on this list for the same reason: it is a model call
-        // on the Session the agent process is already holding, and answering it
-        // in the runtime — the process with a filesystem, and the obvious home
-        // for "do some work" — would mean opening a session there.
-        "read-credential" | "spawn-agent" | "stop-agent" | "await-agent-exit" | "run-turn"
-        | "next-turn-event" | "interrupt-turn" | "compact-session" => Some(Route::Host),
+        | "next-turn-event" | "interrupt-turn" | "read-plan-usage" | "compact-session" => {
+            Some(Route::Host)
+        }
         "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
