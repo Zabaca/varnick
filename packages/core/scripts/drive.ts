@@ -331,6 +331,138 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 }
 
 // ---------------------------------------------------------------------------
+// Session — the command menu
+// ---------------------------------------------------------------------------
+
+{
+  const actor = createActor(sessionMachine, { input: { sessionId: 's6' } }).start()
+  const composer = () => regionOf(actor.getSnapshot().value, 'composer')
+
+  check('the composer starts typing', composer() === 'typing')
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/' })
+  check('a leading slash opens the menu', composer() === 'menu')
+  check(
+    'the menu refuses SEND, so Enter can pick a command',
+    !actor.getSnapshot().can({ type: 'SEND' }),
+  )
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/cle' })
+  check('typing the command keeps the menu open', composer() === 'menu')
+
+  // A space means the slash text is an argument, not a query.
+  actor.send({ type: 'EDIT_DRAFT', text: '/clear now' })
+  check('a space closes the menu', composer() === 'typing')
+  check('and SEND becomes possible again', actor.getSnapshot().can({ type: 'SEND' }))
+
+  // Ordinary text never opens it.
+  actor.send({ type: 'EDIT_DRAFT', text: 'build me a thing' })
+  check('ordinary text leaves the menu closed', composer() === 'typing')
+  actor.stop()
+}
+
+{
+  const actor = createActor(sessionMachine, { input: { sessionId: 's7' } }).start()
+  actor.send({ type: 'EDIT_DRAFT', text: '/c' })
+
+  actor.send({ type: 'MENU_MOVE', delta: 1, count: 3 })
+  check('moving down advances the highlight', actor.getSnapshot().context.menuIndex === 1)
+  actor.send({ type: 'MENU_MOVE', delta: 1, count: 3 })
+  actor.send({ type: 'MENU_MOVE', delta: 1, count: 3 })
+  check('the highlight wraps at the end', actor.getSnapshot().context.menuIndex === 0)
+  actor.send({ type: 'MENU_MOVE', delta: -1, count: 3 })
+  check('and wraps backwards from the start', actor.getSnapshot().context.menuIndex === 2)
+  actor.send({ type: 'MENU_MOVE', delta: 1, count: 0 })
+  check('an empty list cannot be moved off zero', actor.getSnapshot().context.menuIndex === 0)
+  actor.stop()
+}
+
+{
+  // Escape closes the menu without eating the draft — and it must stay closed,
+  // which is the whole reason menuDismissed exists. Without it the eventless
+  // transition reopens the menu on the next microstep.
+  const actor = createActor(sessionMachine, { input: { sessionId: 's8' } }).start()
+  const composer = () => regionOf(actor.getSnapshot().value, 'composer')
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/clear' })
+  check('menu is open before dismissing', composer() === 'menu')
+
+  actor.send({ type: 'MENU_DISMISS' })
+  check('dismissing closes the menu', composer() === 'typing')
+  check('dismissing keeps the draft', actor.getSnapshot().context.draft === '/clear')
+  check('the dismissed menu stays closed', composer() === 'typing')
+  check('and SEND is possible again', actor.getSnapshot().can({ type: 'SEND' }))
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/clea' })
+  check('typing again reopens the menu', composer() === 'menu')
+  actor.stop()
+}
+
+{
+  const actor = createActor(sessionMachine, { input: { sessionId: 's9' } }).start()
+  actor.send({ type: 'EDIT_DRAFT', text: '/clear' })
+  actor.send({ type: 'MENU_MOVE', delta: 1, count: 4 })
+  actor.send({ type: 'MENU_COMMIT' })
+
+  check('committing clears the draft', actor.getSnapshot().context.draft === '')
+  check('committing resets the highlight', actor.getSnapshot().context.menuIndex === 0)
+  check(
+    'committing closes the menu',
+    regionOf(actor.getSnapshot().value, 'composer') === 'typing',
+  )
+  actor.stop()
+}
+
+{
+  // The composer is its own region: a menu open during a live turn must not
+  // touch the turn, and must not become a way to send.
+  const actor = createActor(
+    sessionMachine.provide({ actors: { runTurn: never() } }),
+    { input: { sessionId: 's10' } },
+  ).start()
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+  actor.send({ type: 'SEND' })
+  check('a turn is running', regionOf(actor.getSnapshot().value, 'turn') === 'sending')
+
+  actor.send({ type: 'EDIT_DRAFT', text: '/c' })
+  check(
+    'the menu opens during a live turn',
+    regionOf(actor.getSnapshot().value, 'composer') === 'menu',
+  )
+  check(
+    'and the turn is untouched by it',
+    regionOf(actor.getSnapshot().value, 'turn') === 'sending',
+  )
+  check('interrupting is still possible', actor.getSnapshot().can({ type: 'INTERRUPT' }))
+  actor.stop()
+}
+
+{
+  // Clearing is only legal once a turn has settled. Wiping the transcript
+  // mid-stream would drop the reply that is still arriving.
+  const actor = createActor(
+    sessionMachine.provide({ actors: { runTurn: never() } }),
+    { input: { sessionId: 's11' } },
+  ).start()
+
+  check('an empty session has nothing to clear, but accepts the event', actor.getSnapshot().can({ type: 'CLEAR' }))
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'do a thing' })
+  actor.send({ type: 'SEND' })
+  check('CLEAR is refused mid-turn', !actor.getSnapshot().can({ type: 'CLEAR' }))
+
+  actor.send({ type: 'INTERRUPT' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+  check('CLEAR is possible once the turn settles', actor.getSnapshot().can({ type: 'CLEAR' }))
+
+  actor.send({ type: 'CLEAR' })
+  check('clearing empties the transcript', actor.getSnapshot().context.messages.length === 0)
+  check('clearing empties the draft', actor.getSnapshot().context.draft === '')
+  actor.stop()
+}
+
+// ---------------------------------------------------------------------------
 // Surface — failure isolation
 // ---------------------------------------------------------------------------
 

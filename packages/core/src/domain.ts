@@ -77,6 +77,20 @@ export function refusalFor(input: {
   return { kind: 'sandbox-unavailable', detail: 'sandbox-runtime could not be established.' }
 }
 
+/**
+ * A draft is addressing the command menu when it opens with `/` and has not yet
+ * reached a space. `/re` is still choosing; `/review src` is an argument to a
+ * command already chosen, and the menu is no longer what the keyboard means.
+ */
+export function isCommandDraft(draft: string): boolean {
+  return draft.startsWith('/') && !draft.includes(' ')
+}
+
+/** The query a command draft is filtering by — the text after the slash. */
+export function commandQuery(draft: string): string {
+  return isCommandDraft(draft) ? draft.slice(1) : ''
+}
+
 /** Deterministic id source. `Math.random()` and a live clock make the states
  *  page impossible to compare between runs. */
 export function makeIdFactory(prefix: string, start = 1) {

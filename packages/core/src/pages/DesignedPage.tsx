@@ -5,6 +5,8 @@ import { ClaudeHeader } from '../components/brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from '../components/brainless/claude/claude-message.tsx'
 import { ClaudeThinking } from '../components/brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from '../components/brainless/claude/claude-prompt.tsx'
+import { SlashMenu, type Command } from '../components/slash-menu.tsx'
+import { commandQuery } from '../domain.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
 /**
@@ -58,6 +60,66 @@ export function DesignedPage() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [s?.context.messages.length, s?.context.partial, turn])
+
+  /*
+    Commands are the events the machines currently accept, nothing more. A
+    command that cannot run is not offered — the same rule as every other
+    control here, so the menu cannot drift into advertising capability the
+    product does not have.
+  */
+  const allCommands: Command[] = [
+    {
+      name: '/clear',
+      description: 'Clear the conversation',
+      available: sessionCan({ type: 'CLEAR' }) && (s?.context.messages.length ?? 0) > 0,
+      run: () => session?.send({ type: 'CLEAR' }),
+    },
+    {
+      name: '/retry',
+      description: 'Retry the turn that failed',
+      available: sessionCan({ type: 'RETRY_TURN' }),
+      run: () => session?.send({ type: 'RETRY_TURN' }),
+    },
+    {
+      name: '/interrupt',
+      description: 'Stop the turn in progress',
+      available: sessionCan({ type: 'INTERRUPT' }),
+      run: () => session?.send({ type: 'INTERRUPT' }),
+    },
+    {
+      name: '/save',
+      description: 'Write the session now',
+      available: sessionCan({ type: 'SAVE' }),
+      run: () => session?.send({ type: 'SAVE' }),
+    },
+    {
+      name: '/restart',
+      description: 'Restart the agent',
+      available: snapshot.can({ type: 'RESTART' }),
+      run: () => send({ type: 'RESTART' }),
+    },
+    {
+      name: '/stop',
+      description: 'Stop the agent',
+      available: snapshot.can({ type: 'STOP' }),
+      run: () => send({ type: 'STOP' }),
+    },
+  ]
+
+  const query = commandQuery(draft).toLowerCase()
+  const commands = allCommands.filter(
+    (c) => c.available && c.name.slice(1).toLowerCase().startsWith(query),
+  )
+  const menuOpen = Boolean(s?.context.menuOpen)
+  const menuIndex = Math.min(s?.context.menuIndex ?? 0, Math.max(commands.length - 1, 0))
+
+  const pick = (i: number) => {
+    const c = commands[i]
+    if (!c) return
+    c.run()
+    session?.send({ type: 'MENU_COMMIT' })
+    setDraft('')
+  }
 
   // Only what is actually wrong, and only while it is wrong.
   const problem = harnessProblem(ctx, agentState)
@@ -147,9 +209,19 @@ export function DesignedPage() {
           </div>
 
           <div className="px-6 pb-4" style={{ maxWidth: 'var(--measure)' }}>
+            {menuOpen && (
+              <SlashMenu
+                commands={commands}
+                activeIndex={menuIndex}
+                onHover={(i) => session?.send({ type: 'MENU_MOVE', delta: i - menuIndex, count: commands.length })}
+                onPick={pick}
+              />
+            )}
             <ClaudePrompt
               value={draft}
-              placeholder={working ? 'working — esc to interrupt' : 'What should the agent build?'}
+              placeholder={
+                working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
+              }
               effort="xhigh"
               mode="auto"
               onChange={(e) => {
@@ -157,6 +229,29 @@ export function DesignedPage() {
                 session?.send({ type: 'EDIT_DRAFT', text: e.target.value })
               }}
               onKeyDown={(e) => {
+                if (menuOpen) {
+                  // While the menu is open the keyboard belongs to it. SEND is
+                  // already refused by the machine's guard; this is the rest.
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    session?.send({
+                      type: 'MENU_MOVE',
+                      delta: e.key === 'ArrowDown' ? 1 : -1,
+                      count: commands.length,
+                    })
+                    return
+                  }
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault()
+                    pick(menuIndex)
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    session?.send({ type: 'MENU_DISMISS' })
+                    return
+                  }
+                }
                 if (e.key === 'Enter' && sessionCan({ type: 'SEND' })) {
                   session?.send({ type: 'SEND' })
                   setDraft('')
