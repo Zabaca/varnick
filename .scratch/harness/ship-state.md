@@ -4,26 +4,23 @@ Written before a context compaction so the loop can continue without it. Delete 
 
 ## Where things are
 
-`main` at `eec580c`, clean tree, **not pushed** — 41 commits ahead of `origin/main`.
+`main` at `9431e9c`, clean tree, **not pushed**.
 
-Suite on `main`: `bun test packages` 325 tests / 1 skip, `bun run drive` 228 assertions, `cargo test` 56, `bun run build` clean.
+Suite on `main`: `bun test packages` 358 tests / 1 skip, `bun run drive` 276 assertions, `cargo test` 59, `bun run build` clean, `bun run lint` clean.
+
+**There are six commands now.** Ticket 14 added `bun run lint` — it runs eslint from the root using the parser in `packages/lint`, which exists because typescript-eslint does not support TypeScript 7.
 
 **`cargo` is at `~/.cargo/bin` and is not on the default PATH.** `export PATH="$HOME/.cargo/bin:$PATH"` before any Rust command.
 
 ## In flight
 
-Two worktree agents, all branched from `55abb9f`, all still running:
+One worktree agent: **12 secret resolution**, on `ticket/12-secret-resolution`, branched from `9431e9c`. It is the last ticket.
 
-| Ticket | Branch |
-| --- | --- |
-| 08 compaction | `ticket/08-compaction` |
-| 14 Surface execution | `ticket/14-surface-execution` |
-
-When each returns: review the diff, run all five commands, merge serially, run the full suite again, mark the ticket `done`, reap the worktree with `git worktree remove --force`.
+When it returns: review the diff, run all six commands, merge, run the full suite again, mark it done, reap the worktree.
 
 ## Then
 
-**12** (secret resolution) is the last ticket and unblocks when 14 lands. **18** is `needs-info` — a decision for the developer, not an agent. Ticket 11's fourth criterion and ticket 09's marker criterion are deliberately unticked with reasons in their Comments.
+**18** is `needs-info` — a decision for the developer, not an agent. Ticket 11's fourth criterion and ticket 09's marker criterion are deliberately unticked with reasons in their Comments.
 
 After 12: full suite, `/code-review`, `/impeccable document` (the UI changed — ticket 11 moved the default route and ticket 14 renders Surfaces), then the PR.
 

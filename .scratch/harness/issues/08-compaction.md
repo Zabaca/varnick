@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 (needs a real model call and real token accounting).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** `turn.compacting`
 
