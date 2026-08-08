@@ -100,6 +100,11 @@ established, the agent does not start.
   was handed — nine, on the run that prompted this — and asserts that isolation
   leaves none of them. The first number varies with the terminal you launched
   from; the second does not.
+- A clone whose `sandbox-policy.json` predates one of these denials is contained
+  by it on the next launch anyway, with nothing deleted by hand. That was not
+  true until it was measured: the keychain deny above shipped, and its own probe
+  then failed on the repository that shipped it, because the policy in force was
+  the one generated an hour earlier. See below.
 
 **Asserted by the policy, but not yet probed against a running kernel:**
 
@@ -107,8 +112,30 @@ established, the agent does not start.
   callback, so an unlisted host is a refusal rather than a prompt — but no probe
   has yet tried to reach one.
 - `packages/core/**`, `packages/harness/**`, `vite.config.*`, the root
-  `package.json`, and the generated `sandbox-policy.json` are unwritable, which
-  is what keeps the agent from widening its own fence.
+  `package.json`, the generated `sandbox-policy.json` and the
+  `sandbox-policy.baseline.json` beside it are unwritable, which is what keeps
+  the agent from widening its own fence.
+
+## The policy is yours to edit, and still gets varnick's fixes
+
+`sandbox-policy.json` is generated into the clone on first launch and is meant to
+be edited — the boundary is the thing a fork most wants to change. That is why a
+strengthening cannot simply overwrite it, and why varnick records what it
+generated in `sandbox-policy.baseline.json` beside it. A difference between the
+policy and that baseline is **your** edit; a difference between the baseline and
+what the generator produces today is **varnick's**. Both are printed on start.
+
+Field by field: what you did not touch takes varnick's current value, so a
+denial you never had an opinion about arrives on its own. What you touched and
+varnick did not is kept exactly. Where both moved, the **stronger** side wins —
+a boundary is never resolved downwards on your behalf, so a narrowing of yours
+survives an upgrade and a widening of yours is dropped and reported rather than
+kept silently. Machine paths are compared with the clone, home, users root and
+temp directory tokenized, so carrying a clone to another laptop or renaming your
+home directory rewrites the paths and reports nothing.
+
+Delete the baseline and varnick can no longer tell the two apart; it falls back
+to taking the stronger side of every difference and says so.
 
 ## Where confinement stops
 

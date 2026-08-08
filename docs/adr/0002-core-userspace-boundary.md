@@ -1,8 +1,10 @@
 # Core and Userspace are separated by the sandbox policy, not by convention
 
-The agent edits the clone it is running inside, so the code that holds the conversation is code the agent could otherwise break — and the conversation is what you would use to fix it. The sandbox policy therefore denies writes to `packages/core/**`, `packages/harness/**`, `vite.config.*`, `package.json`, and `sandbox-policy.json`, making the split kernel-enforced rather than a rule in `CLAUDE.md`. The agent's blast radius is Userspace; Core is changed through the escalation path in [ADR-0005](./0005-two-profiles-live-userspace-cloned-core.md).
+The agent edits the clone it is running inside, so the code that holds the conversation is code the agent could otherwise break — and the conversation is what you would use to fix it. The sandbox policy therefore denies writes to `packages/core/**`, `packages/harness/**`, `vite.config.*`, `package.json`, `sandbox-policy.json`, and `sandbox-policy.baseline.json`, making the split kernel-enforced rather than a rule in `CLAUDE.md`. The agent's blast radius is Userspace; Core is changed through the escalation path in [ADR-0005](./0005-two-profiles-live-userspace-cloned-core.md).
 
 **The Harness and the generated policy are on that list because they are how the fence is built.** `CONTEXT.md` defines the Harness as Core's runtime half, and `packages/harness/src/sandbox.ts` is what generates the policy; `sandbox-policy.json` is what the next launch reads. An agent that can write either can widen its own boundary on the next launch, which makes every other entry advisory. This was found while implementing the policy, by reading the list literally.
+
+**The baseline is on it for the same reason, one step further out.** `sandbox-policy.baseline.json` records what the generator produced, and is how the next launch tells a developer's edit from a strengthening varnick has since made — an edit is kept, a strengthening is applied. An agent that can write the baseline can present its own widening as varnick's own work and have it believed, without ever touching the policy. See the third correction in [ADR-0003](./0003-containment-wraps-the-process-tree.md).
 
 ## Consequences
 

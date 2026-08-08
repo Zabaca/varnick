@@ -37,6 +37,11 @@ coverage/
 # denies writes to the home directory, and it is per-clone machine state that
 # nobody else should inherit — see ADR-0010.
 /.varnick/
+# What the generator produced, recorded beside it so the next launch can tell
+# your edits from a boundary varnick has since strengthened. Per-clone, like
+# the policy, and for the same reason. Do not commit it: a committed baseline
+# would tell every other clone that its own machine's paths were hand-edited.
+/sandbox-policy.baseline.json
 
 # Tauri build artifacts
 src-tauri/target/
