@@ -34,6 +34,28 @@ export type SurfaceView = (...args: never[]) => unknown
 /** What `import()` gives back — anything, until it has been checked. */
 export type SurfaceImporter = () => Promise<unknown>
 
+/**
+ * The host substituting secret values while a Userspace module runs (ADR-0006).
+ *
+ * A port, declared here and implemented nowhere in Core — `hostSecretResolution`
+ * in packages/harness/src/secret-resolution.ts is the implementation, and it
+ * imports the filesystem and the keychain, neither of which belongs in this
+ * file. Declaring the shape rather than importing it is the same move the
+ * machines make with their actors (ADR-0001), and for the same reason: it is
+ * what lets this half be run headlessly.
+ *
+ * Two members, and what is absent from them is the point. There is no way to ask
+ * a resolution what it holds — `around` takes code and gives back what that code
+ * returned, `redact` takes text and gives back less of it. A loader holding one
+ * still holds no secret.
+ */
+export interface SecretResolution {
+  /** Run `work` with every stored secret readable as `process.env.NAME`. */
+  around<T>(work: () => T | Promise<T>): Promise<T>
+  /** The text with every stored secret value replaced by `[redacted]`. */
+  redact(text: string): string
+}
+
 /** Everything discovery found: what to show, and how to load each one. */
 export interface DiscoveredSurfaces {
   readonly descriptors: SurfaceDescriptor[]
@@ -115,10 +137,29 @@ const reasonFor = (error: unknown) =>
  * without a relaunch. The conversation that broke the Surface is the one that
  * fixes it, so requiring a relaunch would throw away the fix along with the
  * failure.
+ *
+ * ## Where a secret name becomes a value
+ *
+ * `resolution` is the seam ADR-0006 needs, and this is the only place it can
+ * be: the agent writes `process.env.STRIPE_KEY` into a module, and the one
+ * moment that name has to mean something is the moment the module is evaluated.
+ * `await load()` *is* that evaluation, so the window is exactly this call and
+ * shuts on the way out — a module reads what it needs at module scope, which is
+ * where an integration puts `const key = process.env.STRIPE_KEY` anyway.
+ *
+ * Optional, and the caller that leaves it out is not being careless. Resolution
+ * needs a host process — see `hostSecretResolution` — and the renderer is not
+ * one; `actors/surface-loader.ts` says what follows from that.
+ *
+ * The catch redacts through it too. A client that rejects a request quotes what
+ * it rejected, and that sentence becomes the failed Surface's message and then a
+ * line in the transcript. Redacting where the sentence is *built* means no
+ * caller has to remember to.
  */
 export async function importSurface(
   modulePath: string,
   importers: Record<string, SurfaceImporter>,
+  resolution?: SecretResolution,
 ): Promise<SurfaceView> {
   const load = importers[modulePath]
   if (load === undefined) {
@@ -129,9 +170,12 @@ export async function importSurface(
 
   let module: unknown
   try {
-    module = await load()
+    module = resolution === undefined ? await load() : await resolution.around(load)
   } catch (error) {
-    throw new Error(`${modulePath} did not load — ${reasonFor(error)}`)
+    const said = reasonFor(error)
+    throw new Error(
+      `${modulePath} did not load — ${resolution === undefined ? said : resolution.redact(said)}`,
+    )
   }
 
   const view = (module as { default?: unknown } | null | undefined)?.default

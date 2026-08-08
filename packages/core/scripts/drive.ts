@@ -8,7 +8,9 @@
  *
  * Run: bun run drive
  */
-import { readdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createActor, fromPromise, waitFor } from 'xstate'
 import { harnessMachine, HARNESS_STATE_PATHS } from '../src/machines/harness.ts'
 import { sessionMachine, SESSION_STATE_PATHS, type SessionEvent } from '../src/machines/session.ts'
@@ -22,6 +24,9 @@ import {
   formatContext,
 } from '../src/domain.ts'
 import { compactionFailureMessage } from '@varnick/harness/turn'
+import { openSecretsStore } from '@varnick/harness/secrets'
+import { hostSecretResolution } from '@varnick/harness/secret-resolution'
+import { createSessionStore } from '@varnick/harness/session'
 import { liveActors } from '../src/actors/live.ts'
 import { discoverFrom, importSurface } from '../src/surfaces.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
@@ -1234,6 +1239,189 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
     (await loads(importSurface(path, fixable.importers))) === view,
   )
   check('the loader really imported twice', attempts === 2)
+}
+
+// ---------------------------------------------------------------------------
+// Secret resolution — the host substituting a value at the moment it runs
+// Userspace code (ADR-0006)
+//
+// The one block in this script that fakes almost nothing. A module written the
+// way the agent writes one, on disk, naming a secret nobody told it the value
+// of; the real Secrets Store; the real host-side resolution; the real loader;
+// and a real HTTP service on loopback that answers 200 to exactly one bearer
+// token. What is faked is the keychain, because a test that wrote to the
+// developer's keychain would be a worse bug than the one it was checking.
+//
+// The seam is `importSurface`'s third argument: the loader is where a Userspace
+// module *runs*, so the loader is where a name becomes a value and, one line
+// later, stops being one. See packages/harness/src/secret-resolution.ts for why
+// the binding is non-enumerable, and why there is no equivalent in the renderer.
+// ---------------------------------------------------------------------------
+
+{
+  /** Shaped like the thing it stands in for, so a leak is obvious in a grep. */
+  const BILLING_TOKEN = 'tok_live_ONLY_THE_HOST_EVER_SEES_THIS'
+
+  /** The sentence a failed load carries, never a rejection nobody caught. */
+  const reason = async (run: Promise<unknown>) =>
+    run.then(() => '', (error: unknown) => (error instanceof Error ? error.message : String(error)))
+
+  const items = new Map<string, string>()
+  const secrets = await openSecretsStore({
+    keychain: {
+      read: async (account) => items.get(account) ?? null,
+      write: async (account, value) => {
+        items.set(account, value)
+      },
+      remove: async (account) => {
+        items.delete(account)
+      },
+    },
+  })
+  await secrets.store('BILLING_TOKEN', BILLING_TOKEN)
+  const resolution = hostSecretResolution({ store: secrets })
+
+  // The service the integration talks to. Every Authorization header it is sent
+  // is kept, so what the module actually put on the wire is checkable rather
+  // than inferred from a status code.
+  const presented: string[] = []
+  const service = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const authorization = request.headers.get('authorization') ?? ''
+      presented.push(authorization)
+      return authorization === `Bearer ${BILLING_TOKEN}`
+        ? Response.json({ charged: true })
+        : Response.json({ error: 'that token is not one of ours' }, { status: 401 })
+    },
+  })
+
+  const clone = mkdtempSync(join(tmpdir(), 'varnick-userspace-'))
+
+  /**
+   * A Surface, written the way the agent writes one.
+   *
+   * The URL is in the source because the agent knows it. The token is not,
+   * because the agent does not — it names it and gets on with the integration,
+   * which is the whole of what ADR-0006 asks of it.
+   *
+   * Deliberately free of JSX: this script is React-free by design, and what is
+   * being proven here is the loader, the resolution and a real request, not
+   * rendering. A default-exported function is what the loader checks for.
+   */
+  const surfaceSource = (body: string) => `
+const authorization = \`Bearer \${process.env.BILLING_TOKEN}\`
+${body}
+`
+
+  /** Write one and hand back the pair the loader needs: a clone-relative path and an importer. */
+  const writeSurface = (id: string, body: string) => {
+    const dir = join(clone, 'surfaces', id)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'index.tsx')
+    writeFileSync(file, surfaceSource(body))
+    const found = discoverFrom({
+      [`../../../userspace/surfaces/${id}/index.tsx`]: () => import(file),
+    })
+    return { file, path: `packages/userspace/surfaces/${id}/index.tsx`, importers: found.importers }
+  }
+
+  const charge = writeSurface(
+    'billing',
+    `const response = await fetch('${service.url}charges', { headers: { authorization } })
+const body = await response.json()
+export default function Billing() {
+  return { status: response.status, charged: body.charged === true }
+}`,
+  )
+
+  check(
+    'the module the agent wrote holds the name',
+    readFileSync(charge.file, 'utf-8').includes('process.env.BILLING_TOKEN'),
+  )
+  check(
+    'and cannot be read for the value, because the value was never in it',
+    !readFileSync(charge.file, 'utf-8').includes(BILLING_TOKEN),
+  )
+  check('nothing resolves the name before the host runs the module', process.env.BILLING_TOKEN === undefined)
+
+  const billing = (await importSurface(charge.path, charge.importers, resolution)) as () => {
+    status: number
+    charged: boolean
+  }
+  const charged = billing()
+
+  check('the integration the agent wrote reached the service', presented.length === 1)
+  check(
+    'carrying the value the agent was never given',
+    presented[0] === `Bearer ${BILLING_TOKEN}`,
+  )
+  check('and the service accepted it', charged.status === 200 && charged.charged)
+  check(
+    'the name stops resolving the moment the module has finished running',
+    process.env.BILLING_TOKEN === undefined,
+  )
+
+  /*
+    The same module, loaded without a resolution.
+
+    Here so the four checks above are load-bearing rather than a module that
+    would have worked either way: without the host substituting at the moment of
+    execution, the agent's code sends the name unresolved and the service says
+    no. A second directory rather than a second load, because a module is
+    evaluated once per path and the point is a second evaluation.
+  */
+  const unresolved = writeSurface(
+    'billing-unresolved',
+    `const response = await fetch('${service.url}charges', { headers: { authorization } })
+const body = await response.json()
+export default function Billing() {
+  return { status: response.status, charged: body.charged === true }
+}`,
+  )
+  const bare = (await importSurface(unresolved.path, unresolved.importers)) as () => {
+    status: number
+    charged: boolean
+  }
+  const refused = bare()
+  check('the same module with no resolution is refused by the service', refused.status === 401)
+  check('because it sent the name, unresolved', presented[1] === 'Bearer undefined')
+
+  /*
+    The failure path, which is where a resolved value gets out if anything does.
+
+    A client that rejects a request quotes what it rejected. That sentence is
+    what the loader turns into "<module> did not load — <reason>", which the
+    failed Surface puts on screen and the transcript then carries into the
+    mirror. So the loader redacts through the resolution on the way out.
+  */
+  const angry = writeSurface(
+    'billing-angry',
+    `throw new Error(\`the billing service rejected \${authorization}\`)`,
+  )
+  const said = await reason(importSurface(angry.path, angry.importers, resolution))
+  check('a failure raised while the value was in hand does not quote it', !said.includes(BILLING_TOKEN))
+  check('it says [redacted] where the value was', said.includes('[redacted]'))
+  check('and still names the module the developer has to open', said.includes(angry.path))
+
+  // The same sentence, through a real Session mirror over a real filesystem,
+  // read back the way `grep -r` would read it. Ticket 10 proved this for a value
+  // the developer typed; this is the same proof for a value the host resolved.
+  const mirror = mkdtempSync(join(tmpdir(), 'varnick-resolution-mirror-'))
+  const sessions = createSessionStore({ root: mirror, secretValues: () => secrets.secretValues() })
+  await sessions.persist({
+    sessionId: 'resolved-surface-failure',
+    messages: [{ id: 'm1', role: 'agent', text: `The billing Surface failed: ${said}` }],
+  })
+  const onDisk = readdirSync(mirror)
+    .map((name) => readFileSync(join(mirror, name), 'utf-8'))
+    .join('\n')
+  check('the mirror wrote something', onDisk.length > 0)
+  check('and no byte of it is the value the host resolved', !onDisk.includes(BILLING_TOKEN))
+
+  service.stop(true)
+  rmSync(clone, { recursive: true, force: true })
+  rmSync(mirror, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
