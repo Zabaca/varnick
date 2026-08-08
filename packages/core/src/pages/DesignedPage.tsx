@@ -6,7 +6,7 @@ import { ClaudeMessage } from '../components/brainless/claude/claude-message.tsx
 import { ClaudeThinking } from '../components/brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from '../components/brainless/claude/claude-prompt.tsx'
 import { SlashMenu, type Command } from '../components/slash-menu.tsx'
-import { commandQuery } from '../domain.ts'
+import { commandQuery, invokedCommand } from '../domain.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
 /**
@@ -113,12 +113,28 @@ export function DesignedPage() {
   const menuOpen = Boolean(s?.context.menuOpen)
   const menuIndex = Math.min(s?.context.menuIndex ?? 0, Math.max(commands.length - 1, 0))
 
-  const pick = (i: number) => {
+  /** Tab, or a click: put the command in the draft and stop there. */
+  const complete = (i: number) => {
     const c = commands[i]
     if (!c) return
-    c.run()
-    session?.send({ type: 'MENU_COMMIT' })
-    setDraft('')
+    session?.send({ type: 'MENU_COMPLETE', name: c.name })
+    setDraft(`${c.name} `)
+  }
+
+  /** Enter: send. A draft that names a command runs it instead of posting it. */
+  const submit = () => {
+    const name = invokedCommand(draft, allCommands.map((c) => c.name))
+    const command = name ? allCommands.find((c) => c.name === name) : undefined
+    if (command?.available) {
+      command.run()
+      session?.send({ type: 'EDIT_DRAFT', text: '' })
+      setDraft('')
+      return
+    }
+    if (sessionCan({ type: 'SEND' })) {
+      session?.send({ type: 'SEND' })
+      setDraft('')
+    }
   }
 
   // Only what is actually wrong, and only while it is wrong.
@@ -214,7 +230,7 @@ export function DesignedPage() {
                 commands={commands}
                 activeIndex={menuIndex}
                 onHover={(i) => session?.send({ type: 'MENU_MOVE', delta: i - menuIndex, count: commands.length })}
-                onPick={pick}
+                onPick={complete}
               />
             )}
             <ClaudePrompt
@@ -241,9 +257,9 @@ export function DesignedPage() {
                     })
                     return
                   }
-                  if (e.key === 'Enter' || e.key === 'Tab') {
+                  if (e.key === 'Tab') {
                     e.preventDefault()
-                    pick(menuIndex)
+                    complete(menuIndex)
                     return
                   }
                   if (e.key === 'Escape') {
@@ -252,9 +268,9 @@ export function DesignedPage() {
                     return
                   }
                 }
-                if (e.key === 'Enter' && sessionCan({ type: 'SEND' })) {
-                  session?.send({ type: 'SEND' })
-                  setDraft('')
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  submit()
                 }
                 if (e.key === 'Escape' && sessionCan({ type: 'INTERRUPT' })) {
                   session?.send({ type: 'INTERRUPT' })

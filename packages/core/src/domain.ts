@@ -86,6 +86,18 @@ export function isCommandDraft(draft: string): boolean {
   return draft.startsWith('/') && !draft.includes(' ')
 }
 
+/**
+ * The command a draft invokes, if any.
+ *
+ * Sending is how a command runs: `/clear` typed and sent runs the command
+ * rather than posting the word. Anything that does not name a known command is
+ * an ordinary message, including a half-typed `/cl`.
+ */
+export function invokedCommand(draft: string, names: readonly string[]): string | null {
+  const first = draft.trim().split(/\s+/)[0] ?? ''
+  return names.includes(first) ? first : null
+}
+
 /** The query a command draft is filtering by — the text after the slash. */
 export function commandQuery(draft: string): string {
   return isCommandDraft(draft) ? draft.slice(1) : ''

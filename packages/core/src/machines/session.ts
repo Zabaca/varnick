@@ -72,7 +72,8 @@ export type SessionEvent =
   /** `count` is the number of commands currently listed; the machine does not
    *  own the command list, so the view supplies it for wrapping. */
   | { type: 'MENU_MOVE'; delta: number; count: number }
-  | { type: 'MENU_COMMIT' }
+  /** Tab, or a click: put the command in the draft. It does not run it. */
+  | { type: 'MENU_COMPLETE'; name: string }
   | { type: 'MENU_DISMISS' }
   | { type: 'CLEAR' }
 
@@ -101,9 +102,9 @@ export const sessionMachine = setup({
     >(async () => ({ ok: true })),
   },
   guards: {
-    // A draft addressing the command menu is not a message. Enter picks a
-    // command there; it must not send.
-    hasDraft: ({ context }) => context.draft.trim().length > 0 && !context.menuOpen,
+    // Enter always sends, menu or not. Completing a command is Tab's job, and
+    // a sent draft that names a command runs it — see invokedCommand.
+    hasDraft: ({ context }) => context.draft.trim().length > 0,
   },
   delays: {
     // Named so the states explorer can freeze them. Numeric literals in
@@ -368,8 +369,16 @@ export const sessionMachine = setup({
                     : (context.menuIndex + event.delta + event.count) % event.count,
               }),
             },
-            // The view performs the command; the machine only closes the menu.
-            MENU_COMMIT: { actions: assign({ draft: '', menuIndex: 0 }) },
+            // Completion writes the command into the draft and leaves it there.
+            // The trailing space is what closes the menu, through the same
+            // derived rule as typing one by hand.
+            MENU_COMPLETE: {
+              actions: assign({
+                draft: ({ event }) => `${event.name} `,
+                menuIndex: 0,
+                menuDismissed: false,
+              }),
+            },
             MENU_DISMISS: { actions: assign({ menuDismissed: true, menuIndex: 0 }) },
           },
         },

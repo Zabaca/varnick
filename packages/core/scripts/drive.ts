@@ -12,7 +12,7 @@ import { createActor, fromPromise, waitFor } from 'xstate'
 import { harnessMachine } from '../src/machines/harness.ts'
 import { sessionMachine } from '../src/machines/session.ts'
 import { surfaceMachine } from '../src/machines/surface.ts'
-import { regionOf, canStartAgent } from '../src/domain.ts'
+import { regionOf, canStartAgent, invokedCommand } from '../src/domain.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
 import type { SandboxPolicy } from '../src/domain.ts'
 
@@ -342,10 +342,8 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 
   actor.send({ type: 'EDIT_DRAFT', text: '/' })
   check('a leading slash opens the menu', composer() === 'menu')
-  check(
-    'the menu refuses SEND, so Enter can pick a command',
-    !actor.getSnapshot().can({ type: 'SEND' }),
-  )
+  // Enter sends whether or not the menu is showing; Tab is what completes.
+  check('the menu does not block sending', actor.getSnapshot().can({ type: 'SEND' }))
 
   actor.send({ type: 'EDIT_DRAFT', text: '/cle' })
   check('typing the command keeps the menu open', composer() === 'menu')
@@ -353,7 +351,6 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   // A space means the slash text is an argument, not a query.
   actor.send({ type: 'EDIT_DRAFT', text: '/clear now' })
   check('a space closes the menu', composer() === 'typing')
-  check('and SEND becomes possible again', actor.getSnapshot().can({ type: 'SEND' }))
 
   // Ordinary text never opens it.
   actor.send({ type: 'EDIT_DRAFT', text: 'build me a thing' })
@@ -391,7 +388,6 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
   check('dismissing closes the menu', composer() === 'typing')
   check('dismissing keeps the draft', actor.getSnapshot().context.draft === '/clear')
   check('the dismissed menu stays closed', composer() === 'typing')
-  check('and SEND is possible again', actor.getSnapshot().can({ type: 'SEND' }))
 
   actor.send({ type: 'EDIT_DRAFT', text: '/clea' })
   check('typing again reopens the menu', composer() === 'menu')
@@ -399,16 +395,36 @@ const never = <TOut = never, TIn = Record<string, unknown>>() =>
 }
 
 {
+  // Tab completes into the draft. It does not run the command — Enter does,
+  // and only because the completed draft then names one.
   const actor = createActor(sessionMachine, { input: { sessionId: 's9' } }).start()
-  actor.send({ type: 'EDIT_DRAFT', text: '/clear' })
+  actor.send({ type: 'EDIT_DRAFT', text: '/cl' })
   actor.send({ type: 'MENU_MOVE', delta: 1, count: 4 })
-  actor.send({ type: 'MENU_COMMIT' })
+  actor.send({ type: 'MENU_COMPLETE', name: '/clear' })
 
-  check('committing clears the draft', actor.getSnapshot().context.draft === '')
-  check('committing resets the highlight', actor.getSnapshot().context.menuIndex === 0)
+  check('completing writes the command into the draft', actor.getSnapshot().context.draft === '/clear ')
+  check('completing resets the highlight', actor.getSnapshot().context.menuIndex === 0)
   check(
-    'committing closes the menu',
+    'the trailing space closes the menu',
     regionOf(actor.getSnapshot().value, 'composer') === 'typing',
+  )
+  check('and a completed command is sendable', actor.getSnapshot().can({ type: 'SEND' }))
+
+  check(
+    'a completed draft resolves to its command',
+    invokedCommand(actor.getSnapshot().context.draft, ['/clear', '/save']) === '/clear',
+  )
+  check(
+    'a half-typed command resolves to nothing',
+    invokedCommand('/cl', ['/clear', '/save']) === null,
+  )
+  check(
+    'ordinary text resolves to nothing',
+    invokedCommand('clear the desk', ['/clear']) === null,
+  )
+  check(
+    'arguments do not stop a command resolving',
+    invokedCommand('/clear everything', ['/clear']) === '/clear',
   )
   actor.stop()
 }
