@@ -17,12 +17,17 @@
 //     the one place a credential is most likely to be echoed back at you.
 //
 // The webview learns one thing from a read: which store answered.
+//
+// This module used to be its own `#[tauri::command]`. It is now one route of
+// the bridge (bridge.rs), which is the same call over the same IPC — but there
+// is one seam for the whole Harness rather than one command per capability, and
+// `route_of` is where "the credential is answered in this process" stopped being
+// a convention and became a unit test.
 
 use std::process::Command;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::State;
 
 /// The variable the agent subprocess is spawned with.
 /// Mirrored as CREDENTIAL_ENV_VAR in packages/harness/src/credentials.ts.
@@ -53,20 +58,6 @@ pub enum Source {
 #[derive(Debug, Serialize)]
 pub struct Reading {
     pub source: Source,
-}
-
-/// The failure payload. A tag, not a message: the prose that a developer reads
-/// is authored once, in packages/harness/src/credentials.ts, so the two halves
-/// cannot drift into two different first-run instructions.
-#[derive(Debug, Serialize)]
-pub struct Absence {
-    pub absence: &'static str,
-}
-
-impl Absence {
-    fn of(tag: &'static str) -> Self {
-        Absence { absence: tag }
-    }
 }
 
 /// What the host is holding, if anything. Tauri managed state.
@@ -145,10 +136,14 @@ fn read_keychain() -> Result<Option<String>, ()> {
 }
 
 /// Read the credential and hold it. Answers with which store replied.
-#[tauri::command]
-pub fn read_credential(store: State<'_, CredentialStore>) -> Result<Reading, Absence> {
-    let (source, value) = resolve(read_keychain(), std::env::var(ENV_VAR).ok())
-        .map_err(Absence::of)?;
+///
+/// The failure is a `&'static str` tag and nothing else, which is what makes
+/// "no secret crosses the bridge" a property of the signature: there is no
+/// `String` on this error path for a value to be formatted into. The prose a
+/// developer reads is authored once, in packages/harness/src/credentials.ts, so
+/// the two halves cannot drift into two different first-run instructions.
+pub fn read_credential(store: &CredentialStore) -> Result<Reading, &'static str> {
+    let (source, value) = resolve(read_keychain(), std::env::var(ENV_VAR).ok())?;
 
     match store.0.lock() {
         Ok(mut held) => {
@@ -157,7 +152,7 @@ pub fn read_credential(store: State<'_, CredentialStore>) -> Result<Reading, Abs
         }
         // A poisoned lock means the host cannot vouch for what it is holding.
         // Reporting a read it cannot back up would be worse than reporting none.
-        Err(_) => Err(Absence::of("store-unreadable")),
+        Err(_) => Err("store-unreadable"),
     }
 }
 
@@ -166,6 +161,14 @@ pub fn read_credential(store: State<'_, CredentialStore>) -> Result<Reading, Abs
 /// The one way the value leaves this module, and it goes into a child process's
 /// environment rather than into any string the host keeps. Used by the spawn
 /// (ticket 03); nothing else may call it.
+///
+/// A note for that spawn, since the bridge makes it a live question: the Harness
+/// runtime holds the Sandbox, so the obvious reading is that it should also
+/// spawn the agent — which would mean sending the credential across the bridge,
+/// and that is exactly what may never happen. `EstablishedSandbox.wrap()` hands
+/// back argv and env for a `{ shell: false }` spawn, so the runtime can compute
+/// the wrapping (no secret) and this process can do the spawning (the secret,
+/// still here). The agent stays inside srt either way.
 #[allow(dead_code)]
 pub fn credential_env(store: &CredentialStore) -> Option<(&'static str, String)> {
     let held = store.0.lock().ok()?;

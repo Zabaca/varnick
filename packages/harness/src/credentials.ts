@@ -18,7 +18,14 @@
  * Every message this module produces is written here and selected by an enum.
  * Nothing a host said is ever interpolated into one, so a store that answers
  * with something unexpected cannot smuggle it into an error.
+ *
+ * The read crosses on the same bridge as every other Harness call (./bridge.ts),
+ * and is the one call the Rust host answers itself rather than forwarding to the
+ * Harness runtime — a credential must live in exactly one process, and it has to
+ * be the one that spawns the agent subprocess.
  */
+
+import { HarnessUnavailable, callHarness, tauriHarnessBridge } from './bridge.ts'
 
 /** Which store answered. Reportable — the value it held is not. */
 export type CredentialSource = 'keychain' | 'env'
@@ -99,13 +106,6 @@ export interface CredentialHost {
   read(): Promise<unknown>
 }
 
-interface TauriInternals {
-  invoke(command: string, payload?: unknown): Promise<unknown>
-}
-
-/** The Tauri command name. Mirrored in src-tauri/src/credential.rs. */
-const READ_COMMAND = 'read_credential'
-
 /**
  * The Tauri host, or `null` when there is not one.
  *
@@ -113,20 +113,31 @@ const READ_COMMAND = 'read_credential'
  * does not exist. That is a real first-run path, not an edge case, so it is a
  * value to branch on rather than an exception to catch — and it reaches
  * `credential.absent` with a reason like any other failed read.
+ *
+ * Built on the bridge rather than on its own `invoke`: there is one seam between
+ * Core and the Harness, and the credential was the call that proved it should
+ * exist. `callHarness` rebuilds the answer, so the host's reply is narrowed to
+ * `{ source }` twice — once there and once below — and neither pass is where a
+ * value could survive.
  */
 export function tauriCredentialHost(): CredentialHost | null {
-  const internals = (globalThis as { __TAURI_INTERNALS__?: TauriInternals }).__TAURI_INTERNALS__
-  if (!internals || typeof internals.invoke !== 'function') return null
-  return { read: () => internals.invoke(READ_COMMAND) }
+  const bridge = tauriHarnessBridge()
+  if (bridge === null) return null
+  return { read: () => callHarness({ kind: 'read-credential' }, bridge) }
 }
 
 /** Pull an absence out of whatever a host rejected with, without quoting it. */
 function absenceOf(rejection: unknown): CredentialAbsence {
-  const named = (rejection as { absence?: unknown } | null | undefined)?.absence
-  if (named === 'nothing-stored' || named === 'store-unreadable') return named
-  // Anything else — a panic, a serialisation change, a string — is a store that
-  // did not answer. Deliberately not reported verbatim: an unrecognised payload
-  // is exactly the payload nobody has checked for a secret.
+  // The bridge's refusals carry the tag the Rust host chose, and the credential
+  // route can only choose a `&'static str` — see src-tauri/src/credential.rs.
+  if (rejection instanceof HarnessUnavailable && rejection.failure === 'refused') {
+    const tag = rejection.detail
+    if (tag === 'nothing-stored' || tag === 'store-unreadable') return tag
+  }
+  // Anything else — a panic, a serialisation change, a bridge that never reached
+  // the host — is a store that did not answer. Deliberately not reported
+  // verbatim: an unrecognised payload is exactly the payload nobody has checked
+  // for a secret.
   return 'store-unreadable'
 }
 

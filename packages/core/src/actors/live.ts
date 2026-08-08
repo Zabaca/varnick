@@ -1,6 +1,6 @@
 import { fromPromise } from 'xstate'
+import { callHarness } from '@varnick/harness/bridge'
 import { readCredential as readCredentialFromHost } from '@varnick/harness/credentials'
-import { createSessionStore, defaultSessionRoot, type SessionStore } from '@varnick/harness/session'
 import type {
   Effort,
   Message,
@@ -30,21 +30,15 @@ import type {
  */
 
 /**
- * The Session mirror, made once and kept.
+ * How a live actor reaches the Harness.
  *
- * Built lazily rather than at module load: `defaultSessionRoot()` needs a host
- * process, and constructing it eagerly would make importing this module fail
- * everywhere instead of failing at the one actor that needs a filesystem.
- *
- * No `secretValues` yet — there is no Secrets Store to read them from until
- * ticket 10. Until then the mirror redacts by credential shape only, which is
- * the weaker half of the mechanism; wiring the store in here closes it.
+ * One seam, `callHarness`, and nothing below it. This module is bundled into the
+ * webview, so it imports no Node: the kernel, the keychain and the filesystem
+ * are all behind the bridge, in the host. A call with no host reaches the
+ * actor's own failure state carrying the reason — see @varnick/harness/bridge
+ * for where that answer comes from and why a missing host is a value rather
+ * than an exception.
  */
-let mirror: SessionStore | null = null
-function sessionMirror(): SessionStore {
-  mirror ??= createSessionStore({ root: defaultSessionRoot() })
-  return mirror
-}
 
 const notImplemented = (name: string, what: string) => (): never => {
   throw new Error(
@@ -65,22 +59,14 @@ export function liveActors() {
     /*
       Establishes the real srt policy scoped to the clone, or fails.
 
-      Imported at call time and hidden from the bundler on purpose: the Harness
-      talks to the kernel through node built-ins, and pulling that graph into
-      the browser build would ship the sandbox implementation into the webview
-      where it can never run. Loaded from the host process this resolves; loaded
-      from a plain browser it throws, which is the honest answer — a renderer
-      with no host behind it has no sandbox, and `sandbox.unavailable` carrying
-      that reason is exactly right. There is no third branch here, by design:
-      nothing in this actor can return ok without srt having said so.
+      The Harness runtime does the work; this side only asks. There is no third
+      branch here, by design: nothing in this actor can return ok without srt
+      having said so, and a renderer with no host behind it reaches
+      `sandbox.unavailable` carrying that reason rather than pretending.
     */
-    checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(async () => {
-      const specifier = '@varnick/harness/sandbox'
-      type HarnessSandbox = typeof import('@varnick/harness/sandbox')
-      const harness = (await import(/* @vite-ignore */ specifier)) as HarnessSandbox
-      await harness.establishSandbox()
-      return { ok: true }
-    }),
+    checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(() =>
+      callHarness({ kind: 'check-sandbox' }),
+    ),
 
     // Real. The Tauri host reads the credential and answers with which store
     // replied; the value never crosses the IPC boundary, so Core has no field
@@ -116,11 +102,18 @@ export function liveActors() {
 
     // The host-side mirror, alongside the Agent SDK's own persistence. One
     // JSON Lines file per Session under the app-data directory, which a
-    // developer can read and back up with varnick not running.
+    // developer can read and back up with varnick not running. The store itself
+    // lives in the Harness runtime, which is the only process with a filesystem.
     persistSession: fromPromise<
       { ok: true },
       { sessionId: string; messages: readonly Message[] }
-    >(({ input }) => sessionMirror().persist(input)),
+    >(({ input }) =>
+      callHarness({
+        kind: 'persist-session',
+        sessionId: input.sessionId,
+        messages: input.messages,
+      }),
+    ),
 
     compactSession: fromPromise<
       { messages: Message[]; tokensUsed: number },

@@ -1,5 +1,15 @@
 // The Harness: the runtime half of Core.
 //
+// Core reaches all of it through one seam — `callHarness` in ./bridge.ts. The
+// renderer has no kernel, no keychain and no filesystem, so every capability
+// below runs in the host and answers a bridge call.
+//
+// This barrel is host-side: it re-exports ./sandbox.ts, which imports node built
+// -ins. Core imports the subpaths it needs — `@varnick/harness/bridge` and
+// `@varnick/harness/credentials`, the two modules that import no Node — and
+// never this one. ./runtime.ts is not re-exported at all; it is loaded by the
+// runtime process and by nothing else.
+//
 // Four responsibilities, each with an ADR behind it:
 //   sandbox      — @anthropic-ai/sandbox-runtime around the agent's whole
 //                  process tree, never the SDK's own `sandbox` option (ADR-0003)
@@ -17,6 +27,18 @@
 // restated here, where nothing would keep it true.
 
 export const HARNESS_VERSION = '0.0.0'
+
+export {
+  HARNESS_FAILURES,
+  HarnessUnavailable,
+  callHarness,
+  harnessGuidance,
+  tauriHarnessBridge,
+  type HarnessAnswers,
+  type HarnessBridge,
+  type HarnessFailure,
+  type HarnessRequest,
+} from './bridge.ts'
 
 export {
   DEFAULT_ALLOWED_HOSTS,

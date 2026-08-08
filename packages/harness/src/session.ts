@@ -9,6 +9,12 @@
 //
 // Nothing here imports from `packages/core`. Dependency runs Core → Harness, so
 // the message shape the mirror stores is declared below rather than borrowed.
+//
+// This module is host-side and stays that way. Core reaches the mirror through
+// the bridge (./bridge.ts) and never imports this file, which is what lets it
+// import `node:fs` like any other host module.
+
+import fsp from 'node:fs/promises'
 
 /** A message as the mirror stores it. Structurally what Core calls a `Message`,
  *  declared here because the Harness must not import Core. */
@@ -365,28 +371,16 @@ export function defaultSessionRoot(): string {
 /**
  * The filesystem as the host has it.
  *
- * `node:fs/promises` is reached through a dynamic import with a non-literal
- * specifier so that a browser bundler leaves it alone entirely: Core's live
- * actors import this module, and a static `node:fs` import would drag a Node
- * built-in into the renderer bundle. Called in the renderer it throws, which is
- * the intended behaviour — the mirror is host-side by definition.
+ * `node:fs/promises` is imported statically. It used to be reached through a
+ * dynamic import with a non-literal specifier, to hide it from the bundler:
+ * Core's live actors imported this module directly, and a static Node built-in
+ * would have been dragged into the renderer bundle. They do not any more — the
+ * mirror is reached through the bridge, and this module is only ever loaded in
+ * the Harness runtime, which is a host process by definition.
  */
 export function nodeSessionFs(): SessionFs {
-  const specifier = 'node:fs/promises'
-  const load = async () => {
-    try {
-      return (await import(/* @vite-ignore */ specifier)) as typeof import('node:fs/promises')
-    } catch (cause) {
-      throw new Error(
-        'The Session mirror needs a host filesystem and there is none here. Supply a SessionFs, or call the store from the host process.',
-        { cause },
-      )
-    }
-  }
-
   return {
     async readFile(path) {
-      const fsp = await load()
       try {
         return await fsp.readFile(path, 'utf8')
       } catch (error) {
@@ -396,7 +390,6 @@ export function nodeSessionFs(): SessionFs {
     },
 
     async appendFile(path, data) {
-      const fsp = await load()
       // O_APPEND, one write, then flush. The flush is what makes a resolved
       // save a claim about the device rather than about the page cache.
       const handle = await fsp.open(path, 'a')
@@ -409,7 +402,6 @@ export function nodeSessionFs(): SessionFs {
     },
 
     async replaceFile(path, data) {
-      const fsp = await load()
       // Same directory, so the rename is a rename and not a copy across
       // filesystems — which would not be atomic.
       const temp = `${path}.${Date.now().toString(36)}${Math.trunc(Math.random() * 1e6).toString(36)}.tmp`
@@ -424,12 +416,10 @@ export function nodeSessionFs(): SessionFs {
     },
 
     async makeDir(path) {
-      const fsp = await load()
       await fsp.mkdir(path, { recursive: true })
     },
 
     async listDir(path) {
-      const fsp = await load()
       try {
         return await fsp.readdir(path)
       } catch (error) {
