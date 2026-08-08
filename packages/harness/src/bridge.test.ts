@@ -9,6 +9,7 @@ import {
   type HarnessFailure,
   type HarnessRequest,
 } from './bridge.ts'
+import { TURN_FAILURES, turnFailureMessage } from './turn.ts'
 
 /**
  * The seam: the exported surface of the bridge, and nothing below it.
@@ -60,6 +61,9 @@ describe('a missing host is a value to branch on, not an exception to catch', ()
       { kind: 'spawn-agent' },
       { kind: 'stop-agent' },
       { kind: 'await-agent-exit' },
+      { kind: 'run-turn', turnId: 't1', prompt: 'hi', model: 'claude-opus-5', effort: 'xhigh' },
+      { kind: 'next-turn-event' },
+      { kind: 'interrupt-turn', turnId: 't1' },
     ]
     for (const request of requests) {
       expect((await failureOf(request, null)).failure).toBe('no-host')
@@ -313,5 +317,89 @@ describe('the request crosses intact and carries nothing extra', () => {
     }
     await callHarness({ kind: 'read-credential' }, recording)
     expect(seen).toEqual([{ kind: 'read-credential' }])
+  })
+})
+
+describe('a Turn crosses the same seam as everything else', () => {
+  test('starting a Turn answers with nothing beyond having started it', async () => {
+    const started = await callHarness(
+      { kind: 'run-turn', turnId: 't1', prompt: 'hi', model: 'claude-opus-5', effort: 'xhigh' },
+      answers({ ok: true }),
+    )
+    expect(started).toEqual({ ok: true })
+  })
+
+  test('an event is rebuilt on the way in, like every other answer', async () => {
+    // The event is written inside the Sandbox, by the process holding the
+    // agent. A field it volunteered must not reach the machine's context, from
+    // where it would reach the Session mirror.
+    const event = await callHarness(
+      { kind: 'next-turn-event' },
+      answers({ event: { kind: 'delta', turnId: 't1', text: 'hi', apiKey: LOOKS_LIKE_A_KEY } }),
+    )
+    expect(event).toEqual({ event: { kind: 'delta', turnId: 't1', text: 'hi' } })
+    expect(JSON.stringify(event)).not.toContain('sk-ant')
+  })
+
+  test('no event yet is an answer, not a failure', async () => {
+    // The call waits, and a wait that ran out of patience has nothing to
+    // report. A failure here would fail a Turn that is merely thinking.
+    expect(await callHarness({ kind: 'next-turn-event' }, answers({ event: null }))).toEqual({
+      event: null,
+    })
+  })
+
+  test('an event this build cannot read is malformed rather than skipped', async () => {
+    // Skipping it would drop a `done`, and the Turn would stream for ever.
+    expect((await failureOf({ kind: 'next-turn-event' }, answers({ event: {} }))).failure).toBe(
+      'malformed',
+    )
+    expect((await failureOf({ kind: 'next-turn-event' }, answers({ nothing: true }))).failure).toBe(
+      'malformed',
+    )
+  })
+
+  test('every failure a Turn can report is one this build knows the sentence for', async () => {
+    for (const failure of TURN_FAILURES) {
+      const answer = await callHarness(
+        { kind: 'next-turn-event' },
+        answers({ event: { kind: 'failed', turnId: 't1', failure } }),
+      )
+      expect(answer).toEqual({ event: { kind: 'failed', turnId: 't1', failure } })
+      expect(turnFailureMessage(failure).length).toBeGreaterThan(0)
+    }
+  })
+
+  test('an interrupt names the Turn it means', async () => {
+    const seen: unknown[] = []
+    const recording: HarnessBridge = {
+      call: async (request) => {
+        seen.push(request)
+        return { ok: true }
+      },
+    }
+    await callHarness({ kind: 'interrupt-turn', turnId: 't1' }, recording)
+    expect(seen).toEqual([{ kind: 'interrupt-turn', turnId: 't1' }])
+  })
+
+  test('a Turn request has no field a credential could ride in', async () => {
+    const seen: unknown[] = []
+    const recording: HarnessBridge = {
+      call: async (request) => {
+        seen.push(request)
+        return { ok: true }
+      },
+    }
+    await callHarness(
+      { kind: 'run-turn', turnId: 't1', prompt: 'hi', model: 'claude-opus-5', effort: 'xhigh' },
+      recording,
+    )
+    expect(Object.keys(seen[0] as object).sort()).toEqual([
+      'effort',
+      'kind',
+      'model',
+      'prompt',
+      'turnId',
+    ])
   })
 })

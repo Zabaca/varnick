@@ -1,5 +1,11 @@
 import { seededActors, defaultSeedControls, type SeedControls } from './seeded.ts'
-import { liveActors, liveAgentExit, liveStopAgent, LIVE_NOT_IMPLEMENTED } from './live.ts'
+import {
+  liveActors,
+  liveAgentExit,
+  liveStopAgent,
+  LIVE_NOT_IMPLEMENTED,
+  type TurnObserver,
+} from './live.ts'
 
 /**
  * Which implementations the machines run against.
@@ -37,8 +43,21 @@ export type ActorName = (typeof ACTOR_NAMES)[number]
  */
 export const UNIMPLEMENTED: readonly ActorName[] = LIVE_NOT_IMPLEMENTED
 
-export function actorsFor(mode: ActorMode, controls: SeedControls = defaultSeedControls) {
-  return mode === 'live' ? liveActors() : seededActors(controls)
+/**
+ * The implementations, for one run.
+ *
+ * `observer` is what a live Turn says while it is still running — a delta, a
+ * rejected credential — neither of which can come back through an actor's
+ * promise, because an actor resolves once and both happen before that. A seeded
+ * run ignores it: the seeded turn is one `await` and a string, and the bare
+ * page's `STREAM_DELTA` button is how streaming is reached without an agent.
+ */
+export function actorsFor(
+  mode: ActorMode,
+  controls: SeedControls = defaultSeedControls,
+  observer?: TurnObserver,
+) {
+  return mode === 'live' ? liveActors(observer) : seededActors(controls)
 }
 
 /**
@@ -85,3 +104,4 @@ export function resolveActorMode(): ActorMode {
 }
 
 export { seededActors, defaultSeedControls, type SeedControls } from './seeded.ts'
+export type { TurnObserver } from './live.ts'

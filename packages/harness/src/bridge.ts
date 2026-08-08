@@ -52,6 +52,7 @@
  */
 
 import type { RestoredTranscript, StoredMessage } from './session.ts'
+import { parseTurnEvent, type TurnEvent } from './turn.ts'
 
 /** Establish the Sandbox, or fail. Answers `{ ok: true }` and nothing else. */
 export interface CheckSandboxRequest {
@@ -112,6 +113,53 @@ export interface AwaitAgentExitRequest {
 }
 
 /**
+ * Run one Turn on the Session the agent process is already holding.
+ *
+ * Answers `{ ok: true }` and returns at once. The answer is not the Turn's
+ * answer — that arrives as events, through {@link NextTurnEventRequest} — and
+ * the split is the whole of "watch the response stream": a call that returned
+ * the finished text could not report anything until there was nothing left to
+ * report.
+ *
+ * `turnId` is chosen by the caller so an interrupt can name the Turn it means
+ * and a stale event can be told from a current one.
+ *
+ * There is no field for a credential and no session to open: the prompt goes to
+ * the process the Rust host spawned, inside `srt`, which is the only Claude Code
+ * process varnick ever has (ADR-0003).
+ */
+export interface RunTurnRequest {
+  readonly kind: 'run-turn'
+  readonly turnId: string
+  readonly prompt: string
+  readonly model: string
+  readonly effort: string
+}
+
+/**
+ * Wait for the next thing the running Turn has to say.
+ *
+ * The second call that does not return promptly, for the same reason as
+ * `await-agent-exit`: a request/response seam cannot push, and a poll would make
+ * a streamed answer arrive in whatever rhythm the poll had rather than the
+ * rhythm the agent produced it in.
+ *
+ * It waits with a limit rather than for ever, and `event: null` is what running
+ * out of patience looks like. That is not a failure — a Turn that is thinking is
+ * a working Turn — and it is what lets an abandoned wait end instead of holding
+ * a host thread for the life of the process.
+ */
+export interface NextTurnEventRequest {
+  readonly kind: 'next-turn-event'
+}
+
+/** Stop the Turn named, keeping what has already arrived. */
+export interface InterruptTurnRequest {
+  readonly kind: 'interrupt-turn'
+  readonly turnId: string
+}
+
+/**
  * Every call the bridge carries.
  *
  * A closed union rather than a name and a payload: an actor cannot ask for
@@ -130,6 +178,9 @@ export type HarnessRequest =
   | SpawnAgentRequest
   | StopAgentRequest
   | AwaitAgentExitRequest
+  | RunTurnRequest
+  | NextTurnEventRequest
+  | InterruptTurnRequest
 
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
@@ -140,6 +191,9 @@ export interface HarnessAnswers {
   'spawn-agent': { readonly pid: number }
   'stop-agent': { readonly ok: true }
   'await-agent-exit': { readonly reason: string }
+  'run-turn': { readonly ok: true }
+  'next-turn-event': { readonly event: TurnEvent | null }
+  'interrupt-turn': { readonly ok: true }
 }
 
 /**
@@ -323,6 +377,29 @@ function transcriptAnswer(answer: unknown): RestoredTranscript {
 }
 
 /**
+ * Read one thing the Turn said, or that it has said nothing yet.
+ *
+ * Strict rather than forgiving, and the reason is particular to this answer: an
+ * unreadable event skipped as if it were nothing would silently drop a `done`,
+ * and the Turn would stream for ever with no failure to show for it. An absent
+ * event is a different thing from an unreadable one, and only the first is a
+ * value.
+ */
+function turnEventAnswer(answer: unknown): { event: TurnEvent | null } {
+  const payload = answer as { event?: unknown } | null | undefined
+  if (payload === null || typeof payload !== 'object' || !('event' in payload)) {
+    throw new HarnessUnavailable('malformed')
+  }
+  if (payload.event === null) return { event: null }
+
+  // Rebuilt, like every other answer. This one is written inside the Sandbox by
+  // the process holding the agent, and its text lands in the transcript.
+  const event = parseTurnEvent(payload.event)
+  if (event === null) throw new HarnessUnavailable('malformed')
+  return { event }
+}
+
+/**
  * Ask the host to do one thing.
  *
  * Every path out is either the declared answer or a thrown
@@ -353,9 +430,13 @@ export async function callHarness<R extends HarnessRequest>(
       return spawnAnswer(answer) as HarnessAnswers[R['kind']]
     case 'await-agent-exit':
       return exitAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'next-turn-event':
+      return turnEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
     case 'persist-session':
     case 'stop-agent':
+    case 'run-turn':
+    case 'interrupt-turn':
       return okAnswer(answer) as HarnessAnswers[R['kind']]
   }
 }

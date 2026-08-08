@@ -33,16 +33,25 @@
 // is no branch that starts an unwrapped process, no environment variable that
 // makes one, and no error path that degrades into one.
 
-use std::collections::BTreeMap;
-use std::io;
-use std::process::{Child, Command, Stdio};
+use std::collections::{BTreeMap, VecDeque};
+use std::io::{self, BufRead, BufReader, Write};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::bridge::Failure;
 use crate::credential::{credential_env, CredentialStore};
+
+/// How long a wait for the next Turn event lasts before answering "nothing yet".
+///
+/// Long, because a Turn that is thinking is a working Turn and a short limit
+/// would turn a wait into a poll. Bounded at all, because a wait nobody is
+/// listening to any more — an interrupted Turn's — would otherwise hold a host
+/// thread until the agent said something, which it may never do.
+const EVENT_WAIT: Duration = Duration::from_secs(15);
 
 /// The wrapping, as the runtime answered it.
 ///
@@ -99,6 +108,124 @@ pub fn exit_reason(status: &std::process::ExitStatus) -> String {
     }
 }
 
+/// One control request to the agent host, as one line, or nothing.
+///
+/// Rebuilt field by field rather than forwarded. The agent host runs inside srt
+/// holding a live Claude Code session, so its control channel is the one place
+/// where "pass the request through and let the other end sort it out" would mean
+/// handing the renderer a way to say things to a confined agent that nobody
+/// agreed it could say.
+///
+/// `serde_json` escapes newlines, so a prompt with one in it cannot split a
+/// request across two lines — the same framing the runtime channel uses.
+pub fn control_line_for(request: &Value) -> Option<String> {
+    let field = |name: &str| request.get(name).and_then(Value::as_str);
+    let turn_id = field("turnId")?;
+
+    let control = match request.get("kind").and_then(Value::as_str)? {
+        "run-turn" => serde_json::json!({
+            "kind": "run-turn",
+            "turnId": turn_id,
+            "prompt": field("prompt")?,
+            "model": field("model")?,
+            "effort": field("effort")?,
+        }),
+        // The renderer's word is `interrupt-turn`, because on that side of the
+        // bridge a Turn is the thing being interrupted. Inside the agent host
+        // there is only one Turn, so it is just `interrupt`.
+        "interrupt-turn" => serde_json::json!({ "kind": "interrupt", "turnId": turn_id }),
+        _ => return None,
+    };
+
+    Some(format!("{control}\n"))
+}
+
+/// A line the agent host wrote, if it is a Turn event.
+///
+/// Anything else on stdout is diagnostics — the agent host announces itself
+/// with `{"ready":true}` — and is dropped. The event is not interpreted here:
+/// packages/harness/src/bridge.ts rebuilds it field by field on the way into
+/// Core, and authoring the sentence a developer reads is that side's job.
+pub fn agent_event_of(line: &str) -> Option<Value> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    value.get("turnId").and_then(Value::as_str)?;
+    value.get("kind").and_then(Value::as_str)?;
+    Some(value)
+}
+
+/// What the agent has said that nobody has read yet.
+///
+/// Its own type so it can be tested without a process. Generation-stamped for
+/// the same reason the exit is: a delta written by an agent that has since been
+/// replaced would arrive as the previous conversation's words in this one's
+/// transcript.
+#[derive(Default)]
+pub struct EventQueue {
+    inner: Arc<EventQueueInner>,
+}
+
+#[derive(Default)]
+struct EventQueueInner {
+    state: Mutex<EventQueueState>,
+    arrived: Condvar,
+}
+
+#[derive(Default)]
+struct EventQueueState {
+    generation: u64,
+    events: VecDeque<Value>,
+}
+
+impl EventQueue {
+    /// Start a generation, discarding everything the last one had to say.
+    pub fn restart(&self) -> u64 {
+        let mut state = match self.inner.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        state.generation += 1;
+        state.events.clear();
+        state.generation
+    }
+
+    /// Queue an event, if the generation that produced it is still current.
+    pub fn push(&self, generation: u64, event: Value) {
+        if let Ok(mut state) = self.inner.state.lock() {
+            if state.generation == generation {
+                state.events.push_back(event);
+            }
+        }
+        self.inner.arrived.notify_all();
+    }
+
+    /// The next event, waiting up to `limit` for one.
+    ///
+    /// `None` means nothing was said in that time, which is not a failure: a
+    /// Turn that is thinking is a working Turn.
+    pub fn next(&self, limit: Duration) -> Option<Value> {
+        let mut state = self.inner.state.lock().ok()?;
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            if let Some(event) = state.events.pop_front() {
+                return Some(event);
+            }
+            let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+            let (guard, timed_out) = self.inner.arrived.wait_timeout(state, remaining).ok()?;
+            state = guard;
+            if timed_out.timed_out() && state.events.is_empty() {
+                return None;
+            }
+        }
+    }
+
+    /// A second handle on the same queue, for the thread reading the agent.
+    pub fn clone_handle(&self) -> EventQueue {
+        EventQueue {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 /// What this host knows about the agent right now.
 #[derive(Default)]
 struct AgentState {
@@ -109,6 +236,13 @@ struct AgentState {
     group: Option<i32>,
     /// Why the current generation ended, once it has.
     exit: Option<String>,
+    /// The agent host's control channel. `Some` while the process is believed
+    /// alive — a Turn with nowhere to send its prompt is a refusal, never a
+    /// second process started to have somewhere to send it.
+    stdin: Option<ChildStdin>,
+    /// The Turn this host last started, so an agent that dies mid-Turn can be
+    /// reported against the Turn it killed rather than silently.
+    turn: Option<String>,
 }
 
 /// What the host and every watcher thread share.
@@ -137,6 +271,8 @@ impl Shared {
 #[derive(Default)]
 pub struct AgentProcess {
     shared: Arc<Shared>,
+    /// What the agent has said about the Turn in flight, waiting to be read.
+    events: EventQueue,
 }
 
 impl AgentProcess {
@@ -165,9 +301,15 @@ impl AgentProcess {
             .map_err(|_: io::Error| Failure::of("no-runtime"))?;
 
         let pid = child.id();
+        // Both pipes, or neither. A Turn with nowhere to send its prompt is a
+        // refusal; there is no branch here that starts a second process to have
+        // somewhere to send it.
+        let stdin = child.stdin.take().ok_or_else(|| Failure::of("no-runtime"))?;
+        let stdout = child.stdout.take().ok_or_else(|| Failure::of("no-runtime"))?;
 
-        // Replace before watching, so the watcher below is the only one whose
-        // generation matches.
+        // Before the watchers, so the two threads below are the only ones whose
+        // generation matches. The queue restarts here too: a delta from the
+        // agent being replaced must not arrive in the new one's transcript.
         let generation = {
             let mut state = self
                 .shared
@@ -177,12 +319,59 @@ impl AgentProcess {
             kill_group(state.group.take());
             state.generation += 1;
             state.exit = None;
+            state.turn = None;
+            state.stdin = Some(stdin);
             // The child leads its own process group (see build_command), so its
             // pid is its pgid — and killing the group kills the tree, which is
             // what the wrapper's bash, sandbox-exec and Claude Code all live in.
             state.group = Some(pid as i32);
             state.generation
         };
+        self.events.restart();
+        let queue_generation = generation;
+
+        /*
+          One thread reading the agent's stdout, for the life of this process.
+
+          This is the only thing this host reads out of the agent, and it reads
+          it as data rather than as prose: `agent_event_of` keeps the lines that
+          name a Turn and drops the rest. Nothing here authors a sentence — the
+          renderer does that, from the tag the event carries, so a failure this
+          host has never seen cannot be described by a string it built.
+        */
+        let queue = self.events.clone_handle();
+        let shared = Arc::clone(&self.shared);
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Some(event) = agent_event_of(&line) {
+                    queue.push(queue_generation, event);
+                }
+            }
+            // End of stream: the agent is gone. A Turn that was running has to
+            // be told, or it streams for ever against a process that has
+            // stopped answering.
+            let turn = shared
+                .state
+                .lock()
+                .ok()
+                .and_then(|mut state| {
+                    if state.generation == queue_generation {
+                        state.turn.take()
+                    } else {
+                        None
+                    }
+                });
+            if let Some(turn_id) = turn {
+                queue.push(
+                    queue_generation,
+                    serde_json::json!({
+                        "kind": "failed",
+                        "turnId": turn_id,
+                        "failure": "agent-ended",
+                    }),
+                );
+            }
+        });
 
         // One thread per spawn, owning the Child. `wait()` needs `&mut Child`,
         // and holding the state lock across it would deadlock every stop.
@@ -196,6 +385,54 @@ impl AgentProcess {
         });
 
         Ok(pid)
+    }
+
+    /// Start a Turn on the Session the agent process is already holding.
+    ///
+    /// Writes one control line and returns. The Turn's answer arrives through
+    /// {@link AgentProcess::next_event}, which is what lets a developer read it
+    /// as it comes rather than when it is over.
+    ///
+    /// There is no path from here to a Claude Code process: this writes to a
+    /// pipe, and a Turn with no pipe to write to is a refusal. Opening a session
+    /// to answer a Turn would be the second session ADR-0003 forbids.
+    pub fn run_turn(&self, request: &Value) -> Result<(), Failure> {
+        let Some(line) = control_line_for(request) else {
+            return Err(Failure::of("malformed"));
+        };
+        let turn_id = request
+            .get("turnId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .map_err(|_| Failure::of("runtime-lost"))?;
+
+        let Some(stdin) = state.stdin.as_mut() else {
+            return Err(Failure::refused(
+                "There is no agent running, so there is nothing to run a turn on. Start the agent first.",
+            ));
+        };
+
+        stdin
+            .write_all(line.as_bytes())
+            .and_then(|()| stdin.flush())
+            // Nothing the write said is forwarded: this process holds the
+            // credential, and an OS error can quote the environment.
+            .map_err(|_| Failure::of("runtime-lost"))?;
+
+        if request.get("kind").and_then(Value::as_str) == Some("run-turn") {
+            state.turn = turn_id;
+        }
+        Ok(())
+    }
+
+    /// The next thing the running Turn had to say, or nothing yet.
+    pub fn next_event(&self) -> Option<Value> {
+        self.events.next(EVENT_WAIT)
     }
 
     /// Wait for the agent to exit and say why.
@@ -244,6 +481,10 @@ impl AgentProcess {
             .lock()
             .map_err(|_| Failure::of("runtime-lost"))?;
         kill_group(state.group.take());
+        // Dropped with the process. A control channel to a tree that has been
+        // killed is a pipe a later Turn would write into and never hear from.
+        state.stdin = None;
+        state.turn = None;
         Ok(())
     }
 }
@@ -273,11 +514,22 @@ fn build_command(wrapping: &Wrapping) -> Command {
         // working directory it cannot read, and its interpreter fails at
         // startup with an error that names nothing.
         .current_dir(&wrapping.cwd)
-        .stdin(Stdio::null())
-        // Diagnostics go to the terminal varnick was launched from. Not
-        // captured: this host does not read the agent's output, so it cannot
-        // forward anything the agent printed into a reply.
-        .stdout(Stdio::inherit())
+        /*
+          Both pipes, because a Turn rides this process.
+
+          stdin carries control requests — a prompt, an interrupt — and stdout
+          carries what the Turn says back. That is what makes ADR-0003's last
+          consequence implementable rather than merely stated: there is a way to
+          ask the confined session a question, so nothing needs to open a second
+          one to ask it.
+
+          Only lines that name a Turn are read back (`agent_event_of`), and even
+          those are rebuilt on the far side of the bridge. stderr stays on the
+          terminal varnick was launched from, uncaptured, so nothing the agent
+          printed can be forwarded into a reply.
+        */
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
     lead_process_group(&mut command);
     command
@@ -310,10 +562,163 @@ fn kill_group(_group: Option<i32>) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{build_command, exit_reason, wrapping_of, Wrapping};
+    use super::{
+        agent_event_of, build_command, control_line_for, exit_reason, wrapping_of, EventQueue,
+        Wrapping,
+    };
     use crate::bridge::Failure;
     use serde_json::json;
     use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    /// A value shaped like a real key, used to prove it never gets through.
+    const LOOKS_LIKE_A_KEY: &str = "sk-" + "ant-api03-NEVER-LET-THIS-OUT";
+
+    #[test]
+    fn a_turn_reaches_the_agent_as_one_line() {
+        let line = control_line_for(&json!({
+            "kind": "run-turn",
+            "turnId": "t1",
+            "prompt": "hello\nthere",
+            "model": "claude-opus-5",
+            "effort": "xhigh",
+        }))
+        .expect("a run-turn is a control request");
+        assert!(line.ends_with('\n'));
+        // The prompt has a newline in it and the framing is one request per
+        // line, so escaping is what keeps the channel in step.
+        assert_eq!(line.matches('\n').count(), 1);
+    }
+
+    #[test]
+    fn the_control_request_is_rebuilt_rather_than_forwarded() {
+        // The agent host runs inside srt holding a live Claude Code session.
+        // A field the renderer volunteered must not reach it.
+        let line = control_line_for(&json!({
+            "kind": "run-turn",
+            "turnId": "t1",
+            "prompt": "hello",
+            "model": "claude-opus-5",
+            "effort": "xhigh",
+            "apiKey": LOOKS_LIKE_A_KEY,
+            "cwd": "/etc",
+        }))
+        .expect("a run-turn is a control request");
+        assert!(!line.contains("sk-ant"));
+        assert!(!line.contains("cwd"));
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            parsed,
+            json!({
+                "kind": "run-turn",
+                "turnId": "t1",
+                "prompt": "hello",
+                "model": "claude-opus-5",
+                "effort": "xhigh",
+            })
+        );
+    }
+
+    #[test]
+    fn an_interrupt_names_the_turn_and_says_nothing_else() {
+        let line = control_line_for(&json!({ "kind": "interrupt-turn", "turnId": "t1" }))
+            .expect("an interrupt is a control request");
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(parsed, json!({ "kind": "interrupt", "turnId": "t1" }));
+    }
+
+    #[test]
+    fn a_request_that_is_not_a_control_request_never_reaches_the_agent() {
+        assert_eq!(control_line_for(&json!({ "kind": "run-turn" })), None);
+        assert_eq!(
+            control_line_for(&json!({ "kind": "run-turn", "turnId": "t1", "prompt": 7,
+                                     "model": "m", "effort": "e" })),
+            None
+        );
+        assert_eq!(control_line_for(&json!({ "kind": "spawn-agent" })), None);
+        assert_eq!(control_line_for(&json!("nope")), None);
+    }
+
+    #[test]
+    fn a_line_the_agent_wrote_is_an_event_only_if_it_names_a_turn() {
+        assert_eq!(
+            agent_event_of(r#"{"kind":"delta","turnId":"t1","text":"hi"}"#),
+            Some(json!({ "kind": "delta", "turnId": "t1", "text": "hi" }))
+        );
+        // The agent host also announces itself on stdout. That is not an event.
+        assert_eq!(agent_event_of(r#"{"ready":true}"#), None);
+        assert_eq!(agent_event_of("Debug: starting up"), None);
+        assert_eq!(agent_event_of(""), None);
+    }
+
+    #[test]
+    fn an_event_waits_rather_than_answering_nothing_straight_away() {
+        // The whole point of the call: a poll would make a streamed answer
+        // arrive in the poll's rhythm rather than the agent's.
+        let queue = EventQueue::default();
+        let generation = queue.restart();
+        let pushed = queue.clone_handle();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            pushed.push(generation, json!({ "kind": "delta", "turnId": "t1", "text": "hi" }));
+        });
+        let started = std::time::Instant::now();
+        let event = queue.next(Duration::from_secs(2));
+        assert!(started.elapsed() >= Duration::from_millis(25));
+        assert_eq!(
+            event,
+            Some(json!({ "kind": "delta", "turnId": "t1", "text": "hi" }))
+        );
+    }
+
+    #[test]
+    fn a_wait_that_ran_out_of_patience_is_nothing_rather_than_a_failure() {
+        // A Turn that is thinking is a working Turn. Failing here would fail it.
+        let queue = EventQueue::default();
+        queue.restart();
+        assert_eq!(queue.next(Duration::from_millis(10)), None);
+    }
+
+    #[test]
+    fn events_arrive_in_the_order_the_agent_wrote_them() {
+        let queue = EventQueue::default();
+        let generation = queue.restart();
+        queue.push(generation, json!({ "kind": "delta", "turnId": "t1", "text": "one" }));
+        queue.push(generation, json!({ "kind": "delta", "turnId": "t1", "text": "two" }));
+        assert_eq!(
+            queue.next(Duration::from_millis(10)),
+            Some(json!({ "kind": "delta", "turnId": "t1", "text": "one" }))
+        );
+        assert_eq!(
+            queue.next(Duration::from_millis(10)),
+            Some(json!({ "kind": "delta", "turnId": "t1", "text": "two" }))
+        );
+    }
+
+    #[test]
+    fn a_restart_leaves_no_event_from_the_process_that_was_replaced() {
+        // A delta from a dead agent delivered into a fresh one's Turn would be
+        // the previous conversation's words in this one's transcript.
+        let queue = EventQueue::default();
+        let old = queue.restart();
+        queue.push(old, json!({ "kind": "delta", "turnId": "t1", "text": "stale" }));
+        queue.restart();
+        assert_eq!(queue.next(Duration::from_millis(10)), None);
+    }
+
+    #[test]
+    fn an_event_from_a_replaced_generation_is_dropped_rather_than_queued() {
+        let queue = EventQueue::default();
+        let old = queue.restart();
+        let new = queue.restart();
+        queue.push(old, json!({ "kind": "delta", "turnId": "t1", "text": "stale" }));
+        queue.push(new, json!({ "kind": "delta", "turnId": "t2", "text": "fresh" }));
+        assert_eq!(
+            queue.next(Duration::from_millis(10)),
+            Some(json!({ "kind": "delta", "turnId": "t2", "text": "fresh" }))
+        );
+        assert_eq!(queue.next(Duration::from_millis(10)), None);
+    }
 
     fn wrapping() -> Wrapping {
         Wrapping {

@@ -119,9 +119,11 @@ export async function readSubscriptionUsage(read: ReadPlanUsageReport): Promise<
  * created here: see {@link ReadPlanUsageReport} for why opening one would be an
  * unconfined agent process rather than an implementation detail.
  *
- * Nothing calls this yet — ticket 03 is what will own a confined session to
- * hand it. Until then `readSubscriptionUsage` has no reader and the strip stays
- * seeded, which is the honest state rather than a chore left undone.
+ * Nothing calls this yet. The confined session exists and now takes control
+ * requests — a Turn is one — so what is left is a `TurnControl` kind that asks
+ * for usage and a route for the answer. Until then `readSubscriptionUsage` has
+ * no reader and the strip stays seeded, which is the honest state rather than a
+ * chore left undone.
  */
 export function reportFromSession(session: UsageCapableSession): ReadPlanUsageReport {
   return async () =>

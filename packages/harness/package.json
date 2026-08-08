@@ -12,7 +12,8 @@
     "./credentials": "./src/credentials.ts",
     "./secrets": "./src/secrets.ts",
     "./session": "./src/session.ts",
-    "./subscription": "./src/subscription.ts"
+    "./subscription": "./src/subscription.ts",
+    "./turn": "./src/turn.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -171,6 +171,15 @@ export async function readCredential(
 }
 
 /**
+ * The one sentence a rejected credential produces.
+ *
+ * Here rather than at each caller, because a Turn that fails on authentication
+ * and a spawn that does are the same fact reaching the same state, and two
+ * sentences for one fact would read as two problems.
+ */
+export const CREDENTIAL_REJECTED_DETAIL = 'The API refused the credential (HTTP 401).'
+
+/**
  * Was this failure the API refusing the credential?
  *
  * `credential.rejected` is driven by whatever sees the 401 — the turn, the
@@ -186,10 +195,16 @@ export function credentialRejection(error: unknown): { detail: string } | null {
   if (error === null || error === undefined) return null
 
   const status = (error as { status?: unknown }).status
-  if (status === 401) return { detail: 'The API refused the credential (HTTP 401).' }
+  if (status === 401) return { detail: CREDENTIAL_REJECTED_DETAIL }
   if (typeof status === 'number') return null
 
   const text = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
-  const refused = /\b401\b/.test(text) || /authentication_error|invalid x-api-key/i.test(text)
-  return refused ? { detail: 'The API refused the credential (HTTP 401).' } : null
+  // `authentication_failed` is the Agent SDK's own name for it, added when the
+  // Turn became the first caller: the SDK reports a refused credential as that
+  // enum rather than as an HTTP status, and a classifier that missed it would
+  // let the one failure that means `credential.rejected` land as an ordinary
+  // failed Turn.
+  const refused =
+    /\b401\b/.test(text) || /authentication_error|authentication_failed|invalid x-api-key/i.test(text)
+  return refused ? { detail: CREDENTIAL_REJECTED_DETAIL } : null
 }

@@ -7,8 +7,15 @@ import {
   agentCommand,
   agentEntryPath,
   agentSdkEntry,
+  failureOfThrown,
   sandboxEnvOverlay,
+  serveTurns,
+  type TurnSessionPort,
 } from './agent.ts'
+import { parseTurnEvent, turnFailureMessage, type TurnEvent } from './turn.ts'
+
+/** A value shaped like a real key, used to prove it never comes back out. */
+const LOOKS_LIKE_A_KEY = 'sk-" + "ant-api03-NEVER-LET-THIS-OUT'
 
 /*
   The seam is what the Harness hands the host to spawn — a command string, and
@@ -113,5 +120,289 @@ describe('the overlay carries no secret', () => {
   test('the name matches the one the Rust host injects', () => {
     // Mirrored as ENV_VAR in src-tauri/src/credential.rs.
     expect(CREDENTIAL_ENV_VAR_NAME).toBe('ANTHROPIC_API_KEY')
+  })
+})
+
+describe('what a Session threw, classified', () => {
+  test('a thrown 401 goes through the shared classifier rather than a second rule', () => {
+    // The SDK names most failures itself. An exception carries only prose, and
+    // prose is where a 401 body would be — so `credentialRejection` decides,
+    // and nothing but its verdict is kept.
+    expect(failureOfThrown(new Error(`401 invalid x-api-key ${LOOKS_LIKE_A_KEY}`))).toBe(
+      'authentication',
+    )
+    expect(failureOfThrown({ status: 401 })).toBe('authentication')
+    expect(failureOfThrown(new Error('socket hang up'))).toBe('execution')
+  })
+
+  test('whatever was thrown, the sentence shown is the authored one', () => {
+    expect(turnFailureMessage(failureOfThrown(new Error(LOOKS_LIKE_A_KEY)))).not.toContain('sk-ant')
+    expect(turnFailureMessage(failureOfThrown({ status: 401, body: LOOKS_LIKE_A_KEY }))).not.toContain(
+      'sk-ant',
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The agent host's control loop
+// ---------------------------------------------------------------------------
+
+/*
+  Still no process. `serveTurns` takes the Session as a port, so these tests
+  drive the whole loop — a prompt in, deltas out, an interrupt — with no Claude
+  Code executable anywhere. That is ADR-0003's last consequence applied to the
+  test suite: a test that opened a session to check a turn would be a session
+  outside srt on a developer's machine.
+*/
+
+/** A stream a test pushes into and closes by hand. */
+function pushable<T>() {
+  const queued: T[] = []
+  let wake: (() => void) | null = null
+  let closed = false
+
+  return {
+    push(value: T) {
+      queued.push(value)
+      wake?.()
+    },
+    close() {
+      closed = true
+      wake?.()
+    },
+    async *[Symbol.asyncIterator](): AsyncIterator<T> {
+      for (;;) {
+        while (queued.length > 0) yield queued.shift() as T
+        if (closed) return
+        await new Promise<void>((resolve) => {
+          wake = resolve
+        })
+      }
+    },
+  }
+}
+
+/** A Session that records what was asked of it and answers nothing. */
+function fakeSession() {
+  const asked: string[] = []
+  const port: TurnSessionPort = {
+    prompt: (text) => {
+      asked.push(`prompt:${text}`)
+    },
+    setModel: async (model) => {
+      asked.push(`model:${model}`)
+    },
+    setEffort: async (effort) => {
+      asked.push(`effort:${effort}`)
+    },
+    interrupt: async () => {
+      asked.push('interrupt')
+    },
+  }
+  return { port, asked }
+}
+
+const runTurnLine = (turnId: string, prompt: string, model = 'claude-opus-5', effort = 'xhigh') =>
+  `${JSON.stringify({ kind: 'run-turn', turnId, prompt, model, effort })}\n`
+
+const textDelta = (text: string) => ({
+  type: 'stream_event',
+  event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+})
+
+const result = (text: string) => ({
+  type: 'result',
+  subtype: 'success',
+  is_error: false,
+  result: text,
+  usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+})
+
+/** Run the loop over a scripted exchange and collect the events it wrote. */
+async function serve(
+  script: (input: {
+    control: ReturnType<typeof pushable<string>>
+    messages: ReturnType<typeof pushable<unknown>>
+    asked: string[]
+  }) => Promise<void>,
+) {
+  const control = pushable<string>()
+  const messages = pushable<unknown>()
+  const { port, asked } = fakeSession()
+  const written: TurnEvent[] = []
+
+  const served = serveTurns({
+    control,
+    messages,
+    session: port,
+    write: (line) => {
+      const event = parseTurnEvent(JSON.parse(line))
+      if (event !== null) written.push(event)
+    },
+  })
+
+  await script({ control, messages, asked })
+  control.close()
+  messages.close()
+  await served
+  return { written, asked }
+}
+
+/** Let the loops run until they have nothing left to do. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 5))
+
+describe('a turn rides the session that is already open', () => {
+  test('a prompt is put on the running session, not on a new one', async () => {
+    const { asked } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(asked).toContain('prompt:hello')
+  })
+
+  test('the model and the effort are applied before the prompt goes out', async () => {
+    // This is what makes "a change mid-turn applies to the next turn" true: the
+    // values arrive with the turn, so the turn in flight is never reconfigured
+    // underneath itself.
+    const { asked } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello', 'claude-sonnet-5', 'low'))
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(asked).toEqual(['model:claude-sonnet-5', 'effort:low', 'prompt:hello'])
+  })
+
+  test('the answer arrives in pieces and then completes', async () => {
+    const { written } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(textDelta('Hel'))
+      messages.push(textDelta('lo'))
+      messages.push(result('Hello'))
+      await settle()
+    })
+    expect(written.map((e) => e.kind)).toEqual(['delta', 'delta', 'done'])
+    expect(written.at(-1)).toMatchObject({ kind: 'done', turnId: 't1', text: 'Hello' })
+  })
+
+  test('messages arriving with no turn running are not attributed to one', async () => {
+    // The session emits its own init and status messages. A delta with no turn
+    // to belong to must not become the first word of the next one.
+    const { written } = await serve(async ({ messages }) => {
+      messages.push({ type: 'system', subtype: 'init' })
+      messages.push(textDelta('stray'))
+      await settle()
+    })
+    expect(written).toEqual([])
+  })
+
+  test('a second turn is its own turn, and the first one is not still listening', async () => {
+    const { written } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'one'))
+      await settle()
+      messages.push(result('first'))
+      await settle()
+      control.push(runTurnLine('t2', 'two'))
+      await settle()
+      messages.push(textDelta('second'))
+      messages.push(result('second'))
+      await settle()
+    })
+    expect(written.filter((e) => e.turnId === 't1').map((e) => e.kind)).toEqual(['done'])
+    expect(written.filter((e) => e.turnId === 't2').map((e) => e.kind)).toEqual(['delta', 'done'])
+  })
+})
+
+describe('interrupting', () => {
+  test('an interrupt reaches the session it names', async () => {
+    const { asked } = await serve(async ({ control }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      control.push(`${JSON.stringify({ kind: 'interrupt', turnId: 't1' })}\n`)
+      await settle()
+    })
+    expect(asked).toContain('interrupt')
+  })
+
+  test('an interrupt naming a turn that is not running does nothing', async () => {
+    // A stale interrupt from an abandoned turn must not stop the one that
+    // replaced it.
+    const { asked } = await serve(async ({ control }) => {
+      control.push(runTurnLine('t2', 'hello'))
+      await settle()
+      control.push(`${JSON.stringify({ kind: 'interrupt', turnId: 't1' })}\n`)
+      await settle()
+    })
+    expect(asked).not.toContain('interrupt')
+  })
+
+  test('what had already streamed is still on the wire when the interrupt lands', async () => {
+    // The machine folds `partial` into the transcript, so keeping the partial
+    // means having emitted it as it arrived rather than at the end.
+    const { written } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(textDelta('half an ans'))
+      await settle()
+      control.push(`${JSON.stringify({ kind: 'interrupt', turnId: 't1' })}\n`)
+      await settle()
+    })
+    expect(written).toEqual([{ kind: 'delta', turnId: 't1', text: 'half an ans' }])
+  })
+})
+
+describe('the control channel refuses what it does not understand', () => {
+  test('a line that is not a control request is ignored rather than acted on', async () => {
+    const { asked } = await serve(async ({ control }) => {
+      control.push('not json\n')
+      control.push(`${JSON.stringify({ kind: 'exec', command: 'rm -rf /' })}\n`)
+      await settle()
+    })
+    expect(asked).toEqual([])
+  })
+
+  test('a request split across two chunks is still one request', async () => {
+    const line = runTurnLine('t1', 'hello')
+    const { asked } = await serve(async ({ control }) => {
+      control.push(line.slice(0, 12))
+      await settle()
+      control.push(line.slice(12))
+      await settle()
+    })
+    expect(asked).toContain('prompt:hello')
+  })
+
+  test('a session that refuses the prompt fails the turn rather than hanging it', async () => {
+    const control = pushable<string>()
+    const messages = pushable<unknown>()
+    const written: TurnEvent[] = []
+    const served = serveTurns({
+      control,
+      messages,
+      session: {
+        prompt: () => {
+          throw new Error('401 unauthorized')
+        },
+        setModel: async () => {},
+        setEffort: async () => {},
+        interrupt: async () => {},
+      },
+      write: (line) => {
+        const event = parseTurnEvent(JSON.parse(line))
+        if (event !== null) written.push(event)
+      },
+    })
+    control.push(runTurnLine('t1', 'hello'))
+    await settle()
+    control.close()
+    messages.close()
+    await served
+
+    // A turn that was sent and never answered is the worst available state:
+    // `sending` for ever, with nothing to retry or dismiss.
+    expect(written).toEqual([{ kind: 'failed', turnId: 't1', failure: 'authentication' }])
   })
 })
