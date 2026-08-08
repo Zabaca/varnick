@@ -1,4 +1,5 @@
 import { fromPromise } from 'xstate'
+import { readCredential as readCredentialFromHost } from '@varnick/harness/credentials'
 import type {
   Effort,
   Message,
@@ -29,7 +30,6 @@ const notImplemented = (name: string, what: string) => (): never => {
 
 export const LIVE_NOT_IMPLEMENTED = [
   'checkSandbox',
-  'readCredential',
   'spawnAgent',
   'readSubscriptionUsage',
   'runTurn',
@@ -44,8 +44,12 @@ export function liveActors() {
       notImplemented('checkSandbox', 'nothing establishes a sandbox-runtime policy'),
     ),
 
-    readCredential: fromPromise<{ source: 'keychain' | 'env' }, Record<string, never>>(
-      notImplemented('readCredential', 'Tauri does not read the keychain yet'),
+    // Real. The Tauri host reads the credential and answers with which store
+    // replied; the value never crosses the IPC boundary, so Core has no field
+    // that could hold it. No host — a browser tab at the dev server — is a
+    // failed read with a reason, not an unhandled rejection.
+    readCredential: fromPromise<{ source: 'keychain' | 'env' }, Record<string, never>>(() =>
+      readCredentialFromHost(),
     ),
 
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(

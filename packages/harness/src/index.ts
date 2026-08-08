@@ -9,7 +9,11 @@
 //                  one; the host resolves names at run time (ADR-0006)
 //   session      — persisted twice, so a transcript survives a broken build
 //
-// Nothing is implemented yet. The machines come first: no component and no
-// implementation before scripts/drive.ts passes. See docs/agents/workflow.md.
+// The machines come first: no component and no implementation before
+// scripts/drive.ts passes. See docs/agents/workflow.md.
+//
+// What is wired and what is still a stub is recorded in exactly one place —
+// LIVE_NOT_IMPLEMENTED in packages/core/src/actors/live.ts, which the seeded
+// marker reads — rather than restated here, where nothing would keep it true.
 
 export const HARNESS_VERSION = '0.0.0'

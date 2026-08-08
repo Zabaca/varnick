@@ -6,9 +6,13 @@
 // See docs/adr/0003-containment-wraps-the-process-tree.md and
 // docs/adr/0006-agents-author-secret-use-never-hold-secrets.md.
 
+mod credential;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(credential::CredentialStore::default())
+        .invoke_handler(tauri::generate_handler![credential::read_credential])
         .run(tauri::generate_context!())
         .expect("error while running varnick");
 }
