@@ -22,7 +22,7 @@ The two are the same person in different postures, and the product treats them t
 
 ## Product Purpose
 
-varnick is a desktop harness for a coding agent, and a chat that runs inside it. The harness supplies the things nobody wants to build twice and everybody needs before they can let an agent run unattended: kernel-level confinement, credential injection that keeps the agent out of the system keychain, a secrets store the agent can never read, and a session that survives a crash, a restart, and a build the agent just broke.
+varnick is a desktop harness for a coding agent, and a chat that runs inside it. The harness supplies the things nobody wants to build twice and everybody needs before they can let an agent run unattended: kernel-level confinement, a credential the host reads and injects so the agent never needs a keychain of its own, a secrets store the agent cannot read, and a session that survives a crash, a restart, and a build the agent just broke.
 
 You clone it, run it in dev mode, and build your own Workspace inside it — Surfaces, integrations, whatever the work needs — by asking the agent for them. The chat is not the destination; it is the thing that constructs everything else.
 
@@ -34,7 +34,7 @@ Success is that a person can hand an agent real autonomy on their own machine an
 
 **v1 is a Claude Code client, and says so.** An earlier draft of this file claimed varnick is "explicitly not a terminal embedded in a window." That was aspiration about where the product goes, stated as though it were true of what ships, and it made the first surface harder to read for no gain. At v1 the chat is a faithful representation of a Claude Code session — the same transcript, tool calls, and composer a developer already knows — because familiarity is the right starting point for a surface whose job is to construct everything else. What varnick adds is the harness around it and the Workspace that grows from it, not a different way to hold a conversation.
 
-The claim a competitor cannot copy by shipping a nicer chat window is the containment story: the agent runs under a kernel sandbox covering its entire process tree, authenticates without ever touching the keychain, uses secrets it cannot read, and cannot write the code that holds the conversation. That is a set of decisions with measurements behind them, not a feature list.
+The claim a competitor cannot copy by shipping a nicer chat window is the containment story: on macOS the agent runs under a kernel sandbox covering its entire process tree, cannot open either keychain on the machine, authenticates from a credential the host injects, and cannot write the code that holds the conversation. That is a set of decisions with measurements behind them, not a feature list — and the measurements are what bound the claim. The keychains are unreachable because their files are under denied paths, which is a file denial and not a capability denial: `security`, `osascript` and `open` all still execute inside the Sandbox, and the README says so. Linux and Windows are unmeasured, so nothing is claimed for them.
 
 The second half of the position is the refusal to build a plugin API. Extension is by clone: you fork, you edit, the seam is filesystem discovery rather than a versioned contract. That is only credible because the harness is small enough to read.
 

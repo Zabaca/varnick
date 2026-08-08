@@ -27,19 +27,47 @@ import {
 import { sandboxEnvOverlay } from './agent.ts'
 
 /**
- * Binaries denied by making them unreadable.
+ * Binaries the agent cannot **open for reading**. It can still run them.
  *
- * srt has no execute allowlist, so this is the only way to block one. Denying
- * `security` breaks Keychain authentication, which is the point: the host reads
- * the credential and injects it, so the agent never needs the Keychain and must
- * never reach it (ADR-0003).
+ * The name says `UNREADABLE` and not `DENIED` because the list used to be
+ * called `DENIED_BINARIES` and every document downstream read that as an
+ * execute denial. It is not one, and cannot be made into one here: srt's
+ * generated Seatbelt profile carries an unconditional `(allow process-exec)`
+ * with no configuration knob, while `denyRead` emits `file-read-data` denials.
+ * Those are different kernel operations. Measured — `cat /usr/bin/osascript`
+ * is refused and `osascript -e 'return 6*7'` prints 42 in the same sandbox.
+ * See the correction in docs/adr/0003-containment-wraps-the-process-tree.md.
+ *
+ * `sudo` is the exception, and not because of this list: it is setuid, and the
+ * kernel refuses to honour that inside a sandbox for its own reasons.
+ *
+ * So why keep the list? Because a binary the agent cannot read is one it cannot
+ * copy, patch, or inspect, and because these four are the ones worth noticing
+ * in a violation log. It is a tripwire and a small friction, not a boundary.
+ * Nothing may depend on these programs being unable to execute.
  */
-export const DENIED_BINARIES = [
+export const UNREADABLE_BINARIES = [
   '/usr/bin/security',
   '/usr/bin/osascript',
   '/usr/bin/open',
   '/usr/bin/sudo',
 ] as const
+
+/**
+ * The machine-wide keychain directory.
+ *
+ * The login Keychain is covered by the denial on `$HOME`, because that is where
+ * Apple puts the file. `/Library/Keychains` is not under any home directory, so
+ * nothing covered it — `System.keychain` was readable and `security
+ * dump-keychain` returned 30902 bytes and 37 generic-password items from inside
+ * the Sandbox, the joined Wi-Fi networks among their labels. Denying the
+ * directory rather than the one file also covers `apsd.keychain` and anything
+ * an administrator installs there later.
+ *
+ * Measured not to cost anything: with this denied, TLS to both allowlisted
+ * hosts still completes. `sandbox.boundary.test.ts` keeps both halves honest.
+ */
+export const MACHINE_KEYCHAIN_DIR = '/Library/Keychains'
 
 /**
  * Hosts the agent may reach.
@@ -138,8 +166,11 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
         // credentials, my age keys, and every repository that is not this one.
         usersRootOf(home),
         home,
-        // Denied execution, expressed as the only thing srt can express.
-        ...DENIED_BINARIES,
+        // The keychains that live outside every home directory, and are
+        // therefore not covered by the two lines above.
+        MACHINE_KEYCHAIN_DIR,
+        // Unreadable, not unrunnable. See UNREADABLE_BINARIES.
+        ...UNREADABLE_BINARIES,
       ],
       // Read back exactly one thing out of the denied home: the clone. Nothing
       // broader — an allow beats a deny, so `/` or `/usr` here would hand back
@@ -211,8 +242,13 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     '  Every host in that list is an exfiltration path. The allowlist bounds',
     '  the blast radius; it does not prevent data leaving.',
     '',
-    '  security, osascript, open and sudo are blocked by being made unreadable.',
-    '  srt has no execute allowlist, so that is what denying execution means.',
+    '  security, osascript, open and sudo are made unreadable. They still run:',
+    '  srt allows process-exec unconditionally, and denying read is a different',
+    '  kernel operation. Treat the list as a tripwire, not as a boundary.',
+    '',
+    '  Both keychains are unreachable, by two different mechanisms. The login',
+    '  Keychain lives under the denied home directory; /Library/Keychains is',
+    '  denied on its own line because it does not.',
     '',
     '  If this policy cannot be established the agent does not start. There is',
     '  no unconfined mode.',
