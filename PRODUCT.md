@@ -85,7 +85,9 @@ The name is `varnick`. Nothing else is committed — no logo, wordmark, palette,
 
 ## Evidence on Hand
 
-None in this repository. It contains documentation only: `README.md`, `CLAUDE.md`, `CONTEXT.md`, `docs/agents/`, and `docs/adr/`.
+A working harness, and measurements against the kernel. The repository holds Core, the Harness, three pages, and a test suite; `packages/harness/src/sandbox.boundary.test.ts` runs a real agent under the real policy and reports what it can and cannot reach. That suite is the only evidence for the containment claims, and the claims are written to match it.
+
+What there is still none of: users other than the author, customers, deployments, benchmarks, and any measurement on Linux or Windows. Nothing in this repository should imply otherwise.
 
 Prior art exists in adjacent repositories by the same author and is the source of the containment design: `zbc/packages/agent` (sandbox-runtime containment, Profiles, Traits, disposable clones, Collect, and the measurements in its ADR-0002), `hudsonts/packages/nix/claude-sandbox` (a hand-written Seatbelt profile predating `srt`), and `cedarpad` (a hosted multi-workspace canvas platform on Cloudflare — a different deployment model, useful for canvas opinions).
 

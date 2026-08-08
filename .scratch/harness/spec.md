@@ -137,7 +137,7 @@ which events are legal, so each looped back through the machines.
 
 **Containment is `@anthropic-ai/sandbox-runtime` around the agent's process tree.** The Agent SDK's own `sandbox` option is disabled and must stay disabled — the kernel refuses to apply a sandbox inside an existing one, so enabling both kills every Bash command. This is [ADR-0003](../../docs/adr/0003-containment-wraps-the-process-tree.md).
 
-**Execution is denied by denying read.** `sandbox-runtime` has no execute allowlist, so a binary is blocked by making it unreadable. The denied set is `security`, `osascript`, `open`, and `sudo`. A narrow deny must win over the broad allow that re-opens system paths.
+**Four binaries are made unreadable, and three of them run anyway.** This originally read "execution is denied by denying read" — `sandbox-runtime` has no execute allowlist, so the reasoning went, a binary is blocked by making it unreadable. Measured, that is false: `srt`'s profile carries an unconditional `(allow process-exec)`, and `denyRead` emits `file-read-data` denials, which is a different operation. `security`, `osascript` and `open` all execute; only `sudo` is blocked, for its own setuid reason. The list is kept and is now called `UNREADABLE_BINARIES` — a binary the agent cannot open is one it cannot copy or patch — but nothing may depend on those four failing to run. See ADR-0003's correction.
 
 **The sandbox policy denies Core.** `packages/core/**`, the build configuration, and package scripts are unwritable by the Userspace Profile, per [ADR-0002](../../docs/adr/0002-core-userspace-boundary.md). This is what makes the boundary kernel-enforced rather than conventional, and it is also what closes the build-pipeline escape.
 

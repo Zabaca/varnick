@@ -243,6 +243,8 @@ test.skipIf(blocked !== null)(
     // so a denial below means the policy did it and not the filesystem.
     accessSync('/Library/Keychains/System.keychain', constants.R_OK)
 
+    const run = runner(await establishSandbox({ cloneRoot: clone }))
+
     const opened = await run('cat /Library/Keychains/System.keychain')
     expect(opened.code).not.toBe(0)
     expect(opened.stderr).toMatch(/not permitted|Permission denied|No such file/i)
@@ -299,6 +301,8 @@ test.skipIf(offline !== null)(
       all means the TLS handshake completed. The request is unauthenticated and
       carries no credential.
     */
+    const run = runner(await establishSandbox({ cloneRoot: clone }))
+
     const anthropic = await run(
       'curl -sS -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages',
     )
