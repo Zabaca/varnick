@@ -27,12 +27,24 @@ import {
 import { sandboxEnvOverlay } from './agent.ts'
 
 /**
- * Binaries denied by making them unreadable.
+ * Binaries whose *contents* are denied.
  *
- * srt has no execute allowlist, so this is the only way to block one. Denying
- * `security` breaks Keychain authentication, which is the point: the host reads
- * the credential and injects it, so the agent never needs the Keychain and must
- * never reach it (ADR-0003).
+ * srt has no execute allowlist, so denying read is the only thing it can be
+ * asked to do about a binary. **It does not stop the binary running**, and this
+ * comment used to say it did. Measured in `containment.probe.test.ts`, probes 2
+ * and 2b, against the policy below:
+ *
+ *   * `security`, `osascript` and `open` are unreadable and execute anyway.
+ *     srt's profile carries an unconditional `(allow process-exec)` while
+ *     `denyRead` emits `file-read-data` denials — different operations.
+ *   * `sudo` is refused, and not because of this list. Lifting all four entries
+ *     out of `denyRead` leaves it refused: it is setuid, and its own file mode
+ *     `-r-s--x--x` already forbids the read besides.
+ *
+ * The list stays. It is not what protects the Keychain — `denyRead` on `$HOME`
+ * is, incidentally, because that is where the Keychain file lives — but denying
+ * the bytes of these binaries is still worth having, and removing entries to
+ * make a doc comment true would be changing the fence to fit its label.
  */
 export const DENIED_BINARIES = [
   '/usr/bin/security',
@@ -211,8 +223,13 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     '  Every host in that list is an exfiltration path. The allowlist bounds',
     '  the blast radius; it does not prevent data leaving.',
     '',
-    '  security, osascript, open and sudo are blocked by being made unreadable.',
-    '  srt has no execute allowlist, so that is what denying execution means.',
+    '  security, osascript, open and sudo have their contents denied above.',
+    '  That is not the same as denying execution, and it does not achieve it:',
+    '  measured, the first three still run. Only sudo is refused, because it is',
+    '  setuid. Nothing here should be read as an execute allowlist; srt has none.',
+    '',
+    '  What keeps the agent out of the login Keychain is the denial of the home',
+    '  directory, which is where the Keychain file lives — not the line above.',
     '',
     '  If this policy cannot be established the agent does not start. There is',
     '  no unconfined mode.',

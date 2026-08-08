@@ -20,7 +20,9 @@ export interface SandboxPolicy {
   readonly denyWrite: readonly string[]
   /** Hosts the agent may reach. Every entry is an exfiltration path. */
   readonly allowedHosts: readonly string[]
-  /** Binaries denied by making them unreadable — srt has no exec allowlist. */
+  /** Paths denied outright, binaries among them. Denying a binary's bytes is
+   * not denying its execution — srt has no exec allowlist and cannot be asked
+   * for one. See DENIED_BINARIES in the Harness. */
   readonly denyRead: readonly string[]
 }
 

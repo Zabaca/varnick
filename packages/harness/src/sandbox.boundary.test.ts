@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, mkdtempSync, rmSync, writeFileSync }
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { agentCommand } from './agent.ts'
+import { SELFTEST_MARKER, agentCommand } from './agent.ts'
 import {
   establishSandbox,
   releaseSandbox,
@@ -127,7 +127,14 @@ test.skipIf(blocked !== null)(
     // machine that has never stored one. What it proves is the pair that
     // matters: the process can load the Agent SDK inside the Sandbox, and it
     // still cannot read outside the clone once it has.
-    writeFileSync(outsideClone, SECRET, 'utf8')
+    //
+    // The file carries the probe's own marker as well as this suite's secret,
+    // because `--selftest` answers `denied` for a file it could not read *and*
+    // for one whose contents did not carry the marker. Without the marker here
+    // the denial would be true for the wrong reason. The full matrix — all four
+    // tool shapes, each against a control inside the clone — is ticket 04's, in
+    // containment.probe.test.ts.
+    writeFileSync(outsideClone, `${SELFTEST_MARKER}\n${SECRET}`, 'utf8')
 
     // One Sandbox per process, and `SandboxManager.initialize` returns early
     // once there is one — it does not replace the policy. The previous test

@@ -4,8 +4,11 @@
  * The credential is read by the Tauri host, which is outside the Sandbox by
  * construction, and injected into the agent subprocess as an environment
  * variable. The agent authenticates while being unable to reach the keychain
- * that holds the value: `/usr/bin/security` is denied to it by denying read.
- * See docs/adr/0003-containment-wraps-the-process-tree.md.
+ * that holds the value — but *not* because `/usr/bin/security` is denied. That
+ * binary runs inside the Sandbox regardless, measured in
+ * containment.probe.test.ts; what puts the login Keychain out of reach is
+ * `denyRead` on the home directory, which is where its file lives. See the
+ * Correction in docs/adr/0003-containment-wraps-the-process-tree.md.
  *
  * **The value is not representable here.** Nothing in this module has a field
  * that could hold it, and no function returns one. A read answers with which
