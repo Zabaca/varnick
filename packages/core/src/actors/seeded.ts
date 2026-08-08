@@ -1,5 +1,6 @@
 import { fromPromise } from 'xstate'
 import type { Effort, Message, ModelId, SandboxPolicy, SubscriptionUsage } from '../domain.ts'
+import { compactedTranscript } from '../domain.ts'
 import { brokenSurfaceError } from '../data/seed.ts'
 
 /**
@@ -94,13 +95,18 @@ export function seededActors(controls: SeedControls) {
     >(async ({ input }) => {
       await wait(700)
       if (controls.failCompact) throw new Error('could not summarise the conversation')
-      const summary: Message = {
-        id: 'compact',
-        role: 'agent',
-        text: `Summary of ${input.messages.length} earlier messages.`,
-      }
       turnTokens = 300
-      return { messages: [summary], tokensUsed: turnTokens }
+      // The same builder the live compaction uses, so a seeded run and a real
+      // one produce a transcript of the same shape. A seed that composed its
+      // own would be a second answer to what a compacted conversation looks
+      // like, and the states page compares between runs.
+      return {
+        messages: compactedTranscript(
+          input.messages,
+          'The developer asked about the harness and the agent answered. Nothing is outstanding.',
+        ),
+        tokensUsed: turnTokens,
+      }
     }),
 
     persistSession: fromPromise<

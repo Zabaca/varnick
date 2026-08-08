@@ -64,6 +64,7 @@ describe('a missing host is a value to branch on, not an exception to catch', ()
       { kind: 'run-turn', turnId: 't1', prompt: 'hi', model: 'claude-opus-5', effort: 'xhigh' },
       { kind: 'next-turn-event' },
       { kind: 'interrupt-turn', turnId: 't1' },
+      { kind: 'compact-session', turnId: 'c1' },
     ]
     for (const request of requests) {
       expect((await failureOf(request, null)).failure).toBe('no-host')
@@ -368,6 +369,60 @@ describe('a Turn crosses the same seam as everything else', () => {
       expect(answer).toEqual({ event: { kind: 'failed', turnId: 't1', failure } })
       expect(turnFailureMessage(failure).length).toBeGreaterThan(0)
     }
+  })
+
+  test('a compaction asks for one thing and carries no text at all', async () => {
+    // The request that would most obviously grow a prompt, and it has none:
+    // the command is a constant inside the Sandbox, so there is nothing on
+    // this side of the bridge that decides what the confined session is told.
+    const seen: unknown[] = []
+    const recording: HarnessBridge = {
+      call: async (request) => {
+        seen.push(request)
+        return { ok: true }
+      },
+    }
+    const started = await callHarness({ kind: 'compact-session', turnId: 'c1' }, recording)
+    expect(started).toEqual({ ok: true })
+    expect(seen).toEqual([{ kind: 'compact-session', turnId: 'c1' }])
+  })
+
+  test('a finished compaction is rebuilt on the way in like every other answer', async () => {
+    const answer = await callHarness(
+      { kind: 'next-turn-event' },
+      answers({
+        event: {
+          kind: 'compacted',
+          turnId: 'c1',
+          summary: 'so far…',
+          tokensUsed: 4_000,
+          apiKey: LOOKS_LIKE_A_KEY,
+        },
+      }),
+    )
+    expect(answer).toEqual({
+      event: { kind: 'compacted', turnId: 'c1', summary: 'so far…', tokensUsed: 4_000 },
+    })
+    expect(JSON.stringify(answer)).not.toContain('sk-ant')
+  })
+
+  test('a compaction with no figure is malformed rather than a meter reading zero', async () => {
+    expect(
+      (
+        await failureOf(
+          { kind: 'next-turn-event' },
+          answers({ event: { kind: 'compacted', turnId: 'c1', summary: 'x' } }),
+        )
+      ).failure,
+    ).toBe('malformed')
+    expect(
+      (
+        await failureOf(
+          { kind: 'next-turn-event' },
+          answers({ event: { kind: 'compacted', turnId: 'c1', tokensUsed: 1 } }),
+        )
+      ).failure,
+    ).toBe('malformed')
   })
 
   test('an interrupt names the Turn it means', async () => {

@@ -16,10 +16,13 @@ import { surfaceMachine, SURFACE_STATE_PATHS } from '../src/machines/surface.ts'
 import {
   regionOf,
   canStartAgent,
+  compactedTranscript,
   invokedCommand,
   isCommandDraft,
   formatContext,
 } from '../src/domain.ts'
+import { compactionFailureMessage } from '@varnick/harness/turn'
+import { liveActors } from '../src/actors/live.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
 import { SCENARIOS, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
 import { frozenHarness } from '../src/actors/frozen.ts'
@@ -862,6 +865,33 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 }
 
 {
+  /*
+    The transcript and the count are one act.
+
+    The meter is what the *next* turn starts from, so a CLEAR that emptied the
+    screen and left the figure would say the conversation costs eight thousand
+    tokens while showing none of them. Both are cleared in the same assign,
+    which is what makes them impossible to separate — and the same is true of a
+    compaction error left over from before, because "the conversation is
+    unchanged" is a claim about a conversation that no longer exists.
+  */
+  const actor = createActor(sessionMachine.provide({ actors: { runTurn: turnNever() } }), {
+    input: {
+      sessionId: 's11b',
+      messages: [{ id: 'm1', role: 'user', text: 'a long conversation' }],
+      tokensUsed: 812_000,
+      compactError: 'the rate limit was reached',
+    },
+  }).start()
+
+  actor.send({ type: 'CLEAR' })
+  const cleared = actor.getSnapshot().context
+  check('clearing resets the transcript and the count together', cleared.messages.length === 0 && cleared.tokensUsed === 0)
+  check('and takes the stale compaction error with it', cleared.compactError === null)
+  actor.stop()
+}
+
+{
   // Model and effort are settings, not modes: legal at any time, applied to the
   // next turn, and never disturbing a turn already in flight.
   const actor = createActor(
@@ -985,6 +1015,72 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   check('a failed compaction keeps the messages', actor.getSnapshot().context.messages.length === 2)
   check('a failed compaction keeps the cost', actor.getSnapshot().context.tokensUsed === 5_000)
   check('and says why', actor.getSnapshot().context.compactError === 'could not summarise')
+  actor.stop()
+}
+
+{
+  /*
+    "Unchanged" is checked as identity, not as a count.
+
+    A compaction that built the replacement *in place* and then failed would
+    pass every assertion above: two messages, the same cost, an error to show.
+    The conversation would still be half-rewritten, and the state would say
+    nothing happened. So the messages the Session started with are the exact
+    objects it ends with, and the transcript reads word for word as it did.
+  */
+  const before: Message[] = [
+    { id: 'm1', role: 'user', text: 'what does the sandbox deny' },
+    { id: 'm2', role: 'agent', text: 'the home directory, and both keychains' },
+  ]
+  const wording = textsOf(before)
+
+  const { spy, actor: persistSession } = saveSpy(true)
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: turnNever(),
+        /*
+          The mistake, written out. This compaction rewrites the transcript it
+          was handed and *then* fails — which is exactly what a future
+          implementation that saves an allocation would do, and it is not a
+          contrived one: `readonly Message[]` stops the compiler complaining and
+          stops nothing at run time.
+
+          It passes every count-based assertion above. The machine is what has
+          to make it harmless.
+        */
+        compactSession: fromPromise<CompactOutput, CompactInput>(async ({ input }) => {
+          const rewriting = input.messages as Message[]
+          rewriting.splice(0, rewriting.length, { id: 'c1', role: 'agent', text: 'half a summary' })
+          throw new Error('the API was overloaded')
+        }),
+        persistSession,
+      },
+    }),
+    { input: { sessionId: 's15b', messages: before, tokensUsed: 5_000 } },
+  ).start()
+
+  actor.send({ type: 'COMPACT' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+
+  const after = actor.getSnapshot().context.messages
+  check('a compaction cannot rewrite the transcript in place', after.length === 2)
+  check('a failed compaction leaves the transcript word for word', textsOf(after) === wording)
+  check('and the messages handed in are untouched too', textsOf(before) === wording)
+  check('a failed compaction keeps the cost it could not reduce', actor.getSnapshot().context.tokensUsed === 5_000)
+
+  /*
+    And no boundary is raised.
+
+    Compaction is the one Turn boundary that takes the store's *replace* path
+    rather than its append path — the transcript it saves is not a prefix of
+    what is on disk. A failed compaction that raised SAVE anyway would hand the
+    store an unchanged transcript and, being a prefix, it would append nothing;
+    but the moment anything about it differed, a compaction that changed
+    nothing would rewrite the mirror. The state says nothing happened, so
+    nothing is written.
+  */
+  check('a failed compaction writes nothing to the mirror', spy.calls === 0)
   actor.stop()
 }
 
@@ -1308,6 +1404,18 @@ async function turnPath(
     actor.stop()
   }
 
+  {
+    const actor = createActor(
+      sessionMachine.provide({
+        actors: { runTurn: turnNever(), compactSession: never<CompactOutput, CompactInput>() },
+      }),
+      { input: { sessionId: 'x8', messages: [{ id: 'm1', role: 'user', text: 'one' }] } },
+    ).start()
+    actor.send({ type: 'COMPACT' })
+    at.set('compacting', accepts(actor))
+    actor.stop()
+  }
+
   check(
     'idle accepts what idle has always accepted',
     at.get('idle') === 'EDIT_DRAFT SEND SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACT',
@@ -1330,8 +1438,16 @@ async function turnPath(
     at.get('failed') ===
       'EDIT_DRAFT RETRY_TURN DISMISS_TURN_ERROR SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACT',
   )
+  check(
+    'compacting refuses everything a running turn refuses, including another compaction',
+    at.get('compacting') === 'EDIT_DRAFT SAVE SET_MODEL SET_EFFORT SET_COMMANDS',
+  )
+  check(
+    'a compaction cannot be interrupted, so nothing may offer to',
+    at.get('compacting')?.includes('INTERRUPT') === false,
+  )
   check('the composer and the model are legal in every turn state', [...at.values()].every((set) => set.startsWith('EDIT_DRAFT') && set.includes('SET_MODEL')))
-  check('every turn state ticket 05 realizes was reached to be measured', at.size === 5)
+  check('every turn state the harness realizes was reached to be measured', at.size === 6)
 }
 
 {
@@ -1425,7 +1541,106 @@ async function turnPath(
   // stayed on the list would keep the seeded marker claiming a real turn is
   // fake; one that left it while still throwing would claim the opposite.
   check('the turn actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('runTurn'))
+  check('the compaction actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('compactSession'))
   check('every unimplemented name is a real actor', UNIMPLEMENTED.every((name) => (ACTOR_NAMES as readonly string[]).includes(name)))
+}
+
+// ---------------------------------------------------------------------------
+// Compaction — building the replacement, and only then swapping
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The replacement transcript is a value, not an edit.
+
+    `compactedTranscript` is the whole of what a successful Compaction does to
+    the conversation, and it is a pure function of what came before and the
+    summary the Session produced. Nothing about it can half-happen.
+  */
+  const before: Message[] = [
+    { id: 'm1', role: 'user', text: 'what does the sandbox deny' },
+    { id: 'm2', role: 'agent', text: 'the home directory, and both keychains' },
+  ]
+  const wording = textsOf(before)
+  const after = compactedTranscript(before, 'The developer asked about the sandbox policy.')
+
+  check('a compaction replaces the history with one message', after.length === 1)
+  check('and that message is the summary the Session produced', after[0]!.text.includes('The developer asked about the sandbox policy.'))
+  check('a summary is marked as one, so it does not read as an answer', after[0]!.text.startsWith('⟲'))
+  check('and the mark names what it replaced, which the transcript no longer shows', after[0]!.text.includes('2 earlier messages'))
+  check('the summary is the agent speaking, because the model wrote it', after[0]!.role === 'agent')
+  check('the replacement is a new array', after !== (before as readonly Message[]))
+  check('and building it changes nothing about what came before', textsOf(before) === wording)
+  check(
+    'the next message after a compaction does not collide with the summary',
+    after[0]!.id !== `m${after.length + 1}`,
+  )
+}
+
+{
+  /*
+    The live actor, against a host that answers — the only place Core's half of
+    a Compaction can be driven without a Claude Code process anywhere.
+
+    `tauriHarnessBridge()` reads `__TAURI_INTERNALS__`, which is the same seam
+    the real app arrives through, so this exercises the actor exactly as it
+    runs. Nothing here starts a session: the actor's whole job is to put a
+    `compact-session` on the bridge and read events back.
+  */
+  const realInternals = (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+  let queued: unknown = null
+  const asked: string[] = []
+  ;(globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+    invoke: async (_command: string, payload: { request: { kind: string } }) => {
+      const kind = payload.request.kind
+      asked.push(kind)
+      if (kind === 'compact-session') return { ok: true }
+      if (kind === 'next-turn-event') {
+        const event = queued
+        queued = null
+        return { event }
+      }
+      throw { failure: 'malformed' }
+    },
+  }
+
+  const before: Message[] = [
+    { id: 'm1', role: 'user', text: 'what does the sandbox deny' },
+    { id: 'm2', role: 'agent', text: 'the home directory, and both keychains' },
+  ]
+  const wording = textsOf(before)
+
+  const compact = liveActors().compactSession
+  const run = (input: CompactInput) =>
+    new Promise<{ output?: CompactOutput; error?: unknown }>((resolve) => {
+      const actor = createActor(compact, { input })
+      actor.subscribe({
+        next: (snapshot) => {
+          if (snapshot.status === 'done') resolve({ output: snapshot.output as CompactOutput })
+        },
+        error: (error) => resolve({ error }),
+      })
+      actor.start()
+    })
+
+  queued = { kind: 'compacted', turnId: 'turn-1', summary: 'so far: the sandbox', tokensUsed: 4_000 }
+  const done = await run({ sessionId: 'live-1', messages: before, model: 'claude-opus-5' })
+  check('the live compaction asks the confined session and nothing else', asked.every((kind) => kind === 'compact-session' || kind === 'next-turn-event'))
+  check('a live compaction answers with the replacement transcript', done.output?.messages.length === 1)
+  check('and with what the context now measures, not an estimate', done.output?.tokensUsed === 4_000)
+  check('the live compaction leaves the transcript it was given alone', textsOf(before) === wording)
+
+  queued = { kind: 'failed', turnId: 'turn-2', failure: 'overloaded' }
+  const failed = await run({ sessionId: 'live-1', messages: before, model: 'claude-opus-5' })
+  check('a live compaction that failed throws rather than answering', failed.output === undefined)
+  check(
+    'and reads as a clause inside the sentence the surface owns',
+    failed.error instanceof Error && failed.error.message === compactionFailureMessage('overloaded'),
+  )
+  check('a failed live compaction leaves the transcript untouched', textsOf(before) === wording)
+
+  if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+  else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = realInternals
 }
 
 // ---------------------------------------------------------------------------

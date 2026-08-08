@@ -40,3 +40,28 @@ model was not wrong — the wire was simply never run, because until the mirror
 existed there was nothing to save to. A failed Turn saving is the case worth
 keeping in mind: the user's message is in the transcript whether or not an
 answer ever arrived, and that is the loss the mirror exists to prevent.
+
+## Amended again while building Compaction
+
+**`compactSession` is handed a copy of the transcript.** One line, in the
+actor's `input`, and it is what turns "a failed compaction leaves the
+conversation unchanged" from a rule an implementation has to remember into
+something the machine enforces. `readonly Message[]` is a compile-time claim and
+nothing at run time: an implementation that assembled the replacement in the
+array it was handed and then threw would leave a half-rewritten conversation
+behind a `turn.idle` saying nothing happened, and every count-based assertion
+would pass. With a copy, the replacement can only arrive as the actor's result,
+so the only way to change the transcript is to finish. `drive.ts` runs exactly
+that hostile implementation and asserts the conversation survives it.
+
+**And `compacting.onError` still raises no `SAVE`, deliberately.** It is the one
+Turn boundary missing from the list above, and the omission is the point:
+Compaction is also the only boundary that takes the store's *replace* path
+rather than its append path, so a failure that raised `SAVE` would put the
+mirror one atomic rewrite away from a conversation nobody rewrote. `drive.ts`
+asserts the mirror is not written at all when a compaction fails.
+
+Recorded for the same reason as the amendment above: no state was added or
+removed, `SESSION_STATE_PATHS` and the states-page cards are untouched, and the
+`#/states` cards for `compacting` and the failure after it render exactly as
+they did.

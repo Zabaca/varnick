@@ -348,7 +348,7 @@ function pushable<T>() {
 }
 
 /** A Session that records what was asked of it and answers nothing. */
-function fakeSession() {
+function fakeSession(contextTokens: () => Promise<number | null> = async () => null) {
   const asked: string[] = []
   const port: TurnSessionPort = {
     prompt: (text) => {
@@ -362,6 +362,10 @@ function fakeSession() {
     },
     interrupt: async () => {
       asked.push('interrupt')
+    },
+    contextTokens: () => {
+      asked.push('contextTokens')
+      return contextTokens()
     },
   }
   return { port, asked }
@@ -389,24 +393,31 @@ async function serve(
     control: ReturnType<typeof pushable<string>>
     messages: ReturnType<typeof pushable<unknown>>
     asked: string[]
+    /** What the `PostCompact` hook would report, from outside the message stream. */
+    summarised: (summary: string) => void
   }) => Promise<void>,
+  contextTokens: () => Promise<number | null> = async () => null,
 ) {
   const control = pushable<string>()
   const messages = pushable<unknown>()
-  const { port, asked } = fakeSession()
+  const { port, asked } = fakeSession(contextTokens)
   const written: TurnEvent[] = []
+  let report: (summary: string) => void = () => {}
 
   const served = serveTurns({
     control,
     messages,
     session: port,
+    compactionSummaries: (deliver) => {
+      report = deliver
+    },
     write: (line) => {
       const event = parseTurnEvent(JSON.parse(line))
       if (event !== null) written.push(event)
     },
   })
 
-  await script({ control, messages, asked })
+  await script({ control, messages, asked, summarised: (summary) => report(summary) })
   control.close()
   messages.close()
   await served
@@ -519,6 +530,204 @@ describe('interrupting', () => {
   })
 })
 
+describe('a compaction rides the same session a turn does', () => {
+  const compactLine = (turnId: string) => `${JSON.stringify({ kind: 'compact', turnId })}\n`
+
+  const boundary = (post?: number) => ({
+    type: 'system',
+    subtype: 'compact_boundary',
+    compact_metadata: {
+      trigger: 'manual',
+      pre_tokens: 812_000,
+      ...(post === undefined ? {} : { post_tokens: post }),
+    },
+  })
+
+  test('summarising is a command on the session already open, not a second one', async () => {
+    // The whole of ADR-0003's last consequence. The only thing that happens on
+    // a compaction is a prompt onto the pipe the confined process is reading.
+    const { asked } = await serve(async ({ control }) => {
+      control.push(compactLine('c1'))
+      await settle()
+    })
+    expect(asked).toEqual(['prompt:/compact'])
+  })
+
+  test('a compaction reports the summary and what the context now measures', async () => {
+    const { written } = await serve(async ({ control, messages, summarised }) => {
+      control.push(compactLine('c1'))
+      await settle()
+      summarised('Earlier: the developer wired the sandbox policy.')
+      messages.push(boundary(4_000))
+      await settle()
+    })
+    expect(written).toEqual([
+      {
+        kind: 'compacted',
+        turnId: 'c1',
+        summary: 'Earlier: the developer wired the sandbox policy.',
+        tokensUsed: 4_000,
+      },
+    ])
+  })
+
+  test('a boundary that reported no size is measured by asking the session', async () => {
+    // Never estimated. The figure is either the compaction's own or the
+    // Session's answer to what it now holds.
+    const { written, asked } = await serve(
+      async ({ control, messages, summarised }) => {
+        control.push(compactLine('c1'))
+        await settle()
+        summarised('a summary')
+        messages.push(boundary())
+        await settle()
+      },
+      async () => 5_500,
+    )
+    expect(asked).toContain('contextTokens')
+    expect(written).toEqual([
+      { kind: 'compacted', turnId: 'c1', summary: 'a summary', tokensUsed: 5_500 },
+    ])
+  })
+
+  test('the compaction is not asked how big it is when it already said', async () => {
+    const { asked } = await serve(async ({ control, messages, summarised }) => {
+      control.push(compactLine('c1'))
+      await settle()
+      summarised('a summary')
+      messages.push(boundary(4_000))
+      await settle()
+    })
+    expect(asked).not.toContain('contextTokens')
+  })
+
+  test('a compaction nobody could measure fails rather than showing a figure it invented', async () => {
+    const { written } = await serve(
+      async ({ control, messages, summarised }) => {
+        control.push(compactLine('c1'))
+        await settle()
+        summarised('a summary')
+        messages.push(boundary())
+        await settle()
+      },
+      async () => null,
+    )
+    expect(written).toEqual([
+      { kind: 'failed', turnId: 'c1', failure: 'compaction-unmeasured' },
+    ])
+  })
+
+  test('a session that throws when asked its size is the same answer as no answer', async () => {
+    const { written } = await serve(
+      async ({ control, messages, summarised }) => {
+        control.push(compactLine('c1'))
+        await settle()
+        summarised('a summary')
+        messages.push(boundary())
+        await settle()
+      },
+      async () => {
+        throw new Error('the control request was refused')
+      },
+    )
+    expect(written).toEqual([
+      { kind: 'failed', turnId: 'c1', failure: 'compaction-unmeasured' },
+    ])
+  })
+
+  test('a compaction that never happened is a failure and nothing else', async () => {
+    // Nothing is emitted that Core could turn into a transcript, which is what
+    // makes "the conversation is unchanged" a property of the wire rather than
+    // of whoever reads it.
+    const { written } = await serve(async ({ control, messages }) => {
+      control.push(compactLine('c1'))
+      await settle()
+      messages.push({ type: 'system', subtype: 'status', status: null, compact_result: 'failed' })
+      await settle()
+    })
+    expect(written).toEqual([{ kind: 'failed', turnId: 'c1', failure: 'compaction' }])
+  })
+
+  test('the summary may arrive after the boundary and still complete the compaction', async () => {
+    const { written } = await serve(async ({ control, messages, summarised }) => {
+      control.push(compactLine('c1'))
+      await settle()
+      messages.push(boundary(4_000))
+      await settle()
+      summarised('a summary')
+      await settle()
+    })
+    expect(written).toEqual([
+      { kind: 'compacted', turnId: 'c1', summary: 'a summary', tokensUsed: 4_000 },
+    ])
+  })
+
+  test('a summary reported with no compaction running is not attributed to one', async () => {
+    // Auto-compaction fires the same hook. A conversation nobody asked to
+    // compact must not be rewritten because the window filled up.
+    const { written } = await serve(async ({ messages, summarised }) => {
+      summarised('an auto-compaction happened')
+      messages.push(boundary(4_000))
+      await settle()
+    })
+    expect(written).toEqual([])
+  })
+
+  test('a compaction ends exactly once, however much the session keeps saying', async () => {
+    const { written } = await serve(async ({ control, messages, summarised }) => {
+      control.push(compactLine('c1'))
+      await settle()
+      summarised('a summary')
+      messages.push(boundary(4_000))
+      await settle()
+      messages.push(boundary(9_000))
+      summarised('another summary')
+      await settle()
+    })
+    expect(written).toHaveLength(1)
+  })
+
+  test('an interrupt reaches a compaction by name, like any other turn', async () => {
+    const { asked } = await serve(async ({ control }) => {
+      control.push(compactLine('c1'))
+      await settle()
+      control.push(`${JSON.stringify({ kind: 'interrupt', turnId: 'c1' })}\n`)
+      await settle()
+    })
+    expect(asked).toContain('interrupt')
+  })
+
+  test('a session that refuses the compaction fails it rather than hanging it', async () => {
+    const control = pushable<string>()
+    const messages = pushable<unknown>()
+    const written: TurnEvent[] = []
+    const served = serveTurns({
+      control,
+      messages,
+      session: {
+        prompt: () => {
+          throw new Error('401 unauthorized')
+        },
+        setModel: async () => {},
+        setEffort: async () => {},
+        interrupt: async () => {},
+        contextTokens: async () => null,
+      },
+      write: (line) => {
+        const event = parseTurnEvent(JSON.parse(line))
+        if (event !== null) written.push(event)
+      },
+    })
+    control.push(compactLine('c1'))
+    await settle()
+    control.close()
+    messages.close()
+    await served
+
+    expect(written).toEqual([{ kind: 'failed', turnId: 'c1', failure: 'authentication' }])
+  })
+})
+
 describe('the control channel refuses what it does not understand', () => {
   test('a line that is not a control request is ignored rather than acted on', async () => {
     const { asked } = await serve(async ({ control }) => {
@@ -554,6 +763,7 @@ describe('the control channel refuses what it does not understand', () => {
         setModel: async () => {},
         setEffort: async () => {},
         interrupt: async () => {},
+        contextTokens: async () => null,
       },
       write: (line) => {
         const event = parseTurnEvent(JSON.parse(line))

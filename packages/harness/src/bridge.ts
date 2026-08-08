@@ -160,6 +160,30 @@ export interface InterruptTurnRequest {
 }
 
 /**
+ * Ask the Session to summarise itself, freeing the context it is holding.
+ *
+ * Answers `{ ok: true }` and returns at once, exactly like `run-turn`: the
+ * result arrives as a `compacted` event through {@link NextTurnEventRequest},
+ * because a compaction takes as long as a model call and `turn.compacting` has
+ * to be a state you can watch rather than a call you wait on.
+ *
+ * **There is no prompt on it, and that is the design.** The command the confined
+ * session is given is a constant inside the Sandbox (`COMPACT_COMMAND` in
+ * ./turn.ts), so nothing on this side of the bridge decides what a Compaction
+ * says to the agent. The whole request is a Turn id.
+ *
+ * It rides the Session the agent process is already holding, for the same
+ * reason a Turn does: summarising through a `query()` on the host would be a
+ * second Claude Code process outside `srt`, which ADR-0003's last consequence
+ * exists to prevent — and which reads as innocuous, because the code that does
+ * it does not look like it starts an agent.
+ */
+export interface CompactSessionRequest {
+  readonly kind: 'compact-session'
+  readonly turnId: string
+}
+
+/**
  * Every call the bridge carries.
  *
  * A closed union rather than a name and a payload: an actor cannot ask for
@@ -181,6 +205,7 @@ export type HarnessRequest =
   | RunTurnRequest
   | NextTurnEventRequest
   | InterruptTurnRequest
+  | CompactSessionRequest
 
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
@@ -194,6 +219,7 @@ export interface HarnessAnswers {
   'run-turn': { readonly ok: true }
   'next-turn-event': { readonly event: TurnEvent | null }
   'interrupt-turn': { readonly ok: true }
+  'compact-session': { readonly ok: true }
 }
 
 /**
@@ -437,6 +463,7 @@ export async function callHarness<R extends HarnessRequest>(
     case 'stop-agent':
     case 'run-turn':
     case 'interrupt-turn':
+    case 'compact-session':
       return okAnswer(answer) as HarnessAnswers[R['kind']]
   }
 }

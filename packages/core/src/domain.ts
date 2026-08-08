@@ -45,6 +45,39 @@ export interface Message {
 }
 
 /**
+ * The conversation after a Compaction, built from the one before it.
+ *
+ * A pure function returning a new transcript, and that shape is the point
+ * rather than a style preference. `CONTEXT.md` defines **Compaction** as
+ * replacing earlier messages with a summary, and names what it must not be
+ * confused with — *truncate, prune (both lose the fact that nothing is
+ * discarded blindly)*. A rewrite performed step by step over the live
+ * transcript can fail halfway and leave exactly that: a conversation partly
+ * discarded, behind a `turn.idle` that says nothing happened. Built as a value,
+ * the replacement either exists whole or does not exist, and the only way it
+ * reaches the Session is as the actor's result.
+ *
+ * The summary is the Session's own — the text its compaction produced, not
+ * anything composed here. What is composed here is the one line above it,
+ * because a summary rendered as an ordinary agent message is indistinguishable
+ * from an answer: a developer scrolling back would read varnick's account of
+ * their conversation as something the agent said in it. The line names the
+ * count, which is the fact the transcript can no longer show for itself.
+ */
+export function compactedTranscript(previous: readonly Message[], summary: string): Message[] {
+  const replaced = previous.length === 1 ? '1 earlier message' : `${previous.length} earlier messages`
+  return [
+    {
+      // `m1`, so the ids the Session hands out next — `m${length + 1}` — carry
+      // on from the summary rather than colliding with it.
+      id: 'm1',
+      role: 'agent',
+      text: `⟲ Compacted — ${replaced}, summarised.\n\n${summary}`,
+    },
+  ]
+}
+
+/**
  * The conversation varnick continues when it launches.
  *
  * One name, fixed, because varnick runs one Session. The mirror can hold
