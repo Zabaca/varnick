@@ -4,20 +4,19 @@ Written before a context compaction so the loop can continue without it. Delete 
 
 ## Where things are
 
-`main` at `6076a64`, clean tree, **not pushed** — 41 commits ahead of `origin/main`.
+`main` at `eec580c`, clean tree, **not pushed** — 41 commits ahead of `origin/main`.
 
-Suite on `main`: `bun test packages` 300 tests / 1 skip, `bun run drive` 219 assertions, `cargo test` 43, `bun run build` clean.
+Suite on `main`: `bun test packages` 325 tests / 1 skip, `bun run drive` 228 assertions, `cargo test` 56, `bun run build` clean.
 
 **`cargo` is at `~/.cargo/bin` and is not on the default PATH.** `export PATH="$HOME/.cargo/bin:$PATH"` before any Rust command.
 
 ## In flight
 
-Three worktree agents, all branched from `55abb9f`, all still running:
+Two worktree agents, all branched from `55abb9f`, all still running:
 
 | Ticket | Branch |
 | --- | --- |
 | 08 compaction | `ticket/08-compaction` |
-| 09 plan-usage wiring | `ticket/09-plan-usage-wiring` |
 | 14 Surface execution | `ticket/14-surface-execution` |
 
 When each returns: review the diff, run all five commands, merge serially, run the full suite again, mark the ticket `done`, reap the worktree with `git worktree remove --force`.
