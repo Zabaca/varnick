@@ -35,3 +35,15 @@ Asking the developer to declare which kind they are using, then looking for that
 - **`resolve()` returns a kind, so every caller has to handle both.** The precedence rule stays a pure function with no keychain in it, and the kind is decided there rather than at the spawn — the spawn asks what to inject and is told.
 - **The plan-usage strip becomes conditional, and the `subscription` region only runs under a subscription.** `readSubscriptionUsage` is not invoked under an API key, so its refusal path stops being the normal case.
 - **One measurement proves this, not two.** An agent that starts and answers under a subscription token, with plan usage populated, is the only evidence that this works — ticket 09's original measurement was taken against the developer's own Claude Code session rather than against what varnick spawns, which is how a feature shipped that could never have worked.
+
+## The measurement, taken
+
+A subscription token was minted with `claude setup-token`, stored in the Keychain as `varnick`/`claude-oauth-token`, and used to drive containment probe 6 — the only probe that opens a real Session. The agent authenticated, started, and called tools:
+
+```
+tools the Session actually called   Read:denied, Read:allowed, Grep:denied, Grep:allowed, Glob:denied, Glob:allowed
+```
+
+So a subscription authenticates what varnick spawns, which is what this decision claimed and what nothing had shown.
+
+The same run found a defect, which is what happens when a probe that has always skipped finally runs: `Grep` is refused inside the clone as well as outside it, because it shells out to the Claude Code executable and that binary lives under `$HOME`, which `denyRead` covers. That is ticket 26, and it is not a consequence of this decision — it was equally true under an API key, and no measurement had ever been in a position to see it.
