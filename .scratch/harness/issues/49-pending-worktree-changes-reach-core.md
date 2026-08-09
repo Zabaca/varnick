@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** `review.listing`, `review.listed`, `review.empty`, `review.listFailed`.
 
