@@ -34,9 +34,24 @@ Their statusline script calls nothing. It reads `.rate_limits.five_hour.used_per
 
 **So it is the credential, not the timing.** The statusline has figures because that session is the developer's interactive login. A `setup-token` session reports nothing, warm or cold.
 
-### One lead not yet closed
+### Four routes, all closed by measurement
 
-The Claude Code binary contains an endpoint, `/api/oauth/usage`, which would report plan usage without a session at all. Called three times with the subscription token it answered **429** rather than 401 — so it exists and did not reject the credential, but nothing was read from it. That is not evidence either way and the calls were stopped rather than repeated. If plan usage is worth keeping, this is where to look before cutting: an endpoint read with the token varnick already holds would need no session, no control request, and no `subscription` region.
+| Route | `setup-token` | interactive login |
+|---|---|---|
+| SDK usage control request | `rate_limits_available: false`, `rate_limits: null` | — |
+| Session transcript (`*.jsonl`) | no such field, across all 69 on this machine | no such field |
+| Statusline payload | **no `rate_limits` key at all** | has it |
+| `GET /api/oauth/usage` | **429** | **200** — `five_hour 28.0`, `seven_day 76.0` |
+
+The statusline row is the one that settles it, because the statusline is where the developer *saw* the figures. Its script calls nothing; it reads `.rate_limits` out of the JSON Claude Code pipes to it. Captured that JSON from a real interactive session running under `CLAUDE_CODE_OAUTH_TOKEN`, with a config directory holding no credentials so the token was the only auth. The key is absent, and the session's own banner says what it thinks it is:
+
+```
+Sonnet 5 · Claude API
+```
+
+**Claude Code treats a `setup-token` session as API authentication, not as a plan.** That single fact explains every row: no `subscription_type`, no windows from the SDK, nothing in the statusline payload, and a `429` from the usage endpoint. The endpoint answers `200` with real figures for the interactive token — the credential [ADR-0011](../../../docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md) refuses to hold, for reasons that have not changed.
+
+So there is no route to plan usage that does not go through that ADR. The lead is closed rather than open.
 
 ## Why this was not caught before, which is the part worth keeping
 
