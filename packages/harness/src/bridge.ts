@@ -71,7 +71,6 @@
 
 import { parseMintEvent, type MintEvent } from './mint.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
-import { PLAN_USAGE_UNAVAILABLE, parsePlanUsageAnswer, type PlanUsage } from './subscription.ts'
 import { parseTurnEvent, type TurnEvent } from './turn.ts'
 
 /** Establish the Sandbox, or fail. Answers `{ ok: true }` and nothing else. */
@@ -242,30 +241,6 @@ export interface InterruptTurnRequest {
 }
 
 /**
- * Ask the running agent's Session what the plan has left.
- *
- * The one call whose answer is a *measurement*, and the reason it is on this
- * list rather than answered anywhere more convenient. The figures come from the
- * SDK's `get_usage` control request, which rides a live Session — and the only
- * Session varnick has is the confined one the Rust host spawned. Opening one
- * here, or in the runtime, or in Rust, would be a Claude Code process outside
- * `srt` running whatever `SessionStart` hook the agent wrote (ADR-0003).
- *
- * So a read with no agent running is a *refusal*, and that is the whole of the
- * design rather than a limitation of it: the honest answer to "how much runway
- * is left" when there is nothing to ask is the last one that was measured, which
- * on a first run is none at all.
- *
- * `requestId` is chosen by the caller, like a Turn's, so an answer can be
- * matched to the read that asked for it rather than to whichever read is
- * waiting.
- */
-export interface ReadPlanUsageRequest {
-  readonly kind: 'read-plan-usage'
-  readonly requestId: string
-}
-
-/**
  * Ask the Session to summarise itself, freeing the context it is holding.
  *
  * Answers `{ ok: true }` and returns at once, exactly like `run-turn`: the
@@ -314,7 +289,6 @@ export type HarnessRequest =
   | RunTurnRequest
   | NextTurnEventRequest
   | InterruptTurnRequest
-  | ReadPlanUsageRequest
   | CompactSessionRequest
 
 /** What each call answers with, on success. */
@@ -342,9 +316,6 @@ export interface HarnessAnswers {
   'run-turn': { readonly ok: true }
   'next-turn-event': { readonly event: TurnEvent | null }
   'interrupt-turn': { readonly ok: true }
-  // Two figures or nothing. There is no third answer, and no shape here that
-  // could carry a plausible one — see {@link planUsageAnswer}.
-  'read-plan-usage': PlanUsage
   'compact-session': { readonly ok: true }
 }
 
@@ -588,34 +559,6 @@ function mintEventAnswer(answer: unknown): { event: MintEvent | null } {
 }
 
 /**
- * Read the two figures, or fail.
- *
- * Three outcomes and no fourth, which is the point of this function existing at
- * all. A reading is rebuilt field by field like every other answer. A read the
- * Session could not answer is a *refusal* carrying an authored sentence — the
- * machine's `subscription` region sends that back to `unread` with context
- * untouched, which is how "leave whatever was last known" is spelled. And an
- * answer this build cannot read is `malformed` rather than anything numeric.
- *
- * `parsePlanUsageAnswer` stamps `source` rather than reading it: everything
- * arriving here came from the plan, through the confined Session, so no host
- * can make a measurement look seeded or a seed look measured.
- */
-function planUsageAnswer(requestId: string, answer: unknown): PlanUsage {
-  const payload = answer as { usage?: unknown } | null | undefined
-  if (payload === null || typeof payload !== 'object' || !('usage' in payload)) {
-    throw new HarnessUnavailable('malformed')
-  }
-  const read = parsePlanUsageAnswer({ kind: 'plan-usage', requestId, usage: payload.usage })
-  if (read === null) throw new HarnessUnavailable('malformed')
-  // The host was reached, the read happened, and it produced no figures. That
-  // is a refusal rather than a malformed answer, and it is the ordinary outcome
-  // when no agent is running.
-  if (read.usage === null) throw new HarnessUnavailable('refused', PLAN_USAGE_UNAVAILABLE)
-  return read.usage
-}
-
-/**
  * Ask the host to do one thing.
  *
  * Every path out is either the declared answer or a thrown
@@ -650,8 +593,6 @@ export async function callHarness<R extends HarnessRequest>(
       return turnEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'next-mint-event':
       return mintEventAnswer(answer) as HarnessAnswers[R['kind']]
-    case 'read-plan-usage':
-      return planUsageAnswer(request.requestId, answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
     case 'store-credential':
     case 'mint-subscription-token':

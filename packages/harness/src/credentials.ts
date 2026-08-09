@@ -66,8 +66,9 @@ export type CredentialSource = 'keychain' | 'env'
  *
  * Decided by the host from what it resolved (ADR-0011), never declared by the
  * developer, and orthogonal to the source: either kind can come from either
- * store. It decides which variable the agent is spawned with, and whether there
- * is a plan for plan usage to be about.
+ * store. It decides which variable the agent is spawned with, and since ticket
+ * 31 that is the whole of what it decides — the plan-usage strip it also gated
+ * is gone, because no credential varnick can hold reports plan windows.
  */
 export type CredentialKind = 'api-key' | 'subscription'
 

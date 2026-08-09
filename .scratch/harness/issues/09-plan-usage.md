@@ -24,7 +24,24 @@ exists: the Agent SDK's `get_usage` control request, the structured data behind
 Claude Code's `/usage`, carrying `rate_limits.five_hour.utilization` and
 `rate_limits.seven_day.utilization` as server-side percentages. Verified by
 calling it on this machine, not by reading types — it returned a `max`
-subscription with real figures in both windows. Also checked and ruled out: the
+subscription with real figures in both windows.
+
+> **This measurement was taken against the developer's own interactive Claude
+> Code login, not against anything varnick spawns, and the distinction is the
+> whole story of this ticket.** It has been corrected twice — by ticket 23 and
+> again by ticket 31 — so it is stated here, inline, rather than only in an
+> amendment below that a reader reaches after taking the wrong thing away.
+>
+> The credential that returned those figures is the OAuth pair in
+> `Claude Code-credentials`, which [ADR-0011](../../../docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md)
+> refuses to read for measured reasons. **No credential varnick can hold returns
+> them**, including a `claude setup-token` subscription: such a session reports
+> `subscription_type: null` and `rate_limits_available: false`, because Claude
+> Code treats it as API authentication rather than as a plan. The source below
+> is real, the parser below is correct, and neither was ever reachable from the
+> product. The strip was cut in ticket 31.
+
+Also checked and ruled out: the
 Anthropic Admin usage report (organization/API-key scoped, a different quantity),
 the local CLI (no `usage` subcommand), and the SDK's browser and bridge
 entrypoints (no usage surface). A locally-tallied figure was ruled out on
@@ -108,3 +125,21 @@ turning out to be a subscription. It was sent before anything had been read,
 which was free when the read was possible in every configuration and possible in
 none — and the moment the kind decides the answer, the first moment there is an
 answer is the moment to ask.
+
+**Closed by ticket 31 — the strip is cut.** Ticket 23's measurement, the one
+named above as what would close this properly, was taken and reported nothing:
+against a real `claude setup-token` credential driving a real Session,
+`subscription_type: null`, `rate_limits_available: false`, `rate_limits: null`.
+Four routes to a figure were measured and all four are closed. So this ticket
+ends on the outcome its own opening paragraph named as acceptable — *"if no
+source exists, the honest outcome is deleting the strip rather than shipping a
+number that looks measured"* — with one correction to that sentence: a source
+does exist, and varnick cannot reach it.
+
+Everything built here was correct and none of it was reachable. `read-plan-usage`,
+`subscription.ts`, the `subscription` region, the strip and the scenarios are all
+removed; the `ControlRequest` channel this ticket generalised is untouched and
+carries Compaction and `describe-secrets`. The lesson stated above stands
+verbatim and is the reason this ticket is worth keeping in the record: *a read
+proven end-to-end against a session that was to hand is not proven against the
+session the product opens.*

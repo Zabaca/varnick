@@ -6,7 +6,6 @@ import type {
   Message,
   ModelId,
   SandboxPolicy,
-  SubscriptionUsage,
 } from '../domain.ts'
 import { compactedTranscript } from '../domain.ts'
 import { brokenSurfaceError } from '../data/seed.ts'
@@ -67,9 +66,9 @@ export function seededActors(controls: SeedControls) {
       async () => {
         await wait(150)
         if (controls.failCredential) throw new Error('no credential found')
-        // A subscription, because that is the case with more downstream of it:
-        // plan usage exists to be read only under one, so a seed that always
-        // said `api-key` would leave the strip unexercised in every seeded run.
+        // A subscription, because it is the kind the setup screen offers first
+        // and the one a mint produces, so a seeded run exercises the path a
+        // developer is most likely to have taken.
         return { source: 'keychain', kind: 'subscription' }
       },
     ),
@@ -114,16 +113,6 @@ export function seededActors(controls: SeedControls) {
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => {
       await wait(300)
       return { pid: 4242 }
-    }),
-
-    /*
-      Plausible plan usage, so the strip can be designed against something that
-      looks like a real reading. Safe to render because the whole build is
-      marked seeded — see actors/index.ts. Deterministic, like every other seed.
-    */
-    readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(async () => {
-      await wait(200)
-      return { fiveHourPct: 68, weeklyPct: 41, source: 'seeded' }
     }),
 
     runTurn: fromPromise<

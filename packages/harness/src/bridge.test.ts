@@ -69,7 +69,6 @@ describe('a missing host is a value to branch on, not an exception to catch', ()
       { kind: 'run-turn', turnId: 't1', prompt: 'hi', model: 'claude-opus-5', effort: 'xhigh' },
       { kind: 'next-turn-event' },
       { kind: 'interrupt-turn', turnId: 't1' },
-      { kind: 'read-plan-usage', requestId: 'u1' },
       { kind: 'compact-session', turnId: 'c1' },
     ]
     for (const request of requests) {
@@ -492,85 +491,16 @@ describe('a Turn crosses the same seam as everything else', () => {
   })
 })
 
-/**
- * Plan usage crosses the same seam, and refuses in the same place.
- *
- * The read happens inside the Sandbox, on the session the agent process is
- * already holding. What reaches this side is two numbers or nothing at all, and
- * "nothing at all" has to arrive as a failure — the machine's `subscription`
- * region sends a failed read back to `unread` with context untouched, which is
- * how "leave whatever was last known" is spelled.
- */
-describe('plan usage is either the measurement or a refusal', () => {
-  test('a reading is rebuilt and reports itself as live', async () => {
-    const usage = await callHarness(
-      { kind: 'read-plan-usage', requestId: 'u1' },
-      answers({ usage: { fiveHourPct: 11, weeklyPct: 54, source: 'live' } }),
-    )
-    expect(usage).toEqual({ fiveHourPct: 11, weeklyPct: 54, source: 'live' })
-  })
+/*
+  A "plan usage is either the measurement or a refusal" suite stood here: seven
+  tests over the `read-plan-usage` answer codec — that a reading was rebuilt,
+  that `source` was stamped rather than read, that nothing rode in beside the
+  figures, that a `null` usage became a refusal rather than a zero.
 
-  test('a host cannot make a measurement look seeded, or a seed look measured', async () => {
-    // `source` is stamped on this side. Anything arriving here came from the
-    // plan through the confined session; there is no other way in.
-    const usage = await callHarness(
-      { kind: 'read-plan-usage', requestId: 'u1' },
-      answers({ usage: { fiveHourPct: 11, weeklyPct: 54, source: 'seeded' } }),
-    )
-    expect(usage.source).toBe('live')
-  })
+  They were good tests of a codec that never decoded a real figure. The read
+  they guarded could not populate under any credential varnick can hold, so
+  the kind, the codec and the suite go together. See ticket 31.
 
-  test('nothing the host volunteered rides in beside the figures', async () => {
-    const usage = await callHarness(
-      { kind: 'read-plan-usage', requestId: 'u1' },
-      answers({
-        usage: { fiveHourPct: 11, weeklyPct: 54, source: 'live', apiKey: LOOKS_LIKE_A_KEY },
-      }),
-    )
-    expect(Object.keys(usage).sort()).toEqual(['fiveHourPct', 'source', 'weeklyPct'])
-    expect(JSON.stringify(usage)).not.toContain('sk-ant')
-  })
-
-  test('a read the session could not answer is a refusal, never a figure', async () => {
-    const failure = await failureOf(
-      { kind: 'read-plan-usage', requestId: 'u1' },
-      answers({ usage: null }),
-    )
-    expect(failure.failure).toBe('refused')
-    // The sentence is authored here, and it says what happens to the strip —
-    // the developer's question is whether the number they can see is stale.
-    expect(failure.message.length).toBeGreaterThan(20)
-  })
-
-  test('an answer this build cannot read is malformed rather than a figure', async () => {
-    for (const answer of [
-      {},
-      { usage: {} },
-      { usage: { fiveHourPct: 11 } },
-      { usage: { fiveHourPct: '11', weeklyPct: 54 } },
-      { usage: { fiveHourPct: Number.NaN, weeklyPct: 54 } },
-    ]) {
-      expect(
-        (await failureOf({ kind: 'read-plan-usage', requestId: 'u1' }, answers(answer))).failure,
-      ).toBe('malformed')
-    }
-  })
-
-  test('the request names the read it expects an answer to, and nothing else', async () => {
-    const seen: unknown[] = []
-    const recording: HarnessBridge = {
-      call: async (request) => {
-        seen.push(request)
-        return { usage: { fiveHourPct: 0, weeklyPct: 0, source: 'live' } }
-      },
-    }
-    await callHarness({ kind: 'read-plan-usage', requestId: 'u1' }, recording)
-    expect(seen).toEqual([{ kind: 'read-plan-usage', requestId: 'u1' }])
-  })
-
-  test('a read with no host is the same failure as everything else', async () => {
-    expect((await failureOf({ kind: 'read-plan-usage', requestId: 'u1' }, null)).failure).toBe(
-      'no-host',
-    )
-  })
-})
+  Nothing about the *bridge* changed: the same rebuild-field-by-field rule
+  applies to every remaining kind, and the suites above assert it.
+*/

@@ -16,8 +16,8 @@ pub fn run() {
     tauri::Builder::default()
         // One command for the whole Harness — see bridge.rs. The credential and
         // everything downstream of it are answered here: storing one, minting
-        // one, the agent process it is injected into, and the Turns, plan-usage
-        // reads and Compactions that ride that process's Session. What is
+        // one, the agent process it is injected into, and the Turns and
+        // Compactions that ride that process's Session. What is
         // forwarded to the Harness runtime is what needs the Sandbox or a
         // filesystem — the sandbox check and both directions of the Session
         // mirror. `route_of` is where that split is decided, and it is a unit

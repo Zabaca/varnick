@@ -2,10 +2,11 @@
 
 varnick authenticates with **either** an Anthropic API key **or** a Claude subscription, and the host decides which by what it finds. The kind is not a preference the developer sets in two places; it is a property of the credential that was resolved, and it travels with the reading.
 
-A credential therefore has a **kind** as well as a **source**. `source` — `keychain` or `env` — says which store answered, and already existed. `kind` — `api-key` or `subscription` — says what was in it, and decides two things:
+A credential therefore has a **kind** as well as a **source**. `source` — `keychain` or `env` — says which store answered, and already existed. `kind` — `api-key` or `subscription` — says what was in it, and decides one thing:
 
 - **Which variable the agent is spawned with.** `ANTHROPIC_API_KEY` for a key, `CLAUDE_CODE_OAUTH_TOKEN` for a subscription. Both are first-class authentication variables to the Agent SDK, listed side by side in its own credential table, so this is one substitution rather than a second authentication path.
-- **Whether plan usage exists to be read.** Rolling windows are a property of a plan. Under an API key there is no plan, `rate_limits_available` is false, and the strip is not rendered — rather than rendered permanently empty, which is what shipped in v1.
+
+This decision originally claimed a second thing — *whether plan usage exists to be read* — and that claim is withdrawn. It was false in the only configuration this decision produces; see "What the subscription token turned out not to carry" below.
 
 Neither value is ever read by the agent from a store. Both are injected by the Rust host into the subprocess environment, exactly as [ADR-0008](./0008-the-harness-runs-as-one-long-lived-host-process.md) requires, and [ADR-0010](./0010-the-agent-is-isolated-from-the-developers-claude-code.md)'s isolation of `~/.claude` is untouched. A subscription credential reaches the agent the same way a key does and by the same audit.
 
@@ -33,8 +34,8 @@ Asking the developer to declare which kind they are using, then looking for that
 
 - **Precedence is subscription first, within each store.** Keychain still beats environment, which is unchanged. A developer holding both is taken to prefer the plan they already pay for; the environment variable remains the escape hatch, and CI, which has a key and no plan, is unaffected.
 - **`resolve()` returns a kind, so every caller has to handle both.** The precedence rule stays a pure function with no keychain in it, and the kind is decided there rather than at the spawn — the spawn asks what to inject and is told.
-- **The plan-usage strip becomes conditional, and the `subscription` region only runs under a subscription.** `readSubscriptionUsage` is not invoked under an API key, so its refusal path stops being the normal case.
-- **One measurement proves this, not two.** An agent that starts and answers under a subscription token, with plan usage populated, is the only evidence that this works — ticket 09's original measurement was taken against the developer's own Claude Code session rather than against what varnick spawns, which is how a feature shipped that could never have worked.
+- ~~**The plan-usage strip becomes conditional, and the `subscription` region only runs under a subscription.**~~ **Withdrawn by ticket 31.** The gate was built and was correct; it was never the thing standing between the developer and a figure. The strip, the region, `readSubscriptionUsage` and the `read-plan-usage` control kind are all removed. What replaces this consequence is a plainer one: **the Credential Kind decides which variable is injected and nothing else.** Nothing varnick renders differs by kind.
+- **One measurement proves this, not two.** An agent that starts and answers under a subscription token is the only evidence that this works — ticket 09's original measurement was taken against the developer's own Claude Code session rather than against what varnick spawns, which is how a feature shipped that could never have worked. That measurement has now been taken: see "The measurement, taken" below, where a subscription token authenticates a real confined Session.
 
 ## The measurement, taken
 
@@ -65,10 +66,21 @@ rate_limits_available:   false
 rate_limits:             null
 ```
 
-**A subscription token authenticates, and reports no plan.** It does not even identify itself as a subscription. So the second of this decision's two consequences — "whether plan usage exists to be read" — has only one answer in practice, and the plan-usage strip is unreachable under every credential varnick can hold.
+**A subscription token authenticates, and reports no plan.** It does not even identify itself as a subscription. Claude Code's own banner for such a session reads `Claude API`: it treats a `setup-token` credential as **API authentication, not as a plan**. That single fact closes every route to the windows —
 
-The first consequence is unaffected and this decision stands: the token authenticates, an agent runs under it, and the developer's plan pays for the tokens rather than an API key billing per request. That was the reason for choosing it and it holds.
+| Route | `setup-token` | interactive login |
+|---|---|---|
+| SDK usage control request | `rate_limits_available: false` | — |
+| Session transcript (`*.jsonl`) | no such field | no such field |
+| Statusline payload | no `rate_limits` key at all | has it |
+| `GET /api/oauth/usage` | `429` | `200` — real figures |
 
-What this does undo is the assumption underneath ticket 23. The windows ticket 09 measured came from the developer's *interactive* Claude Code login — the OAuth pair in `Claude Code-credentials`, which this ADR refuses to read and gives measured reasons for. The credential that reports plan usage is precisely the one varnick will not hold.
+— and the endpoint that answers is the interactive OAuth pair, the credential this ADR refuses to read for reasons that have not changed. There is no route to plan usage that does not go through this decision.
 
-Ticket 31 carries the decision that follows: cut the strip, or keep the machinery and say plainly that it cannot populate.
+**The first consequence is unaffected and this decision stands:** the token authenticates, an agent runs under it, and the developer's plan pays for the tokens rather than an API key billing per request. That was the reason for choosing it and it holds.
+
+**The second consequence is withdrawn.** "Whether plan usage exists to be read" has one answer in practice — no — so it was never a thing the Kind decided. Ticket 31 cut the strip, the `subscription` region, `readSubscriptionUsage`, the `read-plan-usage` control kind and the scenarios that showed them.
+
+What this also undoes is the assumption underneath ticket 23. The windows ticket 09 measured came from the developer's *interactive* Claude Code login — the OAuth pair in `Claude Code-credentials`, which this ADR refuses to read. **The credential that reports plan usage is precisely the one varnick will not hold.** Ticket 23's gate was correct and was simply never what stood between the developer and a figure.
+
+Reversing this would mean owning OAuth refresh and racing Claude Code for the same keychain item — recorded for completeness in ticket 31 and not recommended. The reasoning in "Rejected: reading `Claude Code-credentials`" above has not changed.

@@ -62,13 +62,12 @@ const up = {
   enterCredential: 'present',
   // A credential that is present always turned out to be something. A card
   // parked in `credential.present` with no kind is a context the live machine
-  // cannot reach — and a subscription is the one with plan usage behind it,
-  // which is what the strip in these scenarios is showing.
+  // cannot reach, so the cards name one — a subscription, because it is what
+  // the setup screen offers first and what a mint produces. Nothing on screen
+  // now differs by kind: the strip that did was cut in ticket 31.
   credentialKind: 'subscription' as const,
   enterSandbox: 'available',
   enterAgent: 'running',
-  enterSubscription: 'read',
-  subscription: { fiveHourPct: 68, weeklyPct: 41, source: 'seeded' as const },
 } satisfies HarnessInput
 
 export const SCENARIOS: readonly Scenario[] = [
@@ -79,7 +78,7 @@ export const SCENARIOS: readonly Scenario[] = [
     blurb:
       'Nothing has been read or checked yet. The literal first frame after launch, before even the sandbox has been asked about.',
     question: 'Is the first thing asked for the first thing that is needed, and nothing else?',
-    covers: ['credential.absent', 'sandbox.unchecked', 'agent.down', 'subscription.unread'],
+    covers: ['credential.absent', 'sandbox.unchecked', 'agent.down'],
     input: { policy: seedPolicy },
   },
   {
@@ -87,18 +86,8 @@ export const SCENARIOS: readonly Scenario[] = [
     title: 'Reading the credential',
     blurb: 'Tauri is asking the keychain. Nothing is claimed until it answers.',
     question: 'Is the wait legible without asserting an outcome?',
-    covers: ['credential.reading', 'subscription.reading'],
-    input: {
-      policy: seedPolicy,
-      enterCredential: 'reading',
-      // A plan-usage read is in flight, so the kind that let it start is still
-      // in hand — this is a credential being read *again*, which is the only way
-      // both regions are busy at once. Without it the card would be parked in a
-      // context the live machine cannot reach, since `subscription.reading` is
-      // now only entered under a subscription.
-      credentialKind: 'subscription',
-      enterSubscription: 'reading',
-    },
+    covers: ['credential.reading'],
+    input: { policy: seedPolicy, enterCredential: 'reading' },
   },
   {
     id: 'checking-sandbox',
@@ -235,28 +224,19 @@ export const SCENARIOS: readonly Scenario[] = [
     title: 'Running, nothing said',
     blurb: 'The agent is up and the transcript is empty. The true first screen.',
     question: 'Does an empty transcript tell you what to type?',
-    covers: ['agent.running', 'subscription.read', 'turn.idle', 'persistence.saved', 'composer.typing'],
+    covers: ['agent.running', 'turn.idle', 'persistence.saved', 'composer.typing'],
     input: { ...up, sessionInput: { sessionId: 'states-idle' } },
   },
-  {
-    id: 'api-key-no-plan',
-    title: 'Running on an API key',
-    blurb:
-      'The same running session, authenticated by an API key instead of a subscription. There is no plan, so there are no rolling windows and the plan-usage strip is not part of the window — absent, not empty. The `subscription` region stays `unread` and its actor never runs.',
-    question: 'Does the window read as complete, or as one with a row missing from the top?',
-    // No new state, which is the point: this is `subscription.unread` alongside
-    // a running agent, and the only difference from the card above is a fact in
-    // context. A fourth state meaning "not applicable" would have made this a
-    // card about the machine rather than about what a developer sees.
-    covers: ['subscription.unread'],
-    input: {
-      ...up,
-      credentialKind: 'api-key',
-      enterSubscription: 'unread',
-      subscription: null,
-      sessionInput: { sessionId: 'states-api-key' },
-    },
-  },
+  /*
+    An `api-key-no-plan` card was here, showing the same running session under
+    an API key so the plan-usage strip's absence could be compared against its
+    presence. Both it and the strip are gone: with nothing on screen differing
+    by Credential Kind, the card had no second thing to be a comparison against.
+
+    The kind itself is not gone and is still a fact the host decides — it
+    chooses which variable the agent is spawned with. It simply has no card,
+    because it has no appearance. See ticket 31.
+  */
   {
     id: 'resumed',
     title: 'Resumed on launch',

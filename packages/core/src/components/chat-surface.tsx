@@ -12,12 +12,10 @@ import {
   commandQuery,
   invokedCommand,
   formatContext,
-  hasPlanUsage,
   CONTEXT_WINDOW,
   EFFORTS,
   MODELS,
 } from '../domain.ts'
-import type { CredentialKind, SubscriptionUsage } from '../domain.ts'
 import type { harnessMachine, HarnessEvent } from '../machines/harness.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
@@ -272,7 +270,21 @@ export function ChatSurface({
 
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
-      <PlanUsage usage={ctx.subscription} kind={ctx.credentialKind} mode={mode} />
+      {/*
+        The seeded warning, on a strip of its own.
+
+        It used to ride the plan-usage strip, which is how cutting that strip
+        nearly took the build's only admission that it is not measuring anything
+        with it. That coupling was never deliberate: the marker gates on `mode`
+        and on nothing else, so it belongs to the whole surface rather than to
+        one row of figures — and a strip that only appeared under a subscription
+        meant an API-key run in seeded mode said nothing at all.
+
+        Rendered here rather than hidden, so `#/bare` and a DOM snapshot agree
+        with what is on screen. In a live run the component returns null and the
+        row is not in the document.
+      */}
+      <SeededStrip mode={mode} />
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
@@ -595,53 +607,39 @@ function SurfacePanel({
   )
 }
 
+/*
+  A `PlanUsage` strip was here, above the chat: `plan usage · 5h n% · week n%`,
+  gated on the credential being a subscription.
+
+  It is gone because it never had a number to show. Ticket 23 made it absent
+  under an API key rather than permanently empty, which was correct and was not
+  the thing standing between the developer and a figure — under the only
+  subscription varnick can hold, a `claude setup-token` credential, the session
+  reports `rate_limits_available: false` and does not even identify itself as a
+  subscription. Four routes to the windows were measured and all four are
+  closed; the one credential that answers is the interactive OAuth login, which
+  ADR-0011 refuses to hold. See ticket 31.
+
+  It was never rendered against a live figure, only a seeded one — which is
+  exactly the shape `SeededMarker` exists to keep honest, and exactly the reason
+  it survived this long without anyone noticing it could not populate.
+*/
+
 /**
- * Plan usage, outside the chat shell.
+ * The row the seeded marker sits on.
  *
- * Whether these numbers are measured or seeded is answered once, by the marker
- * beside them, rather than by this component second-guessing each value.
- *
- * Whether there is anything to show is answered before that, by the credential's
- * kind. Under an API key there is no plan, so there are no rolling windows and
- * this strip is not part of the window at all. Absent rather than empty, and the
- * difference is the whole of ticket 23: an empty strip reads as "we asked and
- * got zero", which is indistinguishable from a read that broke. Nothing here is
- * hidden — the element is never returned, so `#/bare` and a DOM snapshot agree
- * with what is on screen.
- *
- * `hasPlanUsage` rather than a comparison written out here: the same predicate
- * gates the `subscription` region's read, so the strip cannot end up rendering a
- * place for an answer the machine will never go and get.
+ * Its own component because the marker was previously reachable only through
+ * the plan-usage strip, and one gate — the credential's kind — was silently
+ * deciding both "are there figures" and "does this build admit it is seeded".
+ * Those are unrelated questions and only one of them survives.
  */
-function PlanUsage({
-  usage,
-  kind,
-  mode,
-}: {
-  usage: SubscriptionUsage | null
-  kind: CredentialKind | null
-  mode: ActorMode
-}) {
-  if (!hasPlanUsage(kind)) return null
-  if (!usage) return null
+function SeededStrip({ mode }: { mode: ActorMode }) {
+  if (mode === 'live') return null
   return (
     <div
-      className="flex items-center gap-5 px-6 py-1.5 text-[11.5px]"
+      className="flex items-center px-6 py-1.5 text-[11.5px]"
       style={{ borderBottom: '1px solid var(--rule)', color: 'var(--fg-faint)' }}
     >
-      <span>plan usage</span>
-      <span>
-        5h{' '}
-        <span data-numeric style={{ color: 'var(--fg-dim)' }}>
-          {usage.fiveHourPct}%
-        </span>
-      </span>
-      <span>
-        week{' '}
-        <span data-numeric style={{ color: 'var(--fg-dim)' }}>
-          {usage.weeklyPct}%
-        </span>
-      </span>
       <SeededMarker mode={mode} />
     </div>
   )

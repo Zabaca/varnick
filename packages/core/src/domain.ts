@@ -8,9 +8,9 @@ export type CredentialSource = 'keychain' | 'env'
  * subscription token minted by `claude setup-token`.
  *
  * Decided by the host from what it resolved, never configured — ADR-0011. It
- * decides which variable the agent is spawned with, and whether there is a plan
- * for plan usage to be about. Orthogonal to the source: either kind can come
- * from either store.
+ * decides which variable the agent is spawned with, and that is the whole of
+ * what it decides. Orthogonal to the source: either kind can come from either
+ * store.
  */
 export type CredentialKind = 'api-key' | 'subscription'
 
@@ -145,28 +145,20 @@ export function canStartAgent(input: {
   return input.credential === 'present' && input.sandbox === 'available'
 }
 
-/**
- * Whether there is a plan for plan usage to be about.
- *
- * Rolling windows are a property of a plan. An API key has none — the API says
- * so itself, with `rate_limits_available: false` — and a credential nobody has
- * read yet has nothing to say either way, so both answer no.
- *
- * One predicate because two readers need the same rule and must not answer
- * differently: the `subscription` region's gate, which decides whether
- * `readSubscriptionUsage` runs at all, and the plan-usage strip, which decides
- * whether it is rendered. Exported for the same reason `canStartAgent` is.
- *
- * What it deliberately is not is a fourth state. Under an API key the region
- * stays `unread`; the kind is already a fact in context, and a state standing
- * for a fact that is not a state is what CONTEXT.md's naming discipline exists
- * to prevent. And what it decides is absence rather than emptiness: an empty
- * strip reads as "we measured, and got nothing", which is also exactly what a
- * broken read looks like. See ADR-0011.
- */
-export function hasPlanUsage(kind: CredentialKind | null): boolean {
-  return kind === 'subscription'
-}
+/*
+  `hasPlanUsage` was here, gating a plan-usage strip and the `subscription`
+  region that fed it. Both are gone, and the predicate went with them rather
+  than being kept for a caller that might return.
+
+  It answered "is this credential a subscription", which was never the question
+  the strip needed. The question was "does this credential report rolling
+  windows", and the answer measured under a `claude setup-token` credential —
+  the only subscription varnick can hold — is no: `subscription_type: null`,
+  `rate_limits_available: false`, `rate_limits: null`. Claude Code treats such a
+  session as API authentication, not as a plan. So the predicate said yes in a
+  configuration where no figure existed, and the region it gated could only ever
+  sit in `unread`. See ADR-0011 and ticket 31.
+*/
 
 export function refusalFor(input: {
   credential: string
@@ -250,20 +242,6 @@ export function formatContext(used: number, total: number): string {
         : String(n)
   const pct = total > 0 ? Math.round((used / total) * 100) : 0
   return `${short(used)}/${short(total)} (${pct}%)`
-}
-
-/**
- * Subscription usage across the plan's rolling windows.
- *
- * `source` is part of the shape so a reading always carries where it came from.
- * The seeded-data marker is what tells a viewer the build is not measuring
- * anything; this field is what lets a single value say so even if it outlives
- * the marker.
- */
-export interface SubscriptionUsage {
-  fiveHourPct: number
-  weeklyPct: number
-  source: 'live' | 'seeded'
 }
 
 /** The query a command draft is filtering by — everything typed so far. */
