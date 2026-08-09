@@ -518,6 +518,8 @@ async function serve(
     asked: string[]
     /** What the `PostCompact` hook would report, from outside the message stream. */
     summarised: (summary: string) => void
+    /** A compaction the agent performed without being asked. */
+    compactedOnItsOwn: (summary: string) => void
   }) => Promise<void>,
   contextTokens?: () => Promise<number | null>,
   /** Whether this run was opened by resuming — what the report carries. */
@@ -534,7 +536,7 @@ async function serve(
   // Everything the loop wrote, unfiltered. The channel carries more than Turn
   // events now, and a helper that only kept those could not see the rest.
   const lines: string[] = []
-  let report: (summary: string) => void = () => {}
+  let report: (summary: string, asked: boolean) => void = () => {}
   /** Every list of secret names the loop handed over, in order. */
   const described: (readonly string[])[] = []
 
@@ -559,7 +561,15 @@ async function serve(
     },
   })
 
-  await script({ control, messages, asked, summarised: (summary) => report(summary) })
+  await script({
+    control,
+    messages,
+    asked,
+    summarised: (summary) => report(summary, true),
+    // A compaction nobody asked for: the CLI's own `/compact`, or the window
+    // filling up. The agent's context is rewritten either way.
+    compactedOnItsOwn: (summary) => report(summary, false),
+  })
   control.close()
   messages.close()
   await served
@@ -838,6 +848,64 @@ describe('the commands the runtime will accept', () => {
       [],
     )
     expect(written.some((e) => e.kind === 'done')).toBe(true)
+  })
+})
+
+describe('a compaction nobody asked for', () => {
+  test('the window is told, so the transcript follows the context', async () => {
+    /*
+      The live half of this: an auto-compaction fires when the window fills,
+      with no command and nobody watching. It rewrites the agent's context
+      either way — dropping the news left varnick showing a conversation the
+      agent no longer held, which is the `/clear` disagreement with nothing to
+      blame it on.
+    */
+    const { written } = await serve(async ({ control, messages, compactedOnItsOwn }) => {
+      control.push(runTurnLine('t1', 'carry on'))
+      await settle()
+      compactedOnItsOwn('everything so far, in short')
+      await settle()
+      messages.push(result('carried on'))
+      await settle()
+    })
+    const compacted = written.find((e) => e.kind === 'compacted')
+    expect(compacted).toBeDefined()
+    expect(compacted?.kind === 'compacted' && compacted.summary).toBe('everything so far, in short')
+  })
+
+  test('an empty summary is not a compaction to report', async () => {
+    // A transcript replaced by nothing is a transcript discarded, which is the
+    // rule the asked-for path already follows.
+    const { written } = await serve(async ({ control, compactedOnItsOwn }) => {
+      control.push(runTurnLine('t1', 'carry on'))
+      await settle()
+      compactedOnItsOwn('   ')
+      await settle()
+    })
+    expect(written.some((e) => e.kind === 'compacted')).toBe(false)
+  })
+
+  test('one varnick asked for still settles the run that asked', async () => {
+    /*
+      The path that existed, and it must not have moved. It settles on *both*
+      halves — the boundary that says a compaction happened and the summary that
+      says what it produced — which is why this test needs the boundary message
+      and the unasked-for ones above do not: there is no run waiting on halves.
+    */
+    const { written } = await serve(async ({ control, messages, summarised }) => {
+      control.push(`${JSON.stringify({ kind: 'compact', turnId: 'c1' })}\n`)
+      await settle()
+      messages.push({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'manual', pre_tokens: 812_000, post_tokens: 4_000 },
+      })
+      summarised('the asked-for summary')
+      await settle()
+    })
+    const compacted = written.find((e) => e.kind === 'compacted')
+    expect(compacted?.turnId).toBe('c1')
+    expect(compacted?.kind === 'compacted' && compacted.tokensUsed).toBe(4_000)
   })
 })
 

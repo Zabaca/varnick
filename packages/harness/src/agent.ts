@@ -1068,7 +1068,7 @@ export interface ServeTurnsInput {
    * summary fails, which is the outcome that costs a context window rather than
    * a conversation.
    */
-  readonly compactionSummaries?: (report: (summary: string) => void) => void
+  readonly compactionSummaries?: (report: (summary: string, asked: boolean) => void) => void
   /**
    * Where the names of the stored secrets come in.
    *
@@ -1234,15 +1234,43 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     emit(await concluded(run.turnId, settlement))
   }
 
-  // The summary arrives out of band, from the SDK's `PostCompact` hook. A
-  // report with no Compaction running is dropped: the same hook fires for an
-  // auto-compaction, and a conversation nobody asked to compact must not be
-  // rewritten because the window filled up.
-  input.compactionSummaries?.((summary) => {
+  /*
+    The summary, which arrives out of band through the SDK's `PostCompact` hook.
+
+    Two cases, and only the first used to be handled. A Compaction varnick asked
+    for settles the run that asked. **A compaction varnick did not ask for — the
+    CLI's own `/compact`, or an auto-compaction when the window fills — used to
+    be dropped**, on the reasoning that a rewrite nobody requested should not
+    happen. But it had already happened: the agent's context was rewritten
+    either way, and dropping the news left the window showing a conversation the
+    agent no longer held. Nobody asked, and nobody could tell.
+
+    So the second case is reported too, stamped with whatever Turn is running,
+    the way every other agent-level fact on this channel is.
+  */
+  input.compactionSummaries?.((summary, asked) => {
     const run = compacting
-    if (run === null) return
-    run.summarised(summary)
-    void settle(run)
+    if (run !== null) {
+      run.summarised(summary)
+      void settle(run)
+      return
+    }
+    if (!asked && summary.trim().length === 0) return
+    const carrying = running
+    if (carrying === null || carrying.finished) return
+    void (async () => {
+      const measured = await session.contextTokens().catch(() => null)
+      emit([
+        {
+          kind: 'compacted',
+          turnId: carrying.turnId,
+          summary,
+          // The same rule the asked-for path follows: a figure that was read,
+          // or the Compaction fails rather than showing one nobody measured.
+          tokensUsed: measured === null || !Number.isFinite(measured) ? 0 : measured,
+        },
+      ])
+    })()
   })
 
   /**
@@ -1482,7 +1510,7 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     too, and rewriting varnick's transcript because the window filled up would be
     a rewrite nobody asked for.
   */
-  let reportSummary: ((summary: string) => void) | null = null
+  let reportSummary: ((summary: string, asked: boolean) => void) | null = null
 
   /*
     Which secrets exist, as the host last said.
@@ -1582,7 +1610,23 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
             hooks: [
               async (hook) => {
                 if (hook.hook_event_name !== 'PostCompact') return {}
-                if (hook.trigger === 'manual') reportSummary?.(hook.compact_summary)
+                /*
+                  Every compaction now, not only the one varnick asked for.
+
+                  This was `trigger === 'manual'` on the reasoning that
+                  rewriting the transcript because the window filled up would be
+                  a rewrite nobody asked for. The opposite turned out to be
+                  true: an auto-compaction rewrites the *agent's* context
+                  whether or not varnick joins in, so dropping it left the
+                  window showing a conversation the agent no longer held — the
+                  same disagreement `/clear` had, with no command involved at
+                  all and nobody able to notice.
+
+                  The trigger still travels, because what the surface says about
+                  a summarisation someone asked for and one that happened on its
+                  own are different sentences.
+                */
+                reportSummary?.(hook.compact_summary, hook.trigger === 'manual')
                 return {}
               },
             ],
