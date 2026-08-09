@@ -81,7 +81,7 @@ export function SlashMenu({
               e.preventDefault()
               onPick(i)
             }}
-            className="cursor-pointer truncate py-0.5 pr-2"
+            className="flex cursor-pointer items-baseline gap-3 py-0.5 pr-2"
             /*
               The selected row is a band, not a shade of text.
 
@@ -98,7 +98,17 @@ export function SlashMenu({
               paddingLeft: '6px',
             }}
           >
-            <span className="inline-block" style={{ width: `${NAME_COLS}ch` }}>
+            {/*
+              A row that cannot overlap itself.
+
+              The name sat in a fixed 24ch inline-block, so anything longer —
+              `/mattpocock-skills:grill-with-docs`, or a name plus its argument
+              hint — ran straight under the description and the two rendered on
+              top of each other. A flex row with a floor instead of a fixed
+              width keeps the column where a scan expects it and lets a long
+              name push rather than collide.
+            */}
+            <span className="shrink-0" style={{ minWidth: `${NAME_COLS}ch` }}>
               {commandLabel(c)}
               {/*
                 What the command takes, beside its name rather than in place of
@@ -109,15 +119,11 @@ export function SlashMenu({
                 <span style={{ color: INACTIVE, opacity: 0.7 }}> {c.argumentHint}</span>
               )}
             </span>
-            {c.description}
-            {/*
-              Whose command this is, said once and quietly. A varnick row is an
-              event this window sends; an agent row is text the Session runs.
-              Unmarked, a menu that suddenly lists thirty entries gives no way to
-              tell the two apart — and they fail in different places.
-            */}
+            <span className="min-w-0 flex-1 truncate">{c.description}</span>
             {c.source === 'agent' && (
-              <span style={{ color: INACTIVE, opacity: 0.55 }}> · agent</span>
+              <span className="shrink-0" style={{ color: INACTIVE, opacity: 0.55 }}>
+                agent
+              </span>
             )}
           </li>
         )

@@ -183,8 +183,28 @@ export function refusalFor(input: {
  */
 export function isCommandDraft(draft: string, names: readonly string[]): boolean {
   if (!draft.startsWith('/')) return false
-  const typed = draft.toLowerCase()
-  return names.some((n) => n.toLowerCase().startsWith(typed))
+  const typed = draft.slice(1).toLowerCase()
+  return typed === '' || names.some((name) => nameAnswers(name, typed))
+}
+
+/**
+ * Whether a name answers what has been typed, by the menu's own rule.
+ *
+ * **Shared with the matcher on purpose.** The machine decides whether the menu
+ * is open and {@link matchCommands} decides what is in it, and they used two
+ * different rules: the machine asked whether a name *starts with* the draft
+ * while the matcher would also match inside one. Every plugin-qualified command
+ * fell through the gap — `mattpocock-skills:grill-with-docs` is not found by
+ * `/grill`, so the menu closed on the keystroke that should have found it, and
+ * the list the matcher would have returned was never rendered.
+ *
+ * The two-character floor is the matcher's, for the matcher's reason: one
+ * character is inside half the names, so a single letter matching everything
+ * makes the first keystroke of a hunt widen the list.
+ */
+function nameAnswers(name: string, typed: string): boolean {
+  const bare = name.startsWith('/') ? name.slice(1).toLowerCase() : name.toLowerCase()
+  return bare.startsWith(typed) || (typed.length >= 2 && bare.includes(typed))
 }
 
 /*

@@ -999,6 +999,25 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   */
   check('a query nothing answers is nothing', matchCommands(list, 'zzzz').length === 0)
 
+  /*
+    The menu opens on the same rule it filters by.
+
+    They were two rules: the machine asked whether a name *starts with* the
+    draft, the matcher would also match inside one. Every plugin-qualified
+    command fell through the gap — nothing starts with `/grill`, so the menu
+    closed on the keystroke that should have found
+    `mattpocock-skills:grill-with-docs`, and the list the matcher would have
+    returned was never rendered.
+  */
+  const qualified = ['/mattpocock-skills:grill-with-docs', '/caveman:caveman', '/clear']
+  check('a name is found from inside it, not only from its start', isCommandDraft('/grill', qualified))
+  check(
+    'and the matcher agrees, which is the point',
+    matchCommands([agent('mattpocock-skills:grill-with-docs')], 'grill').length === 1,
+  )
+  check('one character is still a prefix hunt', !isCommandDraft('/g', qualified))
+  check('a command followed by prose still closes the menu', !isCommandDraft('/clear everything', qualified))
+
   // Merging, which is about two different collisions.
   const merged = mergeCommands([
     { name: 'compact', description: "varnick's own", argumentHint: '', source: 'varnick' as const, run: () => {} },
