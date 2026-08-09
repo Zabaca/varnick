@@ -15,7 +15,7 @@ Resolution — the half where the host substitutes a real value at run time — 
 Storage mechanism is an open decision, carried from `PRODUCT.md`. It is the same open decision as ticket 06 — what persists on disk and how. Answer it once, for both.
 
 - [ ] Secrets can be stored, listed, renamed and removed without a restart
-- [ ] The agent is given the list of **names** and never a value — **the *never a value* half holds; the *is given* half does not.** `describeSecretsForAgent` is composed and tested, and its only caller is the CLI. The running agent is never handed it. Ticket 20 owns closing that
+- [x] The agent is given the list of **names** and never a value — **closed by ticket 20.** The names cross as a `describe-secrets` control request, sent before every Turn, and the agent host composes `describeSecretsForAgent` into a `UserPromptSubmit` hook's `additionalContext`. Only names cross, and by construction: both parses rebuild the request out of `kind` and `names`
 - [x] The store is unreadable from inside the sandbox, proven rather than assumed — **met, but not by the mechanism this ticket assumed.** The first measurement used a throwaway keychain in `/private/tmp`, a readable location, and concluded the store was exposed. Repeated with the keychain under `$HOME` — where the login Keychain actually lives — it is unreachable. `denyRead` on `$HOME` is what does it, not the denied binary. See ADR-0003's correction
 - [ ] Grepping the transcript and the Session mirror for a stored test value finds nothing
 

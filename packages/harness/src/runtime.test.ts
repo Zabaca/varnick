@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { answerHarnessLine, hostCapabilities, type HarnessCapabilities } from './runtime.ts'
+import { openSecretsStore, SECRETS_INDEX_ACCOUNT } from './secrets.ts'
 import type { StoredMessage } from './session.ts'
 
 /**
@@ -16,12 +17,13 @@ interface Recorded {
   sandboxChecks: number
   saves: { sessionId: string; messages: readonly StoredMessage[] }[]
   reads: string[]
+  secretNameReads: number
 }
 
 function capabilities(
   overrides: Partial<HarnessCapabilities> = {},
 ): HarnessCapabilities & { recorded: Recorded } {
-  const recorded: Recorded = { sandboxChecks: 0, saves: [], reads: [] }
+  const recorded: Recorded = { sandboxChecks: 0, saves: [], reads: [], secretNameReads: 0 }
   return {
     recorded,
     establishSandbox: async () => {
@@ -39,6 +41,10 @@ function capabilities(
     readSession: async (sessionId) => {
       recorded.reads.push(sessionId)
       return []
+    },
+    readSecretNames: async () => {
+      recorded.secretNameReads += 1
+      return ['STRIPE_KEY']
     },
     ...overrides,
   }
@@ -262,6 +268,100 @@ describe('wrap-agent-command computes the wrapping and nothing else', () => {
     const answer = await reply(call(1, { kind: 'spawn-agent' }))
     expect(answer.ok).toBeUndefined()
     expect(String(answer.error)).toContain('spawn-agent')
+  })
+})
+
+/*
+  ADR-0006's naming end, at the only process that can answer it.
+
+  The Secrets Store is a keychain under `$HOME`; the agent host is inside the
+  Sandbox and the Rust host does not read it. So this is where "which secrets
+  exist" is answered, and — because the values are in this process too — it is
+  where the claim that only names leave has to be taken.
+
+  No test here touches a real keychain. `openSecretsStore` takes a
+  `SecretsKeychain` and has no default, so it cannot be reached by forgetting an
+  argument.
+*/
+describe('read-secret-names answers with names and never a value', () => {
+  /** A value shaped like a real key, so a leak is greppable rather than subtle. */
+  const STRIPE = ['sk_live_', 'NEVER_LEAVES_THE_HOST'].join('')
+
+  /** A keychain in a Map, and the real store over it. */
+  const storeOver = (items: Map<string, string>) =>
+    openSecretsStore({
+      keychain: {
+        read: async (account) => items.get(account) ?? null,
+        write: async (account, value) => {
+          items.set(account, value)
+        },
+        remove: async (account) => {
+          items.delete(account)
+        },
+      },
+    })
+
+  test('the names come back', async () => {
+    const answer = await reply(call(1, { kind: 'read-secret-names' }))
+    expect(answer.ok).toEqual({ names: ['STRIPE_KEY'] })
+  })
+
+  test('the value is nowhere on the wire, over a real store holding a real one', async () => {
+    // The assertion, taken on the serialised line rather than on an object: the
+    // line is what crosses to the Rust host and then to the confined process,
+    // and a value that is not in it is a value that cannot arrive there.
+    const store = await storeOver(new Map<string, string>())
+    await store.store('STRIPE_KEY', STRIPE)
+
+    const raw = await answerHarnessLine(
+      call(1, { kind: 'read-secret-names' }),
+      capabilities({ readSecretNames: async () => store.names() }),
+    )
+    expect(raw).toContain('STRIPE_KEY')
+    expect(raw).not.toContain(STRIPE)
+  })
+
+  test('a secret added by another process is named without a relaunch', async () => {
+    /*
+      The whole reason this is a call rather than a variable in the spawn
+      environment. `bun run secret add` runs in a different process against the
+      same keychain, so the store this one holds is a stale snapshot until it is
+      re-read — which is exactly what ticket 06 had to do for the mirror, and
+      the same answer is right here.
+
+      The store is the real one; "the other process" is a write straight into
+      the keychain behind its back, which is what another process looks like
+      from in here.
+    */
+    const items = new Map<string, string>()
+    const store = await storeOver(items)
+    await store.store('STRIPE_KEY', STRIPE)
+
+    const capability = capabilities({
+      readSecretNames: async () => {
+        await store.reload()
+        return store.names()
+      },
+    })
+
+    items.set('BILLING_TOKEN', 'tok_added_later')
+    items.set(SECRETS_INDEX_ACCOUNT, JSON.stringify(['STRIPE_KEY', 'BILLING_TOKEN']))
+
+    const answer = await reply(call(1, { kind: 'read-secret-names' }), capability)
+    expect(answer.ok).toEqual({ names: ['STRIPE_KEY', 'BILLING_TOKEN'] })
+  })
+
+  test('the answer is rebuilt, so nothing rides along with the names', async () => {
+    const extra = ['sk_live_', 'VOLUNTEERED'].join('')
+    const raw = await answerHarnessLine(
+      call(1, { kind: 'read-secret-names' }),
+      capabilities({
+        readSecretNames: async () =>
+          Object.assign(['STRIPE_KEY'], { values: [extra] }) as readonly string[],
+      }),
+    )
+    expect(JSON.parse(raw)).toMatchObject({ id: 1, ok: { names: ['STRIPE_KEY'] } })
+    expect(raw).not.toContain(extra)
   })
 })
 

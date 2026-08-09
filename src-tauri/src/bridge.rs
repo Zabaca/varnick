@@ -250,6 +250,34 @@ impl HarnessRuntime {
         crate::agent::wrapping_of(&answer)
     }
 
+    /// Ask the runtime which secrets are stored, by name.
+    ///
+    /// Host-internal like `agent_wrapping`, and absent from `route_of` for the
+    /// same reason: it is a step inside running a Turn, not a capability the
+    /// renderer has. Keeping it off that list also keeps the webview unable to
+    /// ask what a developer's keys are called, which is not a secret but is
+    /// nobody's business in a process that talks HTTP.
+    ///
+    /// The runtime is the only process that can answer it — the Secrets Store
+    /// is a keychain under `$HOME`, and both this process and the agent host
+    /// are the wrong side of that. Names only: `read-secret-names` is answered
+    /// from `SecretsStore.names()`, and nothing on that path can reach a value.
+    ///
+    /// A name that is not a string is dropped rather than failing the read. The
+    /// store cannot produce one, so this is a runtime that does not match this
+    /// build, and the useful behaviour then is to name the secrets it did agree
+    /// about rather than to leave the agent knowing nothing.
+    pub fn secret_names(&self) -> Result<Vec<String>, Failure> {
+        let answer = self.call(&serde_json::json!({ "kind": "read-secret-names" }))?;
+        let Some(names) = answer.get("names").and_then(Value::as_array) else {
+            return Err(Failure::of("malformed"));
+        };
+        Ok(names
+            .iter()
+            .filter_map(|name| name.as_str().map(str::to_string))
+            .collect())
+    }
+
     /// Ask the runtime to do one thing.
     ///
     /// Calls are serialised by the lock. That is not a limitation worked around:
@@ -434,6 +462,37 @@ pub fn harness_call(
             // here: one control line onto the pipe the agent process is
             // listening on. None of their answers comes back through this call.
             "run-turn" | "interrupt-turn" | "compact-session" => {
+                /*
+                  A Turn, and only a Turn, is preceded by the names of the
+                  stored secrets — ADR-0006's naming end.
+
+                  Here rather than at spawn because the list changes while the
+                  agent runs: `bun run secret add` is a different process, and a
+                  developer who adds a key should be able to use it in the next
+                  message rather than after a relaunch. Ticket 06 answered the
+                  same problem on the mirror's side the same way, by re-reading
+                  the store before every save instead of trusting the snapshot
+                  taken at start-up.
+
+                  Not before an interrupt, which stops an answer and asks the
+                  agent for nothing, and not before a compaction, which
+                  summarises what has already been said. Both would pay a
+                  round-trip to the runtime for a brief nothing is going to read,
+                  and an interrupt paying for one is the exact delay interrupting
+                  exists to avoid.
+
+                  Both steps are deliberately unchecked. A runtime that will not
+                  answer, or an agent that is not running, leaves the agent
+                  knowing whatever it last knew — and the Turn below still
+                  succeeds or refuses on its own account, with the sentence that
+                  fits. A Turn is what the developer asked for; an unnameable
+                  secret makes it a poorer answer, never a failed one.
+                */
+                if request.get("kind").and_then(Value::as_str) == Some("run-turn") {
+                    if let Ok(names) = runtime.secret_names() {
+                        let _ = agent.describe_secrets(&names);
+                    }
+                }
                 agent.run_turn(&request)?;
                 Ok(serde_json::json!({ "ok": true }))
             }
@@ -542,6 +601,29 @@ mod tests {
         // The runtime answers `wrap-agent-command`, but only to this process,
         // as a step inside a spawn. It is not a capability Core has.
         assert_eq!(route_of("wrap-agent-command"), None);
+    }
+
+    #[test]
+    fn the_renderer_cannot_ask_about_the_secrets_at_all() {
+        /*
+          Neither half of ADR-0006's naming end is on this bridge, and both are
+          absent for their own reason.
+
+          `read-secret-names` is answered by the runtime, but — like
+          `wrap-agent-command` — only when this process asks, as a step inside
+          running a Turn. Names are not secret, so a renderer holding them would
+          not be a containment failure; it would be the webview knowing what a
+          developer's keys are called, in a process that talks HTTP, for no
+          reason anything needs.
+
+          `describe-secrets` is sharper. It is the line that decides what the
+          confined agent believes about the store, and a renderer that could
+          send one could tell the agent that a secret exists which does not, or
+          conceal one that does. It is written by this process, from what the
+          runtime answered, and there is no route to it from anywhere else.
+        */
+        assert_eq!(route_of("read-secret-names"), None);
+        assert_eq!(route_of("describe-secrets"), None);
     }
 
     #[test]

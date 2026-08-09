@@ -41,7 +41,7 @@ A tool given to an agent as an in-process SDK MCP tool rather than a built-in. R
 _Avoid_: MCP server (a Custom Tool may be one; the term is about where the code runs)
 
 **Secrets Store**:
-Host-side storage the agent cannot read. The agent authors code that names a secret; the host resolves the name when it runs that code. See [ADR-0006](./docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
+Host-side storage the agent cannot read. The agent authors code that names a secret; the host resolves the name when it runs that code. It learns the names because the host tells it — a control request on the channel the agent host already holds, sent before every Turn, so a secret added while varnick is running is nameable without a relaunch. See [ADR-0006](./docs/adr/0006-agents-author-secret-use-never-hold-secrets.md).
 
 It is worth knowing *why* it cannot, because the obvious answer is wrong and was believed for a while: not because `/usr/bin/security` is denied — that binary still runs, and the Security framework links in-process anyway — but because the Keychain file lives under `$HOME`, which `denyRead` covers. The protection is real and kernel-enforced, and it is incidental to where Apple puts the file. Widening `allowRead` over `$HOME` would remove it silently. See the first correction in [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md).
 _Avoid_: vault, keychain, credentials (credentials are what authenticate the agent itself, which is a separate path)
