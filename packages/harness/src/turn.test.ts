@@ -347,6 +347,7 @@ describe('the wire between the agent host and the host', () => {
       prompt: 'hello',
       model: 'claude-opus-5',
       effort: 'xhigh',
+      images: [],
     })
     expect(parseControlRequest(line)).toEqual({
       kind: 'run-turn',
@@ -354,6 +355,7 @@ describe('the wire between the agent host and the host', () => {
       prompt: 'hello',
       model: 'claude-opus-5',
       effort: 'xhigh',
+      images: [],
     })
     expect(parseControlRequest(JSON.stringify({ kind: 'interrupt', turnId: 't1' }))).toEqual({
       kind: 'interrupt',

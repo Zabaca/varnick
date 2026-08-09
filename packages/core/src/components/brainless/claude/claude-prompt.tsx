@@ -86,6 +86,7 @@ export function ClaudePrompt({
   defaultValue = "",
   onChange,
   onKeyDown,
+  onPaste,
   placeholder = "",
   mode = "auto",
   effort = "xhigh",
@@ -97,6 +98,8 @@ export function ClaudePrompt({
   defaultValue?: string;
   onChange?: React.ChangeEventHandler<HTMLTextAreaElement>;
   onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
+  /** Local addition: a screenshot is a paste, and the field is where it lands. */
+  onPaste?: React.ClipboardEventHandler<HTMLTextAreaElement>;
   placeholder?: string;
   /** Pass `false` to hide the mode line, as `effort` already allows. */
   mode?: ClaudeMode | false;
@@ -177,6 +180,7 @@ export function ClaudePrompt({
           aria-label="Prompt"
           placeholder={placeholder}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           {...(controlled
             ? { value, onChange }
             : { defaultValue, onChange })}

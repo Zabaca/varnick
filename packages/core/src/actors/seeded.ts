@@ -1,4 +1,5 @@
 import { fromPromise } from 'xstate'
+import type { PastedImage } from '@varnick/harness/turn'
 import type {
   CredentialKind,
   CredentialReading,
@@ -99,7 +100,13 @@ export function seededActors() {
 
     runTurn: fromPromise<
       { text: string; tokensUsed: number },
-      { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+      {
+        sessionId: string
+        prompt: string
+        model: ModelId
+        effort: Effort
+        images: readonly PastedImage[]
+      }
     >(async ({ input }) => {
       await wait(600)
       // Echoes what it ran on, so a /model or /effort change is visible even

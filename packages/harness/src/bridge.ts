@@ -71,7 +71,13 @@
 
 import { parseMintEvent, type MintEvent } from './mint.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
-import { normaliseCommands, parseTurnEvent, type SlashCommand, type TurnEvent } from './turn.ts'
+import {
+  normaliseCommands,
+  parseTurnEvent,
+  type PastedImage,
+  type SlashCommand,
+  type TurnEvent,
+} from './turn.ts'
 
 /** Establish the Sandbox, or fail. Answers `{ ok: true }` and nothing else. */
 export interface CheckSandboxRequest {
@@ -253,6 +259,16 @@ export interface RunTurnRequest {
   readonly prompt: string
   readonly model: string
   readonly effort: string
+  /**
+   * Pictures the developer pasted into the composer.
+   *
+   * The first bulk payload this bridge has ever carried — everything else on it
+   * is a short string this codebase composed. It is validated on the way into
+   * the confined process rather than here (see `parseImages` in ./turn.ts):
+   * this side is the renderer, and the check that matters is the one the
+   * sandboxed half performs on what it was handed.
+   */
+  readonly images?: readonly PastedImage[]
 }
 
 /**

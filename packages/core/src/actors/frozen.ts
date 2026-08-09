@@ -2,6 +2,7 @@ import { fromPromise } from 'xstate'
 import { harnessMachine } from '../machines/harness.ts'
 import { sessionMachine } from '../machines/session.ts'
 import { surfaceMachine } from '../machines/surface.ts'
+import type { PastedImage } from '@varnick/harness/turn'
 import type {
   CredentialKind,
   CredentialReading,
@@ -76,7 +77,13 @@ export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
         actors: {
           runTurn: never<
             { text: string; tokensUsed: number },
-            { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+            {
+              sessionId: string
+              prompt: string
+              model: ModelId
+              effort: Effort
+              images: readonly PastedImage[]
+            }
           >(),
           persistSession: never<
             { ok: true },

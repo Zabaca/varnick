@@ -23,6 +23,8 @@ export interface StoredMessage {
   readonly id: string
   readonly role: 'user' | 'agent'
   readonly text: string
+  /** How many pictures went with it. Absent for the messages that carry none. */
+  readonly attachments?: number
 }
 
 /**
@@ -225,22 +227,42 @@ function assertSafeSessionId(sessionId: string): void {
 }
 
 function sameMessage(a: StoredMessage, b: StoredMessage): boolean {
-  return a.id === b.id && a.role === b.role && a.text === b.text
+  return (
+    a.id === b.id &&
+    a.role === b.role &&
+    a.text === b.text &&
+    (a.attachments ?? 0) === (b.attachments ?? 0)
+  )
 }
 
 function serialise(message: StoredMessage): string {
   // Field order fixed so two saves of the same message produce the same bytes.
-  return JSON.stringify({ id: message.id, role: message.role, text: message.text })
+  return JSON.stringify({
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    // Omitted rather than zero, so the overwhelming majority of lines are
+    // byte-identical to the ones written before pictures existed and a mirror
+    // written by an older build still compares equal.
+    ...(message.attachments ? { attachments: message.attachments } : {}),
+  })
 }
 
 function parseLine(line: string): StoredMessage | null {
   try {
     const value: unknown = JSON.parse(line)
     if (typeof value !== 'object' || value === null) return null
-    const { id, role, text } = value as Record<string, unknown>
+    const { id, role, text, attachments } = value as Record<string, unknown>
     if (typeof id !== 'string' || typeof text !== 'string') return null
     if (role !== 'user' && role !== 'agent') return null
-    return { id, role, text }
+    // A count or nothing. A line written by a build that predates pictures has
+    // no field here, and that is a message with no attachments rather than a
+    // malformed one.
+    if (attachments === undefined) return { id, role, text }
+    if (typeof attachments !== 'number' || !Number.isInteger(attachments) || attachments < 1) {
+      return null
+    }
+    return { id, role, text, attachments }
   } catch {
     return null
   }

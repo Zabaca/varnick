@@ -67,6 +67,7 @@ import {
   runtimeReportFrom,
   type TurnEvent,
   type RuntimeReport,
+  type PastedImage,
   type SlashCommand,
   type TurnFailure,
   type TurnRun,
@@ -1010,8 +1011,15 @@ async function toolProbe(
  * thing story 69 exists to prevent.
  */
 export interface AgentSessionPort {
-  /** Put a prompt on the Session's streaming input. */
-  prompt(text: string): void
+  /**
+   * Put a prompt on the Session's streaming input.
+   *
+   * `images` is what the developer pasted, and it is almost always empty. A
+   * message carrying one becomes SDK content blocks rather than a string —
+   * there is no text form of a picture, and inventing one (a path, a caption)
+   * would be varnick describing an image to the model instead of showing it.
+   */
+  prompt(text: string, images?: readonly PastedImage[]): void
   /** What the *next* answer runs on. Applied before the prompt goes out. */
   setModel(model: string): Promise<void>
   setEffort(effort: string): Promise<void>
@@ -1239,6 +1247,7 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     prompt: string
     model: string
     effort: string
+    images: readonly PastedImage[]
   }): Promise<void> {
     const run = beginTurn(request.turnId)
     running = run
@@ -1254,7 +1263,7 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       // true rather than likely.
       await session.setModel(request.model)
       await session.setEffort(request.effort)
-      session.prompt(request.prompt)
+      session.prompt(request.prompt, request.images)
     } catch (error) {
       // A Turn that was sent and never answered is the worst available state:
       // `sending` for ever, with nothing to retry and nothing to dismiss.
@@ -1391,7 +1400,23 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
 async function runAgentHost(sdkEntry: string): Promise<void> {
   const { query } = (await import(sdkEntry)) as typeof import('@anthropic-ai/claude-agent-sdk')
   type Prompt = Parameters<typeof query>[0]['prompt']
-  type UserMessage = { type: 'user'; message: { role: 'user'; content: string }; parent_tool_use_id: null; session_id: string }
+  /*
+    Content is a string or a list of blocks.
+
+    A plain prompt stays a string, which is what every Turn before images was
+    and what the SDK is happiest with. A prompt carrying pictures becomes
+    blocks, because that is the only shape an image has on the API: base64 and
+    a media type, beside the text rather than described by it.
+  */
+  type ContentBlock =
+    | { type: 'text'; text: string }
+    | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  type UserMessage = {
+    type: 'user'
+    message: { role: 'user'; content: string | ContentBlock[] }
+    parent_tool_use_id: null
+    session_id: string
+  }
 
   /*
     Streaming input, held open, fed by the control channel.
@@ -1625,10 +1650,30 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       }
     },
     session: {
-      prompt: (text) => {
+      prompt: (text, images) => {
+        /*
+          Images first, then the text.
+
+          The order is the one the API documents for a prompt about a picture,
+          and it is also the one that reads correctly if a model sees only the
+          first block: "here is a screenshot, and here is what I am asking about
+          it" rather than a question about something that has not arrived yet.
+        */
+        const content: string | ContentBlock[] =
+          images === undefined || images.length === 0
+            ? text
+            : [
+                ...images.map(
+                  (image): ContentBlock => ({
+                    type: 'image',
+                    source: { type: 'base64', media_type: image.mediaType, data: image.data },
+                  }),
+                ),
+                { type: 'text', text },
+              ]
         queued.push({
           type: 'user',
-          message: { role: 'user', content: text },
+          message: { role: 'user', content },
           parent_tool_use_id: null,
           session_id: '',
         })

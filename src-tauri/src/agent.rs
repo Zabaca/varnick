@@ -141,6 +141,48 @@ pub fn exit_reason(status: &std::process::ExitStatus) -> String {
     }
 }
 
+/// The pictures on a request, rebuilt to two fields each.
+///
+/// **Anything malformed becomes no images rather than some.** A partial list is
+/// worse than an empty one: a developer who pasted three screenshots and had one
+/// silently dropped is asking the agent about a picture it cannot see, and the
+/// Turn would answer confidently about the two it got.
+///
+/// The media type is an allowlist rather than an `image/` prefix test, because
+/// `image/svg+xml` is a document with script in it rather than a picture. The
+/// payload must be base64 and nothing else — a newline inside it would split the
+/// request across two lines of a newline-framed channel, which is the one way a
+/// value on this wire could become a request.
+fn images_of(request: &Value) -> Vec<Value> {
+    const ALLOWED: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+    let Some(list) = request.get("images").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::with_capacity(list.len());
+    for entry in list {
+        let (Some(media_type), Some(data)) = (
+            entry.get("mediaType").and_then(Value::as_str),
+            entry.get("data").and_then(Value::as_str),
+        ) else {
+            return Vec::new();
+        };
+        if !ALLOWED.contains(&media_type) {
+            return Vec::new();
+        }
+        if data.is_empty()
+            || !data
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        {
+            return Vec::new();
+        }
+        out.push(serde_json::json!({ "mediaType": media_type, "data": data }));
+    }
+    out
+}
+
 /// One control request to the agent host, as one line, or nothing.
 ///
 /// Rebuilt field by field rather than forwarded. The agent host runs inside srt
@@ -164,6 +206,12 @@ pub fn control_line_for(request: &Value) -> Option<String> {
             "prompt": field("prompt")?,
             "model": field("model")?,
             "effort": field("effort")?,
+            // Rebuilt entry by entry like every other field on this channel.
+            // The confined half validates them again (`parseImages` in
+            // packages/harness/src/turn.ts) — this is the outer of two checks,
+            // and it is here because bulk data from the renderer is the one
+            // thing on this wire that was never a short string varnick wrote.
+            "images": images_of(request),
         }),
         // The renderer's word is `interrupt-turn`, because on that side of the
         // bridge a Turn is the thing being interrupted. Inside the agent host
@@ -782,6 +830,10 @@ mod tests {
                 "prompt": "hello",
                 "model": "claude-opus-5",
                 "effort": "xhigh",
+                // Always present, empty for almost every Turn. A field that
+                // appeared only sometimes would make the confined half branch
+                // on absence as well as on contents.
+                "images": [],
             })
         );
     }
@@ -792,6 +844,62 @@ mod tests {
             .expect("an interrupt is a control request");
         let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(parsed, json!({ "kind": "interrupt", "turnId": "t1" }));
+    }
+
+    #[test]
+    fn a_pasted_picture_crosses_as_two_fields_and_nothing_else() {
+        let line = control_line_for(&json!({
+            "kind": "run-turn", "turnId": "t1", "prompt": "what is this",
+            "model": "claude-opus-5", "effort": "xhigh",
+            "images": [{
+                "mediaType": "image/png",
+                "data": "aGVsbG8=",
+                // Volunteered beside the two that are read. A path is the one
+                // that matters: it is a thing the agent might try to open.
+                "path": "/Users/someone/Desktop/shot.png",
+                "apiKey": looks_like_a_key(),
+            }],
+        }))
+        .expect("a run-turn is a control request");
+        assert!(!line.contains("sk-ant"));
+        assert!(!line.contains("Desktop"));
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            parsed["images"],
+            json!([{ "mediaType": "image/png", "data": "aGVsbG8=" }])
+        );
+    }
+
+    #[test]
+    fn a_picture_that_is_not_one_takes_the_whole_list_with_it() {
+        // All or nothing. A developer who pasted two screenshots and had one
+        // silently dropped is asking about a picture the agent cannot see.
+        let refused = |images: serde_json::Value| {
+            let line = control_line_for(&json!({
+                "kind": "run-turn", "turnId": "t1", "prompt": "p",
+                "model": "claude-opus-5", "effort": "xhigh", "images": images,
+            }))
+            .expect("a run-turn is a control request");
+            let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+            parsed["images"] == json!([])
+        };
+
+        // SVG is a document with script in it rather than a picture, which is
+        // why the media type is an allowlist and not an `image/` prefix test.
+        assert!(refused(json!([{ "mediaType": "image/svg+xml", "data": "aGk=" }])));
+        assert!(refused(json!([{ "mediaType": "text/html", "data": "aGk=" }])));
+        // A newline in the payload would split the request across two lines of
+        // a newline-framed channel, which is the one way a value here could
+        // become a request.
+        assert!(refused(json!([{ "mediaType": "image/png", "data": "aGk=\nzz" }])));
+        assert!(refused(json!([{ "mediaType": "image/png", "data": "not base64!" }])));
+        assert!(refused(json!([{ "mediaType": "image/png", "data": "" }])));
+        assert!(refused(json!([{ "mediaType": "image/png" }])));
+        // One good and one bad is nothing, not one.
+        assert!(refused(json!([
+            { "mediaType": "image/png", "data": "aGk=" },
+            { "mediaType": "image/svg+xml", "data": "aGk=" },
+        ])));
     }
 
     #[test]

@@ -69,6 +69,8 @@ export type ControlRequest =
       readonly prompt: string
       readonly model: string
       readonly effort: string
+      /** Images pasted into the composer. Empty for almost every Turn. */
+      readonly images: readonly PastedImage[]
     }
   | { readonly kind: 'interrupt'; readonly turnId: string }
   | DescribeSecretsRequest
@@ -119,6 +121,78 @@ export interface DescribeSecretsRequest {
   readonly names: readonly string[]
 }
 
+/**
+ * What a picture may be, crossing into the Sandbox.
+ *
+ * The control channel is the one way into the confined process, and until now
+ * every field on it was a short string this codebase composed. This is the
+ * first that carries bulk data from outside, so it is the narrowest shape that
+ * can be a picture: a media type from a fixed list, and base64.
+ *
+ * **No filename, no path, no `data:` URL.** A name is metadata the model does
+ * not need and a path is a thing the agent might try to open; a `data:` prefix
+ * is a place to put a second media type that disagrees with the first. The
+ * request is rebuilt out of these two fields, so anything sent beside them is a
+ * field that was never read — the same rule `describe-secrets` follows.
+ */
+export interface PastedImage {
+  readonly mediaType: ImageMediaType
+  /** Base64, with no `data:` prefix and no whitespace. */
+  readonly data: string
+}
+
+/**
+ * The formats a paste may be.
+ *
+ * An allowlist rather than a pattern: `image/*` would accept `image/svg+xml`,
+ * and SVG is a document with script in it rather than a picture. These four are
+ * what a screenshot actually arrives as.
+ */
+export const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number]
+
+/**
+ * How much picture one Turn may carry, in base64 characters.
+ *
+ * Roughly 8MB of image across the whole request. The channel is newline-framed
+ * and a line is read into memory whole by both halves, so an unbounded paste is
+ * an unbounded allocation in the host *and* in the confined process. A cap is
+ * cheaper than either discovering that in production.
+ */
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
+
+/**
+ * Read a list of images, or refuse the whole request.
+ *
+ * All-or-nothing on purpose, and it is the same argument `describe-secrets`
+ * makes about names: a partial list is worse than none. A developer who pasted
+ * three screenshots and had one silently dropped is asking the agent about a
+ * picture it cannot see.
+ */
+export function parseImages(value: unknown): readonly PastedImage[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) return null
+
+  const images: PastedImage[] = []
+  let total = 0
+  for (const entry of value) {
+    if (entry === null || typeof entry !== 'object') return null
+    const { mediaType, data } = entry as Record<string, unknown>
+    if (typeof mediaType !== 'string' || typeof data !== 'string') return null
+    if (!(IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType)) return null
+    // Base64 and nothing else. A newline inside the payload would split the
+    // request across two lines of a newline-framed channel, which is the one
+    // way a value on this wire could become a request.
+    if (data.length === 0 || !BASE64.test(data)) return null
+    total += data.length
+    if (total > MAX_IMAGE_BYTES) return null
+    images.push({ mediaType: mediaType as ImageMediaType, data })
+  }
+  return images
+}
+
 /*
   `CLEAR_COMMAND` and `COMPACT_COMMAND` were here, each with a control request
   to carry it.
@@ -150,7 +224,10 @@ export function parseControlRequest(line: string): ControlRequest | null {
     return null
   }
 
-  const { kind, turnId, prompt, model, effort, names } = (value ?? {}) as Record<string, unknown>
+  const { kind, turnId, prompt, model, effort, names, images } = (value ?? {}) as Record<
+    string,
+    unknown
+  >
 
   /*
     Rebuilt to `kind` and `names`, which is what makes "no value can arrive
@@ -178,7 +255,11 @@ export function parseControlRequest(line: string): ControlRequest | null {
     if (typeof prompt !== 'string' || typeof model !== 'string' || typeof effort !== 'string') {
       return null
     }
-    return { kind, turnId, prompt, model, effort }
+    // Rebuilt like every other field, and a malformed picture fails the Turn
+    // rather than being dropped from it — see parseImages.
+    const parsed = parseImages(images)
+    if (parsed === null) return null
+    return { kind, turnId, prompt, model, effort, images: parsed }
   }
 
   return null

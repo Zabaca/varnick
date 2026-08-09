@@ -31,7 +31,7 @@ import {
   signatureFor,
   completionFor,
 } from '../src/domain.ts'
-import { parseControlRequest } from '@varnick/harness/turn'
+import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
 import { describeSecretsForAgent, openSecretsStore } from '@varnick/harness/secrets'
 import { answerHarnessLine, type HarnessCapabilities } from '@varnick/harness/runtime'
@@ -43,6 +43,7 @@ import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.t
 import { GROUPS, SCENARIOS, matches, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
 import { cardOf, linkToCard, routeOf } from '../src/routing.ts'
 import { parseMarkdown, parseInline, isSafeHref } from '../src/markdown.ts'
+import type { PastedImage } from '@varnick/harness/turn'
 import { frozenHarness } from '../src/actors/frozen.ts'
 import { ACTOR_NAMES, UNIMPLEMENTED, seededDetail } from '../src/actors/index.ts'
 import type {
@@ -77,7 +78,13 @@ const rejects = <TOut = never, TIn = Record<string, unknown>>(message: string) =
 const never = <TOut = never, TIn = Record<string, unknown>>() =>
   fromPromise<TOut, TIn>(() => new Promise<TOut>(() => {}))
 
-type TurnInput = { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+type TurnInput = {
+  sessionId: string
+  prompt: string
+  model: ModelId
+  effort: Effort
+  images: readonly PastedImage[]
+}
 type TurnOutput = { text: string; tokensUsed: number }
 const turnNever = () => never<TurnOutput, TurnInput>()
 
@@ -2152,6 +2159,119 @@ export default function Billing() {
 }
 
 // ---------------------------------------------------------------------------
+// A pasted picture — that it reaches the Turn and the record says it did
+// ---------------------------------------------------------------------------
+
+{
+  const png = (data: string): PastedImage => ({ mediaType: 'image/png', data })
+  const shot = (): PastedImage => png('aGVsbG8=')
+
+  {
+    // A screenshot with no caption is a message. "look at this" is the whole
+    // reason somebody pastes one, and a guard on the draft alone would have
+    // made it unsendable.
+    const actor = createActor(sessionMachine.provide({ actors: { runTurn: turnNever() } }), {
+      input: { sessionId: 'img-1' },
+    }).start()
+    check('an empty composer refuses SEND', !actor.getSnapshot().can({ type: 'SEND' }))
+    actor.send({ type: 'ATTACH_IMAGES', images: [shot()] })
+    check('a picture on its own is sendable', actor.getSnapshot().can({ type: 'SEND' }))
+    check('and it is held beside the draft', actor.getSnapshot().context.pending.length === 1)
+    actor.send({ type: 'DETACH_IMAGE', index: 0 })
+    check('taking it back empties the composer again', !actor.getSnapshot().can({ type: 'SEND' }))
+    actor.stop()
+  }
+
+  {
+    /*
+      The ordering bug this shape exists to avoid: the actor's input is read on
+      entry to `answering`, so clearing the attachments in the same action that
+      appends the message would send the message without its pictures. They are
+      cleared on exit instead, which is why this asserts what the actor was
+      *handed* rather than what the context held afterwards.
+    */
+    const seen: PastedImage[][] = []
+    const actor = createActor(
+      sessionMachine.provide({
+        actors: {
+          runTurn: fromPromise<TurnOutput, TurnInput>(async ({ input }) => {
+            seen.push([...input.images])
+            return { text: 'ok', tokensUsed: 1 }
+          }),
+        },
+      }),
+      { input: { sessionId: 'img-2' } },
+    ).start()
+
+    actor.send({ type: 'ATTACH_IMAGES', images: [shot(), png('d29ybGQ=')] })
+    actor.send({ type: 'EDIT_DRAFT', text: 'what is wrong here' })
+    actor.send({ type: 'SEND' })
+    check('the Turn is handed the pictures that were pasted', seen[0]?.length === 2)
+
+    await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle', soon)
+    const after = actor.getSnapshot().context
+    check('and the composer is empty afterwards', after.pending.length === 0)
+    // The record has to say a picture went, or a message reading "what is
+    // wrong here" is a transcript that lies about the conversation.
+    const sent = after.messages.find((m) => m.role === 'user')
+    check('the transcript records how many went with it', sent?.attachments === 2)
+    check('as a count, not as the bytes — the mirror stays readable', JSON.stringify(sent).length < 200)
+    actor.stop()
+  }
+
+  {
+    // Clearing takes the attachments with it. A picture pasted for a
+    // conversation the agent has forgotten is a question about nothing.
+    const actor = createActor(sessionMachine.provide({ actors: { runTurn: turnNever() } }), {
+      input: { sessionId: 'img-3' },
+    }).start()
+    actor.send({ type: 'ATTACH_IMAGES', images: [shot()] })
+    actor.send({ type: 'CLEAR' })
+    check('a clear drops what was waiting to be sent', actor.getSnapshot().context.pending.length === 0)
+    actor.stop()
+  }
+
+  {
+    /*
+      The channel's own check, which is the one that matters: this is the first
+      bulk payload the control request has ever carried, and the confined half
+      rebuilds it rather than trusting it.
+    */
+    const request = (images: unknown) =>
+      parseControlRequest(
+        JSON.stringify({
+          kind: 'run-turn',
+          turnId: 't1',
+          prompt: 'p',
+          model: 'claude-opus-5',
+          effort: 'xhigh',
+          images,
+        }),
+      )
+
+    check('a well-formed picture crosses', request([shot()])?.kind === 'run-turn')
+    check('no images at all is an empty list rather than a refusal', request(undefined) !== null)
+    // SVG is a document with script in it rather than a picture, which is why
+    // the media type is an allowlist and not an `image/` prefix test.
+    check('svg is refused', request([{ mediaType: 'image/svg+xml', data: 'aGk=' }]) === null)
+    // A newline in the payload would split the request across two lines of a
+    // newline-framed channel — the one way a value here could become a request.
+    check('a payload with a newline in it is refused', request([{ mediaType: 'image/png', data: 'aGk=\nzz' }]) === null)
+    check('a payload that is not base64 is refused', request([{ mediaType: 'image/png', data: 'not base64!' }]) === null)
+    // All or nothing: a developer who pasted two and had one dropped is asking
+    // about a picture the agent cannot see.
+    check(
+      'one bad picture refuses the whole Turn',
+      request([shot(), { mediaType: 'image/svg+xml', data: 'aGk=' }]) === null,
+    )
+    check(
+      'and a paste too large to frame is refused rather than truncated',
+      request([{ mediaType: 'image/png', data: 'a'.repeat(MAX_IMAGE_BYTES + 4) }]) === null,
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Markdown — what the agent wrote, read as what it meant
 // ---------------------------------------------------------------------------
 
@@ -2851,7 +2971,7 @@ async function turnPath(
     { kind: 'compacted', turnId: 'turn-1', summary: 'so far: the sandbox', tokensUsed: 4_000 },
     { kind: 'done', turnId: 'turn-1', text: 'and then this', tokensUsed: 4_200 },
   )
-  const done = await run({ sessionId: 'live-1', prompt: 'carry on', model: 'claude-opus-5', effort: 'xhigh' })
+  const done = await run({ sessionId: 'live-1', prompt: 'carry on', model: 'claude-opus-5', effort: 'xhigh', images: [] })
   check('the live turn asks the confined session and nothing else', asked.every((kind) => kind === 'run-turn' || kind === 'next-turn-event'))
   check('a compaction mid-turn is reported to the window', heard.length === 1)
   check('with the summary the Session produced', heard[0]?.summary === 'so far: the sandbox')
@@ -2862,7 +2982,7 @@ async function turnPath(
     { kind: 'compacted', turnId: 'turn-2', summary: 'a summary', tokensUsed: null },
     { kind: 'done', turnId: 'turn-2', text: 'carried on', tokensUsed: 1 },
   )
-  await run({ sessionId: 'live-1', prompt: 'again', model: 'claude-opus-5', effort: 'xhigh' })
+  await run({ sessionId: 'live-1', prompt: 'again', model: 'claude-opus-5', effort: 'xhigh', images: [] })
   check(
     'a compaction the Session would not measure still reaches the window',
     heard.length === 2 && heard[1]?.tokensUsed === null,

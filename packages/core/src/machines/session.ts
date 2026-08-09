@@ -1,6 +1,7 @@
 import { setup, assign, fromPromise, raise } from 'xstate'
 import type { Message } from '../domain.ts'
 import { compactedTranscript, isCommandDraft } from '../domain.ts'
+import type { PastedImage } from '@varnick/harness/turn'
 import type { Effort, ModelId } from '../domain.ts'
 
 /**
@@ -52,6 +53,15 @@ export interface SessionContext {
   effort: Effort
   /** Cumulative tokens the conversation currently occupies. */
   tokensUsed: number
+  /**
+   * Pictures pasted into the composer and not yet sent.
+   *
+   * Beside the draft rather than inside it, because they are not text and a
+   * transcript entry cannot hold them: `SEND` consumes both together and
+   * clears both, so a paste can only reach the agent as part of the message it
+   * was pasted into.
+   */
+  pending: readonly PastedImage[]
   readonly enterTurn: string | null
   readonly enterPersistence: string | null
 }
@@ -69,6 +79,7 @@ export interface SessionInput {
   model?: ModelId
   effort?: Effort
   tokensUsed?: number
+  pending?: readonly PastedImage[]
   enterTurn?: string | null
   enterPersistence?: string | null
 }
@@ -92,6 +103,10 @@ export type SessionEvent =
   | { type: 'SET_MODEL'; model: ModelId }
   | { type: 'SET_EFFORT'; effort: Effort }
   | { type: 'SET_COMMANDS'; names: readonly string[] }
+  /** A picture arrived in the composer. Legal whenever typing is. */
+  | { type: 'ATTACH_IMAGES'; images: readonly PastedImage[] }
+  /** Take one back off the draft before it is sent. */
+  | { type: 'DETACH_IMAGE'; index: number }
   /** The agent summarised the conversation. A report, like `CLEAR`. `null`
    *  tokens means the Session would not say what it now holds. */
   | { type: 'COMPACTED'; summary: string; tokensUsed: number | null }
@@ -114,7 +129,13 @@ export const sessionMachine = setup({
   actors: {
     runTurn: fromPromise<
       { text: string; tokensUsed: number },
-      { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+      {
+        sessionId: string
+        prompt: string
+        model: ModelId
+        effort: Effort
+        images: readonly PastedImage[]
+      }
     >(async () => ({ text: '', tokensUsed: 0 })),
     persistSession: fromPromise<
       { ok: true },
@@ -135,7 +156,15 @@ export const sessionMachine = setup({
   guards: {
     // Enter always sends, menu or not. Completing a command is Tab's job, and
     // a sent draft that names a command runs it — see invokedCommand.
-    hasDraft: ({ context }) => context.draft.trim().length > 0,
+    /*
+      A picture on its own is a message.
+
+      The guard was the draft alone, which would have made a pasted screenshot
+      unsendable without a caption — and "look at this" is the whole reason
+      somebody pastes one. So either half is enough, and the transcript records
+      an empty text with an attachment rather than pretending a caption existed.
+    */
+    hasDraft: ({ context }) => context.draft.trim().length > 0 || context.pending.length > 0,
   },
   delays: {
     // Named so the states explorer can freeze them. Numeric literals in
@@ -159,6 +188,7 @@ export const sessionMachine = setup({
     model: input.model ?? 'claude-opus-5',
     effort: input.effort ?? 'xhigh',
     tokensUsed: input.tokensUsed ?? 0,
+    pending: input.pending ?? [],
     enterTurn: input.enterTurn ?? null,
     enterPersistence: input.enterPersistence ?? null,
   }),
@@ -195,6 +225,9 @@ export const sessionMachine = setup({
         partial: '',
         turnError: null,
         draft: '',
+        // The attachments go with the draft. A picture pasted for a
+        // conversation the agent has forgotten is a question about nothing.
+        pending: [],
         menuIndex: 0,
         tokensUsed: 0,
       }),
@@ -234,6 +267,21 @@ export const sessionMachine = setup({
       ],
     },
     SET_COMMANDS: { actions: assign({ commandNames: ({ event }) => event.names }) },
+    /*
+      Attaching is legal wherever typing is, and for the same reason: the
+      composer is not gated on the Turn. What is gated is `SEND`, which is
+      where the two halves of a message become one.
+    */
+    ATTACH_IMAGES: {
+      actions: assign({
+        pending: ({ context, event }) => [...context.pending, ...event.images],
+      }),
+    },
+    DETACH_IMAGE: {
+      actions: assign({
+        pending: ({ context, event }) => context.pending.filter((_, i) => i !== event.index),
+      }),
+    },
     SET_MODEL: { actions: assign({ model: ({ event }) => event.model }) },
     SET_EFFORT: { actions: assign({ effort: ({ event }) => event.effort }) },
     EDIT_DRAFT: {
@@ -274,6 +322,11 @@ export const sessionMachine = setup({
                     id: `m${context.messages.length + 1}`,
                     role: 'user' as const,
                     text: context.draft,
+                    // A count rather than the bytes. The transcript records
+                    // that pictures were sent, which is what makes the record
+                    // honest; keeping them would put megabytes into a mirror
+                    // whose whole virtue is that `cat` and `jq` read it.
+                    ...(context.pending.length > 0 ? { attachments: context.pending.length } : {}),
                   },
                 ],
                 draft: '',
@@ -297,6 +350,17 @@ export const sessionMachine = setup({
         */
         answering: {
           initial: 'sending',
+          /*
+            The attachments belong to the Turn that carried them.
+
+            Cleared on exit rather than by `SEND`, because the actor's input is
+            read on entry: emptying them in the same action that appends the
+            message would send the message without its pictures. On exit covers
+            every way out — answered, failed, interrupted — and a retry re-enters
+            with the input the machine still holds, so a retried Turn carries the
+            same screenshots the first attempt did.
+          */
+          exit: assign({ pending: [] }),
           // Deliberately no entry that appends the prompt. `RETRY_TURN` re-enters
           // this state, and by then the draft has been consumed and cleared — an
           // entry action would append an empty user message and retry with an
@@ -310,6 +374,13 @@ export const sessionMachine = setup({
               prompt: context.messages[context.messages.length - 1]?.text ?? '',
               model: context.model,
               effort: context.effort,
+              /*
+                Read here rather than cleared by SEND, because the actor's input
+                is evaluated on entry to `answering` and a `pending` already
+                emptied would send the message without its pictures. They are
+                cleared when the Turn settles — see the `exit` below.
+              */
+              images: context.pending,
             }),
             onDone: {
               target: 'idle',

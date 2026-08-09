@@ -10,6 +10,7 @@ import {
 import {
   isCredentialRejection,
   turnFailureMessage,
+  type PastedImage,
   type RuntimeReport,
   type SlashCommand,
 } from '@varnick/harness/turn'
@@ -279,7 +280,13 @@ export function liveActors(
     */
     runTurn: fromPromise<
       { text: string; tokensUsed: number },
-      { sessionId: string; prompt: string; model: ModelId; effort: Effort }
+      {
+        sessionId: string
+        prompt: string
+        model: ModelId
+        effort: Effort
+        images: readonly PastedImage[]
+      }
     >(async ({ input, signal }) => {
       // Chosen here so an interrupt can name the Turn it means and a late event
       // from an abandoned Turn can be told from this one's first word.
@@ -291,6 +298,7 @@ export function liveActors(
         prompt: input.prompt,
         model: input.model,
         effort: input.effort,
+        images: input.images,
       })
 
       /*

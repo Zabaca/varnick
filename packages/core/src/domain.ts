@@ -64,6 +64,16 @@ export interface Message {
   readonly id: string
   readonly role: MessageRole
   readonly text: string
+  /**
+   * How many pictures went with this message.
+   *
+   * A count, not the bytes. The transcript has to record that a screenshot was
+   * sent — a message reading "what is wrong here?" with nothing beside it is a
+   * transcript that lies about the conversation — but the mirror's whole virtue
+   * is that `cat` and `jq` read it, and megabytes of base64 per message ends
+   * that. Absent rather than `0` for the overwhelming majority that carry none.
+   */
+  readonly attachments?: number
 }
 
 /**

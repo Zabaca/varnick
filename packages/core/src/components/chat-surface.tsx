@@ -25,6 +25,7 @@ import {
   EFFORTS,
   MODELS,
 } from '../domain.ts'
+import { IMAGE_MEDIA_TYPES, type PastedImage } from '@varnick/harness/turn'
 import type { harnessMachine, HarnessEvent } from '../machines/harness.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
@@ -89,6 +90,37 @@ export interface ChatSurfaceProps {
    * the states page exists to avoid.
    */
   resolveSurface?: (modulePath: string) => ComponentType | undefined
+}
+
+/** The formats a paste may be — the same allowlist the control channel keeps. */
+const IMAGE_TYPES: readonly string[] = [...IMAGE_MEDIA_TYPES]
+
+/**
+ * A clipboard file, as the two fields that cross into the Sandbox.
+ *
+ * Base64 rather than a blob URL or a path. A blob URL is a handle inside this
+ * webview and means nothing in another process; a path points into `$HOME`,
+ * which the Sandbox denies, so an agent handed one would be handed something it
+ * cannot open. The bytes themselves are the only form that travels.
+ */
+async function asPastedImage(file: File): Promise<PastedImage> {
+  const buffer = new Uint8Array(await file.arrayBuffer())
+  // Chunked, because `String.fromCharCode(...array)` on a few megabytes is a
+  // spread of millions of arguments and throws a stack overflow — which would
+  // make a large screenshot fail in a way that reads as the paste being ignored.
+  let binary = ''
+  for (let i = 0; i < buffer.length; i += 8192) {
+    binary += String.fromCharCode(...buffer.subarray(i, i + 8192))
+  }
+  return { mediaType: file.type as PastedImage['mediaType'], data: btoa(binary) }
+}
+
+/** Base64 is 4 characters per 3 bytes; near enough for a chip. */
+function sizeOf(base64: string): string {
+  const bytes = Math.floor((base64.length * 3) / 4)
+  return bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))}kB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
 export function ChatSurface({
@@ -459,6 +491,16 @@ export function ChatSurface({
                 m.role === 'user' ? (
                   <ClaudeMessage key={m.id} role="user">
                     {m.text}
+                    {/* The record has to say a picture went, or a message
+                        reading "what is wrong here?" is a transcript that lies
+                        about the conversation. A count, because the mirror
+                        keeps no bytes — see Message in domain.ts. */}
+                    {m.attachments ? (
+                      <span style={{ color: 'var(--fg-faint)' }}>
+                        {m.text ? '  ' : ''}⧉ {m.attachments} image
+                        {m.attachments === 1 ? '' : 's'}
+                      </span>
+                    ) : null}
                   </ClaudeMessage>
                 ) : (
                   <ClaudeMessage key={m.id} role="assistant">
@@ -575,6 +617,38 @@ export function ChatSurface({
                 )}
               </div>
             )}
+            {/*
+              What is going with the next message, and a way to take it back.
+
+              Above the composer rather than inside it, because the field is a
+              textarea and a picture is not text. Square, hairline, no preview —
+              a thumbnail would be the first image in the product and DESIGN.md
+              has no vocabulary for one; the developer knows what they just
+              pasted, and what they need is confirmation it was taken and a way
+              to undo it.
+            */}
+            {(s?.context.pending.length ?? 0) > 0 && (
+              <div className="flex flex-wrap gap-2 pb-1 text-[12px]">
+                {(s?.context.pending ?? []).map((image, i) => (
+                  <span
+                    key={i}
+                    className="flex items-baseline gap-2 px-1.5 py-0.5"
+                    style={{ border: '1px solid var(--rule)', color: 'var(--fg-dim)' }}
+                  >
+                    <span aria-hidden>⧉</span>
+                    {image.mediaType.replace('image/', '')} · {sizeOf(image.data)}
+                    <button
+                      aria-label={`Remove attachment ${i + 1}`}
+                      style={{ color: 'var(--accent)' }}
+                      onClick={() => session?.send({ type: 'DETACH_IMAGE', index: i })}
+                    >
+                      remove
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
             <ClaudePrompt
               value={draft}
               placeholder={
@@ -596,6 +670,31 @@ export function ChatSurface({
               effort={false}
               model={undefined}
               mode={false}
+              /*
+                A screenshot is a paste, which is the only way most of them are
+                ever moved. `clipboardData.items` is where an image arrives —
+                `getData('text')` is empty for one, which is why a paste that
+                looked like it did nothing did exactly nothing before this.
+
+                Read as base64 and never as a path. The clipboard holds bytes,
+                and the file a screenshot came from is on the developer's disk
+                under `$HOME`, which the Sandbox denies — an agent handed a path
+                would be handed something it cannot open.
+              */
+              onPaste={(e) => {
+                const files = [...e.clipboardData.items]
+                  .filter((item) => item.kind === 'file' && IMAGE_TYPES.includes(item.type))
+                  .map((item) => item.getAsFile())
+                  .filter((file): file is File => file !== null)
+                if (files.length === 0) return
+                // Only once there is something to attach: a text paste must
+                // still reach the field, and preventing it here would break
+                // pasting a path or a stack trace, which is most pastes.
+                e.preventDefault()
+                void Promise.all(files.map(asPastedImage)).then((images) => {
+                  session?.send({ type: 'ATTACH_IMAGES', images })
+                })
+              }}
               onChange={(e) => session?.send({ type: 'EDIT_DRAFT', text: e.target.value })}
               onKeyDown={(e) => {
                 if (menuOpen) {
