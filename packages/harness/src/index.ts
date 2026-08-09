@@ -55,8 +55,20 @@ export {
   agentEntryPath,
   agentSdkEntry,
   sandboxEnvOverlay,
+  zodEntry,
   type AgentCommandInput,
 } from './agent.ts'
+
+export {
+  FENCE_BASELINE_FILE,
+  FENCE_DIRECTORIES,
+  LAUNCH_PREVIEW_TOOL,
+  PREVIEW_OUTCOMES,
+  fenceHunks,
+  isFencePath,
+  previewOutcomeMessage,
+  type PreviewOutcome,
+} from './preview.ts'
 
 export {
   DEFAULT_ALLOWED_HOSTS,

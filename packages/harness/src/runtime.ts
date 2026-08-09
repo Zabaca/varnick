@@ -60,10 +60,13 @@
  */
 
 import { execFile } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { agentCommand, commandsCachePath } from './agent.ts'
 import { listPendingWorktrees, type PendingWorktree } from './worktrees.ts'
 import { readLines } from './framing.ts'
+import { fenceHunks, UNTRACKED_PREVIEW_BYTES } from './preview.ts'
 import {
   establishSandbox,
   type EstablishedSandbox,
@@ -151,6 +154,26 @@ export interface HarnessCapabilities {
    * `review.empty` against `review.listFailed` in the Harness machine.
    */
   listWorktrees(): Promise<readonly PendingWorktree[]>
+  /**
+   * The **Fence** part of what a Worktree changes, as hunks.
+   *
+   * What the native dialog in front of a Preview shows, and the whole of what
+   * decides whether one is raised: empty means the worktree's Fence is the Fence
+   * already running, and that launches without asking.
+   *
+   * **Here rather than in the Rust host**, though the host is what draws the
+   * dialog. Two reasons, and the second is the load-bearing one. This is the
+   * process with a filesystem and with git already in reach, so running two
+   * commands and reading a diff costs nothing new. And `isFencePath` — which
+   * decides what Fence *is* — is one list that three separate mechanisms key off
+   * (the dialog, the diff view's highlighting, and `denyWrite` itself), so it
+   * belongs where the other two can read it rather than written a second time in
+   * another language.
+   *
+   * The path is absolute and comes from the host, which resolved it out of what
+   * `git worktree list` reported. Nothing the agent typed reaches this.
+   */
+  readFenceDiff(worktree: string): Promise<string>
 }
 
 export interface HostCapabilitiesInput {
@@ -292,6 +315,7 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
     },
 
     listWorktrees: async () => listPendingWorktrees({ git: gitIn(cloneRoot), cloneRoot }),
+    readFenceDiff: async (worktree) => fenceDiffOf(worktree, cloneRoot),
   }
 }
 
@@ -351,6 +375,70 @@ function gitIn(cloneRoot: string) {
         },
       )
     })
+}
+
+/**
+ * What git says a Worktree has that the running varnick does not, filtered to
+ * the Fence.
+ *
+ * Two commands, and the second one is not belt-and-braces. `git diff <live
+ * HEAD>` shows tracked changes — committed and uncommitted — but says nothing
+ * about a file that has never been added, so a fresh
+ * `packages/harness/src/widen.ts` sitting in a worktree would produce an empty
+ * diff and launch with no dialog at all. That hole is exactly the shape of the
+ * thing the dialog exists to catch, which is why untracked files are
+ * enumerated separately and rendered as added files.
+ *
+ * **The base is the live clone's `HEAD`, not the worktree's merge base.** The
+ * question the developer is being asked is "what is different about the fence
+ * between the varnick you are running and the one about to start", and that is a
+ * comparison against what is checked out here — not against a fork point, which
+ * would also show changes the live tree already has.
+ *
+ * A failure anywhere is an empty answer, and that is deliberate in the *unsafe*
+ * direction, which is worth stating rather than hiding: a worktree whose diff
+ * could not be taken launches without a dialog. The alternative is a dialog with
+ * nothing in it, which asks the developer to approve bytes it cannot show them —
+ * and approving bytes is the whole mechanism. A git that will not answer is a
+ * broken machine rather than an attack, and the host still refuses every name
+ * git did not report.
+ */
+async function fenceDiffOf(worktree: string, cloneRoot: string): Promise<string> {
+  const git = async (cwd: string, args: readonly string[]): Promise<string | null> => {
+    try {
+      const run = Bun.spawn(['git', ...args], {
+        cwd,
+        stdout: 'pipe',
+        stderr: 'ignore',
+        stdin: 'ignore',
+      })
+      const text = await new Response(run.stdout).text()
+      return (await run.exited) === 0 ? text : null
+    } catch {
+      return null
+    }
+  }
+
+  const head = (await git(cloneRoot, ['rev-parse', 'HEAD']))?.trim()
+  if (head === undefined || head === '') return ''
+
+  const patch = await git(worktree, ['diff', head, '--'])
+  const untracked = await git(worktree, ['ls-files', '--others', '--exclude-standard'])
+  if (patch === null && untracked === null) return ''
+
+  return fenceHunks({
+    patch: patch ?? '',
+    untracked: (untracked ?? '').split('\n').filter((path) => path.length > 0),
+    readUntracked: (path) => {
+      try {
+        // Bounded on the way in as well as on the way out: an untracked file is
+        // whatever size the agent made it, and this process reads it whole.
+        return readFileSync(join(worktree, path), 'utf8').slice(0, UNTRACKED_PREVIEW_BYTES)
+      } catch {
+        return null
+      }
+    },
+  })
 }
 
 /** A message, as much of one as the mirror stores. Nothing else crosses. */
@@ -459,6 +547,24 @@ async function answer(
           touchesFence: entry.touchesFence,
         })),
       }
+    }
+
+    case 'read-fence-diff': {
+      const { worktree } = request as Record<string, unknown>
+      if (typeof worktree !== 'string' || worktree.length === 0) {
+        throw new Error('A fence diff needs the worktree to take it in, and this request named none.')
+      }
+      /*
+        Asked by the host and by nothing else — it is absent from `route_of`,
+        like `wrap-agent-command` and `read-secret-names`, because it is a step
+        inside answering a Preview rather than a capability the renderer has.
+
+        The answer is hunks git wrote and never a summary of them. ADR-0005
+        found the reason and it survives its own supersession: approving a
+        request means approving a sentence the agent wrote, and that sentence is
+        exactly what prompt injection produces.
+      */
+      return { hunks: await capabilities.readFenceDiff(worktree) }
     }
 
     case 'read-secret-names': {

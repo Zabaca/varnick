@@ -61,6 +61,13 @@ import type { Pointer } from 'bun:ffi'
 import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
 import { readLines } from './framing.ts'
 import { watchForOrphaning } from './orphan.ts'
+import {
+  encodePreviewRequest,
+  previewToolResult,
+  LAUNCH_PREVIEW_DESCRIPTION,
+  LAUNCH_PREVIEW_TOOL,
+  type PreviewOutcome,
+} from './preview.ts'
 import { describeSecretsForAgent } from './secrets.ts'
 import {
   beginTurn,
@@ -153,6 +160,31 @@ export function agentSdkEntry(): string {
 }
 
 /**
+ * Where zod is, as an absolute path, for exactly the reason above.
+ *
+ * The second entry the confined process is handed rather than left to find, and
+ * it is here because a **Custom Tool** needs one: `createSdkMcpServer` refuses
+ * an input schema that is not a zod raw shape — *"inputSchema must be a Zod
+ * schema or raw shape, received an unrecognized object"*, measured — and zod is
+ * a peer dependency of the Agent SDK rather than something it re-exports. A bare
+ * `import 'zod'` inside the Sandbox would fail the same silent way the SDK's own
+ * bare specifier does, so it is resolved out here and imported by path in there.
+ *
+ * Empty when this installation has none. That is not an error and must not be
+ * one: an agent with no `launch_preview` tool is an agent that cannot ask for a
+ * Preview, which is where varnick was before this existed. An agent that will
+ * not start is a different and much worse thing — the same rule ADR-0004 applies
+ * to a Surface.
+ */
+export function zodEntry(): string {
+  try {
+    return fileURLToPath(import.meta.resolve('zod'))
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Where the developer toolchain's own binaries live, newest choice first.
  *
  * `/usr/bin/git` on macOS is a shim: it hands over to whichever developer
@@ -222,6 +254,8 @@ export interface AgentCommandInput {
   readonly execPath?: string
   /** Defaults to {@link agentSdkEntry}. */
   readonly sdkEntry?: string
+  /** Defaults to {@link zodEntry}. Empty means this installation has none. */
+  readonly zodEntry?: string
 }
 
 /**
@@ -230,10 +264,21 @@ export interface AgentCommandInput {
  * A string, because that is what `wrap()` takes; every path in it is quoted
  * through `JSON.stringify`, because the wrapper hands this to `bash -c` and an
  * unquoted path is an injection point rather than a cosmetic problem.
+ *
+ * Two library paths, both resolved out here and never looked for in there — see
+ * {@link agentSdkEntry} for the measurement that forced the first and
+ * {@link zodEntry} for why the second follows it. They are positional and always
+ * present, empty string included, so the probe flags after them keep their
+ * places.
  */
 export function agentCommand(input: AgentCommandInput): string {
   const exec = input.execPath ?? process.execPath
-  const parts = [exec, agentEntryPath(input.cloneRoot), input.sdkEntry ?? agentSdkEntry()]
+  const parts = [
+    exec,
+    agentEntryPath(input.cloneRoot),
+    input.sdkEntry ?? agentSdkEntry(),
+    input.zodEntry ?? zodEntry(),
+  ]
   return parts.map((part) => JSON.stringify(part)).join(' ')
 }
 
@@ -799,7 +844,12 @@ async function probeFileAccess(directory: string, file: string): Promise<Record<
  * machine that has never stored one. Nothing here reads a settings file: the
  * environment is computed, and no Claude Code process is started.
  */
-async function selfTest(sdkEntry: string, deniedPath: string, allowedPath: string): Promise<void> {
+async function selfTest(
+  sdkEntry: string,
+  zodPath: string,
+  deniedPath: string,
+  allowedPath: string,
+): Promise<void> {
   const { dirname } = await import('node:path')
   const report: Record<string, string> = {}
 
@@ -808,6 +858,34 @@ async function selfTest(sdkEntry: string, deniedPath: string, allowedPath: strin
     report.sdk = typeof sdk.query === 'function' ? 'loaded' : 'missing-query'
   } catch (error) {
     report.sdk = `failed: ${error instanceof Error ? error.message : String(error)}`
+  }
+
+  /*
+    The second library the confined process is handed by path rather than left to
+    find, and the one thing about the Custom Tool that could not be checked
+    anywhere else.
+
+    `runAgentHost` needs zod to build `launch_preview`'s input schema, and the
+    reason it is an argument at all is a measured failure: a *bare* specifier
+    resolved from inside the Sandbox fails silently, with `Cannot find module`
+    and nothing in srt's violation log — see `agentSdkEntry`. That measurement
+    was taken against the SDK. This is the same claim about zod, taken the same
+    way, in the same process, under the same policy — because "the fix works for
+    the other module too" is exactly the kind of sentence that turns out to be
+    prose.
+
+    A build with no zod reports `absent`, which is a real answer: it is an agent
+    that cannot ask for a Preview rather than an agent that will not start.
+  */
+  if (zodPath === '') {
+    report.zod = 'absent'
+  } else {
+    try {
+      const zod = (await import(zodPath)) as { z?: { string?: unknown } }
+      report.zod = typeof zod.z?.string === 'function' ? 'loaded' : 'missing-string'
+    } catch (error) {
+      report.zod = `failed: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
 
   const denied = await probeFileAccess(dirname(deniedPath), deniedPath)
@@ -1212,6 +1290,23 @@ export interface ServeTurnsInput {
    */
   readonly secretsDescribed?: (names: readonly string[]) => void
   /**
+   * Where a request for a Preview goes out, and how its answer comes back.
+   *
+   * Handed a function rather than being one, the same shape
+   * {@link ServeTurnsInput.compactionSummaries} uses: the loop owns the request
+   * ids and the pending answers, and the caller — `runAgentHost` — owns the
+   * Custom Tool that calls it. Optional because the loop is complete without it,
+   * which is what lets every existing test drive Turns with no Preview anywhere.
+   *
+   * **The confined process cannot do this itself, which is why it is a
+   * question.** srt gates mach lookups by service name and varnick's policy
+   * names none, so `com.apple.windowserver.active` is unreachable and no window
+   * can be opened from in here. The host is asked; the host decides; the host
+   * may put a native dialog in front of the decision. All this loop does is
+   * carry the name out and the tag back.
+   */
+  readonly previewLaunches?: (ask: (worktree: string) => Promise<PreviewOutcome>) => void
+  /**
    * Whether this Session was opened by resuming the last one.
    *
    * Reported rather than inferred: the init message describes the session the
@@ -1386,6 +1481,35 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   }
 
   /*
+    Previews the host has been asked for and has not answered yet.
+
+    Keyed by a request id this loop mints, because a Preview is the one thing on
+    this channel with no Turn to name it by — the agent may ask for one in the
+    middle of any Turn, or in the middle of two.
+
+    A pending request is resolved exactly once: by the answer, or by the control
+    stream ending. The second is not tidiness. The host is what writes these
+    answers, so a host that has gone is an answer that is never coming, and a
+    tool call awaiting one would hold the Turn open for the life of a process
+    that has stopped listening.
+  */
+  const awaitingPreview = new Map<string, (outcome: PreviewOutcome) => void>()
+  let previewsAsked = 0
+
+  input.previewLaunches?.((worktree: string) => {
+    previewsAsked += 1
+    const requestId = `preview-${previewsAsked}`
+    return new Promise<PreviewOutcome>((resolve) => {
+      awaitingPreview.set(requestId, resolve)
+      // The name, unexamined. Deciding here whether it is a real worktree would
+      // be this process vouching for a directory it is on the wrong side of the
+      // Sandbox from; the host validates it against what git reports, which is
+      // the only list that means anything. See src-tauri/src/preview.rs.
+      write(encodePreviewRequest(requestId, worktree))
+    })
+  })
+
+  /*
     A compaction, which arrives out of band through the SDK's `PostCompact`
     hook rather than on the message stream.
 
@@ -1477,6 +1601,17 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       input.secretsDescribed?.(request.names)
       return
     }
+    if (request.kind === 'preview-answer') {
+      // Answered once and forgotten. A second answer to the same request — a
+      // host that wrote twice, or a line replayed — has nothing to resolve, and
+      // resolving a promise twice would be a tool call answered by whichever
+      // arrived last rather than by the developer's decision.
+      const waiting = awaitingPreview.get(request.requestId)
+      if (waiting === undefined) return
+      awaitingPreview.delete(request.requestId)
+      waiting(request.outcome)
+      return
+    }
     // A stale interrupt from an abandoned Turn must not stop the one that
     // replaced it, so it has to name the Turn it means.
     const named = running !== null && !running.finished && running.turnId === request.turnId
@@ -1485,8 +1620,18 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
 
   // The same framing the runtime's pipe uses, and the same reader — see
   // ./framing.ts for why it is one function rather than two identical ones.
-  function readControl(): Promise<void> {
-    return readLines(control, handle)
+  async function readControl(): Promise<void> {
+    try {
+      await readLines(control, handle)
+    } finally {
+      // The channel is closed, so no answer can arrive on it. Everything still
+      // waiting is told the launch did not happen, which is true and is the one
+      // thing a caller can act on — see `awaitingPreview`.
+      for (const [requestId, waiting] of awaitingPreview) {
+        awaitingPreview.delete(requestId)
+        waiting('no-launch')
+      }
+    }
   }
 
   async function readMessages(): Promise<void> {
@@ -1586,8 +1731,9 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
  * agent wrote runs in the confined process or not at all. ADR-0003's last
  * consequence is the rule that makes that matter.
  */
-async function runAgentHost(sdkEntry: string): Promise<void> {
-  const { query } = (await import(sdkEntry)) as typeof import('@anthropic-ai/claude-agent-sdk')
+async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
+  const sdk = (await import(sdkEntry)) as typeof import('@anthropic-ai/claude-agent-sdk')
+  const { query } = sdk
   type Prompt = Parameters<typeof query>[0]['prompt']
   type UserMessage = {
     type: 'user'
@@ -1635,6 +1781,83 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     announce an emptiness this process has no evidence for.
   */
   let secretNames: readonly string[] | null = null
+
+  /*
+    Where a request for a Preview goes once the loop below is running.
+
+    Assigned by `serveTurns` through `previewLaunches`, exactly as
+    `reportSummary` above is assigned through `compactionSummaries`, and for the
+    same reason: the query has to be built before the loop that drives it, and
+    the tool the query carries needs something the loop owns.
+
+    Null is unreachable in practice — a tool call happens inside a Turn and a
+    Turn only exists once the loop is serving — and it answers `no-launch`
+    rather than throwing, because a tool that raises is a failed Turn and this
+    one is never worth failing a Turn over.
+  */
+  let askForPreview: ((worktree: string) => Promise<PreviewOutcome>) | null = null
+
+  /*
+    The `launch_preview` **Custom Tool**.
+
+    ADR-0014's one addition to what the agent can do, and it is a Custom Tool
+    rather than a widening for the reason CONTEXT.md gives the term: one narrow
+    capability granted in process, instead of a policy loosened for everything
+    else. The work it asks for happens outside the Sandbox, so the tool's own
+    surface *is* the security boundary — which is why the whole of what crosses
+    is one string, and why what that string may be is decided by the host
+    against `git worktree list` rather than here.
+
+    **Built inside a try, and a failure costs the tool rather than the agent.**
+    zod is resolved by the runtime and handed in as a path (see `zodEntry`);
+    an installation without it, or an SDK that has moved on, leaves an agent
+    that cannot ask for a Preview. That is where varnick was before this
+    existed. The alternative — an agent that will not start because a tool would
+    not build — is the failure ADR-0004 refuses for a Surface, and there is no
+    reason to accept it here.
+  */
+  type McpServers = NonNullable<NonNullable<Parameters<typeof query>[0]['options']>['mcpServers']>
+
+  const previewServers: McpServers = await (async (): Promise<McpServers> => {
+    if (zodPath === '') return {}
+    try {
+      const { z } = (await import(zodPath)) as typeof import('zod')
+      const previewTool = sdk.tool(
+        LAUNCH_PREVIEW_TOOL,
+        LAUNCH_PREVIEW_DESCRIPTION,
+        {
+          // One field, and it is a name. There is deliberately no `path`, no
+          // `command`, no `port` and no `env`: this is a host-side process spawn
+          // driven by agent input, and every field that is not here is a field
+          // that cannot be filled in.
+          worktree: z
+            .string()
+            .describe(
+              'The name of a worktree under .claude/worktrees/ — one path component, not a path.',
+            ),
+        },
+        async (args) => {
+          const ask = askForPreview
+          const outcome = ask === null ? 'no-launch' : await ask(args.worktree)
+          const { launched, text } = previewToolResult(outcome)
+          return {
+            content: [{ type: 'text' as const, text }],
+            // A refusal is a refusal, not a broken tool: `isError` is what stops
+            // the model reading "the developer declined" as "try again".
+            isError: !launched,
+          }
+        },
+      )
+      return {
+        varnick: sdk.createSdkMcpServer({ name: 'varnick', tools: [previewTool] }),
+      }
+    } catch (error) {
+      process.stderr.write(
+        `varnick: the launch_preview tool could not be built, so this agent cannot ask for a preview — ${error instanceof Error ? error.message : String(error)}\n`,
+      )
+      return {}
+    }
+  })()
 
   // Created rather than assumed. Claude Code writes its own state here, and a
   // directory it cannot create is a start that fails with an error about
@@ -1789,6 +2012,15 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       },
       ...agentConfigurationOptions(inherit),
       /*
+        The Custom Tools. One, and it is `launch_preview` — an in-process SDK
+        MCP server, which is what CONTEXT.md means by the term: code running in
+        this process rather than a capability the Sandbox policy had to grant.
+
+        Empty when the tool could not be built, which is an agent without it
+        rather than no agent at all.
+      */
+      mcpServers: previewServers,
+      /*
         Plugins the clone carries. Empty on a fresh checkout, which is the
         honest default — a plugin only exists for this agent if it is somewhere
         the agent can read, and `~/.claude/plugins` is not.
@@ -1809,6 +2041,11 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     write: (line) => process.stdout.write(line),
     compactionSummaries: (report) => {
       reportSummary = report
+    },
+    // The other half of the Custom Tool above: the loop hands over the way to
+    // ask, and the tool's handler is what calls it.
+    previewLaunches: (ask) => {
+      askForPreview = ask
     },
     // Replaced wholesale, so a secret the developer removed stops being named
     // on the next Turn rather than lingering as a name nothing can resolve.
@@ -1868,20 +2105,22 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
   })
 }
 
-// `agent.ts <sdkEntry> [--selftest|--toolprobe|--nestprobe <deniedPath> <allowedPath>]`,
+// `agent.ts <sdkEntry> <zodEntry> [--selftest|--toolprobe|--nestprobe <deniedPath> <allowedPath>]`,
 // spawned by src-tauri/src/agent.rs through the wrapping the runtime computed.
-// The SDK's location is an argument rather than a bare import — see
-// agentSdkEntry above for the measurement that forced that. All three flags
+// Both library locations are arguments rather than bare imports — see
+// agentSdkEntry above for the measurement that forced the first and zodEntry for
+// why the second follows it. Both are always present and the second may be the
+// empty string, so the flags after them keep their places. All three flags
 // belong to the containment probes in containment.probe.test.ts; none is
-// reachable from the host, which passes the SDK path and nothing else.
+// reachable from the host, which passes the two paths and nothing else.
 if (import.meta.main) {
-  const [sdkEntry, flag, deniedPath, allowedPath] = process.argv.slice(2)
+  const [sdkEntry, zodPath, flag, deniedPath, allowedPath] = process.argv.slice(2)
   if (sdkEntry === undefined) {
     process.stderr.write('The agent host was started without the Agent SDK path it needs.\n')
     process.exit(2)
   }
   if (flag === '--selftest') {
-    await selfTest(sdkEntry, deniedPath ?? '', allowedPath ?? '')
+    await selfTest(sdkEntry, zodPath ?? '', deniedPath ?? '', allowedPath ?? '')
   } else if (flag === '--toolprobe') {
     await toolProbe(sdkEntry, deniedPath ?? '', allowedPath ?? '')
     process.exit(0)
@@ -1919,6 +2158,6 @@ if (import.meta.main) {
       // — and here because a teardown that somehow returns must still end it.
       exit: () => process.exit(0),
     })
-    await runAgentHost(sdkEntry)
+    await runAgentHost(sdkEntry, zodPath ?? '')
   }
 }

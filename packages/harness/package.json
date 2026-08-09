@@ -12,6 +12,7 @@
     "./credentials": "./src/credentials.ts",
     "./secret-resolution": "./src/secret-resolution.ts",
     "./secrets": "./src/secrets.ts",
+    "./preview": "./src/preview.ts",
     "./session": "./src/session.ts",
     "./turn": "./src/turn.ts"
   },
@@ -20,7 +21,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
-    "@anthropic-ai/sandbox-runtime": "0.0.67"
+    "@anthropic-ai/sandbox-runtime": "0.0.67",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "typescript": "7"

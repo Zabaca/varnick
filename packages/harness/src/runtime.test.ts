@@ -19,6 +19,7 @@ interface Recorded {
   reads: string[]
   secretNameReads: number
   worktreeListings: number
+  fenceDiffs: string[]
 }
 
 function capabilities(
@@ -30,6 +31,7 @@ function capabilities(
     reads: [],
     secretNameReads: 0,
     worktreeListings: 0,
+    fenceDiffs: [],
   }
   return {
     recorded,
@@ -57,6 +59,10 @@ function capabilities(
     listWorktrees: async () => {
       recorded.worktreeListings += 1
       return []
+    },
+    readFenceDiff: async (worktree) => {
+      recorded.fenceDiffs.push(worktree)
+      return ''
     },
     ...overrides,
   }
@@ -451,6 +457,60 @@ describe('list-worktrees answers with what git said', () => {
     )
     expect(raw).not.toContain('VOLUNTEERED')
     expect(JSON.parse(raw)).toMatchObject({ id: 1, ok: { worktrees: [pending] } })
+  })
+})
+
+describe('read-fence-diff answers with hunks and takes a path it was given', () => {
+  test('the worktree it names is the one the diff is taken in', async () => {
+    const caps = capabilities()
+    const answer = await reply(
+      call(1, {
+        kind: 'read-fence-diff',
+        worktree: '/Users/dev/varnick/.claude/worktrees/agent-one',
+      }),
+      caps,
+    )
+    expect(answer.ok).toEqual({ hunks: '' })
+    expect(caps.recorded.fenceDiffs).toEqual([
+      '/Users/dev/varnick/.claude/worktrees/agent-one',
+    ])
+  })
+
+  test('an empty answer is the answer that launches without a dialog', async () => {
+    // One condition on the dialog, and this is the value of it. A worktree
+    // whose Fence matches the running one is a Preview nobody is asked about.
+    const answer = await reply(
+      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
+      capabilities({ readFenceDiff: async () => '' }),
+    )
+    expect(answer.ok).toEqual({ hunks: '' })
+  })
+
+  test('the hunks cross as git wrote them, newlines and all, on one line', async () => {
+    const hunks = 'diff --git a/src-tauri/src/credential.rs b/…\n@@ -1 +1 @@\n-a\n+b\n'
+    const raw = await answerHarnessLine(
+      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
+      capabilities({ readFenceDiff: async () => hunks }),
+    )
+    // A diff is the one answer on this pipe that is full of newlines, and the
+    // framing is one reply per line. `JSON.stringify` is what holds that.
+    expect(raw.slice(0, -1)).not.toContain('\n')
+    expect((JSON.parse(raw) as { ok: { hunks: string } }).ok.hunks).toBe(hunks)
+  })
+
+  test('a request naming no worktree is refused rather than defaulted', async () => {
+    // There is no sensible default. The live tree would be the one worth
+    // guessing at, and a diff of the live tree against itself is empty — which
+    // reads as "no fence change" for a request that named nothing.
+    for (const request of [
+      { kind: 'read-fence-diff' },
+      { kind: 'read-fence-diff', worktree: '' },
+      { kind: 'read-fence-diff', worktree: 3 },
+    ]) {
+      const answer = await reply(call(1, request))
+      expect(answer.ok).toBeUndefined()
+      expect(answer.error).toBeTypeOf('string')
+    }
   })
 })
 

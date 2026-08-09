@@ -19,8 +19,17 @@
  * varnick — see docs/adr/0014-core-is-authored-in-a-worktree.md.
  */
 
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
-import { DEV_PORT_ENV_VAR, DEV_URL_ENV_VAR, chosenDevPort, devLaunch } from '../dev-server.ts'
+import {
+  DEV_PORT_ENV_VAR,
+  DEV_URL_ENV_VAR,
+  INSTALL_MARKER,
+  bootstrapCommand,
+  chosenDevPort,
+  devLaunch,
+} from '../dev-server.ts'
 
 const argv = process.argv.slice(2)
 const flag = argv.indexOf('--port')
@@ -42,6 +51,34 @@ const launch = devLaunch(port)
 const cloneRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
 
 console.log(`varnick on ${launch.env[DEV_URL_ENV_VAR]} — clone ${cloneRoot}`)
+
+/*
+  A tree git just created has no `node_modules`, and one of the things not in it
+  is the Tauri CLI the next line runs.
+
+  This is where a Worktree's `bun install` happens — the decision, not a
+  discovery at launch. It is conditional, so `bun tauri dev` in an installed
+  checkout pays nothing; see `bootstrapCommand` for why it is the launcher's job
+  rather than the Rust host's, and for what running `postinstall` out of an
+  unmerged tree does and does not cost.
+
+  A failed install ends the launch rather than falling through to a Tauri CLI
+  that is not there, because the second failure names a missing binary and this
+  one names the install.
+*/
+const bootstrap = bootstrapCommand(existsSync(join(cloneRoot, INSTALL_MARKER)))
+if (bootstrap !== null) {
+  console.log(`installing ${cloneRoot} — a fresh worktree has no ${INSTALL_MARKER}`)
+  const installing = Bun.spawn([...bootstrap], {
+    cwd: cloneRoot,
+    stdio: ['inherit', 'inherit', 'inherit'],
+  })
+  const code = await installing.exited
+  if (code !== 0) {
+    console.error(`\`${bootstrap.join(' ')}\` failed in ${cloneRoot}, so varnick was not started.`)
+    process.exit(code)
+  }
+}
 
 const child = Bun.spawn(['bun', ...launch.args, ...passThrough], {
   cwd: cloneRoot,

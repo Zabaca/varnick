@@ -417,6 +417,7 @@ impl AgentProcess {
         &self,
         wrapping: &Wrapping,
         credentials: &CredentialStore,
+        app: &tauri::AppHandle,
     ) -> Result<u32, Failure> {
         let Some(injection) = credential_env(credentials) else {
             // A tag, not a message. Nothing about a credential is described in
@@ -479,10 +480,40 @@ impl AgentProcess {
         */
         let queue = self.events.clone_handle();
         let shared = Arc::clone(&self.shared);
+        let previews = app.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Some(event) = agent_event_of(&line) {
                     queue.push(queue_generation, event);
+                    continue;
+                }
+                /*
+                  The second shape on this pipe: the agent asking for a Preview.
+
+                  Told apart from a Turn event by which id it names — a Turn
+                  event names a `turnId` and this names a `requestId` — which is
+                  the same discipline the `plan-usage` answers were read with
+                  before that kind was removed.
+
+                  **Answered on a thread of its own**, because answering means
+                  running git, asking the runtime for a diff, and possibly
+                  putting a modal dialog in front of a person. Doing any of that
+                  here would stop this loop, and this loop is what carries the
+                  answer of the Turn the agent asked from — the developer would
+                  watch their answer stop dead behind a dialog about something
+                  else.
+                */
+                if let Some(request) = crate::preview::preview_request_of(&line) {
+                    let app = previews.clone();
+                    let shared = Arc::clone(&shared);
+                    std::thread::spawn(move || {
+                        let outcome = crate::preview::answer_preview(&app, &request.worktree);
+                        write_control(
+                            &shared,
+                            queue_generation,
+                            &crate::preview::preview_answer_line(&request.request_id, outcome),
+                        );
+                    });
                 }
             }
             // End of stream: the agent is gone. A Turn that was running has to
@@ -705,6 +736,32 @@ impl Drop for AgentProcess {
             kill_group(state.group.take());
         }
     }
+}
+
+/// Write one control line onto whichever agent is running, if it is still this
+/// one.
+///
+/// **Generation-checked, for the reason every other answer here is.** Answering
+/// a Preview takes as long as a person takes to read a diff, and an agent can be
+/// restarted while one is open — so the answer has to be dropped rather than
+/// written into a pipe belonging to a process that never asked. A `launched` for
+/// a request the new agent has no record of would be a tool result attached to
+/// nothing.
+///
+/// Best effort and silent. There is no caller with anything to do about a pipe
+/// that would not take a line, and the far end resolves what it is still waiting
+/// on when the channel closes — see `readControl` in packages/harness/src/agent.ts.
+fn write_control(shared: &Arc<Shared>, generation: u64, line: &str) {
+    let Ok(mut state) = shared.state.lock() else {
+        return;
+    };
+    if state.generation != generation {
+        return;
+    }
+    let Some(stdin) = state.stdin.as_mut() else {
+        return;
+    };
+    let _ = stdin.write_all(line.as_bytes()).and_then(|()| stdin.flush());
 }
 
 /// The command, minus the credential.

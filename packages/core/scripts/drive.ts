@@ -34,6 +34,8 @@ import {
 import {
   DEFAULT_DEV_PORT,
   DEV_URL_ENV_VAR,
+  INSTALL_MARKER,
+  bootstrapCommand,
   chosenDevPort,
   devLaunch,
   devUrlFor,
@@ -1814,6 +1816,7 @@ export default function Billing() {
     readSession: unreached,
     readCommands: unreached,
     listWorktrees: unreached,
+    readFenceDiff: unreached,
     readSecretNames: async () => {
       await secrets.reload()
       return secrets.names()
@@ -3884,6 +3887,28 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   refuses('a devUrl that is not a URL is refused', () => portToBind('localhost:1421'))
   refuses('and one that names no port, because there is nothing to bind', () =>
     portToBind('http://localhost'),
+  )
+
+  /*
+    Where a Worktree's `bun install` happens, asserted rather than left to be
+    found out at launch.
+
+    Git does not track `node_modules`, so a fresh worktree has none — and the
+    Tauri CLI `bun tauri dev` runs is one of the things that is not there. The
+    decision is that the launcher does it, conditionally: a Preview and a
+    developer typing `bun run dev:app` in a fresh worktree get the same
+    behaviour, and an installed checkout pays nothing at all. See
+    `bootstrapCommand` for the whole argument, including what running
+    `postinstall` out of an unmerged tree costs and why it is not new.
+  */
+  check('an installed tree runs nothing before starting', bootstrapCommand(true) === null)
+  check(
+    'a fresh worktree installs itself first, with bun and nothing else',
+    JSON.stringify(bootstrapCommand(false)) === JSON.stringify(['bun', 'install']),
+  )
+  check(
+    'the marker is at the root, because a workspace is installed whole',
+    INSTALL_MARKER === 'node_modules' && !INSTALL_MARKER.includes('/'),
   )
 
   /*

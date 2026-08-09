@@ -10,6 +10,7 @@ mod agent;
 mod bridge;
 mod credential;
 mod mint;
+mod preview;
 
 use tauri::Manager;
 

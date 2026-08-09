@@ -26,15 +26,22 @@
  * module is safe to import from the bundle that runs in the webview — which
  * ./bridge.ts does, to read the events back off the wire.
  *
- * It imports nothing at all beyond that, and that is load-bearing rather than
- * tidy. ./bridge.ts needs it, ./credentials.ts imports ./bridge.ts, and a Turn
- * reaching back for the credential module's classifier would close the ring —
- * an import cycle that happens to work because everything in it is called
- * rather than read at load. The classification a Turn does need lives in
+ * It imports nothing at run time beyond ./preview.ts, and that is load-bearing
+ * rather than tidy. ./bridge.ts needs it, ./credentials.ts imports ./bridge.ts,
+ * and a Turn reaching back for the credential module's classifier would close
+ * the ring — an import cycle that happens to work because everything in it is
+ * called rather than read at load. The classification a Turn does need lives in
  * ./agent.ts, which is a leaf and can import both.
+ *
+ * ./preview.ts is admissible under exactly that rule and for exactly that
+ * reason: it imports nothing itself, reaches no Node built-in and no SDK, and is
+ * a leaf below this one. It is here because a Preview's answer is a control
+ * request, and the closed list of outcomes it may carry belongs beside the
+ * sentences written for them.
  */
 
 import type { NonNullableUsage, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import { isPreviewOutcome, type PreviewOutcome } from './preview.ts'
 
 // ---------------------------------------------------------------------------
 // What the agent host is asked to do
@@ -74,6 +81,7 @@ export type ControlRequest =
     }
   | { readonly kind: 'interrupt'; readonly turnId: string }
   | DescribeSecretsRequest
+  | PreviewAnswerRequest
 
 /**
  * Tell the confined process which secrets exist, by name.
@@ -119,6 +127,29 @@ export interface DescribeSecretsRequest {
    * secrets should have the agent told.
    */
   readonly names: readonly string[]
+}
+
+/**
+ * What the host did about a Preview the agent asked for.
+ *
+ * The one kind on this channel that is an *answer* rather than an instruction or
+ * a fact — the confined process asked a question it has no way to answer itself
+ * (a confined process cannot open a window) and this is the reply. The question
+ * went out on stdout as a `launch-preview` line; see ./preview.ts.
+ *
+ * **Three fields, and one of them is a tag from a closed list.** The outcome is
+ * not prose. The host is the process holding the Credential and the one that
+ * performs spawns, so a sentence composed there is the string most likely to
+ * carry a path, an environment or an OS error into a confined process and from
+ * there into the transcript. Every sentence for these tags is authored in
+ * `previewOutcomeMessage`, on this side, exactly as `turnFailureMessage` is.
+ */
+export interface PreviewAnswerRequest {
+  readonly kind: 'preview-answer'
+  /** Which `launch_preview` call this answers. */
+  readonly requestId: string
+  /** One of `PREVIEW_OUTCOMES` in ./preview.ts. */
+  readonly outcome: PreviewOutcome
 }
 
 /**
@@ -242,10 +273,8 @@ export function parseControlRequest(line: string): ControlRequest | null {
     return null
   }
 
-  const { kind, turnId, prompt, model, effort, names, images } = (value ?? {}) as Record<
-    string,
-    unknown
-  >
+  const { kind, turnId, prompt, model, effort, names, images, requestId, outcome } = (value ??
+    {}) as Record<string, unknown>
 
   /*
     Rebuilt to `kind` and `names`, which is what makes "no value can arrive
@@ -263,6 +292,18 @@ export function parseControlRequest(line: string): ControlRequest | null {
     if (!Array.isArray(names)) return null
     if (names.some((name) => typeof name !== 'string' || name.length === 0)) return null
     return { kind, names: [...(names as string[])] }
+  }
+
+  /*
+    The host's answer to a Preview the agent asked for. Rebuilt to three fields
+    like everything else here, and the outcome is checked against the closed
+    list rather than carried through as a string: an answer this build does not
+    understand must not become a sentence nothing wrote.
+  */
+  if (kind === 'preview-answer') {
+    if (typeof requestId !== 'string' || requestId.length === 0) return null
+    if (!isPreviewOutcome(outcome)) return null
+    return { kind, requestId, outcome }
   }
 
   if (typeof turnId !== 'string' || turnId.length === 0) return null
