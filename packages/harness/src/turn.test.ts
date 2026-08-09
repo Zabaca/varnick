@@ -228,14 +228,28 @@ describe('a failure says which failure it was, and never quotes the API', () => 
     expect(turnFailureMessage('authentication')).toContain('key')
   })
 
-  test('this module reaches nothing, so a Turn cannot close an import ring', () => {
-    // ./bridge.ts imports this file and ./credentials.ts imports ./bridge.ts,
-    // so a Turn reaching back for the credential module would make a cycle that
-    // works only because nothing in it is read at load. Asserted rather than
-    // remembered, because the tempting import is a one-liner.
-    const source = readFileSync(new URL('./turn.ts', import.meta.url), 'utf8')
-    const runtimeImports = [...source.matchAll(/^import (?!type )/gm)]
-    expect(runtimeImports).toHaveLength(0)
+  test('this module reaches one leaf, so a Turn cannot close an import ring', () => {
+    /*
+      ./bridge.ts imports this file and ./credentials.ts imports ./bridge.ts, so
+      a Turn reaching back for the credential module would make a cycle that
+      works only because nothing in it is read at load. Asserted rather than
+      remembered, because the tempting import is a one-liner.
+
+      It used to be none at all, and one is now admissible on a condition this
+      test is what enforces: the thing imported must itself import nothing, so
+      it cannot be the first step of a ring. ./preview.ts is that module — the
+      closed list of outcomes a `preview-answer` may carry, beside the sentences
+      written for them — and the second assertion is the whole of what makes the
+      first one safe.
+    */
+    const runtimeImportsIn = (module: string) => {
+      const source = readFileSync(new URL(`./${module}`, import.meta.url), 'utf8')
+      return [...source.matchAll(/^import (?!type )(?:.*? from )?'(.+?)'/gm)].map(
+        (match) => match[1] as string,
+      )
+    }
+    expect(runtimeImportsIn('turn.ts')).toEqual(['./preview.ts'])
+    expect(runtimeImportsIn('preview.ts')).toHaveLength(0)
   })
 
   test('a failure nobody enumerated is still a failure with a sentence', () => {

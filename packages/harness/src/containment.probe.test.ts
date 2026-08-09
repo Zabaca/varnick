@@ -268,6 +268,7 @@ test.skipIf(blocked !== null)(
 
     report('probe 1 — one file outside the clone, four ways to ask for it', [
       ['Agent SDK loaded inside the Sandbox', answers.sdk ?? '(nothing)'],
+      ['zod loaded inside the Sandbox', answers.zod ?? '(nothing)'],
       ['', ''],
       ['Bash  cat  outside', outcome(bashOutside)],
       ['Read  readFileSync  outside', `${answers.read} (${answers.readWhy})`],
@@ -286,6 +287,17 @@ test.skipIf(blocked !== null)(
     // The process started, the SDK loaded from inside the Sandbox, and all four
     // operations succeed where the policy allows them.
     expect(answers.sdk).toBe('loaded')
+    /*
+      And zod, by absolute path, for the `launch_preview` Custom Tool.
+
+      The same claim as the line above and it needed its own measurement rather
+      than inheriting one: the bare-specifier failure `agentSdkEntry` records was
+      measured against the SDK, and "the same fix works for the other module" is
+      the kind of sentence this repository has been wrong about before. An agent
+      that could not load this would start, run Turns, and have no way to ask for
+      a Preview — a silent gap of exactly the shape the SDK's own was.
+    */
+    expect(answers.zod).toBe('loaded')
     expect(answers.readControl).toBe('permitted')
     expect(answers.listControl).toBe('permitted')
     expect(answers.globControl).toBe('permitted')

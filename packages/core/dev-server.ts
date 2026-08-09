@@ -132,6 +132,52 @@ export function devLaunch(port: number): DevLaunch {
 }
 
 // ---------------------------------------------------------------------------
+// The install a fresh tree needs before any of the above can run
+// ---------------------------------------------------------------------------
+
+/**
+ * The one directory whose presence decides whether this tree has been installed.
+ *
+ * At the root rather than in a package: bun installs a workspace as a whole, and
+ * the root is where the binaries every launch reaches for end up — the Tauri
+ * CLI first among them.
+ */
+export const INSTALL_MARKER = 'node_modules'
+
+/**
+ * What to run before starting varnick from this tree, or nothing.
+ *
+ * **Where a Worktree's `bun install` happens, decided rather than discovered at
+ * launch.** Git does not track `node_modules`, so a fresh worktree has none —
+ * and `bun tauri dev` is the Tauri CLI, which is one of the things that is not
+ * there. ADR-0014 records the need; this is the answer to *where*.
+ *
+ * Here, in the launcher, and not in the Rust host. Three reasons, in the order
+ * they mattered:
+ *
+ *   * this is already the one place that means "start varnick from this tree",
+ *     so a Preview and a developer typing `bun run dev:app` in a fresh worktree
+ *     get the same behaviour without either of them knowing about the other;
+ *   * the host would otherwise own a package manager — a second spawn, a second
+ *     failure mode, and a wait with no output in a process whose stdout is a
+ *     protocol;
+ *   * `bun install` runs `postinstall`, and `packages/userspace/package.json` is
+ *     deliberately writable, so this executes unmerged agent-authored code. That
+ *     is not a new hole — launching a Preview at all runs the agent's
+ *     application code unconfined in the webview and the host, which is the same
+ *     decision one step earlier — and it belongs beside the launch it is part
+ *     of rather than hidden inside the process that holds the Credential.
+ *
+ * Conditional, so the path everybody uses pays nothing: an installed tree
+ * answers `null` and `bun tauri dev` starts exactly as fast as it did. A tree
+ * that is *partly* installed is not detected and does not need to be — bun is
+ * idempotent, and the case this exists for is a directory git just created.
+ */
+export function bootstrapCommand(installed: boolean): readonly string[] | null {
+  return installed ? null : ['bun', 'install']
+}
+
+// ---------------------------------------------------------------------------
 // The reload
 // ---------------------------------------------------------------------------
 

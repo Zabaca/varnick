@@ -25,8 +25,10 @@ import {
   resumableSession,
   sandboxEnvOverlay,
   serveTurns,
+  zodEntry,
   type AgentSessionPort,
 } from './agent.ts'
+import { previewToolResult, type PreviewOutcome } from './preview.ts'
 import {
   parseTurnEvent,
   turnFailureMessage,
@@ -60,6 +62,7 @@ const [API_KEY_VAR, SUBSCRIPTION_VAR] = CREDENTIAL_ENV_VAR_NAMES
 const CLONE = '/Users/dev/code/varnick'
 const BUN = '/Users/dev/.bun/bin/bun'
 const SDK = '/Users/dev/code/varnick/node_modules/.store/claude-agent-sdk/sdk.mjs'
+const ZOD = '/Users/dev/code/varnick/node_modules/.store/zod/index.js'
 
 describe('what gets spawned', () => {
   test('the entry is the Harness agent host, inside the clone', () => {
@@ -88,6 +91,32 @@ describe('what gets spawned', () => {
     // If this ever stops being true the agent stops starting, and the failure
     // in the wrapped process reads as a missing dependency rather than as this.
     expect(existsSync(agentSdkEntry())).toBe(true)
+  })
+
+  test('zod is named by absolute path too, for the same measured reason', () => {
+    /*
+      The Custom Tool needs it — `createSdkMcpServer` refuses an input schema
+      that is not a zod raw shape, measured — and a bare `import 'zod'` inside
+      the Sandbox would fail exactly the way the SDK's own bare specifier does.
+      So the runtime resolves it out here and the confined process imports a
+      path.
+    */
+    const command = agentCommand({ cloneRoot: CLONE, execPath: BUN, sdkEntry: SDK, zodEntry: ZOD })
+    expect(command).toContain(ZOD)
+    expect(command.indexOf(ZOD)).toBeGreaterThan(command.indexOf(SDK))
+    expect(existsSync(zodEntry())).toBe(true)
+  })
+
+  test('an installation with no zod is an agent without the tool, not a broken argv', () => {
+    /*
+      Positional and always present, empty string included. The probe flags come
+      after it (`--selftest`, `--toolprobe`, `--nestprobe`), so an argument that
+      vanished when it had no value would move all three one place left and every
+      containment probe would be reading a path as a flag.
+    */
+    const command = agentCommand({ cloneRoot: CLONE, execPath: BUN, sdkEntry: SDK, zodEntry: '' })
+    expect(command.endsWith('""')).toBe(true)
+    expect(command.split(' ').filter((part) => part.startsWith('"')).length).toBe(4)
   })
 
   test('the developer toolchain is found rather than assumed', () => {
@@ -523,6 +552,14 @@ async function serve(
      * asked for one or the window filled up on its own.
      */
     summarised: (summary: string) => void
+    /**
+     * What the `launch_preview` Custom Tool calls. The loop hands this over;
+     * here it stands in for the tool's handler, so the round trip can be driven
+     * with no Claude Code process and no window.
+     */
+    askForPreview: (worktree: string) => Promise<PreviewOutcome>
+    /** Everything the loop has written so far, while it is still running. */
+    written: readonly string[]
   }) => Promise<void>,
   contextTokens?: () => Promise<number | null>,
   /** Whether this run was opened by resuming — what the report carries. */
@@ -542,6 +579,7 @@ async function serve(
   let report: (summary: string) => void = () => {}
   /** Every list of secret names the loop handed over, in order. */
   const described: (readonly string[])[] = []
+  let ask: (worktree: string) => Promise<PreviewOutcome> = async () => 'no-launch'
 
   const served = serveTurns({
     control,
@@ -549,6 +587,9 @@ async function serve(
     session: port,
     compactionSummaries: (deliver) => {
       report = deliver
+    },
+    previewLaunches: (deliver) => {
+      ask = deliver
     },
     secretsDescribed: (names) => {
       described.push(names)
@@ -569,6 +610,8 @@ async function serve(
     messages,
     asked,
     summarised: (summary) => report(summary),
+    askForPreview: (worktree) => ask(worktree),
+    written: lines,
   })
   control.close()
   messages.close()
@@ -1407,5 +1450,165 @@ describe('the real git, ahead of the shim', () => {
 
   test('neither location present is null rather than a guess', () => {
     expect(developerToolsBin(() => false)).toBe(null)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A Preview, asked for from inside the Sandbox
+// ---------------------------------------------------------------------------
+
+/*
+  The round trip and nothing else. No window is opened, no second varnick is
+  started and no dialog is drawn here — all three are the host's, in
+  src-tauri/src/preview.rs, and the ticket says plainly that no test may do any
+  of them. What this seam owns is the question going out and the answer coming
+  back, which is the whole of what the confined half does.
+*/
+
+describe('asking the host for a preview', () => {
+  const requested = (lines: readonly string[]) =>
+    lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((value) => value.kind === 'launch-preview')
+
+  const answerLine = (requestId: string, outcome: string, extra: Record<string, unknown> = {}) =>
+    `${JSON.stringify({ kind: 'preview-answer', requestId, outcome, ...extra })}\n`
+
+  test('the name goes out as a request and the answer comes back as the tool result', async () => {
+    const answers: PreviewOutcome[] = []
+    await serve(async ({ control, askForPreview, written }) => {
+      const asking = askForPreview('agent-one').then((outcome) => answers.push(outcome))
+      await settle()
+      const request = requested(written)[0] as Record<string, unknown>
+      expect(request.kind).toBe('launch-preview')
+      expect(request.worktree).toBe('agent-one')
+      control.push(answerLine(request.requestId as string, 'launched'))
+      await asking
+    })
+    expect(answers).toEqual(['launched'])
+    expect(previewToolResult(answers[0] as PreviewOutcome).launched).toBe(true)
+  })
+
+  test('declining reaches the agent as a declined tool call rather than as a launch', async () => {
+    // The ticket's own criterion: declining the dialog launches nothing and
+    // tells the agent it was declined.
+    const answers: PreviewOutcome[] = []
+    await serve(async ({ control, askForPreview, written }) => {
+      const asking = askForPreview('agent-one').then((outcome) => answers.push(outcome))
+      await settle()
+      control.push(answerLine(requested(written)[0]?.requestId as string, 'declined'))
+      await asking
+    })
+    expect(answers).toEqual(['declined'])
+    const result = previewToolResult(answers[0] as PreviewOutcome)
+    expect(result.launched).toBe(false)
+    expect(result.text).toContain('declined')
+  })
+
+  test('the request carries a name and has no field a command could arrive in', async () => {
+    const { lines } = await serve(async ({ control, askForPreview, written }) => {
+      const asking = askForPreview('agent-one')
+      await settle()
+      const request = requested(written)[0] as Record<string, unknown>
+      expect(Object.keys(request).sort()).toEqual(['kind', 'requestId', 'worktree'])
+      control.push(answerLine(request.requestId as string, 'launched'))
+      await asking
+    })
+    expect(requested(lines)).toHaveLength(1)
+  })
+
+  test('two requests in flight are answered by request id rather than by order', async () => {
+    const answers: string[] = []
+    await serve(async ({ control, askForPreview }) => {
+      const one = askForPreview('agent-one').then((outcome) => answers.push(`one:${outcome}`))
+      const two = askForPreview('agent-two').then((outcome) => answers.push(`two:${outcome}`))
+      await settle()
+      // The second answered first. A loop that paired these up by arrival would
+      // tell the agent that the worktree it did not ask about was declined.
+      control.push(answerLine('preview-2', 'declined'))
+      await settle()
+      control.push(answerLine('preview-1', 'launched'))
+      await Promise.all([one, two])
+    })
+    expect(answers).toEqual(['two:declined', 'one:launched'])
+  })
+
+  test('an answer to a request nobody is waiting for changes nothing', async () => {
+    const answers: PreviewOutcome[] = []
+    await serve(async ({ control, askForPreview }) => {
+      const asking = askForPreview('agent-one').then((outcome) => answers.push(outcome))
+      await settle()
+      control.push(answerLine('preview-1', 'launched'))
+      await asking
+      // Replayed, and again for a request that never existed. A promise
+      // resolved twice would be a tool call answered by whichever line arrived
+      // last rather than by the developer's decision.
+      control.push(answerLine('preview-1', 'declined'))
+      control.push(answerLine('preview-99', 'declined'))
+      await settle()
+    })
+    expect(answers).toEqual(['launched'])
+  })
+
+  test('an answer this build cannot read leaves the tool waiting rather than guessing', async () => {
+    const answers: PreviewOutcome[] = []
+    await serve(async ({ control, askForPreview }) => {
+      const asking = askForPreview('agent-one').then((outcome) => answers.push(outcome))
+      // An outcome nothing wrote, and an answer with no outcome at all. Neither
+      // is a control request, so neither resolves anything — the far end is the
+      // host, and an unreadable line from it is not a decision.
+      control.push(answerLine('preview-1', 'probably'))
+      control.push(`${JSON.stringify({ kind: 'preview-answer', requestId: 'preview-1' })}\n`)
+      await settle()
+      expect(answers).toEqual([])
+      control.push(answerLine('preview-1', 'launched'))
+      await asking
+    })
+    expect(answers).toEqual(['launched'])
+  })
+
+  test('a host that goes away is a launch that did not happen', async () => {
+    /*
+      The control channel closing means no answer can arrive on it. Left
+      unresolved, the tool call would hold its Turn open for the life of a
+      process that has stopped listening — which is the state a Turn can neither
+      retry nor dismiss.
+    */
+    const answers: PreviewOutcome[] = []
+    await serve(async ({ askForPreview }) => {
+      void askForPreview('agent-one').then((outcome) => answers.push(outcome))
+      await settle()
+    })
+    await settle()
+    expect(answers).toEqual(['no-launch'])
+  })
+
+  test('a preview request is not a Turn event and does not become transcript', async () => {
+    // Two shapes on one pipe. `parseTurnEvent` is what Core reads the pipe
+    // with, and it names a Turn; this names a request and nothing else.
+    const { written, lines } = await serve(async ({ control, askForPreview }) => {
+      const asking = askForPreview('agent-one')
+      await settle()
+      control.push(answerLine('preview-1', 'launched'))
+      await asking
+    })
+    expect(written).toEqual([])
+    expect(lines).toHaveLength(1)
+    expect(parseTurnEvent(JSON.parse(lines[0] as string))).toBeNull()
+  })
+
+  test('a Turn is unaffected by a preview asked for in the middle of it', async () => {
+    const { written } = await serve(async ({ control, messages, askForPreview }) => {
+      control.push(runTurnLine('t1', 'change the sandbox'))
+      await settle()
+      messages.push(textDelta('working'))
+      const asking = askForPreview('agent-one')
+      await settle()
+      control.push(answerLine('preview-1', 'launched'))
+      await asking
+      messages.push(result('done'))
+      await settle()
+    })
+    expect(written.map((event) => event.kind)).toEqual(['delta', 'done'])
   })
 })

@@ -396,6 +396,32 @@ impl HarnessRuntime {
             .collect())
     }
 
+    /// Ask the runtime what a Worktree changes about the **Fence**.
+    ///
+    /// Host-internal like `agent_wrapping` and `secret_names`, and absent from
+    /// `route_of` for the same reason: it is a step inside answering a Preview,
+    /// not a capability the renderer has. Keeping it off that list also keeps
+    /// the webview — which the agent writes Surfaces for — from being able to
+    /// ask what a diff of the fence looks like, or to be told one that is not
+    /// the truth.
+    ///
+    /// The worktree is an absolute path this process resolved out of
+    /// `git worktree list`. Nothing the agent typed reaches here.
+    ///
+    /// Hunks, and there is no shape on this answer that could carry anything
+    /// else: the runtime rebuilds the reply to one string, and this reads one
+    /// string back out of it.
+    pub fn fence_diff(&self, worktree: &str) -> Result<String, Failure> {
+        let answer = self.call(&serde_json::json!({
+            "kind": "read-fence-diff",
+            "worktree": worktree,
+        }))?;
+        match answer.get("hunks").and_then(Value::as_str) {
+            Some(hunks) => Ok(hunks.to_string()),
+            None => Err(Failure::of("malformed")),
+        }
+    }
+
     /// Ask the runtime to do one thing.
     ///
     /// Calls are serialised by the lock. That is not a limitation worked around:
@@ -659,7 +685,7 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
             // the call — there is no path from here to an unwrapped process.
             "spawn-agent" => {
                 let wrapping = runtime.agent_wrapping()?;
-                let pid = agent.spawn(&wrapping, &credentials)?;
+                let pid = agent.spawn(&wrapping, &credentials, app)?;
                 Ok(serde_json::json!({ "pid": pid }))
             }
             "stop-agent" => {
@@ -843,6 +869,30 @@ mod tests {
         assert_eq!(route_of("run-turn"), Some(Route::Host));
         assert_eq!(route_of("next-turn-event"), Some(Route::Host));
         assert_eq!(route_of("interrupt-turn"), Some(Route::Host));
+    }
+
+    #[test]
+    fn the_renderer_cannot_ask_for_a_preview_or_for_what_one_would_show() {
+        /*
+          Neither half of a Preview is on this bridge, and both are absent for
+          their own reason.
+
+          `launch-preview` is not a call at all — it arrives on the agent's own
+          stdout, from inside the Sandbox, because the agent is who asks. A
+          renderer that could send one would be a Surface — Userspace, which the
+          agent writes freely — able to start an unconfined varnick from a
+          worktree the agent also wrote, with no dialog and no agent in the loop.
+          That is the whole escalation path with its one gate removed.
+
+          `read-fence-diff` is the runtime's, but — like `wrap-agent-command`
+          and `read-secret-names` — only when this process asks, as a step inside
+          answering a Preview. The window has no reason to hold a diff of the
+          fence, and a window that could ask for one is a window that could be
+          answered with a different one.
+        */
+        assert_eq!(route_of("launch-preview"), None);
+        assert_eq!(route_of("preview-answer"), None);
+        assert_eq!(route_of("read-fence-diff"), None);
     }
 
     #[test]
