@@ -869,26 +869,28 @@ test.skipIf(toolProbeBlocked !== null)(
 )
 
 test.skipIf(blocked !== null)(
-  'a repository outside a home directory is readable, and writes to it are not',
+  'a repository outside a home directory is unreadable now, and writes to it still are',
   async () => {
     /*
-      The fourth thing this project believed without measuring. Three documents
-      said the Sandbox put "other repositories" out of reach. It puts
-      repositories *under a home directory* out of reach, which is where they
-      usually are and not where they must be.
+      The probe that carried ADR-0003's fourth correction, inverted by ticket 18.
 
-      srt's reads are allow-by-default: `denyRead` is a deny list — /Users, the
-      home directory, /Library/Keychains, and four binaries — and everything
-      outside it is readable. Probe 2b already demonstrated this without anyone
-      noticing, since lifting /usr/bin/security out of denyRead only makes `cat`
-      work if /usr/bin was readable all along.
+      It used to measure the asymmetry and report it: `denyRead` was a deny list
+      naming /Users, the home directory, /Library/Keychains and four binaries,
+      and everything outside it — a repository on /opt, /srv, /Volumes or an
+      external disk — was readable in full. Writes were already a real allowlist
+      and held. The two halves of the boundary did not describe each other, and
+      this is where that was visible.
 
-      Writes are the opposite and hold: `allowWrite` is a genuine allowlist, so
-      the clone and the temp directory are writable and nothing else is.
+      `denyRead` now names the filesystem root and `allowRead` is the whole of
+      what is readable, so the read below is refused for the same reason the
+      write is. **The measurement is unchanged and the verdict is inverted** —
+      the same repository, planted in the same place, asked the same question.
 
-      This probe exists so the asymmetry is measured rather than derivable. It
-      is not an argument for widening anything — it is the claim the README now
-      makes, held to the kernel.
+      Its control had to change with it. "The same read under $HOME is refused"
+      distinguished nothing once both are refused, so the control is now a read
+      *inside* the clone, which is what separates a boundary from a broken
+      wrapper. The old control stays beside it, because $HOME being denied by a
+      name of its own rather than by the root is still worth measuring.
     */
     const outside = mkdtempSync('/private/tmp/varnick-outside-home-')
     // The control's file, created rather than assumed. This used to read
@@ -904,14 +906,22 @@ test.skipIf(blocked !== null)(
 
       const run = runner(await establishSandbox({ cloneRoot: repoRoot }))
 
-      // The read, which succeeds. A repository here is not protected.
-      const read = await run(`cat ${JSON.stringify(join(outside, 'secret.txt'))}`)
-      expect(read.code).toBe(0)
-      expect(read.stdout).toContain(SELFTEST_MARKER)
+      // The control, and the one this probe gained when its verdict flipped: the
+      // same `cat`, on an identical file inside the clone, hands back the marker.
+      // Without it every line below is equally true of a wrapper that cannot run
+      // anything at all.
+      const insideClone = await run(`cat ${JSON.stringify(insideFile)}`)
+      expect(insideClone.code).toBe(0)
+      expect(insideClone.stdout).toContain(SELFTEST_MARKER)
 
-      // The control that makes the line above mean something: the same read of
-      // an identical file under a home directory is refused, so this is about
-      // location and not about the wrapper being broken.
+      // The read, which is now refused. A repository here is protected by the
+      // denied root rather than left open by a deny list that never named it.
+      const read = await run(`cat ${JSON.stringify(join(outside, 'secret.txt'))}`)
+      expect(read.code).not.toBe(0)
+      expect(read.stdout).not.toContain(SELFTEST_MARKER)
+
+      // The control this probe was written with, kept: a read under a home
+      // directory is refused by a denial varnick *names*, not only by the root.
       const controlFile = join(insideHome, 'secret.txt')
       writeFileSync(controlFile, SELFTEST_MARKER, 'utf8')
       const underHome = await run(`cat ${JSON.stringify(controlFile)}`)
@@ -927,6 +937,7 @@ test.skipIf(blocked !== null)(
       report('probe 7 — a repository outside a home directory', [
         ['read  secret.txt', `${read.code === 0 ? 'READABLE' : 'denied'} — exit ${read.code}`],
         ['read  under $HOME  (control)', `${underHome.code === 0 ? 'READABLE' : 'denied'} — exit ${underHome.code}`],
+        ['read  inside the clone  (control)', `${insideClone.code === 0 ? 'READABLE' : 'denied'} — exit ${insideClone.code}`],
         ['write into it', `${write.code === 0 ? 'WRITABLE' : 'refused'} — exit ${write.code}`],
       ])
     } finally {

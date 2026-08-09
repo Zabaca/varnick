@@ -4,7 +4,7 @@
 
 **Blocked by:** None — the measurement exists as probe 7.
 
-**Status:** decided — **reads become deny-by-default**, in the sequence below. The developer accepted the trade after the reversibility was put to them.
+**Status:** fixed — the inversion is in, measured with `bun run probe` under a real subscription credential. See the last comment for what the spike had not found.
 
 ## The decision, and the one thing about it that cannot be undone
 
@@ -88,10 +88,10 @@ Not whether it is possible, and not what it needs. Two things:
 
 `git` is the one known casualty so far: it needs `/private/var/select` (`xcode-select`), which is in the list above, and still failed under it — worth resolving before this ships, since an agent that cannot run `git` in the clone is a serious loss.
 
-- [ ] The choice is made and recorded in ADR-0003, alongside the four corrections that led here
-- [ ] If reads stay allow-by-default, `README.md` says so as a decision rather than as a description
-- [ ] If they become deny-by-default, probe 7 is inverted and every other probe still passes unchanged
-- [ ] Either way, `packages/harness/src/sandbox.ts` says which shape it is using and why, so the next reader does not have to infer it from the field name
+- [x] The choice is made and recorded in ADR-0003, alongside the four corrections that led here — as *The decision*, not a fifth correction
+- [x] `README.md`'s *Where confinement stops* leads with the inversion, and points at the generated allowlist rather than restating it
+- [x] Probe 7 is inverted, with a read inside the clone added as the control the flip needed, and every other probe passes unchanged
+- [x] `packages/harness/src/sandbox.ts` says which shape it is using at `denyRead` and `allowRead`, and why every named denial stays denied inside an allowance
 
 Relates to stories 1, 2, 6, 7 and to ticket 13, which documented the current answer.
 
@@ -104,3 +104,25 @@ Relates to stories 1, 2, 6, 7 and to ticket 13, which documented the current ans
 *The computed allowlist.* `readAllowlistFor` in `sandbox.ts` derives the interpreter's install root from `process.execPath` (`~/.bun` here, Homebrew or nvm elsewhere — the reason this is a function), the SDK's tree from `agentSdkEntry()`, and the toolchain from the new `developerToolsBin()` in `agent.ts`. Only the eight measured system paths are constants, with a comment saying they were measured.
 
 *It is not wired into the policy, and that is the answer to the question the brief called the most important judgement.* Adding it to `allowRead` today would weaken the boundary and buy nothing. Nothing, because reads are allow-by-default: every path on the list is already readable, so no entry permits anything new. Weaken, because `allowRead` beats `denyRead` — `/usr` re-opens all four `UNREADABLE_BINARIES`, and `/Library` re-opens `/Library/Keychains`, which ticket 16 denied after dumping 37 generic passwords out of it. `~/.bun` is a third, smaller widening: it is under the denied `$HOME`. `sandbox.test.ts` asserts that overlap, so the mistake fails there rather than in a probe with a keychain dump in it. **The inversion therefore cannot be "add these lines and change `denyRead` to `['/']`"** — it has to restore the binary and keychain denials some other way in the same change, since under a denied root they are no longer covered by the deny list at all.
+
+**The inversion is in, and the trap the ticket predicted did not exist.** `denyRead` is `/` plus every entry it already listed, and `allowRead` is `readAllowlistFor` plus the writable trees. The binary and keychain denials did **not** have to be restored some other way: `srt`'s `generateReadRules` already re-emits any *literal* deny nested inside an allowed subpath, so `/Library/Keychains` stays denied under the allowed `/Library` and the four binaries stay denied under the allowed `/usr`. Its own comment says so. What that comment also says is the thing to keep: glob denies are not re-emitted, and `denyReadAlways` is the lever for that case — so a denial written as a pattern would be silently re-opened. Every entry in `denyRead` is a literal, and `sandbox.test.ts` now asserts that for the whole list rather than for the six paths it affects today.
+
+**The spike's allowlist was not enough, and the violation monitor is the only reason that took an hour rather than a day.** Six additions, each with the failure that named it — none of which the `--selftest` measurement could have found, because five of them are not about starting the agent:
+
+```
+/private/etc               curl: /private/etc/ssl/openssl.cnf — every request fails
+/etc                       curl: CAfile /etc/ssl/cert.pem;  git: /etc/gitconfig
+/var                       xcode-select: unable to read data link /var/select/developer_dir
+                           — git and python3 do not resolve at all
+/tmp                       mkdir: /tmp: Operation not permitted — every Bash command
+$TMPDIR                    touch $TMPDIR/x refused;  git: cannot open xcrun_db
+/private/tmp/claude-<uid>  touch in the scratch directory refused
+```
+
+Each was verified by dropping it again and re-running. Two general facts came out of it. **The three root symlinks grant the link and not the tree** — `/etc`, `/tmp` and `/var` point into `/private`, the kernel canonicalizes real accesses below them, and with `/tmp` allowed `mkdir -p /tmp/claude-<uid>` succeeds while `ls /tmp` and a read of a file under it are still refused. So both spellings are needed and neither makes the other redundant. And **a writable tree has to be readable**, because `touch` stats before it creates; `allowWrite` without a matching `allowRead` is not a grant, and the scratch directory is ticket 27 for the second time by a different mechanism.
+
+**One thing the merge could not do on its own.** Union for a denial and intersection for an allowance are each right and together wrong for this pair: a clone with no baseline takes the stronger side of everything, which adopts `denyRead: ['/']` *and* intersects `allowRead` down to the one entry the old policy had. That policy denies the filesystem and reads back one directory — `/bin/bash` cannot be mapped, nothing runs, `exit 133` with no message. So when the merged policy denies the root, every entry the generator's allowlist names is kept, and the widening is reported as `[weaker]`. `sandbox.boundary.test.ts` plants exactly that clone, which is how it was found.
+
+**Measured.** `bun run probe` under a real subscription credential: fourteen probes, no skip, probe 6 green — the SDK's own `Read`, `Grep` and `Glob` denied outside the clone and permitted inside, with a Session that ended `ok`, which is also the only evidence that a real agent's `Bash` still works under the inversion. Probe 7's verdict is inverted: a repository outside every home directory is now refused a read as well as a write.
+
+**Two costs to write down rather than fix.** The monitor is noisier than probe 10 suggests — starting a real Session printed five denials the policy did not mean (`/home`, `/sbin`, `/private/var`, `/private/tmp`, `/private/var/run/systemkeychaincheck.done`), none of them load-bearing, all of them path probing. Probe 10 stays silent because it only runs `cat`. Widening the allowlist to quiet them would be widening the boundary to tidy a log, so they stand. And the agent can still read `/usr`, `/Library` and `/System` in full: this bounds what it can reach on the developer's disk, not what it can learn about the machine.

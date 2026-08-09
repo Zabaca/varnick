@@ -134,6 +134,18 @@ export interface SandboxPolicyInput {
   readonly tmpDir?: string
   /** Defaults to {@link DEFAULT_ALLOWED_HOSTS}. */
   readonly allowedHosts?: readonly string[]
+  /**
+   * What stays readable under the denied root. Defaults to
+   * {@link readAllowlistFor} for this clone.
+   *
+   * An input rather than a constant because it has to be *derived* from the
+   * machine — the interpreter, the SDK's install tree and the developer
+   * toolchain are in different places on different machines, and a written-down
+   * list would be right here and `exit 133` on the next laptop. Passing it
+   * explicitly is what lets the unit tests generate a policy for a machine that
+   * is not this one.
+   */
+  readonly readAllowlist?: readonly string[]
 }
 
 /**
@@ -183,8 +195,11 @@ function usersRootOf(homeDir: string): string {
 /**
  * Generate the policy for one clone.
  *
- * Pure: same input, same policy. Everything that touches the filesystem or the
- * kernel lives below this.
+ * Pure given its input: same input, same policy, and nothing here talks to the
+ * kernel. The defaults are the machine — the home directory, the temp
+ * directory, the uid, and the read allowlist {@link readAllowlistFor} derives
+ * from the running process — so a caller that wants a policy for a machine
+ * other than this one passes all four.
  */
 /**
  * The marker file Claude Code writes after every Bash command, as a glob.
@@ -215,6 +230,23 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
   const temp = input.tmpDir ?? tmpdir()
   const clone = input.cloneRoot
 
+  /*
+    The three writable trees, named once and used twice.
+
+    They are in `allowRead` as well because a directory a process may write and
+    may not stat is not writable in any useful sense: `touch` stats before it
+    creates, and `mkdir -p` stats every component on the way down. Under
+    allow-by-default reads that was free and invisible; under a denied root it
+    is two measured failures —
+
+      touch $TMPDIR/x                    Operation not permitted
+      mkdir -p /tmp/claude-<uid>/x       Operation not permitted
+
+    — the second of which is ticket 27 again, and would have left the agent able
+    to read files and run nothing at all.
+  */
+  const writable = [clone, temp, claudeScratchDirFor(process.getuid?.() ?? 0)]
+
   return {
     network: {
       // Every entry is an exfiltration path — see DEFAULT_ALLOWED_HOSTS.
@@ -229,30 +261,77 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
       allowAllUnixSockets: false,
     },
     filesystem: {
+      /*
+        **Reads are deny-by-default.** `sep` is the whole filesystem, and
+        everything readable is read back out of it by `allowRead` below. That is
+        ADR-0003's fifth entry and ticket 18; it replaced a deny list, under
+        which a repository kept anywhere other than a home directory — /opt,
+        /srv, /Volumes, an external disk — was readable in full.
+
+        The named entries beside the root are **not** redundant and must not be
+        removed. Three things depend on them:
+
+          * srt re-emits a literal deny nested inside an allowed subpath, so
+            /Library/Keychains stays denied under the allowed /Library and the
+            four binaries stay denied under the allowed /usr. Take the name away
+            and the allowance is all that is left. See `allowRead`.
+          * `intentionalDenials` reads this list to decide which kernel refusals
+            are the fence working rather than a gap in the allowlist, and it
+            deliberately ignores the root — see `isUnexpectedViolation`.
+          * they are what a developer reads. "Everything is denied" says nothing
+            about which denials were *chosen*.
+      */
       denyRead: [
+        sep,
         // Home first, then the region that holds it. My SSH keys, my cloud
         // credentials, my age keys, and every repository kept under a home
-        // directory. Reads are allow-by-default outside this list, so a
-        // repository somewhere else — /opt, /srv, /Volumes, an external disk —
-        // is readable. Measured; see ADR-0003's fourth correction.
+        // directory. Named beside the root because they are the denials varnick
+        // means, rather than the ones the root happens to cover.
         usersRootOf(home),
         home,
         // The keychains that live outside every home directory, and are
-        // therefore not covered by the two lines above.
+        // therefore not covered by the two lines above. Nested inside the
+        // allowed /Library, and denied anyway — see `allowRead`.
         MACHINE_KEYCHAIN_DIR,
-        // Unreadable, not unrunnable. See UNREADABLE_BINARIES.
+        // Unreadable, not unrunnable. See UNREADABLE_BINARIES. Nested inside the
+        // allowed /usr, and denied anyway, by the same mechanism.
         ...UNREADABLE_BINARIES,
       ],
-      // Read back exactly one thing out of the denied home: the clone. Nothing
-      // broader — an allow beats a deny, so `/` or `/usr` here would hand back
-      // every binary above.
-      //
-      // {@link readAllowlistFor} computes what a *denied* root would need
-      // instead, and is deliberately not used here. Under this shape those
-      // entries buy nothing — everything outside `denyRead` is already
-      // readable — and cost the four binaries and both keychains. See the
-      // comment on that function.
-      allowRead: [clone],
+      /*
+        Everything read back out of the denied root, and nothing else.
+
+        Computed rather than written down — see {@link readAllowlistFor}, which
+        is where each entry is justified and where the parts that vary by
+        machine are derived from the process that is already running.
+
+        **Why the denials above survive being nested inside these allowances.**
+        srt's `generateReadRules` emits `(allow file-read*)`, then the denies,
+        then these allows — so last-match-wins would hand `/usr/bin/security`
+        back under the allowed `/usr`. It does not, because a final pass
+        re-emits any *literal* deny that sits strictly inside an allowed
+        subpath, which puts the more specific deny last. Its own comment says
+        so, and `sandbox.test.ts` asserts the shape that pass requires: every
+        denial nested inside an allowance is a literal path, not a glob. Glob
+        denies are deliberately not re-emitted by srt — `denyReadAlways` is its
+        lever for that case — so a denial written as a pattern would be silently
+        re-opened here. The kernel half is probe 2 and sandbox.boundary.test.ts.
+      */
+      allowRead: [
+        // The clone is pinned first and is never dropped as redundant, even
+        // where it sits inside another allowed tree — which is every test's
+        // clone, since those live under the OS temp directory. It is the entry
+        // the product is about, the one `requireTheCloneIsReadable` names, and
+        // the first line a developer looks for in the generated file.
+        clone,
+        ...withoutRedundantPaths([
+          ...(input.readAllowlist ?? readAllowlistFor({ cloneRoot: clone })),
+          ...writable,
+        ]).filter((path) => path !== clone),
+        // The cwd marker, readable because `touch` stats before it creates —
+        // see the comment at `allowWrite` below, where the monitor named this
+        // exact denial rather than leaving it as an exit code.
+        CLAUDE_CWD_MARKER_GLOB,
+      ],
       /*
         The clone, the OS per-user temp, and one more the agent cannot work
         without.
@@ -297,12 +376,23 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
         refused. If Claude Code writes other markers there, the violation monitor
         names them now — which is the first time that has been true.
       */
-      allowWrite: [
-        clone,
-        temp,
-        claudeScratchDirFor(process.getuid?.() ?? 0),
-        CLAUDE_CWD_MARKER_GLOB,
-      ],
+      /*
+        The marker file, which needs both lists for the same reason the three
+        trees above do — and this is the measurement rather than the inference.
+
+        It was written into `allowWrite` alone first, on the guess that a path
+        Claude Code creates and never reads back would not need to be readable.
+        Probe 9b refused it under the denied root, and the violation monitor said
+        which operation and which path:
+
+          file-read-metadata  /private/tmp/claude-probe99655-cwd
+          while running: touch "/private/tmp/claude-probe99655-cwd"
+
+        `touch` stats before it creates. That is the same sentence the comment on
+        `writable` already carries, arrived at twice — and the second time it
+        cost one run of one probe instead of an `exit 133` with nothing after it.
+      */
+      allowWrite: [...writable, CLAUDE_CWD_MARKER_GLOB],
       denyWrite: [
         // ADR-0002: Core is separated from Userspace by the policy, not by
         // convention. The agent's blast radius is Userspace.
@@ -338,21 +428,64 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
 }
 
 // ---------------------------------------------------------------------------
-// The read allowlist a denied root would need
+// The read allowlist the denied root needs
 // ---------------------------------------------------------------------------
+
+/**
+ * The three symlinks macOS keeps at the filesystem root, each pointing into
+ * `/private`.
+ *
+ * **They grant the link and not the tree behind it**, which is the opposite of
+ * what the spelling suggests and is why they are named here rather than left to
+ * look like a mistake. The kernel canonicalizes a real access below one of them
+ * — `/tmp/x` is checked as `/private/tmp/x` — so a `(subpath "/tmp")` rule only
+ * ever matches the link node itself, which is what `mkdir -p /tmp/…` needs in
+ * order to traverse it. Measured under the shipped policy, with `/tmp` allowed:
+ *
+ * ```
+ * mkdir -p /tmp/claude-<uid>/x   exit 0
+ * ls /tmp                        exit 1  Operation not permitted
+ * cat /tmp/<a file under it>     exit 1  Operation not permitted
+ * ```
+ *
+ * Two things follow, and both are load-bearing. A tool that spells a path with
+ * the link needs the link allowed *as well as* the real directory — `/etc` and
+ * `/private/etc` are both in the list below for that reason, and dropping
+ * either one breaks something different. And these entries make nothing else in
+ * an allowlist redundant, however the text reads, so `withoutRedundantPaths`
+ * must not let them swallow a neighbour.
+ */
+export const PRIVATE_LINK_PATHS = ['/etc', '/tmp', '/var'] as const
 
 /**
  * The system paths a confined process needs, and that are the same everywhere.
  *
  * **Measured, not guessed.** Each entry was verified load-bearing the only way
- * a read allowlist can be: by dropping it from a `denyAllExcept` policy and
- * watching the agent fail to start. They are constants because a macOS install
- * puts them in the same place on every machine — `/usr` for the shims and the
- * shared libraries, `/bin` for the shell srt wraps commands with, `/System` for
- * the dyld cache and the TLS root certificates, `/Library` for the developer
- * tools and the system frameworks, `/etc` for the resolver configuration,
- * `/dev` for the standard streams, `/private/var/db` for the dyld closure and
- * the timezone database, `/private/var/select` for the `sh` selector.
+ * a read allowlist can be: by dropping it from the shipped deny-by-default
+ * policy and watching something fail with the path in the message. They are
+ * constants because a macOS install puts them in the same place on every
+ * machine:
+ *
+ * ```
+ * /usr                  the shims and the shared libraries
+ * /bin                  the shell srt wraps every command with
+ * /System               the dyld cache and the TLS root certificates
+ * /Library              the developer tools and the system frameworks
+ * /dev                  the standard streams
+ * /etc                  curl: CAfile /etc/ssl/cert.pem;  git: /etc/gitconfig
+ * /private/etc          curl: /private/etc/ssl/openssl.cnf
+ * /tmp                  mkdir -p /tmp/claude-<uid>, which every Bash command needs
+ * /var                  xcode-select reading the link /var/select/developer_dir,
+ *                       without which `git` and `python3` do not resolve at all
+ * /private/var/db       the dyld closure and the timezone database
+ * /private/var/select   the `sh` selector
+ * ```
+ *
+ * The pairs are not duplication — see {@link PRIVATE_LINK_PATHS}. Dropping
+ * `/etc` leaves `curl` unable to open `/etc/ssl/cert.pem`; dropping
+ * `/private/etc` leaves the same `curl` unable to open
+ * `/private/etc/ssl/openssl.cnf`. Both spellings reach the kernel, from
+ * different code inside the same program.
  *
  * Everything *not* on this list is derived from the running process instead —
  * see {@link readAllowlistFor}. That split is the whole design: the parts that
@@ -364,8 +497,11 @@ export const MEASURED_SYSTEM_READ_PATHS = [
   '/bin',
   '/System',
   '/Library',
-  '/etc',
   '/dev',
+  '/etc',
+  '/private/etc',
+  '/tmp',
+  '/var',
   '/private/var/db',
   '/private/var/select',
 ] as const
@@ -408,6 +544,20 @@ function covers(outer: string, inner: string): boolean {
 }
 
 /**
+ * Does naming `outer` in a read allowlist make naming `inner` pointless?
+ *
+ * Textual containment, except for the three root symlinks, which contain
+ * nothing at all whatever their spelling says — see {@link PRIVATE_LINK_PATHS}.
+ * Treating `/var` as covering the OS temp directory would drop the entry that
+ * `touch` in `$TMPDIR` actually needs, which is a measured failure rather than
+ * a hypothetical one.
+ */
+function makesRedundant(outer: string, inner: string): boolean {
+  if ((PRIVATE_LINK_PATHS as readonly string[]).includes(outer)) return false
+  return covers(outer, inner)
+}
+
+/**
  * The same set of trees, with nothing said twice.
  *
  * An allowlist naming a directory and something inside it permits exactly what
@@ -418,8 +568,8 @@ function covers(outer: string, inner: string): boolean {
 function withoutRedundantPaths(paths: readonly string[]): string[] {
   const kept: string[] = []
   for (const path of paths) {
-    if (kept.some((already) => covers(already, path))) continue
-    if (paths.some((other) => other !== path && covers(other, path))) continue
+    if (kept.some((already) => makesRedundant(already, path))) continue
+    if (paths.some((other) => other !== path && makesRedundant(other, path))) continue
     kept.push(path)
   }
   return kept
@@ -439,8 +589,8 @@ export interface ReadAllowlistInput {
 }
 
 /**
- * Everything a confined process would have to be able to read if reads were
- * denied by default.
+ * Everything a confined process can read. `denyRead` denies the filesystem
+ * root; this is the whole of what is read back out of it.
  *
  * ## Why this is a function and not a list
  *
@@ -452,23 +602,26 @@ export interface ReadAllowlistInput {
  * process that is already running, and only {@link MEASURED_SYSTEM_READ_PATHS}
  * is written down.
  *
- * ## Why nothing calls this from `sandboxPolicyFor`
+ * ## Nothing here is padding
  *
- * Because reads are still allow-by-default, and under that shape adding these
- * to `allowRead` is a pure weakening:
+ * Every entry was verified load-bearing the only way a read allowlist can be:
+ * by dropping it and watching the agent fail to start. Adding one is the same
+ * kind of decision as adding a network host — say what failed without it, in
+ * the comment beside it, or it does not go in.
  *
- *   * every path here is *already* readable — `denyRead` is a deny list and
- *     none of these is on it — so the entries permit nothing new, and
- *   * `allowRead` beats `denyRead`, so `/usr` hands back the four
- *     {@link UNREADABLE_BINARIES} and `/Library` hands back
- *     {@link MACHINE_KEYCHAIN_DIR}, the directory ticket 16 denied after
- *     dumping 37 generic passwords out of it.
+ * ## What it does *not* hand back
  *
- * All cost, no benefit. It becomes correct the moment `denyRead` denies the
- * root — at which point the denials it re-opens have to be restored some other
- * way, because that inversion cannot simply add these lines and stop.
- * `sandbox.test.ts` asserts both halves so the mistake fails there rather than
- * in a probe with a keychain dump in it.
+ * `/usr` covers all four {@link UNREADABLE_BINARIES} and `/Library` covers
+ * {@link MACHINE_KEYCHAIN_DIR}, and neither is re-opened: srt re-emits a
+ * literal deny nested inside an allowed subpath so that the more specific rule
+ * lands last. That is the property this whole shape now rests on, and it is
+ * asserted in `sandbox.test.ts` and measured at the kernel by probe 2 and
+ * `sandbox.boundary.test.ts`. It holds for literal paths only — a denial
+ * written as a glob is not re-emitted, and would be silently re-opened.
+ *
+ * One entry does widen a denial on purpose: the interpreter root is usually
+ * under the denied `$HOME` (`~/.bun` here), just as the clone is. Both are read
+ * back out deliberately, and neither reaches `~/Library/Keychains`.
  */
 export function readAllowlistFor(input: ReadAllowlistInput): string[] {
   const tools =
@@ -1036,10 +1189,16 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
   return [
     'The agent runs under a kernel sandbox covering its whole process tree.',
     '',
-    '  Readable: everything except these, which are denied:',
-    list(policy.filesystem.denyRead),
-    '  ...with these read back out of the denial:',
+    '  Readable: only these, and nothing else on the filesystem:',
     list(policy.filesystem.allowRead),
+    '  ...read back out of these denials, of which "/" is the whole filesystem:',
+    list(policy.filesystem.denyRead),
+    '',
+    '  Reads are denied by default. The named denials beside "/" are the ones',
+    '  varnick means rather than the ones the root happens to cover, and they',
+    '  survive being inside an allowed directory: /Library/Keychains stays denied',
+    '  under /Library, and the four binaries below stay denied under /usr. Write',
+    '  a denial as a glob and that stops being true, so keep them literal paths.',
     '',
     '  Writable: only these:',
     list(policy.filesystem.allowWrite),
@@ -1131,22 +1290,61 @@ const BASELINE_HEADER = [
 ]
 
 /**
+ * Under a denied root, the read allowlist is not an allowance the merge may
+ * narrow — it is the only reason any process starts at all.
+ *
+ * The merge resolves each field on its own and takes the stronger side of a
+ * disagreement: union for a denial, **intersection** for an allowance. Those two
+ * rules are right separately and wrong together for exactly this pair, and a
+ * clone with no baseline is where it bites. Such a clone can attribute nothing,
+ * so it takes the stronger side of everything — which adopts `denyRead: ['/']`
+ * from the generator *and* intersects `allowRead` down to the one entry the old
+ * policy had, the clone. The result denies the filesystem and reads back a
+ * directory: `/bin/bash` cannot be mapped, so nothing runs, and the failure is
+ * `exit 133` with no message. It is not a stronger boundary; it is no product.
+ *
+ * So when the merged policy denies the root, every entry the generator's
+ * allowlist names is kept. This is the same judgement `requireTheCloneIsReadable`
+ * below already makes for the clone entry alone, applied to the rest of the list
+ * for the same reason — and it re-opens nothing varnick denies, because the
+ * entries are the generator's own and every named denial nested inside one is
+ * re-emitted by srt.
+ *
+ * It is *reported*: the entries land in `adopted`, so a developer whose
+ * narrowing was overruled reads a `[weaker] filesystem.allowRead now permits …`
+ * line on stderr rather than finding out from a diff.
+ */
+function withTheAllowlistTheDeniedRootNeeds(merged: SandboxPolicy, generator: SandboxPolicy): void {
+  if (!merged.filesystem.denyRead.includes(sep)) return
+  const missing = generator.filesystem.allowRead.filter(
+    (path) => !merged.filesystem.allowRead.some((allowed) => covers(allowed, path)),
+  )
+  if (missing.length === 0) return
+  merged.filesystem.allowRead = [...merged.filesystem.allowRead, ...missing]
+}
+
+/**
  * Fail rather than hand back a policy that cannot read the clone.
  *
- * The clone is denied by the deny on `$HOME` and read back out of it by exactly
- * one `allowRead` entry, so a policy without it gives the agent a working
- * directory its own interpreter cannot open — measured in ticket 03, where the
- * error named nothing. The merge can now produce that: intersecting allowances
- * is how "never take the weaker side" is implemented, and an intersection can
- * come back empty when a clone that has no baseline has also been moved.
+ * The clone is denied twice over — by the root and by `$HOME` — and read back
+ * out by exactly one `allowRead` entry, so a policy without it gives the agent a
+ * working directory its own interpreter cannot open, measured in ticket 03 where
+ * the error named nothing. The merge can still produce that: the repair above
+ * only restores entries when the merged policy denies the root, and a hand-edited
+ * policy that denies neither can still intersect this one away.
  *
  * Failing is the correct end of that road — there is no unconfined mode — but a
  * failure that says which file and what to do about it is worth the six lines.
  */
 function requireTheCloneIsReadable(policy: SandboxPolicy, cloneRoot: string, path: string): void {
-  if (policy.filesystem.allowRead.includes(cloneRoot)) return
+  // Covered, not named. A clone that happens to sit inside another allowed tree
+  // — under the OS temp directory, which is where every test's clone lives — is
+  // readable without an entry of its own, and `withoutRedundantPaths` will have
+  // dropped the duplicate. Asking for the literal string would refuse to start
+  // over a policy that permits exactly what this check exists to require.
+  if (policy.filesystem.allowRead.some((allowed) => covers(allowed, cloneRoot))) return
   throw new Error(
-    `The policy in ${path} does not read ${cloneRoot} back out of the denied home directory, so nothing could run inside the clone. varnick does not run an agent unconfined, so it will not run one here. Add ${JSON.stringify(cloneRoot)} to filesystem.allowRead, or delete the file and let it be generated again.`,
+    `The policy in ${path} does not read ${cloneRoot} back out of the denied filesystem root, so nothing could run inside the clone. varnick does not run an agent unconfined, so it will not run one here. Add ${JSON.stringify(cloneRoot)} to filesystem.allowRead, or delete the file and let it be generated again.`,
   )
 }
 
@@ -1256,6 +1454,9 @@ export function ensureSandboxPolicy(input: SandboxPolicyInput): EnsuredSandboxPo
     // one after that.
     leaf.write(merged, sameLeaf(resolved, theirs) ? (theirs as string[] | boolean) : resolved)
   }
+
+  // After every leaf, because it is about two of them at once. See the comment.
+  withTheAllowlistTheDeniedRootNeeds(merged, generator)
 
   const yours = baseline === null ? [] : changesBetween(baseline.policy, inForce, roots)
   const ours = baseline === null ? [] : changesBetween(baseline.policy, generator, roots)

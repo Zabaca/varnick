@@ -137,9 +137,10 @@ working boundary report the same green.
   asked for directly: listing `/Users` is refused, and so is `/Users/Shared`,
   which is under no home directory. SSH keys, cloud credentials, and every
   repository stored under a home directory are outside the agent's reach. The
-  clone is read back out of that denial. Reads are allow-by-default, so this is
-  a statement about those roots and not about the whole filesystem — see *Where
-  confinement stops*.
+  clone is read back out of that denial. So is everything else the agent can
+  read: the filesystem root itself is denied, and a repository kept outside a
+  home directory — on `/opt`, `/srv`, `/Volumes`, an external disk — is refused
+  a read as well as a write.
 - Writes are the other way round: the clone and the OS temp directory are the
   only writable trees. Both are written to in the same run that is refused the
   five paths below. The OS temp directory means `$TMPDIR` — `/var/folders/…` on
@@ -231,14 +232,26 @@ recorded in [`packages/harness/probe-attestation.json`](packages/harness/probe-a
 open it before quoting anything below. `bun run probe` is the command that has no
 skip in it and fails when it cannot measure.
 
-- **Reads are allow-by-default; only the listed roots are denied.** The denied
-  reads are `/Users`, your home inside it, `/Library/Keychains`, and four
-  binaries. Everything else on the filesystem stays readable — `/etc`, `/usr`,
-  and, measurably, a git repository kept somewhere other than a home directory,
-  which the agent can read in full. If your work lives outside `/Users`, the
-  boundary described above does not cover it, and the fix is to add the path to
-  `denyRead` yourself. Writes are the opposite and much tighter: the clone and
-  the OS temp directory, and nothing else.
+- **Reads are deny-by-default, and the allowlist is where they stop.** The
+  filesystem root is denied and `filesystem.allowRead` in `sandbox-policy.json`
+  is the whole of what the agent can read: the clone, the interpreter, the Agent
+  SDK's install tree, the developer toolchain, eleven measured system paths, and
+  the two writable trees. Everything else is refused, including a repository kept
+  outside a home directory — which was readable in full until ticket 18 and is
+  the reason the inversion happened. Read the allowlist rather than this
+  paragraph: it is generated for your machine, and it is the boundary.
+
+  Two things it is honest to say about that list. Every entry is load-bearing —
+  each was verified by dropping it and watching something fail with the path in
+  the message — and several are broad: `/usr`, `/Library` and `/System` are whole
+  system trees, so "deny-by-default" bounds what the agent can reach on *your*
+  disk, not what it can read about the machine. And the four denied binaries and
+  `/Library/Keychains` sit *inside* allowed trees; they stay denied because srt
+  re-emits a nested literal deny after the allows. Write one of those denials as
+  a glob and it is silently re-opened, which is why they are literal paths.
+
+  Writes are unchanged and remain tighter still: the clone, the OS temp
+  directory, and Claude Code's scratch directory, and nothing else.
 - **Anything the agent can reach over the network, it can send data to.** The
   allowlist bounds the blast radius; it does not prevent exfiltration. The probe
   showing `api.anthropic.com` answering is the same fact from the other side — a

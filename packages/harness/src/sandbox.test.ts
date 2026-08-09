@@ -6,6 +6,7 @@ import {
   DEFAULT_ALLOWED_HOSTS,
   MACHINE_KEYCHAIN_DIR,
   MEASURED_SYSTEM_READ_PATHS,
+  PRIVATE_LINK_PATHS,
   SANDBOX_BASELINE_FILENAME,
   claudeScratchDirFor,
   CLAUDE_CWD_MARKER_GLOB,
@@ -44,15 +45,55 @@ import {
 const HOME = '/Users/dev'
 const CLONE = '/Users/dev/code/varnick'
 const TMP = '/var/folders/xx/T'
+const EXEC = '/Users/dev/.bun/bin/bun'
+const SDK = '/Users/dev/code/varnick/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'
+const TOOLS = '/Applications/Xcode.app/Contents/Developer/usr/bin'
 
-const policy = () => sandboxPolicyFor({ cloneRoot: CLONE, homeDir: HOME, tmpDir: TMP })
+/*
+  A whole machine, rather than a home directory on its own.
+
+  The read allowlist holds the interpreter's install root, and that usually sits
+  *inside* the home directory — `~/.bun` here. So a fixture that moves `homeDir`
+  and leaves the allowlist pointing at this laptop's real `~/.bun` describes a
+  machine no generator would ever produce, and the inconsistency then reads as a
+  boundary change when the clone is carried somewhere else. Every policy below
+  is built through here so that it is a function of its arguments and of nothing
+  this file is running on.
+*/
+const machine = (input: { cloneRoot: string; homeDir: string; tmpDir?: string }) => ({
+  ...input,
+  readAllowlist: readAllowlistFor({
+    cloneRoot: input.cloneRoot,
+    execPath: `${input.homeDir}/.bun/bin/bun`,
+    sdkEntry: `${input.cloneRoot}/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs`,
+    developerToolsBin: TOOLS,
+  }),
+})
+
+const policy = () => sandboxPolicyFor(machine({ cloneRoot: CLONE, homeDir: HOME, tmpDir: TMP }))
 
 /** Does `allowed` re-open `path`, either exactly or as an ancestor directory? */
 const reopens = (allowed: string, path: string) =>
   allowed === path || path.startsWith(allowed.endsWith(sep) ? allowed : allowed + sep)
 
 describe('what the policy denies', () => {
-  test('the home directory and every sibling home are unreadable', () => {
+  test('reads are denied by default, and the root is what says so', () => {
+    // Ticket 18. `denyRead` used to be a deny list with everything outside it
+    // readable, which left a repository on /opt, /srv, /Volumes or an external
+    // disk open in full. The filesystem root is now denied and `allowRead` is
+    // the whole of what is readable.
+    expect(policy().filesystem.denyRead).toContain(sep)
+  })
+
+  test('the home directory and every sibling home are named anyway', () => {
+    /*
+      Not redundant under the denied root, and this is the test that says why.
+      Three things read this list rather than the root: srt re-emits these
+      denials when an allowance contains them, `isUnexpectedViolation` decides
+      from them which kernel refusals are the fence working, and a developer
+      reads them to learn what varnick *meant* to deny as opposed to what the
+      root happens to cover.
+    */
     const { denyRead } = policy().filesystem
     expect(denyRead).toContain(HOME)
     // The parent of home is what covers *other* repositories: another user's
@@ -60,7 +101,7 @@ describe('what the policy denies', () => {
     expect(denyRead).toContain('/Users')
   })
 
-  test('the clone is read back out of the denied home', () => {
+  test('the clone is read back out of the denied root', () => {
     const { allowRead } = policy().filesystem
     expect(allowRead).toContain(CLONE)
   })
@@ -78,18 +119,41 @@ describe('what the policy denies', () => {
     expect(UNREADABLE_BINARIES.length).toBe(4)
   })
 
-  test('no allowRead entry re-opens an unreadable binary', () => {
-    // allowRead beats denyRead, so a broad allow of `/` or `/usr` would silently
-    // hand every one of these back. The deny is not what stops them running —
-    // containment.probe.test.ts measures that three of the four execute anyway —
-    // but it is what keeps their contents out of reach, and an allow that
-    // reopened them would undo the one thing the entry does achieve.
+  test('the allowlist does contain the denied binaries, and they stay denied', () => {
+    /*
+      This assertion is the inverse of the one it replaces, and the inversion is
+      the ticket.
 
-    const { allowRead } = policy().filesystem
-    for (const allowed of allowRead) {
-      for (const binary of UNREADABLE_BINARIES) {
-        expect(reopens(allowed, binary)).toBe(false)
-      }
+      Before the root was denied, `allowRead` held one entry and the rule was
+      "nothing in it may cover a denied path" — `/usr` would have handed back all
+      four binaries, so the test forbade `/usr`. Under a denied root `/usr` is
+      not optional: nothing starts without it. So the property moved from the
+      list's *shape* to srt's *behaviour*, and this asserts the precondition that
+      behaviour has.
+
+      `generateReadRules` emits `(allow file-read*)`, then the denies, then the
+      allows — last match wins, so `/usr` would beat the deny on
+      `/usr/bin/security`. A final pass re-emits any **literal** deny that sits
+      strictly inside an allowed subpath, which puts the specific rule last again.
+      Two things have to hold for that to reach these four, and both are checked
+      here: each is named in `denyRead`, and each is a literal path rather than a
+      glob. Glob denies are deliberately not re-emitted — srt's own comment says
+      so, and `denyReadAlways` is its lever for that case — so writing one of
+      these as a pattern would silently hand the binary back.
+
+      The kernel half is probe 2 and sandbox.boundary.test.ts; this is what fails
+      first, in a file with no keychain dump in it.
+    */
+    const { allowRead, denyRead } = policy().filesystem
+
+    for (const binary of UNREADABLE_BINARIES) {
+      const covering = allowRead.filter((allowed) => reopens(allowed, binary))
+      expect(covering).toContain('/usr')
+      expect(denyRead).toContain(binary)
+      expect(binary).not.toMatch(/[*?[\]]/)
+      // srt's condition verbatim: `normalized.startsWith(allowed + '/')`. An
+      // allowance equal to the denial would not be re-emitted, and would win.
+      for (const allowed of covering) expect(binary.startsWith(`${allowed}${sep}`)).toBe(true)
     }
   })
 
@@ -102,9 +166,41 @@ describe('what the policy denies', () => {
     expect(MACHINE_KEYCHAIN_DIR).toBe('/Library/Keychains')
   })
 
-  test('no allowRead entry re-opens the machine-wide keychains', () => {
-    for (const allowed of policy().filesystem.allowRead) {
-      expect(reopens(allowed, MACHINE_KEYCHAIN_DIR)).toBe(false)
+  test('the allowlist contains the machine-wide keychains too, and they stay denied', () => {
+    // Same inversion, and the entry with the most behind it: `/Library` is in
+    // the allowlist because the developer toolchain and the system frameworks
+    // live there, and /Library/Keychains is the directory ticket 16 denied after
+    // dumping 37 generic passwords out of it. It is denied by being named, being
+    // literal, and being strictly inside `/Library` — the three conditions srt's
+    // re-emission pass needs.
+    const { allowRead, denyRead } = policy().filesystem
+    const covering = allowRead.filter((allowed) => reopens(allowed, MACHINE_KEYCHAIN_DIR))
+
+    expect(covering).toContain('/Library')
+    expect(denyRead).toContain(MACHINE_KEYCHAIN_DIR)
+    expect(MACHINE_KEYCHAIN_DIR).not.toMatch(/[*?[\]]/)
+    for (const allowed of covering) {
+      expect(MACHINE_KEYCHAIN_DIR.startsWith(`${allowed}${sep}`)).toBe(true)
+    }
+  })
+
+  test('every denial an allowance contains is re-emittable, whatever the list grows into', () => {
+    /*
+      The two tests above name the paths that are covered today. This one is the
+      rule, and it is the one that catches an entry nobody thought about: any
+      future `denyRead` path that ends up inside a future `allowRead` path has to
+      be a literal, strictly nested, or srt will not re-emit it and the deny is
+      simply lost. The filesystem root is excluded because it is the mechanism
+      rather than a denial anyone means — it is *equal* to no allowance and
+      contains all of them.
+    */
+    const { allowRead, denyRead } = policy().filesystem
+    for (const denied of denyRead.filter((path) => path !== sep)) {
+      for (const allowed of allowRead) {
+        if (!reopens(allowed, denied)) continue
+        expect(denied).not.toMatch(/[*?[\]]/)
+        expect(denied.startsWith(`${allowed}${sep}`)).toBe(true)
+      }
     }
   })
 
@@ -462,11 +558,11 @@ describe('a strengthening reaches a clone that already has a policy', () => {
   test('moving a clone between home directories is not reported as tampering', () => {
     withClone((clone) => {
       // Generated on one machine...
-      const first = ensureSandboxPolicy({ cloneRoot: clone, homeDir: '/Users/before' })
+      const first = ensureSandboxPolicy(machine({ cloneRoot: clone, homeDir: '/Users/before' }))
       expect(first.policy.filesystem.denyRead).toContain('/Users/before')
 
       // ...read on another, where home is somewhere else entirely.
-      const second = ensureSandboxPolicy({ cloneRoot: clone, homeDir: '/home/after' })
+      const second = ensureSandboxPolicy(machine({ cloneRoot: clone, homeDir: '/home/after' }))
 
       expect(second.report.yours).toEqual([])
       expect(second.report.ours).toEqual([])
@@ -482,12 +578,12 @@ describe('a strengthening reaches a clone that already has a policy', () => {
 
   test('a clone moved to another directory keeps the edits it was carrying', () => {
     withClone((clone) => {
-      ensureSandboxPolicy({ cloneRoot: clone, homeDir: '/Users/before' })
+      ensureSandboxPolicy(machine({ cloneRoot: clone, homeDir: '/Users/before' }))
       const edited = readSandboxPolicy(clone) as SandboxPolicy
       edited.network.allowedDomains = ['api.anthropic.com']
       writeFileSync(sandboxPolicyPath(clone), `${JSON.stringify(edited, null, 2)}\n`)
 
-      const moved = ensureSandboxPolicy({ cloneRoot: clone, homeDir: '/home/after' })
+      const moved = ensureSandboxPolicy(machine({ cloneRoot: clone, homeDir: '/home/after' }))
 
       expect(moved.policy.network.allowedDomains).toEqual(['api.anthropic.com'])
       expect(moved.policy.filesystem.denyRead).toContain('/home/after')
@@ -499,15 +595,21 @@ describe('a strengthening reaches a clone that already has a policy', () => {
 
   test('the baseline records the policy in tokens and the roots separately', () => {
     withClone((clone) => {
-      ensureSandboxPolicy({ cloneRoot: clone, homeDir: '/Users/dev' })
+      ensureSandboxPolicy(machine({ cloneRoot: clone, homeDir: '/Users/dev' }))
 
       expect(existsSync(sandboxBaselinePath(clone))).toBe(true)
       const baseline = readSandboxBaseline(clone)
 
       // The policy half carries no machine root. That is what makes a move
-      // invisible rather than a wholesale rewrite of denyRead.
-      expect(baseline?.policy.filesystem.allowRead).toEqual(['<clone>'])
+      // invisible rather than a wholesale rewrite of denyRead — and it has to
+      // hold for the read allowlist too, whose first entry is the clone and
+      // whose interpreter entry lives inside the home directory.
+      expect(baseline?.policy.filesystem.allowRead[0]).toBe('<clone>')
+      expect(baseline?.policy.filesystem.allowRead).toContain('<home>/.bun')
+      expect(baseline?.policy.filesystem.allowRead.join(' ')).not.toContain(clone)
       expect(baseline?.policy.filesystem.denyRead).toContain('<home>')
+      // The root, which is a root and not a machine's.
+      expect(baseline?.policy.filesystem.denyRead).toContain(sep)
       // The paths that are not machine-specific stay literal, because they are.
       expect(baseline?.policy.filesystem.denyRead).toContain(MACHINE_KEYCHAIN_DIR)
 
@@ -549,13 +651,54 @@ describe('a strengthening reaches a clone that already has a policy', () => {
     })
   })
 
+  test('a clone that predates the denied root gets the allowlist that makes it survivable', () => {
+    /*
+      The one place the per-field merge is wrong on its own, and ticket 18 is
+      what exposed it.
+
+      Union for a denial and intersection for an allowance are each right
+      separately. Together, on a clone with no baseline — which can attribute
+      nothing and so takes the stronger side of everything — they adopt
+      `denyRead: ['/']` from the generator *and* intersect `allowRead` down to
+      the one entry the old policy had. That denies the filesystem and reads back
+      a directory: `/bin/bash` cannot be mapped and nothing runs at all, with
+      `exit 133` and no message. It is not a stronger boundary, it is no product.
+
+      So the allowlist rides with the root, and the developer is told, in the
+      word that means something got wider.
+    */
+    withClone((clone) => {
+      const before = sandboxPolicyFor({ cloneRoot: clone })
+      before.filesystem.denyRead = before.filesystem.denyRead.filter((path) => path !== sep)
+      before.filesystem.allowRead = [clone]
+      writeFileSync(sandboxPolicyPath(clone), `${JSON.stringify(before, null, 2)}\n`)
+
+      const { policy, report } = ensureSandboxPolicy({ cloneRoot: clone })
+
+      expect(report.unattributed).toBe(true)
+      expect(policy.filesystem.denyRead).toContain(sep)
+      // Everything the generator names, not the intersection.
+      for (const path of sandboxPolicyFor({ cloneRoot: clone }).filesystem.allowRead) {
+        expect(policy.filesystem.allowRead).toContain(path)
+      }
+      expect(report.lines.join('\n')).toContain('[weaker] filesystem.allowRead')
+    })
+  })
+
   test('normalizing and materializing a policy is a round trip', () => {
-    const input = { cloneRoot: '/Users/dev/code/varnick', homeDir: '/Users/dev', tmpDir: '/tmp/x' }
+    const input = machine({
+      cloneRoot: '/Users/dev/code/varnick',
+      homeDir: '/Users/dev',
+      tmpDir: '/tmp/x',
+    })
     const original = sandboxPolicyFor(input)
     const normalized = normalizeSandboxPolicy(original, input)
     // The clone is a nested path under home, which is nested under the users
     // root: the longest root has to win or the clone stops being the clone.
-    expect(normalized.filesystem.allowRead).toEqual(['<clone>'])
+    expect(normalized.filesystem.allowRead[0]).toBe('<clone>')
+    // And the interpreter, which is under home rather than under the clone, so
+    // the two have to tokenize differently or a move rewrites one of them.
+    expect(normalized.filesystem.allowRead).toContain('<home>/.bun')
     expect(normalized.filesystem.denyRead).toContain('<home>')
     expect(normalized.filesystem.denyRead).toContain('<users>')
     expect(materializeSandboxPolicy(normalized, input)).toEqual(original)
@@ -563,28 +706,24 @@ describe('a strengthening reaches a clone that already has a policy', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The read allowlist a denied root would need — computed, and deliberately not
-// in the policy
+// The read allowlist the denied root needs — computed, and in the policy
 // ---------------------------------------------------------------------------
 
-describe('the read allowlist a denied root would need', () => {
+describe('the read allowlist the denied root needs', () => {
   /*
-    Ticket 18's first prerequisite. Inverting reads means naming everything the
-    toolchain has to reach, and the list is not the same on two machines: this
-    one runs `~/.bun`, the next runs node out of Homebrew or nvm. So the parts
-    that vary are derived from the process that is already running and only the
-    parts that do not are constants.
+    Ticket 18. Inverting reads means naming everything the toolchain has to
+    reach, and the list is not the same on two machines: this one runs `~/.bun`,
+    the next runs node out of Homebrew or nvm. So the parts that vary are derived
+    from the process that is already running and only the parts that do not are
+    constants.
 
-    Nothing here is wired into `sandboxPolicyFor`. The last two tests in this
-    block are why, and they are the judgement the ticket asked for rather than a
-    note in a report: under allow-by-default reads these entries buy nothing —
-    every one of them is already readable — and cost the four denied binaries
-    and both keychains, because `allowRead` beats `denyRead`.
+    This is now what `sandboxPolicyFor` puts in `allowRead`, and the last two
+    tests in this block are the pair that changed when it was wired in. They used
+    to assert that adding the list would re-open both keychains and all four
+    binaries, and that the policy therefore still read back only the clone. It
+    does re-open them by containment, and they are denied anyway — see
+    "the allowlist does contain the denied binaries" above for the mechanism.
   */
-
-  const EXEC = '/Users/dev/.bun/bin/bun'
-  const SDK = '/Users/dev/code/varnick/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'
-  const TOOLS = '/Applications/Xcode.app/Contents/Developer/usr/bin'
 
   const allowlist = (overrides: Partial<Parameters<typeof readAllowlistFor>[0]> = {}) =>
     readAllowlistFor({
@@ -637,30 +776,60 @@ describe('the read allowlist a denied root would need', () => {
     expect(allowlist({ developerToolsBin: null }).length).toBe(allowlist().length - 1)
   })
 
-  test('the system paths are the eight that were measured, and are still constants', () => {
-    // Measured on this machine by dropping each one and watching the agent
-    // fail — see the comment on MEASURED_SYSTEM_READ_PATHS. They are constants
-    // because they are the same on every macOS install; everything above is a
-    // function because it is not.
+  test('the system paths are the eleven that were measured, and are still constants', () => {
+    // Measured on this machine by dropping each one and watching something fail
+    // with the path in the message — see the comment on
+    // MEASURED_SYSTEM_READ_PATHS, which records what each one broke. They are
+    // constants because they are the same on every macOS install; everything
+    // above is a function because it is not.
     expect([...MEASURED_SYSTEM_READ_PATHS]).toEqual([
       '/usr',
       '/bin',
       '/System',
       '/Library',
-      '/etc',
       '/dev',
+      '/etc',
+      '/private/etc',
+      '/tmp',
+      '/var',
       '/private/var/db',
       '/private/var/select',
     ])
     for (const path of MEASURED_SYSTEM_READ_PATHS) expect(allowlist()).toContain(path)
   })
 
-  test('no entry is contained by another', () => {
+  test('the three root symlinks are named in both spellings, and that is not duplication', () => {
+    /*
+      `/etc`, `/tmp` and `/var` are symlinks into `/private`, and the kernel
+      canonicalizes a real access below one of them — so a rule naming the link
+      matches the link and nothing else. Both spellings therefore have to be in
+      the list, because different code inside the same program reaches the same
+      file by different names:
+
+        drop /etc          curl: CAfile /etc/ssl/cert.pem
+        drop /private/etc  curl: /private/etc/ssl/openssl.cnf
+
+      Measured under the shipped policy. `PRIVATE_LINK_PATHS` is what stops the
+      redundancy pass below treating the pair as one.
+    */
+    expect([...PRIVATE_LINK_PATHS]).toEqual(['/etc', '/tmp', '/var'])
+    for (const link of PRIVATE_LINK_PATHS) {
+      expect(allowlist()).toContain(link)
+      expect(MEASURED_SYSTEM_READ_PATHS).toContain(link)
+    }
+    expect(allowlist()).toContain('/private/etc')
+  })
+
+  test('no entry is contained by another, except through a root symlink', () => {
     // An allowlist that names a directory and something inside it says the same
     // thing twice, and the second copy is what a reader has to check against
-    // the deny list for nothing.
+    // the deny list for nothing. The exception is the point of the test above:
+    // `/var` reads as containing `/private/var/db` to nobody, and as containing
+    // the OS temp directory to a string comparison — and dropping that entry was
+    // measured to break `touch` in $TMPDIR.
     const list = allowlist()
     for (const outer of list) {
+      if ((PRIVATE_LINK_PATHS as readonly string[]).includes(outer)) continue
       for (const inner of list) {
         if (outer === inner) continue
         expect(reopens(outer, inner)).toBe(false)
@@ -668,27 +837,65 @@ describe('the read allowlist a denied root would need', () => {
     }
   })
 
-  test('adding it to the policy today would re-open both keychains and all four binaries', () => {
+  test('every writable tree is readable, because a tree you cannot stat you cannot write', () => {
     /*
-      The judgement. `allowRead` beats `denyRead`, so `/usr` hands back
-      /usr/bin/security, /usr/bin/osascript, /usr/bin/open and /usr/bin/sudo,
-      and `/Library` hands back /Library/Keychains — the directory ticket 16
-      denied after dumping 37 generic passwords out of it.
+      `touch` stats before it creates and `mkdir -p` stats every component on the
+      way down, so a write grant with no matching read is not a grant. Under
+      allow-by-default reads this was free; under the denied root it was two
+      measured failures, the second of which is ticket 27 over again:
 
-      Under allow-by-default reads that is a pure loss: every one of these paths
-      is *already* readable, so the entries buy nothing and cost the denials.
-      This test exists so that wiring the list in fails here with the reason
-      rather than in a probe with a keychain dump.
+        touch $TMPDIR/x                Operation not permitted
+        mkdir -p /tmp/claude-<uid>/x   Operation not permitted
+
+      Asserted over the policy rather than the allowlist function, because this
+      is a fact about the two lists agreeing with each other.
     */
-    const list = allowlist()
-    const reopened = [MACHINE_KEYCHAIN_DIR, ...UNREADABLE_BINARIES].filter((denied) =>
-      list.some((allowed) => reopens(allowed, denied)),
-    )
-    expect(reopened).toEqual([MACHINE_KEYCHAIN_DIR, ...UNREADABLE_BINARIES])
+    const { allowRead, allowWrite } = policy().filesystem
+    for (const writable of allowWrite) {
+      expect(allowRead.some((allowed) => reopens(allowed, writable))).toBe(true)
+    }
   })
 
-  test('so the policy still reads back exactly the clone and nothing else', () => {
-    expect(policy().filesystem.allowRead).toEqual([CLONE])
+  test('it contains every one of the six denied paths, and none of them is re-opened', () => {
+    /*
+      The inverted assertion, and the load-bearing one.
+
+      Its predecessor said that adding this list to the policy would re-open
+      /Library/Keychains and all four UNREADABLE_BINARIES, and that this was why
+      it was not wired in. The containment half of that is still exactly true —
+      `/usr` covers the binaries and `/Library` covers the keychains, and the
+      first half of this test asserts it path by path rather than softening it.
+
+      What changed is the conclusion. Under a denied root `/usr` and `/Library`
+      are not optional, so the denials cannot be kept by keeping the list out;
+      they are kept by srt re-emitting each nested literal deny after the allows,
+      which is the property the second half checks the precondition of. Both
+      halves are here in one test because the danger is that somebody satisfies
+      one of them by weakening the other.
+    */
+    const list = allowlist()
+    const denied = [MACHINE_KEYCHAIN_DIR, ...UNREADABLE_BINARIES]
+
+    const contained = denied.filter((path) => list.some((allowed) => reopens(allowed, path)))
+    expect(contained).toEqual(denied)
+
+    const { denyRead } = policy().filesystem
+    for (const path of denied) {
+      expect(denyRead).toContain(path)
+      expect(path).not.toMatch(/[*?[\]]/)
+      const covering = list.filter((allowed) => reopens(allowed, path))
+      for (const allowed of covering) expect(path.startsWith(`${allowed}${sep}`)).toBe(true)
+    }
+  })
+
+  test('so the policy reads back the clone first and then exactly this list', () => {
+    // The other inverted assertion: `allowRead` was `[CLONE]` and is now the
+    // computed list, with the two writable trees the previous test's rule adds.
+    const { allowRead } = policy().filesystem
+    expect(allowRead[0]).toBe(CLONE)
+    for (const path of allowlist()) expect(allowRead).toContain(path)
+    expect(allowRead).toContain(TMP)
+    expect(allowRead).toContain(claudeScratchDirFor(process.getuid?.() ?? 0))
   })
 })
 
@@ -752,22 +959,35 @@ describe('sandbox violations', () => {
     }
   })
 
-  test('a denied root does not silence the monitor', () => {
+  test('the denied root does not silence the monitor', () => {
     /*
-      The property that has to hold *after* reads are inverted, asserted before
-      the inversion lands. `denyRead: ['/']` puts every path in the filesystem
-      under a denial, so a filter that asked only "is this path denied?" would
-      go quiet at exactly the moment it starts being the only thing that says
-      why the agent will not start.
+      Written before the inversion landed, against a policy this test had to
+      build for itself. It now reads the shipped one, which is the whole point:
+      `denyRead` names `/`, so every path in the filesystem is under a denial,
+      and a filter that asked only "is this path denied?" would be silent at
+      exactly the moment it becomes the only thing that says why the agent will
+      not start.
 
       The root is the mechanism, not an intention. What varnick means to deny is
-      the named list beside it, and that is what stays silent.
+      the named list beside it, and that is what stays silent. The control is the
+      line below it: with the root removed, the *same* event is still news, so
+      this is not measuring a filter that says yes to everything.
     */
-    const inverted = policy()
-    inverted.filesystem.denyRead = [sep, ...inverted.filesystem.denyRead]
+    const shipped = policy()
+    expect(shipped.filesystem.denyRead).toContain(sep)
 
-    expect(isUnexpectedViolation(inverted, parseSandboxViolation(READ_OUTSIDE))).toBe(true)
-    expect(isUnexpectedViolation(inverted, parseSandboxViolation(READ_HOME))).toBe(false)
+    expect(isUnexpectedViolation(shipped, parseSandboxViolation(READ_OUTSIDE))).toBe(true)
+    expect(isUnexpectedViolation(shipped, parseSandboxViolation(READ_HOME))).toBe(false)
+
+    const withoutTheRoot: SandboxPolicy = {
+      ...shipped,
+      filesystem: {
+        ...shipped.filesystem,
+        denyRead: shipped.filesystem.denyRead.filter((path) => path !== sep),
+      },
+    }
+    expect(isUnexpectedViolation(withoutTheRoot, parseSandboxViolation(READ_OUTSIDE))).toBe(true)
+    expect(isUnexpectedViolation(withoutTheRoot, parseSandboxViolation(READ_HOME))).toBe(false)
   })
 
   test('a line nothing can parse is reported when it mentions a read', () => {
