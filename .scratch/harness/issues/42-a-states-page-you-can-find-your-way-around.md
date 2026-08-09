@@ -79,10 +79,16 @@ any two functions that return everything.
 
 ## Watch for
 
-`text-[15px]` on the page heading is off `DESIGN.md`'s type ramp and predates
-this ticket. Left alone: the states page runs a compressed developer scale
-(11 / 11.5 / 12 / 13 / 15) and moving one step of it in isolation would be
-arbitrary. It wants a decision about the whole scale, not a patch.
+The design detector flags `text-[15px]` on the page heading as off the type
+ramp. It is a false positive, and the answer is already written down —
+`DESIGN.md`'s *"The exception, named so the rule stays true"*: `#/states` uses
+15px for its title and 11px for card state lines, because it is a coverage
+surface for whoever is building the product rather than a surface the product
+presents, and it is the only place in the codebase above 13px. Nothing in the
+chat surface may follow it.
+
+Left unsuppressed on purpose. A config ignore would stop the detector raising
+it, and the exception is one worth re-reading every time somebody notices it.
 
 - [x] Every card is addressable, and the link scrolls rather than remounting
 - [x] The index and the grid cannot disagree about what is shown
