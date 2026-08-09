@@ -110,7 +110,7 @@ By now the UI and the machines exist and ship. Tickets cover **integration only*
 **Realizes:** orders.sending, orders.sendFailed
 ```
 
-`to-tickets` bans file paths and code snippets because they go stale. A state path does not: it is the same string in the machine, in the exported `XXX_PATHS` list, in `CONTEXT.md`, and on the states-page card, and the coverage banner keeps those in sync. It resolves to a live card — `#/states → orders.sending` — rather than a copy of the design.
+`to-tickets` bans file paths and code snippets because they go stale. A state path does not: it is the same string in the machine, in the exported `XXX_PATHS` list, in `CONTEXT.md`, and on the states-page card, and the coverage banner keeps those in sync. It resolves to a live card — and a card has its own address, so `#/states/turn-failed` is a link rather than a page plus instructions to scroll.
 
 **Stays out of tickets:** tokens, screenshots, surface-brief prose, "match the design". All of it exists as code already; restating it is pure drift surface.
 

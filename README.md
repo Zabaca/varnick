@@ -78,7 +78,14 @@ exactly this, and the boundary is recorded in
 Three routes ship, and they are the same code three ways: `#/designed` is the
 chat and is where a launch lands, `#/bare` is the design-free page showing raw
 machine state and one button per accepted event, `#/states` is every state of
-the chat on one page, driven by the real machines.
+the chat on one page, driven by the real machines. All three are in the **View**
+menu — ⌘1, ⌘2, ⌘3 — because for a long time two of them shipped with no way in:
+the bare and states pages each render a nav and the chat renders none, so the
+pages that could navigate were exactly the two nobody could reach.
+
+`#/states` addresses one card at a time — `#/states/turn-failed` is the card for
+a failed Turn — which is what makes a ticket able to point at a state rather
+than at the whole page.
 
 `scripts/clean-clone.sh` clones the repository into a temporary directory and
 runs it with a scrubbed environment and a `HOME` that has never held varnick.

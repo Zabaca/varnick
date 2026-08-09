@@ -47,7 +47,7 @@ Answer the gate question explicitly at the end of stage 2: **does this touch UI?
 
 ## One rule about states
 
-**A state is named in exactly one place: the machines.** Their exported path lists are the source, `CONTEXT.md` defines the names, `#/states` renders them, and a ticket points at a card. Nothing else enumerates them.
+**A state is named in exactly one place: the machines.** Their exported path lists are the source, `CONTEXT.md` defines the names, `#/states` renders them, and a ticket points at a card by its own address (`#/states/turn-failed`). Nothing else enumerates them.
 
 That is why stage 2.5 writes no states. `/impeccable shape` offers a *States and ranges* section; here it keeps the ranges and drops the states. Ranges are content facts a builder needs before the machines exist — how many messages, how long a tool output, what an empty Workspace holds. States are machine facts discovered *by* stage 3, and prose written before them is a guess that goes stale within a day and then contradicts the code.
 
