@@ -7,6 +7,7 @@ import {
   CLAUDE_CONFIG_DIR_ENV_VAR,
   CLAUDE_CONFIG_RELATIVE_PATH,
   CREDENTIAL_ENV_VAR_NAMES,
+  DEVELOPER_TOOLS_CANDIDATES,
   INHERIT_CLAUDE_CONFIG_ENV_VAR,
   agentCommand,
   agentConfigurationOptions,
@@ -78,6 +79,27 @@ describe('what gets spawned', () => {
     // If this ever stops being true the agent stops starting, and the failure
     // in the wrapped process reads as a missing dependency rather than as this.
     expect(existsSync(agentSdkEntry())).toBe(true)
+  })
+
+  test('the developer toolchain is found rather than assumed', () => {
+    /*
+      `git` is not in `/usr/bin` on macOS — the shim there hands over to
+      whichever developer directory is active, which is Xcode's when Xcode is
+      installed and the Command Line Tools' when it is not. Two different
+      absolute paths, and only one of them is under a path anything else names.
+
+      Probed rather than resolved by running `xcode-select -p`: a spawn inside a
+      function the policy generator calls would make generating a policy start a
+      process, and the answer is a directory either way.
+    */
+    expect(developerToolsBin(() => false)).toBeNull()
+    expect(developerToolsBin((path) => path === `${DEVELOPER_TOOLS_CANDIDATES[1]}/git`)).toBe(
+      DEVELOPER_TOOLS_CANDIDATES[1],
+    )
+    // The Command Line Tools win when both are there: that is what a plain
+    // `xcode-select` install leaves selected, and the narrower of the two.
+    expect(developerToolsBin(() => true)).toBe(DEVELOPER_TOOLS_CANDIDATES[0])
+    expect(DEVELOPER_TOOLS_CANDIDATES[0]).toBe('/Library/Developer/CommandLineTools/usr/bin')
   })
 
   test('a path with a space in it cannot break out of the command', () => {

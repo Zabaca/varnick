@@ -18,13 +18,17 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import {
   SandboxManager,
   SandboxRuntimeConfigSchema,
   type SandboxRuntimeConfig,
 } from '@anthropic-ai/sandbox-runtime'
-import { sandboxEnvOverlay } from './agent.ts'
+// Deep import because srt's index does not re-export it. The package publishes
+// no `exports` map, so the path is a supported one rather than a way round a
+// boundary — and the alternative is not watching the kernel at all.
+import { startMacOSSandboxLogMonitor } from '@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js'
+import { agentSdkEntry, developerToolsBin, sandboxEnvOverlay } from './agent.ts'
 
 /**
  * Binaries the agent cannot **open for reading**. It can still run them.
@@ -219,6 +223,12 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
       // Read back exactly one thing out of the denied home: the clone. Nothing
       // broader — an allow beats a deny, so `/` or `/usr` here would hand back
       // every binary above.
+      //
+      // {@link readAllowlistFor} computes what a *denied* root would need
+      // instead, and is deliberately not used here. Under this shape those
+      // entries buy nothing — everything outside `denyRead` is already
+      // readable — and cost the four binaries and both keychains. See the
+      // comment on that function.
       allowRead: [clone],
       /*
         The clone, the OS per-user temp, and one more the agent cannot work
@@ -271,6 +281,154 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
     enableWeakerNestedSandbox: false,
     enableWeakerNetworkIsolation: false,
   }
+}
+
+// ---------------------------------------------------------------------------
+// The read allowlist a denied root would need
+// ---------------------------------------------------------------------------
+
+/**
+ * The system paths a confined process needs, and that are the same everywhere.
+ *
+ * **Measured, not guessed.** Each entry was verified load-bearing the only way
+ * a read allowlist can be: by dropping it from a `denyAllExcept` policy and
+ * watching the agent fail to start. They are constants because a macOS install
+ * puts them in the same place on every machine — `/usr` for the shims and the
+ * shared libraries, `/bin` for the shell srt wraps commands with, `/System` for
+ * the dyld cache and the TLS root certificates, `/Library` for the developer
+ * tools and the system frameworks, `/etc` for the resolver configuration,
+ * `/dev` for the standard streams, `/private/var/db` for the dyld closure and
+ * the timezone database, `/private/var/select` for the `sh` selector.
+ *
+ * Everything *not* on this list is derived from the running process instead —
+ * see {@link readAllowlistFor}. That split is the whole design: the parts that
+ * vary between machines are computed, and only the parts that do not are
+ * written down.
+ */
+export const MEASURED_SYSTEM_READ_PATHS = [
+  '/usr',
+  '/bin',
+  '/System',
+  '/Library',
+  '/etc',
+  '/dev',
+  '/private/var/db',
+  '/private/var/select',
+] as const
+
+/**
+ * The tree an interpreter's runtime hangs off, from the path to its binary.
+ *
+ * `~/.bun/bin/bun` needs `~/.bun`, because the interpreter's own installation —
+ * its cache, its shims, whatever it resolves beside itself — is a sibling of
+ * `bin` rather than inside it. An interpreter that is not in a `bin` directory
+ * keeps its own directory: handing back the parent there would be a wider allow
+ * than anything anybody measured.
+ */
+export function interpreterRoot(execPath: string): string {
+  const bin = dirname(execPath)
+  return basename(bin) === 'bin' ? dirname(bin) : bin
+}
+
+/**
+ * The `node_modules` a resolved module entry was installed into.
+ *
+ * `agentSdkEntry()` answers with a file. What the resolver needs reachable is
+ * the tree that file sits in, because the SDK's own dependencies are its
+ * siblings there — under bun's store that is
+ * `node_modules/.bun/<pkg>@<version>/node_modules`, which is a different
+ * directory from the one the symlink appears in.
+ *
+ * A module outside any `node_modules` falls back to its own directory, which is
+ * the honest answer for a checkout or a vendored copy.
+ */
+export function packageStoreRoot(entry: string): string {
+  const parts = entry.split(sep)
+  const last = parts.lastIndexOf('node_modules')
+  return last === -1 ? dirname(entry) : parts.slice(0, last + 1).join(sep)
+}
+
+/** Does `outer` contain `inner`, either exactly or as an ancestor directory? */
+function covers(outer: string, inner: string): boolean {
+  return outer === inner || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep)
+}
+
+/**
+ * The same set of trees, with nothing said twice.
+ *
+ * An allowlist naming a directory and something inside it permits exactly what
+ * naming the directory permits, and the second entry is one more line a reader
+ * has to check against the deny list for nothing. First occurrence wins, so the
+ * order below is the order a developer reads.
+ */
+function withoutRedundantPaths(paths: readonly string[]): string[] {
+  const kept: string[] = []
+  for (const path of paths) {
+    if (kept.some((already) => covers(already, path))) continue
+    if (paths.some((other) => other !== path && covers(other, path))) continue
+    kept.push(path)
+  }
+  return kept
+}
+
+export interface ReadAllowlistInput {
+  /** The clone the agent works inside. */
+  readonly cloneRoot: string
+  /** Defaults to this process's own interpreter. */
+  readonly execPath?: string
+  /** Defaults to {@link agentSdkEntry}. */
+  readonly sdkEntry?: string
+  /** Defaults to {@link developerToolsBin}; null means this machine has none. */
+  readonly developerToolsBin?: string | null
+  /** Defaults to {@link MEASURED_SYSTEM_READ_PATHS}. */
+  readonly systemPaths?: readonly string[]
+}
+
+/**
+ * Everything a confined process would have to be able to read if reads were
+ * denied by default.
+ *
+ * ## Why this is a function and not a list
+ *
+ * `~/.bun` is the point. This machine's interpreter lives there; another clone
+ * has node under Homebrew, or nvm, or a system package. A hardcoded list would
+ * be right here and produce an `exit 133` with no message on the next machine —
+ * the exact failure shape ticket 03 already paid for once. So the interpreter,
+ * the SDK's install tree and the developer toolchain are derived from the
+ * process that is already running, and only {@link MEASURED_SYSTEM_READ_PATHS}
+ * is written down.
+ *
+ * ## Why nothing calls this from `sandboxPolicyFor`
+ *
+ * Because reads are still allow-by-default, and under that shape adding these
+ * to `allowRead` is a pure weakening:
+ *
+ *   * every path here is *already* readable — `denyRead` is a deny list and
+ *     none of these is on it — so the entries permit nothing new, and
+ *   * `allowRead` beats `denyRead`, so `/usr` hands back the four
+ *     {@link UNREADABLE_BINARIES} and `/Library` hands back
+ *     {@link MACHINE_KEYCHAIN_DIR}, the directory ticket 16 denied after
+ *     dumping 37 generic passwords out of it.
+ *
+ * All cost, no benefit. It becomes correct the moment `denyRead` denies the
+ * root — at which point the denials it re-opens have to be restored some other
+ * way, because that inversion cannot simply add these lines and stop.
+ * `sandbox.test.ts` asserts both halves so the mistake fails there rather than
+ * in a probe with a keychain dump in it.
+ */
+export function readAllowlistFor(input: ReadAllowlistInput): string[] {
+  const tools =
+    input.developerToolsBin === undefined ? developerToolsBin() : input.developerToolsBin
+
+  return withoutRedundantPaths([
+    // The clone first: it is the entry the policy already has, and the one a
+    // developer looks for.
+    input.cloneRoot,
+    interpreterRoot(input.execPath ?? process.execPath),
+    packageStoreRoot(input.sdkEntry ?? agentSdkEntry()),
+    ...(tools === null ? [] : [tools]),
+    ...(input.systemPaths ?? MEASURED_SYSTEM_READ_PATHS),
+  ])
 }
 
 /**
@@ -1071,6 +1229,194 @@ export function ensureSandboxPolicy(input: SandboxPolicyInput): EnsuredSandboxPo
   }
 }
 
+// ---------------------------------------------------------------------------
+// Violations: what the kernel refused, and which refusals are news
+// ---------------------------------------------------------------------------
+
+/**
+ * One kernel deny event, as srt's log monitor reports it.
+ *
+ * `line` is kept alongside the parsed halves because the parse can be wrong —
+ * srt's format is a log line, not an API — and the line is the evidence.
+ */
+export interface SandboxViolation {
+  /** The kernel operation refused, e.g. `file-read-data`. */
+  readonly operation: string
+  /** What it was refused on: a path for a file operation, a name otherwise. */
+  readonly subject: string
+  /** The wrapped command, when srt could decode it from the log tag. */
+  readonly command: string | null
+  /** The whole line, exactly as srt handed it over. */
+  readonly line: string
+}
+
+/**
+ * `cat(28194) deny(1) file-read-data /Users/uptown/.zshrc`
+ *
+ * Measured, not documented: this is the shape srt's callback really produces on
+ * Darwin 25.5 with srt 0.0.67.
+ */
+const VIOLATION_LINE = /^.+?\(\d+\)\s+deny\(\d+\)\s+(\S+)\s*(.*)$/
+
+/** Read one violation line into its halves. Never throws; see `line`. */
+export function parseSandboxViolation(line: string, command?: string): SandboxViolation {
+  const match = VIOLATION_LINE.exec(line)
+  return {
+    // A line nothing can parse is given a subject of the whole line rather than
+    // being dropped, so that a format change downgrades the message instead of
+    // silencing the mechanism.
+    operation: match?.[1] ?? 'unparsed',
+    subject: match?.[2] ?? line,
+    command: command ?? null,
+    line,
+  }
+}
+
+/**
+ * The denials varnick *means* to make, as opposed to the mechanism that makes
+ * them.
+ *
+ * The filesystem root is excluded on purpose, and it is the whole reason this
+ * is a function rather than `policy.filesystem.denyRead`. A deny-by-default
+ * policy denies `/`, which puts every path in the filesystem under a denial —
+ * so a filter asking only "is this path denied?" would go silent at exactly the
+ * moment this monitor becomes the only thing that says why the agent will not
+ * start. What varnick intends to deny is the named list beside the root, and
+ * that list is the same under either shape.
+ */
+function intentionalDenials(policy: SandboxPolicy): string[] {
+  return policy.filesystem.denyRead.filter((path) => path !== sep)
+}
+
+/**
+ * Is this denial news, or is it the fence doing its job?
+ *
+ * Three things are deliberately silent, because a channel that speaks on every
+ * launch is a channel nobody reads by the time it matters:
+ *
+ *   * **anything that is not a read.** `sysctl-read kern.iossupportversion` is
+ *     denied twice for *every* command run under the policy — once for the
+ *     wrapping shell and once for the command — which measured out at two lines
+ *     of noise per command before anything has gone wrong. `network-outbound`
+ *     to an unlisted host and `appleevent-send` are what `strictAllowlist` and
+ *     `allowAppleEvents: false` are for. None of them is a missing read.
+ *   * **a read under a path varnick meant to deny.** `$HOME`, `/Users`,
+ *     `/Library/Keychains` and the four binaries. The agent reaching for those
+ *     and being refused is the product working.
+ *   * nothing else. A read of a path on neither list is the failure this exists
+ *     for: an allowlist that is nearly right, failing as a startup error with
+ *     no obvious cause.
+ */
+export function isUnexpectedViolation(policy: SandboxPolicy, violation: SandboxViolation): boolean {
+  if (violation.operation === 'unparsed') return violation.line.includes('file-read')
+  if (!violation.operation.startsWith('file-read')) return false
+  if (!violation.subject.startsWith(sep)) return false
+  return !intentionalDenials(policy).some((denied) => covers(denied, violation.subject))
+}
+
+/**
+ * What a developer is told about one violation.
+ *
+ * Names the path, because the path is the fix. Names the command, because a
+ * denial with no command is unattributable and srt decodes one whenever the log
+ * carried the tag. And names the file to edit, because the policy lives in the
+ * clone and the whole point of this message is that the alternative is `exit
+ * 133` with nothing after it.
+ */
+export function describeSandboxViolation(violation: SandboxViolation): string {
+  const lines = [
+    'varnick: the kernel refused a read the Sandbox policy did not mean to deny.',
+    `    ${violation.operation}  ${violation.subject}`,
+  ]
+  if (violation.command !== null) lines.push(`    while running: ${violation.command}`)
+  lines.push(
+    `  Nothing in ${SANDBOX_POLICY_FILENAME} names that path, so this is a gap in the read`,
+    '  allowlist rather than the boundary holding. A process that dies on one of these',
+    '  exits 133 and says nothing else, which is why this line exists.',
+  )
+  return lines.join('\n')
+}
+
+export interface SandboxViolationWatch {
+  /** Stop watching. Idempotent. */
+  stop(): void
+  /** Everything the kernel refused, unfiltered — what the probes measure. */
+  seen(): readonly SandboxViolation[]
+}
+
+export interface SandboxViolationWatchInput {
+  /** The policy in force, which decides which denials are deliberate. */
+  readonly policy: SandboxPolicy
+  /**
+   * Where an unexpected denial is said out loud.
+   *
+   * Defaults to `console.warn` — stderr, which `src-tauri/src/bridge.rs`
+   * inherits, so it lands in varnick's own output. The same channel and the
+   * same reason as the policy report above it: the alternative is a file nobody
+   * opened, and this message is about a process that has already failed.
+   */
+  readonly report?: (text: string, violation: SandboxViolation) => void
+}
+
+/**
+ * Watch the kernel for denials the policy did not mean to make.
+ *
+ * `srt` has watched for these all along and varnick never listened, which is
+ * why a missing allowlist entry has been `exit 133` and nothing else.
+ *
+ * Each distinct operation-and-path is reported once per process. A build loop
+ * hitting the same missing entry a hundred times has one thing wrong with it,
+ * and saying so a hundred times is how a developer learns to scroll past it.
+ *
+ * macOS only, because srt's monitor is: it reads `log stream`. On any other
+ * platform this is a no-op that still answers `seen()` with an empty list,
+ * rather than a branch a caller has to know about.
+ */
+export function watchSandboxViolations(input: SandboxViolationWatchInput): SandboxViolationWatch {
+  const seen: SandboxViolation[] = []
+  const said = new Set<string>()
+  const report = input.report ?? ((text: string) => console.warn(text))
+
+  if (process.platform !== 'darwin') {
+    return { stop: () => undefined, seen: () => seen }
+  }
+
+  const stopMonitor = startMacOSSandboxLogMonitor((event) => {
+    const violation = parseSandboxViolation(event.line, event.command)
+    seen.push(violation)
+    if (!isUnexpectedViolation(input.policy, violation)) return
+    const key = `${violation.operation} ${violation.subject}`
+    if (said.has(key)) return
+    said.add(key)
+    report(describeSandboxViolation(violation), violation)
+  })
+
+  let stopped = false
+  return {
+    stop: () => {
+      if (stopped) return
+      stopped = true
+      stopMonitor()
+    },
+    seen: () => seen,
+  }
+}
+
+/**
+ * The watch this process is holding, if any.
+ *
+ * One per process, like the Sandbox itself: srt's monitor spawns a `log stream`
+ * child, and a suite that establishes six Sandboxes would otherwise leave six
+ * of them running. `releaseSandbox` stops it, which is the same teardown
+ * everything else in this module already goes through.
+ */
+let watching: SandboxViolationWatch | null = null
+
+/** Everything the kernel refused since the Sandbox was established. */
+export function sandboxViolations(): readonly SandboxViolation[] {
+  return watching?.seen() ?? []
+}
+
 /**
  * A command, wrapped so that running it runs it under the policy.
  *
@@ -1162,6 +1508,13 @@ export async function establishSandbox(
   // question; without one, and with strictAllowlist, it stays a denial.
   await SandboxManager.initialize(validated)
 
+  // Started after the kernel restrictions are real, and only then: a monitor
+  // watching for denials under a Sandbox that failed to establish would be
+  // watching for events that cannot happen. Silent when the policy is right —
+  // see isUnexpectedViolation for what it declines to say.
+  watching?.stop()
+  watching = watchSandboxViolations({ policy })
+
   return {
     policy,
     path,
@@ -1179,7 +1532,16 @@ export async function establishSandbox(
   }
 }
 
-/** Tear the sandbox down — proxies, and on Windows the filesystem ACEs. */
+/**
+ * Tear the sandbox down — proxies, the violation monitor, and on Windows the
+ * filesystem ACEs.
+ *
+ * The monitor goes first and unconditionally: it is a `log stream` child
+ * process, and leaving one behind because `reset()` threw would leak a process
+ * per attempt for the life of the run.
+ */
 export async function releaseSandbox(): Promise<void> {
+  watching?.stop()
+  watching = null
   await SandboxManager.reset()
 }

@@ -173,6 +173,13 @@ working boundary report the same green.
   true until it was measured: the keychain deny above shipped, and its own probe
   then failed on the repository that shipped it, because the policy in force was
   the one generated an hour earlier. See below.
+- varnick watches the kernel's own deny log and prints a denial the policy did
+  not mean to make, on stderr, once per distinct path. On a correct policy you
+  see nothing: one `cat` produces three kernel denials, two of which are a
+  `sysctl-read` that *every* wrapped command trips and one of which is the home
+  directory being refused on purpose, and none of the three is worth a line. The
+  case it exists for is the other one — a read of a path nothing denied
+  deliberately, which is otherwise `exit 133` and no message at all.
 
 **Not measured, and named rather than assumed:**
 

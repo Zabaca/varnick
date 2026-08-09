@@ -161,9 +161,28 @@ The control is the point: the same read is refused under `$HOME`, so this is abo
 
 **Whether reads should be deny-by-default at all is open, and is a decision rather than an implementation.** `srt`'s filesystem config accepts a `denyAllExcept` shape; inverting the boundary is strictly stronger and would have made three of this project's four wrong turns impossible to make. The cost is that an interpreter, its standard library, `git`, the system libraries every process links, and the CA bundle all have to be reachable and are not in one place, and an allowlist that is nearly right fails as a startup error with no obvious cause. Ticket 18 holds the trade-off and stays `needs-info` until someone weighs it; a deny-by-default policy that has not started an agent would not be evidence of anything.
 
+### Two things the inversion needs first, and they are in
+
+Both are prerequisites rather than the inversion, and neither changes what the Sandbox permits today.
+
+**varnick now hears the kernel.** `srt` has watched the deny log all along — `startMacOSSandboxLogMonitor`, which nothing here called — so a missing allowlist entry was `exit 133` and nothing else. `establishSandbox` starts the monitor once the restrictions are real and prints an unexpected denial to stderr, the same channel and the same reason as the policy report beside it: `src-tauri/src/bridge.rs` inherits it, and the alternative is a file nobody opened. A correct policy prints nothing, which took a filter, because the noise floor is not zero:
+
+```
+one command run under the policy   3 denials
+  sysctl-read kern.iossupportversion   2   (the wrapping shell, and the command)
+  file-read-data  ~/.zshrc              1   (the fence working)
+  reported to the developer             0
+```
+
+Silent are: anything that is not a read — `sysctl-read` twice per command, `network-outbound` under `strictAllowlist`, `appleevent-send` under `allowAppleEvents: false` — and any read under a path `denyRead` *names*. The filesystem root is deliberately not one of those names, which is the part written for the inversion: `denyRead: ['/']` puts every path under a denial, and a filter asking only "is this denied?" would go quiet at exactly the moment it becomes the only thing saying why the agent will not start. Probe 10 measures both halves, with the same real denial classified against a policy that never denied `$HOME` as the control.
+
+**And the read allowlist is computed rather than written down.** `readAllowlistFor` in `packages/harness/src/sandbox.ts` derives the interpreter's install root from `process.execPath`, the SDK's tree from `agentSdkEntry()`, and the developer toolchain from `developerToolsBin()` — `git` on macOS lives under Xcode or under the Command Line Tools, and those are different trees. `~/.bun` is the whole argument: this machine's interpreter is there, the next machine's is under Homebrew or nvm, and a constant would be right here and `exit 133` there. Only `MEASURED_SYSTEM_READ_PATHS` — `/usr`, `/bin`, `/System`, `/Library`, `/etc`, `/dev`, `/private/var/db`, `/private/var/select` — stays a constant, and each was verified load-bearing by dropping it and watching the agent fail.
+
+**It is deliberately not in the policy, and that is the load-bearing judgement.** Under allow-by-default reads it is a pure weakening: every path on it is already readable, so it permits nothing new, while `allowRead` beats `denyRead` — `/usr` hands back all four `UNREADABLE_BINARIES` and `/Library` hands back `/Library/Keychains`, the directory the second correction denied after dumping 37 generic passwords out of it. All cost, no benefit. `sandbox.test.ts` asserts exactly that overlap, so wiring the list in fails there with the reason rather than in a probe with a keychain dump. The inversion cannot be "add these lines": it has to restore those denials some other way in the same change.
+
 ## What the probes measure, and what they do not
 
-`containment.probe.test.ts` is ticket 04. Nine probes and one variant, each with a positive control beside it, run against the real policy on the real machine. The list is written from the suite's printed output, because the previous version of it was written from memory and named five:
+`containment.probe.test.ts` is ticket 04. Ten probes and one variant, each with a positive control beside it, run against the real policy on the real machine. The list is written from the suite's printed output, because the previous version of it was written from memory and named five:
 
 1. one file under `$HOME`, asked for four ways — `Bash`, and the `Read`, `Grep` and `Glob` *shapes* run in-process inside the real agent entry. All four denied; all four permitted against the same file inside the clone.
 2. every `UNREADABLE_BINARIES` entry, read and executed, with the same command run unconfined as the control.
@@ -175,6 +194,7 @@ The control is the point: the same read is refused under `$HOME`, so this is abo
 7. a git repository outside every home directory: readable, and refused a write.
 8. `/Users` and `/Users/Shared` — the root above every home directory, and a path under it that is under no home directory.
 9. Apple Events and Launch Services: an event only a running application can answer is refused, and so is `open`.
+10. the violation monitor: the kernel's denials reach varnick, and none of them is said out loud while the policy is correct — with the same real denial, classified against a policy that never denied `$HOME`, as the control that proves the channel is not simply dead.
 
 Probe 6 is the only one needing a credential, and it skips with a printed reason without one. That is a real gap and it is named here rather than papered over: probe 1 runs the syscalls those tools make, in the agent process, under the same kernel policy and inside the same process tree — which is why it is the load-bearing measurement and probe 6 is confirmation. There is deliberately no faked substitute, because the Sandbox denies local binding and every unlisted host, so a stub API is unreachable from inside and widening the policy to reach one would be widening the policy to make a probe pass.
 

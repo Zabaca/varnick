@@ -140,6 +140,61 @@ export function agentSdkEntry(): string {
   return fileURLToPath(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))
 }
 
+/**
+ * Where the developer toolchain's own binaries live, newest choice first.
+ *
+ * `/usr/bin/git` on macOS is a shim: it hands over to whichever developer
+ * directory `xcode-select` has active, and the real `git` — along with `clang`,
+ * `make` and the rest — lives under one of these two. Which one depends on
+ * whether Xcode is installed, and they are not in the same tree, so a policy
+ * that named a path here would be right on one machine and wrong on the next.
+ *
+ * The Command Line Tools directory is first because that is what a plain
+ * `xcode-select --install` selects, and because it is the narrower of the two.
+ *
+ * Measured under a policy that denies reads by default, which is what this is
+ * for. The shim reads the symlink `/var/select/developer_dir` to find the real
+ * binary, and that link is in the denied root:
+ *
+ * ```
+ * /usr/bin/git --version              exit 1  xcode-select: unable to read data link
+ * <toolchain>/usr/bin/git --version   exit 0  git version 2.50.1 (Apple Git-155)
+ * git --version, toolchain on PATH    exit 0  git version 2.50.1 (Apple Git-155)
+ * ```
+ *
+ * The denial is of *traversing* the link, so allowing its target does not fix
+ * it — `/private/var`, `/private/var/select` and the toolchain directory were
+ * each tried and each failed identically.
+ */
+export const DEVELOPER_TOOLS_CANDIDATES = [
+  '/Library/Developer/CommandLineTools/usr/bin',
+  '/Applications/Xcode.app/Contents/Developer/usr/bin',
+] as const
+
+/**
+ * The active developer toolchain's `bin`, or null when this machine has none.
+ *
+ * Probed rather than resolved by running `xcode-select -p`. This is called from
+ * the Sandbox policy generator, and a generator that spawns a process to decide
+ * what a policy says is a generator that cannot be run twice cheaply, cannot be
+ * tested without the toolchain installed, and fails in a new way when the spawn
+ * does. The answer is a directory either way.
+ *
+ * Null is not an error. It is a machine where the agent cannot run `git`, which
+ * is a problem the agent reports the first time it tries — unlike a policy that
+ * silently omits the path, which is `exit 133`.
+ *
+ * `exists` is injected so the tests can ask about a machine that is not this
+ * one; nothing else passes it.
+ */
+export function developerToolsBin(exists: (path: string) => boolean = existsSync): string | null {
+  // For `git` inside the candidate, not for the candidate. A toolchain
+  // directory that exists without git in it shadows nothing while claiming to
+  // fix this, and the whole point of putting it on PATH is to get past
+  // /usr/bin/git.
+  return DEVELOPER_TOOLS_CANDIDATES.find((bin) => exists(join(bin, 'git'))) ?? null
+}
+
 export interface AgentCommandInput {
   /** The clone the agent works inside — the one tree the policy reads back. */
   readonly cloneRoot: string
@@ -272,43 +327,7 @@ export interface AgentEnvironmentInput {
   readonly toolsBin?: string | null
 }
 
-/**
- * Where the real `git` is, as opposed to where `git` appears to be.
- *
- * `/usr/bin/git` on macOS is not git. It is an `xcode-select` shim that finds
- * the real binary by reading the symlink `/var/select/developer_dir`, and that
- * link lives in a directory the Sandbox denies. Measured under a policy that
- * denies reads by default:
- *
- * ```
- * /usr/bin/git --version                            exit 1  xcode-select: unable to read data link
- * <toolchain>/usr/bin/git --version                 exit 0  git version 2.50.1 (Apple Git-155)
- * ```
- *
- * The denial is of *traversing* the link, so allowing its target does not fix
- * it — `/private/var`, `/private/var/select` and the toolchain directory were
- * each tried and each failed. Putting the real binary ahead of the shim on
- * `PATH` does, and costs the boundary nothing.
- *
- * **This matters under the shipped policy too, which is why it is not filed
- * with the deny-by-default work.** Reads are currently allow-by-default, so the
- * shim resolves and `git` works — but only because nothing denies the link. An
- * agent's `git` should not depend on the read boundary being the permissive
- * one; ticket 18 may invert it, and this is one thing that then does not break.
- *
- * Both locations are checked because a machine with full Xcode has neither the
- * Command Line Tools path nor a guarantee about ordering. `null` means neither
- * exists, and `PATH` is left exactly as it was — a machine with no toolchain
- * had no working `git` to lose.
- */
-export const DEVELOPER_TOOLCHAIN_BINS = [
-  '/Library/Developer/CommandLineTools/usr/bin',
-  '/Applications/Xcode.app/Contents/Developer/usr/bin',
-] as const
 
-export function developerToolsBin(exists: (path: string) => boolean): string | null {
-  return DEVELOPER_TOOLCHAIN_BINS.find((bin) => exists(join(bin, 'git'))) ?? null
-}
 
 /**
  * The environment the Claude Code process runs with.
