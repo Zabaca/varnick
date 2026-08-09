@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-09T04:00:00Z",
+  "generatedAt": "2026-08-09T20:20:26Z",
   "title": "Design System: varnick",
   "extensions": {
     "colorMeta": {
@@ -216,9 +216,9 @@
       "name": "Inline action",
       "kind": "button",
       "refersTo": "action-inline",
-      "description": "The dominant control in the product, and it is a word. Rendered only when the machine accepts the event.",
-      "html": "<span class=\"ds-problem\"><span aria-hidden=\"true\">\u2717 </span>The sandbox could not be established. <button class=\"ds-action\">try again</button></span>",
-      "css": ".ds-problem { color: var(--bad, #f7768e); font: 400 13px/1.6 ui-monospace, 'SF Mono', Menlo, monospace; } .ds-action { background: none; border: 0; padding: 0; font: inherit; color: var(--accent, #7dcfff); cursor: pointer; text-underline-offset: 3px; } .ds-action:hover { text-decoration: underline; } .ds-action:focus-visible { outline: 1px solid var(--accent, #7dcfff); outline-offset: 2px; }"
+      "description": "The dominant control in the product, and it is a word. Bare text in accent, no border, no background, no padding, sitting inside the sentence that explains why it exists. Presence is the state: it is rendered because snapshot.can() accepted the event, so there is no disabled treatment to design.",
+      "html": "<span class=\"ds-sentence\">The agent stopped — the process exited. <button class=\"ds-action\">restart</button></span>",
+      "css": ".ds-sentence { color: var(--fg, #c0caf5); font: 400 13px/1.6 ui-monospace, 'SF Mono', Menlo, monospace; } .ds-action { background: none; border: 0; padding: 0; font: inherit; color: var(--accent, #7dcfff); cursor: pointer; text-underline-offset: 3px; } .ds-action:hover { text-decoration: underline; } .ds-action:focus-visible { outline: 1px solid var(--accent, #7dcfff); outline-offset: 2px; }"
     },
     {
       "name": "Choice button",
@@ -245,20 +245,28 @@
       "css": ".ds-panel { padding: 12px; border: 1px solid var(--rule, #2c2e40); border-radius: 0; background: var(--ground-raised, #1f2030); color: var(--fg-dim, #8b8fa3); font: 400 13px/1.6 ui-monospace, 'SF Mono', Menlo, monospace; }"
     },
     {
+      "name": "Problem line",
+      "kind": "custom",
+      "refersTo": "action-inline",
+      "description": "The product's way of saying something did not happen: a mark in bad, the sentence, then an inline action if there is one thing to do about it. Never present without either a next action or an explanation of why there is none.",
+      "html": "<span class=\"ds-problem\"><span aria-hidden=\"true\">✗ </span>The sandbox could not be established. The agent will not run unconfined. <button class=\"ds-action\">try again</button></span>",
+      "css": ".ds-problem { color: var(--bad, #f7768e); font: 400 13px/1.6 ui-monospace, 'SF Mono', Menlo, monospace; } .ds-action { background: none; border: 0; padding: 0; font: inherit; color: var(--accent, #7dcfff); cursor: pointer; text-underline-offset: 3px; } .ds-action:hover { text-decoration: underline; } .ds-action:focus-visible { outline: 1px solid var(--accent, #7dcfff); outline-offset: 2px; }"
+    },
+    {
       "name": "Seeded admission",
       "kind": "custom",
       "refersTo": "admission",
       "description": "The one component whose job is to reduce trust in what is beside it. Gates on the run being seeded and on nothing else.",
-      "html": "<button class=\"ds-admission\">seeded data \u2014 nothing here is measured</button>",
+      "html": "<button class=\"ds-admission\">seeded data — nothing here is measured</button>",
       "css": ".ds-admission { background: none; border: 0; padding: 0; font: 400 13px/1.6 ui-monospace, 'SF Mono', Menlo, monospace; color: var(--warn, #e0af68); cursor: pointer; } .ds-admission:focus-visible { outline: 1px solid var(--accent, #7dcfff); outline-offset: 2px; }"
     }
   ],
   "narrative": {
     "northStar": "The Instrument Panel",
-    "overview": "A terminal that grew a housing. The transcript at the centre is a faithful Claude Code session, and everything varnick draws around it is instrumentation. The housing never competes with the instrument it houses.\n\nThe surface is monospace throughout, flat throughout, and square throughout. Not minimalism as taste \u2014 a panel is legible because nothing on it is styled for attention. Depth is carried by two greys in the way a recessed bezel is darker than the face around it, and there is no motion anywhere, because motion in a transcript reads as something happening.\n\nThe palette was not chosen. It was read off the transcript components so the application and the session it holds are one surface rather than two.",
+    "overview": "A terminal that grew a housing. The transcript at the centre is a faithful Claude Code session — the same messages, tool calls and composer a developer already recognises — and everything varnick draws around it is instrumentation: a strip that reports what the machines think, a setup screen for the one thing that must be supplied, a panel for whatever the developer built. The housing never competes with the instrument it houses.\n\nThis is why the surface is monospace throughout, flat throughout, and square throughout. Not minimalism as taste — a panel is legible because nothing on it is styled for attention. Depth is carried by two greys, `ground` and `ground-raised`, in the way a recessed bezel is darker than the face around it. There is no motion anywhere in the product, because motion in a transcript reads as something happening, and the only things happening are the ones the machines report.\n\nThe palette was not chosen. It was read off the transcript components so the application and the session it holds are one surface rather than two, and that provenance is a constraint rather than a fact about the past — see The Inherited Palette Rule. What the product refuses is equally load-bearing: it is not a dashboard of invented numbers, and it is not themeable.",
     "keyCharacteristics": [
       "Monospace only; 13px ceiling with two quieter steps for chrome",
-      "No shadows, no motion, no radius \u2014 depth is tonal, state is textual",
+      "No shadows, no motion, no radius — depth is tonal, state is textual",
       "Colour is semantic and rare; most of the screen is three greys",
       "Controls are text, and exist only when the machine accepts the event",
       "Full-width shell; only prose is capped, at 110ch"
@@ -276,7 +284,7 @@
       },
       {
         "name": "The Quiet Chrome Rule",
-        "body": "13px is the ceiling and the transcript owns it. Anything varnick draws around the conversation steps down \u2014 12px for panel furniture, 11.5px for reporting rows \u2014 and nothing steps up. #/states is the named exception: 15px title, 11px timestamps, on a coverage surface the product does not present.",
+        "body": "13px is the ceiling and the transcript owns it. Anything varnick draws around the conversation steps down — 12px for panel furniture, 11.5px for reporting rows — and nothing steps up. #/states is the named exception: 15px title, 11px timestamps, on a coverage surface the product does not present.",
         "section": "typography"
       },
       {
@@ -301,18 +309,18 @@
       }
     ],
     "dos": [
-      "Do take every new colour from the transcript components. If it is not already in the session, it is not in the product.",
-      "Do express hierarchy with colour and position, keeping 13px as the ceiling and stepping down for chrome.",
-      "Do render a control only when the machine accepts the event, and let its presence be the affordance \u2014 no disabled states to style.",
-      "Do cap prose at 110ch per block, and let tool output, diffs and paths run full width.",
-      "Do carry depth with ground-raised plus a 1px rule border, and nothing else.",
+      "Do take every new colour from the transcript components. If it is not already in the session, it is not in the product (The Inherited Palette Rule).",
+      "Do express hierarchy with colour and position, keeping 13px as the ceiling and stepping down for chrome (The Quiet Chrome Rule).",
+      "Do render a control only when the machine accepts the event, and let its presence be the affordance — no disabled states to style.",
+      "Do cap prose at 110ch per block, and let tool output, diffs and paths run full width (The Wide Measure Rule).",
+      "Do carry depth with ground-raised plus a 1px rule border, and nothing else (The Tonal Depth Rule).",
       "Do apply [data-numeric] to any figure that updates in place, so it does not jitter."
     ],
     "donts": [
-      "Don't add box-shadow, a transition, an animation or an easing token.",
-      "Don't add border-radius to anything varnick draws.",
-      "Don't show a number the product did not measure \u2014 no status pills, health dots, sparklines or usage figures without a live reading behind them.",
-      "Don't add a light mode, a theme switcher or a configurable palette.",
+      "Don't add box-shadow, a transition, an animation or an easing token. Nothing moves that the machines did not move (The Still Surface Rule).",
+      "Don't add border-radius to anything varnick draws (The Square Corner Rule).",
+      "Don't show a number the product did not measure — no status pills, health dots, sparklines or usage figures without a live reading behind them. A strip that could never populate was cut for exactly this.",
+      "Don't add a light mode, a theme switcher or a configurable palette. One world, inherited from the transcript; a clone that wants another edits the tokens.",
       "Don't introduce a second font family, and don't add a size above 13px to anything the product presents.",
       "Don't style varnick's chrome louder than the transcript it surrounds."
     ]
