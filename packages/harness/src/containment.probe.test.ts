@@ -14,6 +14,13 @@ import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { CREDENTIAL_ENV_VAR_NAMES, SELFTEST_MARKER, agentCommand } from './agent.ts'
 import {
+  PROBE_ATTESTATION_FILENAME,
+  probeAttestationPath,
+  readProbeAttestation,
+  recordSdkToolProbeCompletion,
+  sdkToolProbeStanding,
+} from './probe-attestation.ts'
+import {
   UNREADABLE_BINARIES,
   DEFAULT_ALLOWED_HOSTS,
   claudeScratchDirFor,
@@ -52,6 +59,23 @@ import {
      the network, or a missing credential make a probe unrunnable. A red suite
      everyone learns to ignore is worse than a skipped one, but a silent skip is
      worse than both, so every skip prints why.
+
+     That rule is right and it was not enough — ticket 26. Probe 6 needs a
+     credential, skipped from the day it was written, and printed its reason on
+     every single run; behind it sat a real defect (ticket 27) and a fictional
+     one that cost most of a day. A printed reason answers "why is this skipped
+     today", and nobody was ever asking that. The question nobody could ask was
+     "has this ever run at all", because a skip taken this morning and a skip
+     taken every morning since the file was written look identical.
+
+     So the skip now carries a fourth thing. `probe-attestation.json` is a
+     committed record of the last end-to-end completion, written by the probe
+     itself and by nothing else, and the standing test below reports it whether
+     it skips or not. A machine's inability to measure stays a skip; the
+     repository's never having measured is a fact in the repository. And the
+     failing half moved to where it belongs — `bun run probe` (probe-cli.ts)
+     has no skip in it, fails when it cannot measure, and is what a maintainer
+     runs before quoting the README's *Where confinement stops*.
 
   This file never touches the developer's keychain. It creates no keychain, adds
   no item, and changes no search list; the login-Keychain assertion lives in
@@ -720,6 +744,18 @@ const toolProbeBlocked =
     ? null
     : `no ${CREDENTIAL_VARIABLES} in the environment, so no Session can be opened`)
 
+/**
+ * Whether *this* run got probe 6 all the way through.
+ *
+ * Set at the probe's last line and read by the standing test at the bottom of
+ * the file. It is not the same question as the suite's exit code: probe 6 has a
+ * legitimate bail-out — a Session that never authenticated produces the same
+ * empty shape as one whose every tool was denied, so it reports and returns
+ * rather than asserting a denial nobody observed — and that path exits green
+ * having measured nothing. This flag is what tells the two apart.
+ */
+let sdkToolProbeCompleted = false
+
 test.skipIf(toolProbeBlocked !== null)(
   "the Agent SDK's own Read, Grep and Glob tools are denied the same file",
   async () => {
@@ -789,6 +825,41 @@ test.skipIf(toolProbeBlocked !== null)(
     expect(answers.grep).toBe('denied')
     expect(answers.glob).toBe('denied')
     expect(probe.stdout).not.toContain(SELFTEST_MARKER)
+
+    /*
+      And the record — ticket 26, and the last line of the probe on purpose.
+
+      Everything above has passed, so this is the one place in the project that
+      can say the SDK's own tools were measured. It writes the date, the commit
+      and the six verdicts into `probe-attestation.json`, which is committed, is
+      under the tree the sandbox policy denies the agent, and is the only thing
+      that distinguishes "skipped this morning" from "never once run since the
+      probe was written". A printed reason could not, and that is what let this
+      probe hide two defects for the life of the project.
+
+      Recorded rather than asserted against: a run that gets here has measured
+      the boundary, and refusing to write that down because the previous record
+      was old would be the tail wagging the dog.
+    */
+    sdkToolProbeCompleted = true
+    // Every one of these is asserted above, so the fallback is unreachable. It
+    // is here rather than a cast because a record that quietly lost a key would
+    // be a record that says less than it looks like it says.
+    const verdict = (key: string): string => answers[key] ?? '(absent from the probe output)'
+    const wrote = recordSdkToolProbeCompletion({
+      read: verdict('read'),
+      grep: verdict('grep'),
+      glob: verdict('glob'),
+      readControl: verdict('readControl'),
+      grepControl: verdict('grepControl'),
+      globControl: verdict('globControl'),
+      session: verdict('session'),
+    })
+    console.log(
+      wrote
+        ? `probe 6 completed and updated ${probeAttestationPath()} — commit that change, it is the evidence.`
+        : `probe 6 completed; ${PROBE_ATTESTATION_FILENAME} already said so for today at this commit.`,
+    )
   },
   600_000,
 )
@@ -1106,10 +1177,90 @@ test.skipIf(blocked !== null)(
   120_000,
 )
 
-if (blocked) {
-  console.log(`containment probes skipped — ${blocked}`)
-} else if (toolProbeBlocked) {
-  console.log(
-    `containment probe 6 skipped — ${toolProbeBlocked}. Every other probe ran; probe 1 is what covers Read, Grep and Glob without one. To run this last one, export ${CREDENTIAL_VARIABLES} and re-run this file.`,
-  )
-}
+// ---------------------------------------------------------------------------
+// 11. The standing of the one probe a machine can be unable to run
+// ---------------------------------------------------------------------------
+
+/*
+  Ticket 26's surviving box, and the only test in this file that never skips.
+
+  It runs on Linux, on a fresh clone, on CI, with no credential and no kernel
+  support — because what it checks is not a boundary. It checks the *record* of
+  whether the boundary's last unmeasured corner has ever been measured, and that
+  record is a property of the repository rather than of the machine reading it.
+  A fresh clone inherits whatever the last maintainer's run committed.
+
+  Its name carries the verdict, and that was measured before it was relied on:
+  Bun's default reporter prints *nothing* for a passing or skipped test, so the
+  name is visible under `--reporter=junit`, in an IDE, and in `bun test
+  --verbose`, and nowhere else. It is written this way because a name is free and
+  costs nothing when unread; the banner below and the committed record are what
+  carry this when the reporter is quiet.
+
+  Last in the file so that it runs after probe 6 and can see whether this run
+  completed it.
+*/
+test(`probe 6, the one probe a machine can be unable to run — on record: ${sdkToolProbeStanding().headline}`, () => {
+  // Throws if the record is missing or malformed, which is a red everywhere and
+  // should be: losing the record is louder than anything it could have said.
+  const attestation = readProbeAttestation()
+  expect(attestation.sdkTools.probe).toContain('probe 6')
+
+  /*
+    The one assertion here that can fail, and note who it can fail for: a
+    machine that supports the Sandbox *and* has a credential exported — which
+    is to say, somebody who asked for the measurement. A fresh clone, CI, and a
+    machine with no credential all have `toolProbeBlocked` set and never reach
+    it, so this cannot produce the red-suite-everyone-ignores the header warns
+    about.
+
+    What it catches is the hole under the skip: probe 6 exiting green having
+    measured nothing. It returns early when the Session did not end `ok`, which
+    is the right call — a refused credential and a contained agent produce the
+    identical empty answer — but until now that early return was indistinguishable
+    from a pass, and this is the second time in this file that two different
+    things looked the same and the wrong one was believed.
+  */
+  if (toolProbeBlocked === null) {
+    expect(sdkToolProbeCompleted).toBe(true)
+  }
+})
+
+/*
+  The banner, and where it prints is half of what ticket 26 is about.
+
+  It used to be a bare `if (blocked) console.log(...)` at the bottom of the file,
+  which reads as "at the end" and is not: Bun *evaluates* the module before
+  running anything in it, so that line went out before probe 1 and was then
+  pushed off the screen by ten report blocks. It said the right thing in the one
+  place in the output nobody arrives at. It said it on every run for the life of
+  the project and it is not on record that anyone read it.
+
+  An `afterAll` is as late as this file can reach. Bun's default reporter prints
+  nothing for a passing or a skipped test — no names, only console output and the
+  final counts — so there is no such thing as a loud skip in the summary, and
+  the last console output before it is the loudest position available. Registered
+  after the cleanup hook above so it prints once the probes are done.
+
+  Honest about what that buys. Today it does land as the last output before the
+  counts, because this is the last of the fourteen files to print anything — but
+  that is Bun's file order and not a promise, and one new talkative test file
+  would put it back in the middle. It is a better position, not a solved problem,
+  which is why the durable half of this ticket is a committed file and a command
+  that fails rather than a nicer message.
+*/
+afterAll(() => {
+  const lines: string[] = []
+  if (blocked) lines.push(`containment probes skipped — ${blocked}`)
+  else if (toolProbeBlocked) {
+    lines.push(
+      `containment probe 6 skipped — ${toolProbeBlocked}. Every other probe ran; probe 1 is what covers Read, Grep and Glob without one.`,
+    )
+  }
+  try {
+    lines.push(sdkToolProbeStanding().banner)
+  } catch (error) {
+    lines.push(`${PROBE_ATTESTATION_FILENAME} could not be read: ${String(error)}`)
+  }
+  console.log(`\n${lines.join('\n')}\n`)
+})
