@@ -31,6 +31,15 @@ import {
   signatureFor,
   completionFor,
 } from '../src/domain.ts'
+import {
+  DEFAULT_DEV_PORT,
+  DEV_URL_ENV_VAR,
+  chosenDevPort,
+  devLaunch,
+  devUrlFor,
+  hotUpdateVerdict,
+  portToBind,
+} from '../dev-server.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
 import { describeSecretsForAgent, openSecretsStore } from '@varnick/harness/secrets'
@@ -3512,6 +3521,219 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
       !/^#+\s.*\bstates?\b/im.test(text.replace(/#\/states/g, 'the states page')),
     )
   }
+}
+
+// ---------------------------------------------------------------------------
+// The dev server — a Core change reloads, a Userspace change hot-swaps
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    ADR-0005 required an explicit restart after a Core merge, because
+    hot-swapping the module that owns the Session remounts the machine holding
+    the conversation that asked for the change. That was a rule someone had to
+    remember. ADR-0014 makes it mechanical.
+
+    The decision is a pure function over a path precisely so it can be asserted
+    here — no dev server, no browser, no window. What Vite does with the verdict
+    is one line in `vite.config.ts`; what the verdict *is* is the part that can
+    be got wrong quietly, because both mistakes look like nothing happening.
+
+    A full reload is safe and a hot swap is not: the Session is durable
+    host-side and resumes from the mirror (ADR-0009), so a reload costs a moment
+    and loses nothing.
+  */
+  const clone = '/Users/someone/varnick'
+
+  check(
+    'a Core source file reloads the window',
+    hotUpdateVerdict(`${clone}/packages/core/src/machines/session.ts`, clone) === 'reload',
+  )
+  check(
+    'so does a Core file that is not source — the rule is the path, not the extension',
+    hotUpdateVerdict(`${clone}/packages/core/index.html`, clone) === 'reload',
+  )
+
+  // The product's main loop: ask for a Surface and it appears, without the
+  // window blinking. If this one ever says `reload`, the change meant to
+  // protect the conversation has broken the thing it was protecting.
+  check(
+    'a Userspace Surface still hot-swaps',
+    hotUpdateVerdict(`${clone}/packages/userspace/surfaces/runs/index.tsx`, clone) === 'hot-swap',
+  )
+  check(
+    'and so does a Userspace file whose own path contains packages/core',
+    hotUpdateVerdict(`${clone}/packages/userspace/packages/core/thing.ts`, clone) === 'hot-swap',
+  )
+
+  // Prefix matching on the string would take this one, and it is a different
+  // package.
+  check(
+    'a sibling package whose name starts with core is not Core',
+    hotUpdateVerdict(`${clone}/packages/core-tools/src/main.ts`, clone) === 'hot-swap',
+  )
+
+  // ADR-0014: Core is authored in a Worktree, and a Preview runs from one. Its
+  // Core is Core — the rule is relative to the root that is running, which is
+  // the only reason it can be stated as one rule at all.
+  const worktree = `${clone}/.claude/worktrees/agent-1`
+  check(
+    "a Worktree's Core reloads the Preview running from it",
+    hotUpdateVerdict(`${worktree}/packages/core/src/app.tsx`, worktree) === 'reload',
+  )
+  check(
+    "and the live tree's rule does not reach into a Worktree",
+    hotUpdateVerdict(`${worktree}/packages/core/src/app.tsx`, clone) === 'hot-swap',
+  )
+
+  check(
+    'a path outside the clone altogether decides nothing',
+    hotUpdateVerdict('/tmp/somewhere/packages/core/x.ts', clone) === 'hot-swap',
+  )
+  check(
+    'and neither does a sibling clone with a longer name',
+    hotUpdateVerdict(`${clone}-two/packages/core/x.ts`, clone) === 'hot-swap',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The dev server — one port, and a devUrl that cannot disagree with it
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    A second varnick collides with the first on two numbers that are written
+    down twice: `server.port` in the Vite config and `devUrl` in
+    `tauri.conf.json`. Making the port an input is the easy half. The half worth
+    testing is that the two cannot drift apart, because the failure is not a
+    refusal — a `devUrl` pointing at a port another varnick holds opens a window
+    onto that varnick's frontend with this one's host behind it, which is a
+    worse outcome than a window that does not open.
+
+    So there is one string. The launcher builds it and hands the same value to
+    both ends; the frontend reads its port back out of it rather than choosing
+    one. The only literal left is `tauri.conf.json`'s default, and that is
+    checked against the default here.
+  */
+  check('nothing chosen is the port varnick has always bound', chosenDevPort(undefined) === 1420)
+  check('and DEFAULT_DEV_PORT says so', DEFAULT_DEV_PORT === 1420)
+  check('a frontend told nothing binds the same', portToBind(undefined) === DEFAULT_DEV_PORT)
+
+  const conf = JSON.parse(
+    readFileSync(new URL('../../../src-tauri/tauri.conf.json', import.meta.url).pathname, 'utf-8'),
+  ) as { build: { devUrl: string } }
+  check(
+    "tauri.conf.json's devUrl is the default port's URL, so a fresh checkout agrees with itself",
+    conf.build.devUrl === devUrlFor(DEFAULT_DEV_PORT),
+  )
+
+  const chosen = chosenDevPort('1421')
+  check('a chosen port becomes exactly one URL', devUrlFor(chosen) === 'http://localhost:1421')
+  check('and the frontend binds the port that URL names', portToBind(devUrlFor(chosen)) === 1421)
+
+  const refuses = (label: string, run: () => unknown) => {
+    let threw = false
+    try {
+      run()
+    } catch {
+      threw = true
+    }
+    check(label, threw)
+  }
+
+  // Refusals, because a port that quietly becomes 1420 is a collision with the
+  // varnick that is already running.
+  refuses('a port that is not a number is refused', () => chosenDevPort('nineteen'))
+  refuses('and so is one with a fraction', () => chosenDevPort('1420.5'))
+  refuses('and zero', () => chosenDevPort('0'))
+  refuses('and one past the end of the range', () => chosenDevPort('65536'))
+  refuses('a devUrl that is not a URL is refused', () => portToBind('localhost:1421'))
+  refuses('and one that names no port, because there is nothing to bind', () =>
+    portToBind('http://localhost'),
+  )
+
+  /*
+    The config itself, not a restatement of it. Importing it is what makes this
+    an assertion about what `bun tauri dev` does rather than about a function
+    that happens to exist beside it.
+  */
+  const config = (await import('../vite.config.ts')).default as {
+    server: { port: number; strictPort: boolean }
+    plugins: unknown[]
+  }
+
+  check('the dev server binds the default port with nothing set', config.server.port === 1420)
+  check(
+    'strictPort stays on, which is what makes the bound port the configured one',
+    config.server.strictPort === true,
+  )
+
+  type Hooked = { name: string; handleHotUpdate?: (ctx: unknown) => unknown }
+  const plugins = config.plugins.flat().filter((p): p is Hooked => {
+    return typeof p === 'object' && p !== null && 'name' in p
+  })
+  const reloader = plugins.find((p) => typeof p.handleHotUpdate === 'function')
+  check('the config carries a plugin that handles hot updates', reloader !== undefined)
+
+  const sent: string[] = []
+  const fire = (file: string) => {
+    sent.length = 0
+    const modules = [{ id: file }]
+    const returned = reloader?.handleHotUpdate?.({
+      file,
+      timestamp: 0,
+      modules,
+      read: () => '',
+      server: { hot: { send: (payload: { type: string }) => sent.push(payload.type) } },
+    })
+    return { returned, modules }
+  }
+
+  const cloneRoot = new URL('../../../', import.meta.url).pathname.replace(/\/$/, '')
+
+  const core = fire(`${cloneRoot}/packages/core/src/machines/session.ts`)
+  check('a Core change tells the window to reload', sent.join() === 'full-reload')
+  check(
+    'and hands back no modules, so nothing is swapped underneath it',
+    Array.isArray(core.returned) && core.returned.length === 0,
+  )
+
+  const userspace = fire(`${cloneRoot}/packages/userspace/surfaces/runs/index.tsx`)
+  check('a Userspace change sends nothing', sent.length === 0)
+  check(
+    'and leaves the module list alone, which is how a Surface hot-swaps',
+    userspace.returned === undefined,
+  )
+
+  /*
+    The launch is where the two ends are handed the same value. Asserting the
+    spawn's shape is the closest a headless check gets to "two varnicks run at
+    once": what a second window loads and what the second frontend binds are one
+    string produced once.
+  */
+  const second = devLaunch(1421)
+  const overlay = second.args.at(-1) ?? ''
+  const merged = JSON.parse(overlay) as { build: { devUrl: string } }
+
+  check('the launch overrides devUrl and nothing else', Object.keys(merged).join() === 'build')
+  check(
+    'what the window loads and what the frontend is told are the same string',
+    merged.build.devUrl === second.env[DEV_URL_ENV_VAR],
+  )
+  check(
+    'and that string names the port that was asked for',
+    portToBind(second.env[DEV_URL_ENV_VAR]) === 1421,
+  )
+  check(
+    'the overlay reaches the Tauri CLI as a config merge',
+    second.args.at(-2) === '--config' && second.args.slice(0, 2).join(' ') === 'tauri dev',
+  )
+
+  const first = devLaunch(DEFAULT_DEV_PORT)
+  check(
+    'the default launch asks for the port a fresh checkout already has',
+    first.env[DEV_URL_ENV_VAR] === conf.build.devUrl,
+  )
 }
 
 // ---------------------------------------------------------------------------

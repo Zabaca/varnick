@@ -337,6 +337,7 @@ skip in it and fails when it cannot measure.
 bun install
 bun tauri dev             # the desktop app, which is the one that has a host
 bun run dev               # the same interface in a browser, with no host
+bun run dev:app --port 1421   # a second varnick, beside the first
 bun test packages         # unit tests plus the real-kernel boundary probes
 bun run probe             # the same probes with no skip in them; needs a credential
 bun run drive             # the state-machine driver
@@ -347,6 +348,28 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
 scripts/clean-clone.sh    # what a stranger's clone does, as far as one machine can show
 ```
+
+`bun run dev:app` is `bun tauri dev` with the port made an input, and it exists
+because two varnicks otherwise collide twice — on the frontend's `1420` and on
+the `devUrl` the window loads. It chooses the port once and hands the same URL
+to both ends, so they cannot disagree; a `devUrl` pointing at a port the *other*
+varnick holds would open a window onto that varnick's frontend, which is worse
+than a window that does not open. With no `--port` it is exactly what
+`bun tauri dev` already did, and `bun tauri dev` itself is untouched.
+
+You want a second one when a Core change is worth running before it is merged —
+`bun run dev:app --port 1421` inside `.claude/worktrees/<name>`, which is where
+Core is authored ([ADR-0014](docs/adr/0014-core-is-authored-in-a-worktree.md)).
+The two have separate Sessions, because the mirror is keyed by clone root
+([ADR-0012](docs/adr/0012-the-clone-root-is-an-input.md)).
+
+**A change under `packages/core/**` reloads the window rather than hot-swapping
+a module.** Hot-swapping the module that owns the Session remounts the machine
+holding the conversation that asked for the change; the reload costs a moment
+and loses nothing, because the Session resumes from the mirror
+([ADR-0009](docs/adr/0009-resume-reads-the-mirror.md)). Userspace is untouched
+and keeps hot-swapping — "ask for a Surface and it appears" is a hot update, and
+it is the product's main loop.
 
 `cargo build` is on that list because a green `cargo test` is not evidence that
 the application builds: it compiles test harnesses and leaves `target/debug`
