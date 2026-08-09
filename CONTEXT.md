@@ -30,6 +30,14 @@ _Avoid_: instance, install, project. **Note:** `zbc` uses this word for a dispos
 Core's runtime half: the sandbox, credential injection, the Secrets Store, and session durability. Independently useful, kept as a package inside the clone rather than a published dependency so it stays editable.
 _Avoid_: runtime, SDK, framework
 
+**Runtime Report**:
+What the agent's Claude Code process says it is, in its own words — version, model, permission mode, working directory, and the tools, skills, plugins, MCP servers, subagents and slash commands it loaded. Read from the Agent SDK's `init` message, held by the Harness runtime and replayed at the start of every Turn, because `init` is sent once per Session and arrives before any Turn exists to carry it.
+
+It exists because **configured is not the same as loaded** and nothing in varnick could tell the two apart: a Profile is an intention until a process reads it, and a tool that never arrived leaves the code saying one thing and the running agent doing another. Ported from the sibling `forge` service, which calls it the harness panel — a name that cannot be used here, because **Harness** already means Core's runtime half.
+
+Names and counts only. It is not a Credential and has no field one could arrive in; `apiKeySource` is a store's name, the same class of fact as Credential Source. It is a fact rather than a state — nothing transitions on it — and it is dropped when the agent stops, because a description of a process that no longer exists is the exact mistake it was built to catch.
+_Avoid_: harness (taken), capabilities, manifest, profile (the Profile is what was asked for; this is what happened)
+
 **Sandbox**:
 The kernel-level restrictions the agent's process tree runs under, applied with `@anthropic-ai/sandbox-runtime` around the whole tree rather than per command. See [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md).
 _Avoid_: seatbelt (one backend, not the concept), permissions (the SDK's prompt layer, which this replaces)
@@ -115,7 +123,7 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 
 ### Event names
 
-`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
+`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `RUNTIME_REPORTED`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
 

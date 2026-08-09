@@ -23,6 +23,31 @@ const HARNESS_EVENTS: HarnessEvent[] = [
   { type: 'RESTART' },
   { type: 'AGENT_EXIT', detail: 'killed from the bare page' },
   { type: 'CREDENTIAL_REJECTED', detail: '401 from the API' },
+  /*
+    A report, without a runtime to produce one.
+
+    Invented rather than measured, and that is what this page is for: the real
+    one arrives from a Claude Code process inside the Sandbox, which the bare
+    page has no way to start and no business starting. The values are visibly
+    from here — nothing on this page should read as something a runtime said.
+  */
+  {
+    type: 'RUNTIME_REPORTED',
+    report: {
+      claudeCodeVersion: 'from-the-bare-page',
+      model: 'claude-opus-5',
+      permissionMode: 'bypassPermissions',
+      outputStyle: 'default',
+      cwd: '/from/the/bare/page',
+      apiKeySource: 'ANTHROPIC_API_KEY',
+      tools: ['Read', 'Write', 'Bash'],
+      skills: [],
+      slashCommands: ['compact'],
+      agents: [],
+      mcpServers: [],
+      plugins: [],
+    },
+  },
   // Accepted only in `credential.absent`, like the paste — so the button is
   // gone the moment there is a credential to replace.
   { type: 'MINT_CREDENTIAL' },
@@ -157,6 +182,18 @@ export function BarePage() {
           */}
           <dt>sign-in URL</dt>
           <dd>{ctx.mintUrl ?? '— no mint running'}</dd>
+          {/*
+            What the runtime last said it was, as one line rather than as the
+            panel. The designed page renders it properly; here the fact worth
+            proving is that it arrives, is kept, and — the half that is easy to
+            get wrong — goes away again when the agent does.
+          */}
+          <dt>runtime</dt>
+          <dd>
+            {ctx.runtime
+              ? `${ctx.runtime.claudeCodeVersion || '—'} · ${ctx.runtime.model || '—'} · ${ctx.runtime.tools.length} tools`
+              : '— nothing reported'}
+          </dd>
         </dl>
 
         {/*

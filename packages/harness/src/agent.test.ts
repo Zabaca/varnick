@@ -555,6 +555,10 @@ describe('a turn rides the session that is already open', () => {
   test('messages arriving with no turn running are not attributed to one', async () => {
     // The session emits its own init and status messages. A delta with no turn
     // to belong to must not become the first word of the next one.
+    //
+    // The init message is now read rather than dropped — see the runtime report
+    // below — and it still produces no event here, because there is no turn to
+    // stamp one with. That is the whole reason it is held and replayed.
     const { written } = await serve(async ({ messages }) => {
       messages.push({ type: 'system', subtype: 'init' })
       messages.push(textDelta('stray'))
@@ -577,6 +581,93 @@ describe('a turn rides the session that is already open', () => {
     })
     expect(written.filter((e) => e.turnId === 't1').map((e) => e.kind)).toEqual(['done'])
     expect(written.filter((e) => e.turnId === 't2').map((e) => e.kind)).toEqual(['delta', 'done'])
+  })
+})
+
+describe('the runtime describing itself', () => {
+  const init = {
+    type: 'system',
+    subtype: 'init',
+    model: 'claude-opus-5',
+    tools: ['Read', 'Bash'],
+  }
+
+  test('an init that arrives before any turn is replayed onto the first one', async () => {
+    /*
+      The timing this whole arrangement exists for. The Session emits `init` when
+      the Claude Code process starts — which is when the agent is spawned, long
+      before a turn exists to stamp it with. Forwarded straight through it would
+      be dropped as a message with no turn, and the panel would stay empty for
+      the life of the Session, because `init` is sent once and not again.
+    */
+    const { written } = await serve(async ({ control, messages }) => {
+      messages.push(init)
+      await settle()
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(written.map((e) => e.kind)).toEqual(['runtime', 'done'])
+    expect(written[0]).toMatchObject({ kind: 'runtime', turnId: 't1' })
+    expect(written[0]).toHaveProperty('report.model', 'claude-opus-5')
+  })
+
+  test('every turn carries the report, not just the first', async () => {
+    // Replay rather than a one-shot, so a window opened on the second turn is
+    // not a window that never learns what it is talking to.
+    const { written } = await serve(async ({ control, messages }) => {
+      messages.push(init)
+      await settle()
+      control.push(runTurnLine('t1', 'one'))
+      await settle()
+      messages.push(result('first'))
+      await settle()
+      control.push(runTurnLine('t2', 'two'))
+      await settle()
+      messages.push(result('second'))
+      await settle()
+    })
+    expect(written.filter((e) => e.kind === 'runtime').map((e) => e.turnId)).toEqual(['t1', 't2'])
+  })
+
+  test('an init arriving mid-turn is reported without waiting for the next one', async () => {
+    const { written } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(init)
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(written.map((e) => e.kind)).toEqual(['runtime', 'done'])
+  })
+
+  test('a later init replaces the earlier one', async () => {
+    const { written } = await serve(async ({ control, messages }) => {
+      messages.push(init)
+      await settle()
+      messages.push({ ...init, model: 'claude-sonnet-5' })
+      await settle()
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(written[0]).toHaveProperty('report.model', 'claude-sonnet-5')
+  })
+
+  test('an init is never mistaken for something the turn said', async () => {
+    // It is not transcript. A report that reached `STREAM_DELTA` would put the
+    // runtime's description of itself into the conversation and into the mirror.
+    const { written } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(init)
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(written.filter((e) => e.kind === 'delta')).toEqual([])
   })
 })
 

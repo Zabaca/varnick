@@ -89,12 +89,14 @@ export function useHarness(
   const signals = useRef<TurnObserver & MintObserver>({
     delta: () => {},
     credentialRejected: () => {},
+    runtimeReported: () => {},
     authorizing: () => {},
   })
   const observer = useMemo<TurnObserver>(
     () => ({
       delta: (text) => signals.current.delta(text),
       credentialRejected: (detail) => signals.current.credentialRejected(detail),
+      runtimeReported: (report) => signals.current.runtimeReported(report),
     }),
     [],
   )
@@ -182,6 +184,10 @@ export function useHarness(
         actorRef.getSnapshot().context.session?.send({ type: 'STREAM_DELTA', text })
       },
       credentialRejected: (detail) => send({ type: 'CREDENTIAL_REJECTED', detail }),
+      // The third thing a Turn says that is not its answer, and the Harness's
+      // like the second: what the runtime is describes the agent process, not
+      // the conversation it happened to arrive during.
+      runtimeReported: (report) => send({ type: 'RUNTIME_REPORTED', report }),
       // And where the mint's one signal lands. `credential.minting` is the only
       // state that accepts it, so a URL from an attempt that has already ended
       // is dropped by the machine rather than guarded against here.

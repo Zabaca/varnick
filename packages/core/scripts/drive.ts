@@ -378,6 +378,86 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
   actor.stop()
 }
 
+{
+  /*
+    The runtime's self-report: kept while there is a process, gone with it.
+
+    The second half is the one worth a test. A report describes a running Claude
+    Code process, so one left standing after the agent died would be the panel
+    confidently describing something that is not there — which is the exact
+    failure the report exists to catch, one level up.
+
+    Also asserted here: the report is accepted before `agent.running`. It is read
+    off the Session's message stream and replayed at the start of a Turn, so it
+    can arrive at a moment this region has no opinion about, and a transition
+    scoped to one state would drop the only report a Session sends.
+  */
+  const report = {
+    claudeCodeVersion: '2.1.0',
+    model: 'claude-opus-5',
+    permissionMode: 'bypassPermissions',
+    outputStyle: 'default',
+    cwd: '/tmp/clone',
+    apiKeySource: 'ANTHROPIC_API_KEY',
+    tools: ['Read', 'Bash'],
+    skills: [],
+    slashCommands: [],
+    agents: [],
+    mcpServers: [],
+    plugins: [],
+  }
+
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        readCredential: resolves<CredentialReading, Record<string, never>>({
+          source: 'keychain',
+          kind: 'api-key',
+        }),
+        checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+        spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 99 }),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  check('nothing is reported before an agent runs', actor.getSnapshot().context.runtime === null)
+  actor.send({ type: 'RUNTIME_REPORTED', report })
+  check(
+    'a report is accepted with the agent down',
+    actor.getSnapshot().context.runtime?.model === 'claude-opus-5',
+  )
+
+  actor.send({ type: 'READ_CREDENTIAL' })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+  actor.send({ type: 'CHECK_SANDBOX' })
+  await waitFor(actor, (s) => regionOf(s.value, 'sandbox') === 'available')
+  actor.send({ type: 'START' })
+  await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
+
+  actor.send({ type: 'RUNTIME_REPORTED', report: { ...report, model: 'claude-sonnet-5' } })
+  check(
+    'a later report replaces the earlier one',
+    actor.getSnapshot().context.runtime?.model === 'claude-sonnet-5',
+  )
+
+  actor.send({ type: 'AGENT_EXIT', detail: 'The agent process exited with code 71.' })
+  check(
+    'a crashed agent takes its report with it',
+    actor.getSnapshot().context.runtime === null,
+  )
+
+  actor.send({ type: 'RESTART' })
+  await waitFor(actor, (s) => regionOf(s.value, 'agent') === 'running')
+  actor.send({ type: 'RUNTIME_REPORTED', report })
+  actor.send({ type: 'STOP' })
+  check(
+    'a deliberate stop clears the report too',
+    actor.getSnapshot().context.runtime === null,
+  )
+  actor.stop()
+}
+
 // ---------------------------------------------------------------------------
 // Session — refusals and parallel independence
 // ---------------------------------------------------------------------------

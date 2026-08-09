@@ -10,6 +10,7 @@ import {
   isCredentialRejection,
   parseControlRequest,
   parseTurnEvent,
+  runtimeReportFrom,
   toolCallLine,
   turnFailureMessage,
   type TurnEvent,
@@ -428,6 +429,60 @@ describe('what a failed Compaction says', () => {
   })
 })
 
+describe('what the runtime says it is', () => {
+  const init = {
+    type: 'system',
+    subtype: 'init',
+    claude_code_version: '2.1.0',
+    model: 'claude-opus-5',
+    permissionMode: 'bypassPermissions',
+    output_style: 'default',
+    cwd: '/tmp/clone',
+    apiKeySource: 'ANTHROPIC_API_KEY',
+    tools: ['Read', 'Bash'],
+    skills: [],
+    slash_commands: ['compact'],
+    agents: [],
+    mcp_servers: [{ name: 'files', status: 'connected' }],
+    plugins: [{ name: 'thing', path: '/plugins/thing' }],
+  }
+
+  test('the SDK keys are read as they are actually spelled', () => {
+    // Half snake_case and half camelCase, because the init message is assembled
+    // from two sides. Getting one wrong produces a panel of empty rows rather
+    // than an error, which is why this is asserted rather than eyeballed.
+    const report = runtimeReportFrom(init)
+    expect(report.claudeCodeVersion).toBe('2.1.0')
+    expect(report.outputStyle).toBe('default')
+    expect(report.permissionMode).toBe('bypassPermissions')
+    expect(report.slashCommands).toEqual(['compact'])
+    expect(report.mcpServers).toEqual([{ name: 'files', status: 'connected' }])
+  })
+
+  test('a plugin with no version says so rather than inventing one', () => {
+    expect(runtimeReportFrom(init).plugins).toEqual([
+      { name: 'thing', path: '/plugins/thing', version: null },
+    ])
+  })
+
+  test('a report can never fail the turn it describes', () => {
+    // Every field optional on the way in. An init message this does not
+    // recognise is a report full of empties — a true statement, rendered as
+    // dashes — rather than a thrown error inside the message loop.
+    const empty = runtimeReportFrom({ type: 'system', subtype: 'init' })
+    expect(empty.model).toBe('')
+    expect(empty.tools).toEqual([])
+    expect(runtimeReportFrom(null).cwd).toBe('')
+    expect(runtimeReportFrom({ tools: 'all of them', plugins: 7 }).tools).toEqual([])
+  })
+
+  test('nothing arrives at whatever length it was sent at', () => {
+    const long = 'x'.repeat(5_000)
+    expect(runtimeReportFrom({ cwd: long }).cwd).toHaveLength(200)
+    expect(runtimeReportFrom({ tools: [long] }).tools[0]).toHaveLength(200)
+  })
+})
+
 describe('the wire between the agent host and the host', () => {
   test('an event is exactly one line, whatever is in it', () => {
     const line = encodeTurnEvent({ kind: 'delta', turnId: 't1', text: 'one\ntwo' })
@@ -497,6 +552,63 @@ describe('the wire between the agent host and the host', () => {
     ).toEqual(event)
     expect(parseTurnEvent({ kind: 'compacted', turnId: 'c1', summary: 'x' })).toBeNull()
     expect(parseTurnEvent({ kind: 'compacted', turnId: 'c1', tokensUsed: 1 })).toBeNull()
+  })
+
+  test("the runtime's self-report survives the round trip", () => {
+    const event: TurnEvent = {
+      kind: 'runtime',
+      turnId: 't1',
+      report: {
+        claudeCodeVersion: '2.1.0',
+        model: 'claude-opus-5',
+        permissionMode: 'bypassPermissions',
+        outputStyle: 'default',
+        cwd: '/tmp/clone',
+        apiKeySource: 'ANTHROPIC_API_KEY',
+        tools: ['Read', 'Bash'],
+        skills: [],
+        slashCommands: ['compact'],
+        agents: [],
+        mcpServers: [{ name: 'files', status: 'connected' }],
+        plugins: [{ name: 'thing', path: '/plugins/thing', version: '1.0.0' }],
+      },
+    }
+    expect(parseTurnEvent(JSON.parse(encodeTurnEvent(event)))).toEqual(event)
+  })
+
+  test('a report is rebuilt field by field, like every other event', () => {
+    // Same rule as a delta, and it matters more here: this event carries the
+    // largest object on the wire, so it is the most inviting place for a field
+    // nobody agreed to to ride into the machine's context.
+    const parsed = parseTurnEvent({
+      kind: 'runtime',
+      turnId: 't1',
+      report: { model: 'claude-opus-5', apiKey: LOOKS_LIKE_A_KEY },
+    })
+    expect(JSON.stringify(parsed)).not.toContain(LOOKS_LIKE_A_KEY)
+    expect(parsed).toEqual({
+      kind: 'runtime',
+      turnId: 't1',
+      report: {
+        claudeCodeVersion: '',
+        model: 'claude-opus-5',
+        permissionMode: '',
+        outputStyle: '',
+        cwd: '',
+        apiKeySource: '',
+        tools: [],
+        skills: [],
+        slashCommands: [],
+        agents: [],
+        mcpServers: [],
+        plugins: [],
+      },
+    })
+  })
+
+  test('a runtime event with no report is not an event', () => {
+    expect(parseTurnEvent({ kind: 'runtime', turnId: 't1' })).toBeNull()
+    expect(parseTurnEvent({ kind: 'runtime', turnId: 't1', report: 'all of it' })).toBeNull()
   })
 
   test('a control request the agent host does not understand is refused, not guessed at', () => {

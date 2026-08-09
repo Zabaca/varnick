@@ -241,6 +241,147 @@ export const TURN_FAILURES = [
 
 export type TurnFailure = (typeof TURN_FAILURES)[number]
 
+/**
+ * What the agent's Claude Code runtime says it has, in its own words.
+ *
+ * **Configured is not the same as loaded, and nothing in varnick could tell the
+ * two apart.** The Profile names a model, a set of tools and a permission mode;
+ * every one of those is an *intention* until a process reads it. A tool dropped
+ * on the way to the SDK, a model the account cannot use, a settings source that
+ * did not apply — each leaves the code saying one thing and the running agent
+ * doing another, with nothing on screen that disagrees.
+ *
+ * This is the other side: the runtime describing itself in the `init` message it
+ * emits when the Session opens. Ported from forge, which built it after two
+ * plugins were declared in a profile, silently dropped, and only noticed because
+ * the agent happened to read its own skill list.
+ *
+ * Named `RuntimeReport` rather than "harness" — which is what forge calls it —
+ * because `Harness` is taken in this repo, and taken for something else: Core's
+ * runtime half, the thing that *confines* this process. See CONTEXT.md.
+ *
+ * Everything here is a name or a count. `apiKeySource` is the SDK's word for
+ * which store answered — the same class of fact as Credential Source, and never
+ * a credential; there is no field on this type a value could arrive in.
+ */
+export interface RuntimeReport {
+  readonly claudeCodeVersion: string
+  readonly model: string
+  readonly permissionMode: string
+  readonly outputStyle: string
+  readonly cwd: string
+  readonly apiKeySource: string
+  readonly tools: readonly string[]
+  readonly skills: readonly string[]
+  readonly slashCommands: readonly string[]
+  readonly agents: readonly string[]
+  readonly mcpServers: readonly { readonly name: string; readonly status: string }[]
+  readonly plugins: readonly { readonly name: string; readonly path: string; readonly version: string | null }[]
+}
+
+/**
+ * How long a single name may be.
+ *
+ * A cwd is the longest honest field here and a deep clone path is well under
+ * this. The cap is not about layout — it is the same rule the rest of this file
+ * follows, that nothing from outside is carried into Core at whatever size it
+ * arrived at.
+ */
+const NAME_LIMIT = 200
+
+const name = (value: unknown): string =>
+  typeof value === 'string' ? value.slice(0, NAME_LIMIT) : ''
+
+const names = (value: unknown): readonly string[] =>
+  Array.isArray(value)
+    ? value.filter((one): one is string => typeof one === 'string').map((one) => one.slice(0, NAME_LIMIT))
+    : []
+
+/**
+ * Read the runtime's self-report out of the SDK's `init` message.
+ *
+ * Every field optional on the way in and defaulted to empty: a panel describing
+ * the agent must never be able to fail the Turn it describes. A report with
+ * nothing in it is still a true statement — the runtime said nothing this
+ * understands — and renders as a row of dashes rather than as an error.
+ *
+ * The SDK's own keys, which are half snake_case and half camelCase because the
+ * init message is assembled from two sides. Mirrored deliberately rather than
+ * normalised upstream: this is the one place that shape is known.
+ */
+export function runtimeReportFrom(message: unknown): RuntimeReport {
+  const init = (message ?? {}) as Record<string, unknown>
+  return {
+    claudeCodeVersion: name(init['claude_code_version']),
+    model: name(init['model']),
+    permissionMode: name(init['permissionMode']),
+    outputStyle: name(init['output_style']),
+    cwd: name(init['cwd']),
+    apiKeySource: name(init['apiKeySource']),
+    tools: names(init['tools']),
+    skills: names(init['skills']),
+    slashCommands: names(init['slash_commands']),
+    agents: names(init['agents']),
+    mcpServers: Array.isArray(init['mcp_servers'])
+      ? init['mcp_servers'].map((one) => {
+          const server = (one ?? {}) as Record<string, unknown>
+          return { name: name(server['name']), status: name(server['status']) }
+        })
+      : [],
+    plugins: Array.isArray(init['plugins'])
+      ? init['plugins'].map((one) => {
+          const plugin = (one ?? {}) as Record<string, unknown>
+          return {
+            name: name(plugin['name']),
+            path: name(plugin['path']),
+            version: typeof plugin['version'] === 'string' ? name(plugin['version']) : null,
+          }
+        })
+      : [],
+  }
+}
+
+/**
+ * The same report, read back off the wire.
+ *
+ * Rebuilt field by field for the reason {@link parseTurnEvent} gives — a field
+ * nobody agreed to must not ride into the machine's context — and it is the same
+ * rebuild as {@link runtimeReportFrom} against this type's own key names rather
+ * than the SDK's.
+ */
+function parseRuntimeReport(value: unknown): RuntimeReport | null {
+  if (value === null || typeof value !== 'object') return null
+  const report = value as Record<string, unknown>
+  return {
+    claudeCodeVersion: name(report['claudeCodeVersion']),
+    model: name(report['model']),
+    permissionMode: name(report['permissionMode']),
+    outputStyle: name(report['outputStyle']),
+    cwd: name(report['cwd']),
+    apiKeySource: name(report['apiKeySource']),
+    tools: names(report['tools']),
+    skills: names(report['skills']),
+    slashCommands: names(report['slashCommands']),
+    agents: names(report['agents']),
+    mcpServers: Array.isArray(report['mcpServers'])
+      ? report['mcpServers'].map((one) => {
+          const server = (one ?? {}) as Record<string, unknown>
+          return { name: name(server['name']), status: name(server['status']) }
+        })
+      : [],
+    plugins: Array.isArray(report['plugins'])
+      ? report['plugins'].map((one) => {
+          const plugin = (one ?? {}) as Record<string, unknown>
+          return {
+            name: name(plugin['name']),
+            path: name(plugin['path']),
+            version: typeof plugin['version'] === 'string' ? name(plugin['version']) : null,
+          }
+        })
+      : [],
+  }
+}
+
 /** Everything a Turn tells the machine, before it is stamped with its Turn. */
 export type TurnUpdate =
   /** Answer text, as it arrives. Reaches the machine as `STREAM_DELTA`. */
@@ -260,6 +401,16 @@ export type TurnUpdate =
    * transcript and the meter — see packages/core/src/actors/live.ts.
    */
   | { readonly kind: 'compacted'; readonly summary: string; readonly tokensUsed: number }
+  /**
+   * What the runtime says it is, reported once per Session.
+   *
+   * The one update here that is not about the Turn. It rides this channel
+   * because the channel already exists and the fact arrives on the same stream —
+   * adding a second pipe from inside the Sandbox to carry one message would be a
+   * second thing to secure for no gain. It is stamped with whichever Turn was
+   * running when it was read, and Core drops the Turn and keeps the report.
+   */
+  | { readonly kind: 'runtime'; readonly report: RuntimeReport }
 
 /** A {@link TurnUpdate} and the Turn it belongs to. */
 export type TurnEvent = TurnUpdate & { readonly turnId: string }
@@ -402,7 +553,7 @@ export function encodeTurnEvent(event: TurnEvent): string {
  * where it would reach the Session mirror.
  */
 export function parseTurnEvent(value: unknown): TurnEvent | null {
-  const { kind, turnId, text, summary, tokensUsed, failure } = (value ?? {}) as Record<
+  const { kind, turnId, text, summary, tokensUsed, failure, report } = (value ?? {}) as Record<
     string,
     unknown
   >
@@ -431,6 +582,13 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
       return typeof failure === 'string' && (TURN_FAILURES as readonly string[]).includes(failure)
         ? { kind, turnId, failure: failure as TurnFailure }
         : null
+    case 'runtime': {
+      // An object or nothing. Every field inside it is optional and defaulted,
+      // so a report the SDK filled in half of arrives half full rather than not
+      // at all — but a `runtime` event carrying no report is a malformed line.
+      const parsed = parseRuntimeReport(report)
+      return parsed === null ? null : { kind, turnId, report: parsed }
+    }
     default:
       return null
   }

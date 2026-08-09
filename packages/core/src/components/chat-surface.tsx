@@ -8,6 +8,7 @@ import { ClaudeMessage } from './brainless/claude/claude-message.tsx'
 import { ClaudeThinking } from './brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu, type Command } from './slash-menu.tsx'
+import { RuntimePanel } from './runtime-panel.tsx'
 import {
   commandQuery,
   invokedCommand,
@@ -491,22 +492,27 @@ export function ChatSurface({
           a fork builds. What must be true here is narrower and load-bearing: one
           Surface failing leaves its siblings rendered and the chat on the left
           untouched (ADR-0004).
+
+          The column no longer appears only once a Surface exists: the runtime
+          panel above them is Core's own, and it is worth most in a clone with no
+          Surfaces at all — which is every clone on its first launch, and the one
+          where "what is this agent, actually" is hardest to answer from
+          anywhere else.
         */}
-        {ctx.surfaces.length > 0 && (
-          <aside
-            className="min-h-0 w-[320px] shrink-0 overflow-y-auto"
-            style={{ borderLeft: '1px solid var(--rule)' }}
-          >
-            {ctx.surfaces.map((ref) => (
-              <SurfacePanel
-                key={ref.id}
-                surface={ref}
-                resolveSurface={resolveSurface}
-                onUnload={(id) => send({ type: 'UNLOAD_SURFACE', id })}
-              />
-            ))}
-          </aside>
-        )}
+        <aside
+          className="min-h-0 w-[320px] shrink-0 overflow-y-auto"
+          style={{ borderLeft: '1px solid var(--rule)' }}
+        >
+          <RuntimePanel report={ctx.runtime} agentState={agentState} />
+          {ctx.surfaces.map((ref) => (
+            <SurfacePanel
+              key={ref.id}
+              surface={ref}
+              resolveSurface={resolveSurface}
+              onUnload={(id) => send({ type: 'UNLOAD_SURFACE', id })}
+            />
+          ))}
+        </aside>
       </div>
     </div>
   )

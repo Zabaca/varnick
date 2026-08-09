@@ -1,4 +1,8 @@
 import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
+// A type and nothing else. `turn` is one of the three Harness subpaths that
+// reach no Node built-in, which is what makes it importable from Core at all —
+// see the lint rule in eslint.config.js.
+import type { RuntimeReport } from '@varnick/harness/turn'
 import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
   CredentialKind,
@@ -110,6 +114,20 @@ export interface HarnessContext {
   agentError: string | null
   credentialError: string | null
   surfaces: ActorRefFrom<typeof surfaceMachine>[]
+  /**
+   * What the running agent says it is, once it has said anything.
+   *
+   * `null` before the first Turn of a Session and `null` again once the agent is
+   * down, and the second half is the load-bearing one: a report is a description
+   * of a process, so leaving the last one standing over a dead agent would be
+   * the panel confidently describing something that is not there. That is the
+   * exact failure the report exists to catch, one level up.
+   *
+   * A fact rather than a state — nothing transitions on it, and `agent.running`
+   * already says whether there is a process. Names and counts only; see
+   * `RuntimeReport`, which has no field a credential could arrive in.
+   */
+  runtime: RuntimeReport | null
   session: ActorRefFrom<typeof sessionMachine> | null
   /**
    * What the Session is spawned with.
@@ -138,6 +156,8 @@ export interface HarnessInput {
   enterSandbox?: string | null
   enterAgent?: string | null
   sessionInput?: SessionInput
+  /** Seeded only by the states page, which parks a machine with a report in it. */
+  runtime?: RuntimeReport | null
   refusal?: StartRefusal | null
   agentError?: string | null
   sandboxError?: string | null
@@ -189,6 +209,16 @@ export type HarnessEvent =
   | { type: 'STOP' }
   | { type: 'RESTART' }
   | { type: 'AGENT_EXIT'; detail: string }
+  /**
+   * The runtime described itself.
+   *
+   * Named for what happened rather than for what it produces, the same
+   * convention as `AGENT_EXIT`: the runtime reported, and this machine records
+   * it. Accepted in every state of the `agent` region rather than only in
+   * `running`, because the report is read off the message stream and a machine
+   * that refused it in `starting` would drop the only one a Session sends.
+   */
+  | { type: 'RUNTIME_REPORTED'; report: RuntimeReport }
   | { type: 'DISCOVER_SURFACES'; descriptors: SurfaceDescriptor[] }
   | { type: 'UNLOAD_SURFACE'; id: string }
 
@@ -319,6 +349,7 @@ export const harnessMachine = setup({
     agentError: input.agentError ?? null,
     credentialError: input.credentialError ?? null,
     surfaces: [],
+    runtime: input.runtime ?? null,
     session: null,
     sessionInput: input.sessionInput ?? { sessionId: LIVE_SESSION_ID },
     enterCredential: input.enterCredential ?? null,
@@ -355,6 +386,18 @@ export const harnessMachine = setup({
         surfaces: ({ context, event }) =>
           context.surfaces.filter((ref) => ref.getSnapshot().context.descriptor.id !== event.id),
       }),
+    },
+    /*
+      At the root rather than inside `agent.running`, and that is the whole
+      decision. The report is read off the Session's message stream by the
+      runtime, replayed at the start of each Turn, and it can arrive at moments
+      the `agent` region has no opinion about. A transition scoped to one state
+      would drop it whenever it was late, and a dropped report is indistinguish-
+      able on screen from an agent that reported nothing — which is the one
+      reading this panel must never produce.
+    */
+    RUNTIME_REPORTED: {
+      actions: assign({ runtime: ({ event }) => event.report }),
     },
   },
   states: {
@@ -663,6 +706,11 @@ export const harnessMachine = setup({
               }),
             agentError: null,
           }),
+          // A report describes a process. Whichever way this state is left the
+          // process is gone, so the description goes with it rather than
+          // outliving what it describes — the panel says "no agent has reported"
+          // instead of confidently describing a runtime that is not there.
+          exit: assign({ runtime: null }),
           on: {
             STOP: 'down',
             AGENT_EXIT: {

@@ -64,9 +64,11 @@ import {
   COMPACT_COMMAND,
   encodeTurnEvent,
   parseControlRequest,
+  runtimeReportFrom,
   type CompactionRun,
   type CompactionSettlement,
   type TurnEvent,
+  type RuntimeReport,
   type TurnFailure,
   type TurnRun,
 } from './turn.ts'
@@ -889,6 +891,22 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   /** The Compaction currently running. Never both at once — see `start`. */
   let compacting: CompactionRun | null = null
 
+  /**
+   * What the runtime said it was, the last time it said anything.
+   *
+   * **Kept rather than forwarded, because the timing is against us.** The
+   * Session's `init` message is emitted when the Claude Code process starts,
+   * which is when the agent is *spawned* — before any Turn exists to stamp it
+   * with, and once per Session rather than once per Turn. Forwarded straight
+   * through it would be dropped by the rule two paragraphs of this function's
+   * own doc comment describe, and the panel would stay empty for ever.
+   *
+   * So it is held here and replayed at the start of each Turn. Replay is not a
+   * cache of a stale fact: nothing about the runtime changes between Turns
+   * without a new `init`, and if one arrives it overwrites this.
+   */
+  let runtime: RuntimeReport | null = null
+
   const emit = (events: readonly TurnEvent[]) => {
     for (const event of events) write(encodeTurnEvent(event))
   }
@@ -980,6 +998,10 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     // that somehow arrived during a Compaction takes the stream rather than
     // leaving both waiting on messages the other is reading.
     compacting = null
+    // Before the prompt rather than after the answer: what the runtime is
+    // is worth knowing while the Turn runs, and a report that waited for the
+    // answer would arrive at the moment it stopped being interesting.
+    if (runtime !== null) emit([{ kind: 'runtime', turnId: request.turnId, report: runtime }])
     try {
       // Before the prompt, so the Turn runs on what it was started with. A
       // SET_MODEL that arrives mid-Turn belongs to the next one, and applying
@@ -1037,6 +1059,21 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
 
   async function readMessages(): Promise<void> {
     for await (const message of messages) {
+      // Read before anything is dropped, and outside both runs, because this is
+      // the one message on the stream that belongs to the Session rather than to
+      // whatever is running on it.
+      const sdk = message as { type?: string; subtype?: string }
+      if (sdk?.type === 'system' && sdk.subtype === 'init') {
+        runtime = runtimeReportFrom(message)
+        // A Turn already in flight gets it now; anything else waits for `start`.
+        // Both paths run through the same replay, so there is one description of
+        // when a report reaches Core rather than two that can disagree.
+        if (running !== null && !running.finished) {
+          emit([{ kind: 'runtime', turnId: running.turnId, report: runtime }])
+        }
+        continue
+      }
+
       // A Compaction takes the stream while it runs. Its messages are the
       // Session talking about its own context, not an answer to anything, and
       // attributing them to a Turn would put the summarisation's chatter into

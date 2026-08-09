@@ -11,6 +11,7 @@ import {
   compactionFailureMessage,
   isCredentialRejection,
   turnFailureMessage,
+  type RuntimeReport,
 } from '@varnick/harness/turn'
 import { compactedTranscript } from '../domain.ts'
 import type {
@@ -88,12 +89,22 @@ export interface TurnObserver {
    * wrong thing.
    */
   credentialRejected(detail: string): void
+  /**
+   * The runtime described itself, at the start of a Turn.
+   *
+   * Sent to the Harness as `RUNTIME_REPORTED`. Addressed there rather than to
+   * the Session for the same reason `credentialRejected` is: it is a fact about
+   * the agent process, not about the conversation, and it outlives the Turn it
+   * happened to arrive during.
+   */
+  runtimeReported(report: RuntimeReport): void
 }
 
 /** An observer that drops everything. What a run with no owner gets. */
 const silentObserver: TurnObserver = {
   delta: () => {},
   credentialRejected: () => {},
+  runtimeReported: () => {},
 }
 
 /**
@@ -278,6 +289,11 @@ export function liveActors(
           case 'tool':
             observer.delta(event.text)
             break
+          // Not part of the answer, and deliberately not `break`ing into one:
+          // the Turn it is stamped with is only how it got here.
+          case 'runtime':
+            observer.runtimeReported(event.report)
+            break
           case 'done':
             return { text: event.text, tokensUsed: event.tokensUsed }
           case 'failed': {
@@ -371,6 +387,13 @@ export function liveActors(
           */
           case 'delta':
           case 'tool':
+            break
+          // A report stamped with this Compaction's id, which nothing emits
+          // today — the runtime describes itself when a Turn starts, and a
+          // Compaction is not one. Taken rather than ignored if it ever does:
+          // the fact is about the agent and is true whichever run carried it.
+          case 'runtime':
+            observer.runtimeReported(event.report)
             break
           // `done` belongs to a Turn. A Compaction that produced one is a Turn
           // that was mistaken for a Compaction, and taking it would replace the

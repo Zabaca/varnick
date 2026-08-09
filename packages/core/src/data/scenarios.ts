@@ -68,6 +68,31 @@ const up = {
   credentialKind: 'subscription' as const,
   enterSandbox: 'available',
   enterAgent: 'running',
+  /*
+    What a running agent has reported about itself.
+
+    Seeded, like the transcript beside it, and the values are chosen to be the
+    ones a real varnick agent produces rather than a full-looking panel: no
+    skills, no plugins, no MCP servers. Those are empty because the Sandbox
+    denies read on `$HOME` and `settingSources: []` drops the clone's own — so a
+    card showing three plugins would be a card of a configuration this product
+    cannot reach. The empty rows are the boundary, which is the thing worth
+    looking at.
+  */
+  runtime: {
+    claudeCodeVersion: '2.1.0',
+    model: 'claude-opus-5',
+    permissionMode: 'bypassPermissions',
+    outputStyle: 'default',
+    cwd: '/Users/you/varnick',
+    apiKeySource: 'CLAUDE_CODE_OAUTH_TOKEN',
+    tools: ['Task', 'Bash', 'Glob', 'Grep', 'Read', 'Edit', 'Write', 'WebFetch', 'WebSearch'],
+    skills: [],
+    slashCommands: ['compact', 'model'],
+    agents: [],
+    mcpServers: [],
+    plugins: [],
+  },
 } satisfies HarnessInput
 
 export const SCENARIOS: readonly Scenario[] = [
