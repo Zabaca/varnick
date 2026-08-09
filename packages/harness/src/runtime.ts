@@ -45,6 +45,18 @@
  * A runtime that found a way to answer it would be a second process holding a
  * secret, so the request is refused below rather than left unhandled — an
  * unhandled case is a case someone can quietly implement.
+ *
+ * ## Secret names leave this process; secret values do not
+ *
+ * This is the only process that can read the Secrets Store — the keychain lives
+ * under `$HOME` and the agent host is inside the Sandbox — so it is where
+ * `read-secret-names` is answered, and it is the one call whose whole purpose
+ * is to put something in front of the confined agent (ADR-0006's naming end).
+ *
+ * The values are in this process too, and they leave it in exactly one
+ * direction, which is unchanged by that: into the Session mirror's redaction
+ * pass, as `secretValues()`. There is no `get(name)` on a store and nothing on
+ * the request path below that calls the one member which yields values.
  */
 
 import { agentCommand } from './agent.ts'
@@ -89,6 +101,26 @@ export interface HarnessCapabilities {
    * next save would replace a transcript nobody managed to read.
    */
   readSession(sessionId: string): Promise<readonly StoredMessage[]>
+  /**
+   * The names of the stored secrets, for telling the agent which exist.
+   *
+   * ADR-0006's naming end, and the reason it is answered *here*: the keychain
+   * lives under `$HOME`, which the Sandbox denies read on, so the confined agent
+   * host cannot look for itself. This process can, and this is the only member
+   * of the Harness's whole host-side surface that answers a question about the
+   * Secrets Store.
+   *
+   * **Names, and there is no shape here a value could come back in.** It
+   * answers with `store.names()`, which the store guarantees never yields one —
+   * `secretValues()` is the single member that does, it is named for it, and
+   * nothing on this path calls it.
+   *
+   * Re-read rather than answered from the snapshot taken at open, for the same
+   * reason {@link persist} re-reads: `bun run secret add` is a different
+   * process, and a list answered out of the launch-time snapshot would leave a
+   * developer relaunching varnick to make a new key nameable.
+   */
+  readSecretNames(): Promise<readonly string[]>
 }
 
 /**
@@ -172,6 +204,20 @@ export function hostCapabilities(): HarnessCapabilities {
     // Reads do not reload the Secrets Store: redaction happens on the way in,
     // so what is on disk is already clean and nothing here can unredact it.
     readSession: async (sessionId) => (await open()).store.read(sessionId),
+
+    readSecretNames: async () => {
+      const { secrets } = await open()
+      // The same swallowed refresh `persist` does, for the same reason: a
+      // keychain that would not answer this time leaves the previous snapshot
+      // in place, and naming the secrets the last good read knew about beats
+      // telling the agent there are none. A store that will not open *at all*
+      // still throws, because that is a refusal the caller can distinguish
+      // from an empty store — and an empty store is what "no secrets are
+      // stored" means, which is a sentence this must not put in front of the
+      // agent by accident.
+      await secrets.reload().catch(() => undefined)
+      return secrets.names()
+    },
   }
 }
 
@@ -202,7 +248,9 @@ function storedMessages(value: unknown): readonly StoredMessage[] | null {
  * Returns what the caller gets as `ok`. Most calls have nothing to say beyond
  * having been done, and answer with an empty object — the bridge rebuilds every
  * answer, so a runtime that volunteered extra fields could not have them
- * forwarded anyway. A restore is the one call here with a payload.
+ * forwarded anyway. A restore and a read of the secret names are the two calls
+ * here with a payload, and neither payload can hold a secret value: a
+ * transcript is redacted on the way in, and the names are the store's `names()`.
  *
  * Throws with the reason. Every throw here becomes a `refused` on the bridge,
  * carrying this message — which is the string `sandbox.unavailable` and
@@ -258,6 +306,14 @@ async function answer(
       return { ...restoredTranscript(await capabilities.readSession(sessionId)) }
     }
 
+    case 'read-secret-names': {
+      // Rebuilt into a fresh array like every other answer here, so a
+      // capability that volunteered something alongside the names could not
+      // have it forwarded to the confined process.
+      const names = await capabilities.readSecretNames()
+      return { names: [...names] }
+    }
+
     case 'read-credential':
       // Structural, not an oversight. The credential is read by the Tauri host,
       // which is the process that injects it into the agent subprocess; a
@@ -308,9 +364,11 @@ export async function answerHarnessLine(
   try {
     // Most answers are an empty object: the bridge rebuilds every answer, so
     // there is nothing for the runtime to say beyond having done it. The
-    // exceptions are a restore, whose transcript *is* the answer, and
+    // exceptions are a restore, whose transcript *is* the answer;
     // `wrap-agent-command` — deliberately the one thing this process computes
-    // for a spawn it does not perform. A credential read never comes here.
+    // for a spawn it does not perform; and `read-secret-names`, which is the
+    // one question about the Secrets Store this process answers and answers
+    // with names. A credential read never comes here.
     return `${JSON.stringify({ id, ok: await answer(request, capabilities) })}\n`
   } catch (error) {
     return `${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`

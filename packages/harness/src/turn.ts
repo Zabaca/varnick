@@ -43,17 +43,21 @@ import type { NonNullableUsage, SDKMessage } from '@anthropic-ai/claude-agent-sd
 /**
  * A control request, as one line on the agent host's stdin.
  *
- * Four, and each one is a decision rather than a convenience. The agent host is
+ * Five, and each one is a decision rather than a convenience. The agent host is
  * a Claude Code session inside the Sandbox; every additional thing it can be
  * asked to do is another thing something outside the Sandbox can make it do.
  *
- * Two of them are a Turn. The other two are here for the same reason, which is
+ * Two of them are a Turn. Two more are here for the same reason, which is
  * ADR-0003's last consequence: a plan-usage read rides a live session, and
  * summarising a conversation is a model call on *this* session. Either one
  * implemented the obvious way — `query()` on the host — would be a second
  * Claude Code process outside `srt`, running whatever `SessionStart` hook the
  * agent last wrote into the clone. So they are kinds here, or they do not
  * happen.
+ *
+ * The fifth goes the other way. Every other kind asks the confined process to
+ * *do* something; {@link DescribeSecretsRequest} tells it something it has no
+ * way to find out — see there for why the environment could not carry it.
  *
  * The type is no longer called `TurnControl` for that reason: the channel
  * carries control requests, of which a Turn is two.
@@ -81,6 +85,53 @@ export type ControlRequest =
    *  else — there is no prompt on it to smuggle anything through, because the
    *  prompt is a constant this module owns ({@link COMPACT_COMMAND}). */
   | { readonly kind: 'compact'; readonly turnId: string }
+  | DescribeSecretsRequest
+
+/**
+ * Tell the confined process which secrets exist, by name.
+ *
+ * ADR-0006's naming end. The agent authors code that says
+ * `process.env.STRIPE_KEY`; it can only do that if it knows the name, and the
+ * names live in the system keychain, which is under `$HOME` and therefore
+ * unreadable from inside the Sandbox (ADR-0003's first correction). So they
+ * have to be carried in, and this is the carrier.
+ *
+ * **Names, and there is no field here a value could ride in.** `names` is the
+ * whole request. That is not a convention to be remembered: the parse below
+ * rebuilds this request out of `kind` and `names` alone, so a line that
+ * arrived carrying values would be a line whose values were never read.
+ *
+ * ## Why this is a control request and not an environment variable
+ *
+ * The spawn environment is the simpler carrier and it was the other candidate:
+ * names are not secret, so nothing about putting them there would weaken
+ * containment. It is rejected for one reason — it can only ever say what was
+ * true at launch. `bun run secret add` runs in a *different* process, and a
+ * developer who adds a key mid-session would have to relaunch varnick before
+ * the agent could write code against it. Ticket 06 met the same problem from
+ * the redaction side and answered it the same way, by re-reading the store
+ * rather than trusting the snapshot taken at start-up.
+ *
+ * The Agent SDK settles it. `appendSystemPrompt` is part of the `initialize`
+ * control request and is fixed for the life of the session — there is no
+ * `setSystemPrompt`, and `reinitialize()` re-sends the request the session was
+ * opened with rather than a new one. So a system prompt could carry a snapshot
+ * and could never carry a list that changes, and the environment has no route
+ * to anywhere better. What *can* change per Turn is a `UserPromptSubmit` hook's
+ * `additionalContext`, which is what the agent host does with this — see
+ * `runAgentHost` in ./agent.ts.
+ */
+export interface DescribeSecretsRequest {
+  readonly kind: 'describe-secrets'
+  /**
+   * The names, in the order the Secrets Store holds them. Never a value.
+   *
+   * An empty list is a real answer and not a missing one: it means the store
+   * was read and holds nothing, which is what a developer who has stored no
+   * secrets should have the agent told.
+   */
+  readonly names: readonly string[]
+}
 
 /**
  * What asks the Session to summarise itself.
@@ -108,12 +159,33 @@ export function parseControlRequest(line: string): ControlRequest | null {
     return null
   }
 
-  const { kind, turnId, requestId, prompt, model, effort } = (value ?? {}) as Record<string, unknown>
+  const { kind, turnId, requestId, prompt, model, effort, names } = (value ?? {}) as Record<
+    string,
+    unknown
+  >
 
   // Each kind names its own id. One shared field would have made a Turn and a
   // read interchangeable to anything reading only the id.
   if (kind === 'read-plan-usage') {
     return typeof requestId === 'string' && requestId.length > 0 ? { kind, requestId } : null
+  }
+
+  /*
+    Rebuilt to `kind` and `names`, which is what makes "no value can arrive
+    here" a property of this function rather than a rule someone upstream has
+    to keep. A line carrying `values` alongside `names` loses them here, in the
+    same way a `prompt` sent alongside a `compact` is a field that was never
+    read.
+
+    Every entry must be a non-empty string, and one that is not fails the whole
+    request rather than being dropped. A partial list is worse than none: the
+    agent would be told about some of the secrets, write code against those,
+    and have no way to tell that it had been given less than the store holds.
+  */
+  if (kind === 'describe-secrets') {
+    if (!Array.isArray(names)) return null
+    if (names.some((name) => typeof name !== 'string' || name.length === 0)) return null
+    return { kind, names: [...(names as string[])] }
   }
 
   if (typeof turnId !== 'string' || turnId.length === 0) return null

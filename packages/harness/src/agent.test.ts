@@ -497,6 +497,8 @@ async function serve(
   // events now, and a helper that only kept those could not see the rest.
   const lines: string[] = []
   let report: (summary: string) => void = () => {}
+  /** Every list of secret names the loop handed over, in order. */
+  const described: (readonly string[])[] = []
 
   const served = serveTurns({
     control,
@@ -504,6 +506,9 @@ async function serve(
     session: port,
     compactionSummaries: (deliver) => {
       report = deliver
+    },
+    secretsDescribed: (names) => {
+      described.push(names)
     },
     write: (line) => {
       lines.push(line)
@@ -516,11 +521,14 @@ async function serve(
   control.close()
   messages.close()
   await served
-  return { written, asked, lines }
+  return { written, asked, lines, described }
 }
 
 const readUsageLine = (requestId: string) =>
   `${JSON.stringify({ kind: 'read-plan-usage', requestId })}\n`
+
+const describeSecretsLine = (names: readonly string[], extra: Record<string, unknown> = {}) =>
+  `${JSON.stringify({ kind: 'describe-secrets', names, ...extra })}\n`
 
 /** The plan-usage answers the loop wrote, in order. */
 const usageAnswers = (lines: readonly string[]) =>
@@ -1013,6 +1021,110 @@ describe('the control channel refuses what it does not understand', () => {
     // A turn that was sent and never answered is the worst available state:
     // `sending` for ever, with nothing to retry or dismiss.
     expect(written).toEqual([{ kind: 'failed', turnId: 't1', failure: 'authentication' }])
+  })
+})
+
+/*
+  ADR-0006's naming end, on the loop that runs inside the Sandbox.
+
+  The agent authors code that names a secret and never holds one. The holding
+  half is ticket 12's and is proven in secret-resolution.test.ts and in
+  `bun run drive`; what is checked here is the other half — the names arriving,
+  and nothing else arriving with them.
+*/
+describe('the agent is told which secrets exist', () => {
+  test('the names reach the process that has to put them in front of the agent', async () => {
+    const { described } = await serve(async ({ control }) => {
+      control.push(describeSecretsLine(['STRIPE_KEY', 'BILLING_TOKEN']))
+      await settle()
+    })
+    expect(described).toEqual([['STRIPE_KEY', 'BILLING_TOKEN']])
+  })
+
+  test('a later list replaces the earlier one rather than adding to it', async () => {
+    // What makes a removed secret stop being named. A list that accumulated
+    // would have the agent writing code against a key the host can no longer
+    // resolve, which fails at run time in a built Surface, far from here.
+    const { described } = await serve(async ({ control }) => {
+      control.push(describeSecretsLine(['STRIPE_KEY']))
+      await settle()
+      control.push(describeSecretsLine(['BILLING_TOKEN']))
+      await settle()
+    })
+    expect(described).toEqual([['STRIPE_KEY'], ['BILLING_TOKEN']])
+  })
+
+  test('an empty list is delivered, because "there are none" is worth saying', async () => {
+    const { described } = await serve(async ({ control }) => {
+      control.push(describeSecretsLine([]))
+      await settle()
+    })
+    expect(described).toEqual([[]])
+  })
+
+  test('no value can arrive alongside the names, however it is labelled', async () => {
+    /*
+      The assertion the whole ticket turns on, taken at the boundary of the
+      confined process rather than inferred from the parse.
+
+      A value cannot get here because `parseControlRequest` rebuilds this
+      request out of `kind` and `names` and reads no other field. So a line
+      carrying every shape a value might hide in arrives as names alone — and
+      what is checked is not only the delivered list but every byte the loop
+      wrote back, because a channel that echoed the line would be a second way
+      out.
+    */
+    const { described, lines } = await serve(async ({ control }) => {
+      control.push(
+        describeSecretsLine(['STRIPE_KEY'], {
+          values: [LOOKS_LIKE_A_KEY],
+          STRIPE_KEY: LOOKS_LIKE_A_KEY,
+          secrets: { STRIPE_KEY: LOOKS_LIKE_A_KEY },
+        }),
+      )
+      await settle()
+    })
+    expect(described).toEqual([['STRIPE_KEY']])
+    expect(JSON.stringify(described)).not.toContain(LOOKS_LIKE_A_KEY)
+    expect(lines.join('')).not.toContain(LOOKS_LIKE_A_KEY)
+  })
+
+  test('being told about secrets is not a turn, and says nothing to the session', async () => {
+    // It is the one request on this channel that tells the confined process a
+    // fact rather than asking it for one: nothing is prompted, nothing is
+    // answered, and nothing reaches the transcript.
+    const { asked, lines, written } = await serve(async ({ control }) => {
+      control.push(describeSecretsLine(['STRIPE_KEY']))
+      await settle()
+    })
+    expect(asked).toEqual([])
+    expect(lines).toEqual([])
+    expect(written).toEqual([])
+  })
+
+  test('a malformed list leaves the agent knowing what it knew', async () => {
+    // Refused whole rather than partly believed, and refused quietly: the line
+    // arrives inside the Sandbox at a live agent, so an unreadable one is
+    // dropped exactly like any other.
+    const { described } = await serve(async ({ control }) => {
+      control.push(describeSecretsLine(['STRIPE_KEY']))
+      await settle()
+      control.push(`${JSON.stringify({ kind: 'describe-secrets', names: ['A', 7] })}\n`)
+      await settle()
+    })
+    expect(described).toEqual([['STRIPE_KEY']])
+  })
+
+  test('a turn still runs on a loop that was never told about secrets', async () => {
+    // The naming end is additive. An agent nobody has described secrets to is
+    // an agent that knows none, not an agent that cannot answer.
+    const { asked } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(asked).toContain('prompt:hello')
   })
 })
 

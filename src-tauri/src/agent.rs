@@ -174,6 +174,26 @@ pub fn control_line_for(request: &Value) -> Option<String> {
         // packages/harness/src/turn.ts, so no prompt crosses this boundary and
         // there is no field a request could put one in.
         "compact-session" => serde_json::json!({ "kind": "compact", "turnId": turn_id()? }),
+        // The one request on this channel that tells the confined process
+        // something instead of asking it to do something: which secrets exist,
+        // by name, so the agent can write `process.env.STRIPE_KEY` in the
+        // Userspace it builds (ADR-0006).
+        //
+        // **Rebuilt to `kind` and `names`, and every entry has to be a string.**
+        // That is what makes "no value crosses here" a property of this function
+        // rather than a promise made by whoever calls it: a request carrying a
+        // `values` field alongside loses it, in the same way a `prompt` sent
+        // beside a compaction is a field that was never read. The names
+        // themselves come from the Harness runtime, off `SecretsStore.names()`
+        // — see `HarnessRuntime::secret_names` — and this process never learns
+        // what any of them stand for.
+        "describe-secrets" => {
+            let names = request.get("names").and_then(Value::as_array)?;
+            if !names.iter().all(Value::is_string) {
+                return None;
+            }
+            serde_json::json!({ "kind": "describe-secrets", "names": names })
+        }
         _ => return None,
     };
 
@@ -630,6 +650,51 @@ impl AgentProcess {
         Ok(())
     }
 
+    /// Tell the agent which secrets exist, by name.
+    ///
+    /// One line onto the same pipe a Turn rides, sent immediately before one so
+    /// that the brief the agent is given describes the store as it is *now* —
+    /// not as it was when varnick launched. That is the whole reason this is a
+    /// control line rather than a variable in the spawn environment: a
+    /// developer who runs `bun run secret add` in another terminal should be
+    /// able to say "use it" in the next message, and the SDK gives no way to
+    /// change a system prompt once a session is open.
+    ///
+    /// **Best effort, and it must stay that way.** A Turn is the thing the
+    /// developer asked for; being unable to name the secrets is a poorer answer,
+    /// not a failed one, so this returns a refusal that the caller drops. With
+    /// no agent running there is nothing to tell and nothing to fail — the Turn
+    /// that follows refuses on its own account, with the sentence that fits.
+    ///
+    /// Names, never values. There is no argument here a value could arrive in,
+    /// and `control_line_for` would not carry one if there were.
+    pub fn describe_secrets(&self, names: &[String]) -> Result<(), Failure> {
+        let Some(line) = control_line_for(&serde_json::json!({
+            "kind": "describe-secrets",
+            "names": names,
+        })) else {
+            return Err(Failure::of("malformed"));
+        };
+
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .map_err(|_| Failure::of("runtime-lost"))?;
+
+        let Some(stdin) = state.stdin.as_mut() else {
+            return Err(Failure::refused(NO_SESSION_TO_ASK));
+        };
+
+        stdin
+            .write_all(line.as_bytes())
+            .and_then(|()| stdin.flush())
+            // Nothing the write said is forwarded, for the same reason as
+            // everywhere else here: this process holds the credential, and an
+            // OS error can quote the environment.
+            .map_err(|_| Failure::of("runtime-lost"))
+    }
+
     /// The next thing the running Turn had to say, or nothing yet.
     pub fn next_event(&self) -> Option<Value> {
         self.events.next(EVENT_WAIT)
@@ -819,7 +884,7 @@ fn kill_group(_group: Option<i32>) {}
 mod tests {
     use super::{
         agent_event_of, build_command, control_line_for, exit_reason, usage_answer_of, wrapping_of,
-        EventQueue, PlanUsageAnswers, Wrapping,
+        AgentProcess, EventQueue, PlanUsageAnswers, Wrapping,
     };
     use crate::bridge::Failure;
     use serde_json::json;
@@ -1056,6 +1121,97 @@ mod tests {
             control_line_for(&json!({ "kind": "read-plan-usage", "requestId": 7 })),
             None
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // The names of the stored secrets, on the same channel
+    // -----------------------------------------------------------------------
+
+    /*
+      ADR-0006's naming end, as this process sees it: a list of names arriving
+      from the Harness runtime and going onto the pipe the agent is listening on.
+
+      This process never learns what any of them stand for, and these tests are
+      where that is checked rather than assumed. The rebuild is the mechanism —
+      `control_line_for` writes `kind` and `names` and reads nothing else — so a
+      value cannot cross however it is labelled on the way in.
+    */
+
+    #[test]
+    fn the_secret_names_reach_the_agent_as_one_line() {
+        let line = control_line_for(&json!({
+            "kind": "describe-secrets",
+            "names": ["STRIPE_KEY", "BILLING_TOKEN"],
+        }))
+        .expect("describing the secrets is a control request");
+        assert!(line.ends_with('\n'));
+        assert_eq!(line.matches('\n').count(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            parsed,
+            json!({ "kind": "describe-secrets", "names": ["STRIPE_KEY", "BILLING_TOKEN"] })
+        );
+    }
+
+    #[test]
+    fn no_secret_value_crosses_with_the_names_however_it_is_labelled() {
+        // The assertion the naming end turns on. A request carrying values
+        // alongside the names loses them here, in the same way a `prompt` sent
+        // beside a compaction is a field that was never read.
+        let line = control_line_for(&json!({
+            "kind": "describe-secrets",
+            "names": ["STRIPE_KEY"],
+            "values": [looks_like_a_key()],
+            "STRIPE_KEY": looks_like_a_key(),
+            "secrets": { "STRIPE_KEY": looks_like_a_key() },
+        }))
+        .expect("describing the secrets is a control request");
+        assert!(!line.contains("sk-ant"));
+        assert!(!line.contains("values"));
+        // Exactly two fields, checked as a whole rather than by absence: an
+        // assertion that lists the things a value must not be called is an
+        // assertion that is wrong the first time someone thinks of a new name
+        // for one.
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            parsed,
+            json!({ "kind": "describe-secrets", "names": ["STRIPE_KEY"] })
+        );
+    }
+
+    #[test]
+    fn an_empty_list_of_names_is_still_a_line_worth_sending() {
+        // "The store was read and holds nothing" is worth telling the agent, and
+        // is a different thing from never having been told.
+        let line = control_line_for(&json!({ "kind": "describe-secrets", "names": [] }))
+            .expect("an empty list is an answer");
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(parsed, json!({ "kind": "describe-secrets", "names": [] }));
+    }
+
+    #[test]
+    fn a_list_that_is_not_wholly_names_never_reaches_the_agent() {
+        // Refused whole rather than partly sent. An agent told about some of the
+        // secrets writes code against those and has no way to tell it was told
+        // about fewer than the store holds.
+        assert_eq!(
+            control_line_for(&json!({ "kind": "describe-secrets", "names": ["A", 7] })),
+            None
+        );
+        assert_eq!(
+            control_line_for(&json!({ "kind": "describe-secrets", "names": "STRIPE_KEY" })),
+            None
+        );
+        assert_eq!(control_line_for(&json!({ "kind": "describe-secrets" })), None);
+    }
+
+    #[test]
+    fn describing_the_secrets_with_no_agent_running_refuses_rather_than_starting_one() {
+        // The same shape as a Turn and a plan-usage read: with no pipe to write
+        // to this refuses. There is no branch here that starts a process to have
+        // somewhere to send the names.
+        let agent = AgentProcess::default();
+        assert!(agent.describe_secrets(&["STRIPE_KEY".to_string()]).is_err());
     }
 
     #[test]

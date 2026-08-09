@@ -28,9 +28,10 @@ import {
   isCommandDraft,
   formatContext,
 } from '../src/domain.ts'
-import { compactionFailureMessage } from '@varnick/harness/turn'
+import { compactionFailureMessage, parseControlRequest } from '@varnick/harness/turn'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
-import { openSecretsStore } from '@varnick/harness/secrets'
+import { describeSecretsForAgent, openSecretsStore } from '@varnick/harness/secrets'
+import { answerHarnessLine, type HarnessCapabilities } from '@varnick/harness/runtime'
 import { hostSecretResolution } from '@varnick/harness/secret-resolution'
 import { createSessionStore } from '@varnick/harness/session'
 import { liveActors } from '../src/actors/live.ts'
@@ -1513,6 +1514,237 @@ export default function Billing() {
   service.stop(true)
   rmSync(clone, { recursive: true, force: true })
   rmSync(mirror, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------------------
+// The naming end — the agent being told which secrets exist (ADR-0006)
+//
+// The block above proves the holding half: a name in a module the agent wrote
+// becomes a value at the moment the host runs it. It proves nothing about how
+// the agent knew to write `BILLING_TOKEN`, because in that block a person typed
+// it into the script. This is the other half.
+//
+// The route is real end to end, with one thing faked and one thing stood in
+// for. Faked: the keychain, because a script that wrote to the developer's
+// keychain would be a worse bug than the one it is checking. Stood in for: the
+// Rust host, which is four lines of `serde_json` — `control_line_for` in
+// src-tauri/src/agent.rs — and cannot be called from here. Everything else is
+// the shipping code: the runtime's answer function, the control-request parse
+// that runs inside the Sandbox, the text the agent is handed, the loader, the
+// resolution, and a real HTTP service on loopback.
+//
+// What closes the loop is that the Surface below is written from *the brief*
+// rather than from a constant. The name in the code is the name the agent was
+// told, read back out of the sentence it was told it in.
+// ---------------------------------------------------------------------------
+
+{
+  /** Shaped like the thing it stands in for, so a leak is obvious in a grep. */
+  const BILLING_TOKEN = 'tok_live_THE_AGENT_IS_TOLD_THE_NAME_NOT_THIS'
+  const SHIPPING_TOKEN = 'tok_live_ADDED_WHILE_VARNICK_WAS_ALREADY_RUNNING'
+
+  const items = new Map<string, string>()
+  const secrets = await openSecretsStore({
+    keychain: {
+      read: async (account) => items.get(account) ?? null,
+      write: async (account, value) => {
+        items.set(account, value)
+      },
+      remove: async (account) => {
+        items.delete(account)
+      },
+    },
+  })
+  await secrets.store('BILLING_TOKEN', BILLING_TOKEN)
+  const resolution = hostSecretResolution({ store: secrets })
+
+  /**
+   * Every byte that crossed a wire in this block.
+   *
+   * Collected so the claim "no value reaches the agent" can be taken once, over
+   * everything, at the end — rather than as a series of assertions about the
+   * places someone thought to look.
+   */
+  const wire: string[] = []
+
+  /*
+    The Harness runtime's capabilities, with the keychain faked and nothing
+    else. `readSecretNames` is `hostCapabilities`'s own implementation: reload,
+    then `names()`. The rest refuse — nothing in this block calls them, and a
+    stub that quietly answered would be a stub that hid a wrong route.
+  */
+  const unreached = () => {
+    throw new Error('this block does not call that capability')
+  }
+  const capabilities: HarnessCapabilities = {
+    establishSandbox: unreached,
+    wrapAgentCommand: unreached,
+    persist: unreached,
+    readSession: unreached,
+    readSecretNames: async () => {
+      await secrets.reload()
+      return secrets.names()
+    },
+  }
+
+  /**
+   * One trip down the whole route, ending in the text the agent reads.
+   *
+   * Runtime answer -> the line the Rust host writes -> the parse that runs
+   * inside the Sandbox -> the brief. Every step but the middle one is the
+   * shipping function.
+   */
+  const briefTheAgent = async (): Promise<string> => {
+    const reply = await answerHarnessLine(
+      JSON.stringify({ id: 1, request: { kind: 'read-secret-names' } }),
+      capabilities,
+    )
+    wire.push(reply)
+    const answered = (JSON.parse(reply) as { ok?: { names?: unknown } }).ok?.names
+    check('the runtime answers a name read with a list', Array.isArray(answered))
+
+    // What `control_line_for` writes in src-tauri/src/agent.rs: the kind and
+    // the names, and no field a value could ride in.
+    const line = `${JSON.stringify({ kind: 'describe-secrets', names: answered })}\n`
+    wire.push(line)
+
+    const request = parseControlRequest(line)
+    check('the confined process reads it as a control request', request?.kind === 'describe-secrets')
+    const names = request?.kind === 'describe-secrets' ? request.names : []
+    const brief = describeSecretsForAgent(names)
+    wire.push(brief)
+    return brief
+  }
+
+  /** The names the agent can see in what it was handed. */
+  const namesIn = (brief: string) =>
+    brief
+      .split('\n')
+      .filter((sentence) => sentence.startsWith('  ') && sentence.trim().length > 0)
+      .map((sentence) => sentence.trim())
+
+  // The service the integration talks to. Two tokens are good; anything else,
+  // including an unresolved name, is refused.
+  const accepted = new Map([
+    [`Bearer ${BILLING_TOKEN}`, 'billing'],
+    [`Bearer ${SHIPPING_TOKEN}`, 'shipping'],
+  ])
+  const presented: string[] = []
+  const service = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const authorization = request.headers.get('authorization') ?? ''
+      presented.push(authorization)
+      const charged = accepted.get(authorization)
+      return charged === undefined
+        ? Response.json({ error: 'that token is not one of ours' }, { status: 401 })
+        : Response.json({ charged })
+    },
+  })
+
+  const clone = mkdtempSync(join(tmpdir(), 'varnick-naming-'))
+
+  /**
+   * A Surface, written the way an agent that has read the brief writes one.
+   *
+   * `name` is not a constant here — it is lifted out of the sentence the agent
+   * was handed, which is the whole point. If the brief named the wrong secret,
+   * or named none, this module would be written against the wrong name and the
+   * service would refuse it.
+   */
+  const writeSurface = (id: string, name: string) => {
+    const dir = join(clone, 'surfaces', id)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'index.tsx')
+    writeFileSync(
+      file,
+      `const authorization = \`Bearer \${process.env.${name}}\`
+const response = await fetch('${service.url}charges', { headers: { authorization } })
+const body = await response.json()
+export default function Billing() {
+  return { status: response.status, charged: body.charged }
+}`,
+    )
+    const found = discoverFrom({
+      [`../../../userspace/surfaces/${id}/index.tsx`]: () => import(file),
+    })
+    return { file, path: `packages/userspace/surfaces/${id}/index.tsx`, importers: found.importers }
+  }
+
+  const first = await briefTheAgent()
+  check('the agent is told the name of the secret that is stored', namesIn(first).includes('BILLING_TOKEN'))
+  check(
+    'and told it cannot read the value, so it stops asking for one',
+    /cannot read a secret value/.test(first),
+  )
+  check(
+    'and told where a secret resolves, because a Surface in the window reads undefined',
+    first.includes('host-side') && first.includes('window'),
+  )
+
+  const billing = writeSurface('billing-named', namesIn(first)[0] as string)
+  check(
+    'the module written from the brief names the secret',
+    readFileSync(billing.file, 'utf-8').includes('process.env.BILLING_TOKEN'),
+  )
+  check(
+    'and holds no value, because the brief carried none to copy',
+    !readFileSync(billing.file, 'utf-8').includes(BILLING_TOKEN),
+  )
+
+  const charged = (await importSurface(billing.path, billing.importers, resolution)) as () => {
+    status: number
+    charged: string
+  }
+  const receipt = charged()
+  check('the integration reached the service', presented.length === 1)
+  check('carrying the value the agent was never given', presented[0] === `Bearer ${BILLING_TOKEN}`)
+  check('and the service accepted it', receipt.status === 200 && receipt.charged === 'billing')
+
+  /*
+    A secret added while varnick is already running.
+
+    This is the criterion the environment route could not have met, and the
+    reason the names ride the control channel instead. `bun run secret add` is a
+    *different process* writing the same keychain, which from in here is a write
+    behind the open store's back — so the store below is never reopened and the
+    brief is asked for again exactly as the host asks for it before every Turn.
+  */
+  items.set('SHIPPING_TOKEN', SHIPPING_TOKEN)
+  items.set('varnick.index', JSON.stringify(['BILLING_TOKEN', 'SHIPPING_TOKEN']))
+
+  const second = await briefTheAgent()
+  check(
+    'a secret added while varnick is running is named without a relaunch',
+    namesIn(second).includes('SHIPPING_TOKEN'),
+  )
+  check('and the one that was already there still is', namesIn(second).includes('BILLING_TOKEN'))
+
+  const shipping = writeSurface('shipping-named', 'SHIPPING_TOKEN')
+  const shipped = (await importSurface(shipping.path, shipping.importers, resolution)) as () => {
+    status: number
+    charged: string
+  }
+  const label = shipped()
+  check(
+    'and code the agent writes against it resolves, on the same running host',
+    label.status === 200 && label.charged === 'shipping',
+  )
+
+  /*
+    The assertion the ticket turns on, taken over everything at once.
+
+    Every reply, every control line and every brief that crossed in this block,
+    against both values. Names are what travels; values stay in the host process
+    that read the keychain.
+  */
+  const crossed = wire.join('\n')
+  check('no byte of what crossed to the agent is a secret value', !crossed.includes(BILLING_TOKEN))
+  check('including the one added mid-session', !crossed.includes(SHIPPING_TOKEN))
+  check('and what crossed did carry the names', crossed.includes('BILLING_TOKEN') && crossed.includes('SHIPPING_TOKEN'))
+
+  service.stop(true)
+  rmSync(clone, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------

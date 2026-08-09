@@ -39,6 +39,17 @@
  * happens to have — including things they set months ago and have forgotten.
  * That is unreproducible for everyone else, so varnick isolates by default and
  * takes a flag to inherit. See ADR-0010, and `agentEnvironment` below.
+ *
+ * ## What this process is told, as opposed to asked
+ *
+ * Every control request but one asks the confined process to do something. The
+ * exception is `describe-secrets`, which tells it which secrets exist — a fact
+ * it cannot look up, because the Secrets Store is a keychain under `$HOME` and
+ * this process is on the wrong side of `denyRead`. It arrives as names, is held
+ * in {@link runAgentHost}, and becomes a `UserPromptSubmit` hook's
+ * `additionalContext` once per Turn. Nothing in this file reads a secret value
+ * and there is no member on the store it could read one from; ADR-0006 and
+ * `DescribeSecretsRequest` in ./turn.ts have the rest.
  */
 
 import { existsSync } from 'node:fs'
@@ -46,6 +57,7 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
 import { readLines } from './framing.ts'
+import { describeSecretsForAgent } from './secrets.ts'
 import {
   encodePlanUsageAnswer,
   readSubscriptionUsage,
@@ -853,6 +865,20 @@ export interface ServeTurnsInput {
    * a conversation.
    */
   readonly compactionSummaries?: (report: (summary: string) => void) => void
+  /**
+   * Where the names of the stored secrets come in.
+   *
+   * Called once per `describe-secrets` request with the whole list, replacing
+   * whatever was known before rather than adding to it — a removed secret has
+   * to stop being named, or the agent writes code against a key the host can no
+   * longer resolve.
+   *
+   * Optional because the loop is complete without it: an agent that is never
+   * told anything is told nothing, which is where varnick was before this
+   * existed. What it must never be is told a value — see
+   * {@link DescribeSecretsRequest}, whose parse is what makes that structural.
+   */
+  readonly secretsDescribed?: (names: readonly string[]) => void
 }
 
 /**
@@ -1026,6 +1052,15 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       return
     }
     if (request.kind === 'compact') return compact(request)
+    if (request.kind === 'describe-secrets') {
+      // Handed straight over and never kept here. This loop has no use for the
+      // names: it does not compose the brief, does not put one on the Session,
+      // and answers nothing — the request is the host telling the confined
+      // process a fact, not asking it for one, and it is the only kind on this
+      // channel that is.
+      input.secretsDescribed?.(request.names)
+      return
+    }
     /*
       A stale interrupt from an abandoned Turn must not stop the one that
       replaced it, so it has to name the Turn it means.
@@ -1124,6 +1159,18 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
   */
   let reportSummary: ((summary: string) => void) | null = null
 
+  /*
+    Which secrets exist, as the host last said.
+
+    `null` until the host says anything, and that is a different thing from the
+    empty list. An empty list means the Secrets Store was read and holds
+    nothing, which is worth telling the agent — it is the difference between
+    "there are no keys" and "go and look for one". `null` means nobody has said,
+    and the honest thing to do with that is say nothing at all rather than
+    announce an emptiness this process has no evidence for.
+  */
+  let secretNames: readonly string[] | null = null
+
   // Created rather than assumed. Claude Code writes its own state here, and a
   // directory it cannot create is a start that fails with an error about
   // something else. Inside the clone, which is writable — see
@@ -1177,6 +1224,48 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
             ],
           },
         ],
+        /*
+          ADR-0006's naming end: the agent is told which secrets exist, by name,
+          so it can write `process.env.STRIPE_KEY` in the Userspace it builds.
+
+          **Here rather than in the system prompt, because the list changes.**
+          `appendSystemPrompt` belongs to the SDK's `initialize` request and is
+          fixed for the life of the session, so anything carried there would be
+          the list as it stood when varnick launched — and `bun run secret add`
+          runs in another process, minutes later. A `UserPromptSubmit` hook is
+          re-run per Turn, so the brief is composed from whatever the host last
+          said and a key added mid-session is nameable on the very next Turn.
+          See DescribeSecretsRequest in ./turn.ts for the route in.
+
+          Registered in process, exactly like the PostCompact hook above and for
+          the same reason: it is varnick's own code rather than a hook out of
+          `.claude/settings.json`, so `settingSources: []` neither removes it nor
+          is weakened by it, and no agent-authored code runs because of it.
+
+          `describeSecretsForAgent` composes the text and this does not reword
+          it. That matters more than it looks: the sentence it writes is the one
+          saying a value cannot be read and that resolution happens host-side,
+          and an agent told the second half differently writes the renderer
+          version of an integration and reads `undefined` with nothing to
+          explain why.
+        */
+        UserPromptSubmit: [
+          {
+            hooks: [
+              async (hook) => {
+                if (hook.hook_event_name !== 'UserPromptSubmit') return {}
+                const names = secretNames
+                if (names === null) return {}
+                return {
+                  hookSpecificOutput: {
+                    hookEventName: 'UserPromptSubmit',
+                    additionalContext: describeSecretsForAgent(names),
+                  },
+                }
+              },
+            ],
+          },
+        ],
       },
       ...agentConfigurationOptions(inherit),
     },
@@ -1194,6 +1283,11 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     write: (line) => process.stdout.write(line),
     compactionSummaries: (report) => {
       reportSummary = report
+    },
+    // Replaced wholesale, so a secret the developer removed stops being named
+    // on the next Turn rather than lingering as a name nothing can resolve.
+    secretsDescribed: (names) => {
+      secretNames = names
     },
     session: {
       prompt: (text) => {

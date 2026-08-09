@@ -355,6 +355,18 @@ export async function openSecretsStore(options: SecretsStoreOptions): Promise<Se
  * is not a thing that can succeed — an agent that does not know the last part
  * spends turns trying. Composed from names alone, so there is no code path here
  * through which a value could arrive.
+ *
+ * Two callers, and they are handed the same string on purpose. `bun run secret
+ * brief` prints it to a terminal, which is how a developer reads what the agent
+ * was told; `runAgentHost` in ./agent.ts puts it in front of the running agent
+ * through a `UserPromptSubmit` hook. Neither rewords it. That matters for the
+ * sentence about *where* a secret resolves: an agent told host-side resolution
+ * differently writes the renderer version of an integration and reads
+ * `undefined`, with nothing on screen to say why.
+ *
+ * The names reach the agent host over the control channel rather than in its
+ * environment, because the list changes while it runs — see
+ * `DescribeSecretsRequest` in ./turn.ts and ADR-0006.
  */
 export function describeSecretsForAgent(names: readonly string[]): string {
   // Says *where* as well as *that*, because the where is not obvious and getting

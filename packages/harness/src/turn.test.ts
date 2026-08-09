@@ -542,6 +542,65 @@ describe('the wire between the agent host and the host', () => {
     ).toBeNull()
   })
 
+  /*
+    The fifth kind, and the only one that goes the other way: every other
+    request asks the confined process to do something, and this one tells it a
+    fact it has no way to find out — which secrets exist. ADR-0006's naming end.
+
+    The names come off `SecretsStore.names()` in the Harness runtime, cross the
+    Rust host, and land here. What follows is the assertion that a value cannot
+    make that journey however it is smuggled onto the line.
+  */
+  test('the names of the stored secrets are a control request', () => {
+    expect(
+      parseControlRequest(JSON.stringify({ kind: 'describe-secrets', names: ['STRIPE_KEY'] })),
+    ).toEqual({ kind: 'describe-secrets', names: ['STRIPE_KEY'] })
+  })
+
+  test('no secret value can ride in beside the names, whatever it is called', () => {
+    // The load-bearing one. This request is the whole of what the running agent
+    // is told about secrets, so "names are not values" has to be a property of
+    // the parse rather than a rule the callers keep — the same rebuild that
+    // makes a `prompt` sent beside a compaction a field that was never read.
+    const parsed = parseControlRequest(
+      JSON.stringify({
+        kind: 'describe-secrets',
+        names: ['STRIPE_KEY'],
+        values: [LOOKS_LIKE_A_KEY],
+        STRIPE_KEY: LOOKS_LIKE_A_KEY,
+        secrets: { STRIPE_KEY: LOOKS_LIKE_A_KEY },
+      }),
+    )
+    expect(parsed).toEqual({ kind: 'describe-secrets', names: ['STRIPE_KEY'] })
+    expect(JSON.stringify(parsed)).not.toContain(LOOKS_LIKE_A_KEY)
+  })
+
+  test('an empty list is an answer and not a missing one', () => {
+    // "The store was read and holds nothing" is worth telling the agent, and it
+    // is a different thing from nobody having said — see `secretNames` in
+    // ./agent.ts, which keeps the two apart.
+    expect(parseControlRequest(JSON.stringify({ kind: 'describe-secrets', names: [] }))).toEqual({
+      kind: 'describe-secrets',
+      names: [],
+    })
+  })
+
+  test('a list that is not wholly names is refused rather than partly believed', () => {
+    // Refused whole. A partial list is worse than none: the agent would write
+    // code against the names it was given and have no way to tell it had been
+    // told about fewer secrets than the store holds.
+    expect(
+      parseControlRequest(JSON.stringify({ kind: 'describe-secrets', names: ['A', 7] })),
+    ).toBeNull()
+    expect(
+      parseControlRequest(JSON.stringify({ kind: 'describe-secrets', names: ['A', ''] })),
+    ).toBeNull()
+    expect(parseControlRequest(JSON.stringify({ kind: 'describe-secrets' }))).toBeNull()
+    expect(
+      parseControlRequest(JSON.stringify({ kind: 'describe-secrets', names: 'STRIPE_KEY' })),
+    ).toBeNull()
+  })
+
   test('a turn still has to name its turn', () => {
     // The id fields are per kind rather than one shared field, so widening the
     // channel for a read did not stop a Turn needing the id an interrupt uses.
