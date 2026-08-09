@@ -12,7 +12,7 @@ Grep  ~/.zbc-read-probe                 -> the file's contents
 
 ## Consequences
 
-- **The two mechanisms cannot be combined.** The kernel refuses `sandbox_apply` inside an existing sandbox, so leaving the SDK's `sandbox` option enabled kills every Bash command with exit 71. The SDK option stays off.
+- **The two mechanisms cannot be combined.** The kernel refuses `sandbox_apply` inside an existing sandbox, so leaving the SDK's `sandbox` option enabled kills every Bash command with exit 71. The SDK option stays off. Measured by probe 11, which was written to answer a different question and settled this one on the way past: the refusal is unconditional — a *narrower* nested profile is refused exactly as a wider one is.
 - **Four binaries are made unreadable, and three of them run anyway.** `/usr/bin/security`, `/usr/bin/osascript`, `/usr/bin/open`, and `/usr/bin/sudo` are in `denyRead`. This was written down as "denying execution means denying read" and believed for two rounds; it is false, and the list is now called `UNREADABLE_BINARIES` so the name cannot carry the claim. It is a tripwire, not a boundary — see the correction below.
 - **The agent must not be able to authenticate from the Keychain**, because an agent that can is an agent that can read every item in it. Tauri's main process reads the credential host-side and injects it as an environment variable into the sandboxed subprocess instead. This holds, but *not* because `security` is denied — see the correction below for what actually does it.
 - **Any allowed network host is an exfiltration path.** The allowlist bounds blast radius, not data egress, and the README says so.
@@ -235,7 +235,7 @@ The agent can still read `/usr`, `/Library` and `/System` in full, so this bound
 
 ## What the probes measure, and what they do not
 
-`containment.probe.test.ts` is ticket 04. Ten probes and one variant, each with a positive control beside it, run against the real policy on the real machine. The list is written from the suite's printed output, because the previous version of it was written from memory and named five:
+`containment.probe.test.ts` is ticket 04. Eleven probes and one variant, each with a positive control beside it, run against the real policy on the real machine. The list is written from the suite's printed output, because the previous version of it was written from memory and named five:
 
 1. one file under `$HOME`, asked for four ways — `Bash`, and the `Read`, `Grep` and `Glob` *shapes* run in-process inside the real agent entry. All four denied; all four permitted against the same file inside the clone.
 2. every `UNREADABLE_BINARIES` entry, read and executed, with the same command run unconfined as the control.
@@ -250,6 +250,7 @@ The agent can still read `/usr`, `/Library` and `/System` in full, so this bound
 8. `/Users` and `/Users/Shared` — the root above every home directory, and a path under it that is under no home directory.
 9. Apple Events and Launch Services: an event only a running application can answer is refused, and so is `open`.
 10. the violation monitor: the kernel's denials reach varnick, and none of them is said out loud while the policy is correct — with the same real denial, classified against a policy that never denied `$HOME`, as the control that proves the channel is not simply dead.
+11. a second, wider Seatbelt profile compiled and applied from inside the first — in-process through `libsandbox`, and again through `/usr/bin/sandbox-exec` — with a read under `$HOME` as the widening and a directory inside the clone as the witness that says whether anything took effect. `sandbox_apply` is refused with EPERM and the witness never moves, so the read stays denied and nothing was established. This is where the `exit 71` sentence in *Consequences* above comes from, and it is what ADR-0014's nested-sandbox claim is now held to.
 
 Probe 6 is the only one needing a credential, and it skips with a printed reason without one. That is a real gap and it is named here rather than papered over: probe 1 runs the syscalls those tools make, in the agent process, under the same kernel policy and inside the same process tree — which is why it is the load-bearing measurement and probe 6 is confirmation. There is deliberately no faked substitute, because the Sandbox denies local binding and every unlisted host, so a stub API is unreachable from inside and widening the policy to reach one would be widening the policy to make a probe pass.
 

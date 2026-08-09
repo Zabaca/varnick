@@ -12,7 +12,12 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { CREDENTIAL_ENV_VAR_NAMES, SELFTEST_MARKER, agentCommand } from './agent.ts'
+import {
+  CREDENTIAL_ENV_VAR_NAMES,
+  SELFTEST_MARKER,
+  agentCommand,
+  nestedProbeProfile,
+} from './agent.ts'
 import {
   PROBE_ATTESTATION_FILENAME,
   probeAttestationPath,
@@ -1319,7 +1324,200 @@ test.skipIf(blocked !== null)(
 )
 
 // ---------------------------------------------------------------------------
-// 11. The standing of the one probe a machine can be unable to run
+// 11. A second Sandbox policy, established from inside the first
+// ---------------------------------------------------------------------------
+
+/**
+ * What a nested-widening attempt turned out to be, read off the four lines the
+ * probe reports.
+ *
+ * The whole point of ticket 47. A read under `$HOME` refused after a nested
+ * profile granted it is only evidence if the nested profile was *there*, and a
+ * probe that reports one verdict for both cases has measured nothing. So the
+ * verdict is computed from two independent facts: what `sandbox_apply` returned,
+ * and whether the witness — a path the outer policy allows and the nested
+ * profile denies — changed hands.
+ */
+function nestVerdict(answers: Record<string, string>): string {
+  const applied = answers.applyRc === '0'
+  const witnessMoved = answers.allowedAfter?.startsWith('denied') ?? false
+  if (!applied && !witnessMoved) return 'nothing was established'
+  if (applied && witnessMoved) return 'a second profile took effect'
+  if (applied && !witnessMoved) return 'apply reported success and nothing changed'
+  return 'apply failed and the witness moved anyway'
+}
+
+test.skipIf(blocked !== null)(
+  'a second policy granting a read the outer one denies cannot be established from inside the Sandbox',
+  async () => {
+    /*
+      Ticket 47, and the sentence in ADR-0014 it was filed against: *"Nested
+      sandboxes intersect — and that is asserted, not assumed."* It was not
+      asserted. It was reasoning about Seatbelt semantics, marked as such, and
+      load-bearing in two places — which is the exact shape of the three things
+      this project has already been wrong about.
+
+      **The operation.** From inside the agent's own Sandbox, compile a second
+      profile that says `(allow default)` — which grants a read under `$HOME`,
+      the one the outer policy denies and the one the Keychain sits behind — and
+      apply it. Then read the file. It must be refused.
+
+      **Twice, because there are two paths and only one of them is a shell.**
+      `--nestprobe` links `libsandbox` into the agent's own process and calls
+      `sandbox_compile_string` and `sandbox_apply` directly; `sandbox-exec` is
+      the same request through a binary. The first is the one that matters, for
+      ADR-0003's reason: the SDK's `sandbox` option was defeated by code that
+      never shelled out, and a probe that only ran `sandbox-exec` would leave
+      that path unmeasured for a second time.
+
+      **The witness is the whole design.** The nested profile also denies a
+      directory *inside the clone*, which the outer policy reads back out. That
+      path is permitted before the attempt, and it is refused after it only if
+      the nested profile is genuinely in force. Without it, "the nested policy
+      was established and the read was still denied" and "nothing was
+      established" produce identical output, and the second one is the failure
+      mode that will actually happen.
+
+      **What was measured, on Darwin 25.5 with srt 0.0.67, is the second one** —
+      and it is a stronger result than the sentence it replaces, in a way worth
+      stating precisely because it makes ADR-0014's *reason* wrong while leaving
+      its *conclusion* standing. There is no intersection, because there is no
+      second profile: `sandbox_apply` returns -1 with EPERM inside any profile
+      that restricts anything, and `sandbox-exec` exits 71 saying so. The
+      assertions below are therefore written to accept either world — a refused
+      apply with the witness untouched, or a successful apply with the witness
+      flipped — and to fail on any combination that would mean the outer policy
+      had been widened.
+
+      The probe never touches the developer's Keychain. The file under `$HOME` is
+      the one this suite created for probe 1.
+    */
+    const sandbox = await freshSandbox(repoRoot)
+    const run = runner(sandbox)
+    const entry = `${agentCommand({ cloneRoot: repoRoot })} --nestprobe ${JSON.stringify(outsideFile)} ${JSON.stringify(insideFile)}`
+
+    // The control, and it is the only shape this control can take: the same
+    // process, the same profile, the same call, with no outer Sandbox. It is
+    // what proves the mechanism works on this machine and that the profile is
+    // genuinely wider on `$HOME` — without it, a refusal inside could mean a
+    // profile this probe wrote wrong. Probe 2 runs its controls the same way.
+    const controlRan = await runUnconfined(entry)
+    const control = JSON.parse(controlRan.stdout.trim().split('\n').at(-1) ?? '{}') as Record<
+      string,
+      string
+    >
+
+    const confinedRan = await run(entry)
+    if (confinedRan.stdout.trim() === '') {
+      throw new Error(`the nested-sandbox probe said nothing: ${confinedRan.stderr}`)
+    }
+    const confined = JSON.parse(confinedRan.stdout.trim().split('\n').at(-1) ?? '{}') as Record<
+      string,
+      string
+    >
+
+    // The same request through a binary rather than through a linked library.
+    // `sandbox-exec` is what srt itself ends in, so this is also the answer to
+    // "what happens if the agent runs srt inside srt".
+    const wide = '(version 1)(allow default)'
+    const viaExec = await run(
+      `/usr/bin/sandbox-exec -p '${wide}' /bin/cat ${JSON.stringify(outsideFile)}`,
+    )
+
+    // And the same request in the opposite direction: a nested profile that
+    // grants nothing at all. If *this* is refused too, then what the kernel
+    // refuses is nesting rather than widening — which is the difference between
+    // "profiles intersect" and "there is no second profile", and the reason
+    // ADR-0014's conclusion survives while its stated mechanism does not.
+    const viaExecNarrow = await run(
+      `/usr/bin/sandbox-exec -p '(version 1)(deny default)' /bin/echo narrower-nested`,
+    )
+
+    report('probe 11 — a second, wider policy applied from inside the first', [
+      ['profile applied', confined.profile ?? '(nothing)'],
+      ['', ''],
+      ['no outer Sandbox  (control)', ''],
+      ['  libsandbox dlopen', control.dlopen ?? '(nothing)'],
+      ['  sandbox_compile_string', control.compiled ?? '(nothing)'],
+      ['  sandbox_apply', control.applyRc ?? '(nothing)'],
+      ['  read under $HOME  after', control.deniedAfter ?? '(nothing)'],
+      ['  witness inside the clone  before', control.allowedBefore ?? '(nothing)'],
+      ['  witness inside the clone  after', control.allowedAfter ?? '(nothing)'],
+      ['  verdict', nestVerdict(control)],
+      ['', ''],
+      ['inside the agent Sandbox', ''],
+      ['  libsandbox dlopen', confined.dlopen ?? '(nothing)'],
+      ['  sandbox_compile_string', confined.compiled ?? '(nothing)'],
+      [
+        '  sandbox_apply',
+        `${confined.applyRc ?? '(nothing)'}${confined.applyError ? ` — ${confined.applyError} (errno ${confined.applyErrno})` : ''}`,
+      ],
+      ['  read under $HOME  before', confined.deniedBefore ?? '(nothing)'],
+      ['  read under $HOME  after', confined.deniedAfter ?? '(nothing)'],
+      ['  witness inside the clone  before', confined.allowedBefore ?? '(nothing)'],
+      ['  witness inside the clone  after', confined.allowedAfter ?? '(nothing)'],
+      ['  verdict', nestVerdict(confined)],
+      ['', ''],
+      ['  same request via /usr/bin/sandbox-exec', outcome(viaExec)],
+      ['  a nested profile granting nothing', outcome(viaExecNarrow)],
+    ])
+
+    // The control first, because it is what makes the rest mean anything: this
+    // machine can apply this profile, the profile compiles, and it really does
+    // both grant the `$HOME` read and take the clone away. A control that failed
+    // here would mean the probe below measured a broken profile, not a boundary.
+    expect(control.dlopen).toBe('opened')
+    expect(control.compiled).toBe('compiled')
+    expect(control.applyRc).toBe('0')
+    expect(control.allowedBefore).toBe('permitted')
+    expect(control.allowedAfter).toStartWith('denied')
+    expect(control.deniedAfter).toBe('permitted')
+
+    // Inside the Sandbox, the same profile compiles — so whatever stops it is
+    // the kernel refusing the request rather than this probe writing bad Scheme.
+    expect(confined.dlopen).toBe('opened')
+    expect(confined.compiled).toBe('compiled')
+
+    // And it is the profile this file describes, rather than one the child
+    // composed for itself. The report above is quotable only if this holds.
+    expect(confined.profile).toBe(nestedProbeProfile(insideDir).replaceAll('\n', ' '))
+
+    // The outer policy holds on both sides of the attempt. This is the claim.
+    expect(confined.deniedBefore).toStartWith('denied')
+    expect(confined.deniedAfter).toStartWith('denied')
+    expect(confinedRan.stdout).not.toContain(SELFTEST_MARKER)
+
+    // And the witness says which of the two worlds this is, so the assertion
+    // above cannot pass for the wrong reason. Exactly one of these holds today —
+    // `nothing was established` — and the other is written down so that an OS
+    // which starts permitting nested profiles is measured rather than assumed to
+    // intersect. The two verdicts this rejects are the dishonest ones.
+    expect(['nothing was established', 'a second profile took effect']).toContain(
+      nestVerdict(confined),
+    )
+    expect(nestVerdict(confined)).toBe('nothing was established')
+    expect(confined.applyRc).toBe('-1')
+    expect(confined.applyError).toBe('Operation not permitted')
+    expect(confined.allowedAfter).toBe('permitted')
+
+    // The shell path, refused the same way and by name. srt's own wrapping ends
+    // in this binary, so this is what a nested srt would hit.
+    expect(viaExec.code).toBe(71)
+    expect(viaExec.stderr).toContain('sandbox_apply')
+    expect(viaExec.stdout).not.toContain(SELFTEST_MARKER)
+
+    // Refused in the other direction too, which is the sentence ADR-0014 now
+    // carries: the kernel is not intersecting a wider profile down to the outer
+    // one, it is declining to establish a second profile of any shape.
+    expect(viaExecNarrow.code).toBe(71)
+    expect(viaExecNarrow.stderr).toContain('sandbox_apply')
+    expect(viaExecNarrow.stdout).not.toContain('narrower-nested')
+  },
+  180_000,
+)
+
+// ---------------------------------------------------------------------------
+// 12. The standing of the one probe a machine can be unable to run
 // ---------------------------------------------------------------------------
 
 /*

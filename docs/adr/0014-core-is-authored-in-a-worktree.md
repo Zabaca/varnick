@@ -72,8 +72,9 @@ works. varnick ships a fence, not a bureaucracy.
 it reads the Keychain to resolve a Credential, and the Keychain is under the
 denied `$HOME`. So the chain is three steps — the agent edits `sandbox.ts` in a
 worktree, calls `launch_preview`, and the host spawns a varnick whose fence the
-agent wrote, whose own agent then runs under it. Nested Seatbelt profiles
-intersect, but a Preview is not nested inside anything; it is spawned by the
+agent wrote, whose own agent then runs under it. A second profile established
+from inside the Sandbox reaches nothing — measured, see *What this does not
+license* — but a Preview is not nested inside anything; it is spawned by the
 host.
 
 `launch_preview` therefore **prompts** when the worktree touches Fence code —
@@ -150,7 +151,45 @@ policy and its baseline stay on `denyWrite` for
 not touch: an agent that can write them widens its own boundary on the next
 launch, and every other entry becomes advisory.
 
-**Nested sandboxes intersect — and that is asserted, not assumed.** The claim
-that a confined agent cannot grant a child more than it has is load-bearing for
-`enableWeakerNestedSandbox: false`, and it is currently reasoning about Seatbelt
-semantics rather than a measurement. It belongs with the containment probes.
+**A confined agent cannot grant itself or a child more than it has — measured,
+and not by intersection.** This said "nested sandboxes intersect" and marked
+itself as reasoning about Seatbelt semantics rather than a result. Probe 11 in
+`containment.probe.test.ts` is the result, and it keeps the conclusion while
+replacing the reason. Darwin 25.5, srt 0.0.67, under the shipped policy, with a
+second profile whose `(allow default)` grants the read under `$HOME` that the
+outer policy denies:
+
+```
+                              no outer Sandbox (control)   inside the Sandbox
+sandbox_compile_string        compiled                     compiled
+sandbox_apply                 0                            -1, EPERM
+read under $HOME              permitted                    denied
+witness inside the clone      permitted -> denied          permitted -> permitted
+/usr/bin/sandbox-exec         (n/a)                        exit 71, sandbox_apply: EPERM
+```
+
+**There is no intersection, because there is no second profile.** The kernel
+refuses `sandbox_apply` outright inside any profile that restricts anything — a
+narrower nested profile is refused exactly as a wider one is — so the outer
+policy is not merged with a nested one, it is the only one there is.
+
+The witness is what makes that readable rather than assumed. The nested profile
+also denies a directory *inside the clone*, which the outer policy allows: it
+stays permitted after the attempt, so nothing took effect, and the refused read
+under `$HOME` is not a probe reporting a denial it never earned. The control is
+the same call with no outer Sandbox, where `sandbox_apply` returns 0 and the
+witness does change hands.
+
+Both paths are measured, because ADR-0003 exists for the difference between
+them: `libsandbox` linked into the agent's own process, and `/usr/bin/sandbox-exec`.
+srt's own wrapping ends in that binary, so the second line is also the answer to
+"what if the agent runs srt inside srt" — and it is where ADR-0003's `exit 71`
+sentence comes from.
+
+**One thing this does *not* support, which was believed on the way in.**
+`enableWeakerNestedSandbox: false` is not held up by any of the above. srt passes
+that option only in its `case 'linux'` branch, where it governs whether
+bubblewrap mounts a fresh `/proc` under an unshared PID namespace in a Docker
+container; the macOS branch never reads it. It stays `false` because every
+weakening option is off, which is the reason `sandbox.test.ts` asserts, and not
+because a nested profile would otherwise widen this one.
