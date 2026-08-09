@@ -216,6 +216,20 @@ describe('what the policy denies', () => {
     expect(policy().filesystem.denyWrite).toContain(`${CLONE}/${SANDBOX_POLICY_FILENAME}`)
   })
 
+  test('the host that enforces the boundary is unwritable', () => {
+    /*
+      The fourth thing that can change the fence on the next launch, and the one
+      that was missed. `src-tauri` reads the credential, spawns the agent under
+      srt, and decides what the window may ask for — outside the Sandbox, and
+      recompiled on every `bun tauri dev`. An agent that edits it cannot run what
+      it wrote; the developer does, and by then the spawn may not wrap anything.
+
+      ADR-0005 already routes Core changes through a Clone and a reviewed
+      Collect. This is that being enforced rather than assumed.
+    */
+    expect(policy().filesystem.denyWrite).toContain(`${CLONE}/src-tauri/**`)
+  })
+
   test('the recorded baseline is unwritable too', () => {
     // The baseline is what the next launch believes varnick generated. An agent
     // that can write it can present its own widening as varnick's own work and

@@ -416,6 +416,33 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
         // edit from an upgrade. An agent that can write this can make its own
         // widening look like something varnick generated, and be believed.
         join(clone, SANDBOX_BASELINE_FILENAME),
+        /*
+          The host, which is the thing that enforces all of the above.
+
+          **Missed for as long as this list existed**, and it passes the same
+          test every other entry passes: can it change the fence on the next
+          launch? `src-tauri` is the Rust host — the process that reads the
+          credential out of the keychain, spawns the agent under `srt`, and
+          decides in `route_of` what the window may ask for. It runs *outside*
+          the Sandbox, always, and `bun tauri dev` recompiles it every time.
+
+          So an agent that can edit it cannot run what it wrote — the developer
+          does, on the next launch, and by then the spawn may no longer wrap the
+          process in `srt` at all. That is the same one-relaunch delay as editing
+          `sandbox-policy.json`, which has been on this list from the start.
+
+          The list read as "Core" and `packages/core` is where Core looks like it
+          lives. The host is the fourth thing with the same property and it lives
+          somewhere else in the tree.
+
+          This is not a new rule. ADR-0005 already routes Core changes through a
+          Clone and a human-reviewed Collect — precisely because "any path from
+          Userspace to Core is a path from confined to unconfined". This line is
+          that ADR being enforced rather than assumed. When the agent genuinely
+          needs native capability, the answers are a host command added
+          deliberately, or an Escalation — not a writable host.
+        */
+        join(clone, 'src-tauri/**'),
       ],
     },
     // `open` and `osascript` need Apple Events. Allowing them would let a
