@@ -97,3 +97,108 @@ describe('the runtime and the client agree about the shape of an answer', () => 
     ).rejects.toThrow(/does not read the credential/)
   })
 })
+
+/*
+  The stored-message shape, checked at both ends rather than written once.
+
+  A message is validated twice crossing this seam, by two functions in two
+  files. `storedMessage` in runtime.ts decides what may be written to the
+  mirror; the transcript reader in bridge.ts decides what may come back into a
+  machine's context. They are deliberately not one function: bridge.ts is
+  bundled into the webview and must reach no Node, runtime.ts imports the
+  filesystem, and a shared parser would be a module the renderer pulls the host
+  half in through. They are also not redundant — they guard opposite directions,
+  and neither can be dropped in favour of the other.
+
+  What that costs is an agreement nothing kept. Adding a role to one and not the
+  other makes a transcript the mirror will happily store into `malformed` on the
+  way back, which presents as a corrupt mirror rather than as a missing line of
+  code. So the two are driven over the same values here, asserting only that
+  they answer the same way. A shared abstraction would have made them agree by
+  construction and coupled two processes to do it; this fails the moment they
+  stop agreeing and constrains nothing else.
+*/
+
+/** A message value, as it would arrive from either direction. */
+const CANDIDATES: readonly { readonly what: string; readonly value: unknown }[] = [
+  { what: 'a message from the developer', value: { id: 'm1', role: 'user', text: 'one' } },
+  { what: 'a message from the agent', value: { id: 'm2', role: 'agent', text: 'two' } },
+  { what: 'an empty text, which is a message that said nothing', value: { id: 'm3', role: 'user', text: '' } },
+  { what: 'a role neither end has agreed to', value: { id: 'm4', role: 'system', text: 'three' } },
+  { what: 'no id', value: { role: 'user', text: 'four' } },
+  { what: 'no text', value: { id: 'm5', role: 'user' } },
+  { what: 'an id that is not a string', value: { id: 5, role: 'user', text: 'five' } },
+  { what: 'nothing at all', value: null },
+]
+
+/** Whether the mirror would store it. `persist-session`, the way in. */
+async function storable(value: unknown): Promise<boolean> {
+  return await callHarness(
+    {
+      kind: 'persist-session',
+      sessionId: 's1',
+      messages: [value] as readonly StoredMessage[],
+    },
+    bridgeOver(capabilities()),
+  ).then(
+    () => true,
+    () => false,
+  )
+}
+
+/** Whether a machine would take it back. `read-session`, the way out. */
+async function restorable(value: unknown): Promise<boolean> {
+  return await callHarness(
+    { kind: 'read-session', sessionId: 's1' },
+    bridgeOver(
+      capabilities({ readSession: async () => [value] as readonly StoredMessage[] }),
+    ),
+  ).then(
+    () => true,
+    () => false,
+  )
+}
+
+describe('the two ends agree about what a stored message is', () => {
+  for (const { what, value } of CANDIDATES) {
+    test(what, async () => {
+      // Deliberately not asserting *which* answer: the point is that a shape
+      // the mirror accepts is a shape a relaunch can read, whatever the two of
+      // them decide that shape is.
+      expect(await storable(value)).toBe(await restorable(value))
+    })
+  }
+
+  test('a field neither end agreed to reaches neither the mirror nor a machine', async () => {
+    // Both sides rebuild rather than forward, and both say so. Driven here
+    // because a sender that volunteered a field is exactly the sender that
+    // would put something in the transcript a developer later reads.
+    const volunteered = { id: 'm1', role: 'user', text: 'one', note: 'not part of the shape' }
+
+    let persisted: readonly StoredMessage[] = []
+    await callHarness(
+      {
+        kind: 'persist-session',
+        sessionId: 's1',
+        messages: [volunteered] as readonly StoredMessage[],
+      },
+      bridgeOver(
+        capabilities({
+          persist: async ({ messages }) => {
+            persisted = messages
+            return { ok: true } as { ok: true }
+          },
+        }),
+      ),
+    )
+    expect(persisted).toEqual([{ id: 'm1', role: 'user', text: 'one' }])
+
+    const restored = await callHarness(
+      { kind: 'read-session', sessionId: 's1' },
+      bridgeOver(
+        capabilities({ readSession: async () => [volunteered] as readonly StoredMessage[] }),
+      ),
+    )
+    expect(restored).toEqual({ messages: [{ id: 'm1', role: 'user', text: 'one' }], redacted: false })
+  })
+})

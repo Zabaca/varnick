@@ -48,6 +48,7 @@
  */
 
 import { agentCommand } from './agent.ts'
+import { readLines } from './framing.ts'
 import {
   establishSandbox,
   type EstablishedSandbox,
@@ -282,7 +283,9 @@ async function answer(
  *
  * `JSON.stringify` escapes newlines, so a reason with one in it cannot split a
  * reply across two lines and desynchronise the pipe. That is load-bearing: the
- * framing is "one reply per line" and nothing else enforces it.
+ * framing is "one reply per line" and nothing else enforces it. The other half
+ * of that framing — reading calls back out of a stream of chunks — is
+ * {@link readLines}, shared with the agent host's control channel.
  */
 export async function answerHarnessLine(
   line: string,
@@ -326,20 +329,7 @@ export async function serveHarness(
   write: (reply: string) => void,
   capabilities: HarnessCapabilities = hostCapabilities(),
 ): Promise<void> {
-  const decoder = new TextDecoder()
-  let pending = ''
-
-  for await (const chunk of input) {
-    pending += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true })
-
-    let newline = pending.indexOf('\n')
-    while (newline !== -1) {
-      const line = pending.slice(0, newline)
-      pending = pending.slice(newline + 1)
-      if (line.trim().length > 0) write(await answerHarnessLine(line, capabilities))
-      newline = pending.indexOf('\n')
-    }
-  }
-
-  if (pending.trim().length > 0) write(await answerHarnessLine(pending, capabilities))
+  await readLines(input, async (line) => {
+    write(await answerHarnessLine(line, capabilities))
+  })
 }

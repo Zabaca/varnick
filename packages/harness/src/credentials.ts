@@ -99,8 +99,14 @@ export type CredentialAbsence =
  * Both are first-class authentication variables to the Agent SDK, listed side
  * by side in its own credential table — which is what makes supporting a
  * subscription one substitution rather than a second authentication path.
- * Mirrored as `API_KEY_ENV_VAR`/`SUBSCRIPTION_ENV_VAR` in
- * src-tauri/src/credential.rs, and as `CREDENTIAL_ENV_VAR_NAMES` in ./agent.ts.
+ *
+ * The names live here, keyed by the Kind that chooses between them, and
+ * `CREDENTIAL_ENV_VAR_NAMES` in ./agent.ts is these two values in that order —
+ * derived rather than repeated, because a mirror between two files in one
+ * language is a mirror nothing has to keep. The dependency runs that way round
+ * because this module reaches no Node and agent.ts does. Mirrored once more, in
+ * another language, as `API_KEY_ENV_VAR`/`SUBSCRIPTION_ENV_VAR` in
+ * src-tauri/src/credential.rs.
  */
 export const CREDENTIAL_ENV_VARS: Readonly<Record<CredentialKind, string>> = {
   'api-key': 'ANTHROPIC_API_KEY',

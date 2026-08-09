@@ -495,8 +495,10 @@ describe('the read rides the one bridge, like every other Harness call', () => {
 
   test('each kind names the variable the Agent SDK reads it from', () => {
     // Both are first-class authentication variables to the Agent SDK, listed
-    // side by side in its own credential table — ADR-0011. Mirrored as ENV_VAR
-    // in src-tauri/src/credential.rs and CREDENTIAL_ENV_VAR_NAMES in ./agent.ts.
+    // side by side in its own credential table — ADR-0011. These two values are
+    // where CREDENTIAL_ENV_VAR_NAMES in ./agent.ts comes from, so this is the
+    // TypeScript side's only definition; src-tauri/src/credential.rs holds the
+    // other language's.
     expect(CREDENTIAL_ENV_VARS['api-key']).toBe('ANTHROPIC_API_KEY')
     expect(CREDENTIAL_ENV_VARS.subscription).toBe('CLAUDE_CODE_OAUTH_TOKEN')
   })

@@ -4,7 +4,7 @@
 
 **Blocked by:** None.
 
-**Status:** in progress — D15, D16, D17, R3, R4 and most of D18 and D20 are cleared. What is left is listed under "Still open" at the bottom, and every item of it sits in a file ticket 22 is currently working in.
+**Status:** ready-for-human — every finding is worked. D15, D16, D17, R3, R4 went first; D18, D19 and D20 were finished after ticket 22 merged, and what they turned up is recorded below. N4 is the one thing left, and it is a decision rather than a fix.
 
 **Realizes:** no state path.
 
@@ -55,14 +55,79 @@ Each should either assert something that can fail or be deleted. An assertion th
 - **The clone's `.claude/settings.json` is agent-writable and the developer runs Claude Code in this repo.** ADR-0003 records that varnick must never spawn a host-side session; it does not say that the developer's own `claude` in this repo runs those hooks unconfined. That belongs in "Where confinement stops".
 - **The write boundary's documented edge is one of several.** ADR-0002 and the README name `packages/userspace/package.json`. Also agent-writable and host-executed: `packages/lint/package.json`, `bun.lock`, `tsconfig.json`, `eslint.config.js`, and `scripts/clean-clone.sh`, which the README tells the developer to run. Same accepted class; the prose reads as if the list were complete.
 
-## Still open
+## Was open until ticket 22 merged; now cleared
 
-Everything below is in a file ticket 22 has checked out, so it waits for that merge rather than racing it.
+Everything in this section waited on files ticket 22 had checked out. All of it
+was re-read against the merged code before anything was changed, and one item
+had stopped existing.
 
-- **D18**, the comments in `src-tauri/src/lib.rs`, `src-tauri/src/bridge.rs`, `packages/harness/src/agent.ts`, `packages/core/src/actors/live.ts` and `actors/index.ts`. `CLAUDE.md` and `packages/harness/src/index.ts` are done.
-- **D19**, the newline framing duplicated between `agent.ts` and `runtime.ts`, and the stored-message validation duplicated between `bridge.ts` and `runtime.ts`. The `secrets-cli.ts` half is done — the CLI now uses `SECRET_ADD_COMMAND` and `SECRET_REMOVE_COMMAND` rather than hardcoding both strings in three places.
-- **D20**, `CREDENTIAL_ENV_VAR` duplicating `CREDENTIAL_ENV_VAR_NAME`. Ticket 22 rewrites exactly this — a credential's variable is now chosen by its Kind — so the duplicate should be resolved there or immediately after, not before.
-- **N4** below, which is a decision rather than a fix.
+**D18 — the comments.** Five rewritten, each verified by reading what the code
+does now rather than what the review said it did:
+
+- `src-tauri/src/lib.rs` said the credential is answered in this process and
+  *everything else* forwarded. It is the other way round. `route_of` sends
+  twelve kinds to the host and three to the runtime, and the rewrite names the
+  split by what each half needs — the credential and the Session that rides the
+  process holding it, against the Sandbox and the filesystem — rather than by a
+  count, which is what rotted the first one. The review's own "nine of twelve"
+  was already out of date when this was read.
+- `src-tauri/src/bridge.rs`'s `Route::Host` said "the credential, and only the
+  credential" over an arm listing twelve kinds. The module header two hundred
+  lines above it was already right; only the one-liner was wrong.
+- `packages/harness/src/agent.ts` had two paragraphs on `AgentSessionPort` both
+  opening "Five methods, and…" — a bad merge, and six members. Merged into one
+  that says six and says which of the three callers each is there for. The
+  `usage` member's own "the fifth method" was checked and left: it is fifth.
+- `agent.ts`'s doc for `inheritedConfigVariables` still sat above
+  `VARNICK_OWNED_VARIABLES`. Split in two, and the export's claim about "the
+  boundary probe" was corrected to what actually happens: the agent host calls
+  it twice inside the confined process and `sandbox.boundary.test.ts` reads the
+  two numbers out of the report.
+- `packages/core/src/actors/live.ts` described actors that "throw loudly" and a
+  `notImplemented` helper with no caller. The helper is gone and the prose says
+  what is true — the list is empty, live is the default because of it. The two
+  module notes above it became a `/* */` block: half of one was a `/** */`
+  attached to the helper, and with the helper gone it would have read as
+  documentation for the empty list.
+- `packages/core/src/actors/index.ts` said `UNIMPLEMENTED` "shrinks as the
+  harness is written". It is empty, and now says so, with the two places that
+  read it named.
+- **`src-tauri/src/agent.rs` was on D18's original list and off the still-open
+  one, but had not been fixed.** `run_turn`'s header described starting a Turn;
+  interrupts and Compactions route through it as well. Rewritten.
+
+**D19 — the two duplications, decided differently.**
+
+- *Newline framing* is now one function: `readLines` in
+  `packages/harness/src/framing.ts`, called by `serveHarness` and by the agent
+  host's control channel. Unified rather than checked because it is a pure text
+  reader with no protocol in it — it does not know what a line means — so
+  sharing it couples nothing but the framing itself, which is the thing that has
+  to be identical. The two copies were identical character for character, and
+  the coverage was not: only the agent side had a split-across-chunks test, and
+  only the runtime side had the newline-in-a-reason test. Both now cover both.
+- *Stored-message validation* is deliberately **not** unified, and is checked
+  instead — see the new block in `join.test.ts`, which drives eight candidate
+  values through the save path and the restore path and asserts only that the
+  two agree. Not unified because the two ends are not interchangeable:
+  `bridge.ts` is bundled into the webview and must reach no Node, `runtime.ts`
+  imports the filesystem, and the shared parser would have been the module the
+  renderer pulls the host half in through. They also guard opposite directions,
+  so neither could be dropped in favour of the other. The test was falsified
+  before it was committed: adding a third role to `runtime.ts` alone turns it
+  red, and it is the only thing in the suite that goes red.
+
+**D20 — no longer applies, and what took its place.** `CREDENTIAL_ENV_VAR` and
+`CREDENTIAL_ENV_VAR_NAME` do not exist. Ticket 22 replaced both with
+`CREDENTIAL_ENV_VAR_NAMES` in `agent.ts`, and `credential.rs` points at the live
+one. But the duplication survived the reshaping in a new form: `agent.ts` held
+the two names as literals and `credentials.ts` held the same two, keyed by Kind,
+as `CREDENTIAL_ENV_VARS` — which had no caller outside its own test. So the dead
+half was the *other* one this time. It is resolved by deriving rather than
+deleting: `CREDENTIAL_ENV_VAR_NAMES` is now those two values in order, the map
+is load-bearing, and no assertion was removed. The TypeScript half has one
+definition; `credential.rs` is the only remaining mirror, in a language that
+cannot read it, and both tests still pin it against literals.
 
 ## What was cleared, and what it turned up
 
@@ -71,6 +136,7 @@ Everything below is in a file ticket 22 has checked out, so it waits for that me
 - **D17** — `enter` removed rather than wired, for the reason `frozen.ts` already gives.
 - **D20**, the interesting half — `packages/harness/src/index.ts` claimed Core imports "the two modules that import no Node"; there are three. It is a lint rule now rather than a sentence. Writing it found two things: scoping it to `packages/core/**` wrongly rejected `drive.ts`, which is a headless Node script and may import what it likes, and banning the barrel as a `group` banned every subpath under it, because a gitignore pattern matches children. Both are recorded at the rule.
 - **R3, R4** — both written into the README's *Where confinement stops*, with the `.claude/settings.json` claim verified against `git ls-files` and against the six paths `sandbox.ts` denies.
+- **D18, the useful part** — three of the seven comments were wrong about something the reviewer had not noticed, and one file the still-open list had dropped (`agent.rs`) was still wrong. Reading the code rather than the report also turned up ticket 29: the seeded marker's tooltip renders a heading with an empty list under it and tells a developer to append the query parameter that is already the default. Filed rather than fixed — this pass changed no rendered text.
 
 ## One thing to decide rather than fix (N4)
 

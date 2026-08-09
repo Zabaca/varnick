@@ -87,7 +87,10 @@ impl Failure {
 /// Which half of the host answers a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
-    /// This process. The credential, and only the credential.
+    /// This process. The credential, and everything downstream of it — the
+    /// agent process the value is injected into, and the calls that ride the
+    /// Session that process holds. `route_of` below lists them, with the
+    /// reason each one is on this side rather than the other.
     Host,
     /// The Harness runtime — the Node process that holds the Sandbox.
     Runtime,
