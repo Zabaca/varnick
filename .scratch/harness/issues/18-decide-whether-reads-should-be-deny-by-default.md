@@ -4,7 +4,7 @@
 
 **Blocked by:** None — the measurement exists as probe 7.
 
-**Status:** needs-info — the trade-off below is the developer's to weigh, not an implementer's.
+**Status:** needs-info — but the question has changed. It is no longer "is this possible and what does it need"; both are measured below. It is whether the maintenance cost of a computed, machine-specific allowlist is worth the boundary.
 
 **Realizes:** no state path.
 
@@ -25,11 +25,33 @@ So a repository on `/opt`, `/srv`, `/Volumes`, or an external disk is fully read
 
 **Leave it, and say so.** This is what ships today, and the README states it plainly. It is defensible: the sensitive things a developer actually keeps — SSH keys, cloud credentials, keychains, other checkouts — are overwhelmingly under `$HOME`, and the deny list names them. It costs nothing and protects the common case.
 
-**Or make reads deny-by-default.** `srt`'s filesystem config accepts a `denyAllExcept` shape as well as the `allowAllExcept` one in use. That inverts the boundary: the clone is readable, plus whatever the toolchain genuinely needs, and everything else is refused. Strictly stronger, and it would have made three of this project's four wrong turns impossible to make.
+**Or make reads deny-by-default.** This has now been spiked, and both halves of the original framing were wrong.
 
-The cost is real and must be measured rather than guessed. An interpreter, its standard library, `git`, the system libraries every process links, the CA bundle TLS needs, and the SDK's own dependencies all have to be reachable, and they are not in one place. An allowlist that is nearly right fails as a startup error with no obvious cause — ticket 03 already hit exactly that shape once, when a child could not read its own working directory.
+**Wrong the first way: the mechanism.** This ticket said "srt's filesystem config accepts a `denyAllExcept` shape as well as the `allowAllExcept` one in use". It does not. `generateReadRules` in `macos-sandbox-utils.js` always emits `(allow file-read*)` first and then denies; there is no allowlist-first read mode, and the `denyAllExcept` string in that file is a **log label** that is itself mis-set — with the `denyOnly` shape actually in use, `'allowAllExcept' in readConfig` is false, so it prints `denyAllExcept` on every run regardless.
 
-**If it is pursued, the honest sequence is:** build the allowlist, run the whole existing suite under it — `containment.probe.test.ts` and `sandbox.boundary.test.ts` both drive real processes — and only then decide. A deny-by-default policy that has not started an agent is not evidence of anything.
+What does work is putting **`/` in `denyRead`** and the needed paths in `allowRead`. srt anticipates it: there is dedicated handling for a denied root, with a comment explaining that `(subpath "/")` denies the root inode so dyld aborts before exec, and re-allowing the literal root to fix it. Somebody hit this before us.
+
+**Wrong the second way: "the cost must be measured rather than guessed" implied it was hard to find out.** It took about ten minutes. Under `denyRead: ['/']`, this allowlist starts the agent host, loads the SDK, and correctly denies a read outside the clone:
+
+```
+the clone
+/usr  /bin  /System  /Library  /etc  /dev
+/private/var/db  /private/var/select
+~/.bun                       (the interpreter)
+```
+
+Measured with `agentCommand(...) --selftest`, which answered `{"sdk":"loaded","read":"denied","readWhy":"ENOENT","list":"denied",…}` — the agent running, and the boundary holding, under a denied root.
+
+Each of the four candidates was then dropped in turn, and **every one of them is load-bearing**: without `/etc`, `/dev`, `/private/var/db` or `/Library` the agent exits 133 rather than starting. So the set is small, and it is not padded.
+
+## What is actually left to decide
+
+Not whether it is possible, and not what it needs. Two things:
+
+- **The list is machine-specific.** `~/.bun` is this machine's interpreter; another clone may have bun elsewhere, or node, or a Homebrew toolchain. So the allowlist has to be *computed* at policy-generation time from what is actually in use — `process.execPath` and friends — rather than written down. That is real work and it is the honest cost.
+- **It fails closed and obscurely.** A missing entry is `exit 133`, not a message. That is survivable only if srt's `startMacOSSandboxLogMonitor` — which watches kernel deny events and already exists — is wired in to say which path was refused. Without that, a fresh clone on an unfamiliar machine is a hang with no explanation.
+
+`git` is the one known casualty so far: it needs `/private/var/select` (`xcode-select`), which is in the list above, and still failed under it — worth resolving before this ships, since an agent that cannot run `git` in the clone is a serious loss.
 
 - [ ] The choice is made and recorded in ADR-0003, alongside the four corrections that led here
 - [ ] If reads stay allow-by-default, `README.md` says so as a decision rather than as a description
