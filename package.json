@@ -5,6 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "dev": "bun run --filter @varnick/core dev",
+    "dev:app": "bun run packages/core/scripts/dev.ts",
     "build": "bun run --filter @varnick/core build",
     "drive": "bun run --filter @varnick/core drive",
     "secret": "bun run packages/harness/src/secrets-cli.ts",

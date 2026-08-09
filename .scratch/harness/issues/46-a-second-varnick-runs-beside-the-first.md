@@ -27,8 +27,34 @@ A full reload is safe here and a hot swap is not. The Session is durable host-si
 - `1420` stays the default. A developer running `bun tauri dev` in a fresh checkout must see no difference.
 
 - [ ] Two varnicks run at once, each serving its own frontend in its own window
-- [ ] The default port is unchanged and a fresh checkout behaves exactly as before
-- [ ] `devUrl` cannot disagree with the port the dev server bound
-- [ ] A change under `packages/core/**` reloads the window
-- [ ] A change under `packages/userspace/**` still hot-swaps
-- [ ] The reload decision is asserted headlessly
+- [x] The default port is unchanged and a fresh checkout behaves exactly as before
+- [x] `devUrl` cannot disagree with the port the dev server bound
+- [x] A change under `packages/core/**` reloads the window
+- [x] A change under `packages/userspace/**` still hot-swaps
+- [x] The reload decision is asserted headlessly
+
+## Comments
+
+**Implemented on `ticket/46-port-and-reload`.** `packages/core/dev-server.ts`
+holds both halves as pure functions; `vite.config.ts` and
+`packages/core/scripts/dev.ts` are the two lines that act on them, and
+`bun run drive` asserts them with no dev server and no browser.
+
+The port is threaded as **one string, not one number**. `bun run dev:app
+[--port n]` builds the `devUrl` once and hands the same value to the Tauri CLI
+as a `--config` overlay and to Vite as `VARNICK_DEV_URL`; Vite reads its port
+back out of that URL rather than choosing one. The only remaining literal is
+`tauri.conf.json`'s default, and `drive.ts` checks it against
+`devUrlFor(DEFAULT_DEV_PORT)`. `bun tauri dev` is untouched.
+
+**The first box is left unticked deliberately.** The frontend half was measured:
+this worktree's dev server bound `1421` while another varnick's held `1420`, and
+both served. The *window* half was not — that needs two Tauri windows, which
+this agent was told not to open, and a window cannot be observed headlessly.
+Everything between the two is inference: the `--config` overlay was measured to
+reach `build > devUrl` (it fails the schema there on a bad value, before any
+build), so the CLI does receive it; whether two Tauri hosts then coexist is
+unmeasured.
+
+Nothing reached Rust, so there is no `#[cfg(test)]` in `src-tauri` for this —
+`devUrl` is consumed by the Tauri CLI, and `src-tauri/src/**` never reads a port.

@@ -7,5 +7,5 @@
     },
     "types": ["bun", "vite/client"]
   },
-  "include": ["src", "scripts", "vite.config.ts"]
+  "include": ["src", "scripts", "vite.config.ts", "dev-server.ts"]
 }
