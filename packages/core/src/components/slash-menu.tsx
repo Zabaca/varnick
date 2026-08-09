@@ -15,7 +15,15 @@ import { commandLabel, type MenuCommand } from '../domain.ts'
 
 const ACTIVE = '#afd7ff'
 const INACTIVE = '#949494'
-const NAME_COLS = 24
+/**
+ * How wide the name column is, in characters.
+ *
+ * 28 rather than 24, measured against the names that are actually there:
+ * `/mattpocock-skills:prototype` fits exactly, and the plugin-qualified names
+ * are what pushed this past the old width. Wider would buy the longest few
+ * names at every description's expense.
+ */
+const NAME_COLS = 28
 
 /**
  * How tall the list may get before it scrolls.
@@ -99,25 +107,29 @@ export function SlashMenu({
             }}
           >
             {/*
-              A row that cannot overlap itself.
+              A fixed column, clipped rather than pushed.
 
-              The name sat in a fixed 24ch inline-block, so anything longer —
-              `/mattpocock-skills:grill-with-docs`, or a name plus its argument
-              hint — ran straight under the description and the two rendered on
-              top of each other. A flex row with a floor instead of a fixed
-              width keeps the column where a scan expects it and lets a long
-              name push rather than collide.
+              Three arrangements, and the reasons are worth keeping. Fixed and
+              overflowing was the first: a long name drew *under* the
+              description and the two rendered in the same place. Auto-width
+              fixed that and cost the thing the column is for — with
+              `/model opus-5|sonnet-5|haiku-4.5` in it, every description in the
+              list moved right by however long the widest name happened to be,
+              so a ninety-row list had no column at all.
+
+              Fixed and clipped keeps the scan line. What is lost is the tail of
+              a long name, which is the part you have already typed.
+
+              The argument hint is not here. It belongs to the one command you
+              have chosen, not to a list you are searching — see the signature
+              bar in chat-surface.tsx, which is where it went and where it is
+              the only thing worth reading.
             */}
-            <span className="shrink-0" style={{ minWidth: `${NAME_COLS}ch` }}>
+            <span
+              className="shrink-0 overflow-hidden text-ellipsis whitespace-nowrap"
+              style={{ width: `${NAME_COLS}ch` }}
+            >
               {commandLabel(c)}
-              {/*
-                What the command takes, beside its name rather than in place of
-                its description. It is the one piece of a command's frontmatter
-                that changes what you type next.
-              */}
-              {c.argumentHint && (
-                <span style={{ color: INACTIVE, opacity: 0.7 }}> {c.argumentHint}</span>
-              )}
             </span>
             <span className="min-w-0 flex-1 truncate">{c.description}</span>
             {c.source === 'agent' && (

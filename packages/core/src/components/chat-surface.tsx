@@ -507,14 +507,26 @@ export function ChatSurface({
             {/*
               What the accepted command takes, in the gap the menu leaves.
 
-              Accepting `/agents` settles the command and closes the list, which
-              is the moment its `[name]` stops being visible anywhere. Shown only
-              while the arguments are blank: once you have typed one you are
-              answering the question rather than asking it.
+              Accepting `/model` settles the command and closes the list, which
+              is the moment its values stop being visible anywhere — so they are
+              here instead, for exactly as long as the argument is blank. Once
+              you have typed one you are answering the question rather than
+              asking it, and the bar goes.
+
+              This is also the only place the hint appears now. In a row it
+              made the name column ragged and told you about ninety commands you
+              had not chosen; here it is about the one you did.
             */}
             {!menuOpen && signature !== null && (
-              <div className="mb-2 px-1 text-[11.5px]" style={{ color: 'var(--fg-faint)' }}>
-                {commandLabel(signature)} {signature.argumentHint}
+              <div
+                className="mb-1.5 flex items-baseline gap-2 px-1 text-[11.5px]"
+                style={{ color: 'var(--fg-faint)' }}
+              >
+                <span style={{ color: 'var(--accent)' }}>{commandLabel(signature)}</span>
+                <span style={{ color: 'var(--fg-dim)' }}>{signature.argumentHint}</span>
+                {signature.description && (
+                  <span className="min-w-0 flex-1 truncate">{signature.description}</span>
+                )}
               </div>
             )}
             <ClaudePrompt
