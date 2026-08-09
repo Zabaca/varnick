@@ -186,13 +186,21 @@
       }
     },
     "typographyMeta": {
-      "body": {
-        "displayName": "Body",
-        "purpose": "Everything varnick draws: setup copy, problem lines, panel prose, the composer."
-      },
       "transcript": {
         "displayName": "Transcript",
-        "purpose": "The brainless components' own rhythm, one notch tighter. Left as they set it."
+        "purpose": "The brainless components' own rhythm. Left as they set it."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Everything varnick draws at full weight: setup copy, problem lines, the composer."
+      },
+      "chrome": {
+        "displayName": "Chrome",
+        "purpose": "The Surface panel's own furniture. One step down because the panel is beside the conversation rather than in it."
+      },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "The conditions strip and coverage codes. The quietest text in the product, for rows that report rather than say."
       },
       "numeric": {
         "displayName": "Numeric",
@@ -249,7 +257,7 @@
     "northStar": "The Instrument Panel",
     "overview": "A terminal that grew a housing. The transcript at the centre is a faithful Claude Code session, and everything varnick draws around it is instrumentation. The housing never competes with the instrument it houses.\n\nThe surface is monospace throughout, flat throughout, and square throughout. Not minimalism as taste \u2014 a panel is legible because nothing on it is styled for attention. Depth is carried by two greys in the way a recessed bezel is darker than the face around it, and there is no motion anywhere, because motion in a transcript reads as something happening.\n\nThe palette was not chosen. It was read off the transcript components so the application and the session it holds are one surface rather than two.",
     "keyCharacteristics": [
-      "Monospace only, one size (13px), two line-heights",
+      "Monospace only; 13px ceiling with two quieter steps for chrome",
       "No shadows, no motion, no radius \u2014 depth is tonal, state is textual",
       "Colour is semantic and rare; most of the screen is three greys",
       "Controls are text, and exist only when the machine accepts the event",
@@ -267,8 +275,8 @@
         "section": "colors"
       },
       {
-        "name": "The One Size Rule",
-        "body": "13px everywhere, with no scale above or below it. A heading is a heading because of what it says and where it sits, not because it is larger.",
+        "name": "The Quiet Chrome Rule",
+        "body": "13px is the ceiling and the transcript owns it. Anything varnick draws around the conversation steps down \u2014 12px for panel furniture, 11.5px for reporting rows \u2014 and nothing steps up. #/states is the named exception: 15px title, 11px timestamps, on a coverage surface the product does not present.",
         "section": "typography"
       },
       {
@@ -294,7 +302,7 @@
     ],
     "dos": [
       "Do take every new colour from the transcript components. If it is not already in the session, it is not in the product.",
-      "Do express hierarchy with colour and position at one 13px size.",
+      "Do express hierarchy with colour and position, keeping 13px as the ceiling and stepping down for chrome.",
       "Do render a control only when the machine accepts the event, and let its presence be the affordance \u2014 no disabled states to style.",
       "Do cap prose at 110ch per block, and let tool output, diffs and paths run full width.",
       "Do carry depth with ground-raised plus a 1px rule border, and nothing else.",
@@ -305,7 +313,7 @@
       "Don't add border-radius to anything varnick draws.",
       "Don't show a number the product did not measure \u2014 no status pills, health dots, sparklines or usage figures without a live reading behind them.",
       "Don't add a light mode, a theme switcher or a configurable palette.",
-      "Don't introduce a second font family or a type scale.",
+      "Don't introduce a second font family, and don't add a size above 13px to anything the product presents.",
       "Don't style varnick's chrome louder than the transcript it surrounds."
     ]
   }

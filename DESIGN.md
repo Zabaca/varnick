@@ -25,6 +25,16 @@ typography:
     fontSize: "13px"
     fontWeight: 400
     lineHeight: 1.5
+  chrome:
+    fontFamily: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace"
+    fontSize: "12px"
+    fontWeight: 400
+    lineHeight: 1.6
+  micro:
+    fontFamily: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace"
+    fontSize: "11.5px"
+    fontWeight: 400
+    lineHeight: 1.6
   numeric:
     fontFamily: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace"
     fontSize: "13px"
@@ -33,6 +43,7 @@ typography:
     fontFeature: "tnum"
 rounded:
   none: "0"
+  scroll: "6px"
 spacing:
   hairline: "1px"
   tight: "4px"
@@ -88,7 +99,7 @@ This is why the surface is monospace throughout, flat throughout, and square thr
 The palette was not chosen. It was read off the transcript components so the application and the session it holds are one surface rather than two, and that provenance is a constraint rather than a fact about the past — see The Inherited Palette Rule. What the product refuses is equally load-bearing: it is not a dashboard of invented numbers, and it is not themeable.
 
 **Key Characteristics:**
-- Monospace only, one size (13px), two line-heights
+- Monospace only; 13px ceiling with two quieter steps for chrome
 - No shadows, no motion, no radius — depth is tonal, state is textual
 - Colour is semantic and rare; most of the screen is three greys
 - Controls are text, and exist only when the machine accepts the event
@@ -129,16 +140,20 @@ Ten tokens, inherited from the transcript, and most of a screen uses three of th
 **Display Font:** none — there is no display face and no second family.
 **Label/Mono Font:** the same stack; the product is monospace end to end.
 
-**Character:** A single system monospace, at a single size, doing every job. Hierarchy comes from colour and position rather than scale, which is what keeps varnick's chrome from out-ranking the transcript inside it.
+**Character:** A single system monospace across a range of three sizes so narrow it reads as one. Hierarchy comes from colour and position; the size steps do one job only, which is to keep varnick's chrome quieter than the transcript inside it.
 
 ### Hierarchy
-- **Body** (400, 13px, 1.6): everything varnick draws — setup copy, problem lines, panel prose, the composer.
-- **Transcript** (400, 13px, 1.5): the brainless components' own rhythm, slightly tighter. Left as they set it; matching them would mean editing the session to suit the housing.
+- **Transcript** (400, 13px, 1.5): the brainless components' own rhythm. Left as they set it; matching them would mean editing the session to suit the housing.
+- **Body** (400, 13px, 1.6): everything varnick draws at full weight — setup copy, problem lines, the composer. The same size as the transcript, because it is the same kind of content.
+- **Chrome** (400, 12px, 1.6): the Surface panel's own furniture — its header, its loading line, its failure text. One step down because the panel is beside the conversation rather than in it.
+- **Micro** (400, 11.5px, 1.6): the conditions strip, and the coverage codes on `#/states`. The quietest text in the product, for rows that report rather than say.
 - **Numeric** (400, 13px, 1.6, `tnum`): anything that changes in place. Applied through `[data-numeric]` so figures do not jitter as they update.
 
 ### Named Rules
 
-**The One Size Rule.** 13px, everywhere, with no scale above or below it. A heading is a heading because of what it says and where it sits, not because it is larger.
+**The Quiet Chrome Rule.** 13px is the ceiling and the transcript owns it. Anything varnick draws *around* the conversation steps down — 12px for panel furniture, 11.5px for reporting rows — and nothing steps up. A heading is a heading because of what it says and where it sits, never because it is larger.
+
+**The exception, named so the rule stays true.** `#/states` uses 15px for its page title and 11px for card timestamps. It is a coverage surface for whoever is building the product rather than a surface the product presents, and it is the only place in the codebase above 13px. Nothing in the chat surface may follow it.
 
 **The Wide Measure Rule.** Prose caps at 110ch, not the 65ch an essay wants. A transcript is interleaved with tool output, diffs and absolute paths that must not wrap, and a comfortable reading measure would break the thing being read.
 
@@ -168,7 +183,7 @@ There are no breakpoints. This is a desktop application in a window the develope
 
 Square, without exception in anything drawn: `rounded-none` is the only radius that appears in the components, and borders are always exactly 1px in `rule`. Panels, buttons, fields and tooltips all share the same corner, which is none, so nothing reads as a card or a pill.
 
-The one radius in the codebase is `6px` on the scrollbar thumb, which is chrome the browser draws rather than a surface varnick composes. It is recorded here so the rule below is accurate rather than aspirational.
+The one radius in the codebase is `6px` on the scrollbar thumb (`rounded.scroll`), which is chrome the browser draws rather than a surface varnick composes. It is a token rather than only a sentence, so a tool checking the code against this file finds it documented instead of finding a violation — the rule below is about what varnick draws, and the scrollbar is not that.
 
 ### Named Rules
 
@@ -208,7 +223,7 @@ The one radius in the codebase is `6px` on the scrollbar thumb, which is chrome 
 
 ### Do:
 - **Do** take every new colour from the transcript components. If it is not already in the session, it is not in the product (The Inherited Palette Rule).
-- **Do** express hierarchy with colour and position at one 13px size (The One Size Rule).
+- **Do** express hierarchy with colour and position, keeping 13px as the ceiling and stepping *down* for chrome (The Quiet Chrome Rule).
 - **Do** render a control only when the machine accepts the event, and let its presence be the affordance — no disabled states to style.
 - **Do** cap prose at 110ch per block, and let tool output, diffs and paths run full width (The Wide Measure Rule).
 - **Do** carry depth with `ground-raised` plus a 1px `rule` border, and nothing else (The Tonal Depth Rule).
@@ -219,5 +234,5 @@ The one radius in the codebase is `6px` on the scrollbar thumb, which is chrome 
 - **Don't** add `border-radius` to anything varnick draws (The Square Corner Rule).
 - **Don't** show a number the product did not measure — no status pills, health dots, sparklines or usage figures without a live reading behind them. A strip that could never populate was cut for exactly this.
 - **Don't** add a light mode, a theme switcher or a configurable palette. One world, inherited from the transcript; a clone that wants another edits the tokens.
-- **Don't** introduce a second font family or a type scale.
+- **Don't** introduce a second font family, and don't add a size above 13px to anything the product presents.
 - **Don't** style varnick's chrome louder than the transcript it surrounds.
