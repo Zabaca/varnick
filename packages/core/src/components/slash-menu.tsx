@@ -17,6 +17,16 @@ const ACTIVE = '#afd7ff'
 const INACTIVE = '#949494'
 const NAME_COLS = 24
 
+/**
+ * How tall the list may get before it scrolls.
+ *
+ * **A cap rather than a preference.** The list was ninety-three rows on a real
+ * runtime, and unbounded it grew the composer's column until the flex row
+ * outgrew the window — which pushed the Surface panel off the side and left it
+ * blank. A menu is a thing you look at the top of; the rest scrolls.
+ */
+const MOST_OF_THE_LIST = '38vh'
+
 export function SlashMenu({
   commands,
   activeIndex,
@@ -41,7 +51,21 @@ export function SlashMenu({
       role="listbox"
       aria-label="Commands"
       aria-activedescendant={`slash-${activeIndex}`}
-      className="mb-2 space-y-0.5"
+      /*
+        Its own surface, one step up from the transcript.
+
+        The list used to sit on the chat's own background, which made a
+        ninety-row menu read as part of the conversation rather than as
+        something laid over it. `--ground-raised` is the token that already
+        means "one step nearer" — the same one the chips in the runtime panel
+        sit on — so this borrows the ramp rather than inventing a colour.
+      */
+      className="mb-2 overflow-y-auto"
+      style={{
+        maxHeight: MOST_OF_THE_LIST,
+        background: 'var(--ground-raised)',
+        border: '1px solid var(--rule)',
+      }}
     >
       {commands.map((c, i) => {
         const active = i === activeIndex
@@ -57,8 +81,22 @@ export function SlashMenu({
               e.preventDefault()
               onPick(i)
             }}
-            className="cursor-pointer truncate px-1 py-0.5"
-            style={{ color: active ? ACTIVE : INACTIVE }}
+            className="cursor-pointer truncate py-0.5 pr-2"
+            /*
+              The selected row is a band, not a shade of text.
+
+              It was a text colour alone, which on a list this long is nearly
+              invisible — you lose your place the moment you look away. The
+              accent rule down the left is what carries it at a glance; the
+              wash behind is what makes the band read as one row rather than as
+              coloured words.
+            */
+            style={{
+              color: active ? ACTIVE : INACTIVE,
+              background: active ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
+              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+              paddingLeft: '6px',
+            }}
           >
             <span className="inline-block" style={{ width: `${NAME_COLS}ch` }}>
               {commandLabel(c)}

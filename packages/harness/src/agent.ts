@@ -332,6 +332,28 @@ export function lastSessionPath(cloneRoot: string): string {
   return join(claudeConfigDir(cloneRoot), 'last-session.json')
 }
 
+/**
+ * The commands this runtime last reported, kept for the next window.
+ *
+ * **Because the answer arrives too late to be useful the first time.** The list
+ * can only reach Core stamped with a Turn id — that is what the event channel
+ * carries — so a freshly launched window has an empty menu until someone sends
+ * a message. Typing `/` before saying anything is exactly when a person is
+ * looking for a command, and it was the one moment the menu had nothing.
+ *
+ * Written beside the session pointer, in the clone, for the same reasons: the
+ * agent host is the only process that sees this, and the runtime — three
+ * processes away but the one with a filesystem — is what reads it back for a
+ * window that has not run a Turn yet.
+ *
+ * A cache of a fact that changes rarely, and wrong in only one direction: it
+ * can be a launch out of date, which shows a command that has since gone. The
+ * live list replaces it on the first Turn.
+ */
+export function commandsCachePath(cloneRoot: string): string {
+  return join(claudeConfigDir(cloneRoot), 'last-commands.json')
+}
+
 /** Where the CLI keeps conversations, whatever it calls this clone's folder. */
 function sdkProjectsDir(cloneRoot: string): string {
   return join(claudeConfigDir(cloneRoot), 'projects')
@@ -503,34 +525,101 @@ export function agentEnvironment(
 }
 
 /**
- * The Agent SDK options that decide where configuration comes from.
+ * Where the agent's environment comes from.
  *
- * `settingSources: []` is the SDK's own isolation mode: no
- * `~/.claude/settings.json`, no `.claude/settings.json`, no
- * `.claude/settings.local.json`, and — because `CLAUDE.md` loads with the
- * project source — no memory files either. Hooks live in those settings, so
- * they go with them. `strictMcpConfig` drops `.mcp.json`, MCP servers declared
- * in user settings, and MCP servers contributed by plugins.
+ * **The agent owns its environment, inside the fence.** It reads the clone's
+ * `.claude/settings.json`, its hooks, its skills, its MCP servers and — the one
+ * that was costing the most — its `CLAUDE.md`, which the SDK loads only when
+ * `project` is among the sources.
  *
- * Inheriting is the *absence* of both, rather than an option asking for the
- * opposite: what the flag restores is the CLI's own default, and stating it any
- * other way would be varnick deciding what "inherit" means on Claude Code's
- * behalf.
+ * This reverses the isolation this function used to apply, and the argument it
+ * reversed is worth keeping because it was half right. `settingSources: []`
+ * was defending against agent-authored code running out of the clone. But a
+ * hook loaded here runs *inside the Sandbox*, in the same confined process the
+ * agent already runs `Bash` in — it grants no capability the agent does not
+ * have. What it grants is **reach through time**: a hook fires in future
+ * sessions, before anyone reads anything, and never appears in the transcript.
+ * So an injection that lands once can make itself permanent and invisible.
  *
- * Worth being plain about what the flag cannot restore. The Sandbox denies read
- * on `$HOME`, so `~/.claude` — user settings, user `CLAUDE.md`, skills,
- * plugins, and any stdio MCP server installed under the home directory — is
- * unreachable with or without it. The flag restores the clone's own
- * configuration and the developer's environment, and nothing under `$HOME`.
- * Widening the policy to reach it is not on the table: `~/.claude.json` holds
- * MCP server credentials, and a read-allow over the home directory is the exact
- * mistake ADR-0003 records twice.
+ * That is a real cost and it is not the one isolation was priced for. The line
+ * that actually matters is narrower, and it now stands on its own:
+ *
+ * > Nothing derived from the clone is ever executed outside the Sandbox.
+ *
+ * varnick runs exactly one Claude Code process outside it — the `setup-token`
+ * mint, ADR-0003's bounded exception — and that one already sets a
+ * `CLAUDE_CONFIG_DIR` and a working directory outside the clone, for precisely
+ * this reason. `the_mint_cannot_read_the_clone` in src-tauri/src/mint.rs is
+ * what keeps it true.
+ *
+ * The mitigation for the reach problem is the one this codebase reaches for
+ * everywhere else: make it visible rather than forbidden. The runtime panel
+ * already reports what the agent actually loaded — skills, plugins, MCP
+ * servers — because configured is not the same as loaded. An agent-written hook
+ * is a thing to be able to see.
+ *
+ * `user` is deliberately absent. It is `~/.claude`, and the Sandbox denies
+ * reads on `$HOME`, so naming it would be a claim this cannot honour — the flag
+ * below adds it anyway for a run that has widened the policy by hand.
  */
+export const AGENT_SETTING_SOURCES = ['project', 'local'] as const
+
 export function agentConfigurationOptions(inherit: boolean): {
-  settingSources?: never[]
-  strictMcpConfig?: true
+  settingSources: ('user' | 'project' | 'local')[]
+  skills: 'all'
 } {
-  return inherit ? {} : { settingSources: [], strictMcpConfig: true }
+  return {
+    settingSources: inherit
+      ? ['user', ...AGENT_SETTING_SOURCES]
+      : [...AGENT_SETTING_SOURCES],
+    /*
+      Skills need turning on explicitly — the SDK calls this "the single place
+      to turn skills on", and omitting it is not "skills off" but "no SDK
+      opinion". Stated rather than left to a default, because the runtime panel
+      reports the list and an empty one should mean the agent found none, not
+      that varnick never asked.
+    */
+    skills: 'all',
+  }
+}
+
+/**
+ * Plugins the clone carries, as the SDK's own local-plugin config.
+ *
+ * Discovered from the filesystem rather than registered, the same rule Surfaces
+ * follow: adding one must never require editing Core. A directory under
+ * `.claude/plugins/` holding a `.claude-plugin/plugin.json` is a plugin.
+ *
+ * Passed as a query option rather than left to a settings file, which is what
+ * makes this work at all: the plugins a developer has *installed* live under
+ * `~/.claude`, which the Sandbox denies, so a plugin only exists for this agent
+ * if it is inside the clone where the agent can read it. Copying one in is the
+ * price of a fence that holds.
+ *
+ * A malformed plugin is skipped rather than fatal — the same rule ADR-0004
+ * applies to a Surface. An agent left with no plugins is workable; an agent
+ * that will not start is not.
+ */
+export const AGENT_PLUGINS_RELATIVE_PATH = '.claude/plugins'
+
+export function agentPlugins(
+  cloneRoot: string,
+  fs: { readDir: (path: string) => readonly string[]; exists: (path: string) => boolean } = {
+    readDir: (path) => readdirSync(path),
+    exists: (path) => existsSync(path),
+  },
+): { type: 'local'; path: string }[] {
+  const root = join(cloneRoot, AGENT_PLUGINS_RELATIVE_PATH)
+  let entries: readonly string[]
+  try {
+    entries = fs.readDir(root)
+  } catch {
+    return []
+  }
+  return entries
+    .map((entry) => join(root, entry))
+    .filter((path) => fs.exists(join(path, '.claude-plugin', 'plugin.json')))
+    .map((path) => ({ type: 'local' as const, path }))
 }
 
 /**
@@ -1012,6 +1101,14 @@ export interface ServeTurnsInput {
    * which is what makes the pointer survive a crash mid-answer.
    */
   readonly sessionStarted?: (sessionId: string) => void
+  /**
+   * The commands the runtime reported, as soon as it reports them.
+   *
+   * Handed over so the host can keep them for the next launch. The list can
+   * only reach Core stamped with a Turn id, so a window that has not run a Turn
+   * has an empty menu — which is exactly when someone types `/`.
+   */
+  readonly commandsListed?: (commands: readonly SlashCommand[]) => void
 }
 
 /**
@@ -1078,10 +1175,19 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     let answer: readonly SlashCommand[]
     try {
       answer = await session.supportedCommands()
-    } catch {
+    } catch (error) {
+      // stderr, which the host inherits and a developer can see. Not the wire:
+      // this is a description of the agent failing to describe itself, and it
+      // must not become an event a Turn has to reason about.
+      process.stderr.write(
+        `varnick: the runtime would not list its commands — ${error instanceof Error ? error.message : String(error)}\n`,
+      )
       return
     }
     commands = answer
+    // Handed over rather than written here: this loop has no filesystem in it
+    // and no clone root, which is what keeps it testable without one.
+    input.commandsListed?.(answer)
     if (turnId !== null) emit([{ kind: 'commands', turnId, commands: answer }])
   }
 
@@ -1534,6 +1640,12 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
         ],
       },
       ...agentConfigurationOptions(inherit),
+      /*
+        Plugins the clone carries. Empty on a fresh checkout, which is the
+        honest default — a plugin only exists for this agent if it is somewhere
+        the agent can read, and `~/.claude/plugins` is not.
+      */
+      plugins: agentPlugins(cloneRoot),
     },
   })
 
@@ -1557,6 +1669,16 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     },
     resumed: resuming !== null,
     sessionStarted: (sessionId) => rememberSession(cloneRoot, sessionId),
+    commandsListed: (listed) => {
+      // Best-effort, like the session pointer: a cache that could not be
+      // written costs the next launch a menu, and failing this launch to say so
+      // would be the worse trade.
+      try {
+        writeFileSync(commandsCachePath(cloneRoot), `${JSON.stringify({ commands: listed })}\n`)
+      } catch {
+        // Nothing to do about it, and nowhere useful to say it.
+      }
+    },
     session: {
       prompt: (text) => {
         queued.push({

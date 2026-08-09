@@ -970,6 +970,13 @@ mod tests {
         assert_eq!(args, vec!["setup-token"]);
     }
 
+    /*
+      **Load-bearing since ticket 38, where it used to be defensive.** The agent
+      now owns the clone's configuration — its hooks, its skills, its plugins —
+      and the whole of what makes that safe is that nothing derived from the
+      clone is ever executed outside the Sandbox. This process is the one
+      Claude Code varnick runs outside it, so this assertion is the fence.
+    */
     #[test]
     fn the_command_runs_outside_the_clone_and_reads_its_configuration_there() {
         /*

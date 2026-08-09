@@ -216,8 +216,15 @@ export interface MenuCommand {
   readonly argumentHint: string
   readonly aliases?: readonly string[]
   readonly source: 'varnick' | 'agent'
-  /** Only varnick's rows have one; an agent command is sent, not run. */
-  readonly run?: () => void
+  /**
+   * Only varnick's rows have one; an agent command is sent, not run.
+   *
+   * Takes whatever was typed after the name, which is empty for most of them.
+   * `/effort` and `/model` are the two that read it — they were one row per
+   * value until the list grew, and eight rows for two settings is a menu
+   * describing its own implementation rather than the thing you wanted.
+   */
+  readonly run?: (argument: string) => void
 }
 
 /** What a command is called on screen. */
@@ -365,6 +372,18 @@ export function completionFor(command: MenuCommand): string {
  * an argument — so the longest matching name wins. Matching the first word
  * would resolve `/effort xhigh` to a bare `/effort` that means something else.
  */
+/**
+ * What was typed after the command's name.
+ *
+ * The whole of the argument parsing, and it is one line because the menu does
+ * the rest: {@link signatureFor} shows the values a command takes for exactly
+ * as long as the argument is blank, so nothing here has to explain itself when
+ * it does not recognise one.
+ */
+export function commandArgument(draft: string, name: string): string {
+  return draft.trim().slice(name.length).trim()
+}
+
 export function invokedCommand(draft: string, names: readonly string[]): string | null {
   const text = draft.trim()
   let best: string | null = null

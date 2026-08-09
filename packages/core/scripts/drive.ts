@@ -908,7 +908,11 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   const actor = createActor(
     sessionMachine.provide({
       actions: { forgetAgentContext: () => { forgotten += 1 } },
-      actors: { persistSession: resolves<{ ok: true }, unknown>({ ok: true }) },
+      actors: {
+        persistSession: resolves<{ ok: true }, { sessionId: string; messages: readonly Message[] }>({
+          ok: true,
+        }),
+      },
     }),
     { input: { sessionId: 'clear-1', messages: [{ id: 'm1', role: 'agent', text: 'said something' }] } },
   ).start()
@@ -1813,6 +1817,7 @@ export default function Billing() {
     wrapAgentCommand: unreached,
     persist: unreached,
     readSession: unreached,
+    readCommands: unreached,
     readSecretNames: async () => {
       await secrets.reload()
       return secrets.names()

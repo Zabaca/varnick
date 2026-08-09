@@ -159,7 +159,13 @@ pub fn route_of(kind: &str) -> Option<Route> {
         | "clear-session" => {
             Some(Route::Host)
         }
-        "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
+        // `read-commands` is the runtime's because it is a file read, and the
+        // runtime is the process with a filesystem. It answers what the *agent*
+        // last reported — written by the agent host, read back for a window
+        // that has not run a Turn yet and so has never been told.
+        "check-sandbox" | "persist-session" | "read-session" | "read-commands" => {
+            Some(Route::Runtime)
+        }
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
         // capability the renderer has.

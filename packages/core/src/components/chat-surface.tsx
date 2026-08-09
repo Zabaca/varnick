@@ -11,6 +11,7 @@ import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
 import {
   commandLabel,
+  commandArgument,
   commandQuery,
   invokedCommand,
   matchCommands,
@@ -176,32 +177,41 @@ export function ChatSurface({
       run: () => send({ type: 'RESTART' }),
     },
     /*
-      Values are separate entries rather than an argument to parse. Typing
-      `/eff` filters to the five levels, Tab completes one, Enter runs it — no
-      argument parsing, and no error surface for a value that was never typed.
+      One row each, taking a value.
 
-      Every value is listed, including the one in force, marked rather than
-      hidden: the list doubles as the answer to "what is this set to", which is
-      most of why anyone types /model.
+      They were one row per value, on the argument that a command with an
+      argument needs parsing and a command per value does not. That was true and
+      it stopped being worth it: five efforts and three models is eight of the
+      thirteen rows in the menu, so a list whose job is finding things spent
+      most of itself describing two settings.
+
+      What replaced the parsing is the signature bar. `argumentHint` lists the
+      values, and it stays on screen for exactly as long as the argument is
+      blank — so an unrecognised value is answered by the surface rather than by
+      an error this would otherwise have to invent.
     */
-    ...EFFORTS.map((e) => ({
-      name: `effort ${e}`,
-      description:
-        e === s?.context.effort ? `Current — next turn runs at ${e}` : `Run the next turn at ${e} effort`,
-      argumentHint: '',
+    {
+      name: 'effort',
+      description: `Current: ${s?.context.effort ?? '—'}`,
+      argumentHint: EFFORTS.join('|'),
       source: 'varnick' as const,
       available: Boolean(session),
-      run: () => session?.send({ type: 'SET_EFFORT', effort: e }),
-    })),
-    ...MODELS.map((m) => ({
-      name: `model ${m.label}`,
-      description:
-        m.id === s?.context.model ? `Current — next turn runs on ${m.label}` : `Run the next turn on ${m.label}`,
-      argumentHint: '',
+      run: (argument: string) => {
+        const effort = EFFORTS.find((e) => e === argument)
+        if (effort) session?.send({ type: 'SET_EFFORT', effort })
+      },
+    },
+    {
+      name: 'model',
+      description: `Current: ${MODELS.find((m) => m.id === s?.context.model)?.label ?? '—'}`,
+      argumentHint: MODELS.map((m) => m.label).join('|'),
       source: 'varnick' as const,
       available: Boolean(session),
-      run: () => session?.send({ type: 'SET_MODEL', model: m.id }),
-    })),
+      run: (argument: string) => {
+        const model = MODELS.find((m) => m.label === argument)
+        if (model) session?.send({ type: 'SET_MODEL', model: model.id })
+      },
+    },
   ].filter((c) => c.available)
 
   /*
@@ -256,7 +266,7 @@ export function ChatSurface({
       change was careful not to touch.
     */
     if (command?.run) {
-      command.run()
+      command.run(commandArgument(draft, name ?? ''))
       session?.send({ type: 'EDIT_DRAFT', text: '' })
       return
     }
@@ -488,7 +498,16 @@ export function ChatSurface({
             </div>
           </div>
 
-          <div className="px-6 pb-4">
+          {/*
+            The composer, which may not grow past the window.
+
+            `shrink-0` keeps it from being squashed by the transcript above;
+            `min-w-0` and the menu's own height cap keep it from doing the
+            squashing. Without the cap, a ninety-row menu grew this column until
+            the row it sits in outgrew the viewport — and the Surface panel
+            beside it was pushed off the side and rendered blank.
+          */}
+          <div className="min-w-0 shrink-0 px-6 pb-4">
             {menuOpen && (
               <SlashMenu
                 commands={commands}

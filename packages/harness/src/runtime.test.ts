@@ -42,6 +42,7 @@ function capabilities(
       recorded.reads.push(sessionId)
       return []
     },
+    readCommands: async () => [],
     readSecretNames: async () => {
       recorded.secretNameReads += 1
       return ['STRIPE_KEY']

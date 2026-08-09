@@ -59,7 +59,8 @@
  * the request path below that calls the one member which yields values.
  */
 
-import { agentCommand } from './agent.ts'
+import { readFile } from 'node:fs/promises'
+import { agentCommand, commandsCachePath } from './agent.ts'
 import { readLines } from './framing.ts'
 import {
   establishSandbox,
@@ -77,6 +78,7 @@ import {
   type StoredMessage,
 } from './session.ts'
 import { openSecretsStore, securityKeychain, type SecretsStore } from './secrets.ts'
+import { normaliseCommands, type SlashCommand } from './turn.ts'
 
 /** What the runtime can actually do. Injected so tests supply their own. */
 export interface HarnessCapabilities {
@@ -104,6 +106,16 @@ export interface HarnessCapabilities {
    * next save would replace a transcript nobody managed to read.
    */
   readSession(sessionId: string): Promise<readonly StoredMessage[]>
+  /**
+   * The commands the agent last reported, from the cache the agent host wrote.
+   *
+   * Answered here because this is the process with a filesystem, and asked at
+   * all because the live list can only reach Core stamped with a Turn id — so a
+   * window that has not run a Turn has never been told what the agent accepts,
+   * which is exactly when someone types `/`. Empty when there is no cache,
+   * which is a first run rather than a failure.
+   */
+  readCommands(): Promise<readonly SlashCommand[]>
   /**
    * The names of the stored secrets, for telling the agent which exist.
    *
@@ -239,6 +251,17 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
     // so what is on disk is already clean and nothing here can unredact it.
     readSession: async (sessionId) => (await open()).store.read(sessionId),
 
+    readCommands: async () => {
+      try {
+        const raw = await readFile(commandsCachePath(input.cloneRoot), 'utf8')
+        return normaliseCommands((JSON.parse(raw) as { commands?: unknown }).commands)
+      } catch {
+        // No cache, or one this build does not understand. Either way the menu
+        // falls back to varnick's own commands until the first Turn.
+        return []
+      }
+    },
+
     readSecretNames: async () => {
       const { secrets } = await open()
       // The same swallowed refresh `persist` does, for the same reason: a
@@ -328,6 +351,9 @@ async function answer(
       await capabilities.persist({ sessionId, messages: stored })
       return { ok: true }
     }
+
+    case 'read-commands':
+      return { commands: await capabilities.readCommands() }
 
     case 'read-session': {
       const { sessionId } = request as Record<string, unknown>

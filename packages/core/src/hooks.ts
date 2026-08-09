@@ -14,7 +14,7 @@ import {
   type SeedControls,
   type TurnObserver,
 } from './actors/index.ts'
-import { liveForgetAgentContext } from './actors/live.ts'
+import { liveCachedCommands, liveForgetAgentContext } from './actors/live.ts'
 import { loadUserspaceSurface } from './actors/surface-loader.ts'
 import { regionOf } from './domain.ts'
 import { seedPolicy } from './data/seed.ts'
@@ -207,6 +207,39 @@ export function useHarness(
       authorizing: (url) => send({ type: 'MINT_URL', url }),
     }
   }, [actorRef, send])
+
+  /*
+    What the agent accepted last time, asked for once at start-up.
+
+    The live list arrives on a Turn — that is what the event channel carries —
+    so a window that has not run one has never been told what the agent accepts.
+    That is exactly when someone types `/`, so the cold start is answered from
+    the cache the agent host wrote on its last run, and replaced by the live list
+    the moment a Turn reports one.
+
+    Live only. A seeded run has no host to ask, and a browser tab would be
+    calling one it does not have.
+  */
+  useEffect(() => {
+    if (mode !== 'live') return
+    let current = true
+    void liveCachedCommands().then(
+      (commands) => {
+        // Nothing if the agent has already spoken for itself: a cache must
+        // never overwrite the live list it exists to stand in for.
+        if (!current || commands.length === 0) return
+        if (actorRef.getSnapshot().context.commands.length > 0) return
+        send({ type: 'COMMANDS_REPORTED', commands })
+      },
+      () => {
+        // No host, no cache, no menu beyond varnick's own. Not a failure worth
+        // a state — the list fills on the first Turn either way.
+      },
+    )
+    return () => {
+      current = false
+    }
+  }, [mode, actorRef, send])
 
   /*
     The agent process's own exit, turned into the event that names it.

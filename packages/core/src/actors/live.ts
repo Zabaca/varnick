@@ -531,6 +531,19 @@ export async function liveAgentExit(): Promise<string> {
  * behind it would keep running, which would make `agent.down` a claim about the
  * UI rather than about the machine's world.
  */
+/**
+ * What the agent accepted last time, before it has said anything this time.
+ *
+ * The menu's cold start. Everything else about the command list is live — the
+ * runtime reports it, `commands_changed` replaces it — but all of that arrives
+ * on a Turn, and the moment a person types `/` is usually before they have run
+ * one. Empty is an ordinary answer: a first launch has no cache.
+ */
+export async function liveCachedCommands(): Promise<readonly SlashCommand[]> {
+  const { commands } = await callHarness({ kind: 'read-commands' })
+  return commands
+}
+
 export async function liveForgetAgentContext(): Promise<void> {
   /*
     The other half of `/clear`.

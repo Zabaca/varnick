@@ -71,7 +71,7 @@
 
 import { parseMintEvent, type MintEvent } from './mint.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
-import { parseTurnEvent, type TurnEvent } from './turn.ts'
+import { normaliseCommands, parseTurnEvent, type SlashCommand, type TurnEvent } from './turn.ts'
 
 /** Establish the Sandbox, or fail. Answers `{ ok: true }` and nothing else. */
 export interface CheckSandboxRequest {
@@ -195,6 +195,18 @@ export interface StopAgentRequest {
  * The other half of `/clear`, and it carries nothing: what the confined process
  * runs is a constant in ./turn.ts, so there is no field here for a prompt.
  */
+/**
+ * The commands the agent last reported, out of the host-side cache.
+ *
+ * Asked at start-up, because the live list can only arrive stamped with a Turn
+ * id — so a window that has not run a Turn has never been told what the agent
+ * accepts, which is exactly when someone types `/`. Answered by the runtime,
+ * the process with a filesystem; the agent host is what wrote it.
+ */
+export interface ReadCommandsRequest {
+  readonly kind: 'read-commands'
+}
+
 export interface ClearSessionRequest {
   readonly kind: 'clear-session'
 }
@@ -316,6 +328,7 @@ export type HarnessRequest =
   | NextTurnEventRequest
   | InterruptTurnRequest
   | ClearSessionRequest
+  | ReadCommandsRequest
   | CompactSessionRequest
 
 /** What each call answers with, on success. */
@@ -344,6 +357,7 @@ export interface HarnessAnswers {
   'next-turn-event': { readonly event: TurnEvent | null }
   'interrupt-turn': { readonly ok: true }
   'clear-session': { readonly ok: true }
+  'read-commands': { readonly commands: readonly SlashCommand[] }
   'compact-session': { readonly ok: true }
 }
 
@@ -617,6 +631,9 @@ export async function callHarness<R extends HarnessRequest>(
       return spawnAnswer(answer) as HarnessAnswers[R['kind']]
     case 'await-agent-exit':
       return exitAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'read-commands':
+      // Rebuilt like every other answer that crosses into Core.
+      return { commands: normaliseCommands((answer as { commands?: unknown })?.commands) } as HarnessAnswers[R['kind']]
     case 'next-turn-event':
       return turnEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'next-mint-event':

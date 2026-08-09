@@ -47,6 +47,7 @@ const capabilities = (over: Partial<HarnessCapabilities> = {}): HarnessCapabilit
   wrapAgentCommand: async () => ({ argv: ['/bin/bash'], env: {}, cwd: '/tmp' }),
   persist: async () => ({ ok: true }) as { ok: true },
   readSession: async () => [],
+  readCommands: async () => [],
   readSecretNames: async () => [],
   ...over,
 })

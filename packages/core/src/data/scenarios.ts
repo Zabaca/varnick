@@ -71,13 +71,11 @@ const up = {
   /*
     What a running agent has reported about itself.
 
-    Seeded, like the transcript beside it, and the values are chosen to be the
-    ones a real varnick agent produces rather than a full-looking panel: no
-    skills, no plugins, no MCP servers. Those are empty because the Sandbox
-    denies read on `$HOME` and `settingSources: []` drops the clone's own — so a
-    card showing three plugins would be a card of a configuration this product
-    cannot reach. The empty rows are the boundary, which is the thing worth
-    looking at.
+    Seeded, like the transcript beside it, and chosen to look like what a real
+    varnick agent produces: a clone that carries a plugin, and the skills that
+    come with it. It was all zeroes when `settingSources: []` meant the clone's
+    own configuration was dropped too; ticket 38 reversed that, and a card still
+    showing zeroes would be a card of a configuration the product left behind.
   */
   runtime: {
     // A plausible UUID and a resumed session, because that is what the second
@@ -92,11 +90,11 @@ const up = {
     cwd: '/Users/you/varnick',
     apiKeySource: 'CLAUDE_CODE_OAUTH_TOKEN',
     tools: ['Task', 'Bash', 'Glob', 'Grep', 'Read', 'Edit', 'Write', 'WebFetch', 'WebSearch'],
-    skills: [],
-    slashCommands: ['compact', 'model'],
+    skills: ['caveman', 'to-tickets'],
+    slashCommands: ['compact', 'model', 'caveman'],
     agents: [],
     mcpServers: [],
-    plugins: [],
+    plugins: [{ name: 'caveman', path: '/Users/you/varnick/.claude/plugins/caveman', version: null }],
   },
 } satisfies HarnessInput
 
@@ -409,7 +407,9 @@ export const SCENARIOS: readonly Scenario[] = [
           right in a browser and wrong under drive.ts — which is the same as
           saying the scenario is not the thing being asserted.
         */
-        commandNames: MODELS.map((m) => `/model ${m.label}`),
+        // One row now, not one per value — see the composer's command list.
+        // The card's draft is `/mo`, which this still answers.
+        commandNames: ['/model', '/effort', '/compact'],
       },
     },
   },

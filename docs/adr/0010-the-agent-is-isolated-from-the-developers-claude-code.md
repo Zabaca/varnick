@@ -10,6 +10,40 @@ behaviour nobody else can reproduce — including the person it belongs to.
 So the session is isolated by default, and
 `VARNICK_INHERIT_CLAUDE_CONFIG=1 bun tauri dev` is the way out.
 
+> **Amended by ticket 38 — the clone half is reversed.** This ADR isolated the
+> agent from *two* things and only ever needed to isolate it from one. The
+> developer's `~/.claude` is still not read, and cannot be: the Sandbox denies
+> `$HOME`, which is a stronger guarantee than an option. But the **clone's own**
+> configuration is now the agent's: `settingSources: ['project', 'local']`, its
+> hooks, its skills, its MCP servers, and its `CLAUDE.md` — which the SDK loads
+> only when `project` is among the sources, and whose absence meant the agent
+> worked in this repository without the repository's own rules.
+>
+> The argument that changed. A hook loaded from the clone runs **inside the
+> Sandbox**, in the same confined process the agent already runs `Bash` in — it
+> grants no capability. What it grants is *reach through time*: it fires in
+> later sessions, before anyone reads anything, and never appears in the
+> transcript, so an injection that lands once can make itself permanent and
+> invisible. That is a real cost, and it is not the one this ADR was priced
+> against. The line that actually matters is narrower and now stands alone:
+>
+> **Nothing derived from the clone is ever executed outside the Sandbox.**
+>
+> varnick runs exactly one Claude Code process outside it — the `setup-token`
+> mint, ADR-0003's bounded exception — and that one already sets a
+> `CLAUDE_CONFIG_DIR` and a working directory outside the clone. That was
+> defensive when it was written and is load-bearing now.
+>
+> The reach problem is answered the way this codebase answers everything else:
+> **visibly**. The runtime panel reports what the agent actually loaded, because
+> configured is not the same as loaded — so a plugin or skill the agent gave
+> itself is a thing on screen rather than a thing to be discovered.
+>
+> Reproducibility, which is this ADR's opening argument, is better served than
+> before: what the agent loads now lives *in the clone*, so it travels with it.
+> A plugin under `~/.claude` was never reproducible and was never reachable
+> either. One is copied into `.claude/plugins/` or it does not exist.
+
 ## What isolation is, exactly
 
 Two Agent SDK options and one environment rule, all of them in

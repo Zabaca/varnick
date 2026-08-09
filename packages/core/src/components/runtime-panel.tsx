@@ -7,11 +7,11 @@
   happened to read its own skill list and notice an absence.
 
   varnick has the same hole in the same place and one more reason to care about
-  it: the agent runs inside a Sandbox that denies `$HOME`, so `~/.claude` — user
-  settings, skills, plugins — is unreachable whether or not configuration is
-  inherited. That is a deliberate property of ADR-0003, and until this panel
-  existed there was nothing on screen that showed it happening. "No skills
-  loaded" is not a bug report here; it is the boundary, visible.
+  it: the agent runs inside a Sandbox that denies `$HOME`, so `~/.claude` — the
+  settings, skills and plugins a developer has *installed* — is unreachable
+  whatever any option says. So what this panel lists is what the *clone* carries
+  (ticket 38), and the gap between "I installed that" and "the agent has it" is
+  exactly the gap this panel exists to show.
 
   Named Runtime rather than harness, which is what forge calls it. `Harness` in
   this repo is Core's runtime half — the thing that *confines* this process — and
@@ -174,13 +174,13 @@ export function RuntimePanel({ report, agentState }: RuntimePanelProps) {
           </Section>
 
           {/*
-            Expected to be empty, and worth a sentence rather than a shrug.
-            Skills live under `~/.claude`, which the Sandbox denies read on, and
-            `settingSources: []` would drop the clone's own besides. An empty
-            list here is the boundary holding — see ADR-0003.
+            No longer expected to be empty. The clone's skills and plugins load
+            now (ticket 38) — what stays out of reach is `~/.claude`, which the
+            Sandbox denies, so a skill exists for this agent only if it is in the
+            clone. An empty list means the clone carries none.
           */}
           <Section title="skills" count={report.skills.length}>
-            <Chips items={report.skills} empty="none — $HOME is denied, which is the boundary working" />
+            <Chips items={report.skills} empty="none in this clone — ~/.claude is out of reach" />
           </Section>
 
           <Section title="plugins" count={report.plugins.length}>

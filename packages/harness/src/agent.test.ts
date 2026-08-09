@@ -13,6 +13,7 @@ import {
   agentConfigurationOptions,
   agentEntryPath,
   agentEnvironment,
+  agentPlugins,
   agentSdkEntry,
   claudeConfigDir,
   inheritedConfigVariables,
@@ -218,22 +219,52 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
     expect(inheritsClaudeConfig({ [INHERIT_CLAUDE_CONFIG_ENV_VAR]: 'false' })).toBe(false)
   })
 
-  test('no filesystem settings are read, and no MCP configuration but ours', () => {
-    // settingSources: [] is the SDK's own isolation mode — it drops
-    // ~/.claude/settings.json, the clone's .claude/settings.json and
-    // .claude/settings.local.json, and with them every hook and every CLAUDE.md.
-    // strictMcpConfig drops .mcp.json, user settings and plugin MCP servers.
+  test('the agent reads the clone it works in, including its CLAUDE.md', () => {
+    /*
+      The reversal, and the reason it is safe: a hook loaded from the clone runs
+      inside the Sandbox, in the process the agent already runs `Bash` in. It
+      grants no capability. What it grants is reach through time — it fires in
+      future sessions and never appears in the transcript — which is a cost
+      worth paying visibly rather than a reason to starve the agent of the
+      repository's own rules.
+
+      `project` is required for CLAUDE.md to load at all; the SDK says so.
+    */
     expect(agentConfigurationOptions(false)).toEqual({
-      settingSources: [],
-      strictMcpConfig: true,
+      settingSources: ['project', 'local'],
+      skills: 'all',
     })
   })
 
-  test('the flag stops overriding rather than opting into something new', () => {
-    // Inheriting is the CLI's own default behaviour, which is what "inherit"
-    // has to mean: varnick stops passing the two options and gets whatever
-    // Claude Code would have done on its own.
-    expect(agentConfigurationOptions(true)).toEqual({})
+  test('the home directory is not claimed, because the Sandbox denies it', () => {
+    // `user` is ~/.claude, which denyRead covers. It is added only by the flag,
+    // for a run that has widened the policy by hand — naming it by default
+    // would be a claim this cannot honour.
+    expect(agentConfigurationOptions(false).settingSources).not.toContain('user')
+    expect(agentConfigurationOptions(true).settingSources).toEqual(['user', 'project', 'local'])
+  })
+
+  test('skills are turned on rather than left to a default', () => {
+    // The SDK calls this "the single place to turn skills on", and omitting it
+    // is not "skills off" — it is no opinion. The runtime panel reports the
+    // list, and an empty one should mean the agent found none.
+    expect(agentConfigurationOptions(false).skills).toBe('all')
+  })
+
+  test('a plugin is a directory in the clone that says it is one', () => {
+    // Discovered rather than registered, the rule Surfaces follow: adding one
+    // must never require editing Core.
+    const found = agentPlugins('/clone', {
+      readDir: () => ['caveman', 'not-a-plugin'],
+      exists: (path) => path === '/clone/.claude/plugins/caveman/.claude-plugin/plugin.json',
+    })
+    expect(found).toEqual([{ type: 'local', path: '/clone/.claude/plugins/caveman' }])
+  })
+
+  test('a clone with no plugins is not a failure', () => {
+    // The honest default. A plugin only exists for this agent if it is
+    // somewhere the agent can read, and ~/.claude/plugins is denied.
+    expect(agentPlugins('/clone', { readDir: () => { throw new Error('ENOENT') }, exists: () => false })).toEqual([])
   })
 
   test('every CLAUDE and ANTHROPIC variable is dropped except the credential', () => {
