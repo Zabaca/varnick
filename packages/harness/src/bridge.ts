@@ -71,6 +71,7 @@
 
 import { parseMintEvent, type MintEvent } from './mint.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
+import type { PendingWorktree } from './worktrees.ts'
 import {
   normaliseCommands,
   parseTurnEvent,
@@ -217,6 +218,25 @@ export interface ClearSessionRequest {
   readonly kind: 'clear-session'
 }
 
+/**
+ * Which Worktrees hold commits the live tree does not, and what changed in each.
+ *
+ * **Produced by running git, host-side, and never by the agent.** This is the
+ * call that shows what the agent changed, so a listing the agent composed would
+ * be a listing the agent could shade — see ./worktrees.ts, which runs three
+ * read-only commands and nothing else.
+ *
+ * Answered by the Harness runtime, which is the process with a filesystem and a
+ * way to spawn a subprocess. It carries no credential and touches none, which is
+ * the whole reason it is not the Rust host's.
+ *
+ * There is no field on this request and no worktree named in it. The renderer
+ * asks what is pending; it does not get to say what the answer should be about.
+ */
+export interface ListWorktreesRequest {
+  readonly kind: 'list-worktrees'
+}
+
 export interface AwaitAgentExitRequest {
   readonly kind: 'await-agent-exit'
 }
@@ -321,6 +341,7 @@ export type HarnessRequest =
   | NextTurnEventRequest
   | InterruptTurnRequest
   | ReadCommandsRequest
+  | ListWorktreesRequest
 
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
@@ -348,6 +369,10 @@ export interface HarnessAnswers {
   'next-turn-event': { readonly event: TurnEvent | null }
   'interrupt-turn': { readonly ok: true }
   'read-commands': { readonly commands: readonly SlashCommand[] }
+  // Summaries, never hunks. The diff of one worktree is fetched when a
+  // developer opens it; a list that carried every hunk of every branch would
+  // read the whole of a large branch before it could draw a row.
+  'list-worktrees': { readonly worktrees: readonly PendingWorktree[] }
 }
 
 /**
@@ -590,6 +615,41 @@ function mintEventAnswer(answer: unknown): { event: MintEvent | null } {
 }
 
 /**
+ * Read the pending worktrees back, entry by entry.
+ *
+ * Rebuilt like every other answer, and strict for two reasons of its own. A
+ * listing that could not be read must be a **failure** rather than an empty
+ * list: `review.empty` says nothing is waiting to be merged, which is the one
+ * sentence a review surface may not produce when it does not know. And a field
+ * this build does not know about is dropped rather than forwarded — the next
+ * ticket fetches a diff for one worktree on demand, so a body arriving here
+ * would be a list rendering something it promised not to read.
+ */
+function worktreesAnswer(answer: unknown): { worktrees: readonly PendingWorktree[] } {
+  const payload = answer as { worktrees?: unknown } | null | undefined
+  if (!Array.isArray(payload?.worktrees)) throw new HarnessUnavailable('malformed')
+
+  const worktrees: PendingWorktree[] = []
+  for (const entry of payload.worktrees) {
+    const { path, branch, commits, changed, touchesFence } = (entry ?? {}) as Record<string, unknown>
+    if (typeof path !== 'string' || path.length === 0) throw new HarnessUnavailable('malformed')
+    // `null` is a detached HEAD, which is a worktree with no branch rather than
+    // a worktree whose branch went missing.
+    if (branch !== null && typeof branch !== 'string') throw new HarnessUnavailable('malformed')
+    if (typeof commits !== 'number' || !Number.isFinite(commits)) {
+      throw new HarnessUnavailable('malformed')
+    }
+    if (typeof touchesFence !== 'boolean') throw new HarnessUnavailable('malformed')
+    if (!Array.isArray(changed) || changed.some((name) => typeof name !== 'string')) {
+      throw new HarnessUnavailable('malformed')
+    }
+    worktrees.push({ path, branch, commits, changed: [...(changed as string[])], touchesFence })
+  }
+
+  return { worktrees }
+}
+
+/**
  * Ask the host to do one thing.
  *
  * Every path out is either the declared answer or a thrown
@@ -627,6 +687,8 @@ export async function callHarness<R extends HarnessRequest>(
       return turnEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'next-mint-event':
       return mintEventAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'list-worktrees':
+      return worktreesAnswer(answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
     case 'store-credential':
     case 'mint-subscription-token':

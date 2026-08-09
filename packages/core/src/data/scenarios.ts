@@ -35,6 +35,7 @@ export const GROUPS = [
   'The conversation',
   'Surfaces',
   'Persistence',
+  'Pending Core changes',
 ] as const
 export type Group = (typeof GROUPS)[number]
 
@@ -515,6 +516,89 @@ export const SCENARIOS: readonly Scenario[] = [
         enterPersistence: 'saveFailed',
         saveError: 'could not write session store',
       },
+    },
+  },
+
+  // -- Pending Core changes ------------------------------------------------
+  //
+  // The `review` region: which Worktrees hold Core changes nobody has merged,
+  // taken from git host-side and never from the agent (ADR-0014).
+  //
+  // These four cards carry the states before anything draws them. The list
+  // itself is ticket 50's — this ticket is the data — so what a card shows
+  // today is the window with the region parked, and the state line above it.
+  // They are here rather than added with the rendering because the coverage
+  // banner is a gate: a state that ships without a card is a state nobody has
+  // looked at, and that is precisely the state that ships broken.
+  {
+    id: 'worktrees-listing',
+    group: 'Pending Core changes',
+    title: 'Asking git what is pending',
+    blurb:
+      'The region every launch starts in. Nobody asked for it — there is no state meaning "not listed yet", because listing costs three read-only git commands and nothing about it is a decision a developer makes.',
+    question: 'Is a listing in flight quiet enough to launch into?',
+    covers: ['review.listing'],
+    input: { ...up, sessionInput: { sessionId: 'states-worktrees-listing', messages: seedMessages } },
+  },
+  {
+    id: 'worktrees-listed',
+    group: 'Pending Core changes',
+    title: 'Two worktrees waiting',
+    blurb:
+      'Two branches hold commits the live tree does not, and one of them edits the Fence — the generator, the host, or the baseline. That flag is the field the diff view turns into colour, so a widening cannot sit unremarked in four hundred lines.',
+    question: 'Can you tell at a glance which of these changes the boundary?',
+    covers: ['review.listed'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktrees-listed', messages: seedMessages },
+      // Literal scenario data, like the mint card's URL: made up, and visibly
+      // so. Nothing on this page runs git.
+      worktrees: [
+        {
+          path: '/Users/you/varnick/.claude/worktrees/ticket-48',
+          branch: 'ticket/48-launch-preview',
+          commits: 4,
+          changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
+          touchesFence: true,
+        },
+        {
+          path: '/Users/you/varnick/.claude/worktrees/ticket-50',
+          branch: 'ticket/50-diff-view',
+          commits: 2,
+          changed: ['packages/core/src/pages/DesignedPage.tsx'],
+          touchesFence: false,
+        },
+      ],
+      enterReview: 'listed',
+    },
+  },
+  {
+    id: 'worktrees-empty',
+    group: 'Pending Core changes',
+    title: 'Nothing waiting',
+    blurb:
+      'git answered and there is nothing to merge. A real state rather than a list of length zero: this says everything the agent finished has landed, which is a different sentence from the card below it.',
+    question: 'Does this read as up to date rather than as a list that failed to load?',
+    covers: ['review.empty'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktrees-empty', messages: seedMessages },
+      enterReview: 'empty',
+    },
+  },
+  {
+    id: 'worktrees-list-failed',
+    group: 'Pending Core changes',
+    title: 'The listing failed',
+    blurb:
+      'git could not be run, or would not answer. Nothing is known about what is pending — which is why this is not the card above with an empty list: one says nothing is waiting, and this one says nobody can currently tell.',
+    question: 'Is "we do not know" distinguishable from "there is nothing"?',
+    covers: ['review.listFailed'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktrees-list-failed', messages: seedMessages },
+      enterReview: 'listFailed',
+      worktreeError: 'fatal: not a git repository',
     },
   },
 ]

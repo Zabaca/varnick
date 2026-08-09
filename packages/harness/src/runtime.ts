@@ -59,8 +59,10 @@
  * the request path below that calls the one member which yields values.
  */
 
+import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { agentCommand, commandsCachePath } from './agent.ts'
+import { listPendingWorktrees, type PendingWorktree } from './worktrees.ts'
 import { readLines } from './framing.ts'
 import {
   establishSandbox,
@@ -136,6 +138,19 @@ export interface HarnessCapabilities {
    * developer relaunching varnick to make a new key nameable.
    */
   readSecretNames(): Promise<readonly string[]>
+  /**
+   * Which Worktrees hold commits the live tree does not, and what changed.
+   *
+   * Answered here because it needs a filesystem and a subprocess, and because
+   * it must not be answered by the agent: this is the list that shows what the
+   * agent changed, and a list the agent composed is a list the agent can shade.
+   * See ./worktrees.ts, which runs three read-only commands and parses them.
+   *
+   * A listing that could not be made **throws**. An empty list means nothing is
+   * waiting to be merged, which is a different fact with different copy —
+   * `review.empty` against `review.listFailed` in the Harness machine.
+   */
+  listWorktrees(): Promise<readonly PendingWorktree[]>
 }
 
 export interface HostCapabilitiesInput {
@@ -275,7 +290,67 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
       await secrets.reload().catch(() => undefined)
       return secrets.names()
     },
+
+    listWorktrees: async () => listPendingWorktrees({ git: gitIn(cloneRoot), cloneRoot }),
   }
+}
+
+/**
+ * How long git gets before it counts as not answering.
+ *
+ * A bound rather than a policy on latency: `git` on a large repository is
+ * quick, and a `git` that is waiting on a credential prompt or a lock is not
+ * going to finish. The Rust host bounds the whole call at ninety seconds and
+ * drops the runtime when it overruns, which would take the Sandbox with it — so
+ * this fails first, and fails as a listing rather than as a dead process.
+ */
+const GIT_WAIT_MS = 20_000
+
+/**
+ * git, in one clone, reading only.
+ *
+ * The one impure half of the review list, kept here because this is the module
+ * that is allowed to reach a process at all. Three properties are deliberate:
+ *
+ *   * **argv, never a shell.** `execFile` takes an array, so nothing in a branch
+ *     name can become a command. Every argument is git's own output anyway (see
+ *     ./worktrees.ts), and that is the second lock rather than the first.
+ *   * **`-C <clone>` and not a working directory.** The runtime's cwd is set by
+ *     the Rust host and is not the thing this is about; the clone is an input,
+ *     the same way it is for the Sandbox and the mirror (ADR-0012).
+ *   * **`GIT_OPTIONAL_LOCKS=0`.** A read must not take the index lock and must
+ *     not refresh it: the agent may be running git in that clone at the same
+ *     moment, and a review that blocked its subject would be a review nobody
+ *     could run twice.
+ *
+ * Rejects with git's own stderr, which reaches `review.listFailed` as the
+ * reason. Nothing secret can be in it — this process holds no credential, and
+ * the commands read a repository.
+ */
+function gitIn(cloneRoot: string) {
+  return (args: readonly string[]): Promise<string> =>
+    new Promise((resolve, reject) => {
+      execFile(
+        'git',
+        ['-C', cloneRoot, ...args],
+        {
+          timeout: GIT_WAIT_MS,
+          // A branch that changed a thousand files is a long line of names and
+          // nothing more; the default 1MB truncates it into a listing that
+          // silently forgets what a worktree touched.
+          maxBuffer: 32 * 1024 * 1024,
+          env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            const said = stderr.trim()
+            reject(new Error(said.length > 0 ? said : error.message))
+            return
+          }
+          resolve(stdout)
+        },
+      )
+    })
 }
 
 /** A message, as much of one as the mirror stores. Nothing else crosses. */
@@ -364,6 +439,26 @@ async function answer(
       // survives a build the agent just broke, which is the case resume exists
       // for. See docs/adr/0009-resume-reads-the-mirror.md.
       return { ...restoredTranscript(await capabilities.readSession(sessionId)) }
+    }
+
+    case 'list-worktrees': {
+      /*
+        Rebuilt entry by entry like every other answer here, and this one has a
+        reason of its own: the list carries names and counts, and the hunks are
+        fetched for the one worktree a developer opens. A capability that
+        volunteered a diff alongside a summary would put every branch's contents
+        on this wire, which is the cost the summary exists to avoid.
+      */
+      const worktrees = await capabilities.listWorktrees()
+      return {
+        worktrees: worktrees.map((entry) => ({
+          path: entry.path,
+          branch: entry.branch,
+          commits: entry.commits,
+          changed: [...entry.changed],
+          touchesFence: entry.touchesFence,
+        })),
+      }
     }
 
     case 'read-secret-names': {

@@ -160,9 +160,15 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // runtime is the process with a filesystem. It answers what the *agent*
         // last reported — written by the agent host, read back for a window
         // that has not run a Turn yet and so has never been told.
-        "check-sandbox" | "persist-session" | "read-session" | "read-commands" => {
-            Some(Route::Runtime)
-        }
+        //
+        // `list-worktrees` is the runtime's for the same reason one step along:
+        // it runs git in the clone, which needs a filesystem and a subprocess.
+        // It carries no credential and asks for none, so there is nothing about
+        // it that belongs on this side — and it must never be answered by
+        // anything the agent writes, because the list is what shows what the
+        // agent changed. See packages/harness/src/worktrees.ts.
+        "check-sandbox" | "persist-session" | "read-session" | "read-commands"
+        | "list-worktrees" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
         // capability the renderer has.
@@ -802,6 +808,28 @@ mod tests {
         assert_eq!(route_of("spawn-agent"), Some(Route::Host));
         assert_eq!(route_of("stop-agent"), Some(Route::Host));
         assert_eq!(route_of("await-agent-exit"), Some(Route::Host));
+    }
+
+    #[test]
+    fn the_pending_worktrees_are_listed_by_the_runtime() {
+        /*
+          The review list is git's answer, not the agent's, and not this
+          process's either.
+
+          It goes to the runtime for the same reason the mirror does: it needs a
+          filesystem and a subprocess, and this host has neither reason to grow
+          one. It carries no credential, touches none, and names no worktree —
+          the renderer asks what is pending and does not get to say what the
+          answer should be about, which is what keeps agent input out of a
+          host-side spawn (that is ticket 48's problem, and it is a different
+          call).
+
+          What must never happen is this being answered by anything the agent
+          writes: the whole point of the list is that it shows what the agent
+          changed, and a listing the agent composed is a listing the agent can
+          shade.
+        */
+        assert_eq!(route_of("list-worktrees"), Some(Route::Runtime));
     }
 
     #[test]

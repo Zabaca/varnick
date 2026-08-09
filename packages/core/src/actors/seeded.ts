@@ -6,6 +6,7 @@ import type {
   Effort,
   Message,
   ModelId,
+  PendingWorktree,
   SandboxPolicy,
 } from '../domain.ts'
 import { brokenSurfaceError } from '../data/seed.ts'
@@ -126,6 +127,45 @@ export function seededActors() {
     >(async () => {
       await wait(120)
       return { ok: true }
+    }),
+
+    /*
+      Two Worktrees, one of which edits the Fence.
+
+      Plausible rather than empty, because a seeded run is how the surface gets
+      designed and an empty list designs nothing — and one of the two touches
+      the Fence, because the distinction the next ticket renders in colour is
+      not visible in a list where every row is the same.
+
+      Deliberately made up, and visibly so: the paths are under
+      `.claude/worktrees/`, which is where a real one lives, and the branches
+      name tickets in this feature. Nothing here reads git — a seeded run is a
+      design against plausible data, and a seed that shelled out would make
+      "design mode" mean "whatever this machine happens to have checked out".
+    */
+    listWorktrees: fromPromise<
+      { worktrees: readonly PendingWorktree[] },
+      Record<string, never>
+    >(async () => {
+      await wait(200)
+      return {
+        worktrees: [
+          {
+            path: '/Users/you/varnick/.claude/worktrees/ticket-48',
+            branch: 'ticket/48-launch-preview',
+            commits: 4,
+            changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
+            touchesFence: true,
+          },
+          {
+            path: '/Users/you/varnick/.claude/worktrees/ticket-50',
+            branch: 'ticket/50-diff-view',
+            commits: 2,
+            changed: ['packages/core/src/pages/DesignedPage.tsx'],
+            touchesFence: false,
+          },
+        ],
+      }
     }),
 
     // No `loadSurface`. Importing a file is not a service call, so there is

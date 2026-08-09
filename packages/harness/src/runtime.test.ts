@@ -18,12 +18,19 @@ interface Recorded {
   saves: { sessionId: string; messages: readonly StoredMessage[] }[]
   reads: string[]
   secretNameReads: number
+  worktreeListings: number
 }
 
 function capabilities(
   overrides: Partial<HarnessCapabilities> = {},
 ): HarnessCapabilities & { recorded: Recorded } {
-  const recorded: Recorded = { sandboxChecks: 0, saves: [], reads: [], secretNameReads: 0 }
+  const recorded: Recorded = {
+    sandboxChecks: 0,
+    saves: [],
+    reads: [],
+    secretNameReads: 0,
+    worktreeListings: 0,
+  }
   return {
     recorded,
     establishSandbox: async () => {
@@ -46,6 +53,10 @@ function capabilities(
     readSecretNames: async () => {
       recorded.secretNameReads += 1
       return ['STRIPE_KEY']
+    },
+    listWorktrees: async () => {
+      recorded.worktreeListings += 1
+      return []
     },
     ...overrides,
   }
@@ -374,6 +385,72 @@ describe('read-secret-names answers with names and never a value', () => {
     )
     expect(JSON.parse(raw)).toMatchObject({ id: 1, ok: { names: ['STRIPE_KEY'] } })
     expect(raw).not.toContain(extra)
+  })
+})
+
+/*
+  The review list, which is git's answer rather than anybody's account of it.
+
+  Answered here because this process has a filesystem and can spawn a
+  subprocess. Nothing in this file runs git: `listWorktrees` is a capability, so
+  the tests are about what crosses the wire, and packages/harness/src/worktrees.ts
+  is where the commands themselves are asserted.
+*/
+describe('list-worktrees answers with what git said', () => {
+  const pending = {
+    path: '/Users/dev/code/varnick/.claude/worktrees/49',
+    branch: 'ticket/49',
+    commits: 3,
+    changed: ['src-tauri/src/bridge.rs'],
+    touchesFence: true,
+  }
+
+  test('the entries come back', async () => {
+    const answer = await reply(
+      call(1, { kind: 'list-worktrees' }),
+      capabilities({ listWorktrees: async () => [pending] }),
+    )
+    expect(answer.ok).toEqual({ worktrees: [pending] })
+  })
+
+  test('nothing pending is an answer rather than a refusal', async () => {
+    // `review.empty` and `review.listFailed` are two states because they are two
+    // problems. This is the first one, and it must not arrive as the second.
+    const caps = capabilities()
+    const answer = await reply(call(1, { kind: 'list-worktrees' }), caps)
+    expect(answer.ok).toEqual({ worktrees: [] })
+    expect(caps.recorded.worktreeListings).toBe(1)
+  })
+
+  test('a git that failed answers with the reason rather than an empty list', async () => {
+    const answer = await reply(
+      call(1, { kind: 'list-worktrees' }),
+      capabilities({
+        listWorktrees: async () => {
+          throw new Error('fatal: not a git repository')
+        },
+      }),
+    )
+    expect(answer.ok).toBeUndefined()
+    expect(answer.error).toBe('fatal: not a git repository')
+  })
+
+  test('the answer is rebuilt, so nothing rides along with the entries', async () => {
+    /*
+      A body volunteered beside the summary is the failure this rebuild is for.
+      The list carries names and counts; the hunks are fetched for the one
+      worktree a developer opens, and a diff arriving here would be rendered by a
+      surface that promised not to read one — at the size of every branch at once.
+    */
+    const raw = await answerHarnessLine(
+      call(1, { kind: 'list-worktrees' }),
+      capabilities({
+        listWorktrees: async () =>
+          [{ ...pending, diff: '@@ -1 +1 @@ VOLUNTEERED' }] as never,
+      }),
+    )
+    expect(raw).not.toContain('VOLUNTEERED')
+    expect(JSON.parse(raw)).toMatchObject({ id: 1, ok: { worktrees: [pending] } })
   })
 })
 
