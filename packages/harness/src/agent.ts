@@ -52,7 +52,7 @@
  * `DescribeSecretsRequest` in ./turn.ts have the rest.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
@@ -298,6 +298,112 @@ export const CLAUDE_CONFIG_RELATIVE_PATH = '.varnick/claude'
 /** varnick's Claude Code configuration directory in a given clone. */
 export function claudeConfigDir(cloneRoot: string): string {
   return join(cloneRoot, CLAUDE_CONFIG_RELATIVE_PATH)
+}
+
+/**
+ * Which conversation the agent was in last, so the next one can continue it.
+ *
+ * **The gap this closes.** A Session is persisted twice, and until now only one
+ * of the two was ever read back. The mirror gives varnick the transcript to
+ * *display* ([ADR-0009](../../../docs/adr/0009-resume-reads-the-mirror.md)); the
+ * Agent SDK's own store is what the agent *remembers* — and nothing passed
+ * `resume`, so every launch opened a new conversation. The window showed the
+ * whole history and the agent behind it had never seen a word of it. That ADR
+ * says "the SDK's copy is what the agent resumes from" as though it were true;
+ * it was the intention, and this is the code.
+ *
+ * A file beside the SDK's own store rather than a field on the mirror, and the
+ * reason is which process can reach what: the id arrives inside the Sandbox, on
+ * the message stream, and the agent host is the only process that sees it. The
+ * mirror belongs to the runtime, three processes away. Routing a pointer out
+ * through the bridge and back down again would be four hops to write a UUID
+ * next to the store it already points into.
+ *
+ * Sitting in the clone makes it agent-writable, which is worth stating rather
+ * than discovering. It changes nothing: `CLAUDE_CONFIG_DIR` is *already* in the
+ * clone, so the agent can already rewrite the transcript this points at. A
+ * pointer beside a store you can edit is not a new capability.
+ */
+export function lastSessionPath(cloneRoot: string): string {
+  return join(claudeConfigDir(cloneRoot), 'last-session.json')
+}
+
+/** Where the CLI keeps conversations, whatever it calls this clone's folder. */
+function sdkProjectsDir(cloneRoot: string): string {
+  return join(claudeConfigDir(cloneRoot), 'projects')
+}
+
+/**
+ * Remember the conversation the agent is in.
+ *
+ * Written on every `init`, which is once per Session, and written whole rather
+ * than appended so there is only ever one answer in the file. A failure is
+ * swallowed: not being able to record the pointer costs the *next* launch its
+ * memory, and failing the launch that is working to protect the one that is not
+ * would be the worse trade.
+ */
+export function rememberSession(
+  cloneRoot: string,
+  sessionId: string,
+  write: (path: string, contents: string) => void = (path, contents) =>
+    writeFileSync(path, contents),
+): void {
+  if (sessionId.length === 0) return
+  try {
+    write(lastSessionPath(cloneRoot), `${JSON.stringify({ sessionId })}\n`)
+  } catch {
+    // Nothing to do and nowhere to say it. See above.
+  }
+}
+
+/**
+ * The conversation to resume, if there is one that still exists.
+ *
+ * Two conditions, and the second is what keeps a bad launch off the table.
+ * `resume` against an id the CLI has never heard of fails the *whole session* —
+ * so a pointer left behind by a clone whose store was cleared would turn "the
+ * agent forgets" into "the agent will not start", which is a worse product than
+ * the one being fixed.
+ *
+ * The transcript is looked for as `projects/<any>/<id>.jsonl` rather than at a
+ * computed path. The CLI derives that folder name from the working directory by
+ * a rule it owns and does not document, and a mangling this file guessed at
+ * would silently stop matching the day the rule changed — reporting "nothing to
+ * resume" for a store that is right there. Scanning one shallow directory is
+ * cheap and depends only on the id.
+ */
+export function resumableSession(
+  cloneRoot: string,
+  fs: {
+    readFile: (path: string) => string
+    readDir: (path: string) => readonly string[]
+    exists: (path: string) => boolean
+  } = {
+    readFile: (path) => readFileSync(path, 'utf8'),
+    readDir: (path) => readdirSync(path),
+    exists: (path) => existsSync(path),
+  },
+): string | null {
+  let sessionId: unknown
+  try {
+    sessionId = (JSON.parse(fs.readFile(lastSessionPath(cloneRoot))) as { sessionId?: unknown })
+      .sessionId
+  } catch {
+    // No file, or a file this build does not understand. Either way there is
+    // nothing to resume, which is a first run rather than a failure.
+    return null
+  }
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+
+  const projects = sdkProjectsDir(cloneRoot)
+  let folders: readonly string[]
+  try {
+    folders = fs.readDir(projects)
+  } catch {
+    return null
+  }
+  const found = folders.some((folder) => fs.exists(join(projects, folder, `${sessionId}.jsonl`)))
+  return found ? sessionId : null
 }
 
 /**
@@ -868,6 +974,23 @@ export interface ServeTurnsInput {
    * {@link DescribeSecretsRequest}, whose parse is what makes that structural.
    */
   readonly secretsDescribed?: (names: readonly string[]) => void
+  /**
+   * Whether this Session was opened by resuming the last one.
+   *
+   * Reported rather than inferred: the init message describes the session the
+   * CLI ended up in and says nothing about how it got there, so this is the
+   * only place the answer exists. It rides the runtime report to the window,
+   * where a restored transcript over a fresh agent has to be able to say so.
+   */
+  readonly resumed?: boolean
+  /**
+   * The Session the runtime says it is in, as soon as it says it.
+   *
+   * Handed over so the host can write it down for the next launch. Called on
+   * every `init` — once per Session — and before the first Turn is answered,
+   * which is what makes the pointer survive a crash mid-answer.
+   */
+  readonly sessionStarted?: (sessionId: string) => void
 }
 
 /**
@@ -1064,7 +1187,11 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       // whatever is running on it.
       const sdk = message as { type?: string; subtype?: string }
       if (sdk?.type === 'system' && sdk.subtype === 'init') {
-        runtime = runtimeReportFrom(message)
+        runtime = runtimeReportFrom(message, input.resumed === true)
+        // Written down before anything is answered. A conversation whose
+        // pointer was recorded only at the end would lose its continuity to
+        // exactly the crash the mirror already survives.
+        if (runtime.sessionId.length > 0) input.sessionStarted?.(runtime.sessionId)
         // A Turn already in flight gets it now; anything else waits for `start`.
         // Both paths run through the same replay, so there is one description of
         // when a report reaches Core rather than two that can disagree.
@@ -1180,10 +1307,28 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     }
   })() as Prompt
 
+  /*
+    The conversation this process is continuing, or nothing.
+
+    Resolved before the query rather than after, because `resume` is a question
+    asked at the start of a session and cannot be asked later: a Claude Code
+    process that opened a new conversation has already opened it. `null` on a
+    first run, on a cleared store, and on a pointer whose transcript is gone —
+    all three are a fresh conversation rather than a failure, which is what
+    keeps a stale pointer from turning "the agent forgets" into "the agent will
+    not start".
+  */
+  const resuming = resumableSession(cloneRoot)
+
   const session = query({
     prompt,
     options: {
       cwd: cloneRoot,
+      // Spread rather than `resume: resuming ?? undefined`: the option is
+      // documented as mutually exclusive with `continue`, and an explicit
+      // `undefined` on a key the CLI checks for presence is the kind of thing
+      // that works until it does not.
+      ...(resuming === null ? {} : { resume: resuming }),
       // What makes an answer arrive in pieces. Without it the SDK reports one
       // assembled message when the Turn is over, and "working" would be
       // indistinguishable from "hung" for the whole of it.
@@ -1278,6 +1423,8 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     secretsDescribed: (names) => {
       secretNames = names
     },
+    resumed: resuming !== null,
+    sessionStarted: (sessionId) => rememberSession(cloneRoot, sessionId),
     session: {
       prompt: (text) => {
         queued.push({

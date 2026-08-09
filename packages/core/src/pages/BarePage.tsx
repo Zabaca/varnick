@@ -34,6 +34,8 @@ const HARNESS_EVENTS: HarnessEvent[] = [
   {
     type: 'RUNTIME_REPORTED',
     report: {
+      sessionId: 'from-the-bare-page',
+      resumed: false,
       claudeCodeVersion: 'from-the-bare-page',
       model: 'claude-opus-5',
       permissionMode: 'bypassPermissions',

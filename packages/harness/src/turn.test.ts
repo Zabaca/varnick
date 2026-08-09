@@ -559,6 +559,8 @@ describe('the wire between the agent host and the host', () => {
       kind: 'runtime',
       turnId: 't1',
       report: {
+        sessionId: 'aaaaaaaa-0000-0000-0000-000000000000',
+        resumed: true,
         claudeCodeVersion: '2.1.0',
         model: 'claude-opus-5',
         permissionMode: 'bypassPermissions',
@@ -590,6 +592,8 @@ describe('the wire between the agent host and the host', () => {
       kind: 'runtime',
       turnId: 't1',
       report: {
+        sessionId: '',
+        resumed: false,
         claudeCodeVersion: '',
         model: 'claude-opus-5',
         permissionMode: '',

@@ -148,6 +148,25 @@ export function RuntimePanel({ report, agentState }: RuntimePanelProps) {
             */}
             <Fact name="credential">{report.apiKeySource || '—'}</Fact>
             <Fact name="cwd">{report.cwd || '—'}</Fact>
+            {/*
+              The two rows that answer "does it remember?".
+
+              `memory` is the one fact on this panel a person acts on. A window
+              showing a full transcript over an agent that has never seen it is
+              the failure this pair exists to make impossible to miss — so the
+              fresh case is coloured and says what it means, rather than being a
+              `false` someone has to interpret.
+            */}
+            <Fact name="memory">
+              {report.resumed ? (
+                'resumed — it has the conversation above'
+              ) : (
+                <span style={{ color: 'var(--warn)' }}>
+                  new — this agent has not seen the conversation above
+                </span>
+              )}
+            </Fact>
+            <Fact name="session">{report.sessionId || '—'}</Fact>
           </Section>
 
           <Section title="tools" count={report.tools.length}>

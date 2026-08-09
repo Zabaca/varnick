@@ -18,6 +18,9 @@ import {
   inheritedConfigVariables,
   inheritsClaudeConfig,
   failureOfThrown,
+  lastSessionPath,
+  rememberSession,
+  resumableSession,
   sandboxEnvOverlay,
   serveTurns,
   type AgentSessionPort,
@@ -473,10 +476,14 @@ async function serve(
     summarised: (summary: string) => void
   }) => Promise<void>,
   contextTokens?: () => Promise<number | null>,
+  /** Whether this run was opened by resuming — what the report carries. */
+  resumed = false,
 ) {
   const control = pushable<string>()
   const messages = pushable<unknown>()
   const { port, asked } = fakeSession(contextTokens)
+  /** Every session id the loop handed over to be written down, in order. */
+  const started: string[] = []
   const written: TurnEvent[] = []
   // Everything the loop wrote, unfiltered. The channel carries more than Turn
   // events now, and a helper that only kept those could not see the rest.
@@ -495,6 +502,10 @@ async function serve(
     secretsDescribed: (names) => {
       described.push(names)
     },
+    resumed,
+    sessionStarted: (sessionId) => {
+      started.push(sessionId)
+    },
     write: (line) => {
       lines.push(line)
       const event = parseTurnEvent(JSON.parse(line))
@@ -506,7 +517,7 @@ async function serve(
   control.close()
   messages.close()
   await served
-  return { written, asked, lines, described }
+  return { written, asked, lines, described, started }
 }
 
 const describeSecretsLine = (names: readonly string[], extra: Record<string, unknown> = {}) =>
@@ -584,6 +595,79 @@ describe('a turn rides the session that is already open', () => {
   })
 })
 
+describe('the agent picks up the conversation it was in', () => {
+  const CLONE = '/tmp/clone'
+  const ID = '788cec56-9b2b-4e22-ad78-2c117bace2c8'
+
+  /** A store with one conversation in it, addressed the way the CLI lays them out. */
+  const store = (
+    pointer: string | null,
+    transcripts: readonly string[] = [ID],
+    folder = '-tmp-clone',
+  ) => ({
+    readFile: (path: string) => {
+      if (path === lastSessionPath(CLONE) && pointer !== null) return pointer
+      throw new Error('ENOENT')
+    },
+    readDir: () => [folder],
+    exists: (path: string) => transcripts.some((one) => path.endsWith(`${folder}/${one}.jsonl`)),
+  })
+
+  test('the id written down is the id offered back', () => {
+    const written: Record<string, string> = {}
+    rememberSession(CLONE, ID, (path, contents) => {
+      written[path] = contents
+    })
+    expect(written[lastSessionPath(CLONE)]).toContain(ID)
+    expect(resumableSession(CLONE, store(written[lastSessionPath(CLONE)] ?? null))).toBe(ID)
+  })
+
+  test('a first run resumes nothing rather than failing', () => {
+    expect(resumableSession(CLONE, store(null))).toBeNull()
+  })
+
+  test('a pointer whose transcript is gone is not resumed', () => {
+    /*
+      The condition that keeps a bad launch off the table. `resume` against an
+      id the CLI has never heard of fails the whole session — so a pointer left
+      behind by a cleared store would turn "the agent forgets" into "the agent
+      will not start", which is worse than the bug being fixed.
+    */
+    expect(resumableSession(CLONE, store(JSON.stringify({ sessionId: ID }), []))).toBeNull()
+  })
+
+  test('the transcript is found by id, whatever the CLI called the folder', () => {
+    // The folder name is derived from the working directory by a rule the CLI
+    // owns and does not document. Matching on it would silently stop working;
+    // matching on the id cannot.
+    expect(
+      resumableSession(CLONE, store(JSON.stringify({ sessionId: ID }), [ID], 'whatever-it-likes')),
+    ).toBe(ID)
+  })
+
+  test('a pointer this build cannot read is a fresh start, not a crash', () => {
+    expect(resumableSession(CLONE, store('not json'))).toBeNull()
+    expect(resumableSession(CLONE, store(JSON.stringify({ sessionId: 42 })))).toBeNull()
+    expect(resumableSession(CLONE, store(JSON.stringify({})))).toBeNull()
+  })
+
+  test('an unwritable store costs the next launch its memory, not this one its life', () => {
+    expect(() =>
+      rememberSession(CLONE, ID, () => {
+        throw new Error('EROFS')
+      }),
+    ).not.toThrow()
+  })
+
+  test('a session with no id is not written down', () => {
+    let called = false
+    rememberSession(CLONE, '', () => {
+      called = true
+    })
+    expect(called).toBe(false)
+  })
+})
+
 describe('the runtime describing itself', () => {
   const init = {
     type: 'system',
@@ -655,6 +739,48 @@ describe('the runtime describing itself', () => {
       await settle()
     })
     expect(written[0]).toHaveProperty('report.model', 'claude-sonnet-5')
+  })
+
+  test('the session id is handed over to be written down, before any answer', async () => {
+    // Before the turn completes, not after. A pointer recorded at the end would
+    // lose its conversation to exactly the crash the mirror already survives.
+    const { started } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push({ ...init, session_id: 'abc-123' })
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(started).toEqual(['abc-123'])
+  })
+
+  test('the report says whether this agent resumed or started new', async () => {
+    // Not on the init message — the runtime has no idea it was asked to
+    // resume. varnick knows, because varnick asked.
+    const fresh = await serve(async ({ control, messages }) => {
+      messages.push(init)
+      await settle()
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(result('hi'))
+      await settle()
+    })
+    expect(fresh.written[0]).toHaveProperty('report.resumed', false)
+
+    const carried = await serve(
+      async ({ control, messages }) => {
+        messages.push(init)
+        await settle()
+        control.push(runTurnLine('t1', 'hello'))
+        await settle()
+        messages.push(result('hi'))
+        await settle()
+      },
+      undefined,
+      true,
+    )
+    expect(carried.written[0]).toHaveProperty('report.resumed', true)
   })
 
   test('an init is never mistaken for something the turn said', async () => {

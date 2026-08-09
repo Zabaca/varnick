@@ -265,6 +265,26 @@ export type TurnFailure = (typeof TURN_FAILURES)[number]
  * a credential; there is no field on this type a value could arrive in.
  */
 export interface RuntimeReport {
+  /**
+   * The Agent SDK's own id for this conversation.
+   *
+   * What `resume` takes. It is the agent's continuity, and it is not the
+   * varnick Session id: the mirror is keyed by `LIVE_SESSION_ID`, which varnick
+   * chooses and never changes, while this is a UUID the CLI mints per
+   * conversation. Two names for two things that used to be conflated in
+   * conversation and never in code.
+   */
+  readonly sessionId: string
+  /**
+   * Whether this process picked up the previous conversation or started a new
+   * one.
+   *
+   * Not on the init message — the runtime has no idea it was asked to resume.
+   * varnick knows, because varnick asked, and it says so here so that the
+   * window can never show a restored transcript over an agent that remembers
+   * none of it without admitting the difference.
+   */
+  readonly resumed: boolean
   readonly claudeCodeVersion: string
   readonly model: string
   readonly permissionMode: string
@@ -309,9 +329,14 @@ const names = (value: unknown): readonly string[] =>
  * init message is assembled from two sides. Mirrored deliberately rather than
  * normalised upstream: this is the one place that shape is known.
  */
-export function runtimeReportFrom(message: unknown): RuntimeReport {
+export function runtimeReportFrom(message: unknown, resumed = false): RuntimeReport {
   const init = (message ?? {}) as Record<string, unknown>
   return {
+    sessionId: name(init['session_id']),
+    // An argument rather than a field of the message, because the runtime does
+    // not know: `resume` is something varnick asked for on the way in, and the
+    // init message reports the session it ended up with either way.
+    resumed,
     claudeCodeVersion: name(init['claude_code_version']),
     model: name(init['model']),
     permissionMode: name(init['permissionMode']),
@@ -353,6 +378,8 @@ function parseRuntimeReport(value: unknown): RuntimeReport | null {
   if (value === null || typeof value !== 'object') return null
   const report = value as Record<string, unknown>
   return {
+    sessionId: name(report['sessionId']),
+    resumed: report['resumed'] === true,
     claudeCodeVersion: name(report['claudeCodeVersion']),
     model: name(report['model']),
     permissionMode: name(report['permissionMode']),

@@ -393,6 +393,8 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
     scoped to one state would drop the only report a Session sends.
   */
   const report = {
+    sessionId: 'aaaaaaaa-0000-0000-0000-000000000000',
+    resumed: true,
     claudeCodeVersion: '2.1.0',
     model: 'claude-opus-5',
     permissionMode: 'bypassPermissions',

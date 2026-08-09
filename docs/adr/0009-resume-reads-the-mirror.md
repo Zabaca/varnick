@@ -5,7 +5,18 @@ host-side copy — and spawns the Session from it.
 
 The Agent SDK's own store keeps its job and is not touched by this. The two
 answer different questions: the SDK's copy is what the *agent* resumes from, its
-context and its continuity; the mirror is what varnick *displays*. The deciding
+context and its continuity; the mirror is what varnick *displays*.
+
+> **Amended by ticket 33.** The sentence above described an intention, not the
+> code. Nothing passed `resume`, so for seven launches the SDK's store accrued a
+> new conversation each time and none was ever reopened: the window showed the
+> whole history and the agent behind it had never seen a word of it. The agent
+> host now records the SDK's session id in `.varnick/claude/last-session.json`
+> as soon as the runtime reports it, and passes `resume` on the next launch —
+> used only when that transcript still exists, because `resume` against a
+> forgotten id fails the entire session. Which of the two happened is carried on
+> the runtime report and shown in the window, so a restored transcript over a
+> fresh agent always says so. The deciding
 case is the one the mirror was built for — the agent writes code that does not
 compile, and the transcript has to still be readable. A conversation displayed
 out of a store that lives inside the thing that just broke is a conversation

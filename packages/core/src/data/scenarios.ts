@@ -80,6 +80,11 @@ const up = {
     looking at.
   */
   runtime: {
+    // A plausible UUID and a resumed session, because that is what the second
+    // and every later launch looks like. A card showing `resumed: false` would
+    // be showing a first run as though it were the normal case.
+    sessionId: '00000000-0000-0000-0000-000000000000',
+    resumed: true,
     claudeCodeVersion: '2.1.0',
     model: 'claude-opus-5',
     permissionMode: 'bypassPermissions',

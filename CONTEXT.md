@@ -85,7 +85,9 @@ _Avoid_: merge (Collect stops short of merging; the merge is a human's), sync, p
 ### Conversation
 
 **Session**:
-One durable conversation with an agent. Persisted twice — by the Agent SDK for resumption, and mirrored host-side so it survives a broken build, a crash, and a restart. varnick displays the mirror and resumes from it, redactions and all; see [ADR-0009](./docs/adr/0009-resume-reads-the-mirror.md). There is deliberately no term for a *set* of Sessions: the product holds one.
+One durable conversation with an agent. Persisted twice — by the Agent SDK for resumption, and mirrored host-side so it survives a broken build, a crash, and a restart. varnick displays the mirror and resumes from it, redactions and all; see [ADR-0009](./docs/adr/0009-resume-reads-the-mirror.md).
+
+Both halves are read back, and they are keyed differently: the mirror by `LIVE_SESSION_ID`, which varnick chooses and never changes, and the agent's own store by a UUID the CLI mints per conversation. varnick records that UUID and hands it back as `resume` on the next launch. For seven launches it did not, and the window showed a full transcript over an agent that remembered none of it — which is why the runtime report carries whether this agent resumed, and why the window says so. There is deliberately no term for a *set* of Sessions: the product holds one.
 _Avoid_: chat, thread, conversation (all fine in the UI; `Session` is the persisted object)
 
 **Turn**:
