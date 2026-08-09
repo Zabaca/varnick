@@ -498,6 +498,39 @@ describe('read-fence-diff answers with hunks and takes a path it was given', () 
     expect((JSON.parse(raw) as { ok: { hunks: string } }).ok.hunks).toBe(hunks)
   })
 
+  test('a git that would not answer is an error, never an empty diff', async () => {
+    /*
+      Empty and unknown are two facts and only one of them is safe to render as
+      "nothing to show". Empty means this worktree's Fence is the Fence already
+      running, which launches without a dialog; unknown means nobody can say,
+      and the host refuses the launch.
+
+      This was written the other way first — `fenceDiffOf` returned `''` on any
+      failure, so a worktree whose diff could not be taken launched with no
+      dialog. The argument was that the alternative is a dialog with nothing in
+      it, asking the developer to approve bytes it cannot show. The premise is
+      right and the conclusion does not follow: the alternative is refusing. A
+      gate that disappears when git is unwell is not a gate, and this is the one
+      step between a confined agent and an unconfined one.
+    */
+    const answer = await reply(
+      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
+      capabilities({
+        readFenceDiff: async () => {
+          throw new Error('fatal: not a git repository')
+        },
+      }),
+    )
+    expect(answer.ok).toBeUndefined()
+    expect(answer.error).toBe('fatal: not a git repository')
+    // The distinction the host reads. Both are answers; only one is a diff.
+    const empty = await reply(
+      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
+      capabilities({ readFenceDiff: async () => '' }),
+    )
+    expect(empty.ok).toEqual({ hunks: '' })
+  })
+
   test('a request naming no worktree is refused rather than defaulted', async () => {
     // There is no sensible default. The live tree would be the one worth
     // guessing at, and a diff of the live tree against itself is empty — which

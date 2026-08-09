@@ -395,13 +395,19 @@ function gitIn(cloneRoot: string) {
  * comparison against what is checked out here — not against a fork point, which
  * would also show changes the live tree already has.
  *
- * A failure anywhere is an empty answer, and that is deliberate in the *unsafe*
- * direction, which is worth stating rather than hiding: a worktree whose diff
- * could not be taken launches without a dialog. The alternative is a dialog with
- * nothing in it, which asks the developer to approve bytes it cannot show them —
- * and approving bytes is the whole mechanism. A git that will not answer is a
- * broken machine rather than an attack, and the host still refuses every name
- * git did not report.
+ * **A failure anywhere throws, and the host then refuses the launch.** This was
+ * written the other way first, returning `''` so that a diff which could not be
+ * taken launched with no dialog, on the argument that the alternative is a
+ * dialog with nothing in it — asking the developer to approve bytes it cannot
+ * show them, when approving bytes is the whole mechanism.
+ *
+ * The premise is right and the conclusion does not follow: the alternative is
+ * not an empty dialog, it is **refusing**. Empty and unknown are two facts and
+ * only one of them is safe to render as "nothing to show". A git that will not
+ * answer is indeed a broken machine rather than an attack — but this is the
+ * single step between a confined agent and an unconfined one, a broken machine
+ * is a rare, visible, fixable state, and the developer can still start the
+ * Preview by hand. A gate that disappears when git is unwell is not a gate.
  */
 async function fenceDiffOf(worktree: string, cloneRoot: string): Promise<string> {
   const git = async (cwd: string, args: readonly string[]): Promise<string | null> => {
@@ -419,12 +425,26 @@ async function fenceDiffOf(worktree: string, cloneRoot: string): Promise<string>
     }
   }
 
+  /*
+    A git that will not answer **throws**, and the host refuses the launch.
+
+    Empty and unknown are two different facts and only one of them is safe to
+    treat as "nothing to show": empty means this worktree's Fence is the Fence
+    already running, and unknown means nobody can say. Returning `''` for both
+    would make the dialog disappear exactly when the machine is in a state
+    nobody understands, and this is the single step between a confined agent
+    and an unconfined one.
+  */
   const head = (await git(cloneRoot, ['rev-parse', 'HEAD']))?.trim()
-  if (head === undefined || head === '') return ''
+  if (head === undefined || head === '') {
+    throw new Error('git would not say what the live tree has checked out, so the Fence cannot be compared against it.')
+  }
 
   const patch = await git(worktree, ['diff', head, '--'])
   const untracked = await git(worktree, ['ls-files', '--others', '--exclude-standard'])
-  if (patch === null && untracked === null) return ''
+  if (patch === null || untracked === null) {
+    throw new Error('git would not say what this worktree changes, so whether it touches the Fence is unknown.')
+  }
 
   return fenceHunks({
     patch: patch ?? '',

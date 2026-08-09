@@ -527,20 +527,29 @@ pub fn answer_preview(app: &tauri::AppHandle, worktree: &str) -> PreviewOutcome 
 
     /*
       The Fence, as hunks, from the Harness runtime — the process with a
-      filesystem and the one holding `isFencePath`, which three separate
-      mechanisms key off. A runtime that will not answer leaves this empty, and
-      an empty answer launches without asking.
+      filesystem and the one holding `isFencePath`, which several mechanisms key
+      off.
 
-      That is a failure in the unsafe direction and it is deliberate rather than
-      overlooked. The alternative is a dialog with nothing in it, which asks the
-      developer to approve bytes it cannot show them — and approving bytes is
-      the entire mechanism. See `fenceDiffOf` in packages/harness/src/runtime.ts,
-      which makes the same trade one process further down.
+      **A runtime that will not answer refuses the launch.** Empty and unknown
+      are two different facts and only one of them is safe: empty means this
+      worktree's Fence is the Fence already running, and unknown means nobody
+      can say. This is the single step between a confined agent and an
+      unconfined one, so it fails closed.
+
+      The argument for failing open was that the alternative is a dialog with
+      nothing in it, asking the developer to approve bytes it cannot show. That
+      is true and it is not the alternative — refusing is. A git that will not
+      answer is a rare, visible, fixable state, and the developer can still
+      launch the Preview by hand; a gate that disappears when git is unwell is
+      not a gate. See `fenceDiffOf` in packages/harness/src/runtime.ts, which
+      throws rather than returning an empty string for the same reason.
     */
-    let hunks = app
+    let Ok(hunks) = app
         .state::<crate::bridge::HarnessRuntime>()
         .fence_diff(&path.display().to_string())
-        .unwrap_or_default();
+    else {
+        return PreviewOutcome::NoLaunch;
+    };
 
     if should_ask(&hunks) && !ask_developer(app, worktree, &hunks) {
         return PreviewOutcome::Declined;

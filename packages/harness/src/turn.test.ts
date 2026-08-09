@@ -235,21 +235,27 @@ describe('a failure says which failure it was, and never quotes the API', () => 
       works only because nothing in it is read at load. Asserted rather than
       remembered, because the tempting import is a one-liner.
 
-      It used to be none at all, and one is now admissible on a condition this
-      test is what enforces: the thing imported must itself import nothing, so
-      it cannot be the first step of a ring. ./preview.ts is that module — the
-      closed list of outcomes a `preview-answer` may carry, beside the sentences
-      written for them — and the second assertion is the whole of what makes the
-      first one safe.
+      It used to be none at all, and a chain is now admissible on the condition
+      this test enforces: it must **end**. Every module on it imports at most
+      one thing and the last imports nothing, so no step can close a ring.
+
+      The chain is turn.ts → preview.ts → fence.ts. ./preview.ts is the closed
+      list of outcomes a `preview-answer` may carry, beside the sentences
+      written for them; ./fence.ts is the one definition of which paths decide
+      what the agent may do, which preview.ts imports rather than restating —
+      it had its own copy for one afternoon, and the two spellings had already
+      begun to disagree. The last assertion is the whole of what makes the
+      others safe.
     */
     const runtimeImportsIn = (module: string) => {
       const source = readFileSync(new URL(`./${module}`, import.meta.url), 'utf8')
-      return [...source.matchAll(/^import (?!type )(?:.*? from )?'(.+?)'/gm)].map(
+      return [...source.matchAll(/^(?:export|import) (?!type )(?:.*? from )?'(.+?)'/gm)].map(
         (match) => match[1] as string,
       )
     }
     expect(runtimeImportsIn('turn.ts')).toEqual(['./preview.ts'])
-    expect(runtimeImportsIn('preview.ts')).toHaveLength(0)
+    expect(new Set(runtimeImportsIn('preview.ts'))).toEqual(new Set(['./fence.ts']))
+    expect(runtimeImportsIn('fence.ts')).toHaveLength(0)
   })
 
   test('a failure nobody enumerated is still a failure with a sentence', () => {

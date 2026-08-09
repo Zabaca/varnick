@@ -65,24 +65,25 @@ export const FENCE_DIRECTORIES = ['packages/harness', 'src-tauri'] as const
  */
 export const FENCE_BASELINE_FILE = 'sandbox-policy.baseline.json'
 
-/**
- * Does a change to this path change what the agent may do?
- *
- * The path is repository-relative and uses forward slashes. Anything else — an
- * absolute path, a `./` prefix, a Windows separator — answers `false`, because
- * this is asked about strings git wrote and a shape git does not write is a
- * shape this cannot vouch for. Refusing to classify is the safe direction only
- * for the *caller* that treats unknown as Fence; nothing does, so the rule is
- * instead that the caller feeds this git's own output and nothing else.
- */
-export function isFencePath(path: string): boolean {
-  if (path === FENCE_BASELINE_FILE) return true
-  // `packages/harnessed/x` is not `packages/harness/x`, and a prefix test
-  // without the separator would say it was.
-  return FENCE_DIRECTORIES.some(
-    (directory) => path === directory || path.startsWith(`${directory}/`),
-  )
-}
+/*
+  Does a change to this path change what the agent may do? Asked of ./fence.ts,
+  which is the one definition.
+
+  This module had its own copy, written in the same hour and in a different
+  worktree, agreeing on all three paths and disagreeing on their spelling: this
+  one matched git's exact output and `./fence.ts` also normalises a `./` prefix
+  and case. Two readings of one rule is the drift the single list exists to
+  prevent, and where they differed the more inclusive one is the safe direction —
+  on a case-insensitive filesystem `Packages/Harness/x` *is* the fence.
+
+  ./fence.ts is imported rather than ./sandbox.ts, which also knows these paths.
+  That is deliberate and unchanged: this module is loaded by the agent host
+  *inside* the Sandbox, ./sandbox.ts pulls in `@anthropic-ai/sandbox-runtime`,
+  and ./fence.ts imports nothing at all. `fence.test.ts` is what holds
+  `FENCE_PATHS` and the generated `denyWrite` to each other.
+*/
+export { isFencePath, touchesFence, FENCE_PATHS } from './fence.ts'
+import { isFencePath } from './fence.ts'
 
 // ---------------------------------------------------------------------------
 // The diff

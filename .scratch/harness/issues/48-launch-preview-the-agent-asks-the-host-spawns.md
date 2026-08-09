@@ -4,7 +4,7 @@
 
 **Blocked by:** 46 — a Preview that cannot take its own port collides with the varnick that launched it.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** no state path. The Preview is a host process; nothing in Core transitions on it in v1.
 
