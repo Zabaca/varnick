@@ -52,10 +52,13 @@ export const ACTOR_NAMES = [
 export type ActorName = (typeof ACTOR_NAMES)[number]
 
 /**
- * Actors with no real implementation yet.
+ * Actors with no real implementation. Empty: every name above is wired.
  *
- * Kept explicit rather than inferred: this list is the honest answer to "what
- * does this build actually do", and it shrinks as the harness is written.
+ * Kept explicit rather than inferred, and kept now that it is empty rather than
+ * deleted, because empty is a claim someone has to be able to falsify. It is
+ * declared once in `LIVE_NOT_IMPLEMENTED` and read in two places: `drive.ts`
+ * fails the build if it stops being empty, and the seeded-data marker's tooltip
+ * names whatever is in it.
  */
 export const UNIMPLEMENTED: readonly ActorName[] = LIVE_NOT_IMPLEMENTED
 

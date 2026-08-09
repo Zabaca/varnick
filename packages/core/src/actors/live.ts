@@ -24,42 +24,40 @@ import type {
 } from '../domain.ts'
 import type { SessionInput } from '../machines/session.ts'
 
-/**
- * The real implementations.
- *
- * Two of them do not exist yet. Each of those throws with the same shape of
- * message, so switching to live mode fails loudly and immediately at the actor
- * that is missing, rather than appearing to work — which is what a silent stub
- * does, and what a missing `provide()` entry did once already in this project.
- *
- * As the Harness package is written, these are replaced one at a time and
- * removed from LIVE_NOT_IMPLEMENTED. That list is what the seeded-data marker
- * *names* — it is the honest answer to "what does this build actually do".
- *
- * It is not what decides whether the marker shows. That is `mode`, and
- * deliberately: in seeded mode the warning is true whatever the list says, and
- * a list-driven marker would go quiet on the last wiring while the surface was
- * still rendering seeded numbers. The list shrinks; the marker disappears when
- * a run stops being seeded.
- */
+/*
+  The real implementations.
+
+  Every actor the machines declare has one now, which is why
+  LIVE_NOT_IMPLEMENTED below is empty and why live is the default mode. While it
+  was not, each missing actor was a function that threw at the moment it was
+  invoked, so switching to live mode failed loudly at the actor that was missing
+  rather than appearing to work — which is what a silent stub does, and what a
+  missing `provide()` entry did once already in this project. Those functions
+  went with the last entry; the list stayed, because it is read.
+
+  The list is not what decides whether the seeded-data marker shows. That is
+  `mode`, and deliberately: in seeded mode the warning is true whatever the list
+  says, and a list-driven marker would go quiet on the last wiring while the
+  surface was still rendering seeded numbers.
+
+  How a live actor reaches the Harness: one seam, `callHarness`, and nothing
+  below it. This module is bundled into the webview, so it imports no Node — the
+  kernel, the keychain and the filesystem are all behind the bridge, in the
+  host. A call with no host reaches the actor's own failure state carrying the
+  reason; see @varnick/harness/bridge for where that answer comes from and why a
+  missing host is a value rather than an exception.
+
+  A block comment rather than a doc comment, because it describes the module and
+  not whatever declaration follows it. Half of it was a doc comment on
+  `notImplemented`, and that helper is gone.
+*/
 
 /**
- * How a live actor reaches the Harness.
+ * Actors with no live implementation. Empty, and `drive.ts` fails if it is not.
  *
- * One seam, `callHarness`, and nothing below it. This module is bundled into the
- * webview, so it imports no Node: the kernel, the keychain and the filesystem
- * are all behind the bridge, in the host. A call with no host reaches the
- * actor's own failure state carrying the reason — see @varnick/harness/bridge
- * for where that answer comes from and why a missing host is a value rather
- * than an exception.
+ * Reached from Core as `UNIMPLEMENTED` — see ./index.ts, which is what the
+ * seeded-data marker names.
  */
-
-const notImplemented = (name: string, what: string) => (): never => {
-  throw new Error(
-    `${name} has no live implementation yet — ${what}. Run without ?actors=live to use seeded data.`,
-  )
-}
-
 export const LIVE_NOT_IMPLEMENTED = [] as const
 
 /**

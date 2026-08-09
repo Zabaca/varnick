@@ -120,9 +120,10 @@ describe('the overlay carries no secret', () => {
   })
 
   test('the names match the ones the Rust host injects', () => {
-    // Mirrored as API_KEY_ENV_VAR and SUBSCRIPTION_ENV_VAR in
-    // src-tauri/src/credential.rs, and as CREDENTIAL_ENV_VARS in
-    // ./credentials.ts. Both are authentication variables the Agent SDK reads.
+    // Taken from CREDENTIAL_ENV_VARS in ./credentials.ts and pinned here
+    // against the literals, because the third copy — API_KEY_ENV_VAR and
+    // SUBSCRIPTION_ENV_VAR in src-tauri/src/credential.rs — is in a language
+    // this cannot read. Both are authentication variables the Agent SDK reads.
     expect([...CREDENTIAL_ENV_VAR_NAMES]).toEqual(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'])
   })
 

@@ -44,7 +44,8 @@
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { credentialRejection } from './credentials.ts'
+import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
+import { readLines } from './framing.ts'
 import {
   encodePlanUsageAnswer,
   readSubscriptionUsage,
@@ -92,12 +93,20 @@ export const AGENT_ENTRY_RELATIVE_PATH = 'packages/harness/src/agent.ts'
  * removes the other, so an `ANTHROPIC_API_KEY` the developer happened to export
  * cannot sit beside an injected subscription token.
  *
- * Mirrored as `API_KEY_ENV_VAR` and `SUBSCRIPTION_ENV_VAR` in
- * src-tauri/src/credential.rs, and as `CREDENTIAL_ENV_VARS` in ./credentials.ts.
- * Named here so {@link sandboxEnvOverlay} can refuse to carry either, and so
- * {@link agentEnvironment} knows which names are varnick's own.
+ * The same two names as `CREDENTIAL_ENV_VARS` in ./credentials.ts, taken from it
+ * rather than written out again: the pair by Kind is what a store and a spawn
+ * need, and this is that pair with the Kinds dropped. Everything here asks "is
+ * this one of the credential variables" and has no Kind to ask it about —
+ * {@link sandboxEnvOverlay} refuses to carry either of them, and
+ * {@link agentEnvironment} holds either of them back from the scrub. Mirrored a
+ * third time, in another language, as
+ * `API_KEY_ENV_VAR` and `SUBSCRIPTION_ENV_VAR` in src-tauri/src/credential.rs,
+ * where it is a literal because Rust cannot read this one.
  */
-export const CREDENTIAL_ENV_VAR_NAMES = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const
+export const CREDENTIAL_ENV_VAR_NAMES = [
+  CREDENTIAL_ENV_VARS['api-key'],
+  CREDENTIAL_ENV_VARS.subscription,
+] as const
 
 /** Is this variable one varnick injects a credential into? */
 function isCredentialVariable(key: string): boolean {
@@ -388,29 +397,41 @@ export function agentConfigurationOptions(inherit: boolean): {
 }
 
 /**
- * Variables in Claude Code's namespace that varnick did not put there.
+ * The variables in those namespaces that are varnick's own.
  *
- * Three are varnick's own and are therefore not "inherited" whatever their
- * names look like: either variable a credential can arrive in — the host read
- * one and injected it, and isolation must never take it away — and the config
+ * Three of them, and they are therefore not "inherited" whatever their names
+ * look like: either variable a credential can arrive in — the host read one and
+ * injected it, and isolation must never take it away — and the config
  * directory, which varnick sets because the Sandbox leaves nowhere else
- * writable. Everything else matching the prefixes came from whoever launched
- * the app.
+ * writable. All three match {@link INHERITED_CONFIG_PREFIXES} and none of them
+ * came from whoever launched the app, so the count below takes them off the
+ * list.
  *
  * `CLAUDE_CODE_OAUTH_TOKEN` is the one that has to be *named*: it matches the
  * `CLAUDE` prefix the scrub drops by, so a subscription credential left to the
  * rule would be removed from the environment of the very process it
  * authenticates. There is no error on that path — the agent starts, and every
- * Turn fails as though the token were wrong.
- *
- * Exported so the boundary probe counts the same set the scrub uses, rather
- * than a second definition that could drift from it.
+ * Turn fails as though the token were wrong. {@link agentEnvironment} makes the
+ * same exception by a different route, keeping the credential variable by name
+ * and rewriting the config directory outright.
  */
 const VARNICK_OWNED_VARIABLES = [
   ...CREDENTIAL_ENV_VAR_NAMES,
   CLAUDE_CONFIG_DIR_ENV_VAR,
 ] as const
 
+/**
+ * Variables in Claude Code's namespace that varnick did not put there.
+ *
+ * Counts by {@link INHERITED_CONFIG_PREFIXES}, the same list the scrub in
+ * {@link agentEnvironment} drops by, so what is counted here and what is
+ * dropped there cannot drift into two different answers.
+ *
+ * Called twice by {@link selfTest}, over the environment as it arrived and over
+ * the environment the scrub produced. That is what makes sandbox.boundary.test's
+ * `isolated` figure a measurement taken inside the confined process rather than
+ * a claim made outside it. Exported so agent.test.ts can pin it directly.
+ */
 export function inheritedConfigVariables(
   env: Record<string, string | undefined>,
 ): readonly string[] {
@@ -749,15 +770,16 @@ async function toolProbe(
  * `srt` on a developer's machine, which is exactly what ADR-0003's last
  * consequence forbids.
  *
- * Five methods, and each one was a decision. This is the surface something
- * outside the Sandbox can reach into the Sandbox with — and, read the other way,
- * it is the whole list of questions that do not need a second session to answer.
- * Nothing here can create one: there is no `query` in this interface and no way
- * to get at the one `runAgentHost` holds.
- * Five methods, and every one of them is something a Turn or a Compaction
- * cannot do without. This is the surface something outside the Sandbox can
- * reach into the Sandbox with, so it grows one method at a time and each one
- * has to be argued for.
+ * Six members, and each one was a decision. Four are what a Turn cannot be run
+ * without, {@link usage} is what a plan-usage read needs, and
+ * {@link contextTokens} is what a Compaction needs; `usage` is a property
+ * because the Session hands over the reader rather than the figures, and it is
+ * called like the rest. This is the surface something outside the Sandbox can
+ * reach into the Sandbox with, so it grows one member at a time and each one
+ * has to be argued for — and, read the other way, it is the whole list of
+ * questions that do not need a second session to answer. Nothing here can
+ * create one: there is no `query` in this interface and no way to get at the
+ * one `runAgentHost` holds.
  *
  * {@link contextTokens} is the one added for Compaction. It reads and cannot
  * write, takes no argument, and answers with a number — and the alternative to
@@ -1001,21 +1023,10 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     if (named) await session.interrupt()
   }
 
-  async function readControl(): Promise<void> {
-    const decoder = new TextDecoder()
-    let pending = ''
-
-    for await (const chunk of control) {
-      pending += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true })
-      let newline = pending.indexOf('\n')
-      while (newline !== -1) {
-        const line = pending.slice(0, newline)
-        pending = pending.slice(newline + 1)
-        if (line.trim().length > 0) await handle(line)
-        newline = pending.indexOf('\n')
-      }
-    }
-    if (pending.trim().length > 0) await handle(pending)
+  // The same framing the runtime's pipe uses, and the same reader — see
+  // ./framing.ts for why it is one function rather than two identical ones.
+  function readControl(): Promise<void> {
+    return readLines(control, handle)
   }
 
   async function readMessages(): Promise<void> {

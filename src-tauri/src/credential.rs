@@ -57,8 +57,9 @@ use std::sync::Mutex;
 use serde::Serialize;
 
 /// The variable an API key is injected into.
-/// Mirrored as `CREDENTIAL_ENV_VARS` in packages/harness/src/credentials.ts and
-/// as `CREDENTIAL_ENV_VAR_NAMES` in packages/harness/src/agent.ts.
+/// Mirrored as `CREDENTIAL_ENV_VARS` in packages/harness/src/credentials.ts,
+/// which is the only place the TypeScript half names it —
+/// `CREDENTIAL_ENV_VAR_NAMES` in agent.ts is derived from that map.
 pub const API_KEY_ENV_VAR: &str = "ANTHROPIC_API_KEY";
 
 /// The variable a subscription token is injected into.

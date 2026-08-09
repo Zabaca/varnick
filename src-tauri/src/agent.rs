@@ -575,9 +575,15 @@ impl AgentProcess {
         Ok(pid)
     }
 
-    /// Start a Turn on the Session the agent process is already holding.
+    /// Put one control request on the Session the agent process is holding.
     ///
-    /// Writes one control line and returns. The Turn's answer arrives through
+    /// Three kinds arrive here, because from this side they are the same act:
+    /// starting a Turn, interrupting one, and compacting the Session. Which
+    /// line goes out is {@link control_line_for}'s decision; what differs after
+    /// the write is only whether the request names a Turn this process should
+    /// remember, so that an agent dying mid-answer is reported against it.
+    ///
+    /// Writes one control line and returns. Every answer arrives through
     /// {@link AgentProcess::next_event}, which is what lets a developer read it
     /// as it comes rather than when it is over.
     ///
