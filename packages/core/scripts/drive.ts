@@ -38,7 +38,7 @@ import { discoverFrom, importSurface } from '../src/surfaces.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
 import { SCENARIOS, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
 import { frozenHarness } from '../src/actors/frozen.ts'
-import { ACTOR_NAMES, UNIMPLEMENTED } from '../src/actors/index.ts'
+import { ACTOR_NAMES, UNIMPLEMENTED, seededDetail } from '../src/actors/index.ts'
 import type {
   CredentialReading,
   Effort,
@@ -2097,6 +2097,23 @@ async function turnPath(
   // seeded marker actually renders.
   check('every unimplemented name is a real actor', UNIMPLEMENTED.every((name) => (ACTOR_NAMES as readonly string[]).includes(name)))
   check('no actor is listed as unimplemented, so the seeded marker claims nothing', UNIMPLEMENTED.length === 0)
+
+  /*
+    And what the marker then says, which stopped being true when the list
+    emptied. It named an empty list — "These actors have no live implementation
+    yet:" over nothing — and told the developer to append `?actors=live`, which
+    has been the default since every actor was wired, and which names no actor it
+    could fail on. Both branches are asserted here because only one of them can
+    be reached by running the app today.
+  */
+  const nothingMissing = seededDetail([])
+  check('with everything wired, the marker names no actor', nothingMissing.names.length === 0)
+  check('and says seeded was a choice rather than a gap', nothingMissing.lead.includes('asked to be'))
+  check('and points at the flag that is actually set', nothingMissing.exit.includes('?actors=seeded'))
+
+  const oneMissing = seededDetail(['runTurn'])
+  check('with something missing, the marker names it', oneMissing.names.join() === 'runTurn')
+  check('and points at the flag that would fail on it', oneMissing.exit.includes('?actors=live'))
 }
 
 // ---------------------------------------------------------------------------

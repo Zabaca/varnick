@@ -4,7 +4,7 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done — the tooltip branches on whether anything is actually unimplemented, and both branches are asserted in drive.ts.
 
 **Realizes:** no state path.
 
@@ -33,3 +33,26 @@ The marker exists to stop the build claiming more than it does, and this is the 
 - [ ] The way back to a live run is named correctly — remove `?actors=seeded`, not add `?actors=live`
 - [ ] Whatever it says with a non-empty list still reads, because the list is the thing that is allowed to change
 - [ ] Driven, so the empty case is not a case only a human ever sees
+
+
+## Comments
+
+Fixed by moving the copy decision out of the component. `seededDetail` lives in
+`actors/index.ts` beside `UNIMPLEMENTED`, because `chat-surface.tsx` cannot be
+imported outside Vite — a branch inside it is a branch `drive.ts` cannot reach.
+Same shape as `canStartAgent`: the rule is testable and the component renders it.
+
+The marker itself was not touched and still gates on `mode` alone. That is
+deliberate and documented at the component: a list-driven marker goes quiet on
+the last wiring while a seeded surface is still rendering invented figures,
+which is the claim it exists to prevent.
+
+What changed is what it says once the list is empty. It claimed "These actors
+have no live implementation yet:" over nothing, then advised appending
+`?actors=live` — the default since every actor was wired, and an instruction
+naming no actor it could fail on. It now says seeded was a choice rather than a
+gap, and points at `?actors=seeded`, the flag that is actually set.
+
+Both branches are asserted, because only one of them can be reached by running
+the app today — the empty case is what ships, and the populated case is what
+would ship again the moment an actor is added without an implementation.

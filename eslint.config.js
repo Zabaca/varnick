@@ -178,7 +178,28 @@ const restrict = (files, ...restrictions) => ({
 
 export default [
   {
-    ignores: ['**/node_modules/**', '**/dist/**', 'src-tauri/**', 'packages/userspace/**'],
+    /*
+      `.claude/worktrees/**` is here because linting it fails, and because it
+      should not be linted even when it does not.
+
+      A worktree is another checkout of this repository, made for one agent, and
+      it has no `node_modules` of its own — so eslint resolves the parser out of
+      the worktree's `packages/lint` and reports `Cannot find module
+      '@typescript-eslint/parser'`. `bun run lint` therefore went red whenever an
+      agent had one open, and green again once it was reaped, which is a build
+      result that depends on what else is running.
+
+      The second reason is the one that would still hold if it worked: those
+      trees hold code that has not been reviewed or merged. Linting them says
+      nothing about this checkout.
+    */
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      'src-tauri/**',
+      'packages/userspace/**',
+      '.claude/worktrees/**',
+    ],
   },
   restrict(['packages/core/**/*.ts', 'packages/core/**/*.tsx'], NO_USERSPACE),
   restrict(

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import type { ActorRefFrom, SnapshotFrom } from 'xstate'
 import { useChildRevision, toPath } from '../hooks.ts'
-import { UNIMPLEMENTED, type ActorMode } from '../actors/index.ts'
+import { seededDetail, type ActorMode } from '../actors/index.ts'
 import type { surfaceMachine } from '../machines/surface.ts'
 import { ClaudeHeader } from './brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from './brainless/claude/claude-message.tsx'
@@ -655,13 +655,21 @@ function PlanUsage({
  * else is wired, and it goes away when a run stops being seeded rather than when
  * some list empties.
  *
- * `UNIMPLEMENTED` is read for the tooltip and for nothing else. This was written
- * the other way round once, and driving it showed the difference: a list-driven
- * marker goes quiet on the last wiring while a seeded surface is still rendering
- * seeded figures, which is the exact claim it exists to stop anyone making.
+ * The unimplemented list is read for the tooltip and for nothing else. This was
+ * written the other way round once, and driving it showed the difference: a
+ * list-driven marker goes quiet on the last wiring while a seeded surface is
+ * still rendering seeded figures, which is the exact claim it exists to stop
+ * anyone making.
+ *
+ * What the tooltip *says* comes from `seededDetail`, because the list emptied
+ * and the copy did not: it named an empty list and then advised appending
+ * `?actors=live`, which is the default and names no actor it could fail on. The
+ * branch lives in actors/index.ts so `drive.ts` can reach it — this component
+ * cannot be imported outside Vite.
  */
 function SeededMarker({ mode }: { mode: ActorMode }) {
   const [open, setOpen] = useState(false)
+  const detail = seededDetail()
   if (mode === 'live') return null
   return (
     <span className="relative ml-auto">
@@ -681,14 +689,15 @@ function SeededMarker({ mode }: { mode: ActorMode }) {
             color: 'var(--fg-dim)',
           }}
         >
-          These actors have no live implementation yet:
-          <span className="mt-1.5 block" style={{ color: 'var(--fg-faint)' }}>
-            {UNIMPLEMENTED.join(', ')}
-          </span>
+          {detail.lead}
+          {detail.names.length > 0 && (
+            <span className="mt-1.5 block" style={{ color: 'var(--fg-faint)' }}>
+              {detail.names.join(', ')}
+            </span>
+          )}
           <span className="mt-2 block">
             Machines, states and refusals are real; the services behind them are
-            stubs. Append <span style={{ color: 'var(--fg-dim)' }}>?actors=live</span> to fail on
-            the first one that is missing.
+            stubs. {detail.exit}
           </span>
         </span>
       )}

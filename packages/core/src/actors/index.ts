@@ -63,6 +63,46 @@ export type ActorName = (typeof ACTOR_NAMES)[number]
 export const UNIMPLEMENTED: readonly ActorName[] = LIVE_NOT_IMPLEMENTED
 
 /**
+ * What the seeded marker's tooltip has to say, given what is unimplemented.
+ *
+ * Two different facts, and the surface said the first one after it stopped being
+ * true. With entries, a seeded run is partly a necessity — those actors have
+ * nothing real behind them. With none, it is entirely a choice: every actor is
+ * wired, and this run is seeded because someone asked for it. The tooltip
+ * rendered the first version over an empty list, followed by "append
+ * `?actors=live`" — advice for a default that is already live, naming no actor
+ * it could fail on.
+ *
+ * A function here rather than a branch in the component, for the reason ADR-0001
+ * gives: `chat-surface.tsx` cannot be imported outside Vite, so a branch inside
+ * it is a branch `drive.ts` cannot reach. This is the same shape as
+ * `canStartAgent` — the rule is testable and the component renders it.
+ */
+export interface SeededDetail {
+  /** The sentence above the list, or the whole of it when there is no list. */
+  readonly lead: string
+  /** Actor names to show, empty when every actor is live. */
+  readonly names: readonly ActorName[]
+  /** How to stop seeing seeded data, which differs by case. */
+  readonly exit: string
+}
+
+export function seededDetail(unimplemented: readonly ActorName[] = UNIMPLEMENTED): SeededDetail {
+  if (unimplemented.length === 0) {
+    return {
+      lead: 'Every actor has a live implementation. This run is seeded because it was asked to be, not because anything is missing.',
+      names: [],
+      exit: 'Drop ?actors=seeded from the URL to run against the real ones.',
+    }
+  }
+  return {
+    lead: 'These actors have no live implementation yet:',
+    names: unimplemented,
+    exit: 'Append ?actors=live to fail on the first one that is missing.',
+  }
+}
+
+/**
  * The implementations, for one run.
  *
  * `observer` is what a live Turn says while it is still running — a delta, a
