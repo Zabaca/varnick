@@ -20,10 +20,30 @@ import { seedPolicy, seedMessages, statesSurface } from './seed.ts'
 
 export type StatePath = string
 
+/**
+ * The sections of the states page, in the order they are shown.
+ *
+ * These were five comment banners in this file — `// -- Start-up ---` and so
+ * on. A comment cannot be rendered, so the page had no grouping and the index
+ * added in ticket 42 would have had to invent one beside them, which is two
+ * answers to how the page is organised and one of them silently stale. They are
+ * data now, and every scenario names one.
+ */
+export const GROUPS = [
+  'Start-up',
+  'Refusals and failures',
+  'The conversation',
+  'Surfaces',
+  'Persistence',
+] as const
+export type Group = (typeof GROUPS)[number]
+
 export interface Scenario {
-  /** Stable id; also the anchor a ticket can link to. */
+  /** Stable id; also the card a ticket links to — see ../routing.ts. */
   readonly id: string
   readonly title: string
+  /** Which section of the page this card sits in. */
+  readonly group: Group
   /** What this card shows. */
   readonly blurb: string
   /** The question the card answers for whoever is reading it. */
@@ -102,6 +122,7 @@ export const SCENARIOS: readonly Scenario[] = [
   // -- Start-up ------------------------------------------------------------
   {
     id: 'cold-start',
+    group: 'Start-up',
     title: 'Cold start',
     blurb:
       'Nothing has been read or checked yet. The literal first frame after launch, before even the sandbox has been asked about.',
@@ -111,6 +132,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'reading-credential',
+    group: 'Start-up',
     title: 'Reading the credential',
     blurb: 'Tauri is asking the keychain. Nothing is claimed until it answers.',
     question: 'Is the wait legible without asserting an outcome?',
@@ -119,6 +141,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'checking-sandbox',
+    group: 'Start-up',
     title: 'Establishing the sandbox',
     blurb: 'Credential in hand, srt not yet established. The agent has not started.',
     question: 'Does the surface stay quiet while a step that usually succeeds is running?',
@@ -132,6 +155,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'starting-agent',
+    group: 'Start-up',
     title: 'Starting the agent',
     blurb: 'Both preconditions hold; the process is being spawned under srt.',
     question: 'Is "starting" distinguishable from "idle with nothing to say"?',
@@ -148,6 +172,7 @@ export const SCENARIOS: readonly Scenario[] = [
   // -- Refusals and failures ----------------------------------------------
   {
     id: 'sandbox-unavailable',
+    group: 'Refusals and failures',
     title: 'Sandbox unavailable',
     blurb:
       'srt could not be established. There is no fallback to running unconfined — see ADR-0003.',
@@ -163,6 +188,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'credential-rejected',
+    group: 'Refusals and failures',
     title: 'Credential rejected',
     blurb: 'The stored credential exists and the API refused it.',
     question: 'Is this distinguishable from having no credential at all?',
@@ -171,6 +197,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'no-credential',
+    group: 'Refusals and failures',
     title: 'No credential — first run',
     blurb:
       'What a stranger sees on the first launch of a fresh clone: the read found nothing, and the way out is a field rather than a command to go and type somewhere else. The sandbox is fine.',
@@ -184,6 +211,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'storing-credential',
+    group: 'Refusals and failures',
     title: 'Storing the credential',
     blurb:
       'A subscription token was pasted into the setup screen and the host is writing the keychain item. The value crossed once and is held nowhere on this side.',
@@ -198,6 +226,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'minting-token',
+    group: 'Refusals and failures',
     title: 'Minting a subscription token',
     blurb:
       'varnick is running `claude setup-token` on the host and waiting for a sign-in. The browser it tried to open may not have opened, so the URL is on screen — that fallback is the whole reason the flow can be driven from in here at all. Nothing about the token it produces reaches this side: it is read off a terminal and written to the keychain in the host process.',
@@ -217,6 +246,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'start-refused',
+    group: 'Refusals and failures',
     title: 'Start refused',
     blurb:
       'START was pressed while a precondition did not hold. The refusal explains itself instead of swallowing the click.',
@@ -232,6 +262,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'agent-crashed',
+    group: 'Refusals and failures',
     title: 'Agent crashed',
     blurb: 'The process exited on its own. The transcript is unaffected.',
     question: 'Is restarting offered without implying the conversation was lost?',
@@ -249,6 +280,7 @@ export const SCENARIOS: readonly Scenario[] = [
   // -- The conversation ----------------------------------------------------
   {
     id: 'idle-empty',
+    group: 'The conversation',
     title: 'Running, nothing said',
     blurb: 'The agent is up and the transcript is empty. The true first screen.',
     question: 'Does an empty transcript tell you what to type?',
@@ -267,6 +299,7 @@ export const SCENARIOS: readonly Scenario[] = [
   */
   {
     id: 'resumed',
+    group: 'The conversation',
     title: 'Resumed on launch',
     blurb:
       'varnick was quit — or killed — and relaunched. The transcript came back from the mirror, which is redacted on the way in, so one message reads [redacted] where a secret value was.',
@@ -291,6 +324,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'sending',
+    group: 'The conversation',
     title: 'Sending',
     blurb: 'The prompt is posted and the agent has not produced a token yet.',
     question: 'Is the gap between sending and the first token accounted for?',
@@ -307,6 +341,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'streaming',
+    group: 'The conversation',
     title: 'Streaming',
     blurb: 'Output is arriving. The partial is rendered as a message, not as a placeholder.',
     question: 'Does a half-arrived answer read as an answer?',
@@ -324,6 +359,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'interrupting',
+    group: 'The conversation',
     title: 'Interrupting',
     blurb:
       'Escape was pressed mid-stream. The partial is kept — an interrupted turn still said something.',
@@ -341,6 +377,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'turn-failed',
+    group: 'The conversation',
     title: 'Turn failed',
     blurb: 'The turn threw. Retry and dismiss are both offered because both events are accepted.',
     question: 'Can the user tell whether their message was lost?',
@@ -357,6 +394,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'compacted',
+    group: 'The conversation',
     title: 'Summarised',
     blurb:
       'The agent compacted the conversation — because the window filled, or because the CLI was asked to. varnick did not ask and does not have a command for it; it heard.',
@@ -376,6 +414,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'command-menu',
+    group: 'The conversation',
     title: 'Command menu',
     blurb: 'A draft that still matches a command name. Tab completes, Enter sends.',
     question: 'Does the list show only commands the machines will actually accept?',
@@ -409,6 +448,7 @@ export const SCENARIOS: readonly Scenario[] = [
   // inventing content would make them the mock this page exists to avoid.
   {
     id: 'surface-loading',
+    group: 'Surfaces',
     title: 'Surface loading',
     blurb: 'A Surface was found on disk and its module is being imported.',
     question: 'Is a Surface that has not arrived yet distinguishable from one that failed?',
@@ -419,6 +459,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'surface-loaded',
+    group: 'Surfaces',
     title: 'Surface loaded',
     blurb:
       'The module imported and its default export is rendered here. Nothing in Core imports it — it was found by scanning the directory, which is why adding one never touches Core.',
@@ -430,6 +471,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'surface-failed',
+    group: 'Surfaces',
     title: 'Surface failed',
     blurb:
       'The module did not compile. One Surface is down, its siblings are not, and the conversation that caused it is still on the left to fix it — ADR-0004.',
@@ -443,6 +485,7 @@ export const SCENARIOS: readonly Scenario[] = [
   // -- Persistence ---------------------------------------------------------
   {
     id: 'saving',
+    group: 'Persistence',
     title: 'Saving',
     blurb: 'A save is in flight while the turn is idle. The two regions are independent.',
     question: 'Does persistence stay out of the way when it is working?',
@@ -458,6 +501,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: 'save-failed',
+    group: 'Persistence',
     title: 'Save failed',
     blurb:
       'The session store could not be written. The transcript is intact and the turn is unaffected.',
@@ -492,6 +536,34 @@ export const COVERED_PATHS: readonly StatePath[] = [
 ]
 
 /** Paths with no scenario. Empty is the only green result. */
+/**
+ * One predicate, used by the index and the grid.
+ *
+ * Written once and passed to both, rather than each filtering for itself: two
+ * copies is how a nav comes to say "6 of 24" over a grid showing five.
+ *
+ * Here rather than beside the page it renders, because `drive.ts` asserts it
+ * and this module is the one the script can import — `StatesPage.tsx` reaches
+ * hooks.ts, which reaches the Surface loader, which calls `import.meta.glob`
+ * and exists only under Vite. Same reason surfaces.ts takes its record as an
+ * argument.
+ */
+export function matches(query: string, group: Group | 'all') {
+  const q = query.trim().toLowerCase()
+  return (scenario: Scenario): boolean => {
+    if (group !== 'all' && scenario.group !== group) return false
+    if (q.length === 0) return true
+    // The state paths are searchable too, and that is the point of the filter:
+    // "what does `turn.failed` look like" is the question this page exists for,
+    // and it is not answered by a title search.
+    return (
+      scenario.title.toLowerCase().includes(q) ||
+      scenario.id.includes(q) ||
+      scenario.covers.some((path) => path.toLowerCase().includes(q))
+    )
+  }
+}
+
 export function uncoveredPaths(scenarios: readonly Scenario[] = SCENARIOS): StatePath[] {
   const seen = new Set(scenarios.flatMap((s) => s.covers))
   return COVERED_PATHS.filter((p) => !seen.has(p))

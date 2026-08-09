@@ -40,7 +40,8 @@ import { createSessionStore } from '@varnick/harness/session'
 import { liveActors } from '../src/actors/live.ts'
 import { discoverFrom, importSurface } from '../src/surfaces.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
-import { SCENARIOS, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
+import { GROUPS, SCENARIOS, matches, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
+import { cardOf, linkToCard, routeOf } from '../src/routing.ts'
 import { frozenHarness } from '../src/actors/frozen.ts'
 import { ACTOR_NAMES, UNIMPLEMENTED, seededDetail } from '../src/actors/index.ts'
 import type {
@@ -2147,6 +2148,78 @@ export default function Billing() {
       '{"answering":"sending"}',
   )
   actor.stop()
+}
+
+// ---------------------------------------------------------------------------
+// The states page's index — that a link goes where it says
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    Anchors are the classic thing that rots in silence. Rename a scenario and
+    the index entry still renders, still looks right, and goes nowhere: the page
+    mounts, nothing throws, coverage is unchanged, and the only way to find out
+    is to click all twenty-four.
+
+    Every claim here is about the pure half — the route parser and the ids — so
+    it runs at the same seam everything else in this script does, with no
+    browser. What a browser would add is that the element scrolled into view,
+    and the element's id is the scenario's id by construction.
+  */
+  check('the states route is itself', routeOf('#/states') === '#/states')
+  check('and a card on it is still the states page', routeOf('#/states/turn-failed') === '#/states')
+  check('a card is read back off the route', cardOf('#/states/turn-failed') === 'turn-failed')
+  check('the page itself names no card', cardOf('#/states') === null)
+  // A card segment on a page with no cards would invent an addressable thing.
+  check('only the states page has cards', cardOf('#/bare/turn-failed') === null)
+  check('an unknown hash is the chat', routeOf('#/nothing') === '#/designed' && routeOf('') === '#/designed')
+  /*
+    The near-miss that made the parser sort by length: a route that prefixes
+    another would answer for it. Nothing does today, and this is what keeps
+    adding one from being the way it starts.
+  */
+  check('a route is not answered by something that merely prefixes it', routeOf('#/statesish') === '#/designed')
+
+  for (const scenario of SCENARIOS) {
+    check(
+      `scenario "${scenario.id}" is addressable`,
+      linkToCard(scenario.id) === `#/states/${scenario.id}` &&
+        cardOf(linkToCard(scenario.id)) === scenario.id,
+    )
+  }
+
+  // Two cards with one id is two links to one of them, and the coverage banner
+  // would not notice: both would still be on the page.
+  const ids = SCENARIOS.map((s) => s.id)
+  check('no two cards share an id', new Set(ids).size === ids.length)
+  // The id is a path segment and an element id. A space or a slash in one
+  // breaks the link rather than the build.
+  check('every id survives being a URL segment', ids.every((id) => /^[a-z0-9-]+$/.test(id)))
+
+  // The index renders one heading per group and nothing outside the list, so a
+  // scenario whose group is not one of them would be a card with no way in —
+  // the exact defect ticket 41 closed for whole pages.
+  check(
+    'every card sits in a group the index renders',
+    SCENARIOS.every((s) => (GROUPS as readonly string[]).includes(s.group)),
+  )
+  check('every group has at least one card', GROUPS.every((g) => SCENARIOS.some((s) => s.group === g)))
+
+  /*
+    The count in the nav and the number of cards beside it come from one
+    predicate. Asserted with a filter that actually excludes something, because
+    a predicate agreeing with itself over the whole list is true of any two
+    functions that both return everything.
+  */
+  const byQuery = SCENARIOS.filter(matches('turn.failed', 'all'))
+  check('a state path is searchable, because that is what the page is for', byQuery.length > 0)
+  check('and the filter excludes rather than merely sorting', byQuery.length < SCENARIOS.length)
+  const byGroup = SCENARIOS.filter(matches('', 'Surfaces'))
+  check('a group narrows to itself', byGroup.length > 0 && byGroup.every((s) => s.group === 'Surfaces'))
+  check(
+    'a filter that answers nothing answers nothing, rather than everything',
+    SCENARIOS.filter(matches('nothing-is-called-this', 'all')).length === 0,
+  )
 }
 
 // ---------------------------------------------------------------------------
