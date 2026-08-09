@@ -185,6 +185,33 @@ export const sessionMachine = setup({
   on: {
     // Legal at any time. Changing either mid-turn does not disturb the turn in
     // flight; it is what the next one runs on.
+    /*
+      The agent forgot, so the window does too — in whatever state it is in.
+
+      **At the root, and that is the whole of what makes it work.** `CLEAR` was
+      a command, accepted in `idle` and `failed` and refused during an answer,
+      which is right for a request: clearing halfway through a reply is not
+      something to honour. It is a *report* now — the runtime announcing
+      `conversation_reset` — and it arrives while the Turn that typed `/clear`
+      is still running. Refused there, the transcript kept a conversation the
+      agent had already thrown away, which is the exact disagreement listening
+      was supposed to end. Measured in the running app: `running=turn-1
+      finished=false` at the moment it was dropped.
+
+      A state cannot decline a fact. What it does with it is another matter, and
+      here that is the same thing everywhere: the transcript goes.
+    */
+    CLEAR: {
+      actions: assign({
+        messages: [],
+        partial: '',
+        turnError: null,
+        compactError: null,
+        draft: '',
+        menuIndex: 0,
+        tokensUsed: 0,
+      }),
+    },
     SET_COMMANDS: { actions: assign({ commandNames: ({ event }) => event.names }) },
     SET_MODEL: { actions: assign({ model: ({ event }) => event.model }) },
     SET_EFFORT: { actions: assign({ effort: ({ event }) => event.effort }) },
@@ -215,27 +242,7 @@ export const sessionMachine = setup({
         },
         idle: {
           on: {
-          /*
-            The agent forgot, so the window does too.
 
-            `CLEAR` is a *report* now, not a request: the only thing that sends
-            it is the runtime announcing `conversation_reset`. varnick used to
-            own a `/clear` that emptied this and told the agent — which still
-            left the CLI's own `/clear` able to go round the outside and empty
-            one half. Listening covers both, and there is one way for the
-            transcript to empty rather than two that can disagree.
-          */
-          CLEAR: {
-            actions: assign({
-              messages: [],
-              partial: '',
-              turnError: null,
-              compactError: null,
-              draft: '',
-              menuIndex: 0,
-              tokensUsed: 0,
-            }),
-          },
           COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             // Guarded with no fallback: an empty draft is not a refusal worth
             // explaining, it is a button that should read as inert.
@@ -423,27 +430,7 @@ export const sessionMachine = setup({
         },
         failed: {
           on: {
-          /*
-            The agent forgot, so the window does too.
 
-            `CLEAR` is a *report* now, not a request: the only thing that sends
-            it is the runtime announcing `conversation_reset`. varnick used to
-            own a `/clear` that emptied this and told the agent — which still
-            left the CLI's own `/clear` able to go round the outside and empty
-            one half. Listening covers both, and there is one way for the
-            transcript to empty rather than two that can disagree.
-          */
-          CLEAR: {
-            actions: assign({
-              messages: [],
-              partial: '',
-              turnError: null,
-              compactError: null,
-              draft: '',
-              menuIndex: 0,
-              tokensUsed: 0,
-            }),
-          },
           COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             RETRY_TURN: 'answering',
             DISMISS_TURN_ERROR: { target: 'idle', actions: assign({ turnError: null }) },

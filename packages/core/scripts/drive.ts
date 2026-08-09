@@ -1189,8 +1189,21 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 }
 
 {
-  // Clearing is only legal once a turn has settled. Wiping the transcript
-  // mid-stream would drop the reply that is still arriving.
+  /*
+    Clearing is accepted in every state, including mid-turn.
+
+    **This assertion used to say the opposite**, and its reason was right for
+    what `CLEAR` was: a command, and wiping the transcript mid-stream would drop
+    a reply that was still arriving. It is a report now — the runtime announcing
+    that the conversation was reset — and it arrives while the very Turn that
+    typed `/clear` is still running. Refused there, the window kept a
+    conversation the agent had already thrown away.
+
+    Measured in the running app before this changed: the announcement fired at
+    `running=turn-1 finished=false`, and the machine dropped it.
+
+    A state can decide what to do about a fact. It cannot decline one.
+  */
   const actor = createActor(
     sessionMachine.provide({ actors: { runTurn: turnNever() } }),
     { input: { sessionId: 's11' } },
@@ -1200,7 +1213,9 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 
   actor.send({ type: 'EDIT_DRAFT', text: 'do a thing' })
   actor.send({ type: 'SEND' })
-  check('CLEAR is refused mid-turn', !actor.getSnapshot().can({ type: 'CLEAR' }))
+  check('a report is accepted mid-turn, because it has already happened', actor.getSnapshot().can({ type: 'CLEAR' }))
+  actor.send({ type: 'CLEAR' })
+  check('and it empties the transcript there too', actor.getSnapshot().context.messages.length === 0)
 
   actor.send({ type: 'INTERRUPT' })
   await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
@@ -2429,10 +2444,19 @@ async function turnPath(
     'idle accepts what idle has always accepted',
     at.get('idle') === 'EDIT_DRAFT SEND SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACT',
   )
+  /*
+    `CLEAR` joins every one of these, and the literals move for a reason rather
+    than to make a failure go away — which is what the header above warns about.
+
+    It was a command accepted only where a Turn had settled. It is a report now:
+    the runtime announcing that the conversation was reset, arriving while the
+    Turn that asked for it is still running. A state can decide what to do with
+    a fact and cannot decline one, so it is handled at the root.
+  */
   check(
-    'sending accepts a delta and an interrupt, and nothing else new',
+    'sending accepts a delta, an interrupt, and the report that the agent forgot',
     at.get('sending') ===
-      'EDIT_DRAFT STREAM_DELTA INTERRUPT SAVE SET_MODEL SET_EFFORT SET_COMMANDS',
+      'EDIT_DRAFT STREAM_DELTA INTERRUPT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS',
   )
   check(
     'streaming accepts exactly the same, which is why a delta needed no new state',
@@ -2440,7 +2464,7 @@ async function turnPath(
   )
   check(
     'interrupting accepts nothing new, not even another interrupt',
-    at.get('interrupting') === 'EDIT_DRAFT SAVE SET_MODEL SET_EFFORT SET_COMMANDS',
+    at.get('interrupting') === 'EDIT_DRAFT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS',
   )
   check(
     'turn-failed offers retry and dismiss, and the two settled commands',
@@ -2449,7 +2473,7 @@ async function turnPath(
   )
   check(
     'compacting refuses everything a running turn refuses, including another compaction',
-    at.get('compacting') === 'EDIT_DRAFT SAVE SET_MODEL SET_EFFORT SET_COMMANDS',
+    at.get('compacting') === 'EDIT_DRAFT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS',
   )
   check(
     'a compaction cannot be interrupted, so nothing may offer to',
