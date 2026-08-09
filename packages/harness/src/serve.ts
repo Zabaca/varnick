@@ -27,7 +27,9 @@
  */
 
 import { cloneRootFromLaunch } from './clone-root.ts'
+import { watchForOrphaning } from './orphan.ts'
 import { hostCapabilities, serveHarness } from './runtime.ts'
+import { releaseSandbox } from './sandbox.ts'
 
 let cloneRoot: string
 try {
@@ -36,5 +38,23 @@ try {
   process.stderr.write(`varnick: ${error instanceof Error ? error.message : String(error)}\n`)
   process.exit(2)
 }
+
+/*
+  Go when the host goes, however it went.
+
+  This runtime holds the Sandbox, and the Sandbox is not only this process: srt
+  runs proxies, and the violation monitor is a `log stream` child. Exiting
+  without `releaseSandbox` leaves those behind even when the runtime itself
+  ends, which is why the teardown is a call rather than a bare exit.
+
+  The host closes stdin on a clean shutdown and this would end anyway. What this
+  covers is the other exits — a SIGKILL, a crash, a debugger stop — where
+  nothing the host registered ever runs and the pipe is simply never closed.
+*/
+watchForOrphaning({
+  parentPid: () => process.ppid,
+  teardown: () => releaseSandbox(),
+  exit: () => process.exit(0),
+})
 
 await serveHarness(process.stdin, (reply) => process.stdout.write(reply), hostCapabilities({ cloneRoot }))

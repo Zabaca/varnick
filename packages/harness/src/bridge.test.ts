@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import {
+  AGENT_STILL_RUNNING,
   HARNESS_FAILURES,
   HarnessUnavailable,
   callHarness,
@@ -350,6 +352,36 @@ describe('the request crosses intact and carries nothing extra', () => {
     }
     await callHarness({ kind: 'read-credential' }, recording)
     expect(seen).toEqual([{ kind: 'read-credential' }])
+  })
+})
+
+describe('the wait for an agent to exit is bounded on both sides of the wire', () => {
+  /*
+    Read out of the Rust rather than pinned as a literal in a comment.
+
+    The two halves have to agree on one string: the host answers it when a wait
+    for an exit runs out, and the actor re-asks when it sees it. If they drift,
+    nothing fails — `liveAgentExit` simply returns "still-running" as though it
+    were a reason the process ended, and the machine leaves `agent.running` for
+    a crash that never happened. Silent, and about the one call whose whole job
+    is to say when the agent died.
+
+    The convention elsewhere in this suite is to pin the literal and note that
+    the Rust copy is in a language the test cannot read. It can read it; this
+    does.
+  */
+  const rust = readFileSync(new URL('../../../src-tauri/src/agent.rs', import.meta.url), 'utf8')
+
+  test('the host and the renderer name the same string', () => {
+    expect(rust).toContain(`pub const STILL_RUNNING: &str = "${AGENT_STILL_RUNNING}";`)
+  })
+
+  test('the host waits with a deadline rather than for ever', () => {
+    // The defect this closes: an unbounded wait, one per entry to
+    // `agent.running`, each holding a host thread for the life of a process
+    // that can run all day. Eleven were measured, and the app went silent.
+    expect(rust).toContain('EXIT_WAIT')
+    expect(rust).toContain('wait_timeout')
   })
 })
 

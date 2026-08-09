@@ -1,5 +1,5 @@
 import { fromPromise } from 'xstate'
-import { callHarness } from '@varnick/harness/bridge'
+import { AGENT_STILL_RUNNING, callHarness } from '@varnick/harness/bridge'
 import {
   CREDENTIAL_REJECTED_DETAIL,
   mintSubscriptionToken as mintSubscriptionTokenOnHost,
@@ -489,8 +489,23 @@ export async function restoreSession(sessionId: string): Promise<RestoredSession
  * that spawned it. Nothing the agent printed is in it.
  */
 export async function liveAgentExit(): Promise<string> {
-  const { reason } = await callHarness({ kind: 'await-agent-exit' })
-  return reason
+  /*
+    A wait that is re-asked, not a single wait held open.
+
+    The host bounds each one and answers `still-running` when it expires, which
+    is the same arrangement `next-turn-event` has and for the same reason: this
+    call is issued on every entry to `agent.running`, and an unbounded one held
+    a host thread for the life of a process that may run all day. They
+    accumulated across restarts and page loads until the host had no thread left
+    to answer anything, and the window sat for ever on its first call.
+
+    The loop is what keeps the *contract* unchanged: this still resolves once,
+    with a real reason, so nothing about `AGENT_EXIT` or the machine moves.
+  */
+  for (;;) {
+    const { reason } = await callHarness({ kind: 'await-agent-exit' })
+    if (reason !== AGENT_STILL_RUNNING) return reason
+  }
 }
 
 /**

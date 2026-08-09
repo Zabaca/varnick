@@ -194,6 +194,22 @@ export interface AwaitAgentExitRequest {
 }
 
 /**
+ * What that call answers while the agent is still there.
+ *
+ * The wait is bounded host-side and the caller re-asks, which is the same
+ * arrangement `next-turn-event` has and was arrived at the same way: an
+ * unbounded wait is issued on every entry to `agent.running`, and each one held
+ * a host thread for the life of a process that can run all day. They piled up
+ * across restarts until the host had none left and the window sat for ever on
+ * its first call.
+ *
+ * Not a failure and not an absence — the process is fine, this particular wait
+ * simply ran out. Named on both sides of the wire from here; `STILL_RUNNING` in
+ * src-tauri/src/agent.rs is the same string, and a test asserts they agree.
+ */
+export const AGENT_STILL_RUNNING = 'still-running'
+
+/**
  * Run one Turn on the Session the agent process is already holding.
  *
  * Answers `{ ok: true }` and returns at once. The answer is not the Turn's

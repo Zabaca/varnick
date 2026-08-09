@@ -57,6 +57,7 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
 import { readLines } from './framing.ts'
+import { watchForOrphaning } from './orphan.ts'
 import { describeSecretsForAgent } from './secrets.ts'
 import {
   beginCompaction,
@@ -1477,6 +1478,33 @@ if (import.meta.main) {
     await toolProbe(sdkEntry, deniedPath ?? '', allowedPath ?? '')
     process.exit(0)
   } else {
+    /*
+      Take the sandboxed tree down if the host that started it dies.
+
+      The last line of the shutdown story, and the only one that survives a
+      `kill -9`. varnick kills this group on ⌘Q and on SIGTERM; neither runs
+      when the host is killed outright or crashes, and what was left behind was
+      a confined Claude Code process with a credential in its environment,
+      running with nothing attached to it. Several were measured at five hours
+      old.
+
+      `process.kill(0, …)` signals this process's own **group**, which is
+      exactly this tree and nothing else: the host spawns the wrapper with
+      `process_group(0)` (src-tauri/src/agent.rs), so the group is the bash
+      wrapper, `sandbox-exec`, this host, and the Claude Code process under it.
+      Killing the group rather than this process alone is what keeps the agent
+      from outliving its own host — and it is the same signal, to the same
+      group, that varnick's own teardown sends.
+    */
+    watchForOrphaning({
+      parentPid: () => process.ppid,
+      teardown: () => {
+        process.kill(0, 'SIGKILL')
+      },
+      // Not reached in practice — the group signal above includes this process
+      // — and here because a teardown that somehow returns must still end it.
+      exit: () => process.exit(0),
+    })
     await runAgentHost(sdkEntry)
   }
 }

@@ -53,6 +53,27 @@ use crate::credential::{credential_env, CredentialStore};
 /// thread until the agent said something, which it may never do.
 const EVENT_WAIT: Duration = Duration::from_secs(15);
 
+/// How long a wait for the agent to exit lasts before answering "still running".
+///
+/// **Bounded for the reason `EVENT_WAIT` is, arrived at the hard way.** This
+/// wait was unbounded, and one is issued on every entry to `agent.running` — so
+/// each agent restart and each page load left another host thread parked for the
+/// life of a process that may run all day. Eleven of them were measured on a
+/// developer's machine, and while they were parked on the *worker* pool the app
+/// eventually had no thread left to answer anything at all.
+///
+/// The blocking pool the bridge now uses makes that far harder to reach. This
+/// makes it unreachable: a waiter belongs to whoever is still asking, and one
+/// nobody re-asks for goes away on its own within the minute.
+const EXIT_WAIT: Duration = Duration::from_secs(30);
+
+/// What `await-agent-exit` answers while the agent is still running.
+///
+/// A tag rather than prose, and deliberately not a failure: the actor re-asks,
+/// the same shape as `next-turn-event`'s `null`. The machine only leaves
+/// `agent.running` when a real reason arrives.
+pub const STILL_RUNNING: &str = "still-running";
+
 /// What to say when there is no agent to be told which secrets exist.
 ///
 /// Its own sentence since ticket 31. It used to borrow `NO_SESSION_TO_ASK`,
@@ -556,11 +577,16 @@ impl AgentProcess {
         self.events.next(EVENT_WAIT)
     }
 
-    /// Wait for the agent to exit and say why.
+    /// Wait for the agent to exit and say why, or say it is still running.
     ///
     /// Returns immediately if it has already exited — the exit is *state*, not a
     /// signal, precisely because the renderer asks after the machine reaches
     /// `agent.running`, which can be after a process that died instantly.
+    ///
+    /// Bounded by {@link EXIT_WAIT}, answering {@link STILL_RUNNING} when it
+    /// expires. The caller re-asks; see `liveAgentExit`. A wait for a process
+    /// that runs all day used to hold a host thread for the whole of it, one per
+    /// page load, and the app went silent when they outnumbered the pool.
     pub fn await_exit(&self) -> Result<String, Failure> {
         let mut state = self
             .shared
@@ -573,6 +599,7 @@ impl AgentProcess {
             ));
         }
         let waiting_for = state.generation;
+        let deadline = std::time::Instant::now() + EXIT_WAIT;
         loop {
             if let Some(reason) = &state.exit {
                 return Ok(reason.clone());
@@ -583,11 +610,18 @@ impl AgentProcess {
             if state.generation != waiting_for {
                 return Err(Failure::of("runtime-lost"));
             }
-            state = self
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(STILL_RUNNING.to_string());
+            }
+            // The deadline is against the wall clock rather than per-wait, so a
+            // spurious wake-up cannot extend it indefinitely.
+            let (next, _) = self
                 .shared
                 .ended
-                .wait(state)
+                .wait_timeout(state, left)
                 .map_err(|_| Failure::of("runtime-lost"))?;
+            state = next;
         }
     }
 

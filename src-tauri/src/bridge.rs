@@ -34,13 +34,12 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::State;
 
 use crate::agent::AgentProcess;
 use crate::credential::CredentialStore;
@@ -289,11 +288,28 @@ fn checked_clone_root(root: PathBuf) -> Result<PathBuf, Failure> {
     )))
 }
 
+/// How long the runtime gets to answer one request before it counts as gone.
+///
+/// Generous, because the slowest legitimate answer here is `check-sandbox`,
+/// which establishes srt and its proxies. The point is not to police latency —
+/// it is that "for ever" must not be one of the options. A runtime that has
+/// stopped answering used to hold the channel lock permanently and take every
+/// later call with it, which is a dead app rather than a failed call.
+const RUNTIME_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// The runtime process and the two pipes that reach it.
+///
+/// The read half is a thread rather than a `BufReader` this side of the lock,
+/// and that is the whole of what makes {@link RUNTIME_WAIT} possible: a
+/// blocking `read_line` on a pipe cannot be given a deadline, and there is no
+/// portable way to interrupt one. A thread that owns the pipe and posts whole
+/// lines to a channel can be waited on with a timeout, and — if it never
+/// answers — abandoned. It dies on its own when the child is killed and the
+/// pipe closes.
 struct Channel {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    lines: std::sync::mpsc::Receiver<String>,
 }
 
 impl Drop for Channel {
@@ -301,6 +317,11 @@ impl Drop for Channel {
     /// behind when varnick exits — or when a call desynchronises the pipe and
     /// the channel is dropped — would leave that tree running with nothing
     /// attached to it.
+    ///
+    /// **This runs on a desync and on an explicit teardown, and not on exit.**
+    /// macOS ends the event loop in `process::exit`, which unwinds nothing, so
+    /// managed state is never dropped — see the run callback in lib.rs, which is
+    /// what actually closes this down when varnick quits.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -315,6 +336,23 @@ pub struct HarnessRuntime {
 }
 
 impl HarnessRuntime {
+    /// End the runtime process, now, and leave nothing able to restart it.
+    ///
+    /// Called from the exit path in lib.rs rather than left to `Drop`, because
+    /// `Drop` is not on the exit path: macOS ends the event loop in
+    /// `process::exit`, which unwinds nothing, so managed state is never
+    /// dropped. Taking the channel out of the slot runs `Channel::drop` here,
+    /// where it does happen.
+    ///
+    /// A poisoned lock is not a reason to leave a process behind — but it is a
+    /// reason not to touch the pipes, so the failure is silent and the child is
+    /// left to the operating system.
+    pub fn shut_down(&self) {
+        if let Ok(mut slot) = self.channel.lock() {
+            slot.take();
+        }
+    }
+
     /// Ask the runtime for the wrapping that starts an agent.
     ///
     /// The only caller is the spawn in this module. It is not reachable from
@@ -390,6 +428,20 @@ impl HarnessRuntime {
     }
 }
 
+/// One request, and the answer to it or a reason there was none.
+///
+/// **The wait is bounded now, and that is the point of the reader thread.** The
+/// runtime answers one request at a time, and some of its handlers can hang for
+/// ever rather than fail: `read-session` opens the Secrets Store, which shells
+/// out to `/usr/bin/security` with no timeout and no kill, so a locked keychain
+/// or an access prompt nobody answers used to stall this pipe permanently —
+/// with the channel lock held, which took every later call with it. The app
+/// stopped, and nothing anywhere said why.
+///
+/// A timeout answers `runtime-lost`, which the caller already handles by
+/// dropping the channel: the process is killed and the next call starts a fresh
+/// one. That is the right treatment, because a runtime that overran its answer
+/// cannot be trusted to be at the start of the next line.
 fn exchange(channel: &mut Channel, id: u64, request: &Value) -> Result<Value, Failure> {
     let call = encode_call(id, request);
     channel
@@ -398,11 +450,11 @@ fn exchange(channel: &mut Channel, id: u64, request: &Value) -> Result<Value, Fa
         .and_then(|()| channel.stdin.flush())
         .map_err(|_| Failure::of("runtime-lost"))?;
 
-    let mut reply = String::new();
-    match channel.stdout.read_line(&mut reply) {
-        // End of stream: the runtime exited rather than answering.
-        Ok(0) => Err(Failure::of("runtime-lost")),
-        Ok(_) => decode_reply(id, &reply),
+    match channel.lines.recv_timeout(RUNTIME_WAIT) {
+        Ok(reply) => decode_reply(id, &reply),
+        // Timed out, or the reader thread ended because the pipe closed. Both
+        // mean the same thing to the caller: this runtime is not going to
+        // answer, and the channel it was reached through is finished.
         Err(_) => Err(Failure::of("runtime-lost")),
     }
 }
@@ -439,10 +491,38 @@ fn start_runtime() -> Result<Channel, Failure> {
     let stdin = child.stdin.take().ok_or_else(|| Failure::of("no-runtime"))?;
     let stdout = child.stdout.take().ok_or_else(|| Failure::of("no-runtime"))?;
 
+    /*
+      One thread per runtime, owning the read half and posting whole lines.
+
+      Unbounded, and it does not need to be otherwise: the runtime answers one
+      request at a time (see readLines in packages/harness/src/framing.ts), so
+      at most one unread line can be waiting — and if a call has timed out and
+      abandoned its answer, the line arriving late is exactly the thing the
+      generation check below has to be able to see and skip.
+
+      The thread ends when the pipe closes, which is when the child is killed.
+      Nothing has to join it.
+    */
+    let (posted, lines) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {
+                    if posted.send(line).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+
     Ok(Channel {
         child,
         stdin,
-        stdout: BufReader::new(stdout),
+        lines,
     })
 }
 
@@ -458,14 +538,53 @@ fn start_runtime() -> Result<Channel, Failure> {
 /// synchronous command runs on the main thread, where blocking would freeze the
 /// window for the life of the agent. Every runtime call blocks on a pipe too, so
 /// this is the right thread for all of them.
-#[tauri::command(async)]
-pub fn harness_call(
-    request: Value,
-    credentials: State<'_, CredentialStore>,
-    runtime: State<'_, HarnessRuntime>,
-    agent: State<'_, AgentProcess>,
-    mint: State<'_, Minting>,
-) -> Result<Value, Failure> {
+#[tauri::command]
+pub async fn harness_call(request: Value, app: tauri::AppHandle) -> Result<Value, Failure> {
+    /*
+      The blocking body runs on the blocking pool, and that is load-bearing
+      rather than tidy.
+
+      It was `#[tauri::command(async)]` on a *synchronous* function, which reads
+      like "run this off the main thread" and is not what it does: tauri hands a
+      sync body to `async_runtime::spawn`, which is `tokio::spawn` on the
+      multi-thread runtime, so every blocking call occupied one of
+      `num_cpus` **worker** threads. Three call kinds block for a long time or
+      for ever — `await-agent-exit` for the life of the agent, `next-turn-event`
+      for its poll, and every runtime call for a pipe round trip — and the
+      renderer issues a fresh `await-agent-exit` on each entry to
+      `agent.running`. They accumulate, and when they reach the worker count the
+      runtime has no thread left to poll *any* task: the whole IPC surface goes
+      silent with nothing logged and nothing failed.
+
+      That is what the developer saw as a window stuck for ever on "Reading the
+      conversation…" — the first call the app makes. `sample` showed eleven
+      threads parked in `await_exit` and not one executing the read.
+
+      `spawn_blocking` is the pool meant for this: 512 slots, and blocking in it
+      is the contract rather than an accident. The bound on `await_exit` below
+      is the other half — the pool makes starvation take 512 waiters instead of
+      ten, and the bound means they stop accumulating at all.
+
+      `AppHandle` rather than `State` arguments, because a `State` borrows the
+      invocation and cannot cross into a blocking closure. The handle is cheap
+      to clone and resolves the same managed values.
+    */
+    tauri::async_runtime::spawn_blocking(move || answer(request, &app))
+        .await
+        // The pool refused the work or the task panicked. Neither is a refusal
+        // by the Harness, and both leave this call with nothing to report.
+        .unwrap_or_else(|_| Err(Failure::of("runtime-lost")))
+}
+
+/// The whole of the bridge, on a thread that is allowed to block.
+fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
+    use tauri::Manager;
+
+    let credentials = app.state::<CredentialStore>();
+    let runtime = app.state::<HarnessRuntime>();
+    let agent = app.state::<AgentProcess>();
+    let mint = app.state::<Minting>();
+
     let kind = request.get("kind").and_then(Value::as_str).unwrap_or("");
 
     match route_of(kind) {
