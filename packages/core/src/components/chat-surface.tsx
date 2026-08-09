@@ -152,14 +152,15 @@ export function ChatSurface({
     rather than a flag the menu has to remember to check.
   */
   const varnickCommands: (MenuCommand & { available: boolean })[] = [
-    {
-      name: 'clear',
-      description: 'Clear the conversation',
-      argumentHint: '',
-      source: 'varnick' as const,
-      available: sessionCan({ type: 'CLEAR' }) && (s?.context.messages.length ?? 0) > 0,
-      run: () => session?.send({ type: 'CLEAR' }),
-    },
+    /*
+      `/clear` is the agent's now, not varnick's.
+
+      Ours emptied the transcript and told the agent to forget. The CLI has its
+      own, which the menu offers, and that one went round the outside — so
+      whichever you picked, one half could be left holding a conversation the
+      other had thrown away. varnick listens for `conversation_reset` instead,
+      which is announced whichever way the clear was asked for.
+    */
     {
       name: 'compact',
       description: 'Summarise the conversation to free context',

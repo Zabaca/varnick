@@ -107,6 +107,16 @@ export interface TurnObserver {
    * conversation, and it outlives the Turn it happened to arrive during.
    */
   commandsReported(commands: readonly SlashCommand[]): void
+  /**
+   * The agent forgot the conversation.
+   *
+   * Sent to the Session as `CLEAR`, and it is the *only* thing that sends it
+   * now. varnick used to own a `/clear` that emptied the transcript and told
+   * the agent; the two could still disagree, because the CLI's own `/clear`
+   * went round the outside. Listening for the fact covers both, and there is
+   * only one way the transcript can empty.
+   */
+  conversationReset(): void
 }
 
 /** An observer that drops everything. What a run with no owner gets. */
@@ -115,6 +125,7 @@ const silentObserver: TurnObserver = {
   credentialRejected: () => {},
   runtimeReported: () => {},
   commandsReported: () => {},
+  conversationReset: () => {},
 }
 
 /**
@@ -307,6 +318,9 @@ export function liveActors(
           case 'commands':
             observer.commandsReported(event.commands)
             break
+          case 'reset':
+            observer.conversationReset()
+            break
           case 'done':
             return { text: event.text, tokensUsed: event.tokensUsed }
           case 'failed': {
@@ -410,6 +424,11 @@ export function liveActors(
             break
           case 'commands':
             observer.commandsReported(event.commands)
+            break
+          // A compaction cannot reset the conversation, but the channel is one
+          // channel and a kind it ignored would be a kind it dropped.
+          case 'reset':
+            observer.conversationReset()
             break
           // `done` belongs to a Turn. A Compaction that produced one is a Turn
           // that was mistaken for a Compaction, and taking it would replace the
@@ -544,21 +563,14 @@ export async function liveCachedCommands(): Promise<readonly SlashCommand[]> {
   return commands
 }
 
-export async function liveForgetAgentContext(): Promise<void> {
-  /*
-    The other half of `/clear`.
+/*
+  `liveForgetAgentContext` was here.
 
-    Fire and forget by construction: the machine has already emptied the
-    transcript, and there is no state waiting on this. What confirms it is a
-    fact rather than a promise — the CLI answers `conversation_reset` with a new
-    id, which the runtime panel shows. A clear that did not reach the agent
-    leaves the old id on screen.
-
-    A failure is swallowed for the same reason: no agent running is a perfectly
-    ordinary reason for this to do nothing, and it is not a failed clear.
-  */
-  await callHarness({ kind: 'clear-session' }).catch(() => {})
-}
+  It told the agent to forget, so varnick's own `/clear` could clear both
+  halves. varnick no longer has a `/clear`: the CLI's is the one in the menu,
+  and the transcript is cleared by listening for `conversation_reset` instead —
+  which works however the clear was asked for, including from the agent itself.
+*/
 
 export async function liveStopAgent(): Promise<void> {
   await callHarness({ kind: 'stop-agent' })

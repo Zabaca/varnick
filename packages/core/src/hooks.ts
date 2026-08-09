@@ -14,7 +14,7 @@ import {
   type SeedControls,
   type TurnObserver,
 } from './actors/index.ts'
-import { liveCachedCommands, liveForgetAgentContext } from './actors/live.ts'
+import { liveCachedCommands } from './actors/live.ts'
 import { loadUserspaceSurface } from './actors/surface-loader.ts'
 import { regionOf } from './domain.ts'
 import { seedPolicy } from './data/seed.ts'
@@ -92,6 +92,7 @@ export function useHarness(
     credentialRejected: () => {},
     runtimeReported: () => {},
     commandsReported: () => {},
+    conversationReset: () => {},
     authorizing: () => {},
   })
   const observer = useMemo<TurnObserver>(
@@ -100,6 +101,7 @@ export function useHarness(
       credentialRejected: (detail) => signals.current.credentialRejected(detail),
       runtimeReported: (report) => signals.current.runtimeReported(report),
       commandsReported: (commands) => signals.current.commandsReported(commands),
+      conversationReset: () => signals.current.conversationReset(),
     }),
     [],
   )
@@ -139,13 +141,6 @@ export function useHarness(
               persistSession: seeds.persistSession,
               compactSession: seeds.compactSession,
             },
-            /*
-              The other half of a clear, supplied at the same seam the actors
-              are. A seeded run keeps the machine's no-op: there is no agent to
-              tell, and a seeded clear that reached for the bridge would be a
-              browser tab calling a host it does not have.
-            */
-            actions: mode === 'live' ? { forgetAgentContext: () => void liveForgetAgentContext() } : {},
           }),
         },
       }),
@@ -201,6 +196,15 @@ export function useHarness(
       // The fourth, and the Harness's for the same reason the third is: what
       // the agent will accept is a fact about the agent.
       commandsReported: (commands) => send({ type: 'COMMANDS_REPORTED', commands }),
+      /*
+        The transcript follows the agent's memory rather than being cleared
+        beside it. This is the only sender of `CLEAR` now, which is what makes
+        "the window and the agent agree about what was said" true however the
+        clear was asked for — varnick's menu had no way to hear the CLI's own.
+      */
+      conversationReset: () => {
+        actorRef.getSnapshot().context.session?.send({ type: 'CLEAR' })
+      },
       // And where the mint's one signal lands. `credential.minting` is the only
       // state that accepts it, so a URL from an attempt that has already ended
       // is dropped by the machine rather than guarded against here.

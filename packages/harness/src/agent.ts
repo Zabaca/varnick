@@ -63,7 +63,6 @@ import {
   beginCompaction,
   beginTurn,
   COMPACT_COMMAND,
-  CLEAR_COMMAND,
   encodeTurnEvent,
   normaliseCommands,
   parseControlRequest,
@@ -1310,24 +1309,6 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     // channel is a way in rather than a robustness feature.
     if (request === null) return
     if (request.kind === 'run-turn') return start(request)
-    /*
-      Forget the conversation, on the Session that is already open.
-
-      Fire and forget, and the confirmation is a fact rather than a promise:
-      the CLI answers with `conversation_reset` carrying a new id, which is
-      recorded below and shown in the window's runtime panel. A clear that did
-      not happen leaves the old id on screen — which is the difference between
-      an empty transcript that means something and one that does not.
-    */
-    if (request.kind === 'clear') {
-      try {
-        session.prompt(CLEAR_COMMAND)
-      } catch {
-        // Nothing to fail here: there is no Turn to report against, and the
-        // panel still shows the conversation this agent is actually in.
-      }
-      return
-    }
     if (request.kind === 'compact') return compact(request)
     if (request.kind === 'describe-secrets') {
       // Handed straight over and never kept here. This loop has no use for the
@@ -1405,6 +1386,17 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
         if (typeof fresh === 'string' && fresh.length > 0) {
           input.sessionStarted?.(fresh)
           if (runtime !== null) runtime = { ...runtime, sessionId: fresh }
+        }
+        /*
+          And tell the window, so the transcript goes when the memory does.
+
+          Stamped with the Turn that was running, because that is how this
+          channel carries anything — a reset arrives *during* the turn whose
+          prompt was `/clear`. With no turn running there is nobody to tell and
+          nothing on screen to correct.
+        */
+        if (running !== null && !running.finished) {
+          emit([{ kind: 'reset', turnId: running.turnId }])
         }
         continue
       }

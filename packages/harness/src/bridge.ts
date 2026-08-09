@@ -327,7 +327,6 @@ export type HarnessRequest =
   | RunTurnRequest
   | NextTurnEventRequest
   | InterruptTurnRequest
-  | ClearSessionRequest
   | ReadCommandsRequest
   | CompactSessionRequest
 
@@ -356,7 +355,6 @@ export interface HarnessAnswers {
   'run-turn': { readonly ok: true }
   'next-turn-event': { readonly event: TurnEvent | null }
   'interrupt-turn': { readonly ok: true }
-  'clear-session': { readonly ok: true }
   'read-commands': { readonly commands: readonly SlashCommand[] }
   'compact-session': { readonly ok: true }
 }
@@ -646,7 +644,6 @@ export async function callHarness<R extends HarnessRequest>(
     case 'run-turn':
     case 'interrupt-turn':
     case 'compact-session':
-    case 'clear-session':
       return okAnswer(answer) as HarnessAnswers[R['kind']]
   }
 }

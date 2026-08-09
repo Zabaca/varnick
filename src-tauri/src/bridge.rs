@@ -155,8 +155,7 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // runtime. See mint.rs.
         "read-credential" | "store-credential" | "mint-subscription-token"
         | "next-mint-event" | "spawn-agent" | "stop-agent" | "await-agent-exit"
-        | "run-turn" | "next-turn-event" | "interrupt-turn" | "compact-session"
-        | "clear-session" => {
+        | "run-turn" | "next-turn-event" | "interrupt-turn" | "compact-session" => {
             Some(Route::Host)
         }
         // `read-commands` is the runtime's because it is a file read, and the
@@ -676,7 +675,7 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
             // A prompt, an interrupt and a compaction are the same act from
             // here: one control line onto the pipe the agent process is
             // listening on. None of their answers comes back through this call.
-            "run-turn" | "interrupt-turn" | "compact-session" | "clear-session" => {
+            "run-turn" | "interrupt-turn" | "compact-session" => {
                 /*
                   A Turn, and only a Turn, is preceded by the names of the
                   stored secrets — ADR-0006's naming end.

@@ -80,14 +80,6 @@ export type ControlRequest =
    *  else — there is no prompt on it to smuggle anything through, because the
    *  prompt is a constant this module owns ({@link COMPACT_COMMAND}). */
   | { readonly kind: 'compact'; readonly turnId: string }
-  /**
-   * Forget this conversation and start another on the same Session.
-   *
-   * Carries nothing at all — not even a Turn id, because a clear is not part of
-   * one. Like {@link COMPACT_COMMAND}, the prompt it sends is a constant this
-   * module owns, so there is no field on this request for anything to ride in.
-   */
-  | { readonly kind: 'clear' }
   | DescribeSecretsRequest
 
 /**
@@ -147,24 +139,15 @@ export interface DescribeSecretsRequest {
  */
 export const COMPACT_COMMAND = '/compact'
 
-/**
- * What asks the Session to forget.
- *
- * **`/clear` used to be half a clear and nobody could see the other half.** It
- * emptied varnick's transcript and said nothing to the agent, which went on
- * holding the whole conversation — so the window showed an empty chat over an
- * agent that remembered every word of it.
- *
- * That was invisible for as long as the agent forgot everything on each launch
- * anyway. Resume (ticket 33) removed the coincidence rather than causing the
- * defect: it made a real memory out of one that had only ever been accidental,
- * and the half-clear underneath it became something a person could notice.
- *
- * The CLI's own command, for the reason the compaction constant gives: the
- * Session's context is the thing being reset, and only the process holding it
- * can do that.
- */
-export const CLEAR_COMMAND = '/clear'
+/*
+  `CLEAR_COMMAND` was here, with a control request to carry it.
+
+  It existed so varnick's own `/clear` could tell the agent to forget, because
+  clearing the transcript alone left an empty window over a full memory. Both
+  are gone: varnick no longer has a `/clear` — the CLI's is the one in the menu
+  — and the transcript is cleared by *listening* for `conversation_reset`
+  instead. That works however the clear was asked for, which asking never could.
+*/
 
 /**
  * Read a control request, or refuse it.
@@ -200,13 +183,6 @@ export function parseControlRequest(line: string): ControlRequest | null {
     if (names.some((name) => typeof name !== 'string' || name.length === 0)) return null
     return { kind, names: [...(names as string[])] }
   }
-
-  /*
-    Before the Turn id is required, because a clear does not belong to a Turn.
-    It rebuilds to `kind` alone — the emptiest request on this channel, and the
-    one with the least in it to go wrong.
-  */
-  if (kind === 'clear') return { kind: 'clear' }
 
   if (typeof turnId !== 'string' || turnId.length === 0) return null
 
@@ -534,6 +510,15 @@ export type TurnUpdate =
    * merge would keep offering a skill that has gone.
    */
   | { readonly kind: 'commands'; readonly commands: readonly SlashCommand[] }
+  /**
+   * The conversation was reset — the agent forgot everything.
+   *
+   * The CLI announces this after its own `/clear`, after a plan-mode exit, and
+   * after anything else that starts a fresh conversation. varnick clears the
+   * transcript *because of it* rather than alongside its own command, which is
+   * what keeps the two halves in agreement however the clear was asked for.
+   */
+  | { readonly kind: 'reset' }
 
 /** A {@link TurnUpdate} and the Turn it belongs to. */
 export type TurnEvent = TurnUpdate & { readonly turnId: string }
@@ -710,6 +695,9 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
       const parsed = parseRuntimeReport(report)
       return parsed === null ? null : { kind, turnId, report: parsed }
     }
+    case 'reset':
+      // Nothing to rebuild: the event is the whole of the fact.
+      return { kind, turnId }
     case 'commands':
       /*
         An array or nothing, and an *empty* array is a real answer rather than a

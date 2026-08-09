@@ -893,21 +893,19 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 
 {
   /*
-    Clearing is two things, and it used to be one.
+    Clearing is one thing reported, where it used to be two things asked for.
 
-    The transcript emptied and the agent was told nothing, so the window showed
-    an empty conversation over an agent still holding every word of it. That was
-    invisible while the agent forgot on each launch anyway; resume made the
-    memory real and left the gap on screen.
+    varnick owned a `/clear` that emptied this transcript and told the agent to
+    forget. That covered its own command and nothing else — the CLI has a
+    `/clear` too, and using it emptied the agent while the window kept the
+    conversation. Two halves, two ways to ask, one of them able to disagree.
 
-    Asserted at the seam rather than against a live agent: the machine declares
-    that something must tell the agent, and the shell supplies what. This is the
-    same shape as an actor, and it is testable for the same reason.
+    Now `CLEAR` is a report: the runtime announces `conversation_reset` and the
+    transcript follows. Whichever way the clear was asked for, the announcement
+    is the same, so there is one path rather than two.
   */
-  let forgotten = 0
   const actor = createActor(
     sessionMachine.provide({
-      actions: { forgetAgentContext: () => { forgotten += 1 } },
       actors: {
         persistSession: resolves<{ ok: true }, { sessionId: string; messages: readonly Message[] }>({
           ok: true,
@@ -919,12 +917,9 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 
   check('a conversation starts with something in it', actor.getSnapshot().context.messages.length === 1)
   actor.send({ type: 'CLEAR' })
-  check('clearing empties the transcript', actor.getSnapshot().context.messages.length === 0)
-  check('clearing also tells the agent to forget', forgotten === 1)
-
-  // The failed turn accepts CLEAR too, and it must clear both halves there as
-  // well — a conversation abandoned after an error is exactly one someone wants
-  // gone from both sides.
+  check('the report empties the transcript', actor.getSnapshot().context.messages.length === 0)
+  check('and the draft with it', actor.getSnapshot().context.draft === '')
+  check('and the meter', actor.getSnapshot().context.tokensUsed === 0)
   actor.stop()
 }
 

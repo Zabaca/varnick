@@ -175,12 +175,15 @@ pub fn control_line_for(request: &Value) -> Option<String> {
         // packages/harness/src/turn.ts, so no prompt crosses this boundary and
         // there is no field a request could put one in.
         "compact-session" => serde_json::json!({ "kind": "compact", "turnId": turn_id()? }),
-        // `clear-session` outside, `clear` inside, and the emptiest request on
-        // the channel: no Turn id, because a clear is not part of one, and no
-        // prompt, because what the confined process runs is a constant in
-        // packages/harness/src/turn.ts. Nothing crosses here at all except the
-        // instruction to forget.
-        "clear-session" => serde_json::json!({ "kind": "clear" }),
+        /*
+          A `clear-session` arm was here.
+
+          It carried varnick's own `/clear` to the confined process. varnick no
+          longer has one — the CLI's is the command in the menu, and the window
+          clears its transcript by listening for `conversation_reset` instead,
+          which is announced however the clear was asked for. One kind left this
+          channel; the channel is unchanged.
+        */
         // The one request on this channel that tells the confined process
         // something instead of asking it to do something: which secrets exist,
         // by name, so the agent can write `process.env.STRIPE_KEY` in the

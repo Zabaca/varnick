@@ -841,6 +841,40 @@ describe('the commands the runtime will accept', () => {
   })
 })
 
+describe('a conversation that was reset', () => {
+  test('the window is told, so the transcript goes when the memory does', async () => {
+    /*
+      Announced by the CLI after its own `/clear`, a plan-mode exit, or anything
+      else that starts a fresh conversation — which is why varnick listens for
+      it rather than owning a command. Its own `/clear` could only ever cover
+      the clears it was asked for.
+    */
+    const { written, started } = await serve(async ({ control, messages }) => {
+      control.push(runTurnLine('t1', '/clear'))
+      await settle()
+      messages.push({
+        type: 'conversation_reset',
+        new_conversation_id: 'fresh-1',
+      })
+      await settle()
+      messages.push(result('cleared'))
+      await settle()
+    })
+    expect(written.map((e) => e.kind)).toContain('reset')
+    // And the pointer follows, or the next launch resumes the conversation this
+    // one was told to forget.
+    expect(started).toContain('fresh-1')
+  })
+
+  test('a reset with no turn running tells nobody, because there is nobody', async () => {
+    const { written } = await serve(async ({ messages }) => {
+      messages.push({ type: 'conversation_reset', new_conversation_id: 'fresh-2' })
+      await settle()
+    })
+    expect(written).toEqual([])
+  })
+})
+
 describe('the runtime describing itself', () => {
   const init = {
     type: 'system',
