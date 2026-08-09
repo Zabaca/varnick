@@ -44,6 +44,28 @@ Measured with `agentCommand(...) --selftest`, which answered `{"sdk":"loaded","r
 
 Each of the four candidates was then dropped in turn, and **every one of them is load-bearing**: without `/etc`, `/dev`, `/private/var/db` or `/Library` the agent exits 133 rather than starting. So the set is small, and it is not padded.
 
+## The two things that looked like blockers, and are not
+
+**`git` was reported broken under a denied root. It is not, and the reason is worth keeping.** `/usr/bin/git` is not git — it is an `xcode-select` shim that finds the real binary by reading the symlink `/var/select/developer_dir`, and that link sits in the denied root. Allowing the link's *target* does not help; `/private/var`, `/private/var/select` and the toolchain directory were each tried and each failed identically, because the denial is of traversing the link.
+
+```
+/usr/bin/git --version              exit 1  xcode-select: unable to read data link
+<toolchain>/usr/bin/git --version   exit 0  git version 2.50.1 (Apple Git-155)
+git --version, toolchain on PATH    exit 0  git version 2.50.1 (Apple Git-155)
+```
+
+**Already fixed and already shipped**, independently of this decision, because it is not conditional on it: `developerToolsBin` puts the real toolchain ahead of the shim on the agent's `PATH`. Reads are allow-by-default today, so the shim resolves and `git` works — but only because nothing denies the link, which is a bad thing for an agent's `git` to depend on.
+
+**"An explicit allow inside a denied root may not be reliable" — it is reliable.** This was raised as the thing that would kill the option outright, since it would make every entry in the list above suspect. Measured, with a negative control:
+
+```
+clone file, base only              STAT ok    | READ ok 16 bytes
+the file git wanted, + /Library    STAT ok    | READ ok 64 bytes
+the same file, without /Library    STAT EPERM | READ EPERM
+```
+
+The doubt came from misreading git's `fatal: unable to access '…/gitconfig'` as a sandbox denial. The file is readable; git never reached it, because the shim died first.
+
 ## What is actually left to decide
 
 Not whether it is possible, and not what it needs. Two things:
