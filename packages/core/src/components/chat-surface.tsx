@@ -25,7 +25,7 @@ import {
   EFFORTS,
   MODELS,
 } from '../domain.ts'
-import { IMAGE_MEDIA_TYPES, type PastedImage } from '@varnick/harness/turn'
+import { IMAGE_MEDIA_TYPES, imageMarker, type PastedImage } from '@varnick/harness/turn'
 import type { harnessMachine, HarnessEvent } from '../machines/harness.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
@@ -636,7 +636,11 @@ export function ChatSurface({
                     style={{ border: '1px solid var(--rule)', color: 'var(--fg-dim)' }}
                   >
                     <span aria-hidden>⧉</span>
-                    {image.mediaType.replace('image/', '')} · {sizeOf(image.data)}
+                    {/* Numbered to match the marker in the draft: the chip and
+                        the text are the same picture, and a developer editing
+                        the sentence needs to know which one they are moving. */}
+                    {imageMarker(i)} · {image.mediaType.replace('image/', '')} ·{' '}
+                    {sizeOf(image.data)}
                     <button
                       aria-label={`Remove attachment ${i + 1}`}
                       style={{ color: 'var(--accent)' }}
@@ -691,8 +695,25 @@ export function ChatSurface({
                 // still reach the field, and preventing it here would break
                 // pasting a path or a stack trace, which is most pastes.
                 e.preventDefault()
+                /*
+                  The marker goes in at the cursor, which is what makes several
+                  screenshots a conversation rather than a pile.
+
+                  Read before the await, because `currentTarget` is pooled and
+                  the caret will have moved by the time the bytes are ready. The
+                  numbering continues from what is already attached, so a second
+                  paste is [Image #2] rather than a second [Image #1].
+                */
+                const field = e.currentTarget
+                const caret = field.selectionStart ?? draft.length
+                const already = s?.context.pending.length ?? 0
+                const markers = files.map((_, i) => imageMarker(already + i)).join(' ')
                 void Promise.all(files.map(asPastedImage)).then((images) => {
                   session?.send({ type: 'ATTACH_IMAGES', images })
+                  session?.send({
+                    type: 'EDIT_DRAFT',
+                    text: `${draft.slice(0, caret)}${markers} ${draft.slice(caret)}`,
+                  })
                 })
               }}
               onChange={(e) => session?.send({ type: 'EDIT_DRAFT', text: e.target.value })}

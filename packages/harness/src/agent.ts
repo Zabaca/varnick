@@ -67,6 +67,7 @@ import {
   runtimeReportFrom,
   type TurnEvent,
   type RuntimeReport,
+  IMAGE_MARKER,
   type PastedImage,
   type SlashCommand,
   type TurnFailure,
@@ -1127,6 +1128,71 @@ export interface ServeTurnsInput {
  * init and status messages, and a stray delta attributed to the next Turn would
  * become that Turn's first word.
  */
+/**
+ * Content is a string or a list of blocks.
+ *
+ * A plain prompt stays a string, which is what every Turn before images was and
+ * what the SDK is happiest with. A prompt carrying pictures becomes blocks,
+ * because that is the only shape an image has on the API: base64 and a media
+ * type, beside the text rather than described by it.
+ */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+/**
+ * A prompt and its pictures, in the order the developer wrote them.
+ *
+ * The composer puts `[Image #1]` where the paste happened, so the text already
+ * says where each picture belongs. Splitting on those markers puts every image
+ * next to the words about it, which is the difference between *"here are three
+ * screenshots, now some questions"* and a question with its screenshot beside
+ * it.
+ *
+ * Three rules, and two of them are about not losing a picture:
+ *
+ *   * a marker naming an image that is not there stays as text, because it is
+ *     what the developer typed and hiding it would silently change the question
+ *     they asked;
+ *   * an image no marker names goes on the end, because the alternative is
+ *     dropping it — a screenshot that was attached and never sent is the one
+ *     failure this whole path exists to prevent;
+ *   * the same marker twice is one picture, because a duplicated marker is
+ *     somebody editing a sentence rather than asking to pay for the image
+ *     again.
+ */
+export function interleave(text: string, images: readonly PastedImage[]): ContentBlock[] {
+  const asBlock = (image: PastedImage): ContentBlock => ({
+    type: 'image',
+    source: { type: 'base64', media_type: image.mediaType, data: image.data },
+  })
+
+  const blocks: ContentBlock[] = []
+  const used = new Set<number>()
+  let at = 0
+
+  for (const match of text.matchAll(IMAGE_MARKER)) {
+    const index = Number(match[1]) - 1
+    const image = images[index]
+    if (image === undefined || used.has(index)) continue
+    const before = text.slice(at, match.index)
+    // Trimmed before it is judged: "[Image #1] " would otherwise send a block
+    // containing one space, which is a block the model has to account for and
+    // nobody wrote.
+    if (before.trim().length > 0) blocks.push({ type: 'text', text: before })
+    blocks.push(asBlock(image))
+    used.add(index)
+    at = match.index + match[0].length
+  }
+
+  const rest = text.slice(at)
+  if (rest.trim().length > 0) blocks.push({ type: 'text', text: rest })
+  for (const [index, image] of images.entries()) {
+    if (!used.has(index)) blocks.push(asBlock(image))
+  }
+  return blocks
+}
+
 export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   const { control, messages, session, write } = input
 
@@ -1400,17 +1466,6 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
 async function runAgentHost(sdkEntry: string): Promise<void> {
   const { query } = (await import(sdkEntry)) as typeof import('@anthropic-ai/claude-agent-sdk')
   type Prompt = Parameters<typeof query>[0]['prompt']
-  /*
-    Content is a string or a list of blocks.
-
-    A plain prompt stays a string, which is what every Turn before images was
-    and what the SDK is happiest with. A prompt carrying pictures becomes
-    blocks, because that is the only shape an image has on the API: base64 and
-    a media type, beside the text rather than described by it.
-  */
-  type ContentBlock =
-    | { type: 'text'; text: string }
-    | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
   type UserMessage = {
     type: 'user'
     message: { role: 'user'; content: string | ContentBlock[] }
@@ -1651,26 +1706,8 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
     },
     session: {
       prompt: (text, images) => {
-        /*
-          Images first, then the text.
-
-          The order is the one the API documents for a prompt about a picture,
-          and it is also the one that reads correctly if a model sees only the
-          first block: "here is a screenshot, and here is what I am asking about
-          it" rather than a question about something that has not arrived yet.
-        */
         const content: string | ContentBlock[] =
-          images === undefined || images.length === 0
-            ? text
-            : [
-                ...images.map(
-                  (image): ContentBlock => ({
-                    type: 'image',
-                    source: { type: 'base64', media_type: image.mediaType, data: image.data },
-                  }),
-                ),
-                { type: 'text', text },
-              ]
+          images === undefined || images.length === 0 ? text : interleave(text, images)
         queued.push({
           type: 'user',
           message: { role: 'user', content },

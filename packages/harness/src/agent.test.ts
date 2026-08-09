@@ -21,6 +21,7 @@ import {
   failureOfThrown,
   lastSessionPath,
   rememberSession,
+  interleave,
   resumableSession,
   sandboxEnvOverlay,
   serveTurns,
@@ -847,6 +848,57 @@ describe('the commands the runtime will accept', () => {
       [],
     )
     expect(written.some((e) => e.kind === 'done')).toBe(true)
+  })
+})
+
+describe('a picture arrives beside the words about it', () => {
+  const png = (data: string) => ({ mediaType: 'image/png' as const, data })
+  const kinds = (blocks: readonly { type: string }[]) => blocks.map((b) => b.type)
+
+  test('a marker puts the image where the sentence says it is', () => {
+    /*
+      The difference between three screenshots followed by a wall of text, and a
+      question with its screenshot beside it. The developer wrote the markers by
+      pasting; this is what they buy.
+    */
+    const blocks = interleave('the menu in [Image #1] should look like [Image #2]', [
+      png('b25l'),
+      png('dHdv'),
+    ])
+    expect(kinds(blocks)).toEqual(['text', 'image', 'text', 'image'])
+    expect(blocks[1]).toMatchObject({ source: { data: 'b25l' } })
+    expect(blocks[3]).toMatchObject({ source: { data: 'dHdv' } })
+  })
+
+  test('a picture nothing names is still sent, on the end', () => {
+    // The one failure this whole path exists to prevent: a screenshot that was
+    // attached and never sent. Deleting a marker must not delete the image.
+    expect(kinds(interleave('no markers here', [png('b25l')]))).toEqual(['text', 'image'])
+  })
+
+  test('a marker naming nothing stays as the text it is', () => {
+    // It is what the developer typed, and hiding it would silently change the
+    // question they asked.
+    const blocks = interleave('see [Image #7]', [png('b25l')])
+    expect(blocks[0]).toEqual({ type: 'text', text: 'see [Image #7]' })
+    expect(blocks[1]?.type).toBe('image')
+  })
+
+  test('the same marker twice is one picture, not two', () => {
+    // A duplicated marker is a developer editing a sentence, not a request to
+    // pay for the image again.
+    const blocks = interleave('[Image #1] and again [Image #1]', [png('b25l')])
+    expect(kinds(blocks).filter((k) => k === 'image')).toHaveLength(1)
+  })
+
+  test('a caption-less paste is the picture and nothing else', () => {
+    expect(kinds(interleave('', [png('b25l')]))).toEqual(['image'])
+  })
+
+  test('whitespace around a marker is not a text block', () => {
+    // "[Image #1] " would otherwise send a block containing one space, which is
+    // a block the model has to account for and nobody wrote.
+    expect(kinds(interleave('  [Image #1]  ', [png('b25l')]))).toEqual(['image'])
   })
 })
 

@@ -164,6 +164,24 @@ export const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 
 /**
+ * Where a picture sits in the sentence about it.
+ *
+ * The composer writes one of these into the draft at the cursor when an image
+ * is pasted, so the developer can say *"the menu in [Image #1] is what [Image
+ * #2] should look like"* and mean it. Claude Code's own composer uses the same
+ * shape, which is the reason for the format rather than a coincidence: the
+ * developer already knows what it means.
+ *
+ * One-based, because it is read by a person before it is read by a parser.
+ */
+export const IMAGE_MARKER = /\[Image #(\d+)\]/g
+
+/** The marker for the nth image, and the one place that shape is written. */
+export function imageMarker(index: number): string {
+  return `[Image #${index + 1}]`
+}
+
+/**
  * Read a list of images, or refuse the whole request.
  *
  * All-or-nothing on purpose, and it is the same argument `describe-secrets`
