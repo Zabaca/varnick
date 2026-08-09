@@ -21,7 +21,7 @@
  * no per-card links to point at.
  */
 
-export const ROUTES = ['#/bare', '#/designed', '#/states'] as const
+export const ROUTES = ['#/designed', '#/states'] as const
 export type Route = (typeof ROUTES)[number]
 
 /** The rendering a hash names. Anything unrecognised is the chat. */

@@ -13,7 +13,7 @@ HUMAN   2. /to-spec                  → .scratch/<slug>/spec.md   (prose, no co
 HUMAN  2.5 /impeccable shape         → .impeccable/surfaces/<slug>.md   (UI work only)
           ⤷ job, audience, direction, boundaries. No states. No code.
           ⤷ gate: machine decomposition announced in one line, confirmed
-AUTO    3. /machine-first-prototype  → machines, drive.ts, bare, states, high-fidelity
+AUTO    3. /machine-first-prototype  → machines, drive.ts, bare, states, high-fidelity  (bare is a stage, not a deliverable — ADR-0013)
                                        amends spec; writes CONTEXT.md terms and
                                        the decomposition ADR; inherits the brief
 HUMAN   4. use it; iterate visuals; lock look and experience
@@ -37,7 +37,9 @@ Answer the gate question explicitly at the end of stage 2: **does this touch UI?
 
 ## What is different about this flow
 
-**Stage 3 produces real product code, not a throwaway.** The machines, the bare page, the states page, and the high-fidelity UI all live in the main codebase and ship. The states page is a permanent coverage-checked test surface, not a demo. The bare page is the permanent design-free behavioural surface, routed dev-only.
+**Stage 3 produces real product code, not a throwaway.** The machines, the states page and the high-fidelity UI all live in the main codebase and ship. The states page is a permanent coverage-checked test surface, not a demo.
+
+The bare page is the exception, and it is worth knowing which kind. It is a **stage**, not a deliverable: it exists to prove behaviour with no design covering for it, and once `drive.ts` is doing that in CI and every state has a card, keeping the page costs maintenance and buys a second, worse answer to the same question. varnick shipped one and removed it — [ADR-0013](../adr/0013-behaviour-is-proved-headlessly.md).
 
 **The spec is authored early and amended in place.** Stage 2 writes prose from what is known. Stage 3 discovers states prose cannot predict — loading, empty, filtered-empty, error, every in-flight state — and stage 4 may change more. Those are appended to the same spec file, tagged with their source. The spec must be current before stage 5 reads it.
 

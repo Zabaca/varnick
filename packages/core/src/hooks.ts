@@ -8,10 +8,8 @@ import {
   actorsFor,
   agentControlFor,
   resolveActorMode,
-  defaultSeedControls,
   type ActorMode,
   type MintObserver,
-  type SeedControls,
   type TurnObserver,
 } from './actors/index.ts'
 import { liveCachedCommands } from './actors/live.ts'
@@ -66,11 +64,7 @@ export interface Transition {
  * reads the mirror in start-up rather than in an actor. Left out, the machine
  * uses its own default and the conversation starts empty.
  */
-export function useHarness(
-  controls: SeedControls = defaultSeedControls,
-  requestedMode?: ActorMode,
-  sessionInput?: SessionInput,
-) {
+export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInput) {
   const mode = requestedMode ?? resolveActorMode()
 
   /*
@@ -121,8 +115,8 @@ export function useHarness(
   )
 
   const seeds = useMemo(
-    () => actorsFor(mode, controls, observer, mint),
-    [mode, controls, observer, mint],
+    () => actorsFor(mode, observer, mint),
+    [mode, observer, mint],
   )
   const log = useRef<Transition[]>([])
   const last = useRef<Record<string, string>>({})

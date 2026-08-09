@@ -116,8 +116,9 @@ and the answer is rebuilt message by message on the way in like every other one.
 
 ## Not decided here
 
-The bare page runs the same machine with the same default Session id and does
-not resume, so in live mode it would write over a transcript it never read. It
-is the design-free behavioural surface rather than the app, and giving it a
-resume or an id of its own is a change worth making deliberately rather than as
-a side effect of this one.
+The bare page ran the same machine with the same default Session id and did not
+resume, so in live mode it would have written over a transcript it never read.
+That is settled by removal rather than by decision — ADR-0013 — and the shape of
+the hazard is worth keeping: **any second surface that spawns a Session shares
+this one's id.** A future one needs a resume or an id of its own, deliberately,
+and not as a side effect of building it.

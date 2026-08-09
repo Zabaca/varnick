@@ -75,13 +75,14 @@ second process with no lock between them. `claude setup-token` exists for
 exactly this, and the boundary is recorded in
 [ADR-0011](docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md).
 
-Three routes ship, and they are the same code three ways: `#/designed` is the
-chat and is where a launch lands, `#/bare` is the design-free page showing raw
-machine state and one button per accepted event, `#/states` is every state of
-the chat on one page, driven by the real machines. All three are in the **View**
-menu — ⌘1, ⌘2, ⌘3 — because for a long time two of them shipped with no way in:
-the bare and states pages each render a nav and the chat renders none, so the
-pages that could navigate were exactly the two nobody could reach.
+Two routes ship, and they are the same code two ways: `#/designed` is the chat
+and is where a launch lands, `#/states` is every state of the chat on one page,
+driven by the real machines. Both are in the **View** menu — ⌘1 and ⌘2 — because
+for a long time the states page shipped with no way in: it renders a nav and the
+chat renders none, so the page that could navigate was the one nobody could
+reach. A third rendering, the design-free `#/bare`, was removed once `drive.ts`
+proved behaviour better than clicking did
+([ADR-0013](docs/adr/0013-behaviour-is-proved-headlessly.md)).
 
 `#/states` addresses one card at a time — `#/states/turn-failed` is the card for
 a failed Turn — which is what makes a ticket able to point at a state rather

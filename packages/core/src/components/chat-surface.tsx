@@ -39,8 +39,8 @@ import type { SessionEvent } from '../machines/session.ts'
  *
  * Harness state is silent while it holds. It appears only when something is
  * wrong, because a permanent row of green dots reporting on seeded actors is a
- * claim the product cannot currently back. `#/bare` shows the full machine state
- * at all times; that is what it is for.
+ * claim the product cannot currently back. `#/states` is where the full machine
+ * state is on screen at all times, one card per state; that is what it is for.
  */
 
 /**
@@ -357,9 +357,9 @@ export function ChatSurface({
         one row of figures — and a strip that only appeared under a subscription
         meant an API-key run in seeded mode said nothing at all.
 
-        Rendered here rather than hidden, so `#/bare` and a DOM snapshot agree
-        with what is on screen. In a live run the component returns null and the
-        row is not in the document.
+        Rendered here rather than hidden, so a DOM snapshot agrees with what
+        is on screen. In a live run the component returns null and the row is
+        not in the document.
       */}
       <SeededStrip mode={mode} />
       <div className="flex min-h-0 flex-1">

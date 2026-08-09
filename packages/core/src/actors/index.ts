@@ -1,4 +1,4 @@
-import { seededActors, defaultSeedControls, type SeedControls } from './seeded.ts'
+import { seededActors } from './seeded.ts'
 import {
   liveActors,
   liveAgentExit,
@@ -106,20 +106,15 @@ export function seededDetail(unimplemented: readonly ActorName[] = UNIMPLEMENTED
  * `observer` is what a live Turn says while it is still running — a delta, a
  * rejected credential — neither of which can come back through an actor's
  * promise, because an actor resolves once and both happen before that. A seeded
- * run ignores it: the seeded turn is one `await` and a string, and the bare
- * page's `STREAM_DELTA` button is how streaming is reached without an agent.
+ * run ignores it: the seeded turn is one `await` and a string, and `#/states`
+ * is where a streaming Turn is reached without an agent.
  *
  * `mint` is the same arrangement for the one other long-running actor: the URL
  * a sign-in prints, which arrives minutes before the mint settles. A seeded run
  * ignores that too, and deliberately makes up no link — see seeded.ts.
  */
-export function actorsFor(
-  mode: ActorMode,
-  controls: SeedControls = defaultSeedControls,
-  observer?: TurnObserver,
-  mint?: MintObserver,
-) {
-  return mode === 'live' ? liveActors(observer, mint) : seededActors(controls)
+export function actorsFor(mode: ActorMode, observer?: TurnObserver, mint?: MintObserver) {
+  return mode === 'live' ? liveActors(observer, mint) : seededActors()
 }
 
 /**
@@ -144,7 +139,7 @@ export function agentControlFor(mode: ActorMode): AgentControl {
   return mode === 'live'
     ? { exit: liveAgentExit, stop: liveStopAgent }
     : {
-        // A seeded agent never dies on its own. The bare page's AGENT_EXIT
+        // A seeded agent never dies on its own. The `agent-crashed` card's
         // button is how that state is reached without a process, and a seed
         // that crashed on a timer would make the states page non-deterministic.
         exit: () => new Promise<string>(() => {}),
@@ -175,5 +170,5 @@ export function resolveActorMode(): ActorMode {
   return requested === 'seeded' ? 'seeded' : 'live'
 }
 
-export { seededActors, defaultSeedControls, type SeedControls } from './seeded.ts'
+export { seededActors } from './seeded.ts'
 export type { MintObserver, TurnObserver } from './live.ts'

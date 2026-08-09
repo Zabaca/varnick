@@ -57,7 +57,7 @@ Confirmed:
 - Single-user, local-first. No auth, no tenancy, no shared server.
 - Open source: the repository is public and must be runnable by someone who did not write it.
 - Extension is by cloning and editing, not by a plugin API. Surfaces are discovered from the filesystem.
-- State machines, the bare page, and the states page are product code and ship (`docs/agents/workflow.md`); the view layer is pure (`docs/adr/0001-pure-view-layer.md`).
+- State machines and the states page are product code and ship (`docs/agents/workflow.md`); the view layer is pure (`docs/adr/0001-pure-view-layer.md`).
 
 ### v1 scope
 

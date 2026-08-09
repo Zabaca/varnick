@@ -2171,7 +2171,7 @@ export default function Billing() {
   check('a card is read back off the route', cardOf('#/states/turn-failed') === 'turn-failed')
   check('the page itself names no card', cardOf('#/states') === null)
   // A card segment on a page with no cards would invent an addressable thing.
-  check('only the states page has cards', cardOf('#/bare/turn-failed') === null)
+  check('only the states page has cards', cardOf('#/designed/turn-failed') === null)
   check('an unknown hash is the chat', routeOf('#/nothing') === '#/designed' && routeOf('') === '#/designed')
   /*
     The near-miss that made the parser sort by length: a route that prefixes
@@ -2264,105 +2264,6 @@ export default function Billing() {
     `Core statically imports no Userspace module (found: ${offenders.length})`,
     offenders.length === 0,
   )
-}
-
-// ---------------------------------------------------------------------------
-// The bare rendering is design-free, and that is now checked rather than said
-// ---------------------------------------------------------------------------
-
-{
-  /*
-    `bare.css` opens by stating the rule: *"The bare page has no design system on
-    purpose. Native controls, hairline borders, no colour system. Its job is to
-    prove the behaviour is complete before any visual decision is made — anything
-    prettier here would start covering for gaps in the machines."*
-
-    Nothing was checking it. The rule has been kept — the scan below passes on
-    the code as it stands — but kept by whoever last edited the file, which is
-    author discipline wearing the language of enforcement. The cost of losing it
-    is not cosmetic: a bare page that acquires a colour system starts covering
-    for exactly the gaps it exists to expose, and it does so one plausible
-    edit at a time, each of which looks like an improvement.
-
-    A source scan rather than a behaviour test, and deliberately so: the claim
-    is about what the source *says*, and no amount of driving a page can observe
-    "this colour was not used". A rendering that quietly acquires a shadow still
-    works.
-
-    Same home as the ADR-0004 import check above, for the same second reason:
-    this file lives under `packages/core/**`, which the Sandbox policy denies the
-    agent write access to (ADR-0002). A rule the agent could switch off is a rule
-    about the agent's manners.
-  */
-  const bareCss = readFileSync(new URL('../src/styles/bare.css', import.meta.url).pathname, 'utf-8')
-  const barePage = readFileSync(new URL('../src/pages/BarePage.tsx', import.meta.url).pathname, 'utf-8')
-
-  // Comments first. A stylesheet explaining why it has no shadow must not trip
-  // a guard on the word "shadow".
-  const undressed = (source: string) =>
-    source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-
-  const BANNED: readonly { name: string; pattern: RegExp; why: string }[] = [
-    { name: 'hex colour', pattern: /#[0-9a-fA-F]{3,8}\b/, why: 'colour is the design system' },
-    {
-      name: 'computed colour',
-      pattern: /\b(?:rgba?|hsla?|oklch|oklab|color-mix)\s*\(/,
-      why: 'colour is the design system',
-    },
-    {
-      // The sharpest one. The tokens are the design system, and reaching for a
-      // single `var(--fg-dim)` is how a design-free page stops being one.
-      name: 'design token',
-      pattern: /var\(\s*--/,
-      why: 'the tokens are the design system',
-    },
-    { name: 'corner radius', pattern: /border-radius/, why: 'shape is a visual decision' },
-    { name: 'shadow', pattern: /box-shadow|text-shadow/, why: 'depth is a visual decision' },
-    {
-      name: 'motion',
-      pattern: /\btransition\s*:|@keyframes|\banimation\s*:/,
-      why: 'nothing on this page should move',
-    },
-    { name: 'a filter', pattern: /\b(?:backdrop-)?filter\s*:/, why: 'a filter is decoration' },
-  ]
-
-  for (const { name, pattern, why } of BANNED) {
-    check(`bare.css uses no ${name} — ${why}`, !pattern.test(undressed(bareCss)))
-  }
-
-  // The page itself, for the same rules. An inline style is the way round a
-  // stylesheet, and the two controls that carry one today are `marginTop`.
-  for (const { name, pattern, why } of BANNED) {
-    check(`BarePage uses no ${name} — ${why}`, !pattern.test(undressed(barePage)))
-  }
-
-  /*
-    The structural half, and the stronger of the two.
-
-    Class-name policing catches a page that reaches for a colour. It does not
-    catch the shorter route: importing the designed component library, at which
-    point the bare rendering is the designed one with a different heading. The
-    two renderings answer different questions — the bare page proves the
-    machines are complete, the designed page proves the product is — and a
-    component in common is the whole design system in common.
-  */
-  check(
-    'the bare rendering imports no designed component',
-    !/^\s*import\s[^\n]*from\s+['"][^'"]*components\//m.test(barePage),
-  )
-  check(
-    'and no design stylesheet',
-    !/^\s*import\s+['"][^'"]*(?:tokens|app)\.css['"]/m.test(barePage),
-  )
-
-  /*
-    And the rule the bare page keeps that a ban cannot express: with colour
-    gone, a refused control still has to be distinguishable. `.refused` is a
-    dashed border — a device made of shape rather than of palette, which is what
-    a design-free page has left. Asserted so that deleting it is a decision
-    rather than a tidy-up.
-  */
-  check('a refused control is still marked, without colour', /\.refused\s*\{[^}]*border-style/.test(bareCss))
 }
 
 // ---------------------------------------------------------------------------

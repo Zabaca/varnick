@@ -71,7 +71,7 @@ function LiveChat({
   sessionInput: SessionInput | undefined
   redacted: boolean
 }) {
-  const { snapshot, send } = useHarness(undefined, mode, sessionInput)
+  const { snapshot, send } = useHarness(mode, sessionInput)
 
   const ctx = snapshot.context
   const agentState = toPath((snapshot.value as Record<string, unknown>).agent)

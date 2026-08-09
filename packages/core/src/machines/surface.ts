@@ -19,8 +19,10 @@ export type SurfaceStatePath = (typeof SURFACE_STATE_PATHS)[number]
  * It is final, and the parent drops the actor ref the moment it handles
  * `UNLOAD_SURFACE`, so nothing in the product is ever rendered in it — a card
  * would be a picture of something no user can reach. Driving the child to
- * `unloaded` directly, which the bare page can do, leaves a dead panel; that is
- * documented at the button in chat-surface.tsx rather than drawn.
+ * `unloaded` directly leaves a dead panel; that is documented at the button in
+ * chat-surface.tsx rather than drawn. The bare page could do it by hand, which
+ * is where the note came from; it was removed in ADR-0013 and the hazard is
+ * still real for anyone sending the event.
  *
  * It is exported anyway, because the exported lists are what `drive.ts` builds
  * the surface-brief ban list from. A state the machines have and the list does

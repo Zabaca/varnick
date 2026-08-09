@@ -75,9 +75,10 @@ export function StatesPage({ card }: { card?: string | null }) {
   return (
     <div className="min-h-full" style={{ background: 'var(--ground)', color: 'var(--fg)' }}>
       <header className="px-6 pt-5 pb-4" style={{ borderBottom: '1px solid var(--rule)' }}>
+        {/* Kept beside the View menu rather than replaced by it: the dev
+            server is also a URL in a browser, where there is no native menu. */}
         <nav className="mb-4 flex gap-4" style={{ color: 'var(--fg-faint)' }}>
-          <a href="#/bare">bare</a>
-          <a href="#/designed">designed</a>
+          <a href="#/designed">chat</a>
           <a href="#/states" style={{ color: 'var(--fg)' }}>
             states
           </a>

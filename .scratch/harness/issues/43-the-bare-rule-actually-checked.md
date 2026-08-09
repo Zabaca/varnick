@@ -4,7 +4,8 @@
 
 **Blocked by:** None.
 
-**Status:** done.
+**Status:** done, then reversed — see ADR-0013 and ticket 44. The page these
+assertions guarded was removed the same day, and the assertions went with it.
 
 **Realizes:** no state path.
 
@@ -73,13 +74,18 @@ added to `bare.css` and the suite went red on exactly those two lines; the
 injection was then reverted. A source scan that has never failed is
 indistinguishable from one that cannot.
 
-## Left open
+## What happened next
 
-The full skin split is still available and is a real decision rather than a
-cleanup: it would give varnick a bare rendering of the *chat*, which it does not
-have, and would let a reviewer judge composer-to-transcript layout with the
-design removed. It also means threading a skin through `ChatSurface` and every
-component under it. Worth doing deliberately, not as a side effect of a review.
+The developer asked whether the bare layer was needed at all, and it was not.
+The page is gone — ADR-0013, ticket 44 — and these seventeen assertions with it.
+
+That is worth leaving written down rather than deleting, for one reason: **the
+work of making the rule checkable is what made it obvious how little the page was
+doing.** Writing out everything a surface must never contain is a short document,
+and reading it back is what raised the question. The ticket was not wasted; it
+was the last thing the page was useful for.
+
+The skin split named here as still-available is moot with the page.
 
 - [x] Every banned device fails the suite, in the stylesheet and in the page
 - [x] The bare rendering cannot quietly become the designed one by import

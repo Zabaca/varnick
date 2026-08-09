@@ -20,7 +20,7 @@ Spawning the Session from `agent.running` rather than owning it in the parent st
 
 - **Delays are named, never numeric literals.** `interruptGrace` and `refusalTimeout` are overridden by the frozen build; a literal in `after` cannot be, and an explorer card that expires while it is being read is not showing the state it claims.
 
-- **Pairs with [ADR-0001](./0001-pure-view-layer.md).** The machines declare actor contracts and never import an implementation, so the live app, the bare page, and the states page differ only in which implementations are provided and who owns start-up.
+- **Pairs with [ADR-0001](./0001-pure-view-layer.md).** The machines declare actor contracts and never import an implementation, so the live app and the states page differ only in which implementations are provided and who owns start-up. The bare page was a third instance of the same property until ADR-0013 removed it.
 
 ## Amended while building the mirror
 

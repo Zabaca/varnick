@@ -26,42 +26,29 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 /** Cumulative token cost of the seeded conversation. */
 let turnTokens = 0
 
-export interface SeedControls {
-  /** Make checkSandbox fail, as srt does when it cannot be established. */
-  failSandbox: boolean
-  /** Make readCredential fail, as it does when nothing is stored. */
-  failCredential: boolean
-  /** Make storeCredential fail, as the keychain does when it refuses a write. */
-  failStore: boolean
-  /** Make the mint fail, as a sign-in does when it is declined. */
-  failMint: boolean
-  /** Make the next turn fail. */
-  failTurn: boolean
-  /** Make persistence fail. */
-  failSave: boolean
-}
+/*
+  `SeedControls` stood here — six booleans that made the sandbox check, the
+  credential read, a store, a mint, a Turn or a save fail on demand.
 
-export const defaultSeedControls: SeedControls = {
-  failSandbox: false,
-  failCredential: false,
-  failStore: false,
-  failMint: false,
-  failTurn: false,
-  failSave: false,
-}
+  They had exactly one caller, the bare page's checkboxes, and went with it
+  (ADR-0013). Every state they reached is a card on `#/states`, created cold
+  from an entry point rather than by failing a live run into it, and `drive.ts`
+  asserts the failure paths at the actor seam. What is gone is driving a running
+  varnick into a failure by hand; if that turns out to matter it comes back as a
+  debugging surface that says so, rather than as the design-free rendering it
+  was bolted to.
+*/
 
-export function seededActors(controls: SeedControls) {
+export function seededActors() {
   return {
     checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(async () => {
       await wait(250)
-      if (controls.failSandbox) throw new Error('srt: sandbox could not be established')
       return { ok: true }
     }),
 
     readCredential: fromPromise<CredentialReading, Record<string, never>>(
       async () => {
         await wait(150)
-        if (controls.failCredential) throw new Error('no credential found')
         // A subscription, because it is the kind the setup screen offers first
         // and the one a mint produces, so a seeded run exercises the path a
         // developer is most likely to have taken.
@@ -78,13 +65,13 @@ export function seededActors(controls: SeedControls) {
       "edit the machine's own credential". So this waits and answers, and the
       value it was handed is dropped without being read.
 
-      `failCredential` is deliberately not reused for it. A keychain that will
-      not answer a read and one that will not accept a write are two different
-      machines to be looking at.
+      It answers rather than failing. `#/states` reaches `credential.storing`
+      from an entry point, which is what a seeded run is for — a keychain that
+      will not answer a read and one that will not accept a write are two
+      different machines to be looking at, and both are cards.
     */
     storeCredential: fromPromise<void, { kind: CredentialKind; value: string }>(async () => {
       await wait(400)
-      if (controls.failStore) throw new Error('the keychain refused to store it')
     }),
 
     /*
@@ -103,7 +90,6 @@ export function seededActors(controls: SeedControls) {
     */
     mintSubscriptionToken: fromPromise<void, Record<string, never>>(async () => {
       await wait(500)
-      if (controls.failMint) throw new Error('the sign-in produced no token')
     }),
 
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => {
@@ -116,7 +102,6 @@ export function seededActors(controls: SeedControls) {
       { sessionId: string; prompt: string; model: ModelId; effort: Effort }
     >(async ({ input }) => {
       await wait(600)
-      if (controls.failTurn) throw new Error('stream closed unexpectedly')
       // Echoes what it ran on, so a /model or /effort change is visible even
       // while the agent itself is still a stub. Token growth is derived from
       // the prompt so the context meter moves with real input rather than a
@@ -133,7 +118,6 @@ export function seededActors(controls: SeedControls) {
       { sessionId: string; messages: readonly Message[] }
     >(async () => {
       await wait(120)
-      if (controls.failSave) throw new Error('could not write session store')
       return { ok: true }
     }),
 

@@ -89,21 +89,19 @@ fn watch_for_signals(_app: tauri::AppHandle) {}
 
 /// Where every rendering is, as a menu id.
 ///
-/// Three renderings ship (CLAUDE.md: the bare page and the states page are
-/// product code, not scaffolding) and until ticket 41 two of them were
-/// unreachable. `#/bare` and `#/states` each render a nav; `#/designed` renders
-/// none and is where the window opens — so the pages that could navigate were
-/// the two nobody could get to.
+/// Two renderings ship, and until ticket 41 the second was unreachable:
+/// `#/states` renders a nav, `#/designed` renders none and is where the window
+/// opens, so the page that could navigate was the one nobody could get to.
+/// There were three — `#/bare` was removed in ADR-0013.
 ///
 /// The hash rather than a navigation: `App.tsx` listens for `hashchange`, so
 /// switching costs no reload and loses no state. The route strings are
 /// duplicated from there, which is the one thing to keep an eye on — a route
 /// renamed in Core and not here is a menu item that goes nowhere. Cheap to
 /// notice, and the alternative is Rust reading a TypeScript constant.
-const ROUTES: [(&str, &str, &str, &str); 3] = [
+const ROUTES: [(&str, &str, &str, &str); 2] = [
     ("route-designed", "Chat", "#/designed", "CmdOrCtrl+1"),
-    ("route-bare", "Bare", "#/bare", "CmdOrCtrl+2"),
-    ("route-states", "States", "#/states", "CmdOrCtrl+3"),
+    ("route-states", "States", "#/states", "CmdOrCtrl+2"),
 ];
 
 /// The window's own controls: reload the page, restart the app, and go to a
@@ -121,7 +119,7 @@ const ROUTES: [(&str, &str, &str, &str); 3] = [
 /// a renderer that cannot paint cannot handle a keystroke either. It is also
 /// why the route switcher lives here rather than as a nav bar on the chat —
 /// a route switcher on the designed rendering would put developer chrome in the
-/// product, and the whole argument for three renderings is that the designed
+/// product, and the whole argument for a second rendering is that the designed
 /// one is the app rather than a demo of itself.
 ///
 /// Added to the default menu rather than replacing it. ⌘Q, Copy and Paste all
@@ -246,8 +244,11 @@ mod tests {
         // dropping one from the menu fails here instead of quietly shipping a
         // page nobody can open again.
         assert_eq!(route_for("route-designed"), Some("#/designed"));
-        assert_eq!(route_for("route-bare"), Some("#/bare"));
         assert_eq!(route_for("route-states"), Some("#/states"));
+        // The rendering that left. Its menu id must not resolve to anything —
+        // an entry pointing at a route Core no longer has is a menu item that
+        // renders, looks right and goes nowhere.
+        assert_eq!(route_for("route-bare"), None);
     }
 
     #[test]

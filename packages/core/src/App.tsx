@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { BarePage } from './pages/BarePage.tsx'
 import { DesignedPage } from './pages/DesignedPage.tsx'
 import { StatesPage } from './pages/StatesPage.tsx'
 import { routeOf, cardOf } from './routing.ts'
@@ -7,12 +6,13 @@ import { routeOf, cardOf } from './routing.ts'
 /**
  * The chat is what a launch opens.
  *
- * It used to be `#/bare`, which was the first route in the list rather than a
- * decision. A stranger's first frame was then raw machine state and a row of
- * event buttons — a debugging surface, and not the "empty chat that works" a
- * fresh clone is owed. `#/bare` and `#/states` are still product code and still
- * addressable — from the View menu now (ticket 41), which is what made them
- * surfaces a developer uses rather than surfaces that exist.
+ * Two renderings, and it used to be three. `#/bare` was the first route in the
+ * list rather than a decision, so a stranger's first frame was raw machine
+ * state and a row of event buttons — a debugging surface, and not the "empty
+ * chat that works" a fresh clone is owed. It was moved out of the way, then
+ * given a menu entry (ticket 41), then removed (ADR-0013): a surface that
+ * exists to prove behaviour before design, on a product whose behaviour is
+ * proved by 434 assertions in `drive.ts` and shown by `#/states`.
  */
 export function App() {
   const [hash, setHash] = useState(() => window.location.hash)
@@ -24,7 +24,6 @@ export function App() {
   }, [])
 
   const route = routeOf(hash)
-  if (route === '#/bare') return <BarePage />
   if (route === '#/designed') return <DesignedPage />
   // The card travels as a prop rather than being read off `location` inside
   // the page: following an index link must scroll rather than remount, because
