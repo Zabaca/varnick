@@ -4,7 +4,20 @@
 
 **Blocked by:** None — the measurement exists as probe 7.
 
-**Status:** needs-info — but the question has changed. It is no longer "is this possible and what does it need"; both are measured below. It is whether the maintenance cost of a computed, machine-specific allowlist is worth the boundary.
+**Status:** decided — **reads become deny-by-default**, in the sequence below. The developer accepted the trade after the reversibility was put to them.
+
+## The decision, and the one thing about it that cannot be undone
+
+Approved. Not because the cost is low but because it was measured: nine entries, every one load-bearing, allow-within-deny proven with a negative control, and `git` already solved and shipped.
+
+**It is a one-way door for clones, and that is by design rather than by accident.** `strongerLeaf` in `sandbox.ts` merges every clone's policy forward by always taking the stronger side — union for a denial, intersection for an allowance. So a clone that runs once with `denyRead: ['/']` keeps it permanently: reverting the generator does nothing, because the merge holds the stronger value, and each developer would have to edit their own `sandbox-policy.json` to go back. That is ticket 17 working exactly as intended, and it is why this is worth doing deliberately.
+
+**Two things go first, and neither is optional.** They are what make a wrong allowlist diagnosable by whoever hits it rather than only by whoever wrote it:
+
+1. **Wire `startMacOSSandboxLogMonitor`.** srt already ships it and it watches kernel deny events. Without it a missing entry is `exit 133` and nothing else — and this project has already lost a day to a failure that did not say what it was. With it, the refused path is named.
+2. **Compute the allowlist, do not write it down.** `~/.bun` is this machine's interpreter; another clone has node, or Homebrew, or a different toolchain. The list must be derived at policy-generation time from what is actually in use — `process.execPath`, the resolved toolchain, the SDK entry — or a fresh clone on an unfamiliar machine is a hang with no explanation.
+
+Only then invert the boundary, and only with the full suite driven under it: `containment.probe.test.ts` and `sandbox.boundary.test.ts` both run real processes, and probe 6 now runs a real Session.
 
 **Realizes:** no state path.
 

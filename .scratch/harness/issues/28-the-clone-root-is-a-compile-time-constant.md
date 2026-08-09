@@ -4,7 +4,7 @@
 
 **Blocked by:** None.
 
-**Status:** needs-info — whether this is a defect or the design depends on what varnick is, which is the developer's call.
+**Status:** decided — **reading two: the agent's directory becomes configurable.** The developer chose this with the reversibility stated: it is the harder of the two to undo, because once someone runs more than one root, taking it away breaks their setup, and four subsystems would have to give the parameter back.
 
 **Realizes:** no state path.
 
@@ -47,7 +47,9 @@ Step 4 is careful — its comment says "the clone the Sandbox was established fo
 
 The two readings are not close together, and the second is considerably more work than it looks: the Sandbox policy, the Session mirror's location, Surface discovery and the Core/Userspace write boundary are all written against "the clone", and each would need to say which clone.
 
-- [ ] The choice is recorded, in ADR-0008 if it stays one root and in a new ADR if it does not
+- [ ] The choice is recorded in a new ADR — this is a change to what varnick *is*, not a note on how it starts, and `CONTEXT.md`'s **Workspace** definition ("the environment a person builds around themselves inside their clone") has to say whether a Workspace is still one per clone
+- [ ] The four subsystems written against "the clone" each say *which* root: the Sandbox policy, the Session mirror's location, Surface discovery, and the Core/Userspace write boundary
+- [ ] Whatever supplies the root is validated before a Sandbox is established for it — a root that does not exist must be a legible refusal, not a Sandbox for a missing directory
 - [ ] Whichever it is, the root is *named* rather than inherited from a working directory — a function that says where the agent works and why, with the compile-time constant behind it if that is the answer
 - [ ] ADR-0008's packaging consequence mentions the root alongside the runtime entry, since they are the same problem and only one is written down
 - [ ] If it stays fixed, moving the checkout produces a legible failure rather than a Sandbox for a missing directory
