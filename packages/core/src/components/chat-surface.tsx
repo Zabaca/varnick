@@ -5,6 +5,7 @@ import { seededDetail, type ActorMode } from '../actors/index.ts'
 import type { surfaceMachine } from '../machines/surface.ts'
 import { ClaudeHeader } from './brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from './brainless/claude/claude-message.tsx'
+import { Markdown } from './markdown.tsx'
 import { ClaudeThinking } from './brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu } from './slash-menu.tsx'
@@ -442,13 +443,39 @@ export function ChatSurface({
                 </div>
               )}
 
-              {(s?.context.messages ?? []).map((m) => (
-                <ClaudeMessage key={m.id} role={m.role === 'user' ? 'user' : 'assistant'}>
-                  {m.text}
-                </ClaudeMessage>
-              ))}
+              {/*
+                The agent writes Markdown and always has. Until it was rendered,
+                the transcript showed `**Blocked:**` and a fenced diff as the
+                characters they are made of — the developer was reading the
+                source of an answer rather than the answer.
 
-              {s?.context.partial && <ClaudeMessage>{s.context.partial}</ClaudeMessage>}
+                Only the agent's half. A user message is what the developer
+                typed and is shown as typed: rendering it would mean a prompt
+                about `*` displaying something other than what was sent, and the
+                one thing this surface owes is that both halves say what was
+                actually said.
+              */}
+              {(s?.context.messages ?? []).map((m) =>
+                m.role === 'user' ? (
+                  <ClaudeMessage key={m.id} role="user">
+                    {m.text}
+                  </ClaudeMessage>
+                ) : (
+                  <ClaudeMessage key={m.id} role="assistant">
+                    <Markdown text={m.text} />
+                  </ClaudeMessage>
+                ),
+              )}
+
+              {/* Rendered while it streams, for the same reason it is rendered
+                  when it lands: a half-arrived answer is the one being read
+                  most closely. The parser runs an unterminated fence to the end
+                  of what has arrived rather than failing on it. */}
+              {s?.context.partial && (
+                <ClaudeMessage>
+                  <Markdown text={s.context.partial} />
+                </ClaudeMessage>
+              )}
 
               {working && <ClaudeThinking running showTokens={false} />}
 

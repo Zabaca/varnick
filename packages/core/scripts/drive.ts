@@ -42,6 +42,7 @@ import { discoverFrom, importSurface } from '../src/surfaces.ts'
 import { seedPolicy, seedSurfaces, brokenSurfaceError } from '../src/data/seed.ts'
 import { GROUPS, SCENARIOS, matches, uncoveredPaths, unknownPaths } from '../src/data/scenarios.ts'
 import { cardOf, linkToCard, routeOf } from '../src/routing.ts'
+import { parseMarkdown, parseInline, isSafeHref } from '../src/markdown.ts'
 import { frozenHarness } from '../src/actors/frozen.ts'
 import { ACTOR_NAMES, UNIMPLEMENTED, seededDetail } from '../src/actors/index.ts'
 import type {
@@ -2148,6 +2149,121 @@ export default function Billing() {
       '{"answering":"sending"}',
   )
   actor.stop()
+}
+
+// ---------------------------------------------------------------------------
+// Markdown — what the agent wrote, read as what it meant
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The agent has always written Markdown and the transcript always showed the
+    characters. `**Blocked:**` rendered as five asterisks and a word, and a
+    fenced diff rendered as three backticks and a diff — the developer was
+    reading the source of an answer rather than the answer.
+
+    Asserted here rather than in a browser because the parser is pure by
+    design: it produces a tree of tagged nodes and the renderer turns those
+    into elements. That split is not tidiness — a Markdown pipeline that
+    produced HTML would need sanitising, and every agent answer would then be
+    one sanitiser bug away from running script *in the webview that holds the
+    bridge to the host*. There is no HTML anywhere in this path to get wrong.
+  */
+  const kinds = (blocks: readonly { kind: string }[]) => blocks.map((b) => b.kind).join(' ')
+
+  check(
+    'a heading is a heading and its level survives',
+    (() => {
+      const [h] = parseMarkdown('### Three')
+      return h?.kind === 'heading' && h.level === 3
+    })(),
+  )
+  check(
+    'a paragraph keeps the newlines inside it',
+    (() => {
+      const [p] = parseMarkdown('one\ntwo')
+      // One block, not two: a single newline is a line the agent meant, and the
+      // renderer keeps it. CommonMark would fold it into a space, which is right
+      // for prose and wrong for an answer that lays out steps.
+      return p?.kind === 'paragraph' && p.spans.some((s) => s.kind === 'text' && s.text.includes('\n'))
+    })(),
+  )
+  check('a blank line separates paragraphs', kinds(parseMarkdown('one\n\ntwo')) === 'paragraph paragraph')
+
+  /*
+    The rule that matters most, and the one a regex-per-feature parser gets
+    wrong: inside a fence, nothing is Markdown. Half of what an agent writes is
+    a shell line or a diff, and both are full of the characters every other
+    rule is looking for.
+  */
+  const fenced = parseMarkdown('before\n```sh\n# not a heading\n- not a list\n**not bold**\n```\nafter')
+  check('a fence is one code block whatever is inside it', kinds(fenced) === 'paragraph code paragraph')
+  check('and the fence keeps its language', fenced[1]?.kind === 'code' && fenced[1].language === 'sh')
+  check(
+    'and its contents are text, not markup',
+    fenced[1]?.kind === 'code' && fenced[1].text === '# not a heading\n- not a list\n**not bold**',
+  )
+  /*
+    A streamed answer is a partial document by definition. An unterminated
+    fence runs to the end of what has arrived rather than failing, because half
+    a code block is exactly what the developer should see while it is still
+    coming.
+  */
+  const streaming = parseMarkdown('```ts\nconst x = 1')
+  check('an unterminated fence is still a code block', kinds(streaming) === 'code')
+  check('and holds what arrived', streaming[0]?.kind === 'code' && streaming[0].text === 'const x = 1')
+
+  const list = parseMarkdown('- one\n- two\n- three')
+  check('a bulleted list is one block with its items', list[0]?.kind === 'list' && list[0].items.length === 3)
+  check('and knows it is not numbered', list[0]?.kind === 'list' && !list[0].ordered)
+  const ordered = parseMarkdown('1. one\n2. two')
+  check('a numbered list says so', ordered[0]?.kind === 'list' && ordered[0].ordered)
+  // Two lists rather than one with a changing marker: it is what it looks like.
+  check('a list that changes marker is two lists', kinds(parseMarkdown('- one\n1. two')) === 'list list')
+
+  check('a quote is its own block', kinds(parseMarkdown('> quoted')) === 'quote')
+  check('a rule is its own block', kinds(parseMarkdown('---')) === 'rule')
+
+  // Inline
+  const spanKinds = (text: string) => parseInline(text).map((s) => s.kind).join(' ')
+  check('bold is bold', spanKinds('a **b** c') === 'text strong text')
+  check('code is code', spanKinds('run `bun test` now') === 'text code text')
+  /*
+    Code wins, and its contents are never scanned again. Half of what an agent
+    writes is a path or a flag with punctuation in it, so `**` inside backticks
+    staying two asterisks is the difference a developer notices immediately.
+  */
+  check(
+    'markup inside backticks is not markup',
+    (() => {
+      const [span] = parseInline('`**not bold**`')
+      return span?.kind === 'code' && span.text === '**not bold**'
+    })(),
+  )
+  check('a bare url is a link', spanKinds('see https://example.com now') === 'text link text')
+  check(
+    'a labelled link keeps both halves',
+    (() => {
+      const [span] = parseInline('[docs](https://example.com)')
+      return span?.kind === 'link' && span.text === 'docs' && span.href === 'https://example.com'
+    })(),
+  )
+  check('empty text still yields a span, so no renderer branches on nothing', parseInline('').length === 1)
+
+  /*
+    The security half, and the reason it is a function rather than a rule in
+    the renderer: `javascript:` and `data:` execute, and this is the webview
+    holding the bridge to the host process that holds the credential. A link
+    that is not plainly http, https or mailto is rendered as text — the URL is
+    still shown, so nothing is hidden from the developer; it simply is not
+    clickable.
+  */
+  check('an ordinary link is clickable', isSafeHref('https://example.com') && isSafeHref('http://x.dev'))
+  check('mailto is clickable', isSafeHref('mailto:a@b.com'))
+  check('javascript: is not', !isSafeHref('javascript:alert(1)'))
+  check('and neither is it with padding or case', !isSafeHref('  JaVaScRiPt:alert(1)'))
+  check('data: is not', !isSafeHref('data:text/html,<script>'))
+  check('nor a bare path, which has no scheme to trust', !isSafeHref('/etc/passwd'))
 }
 
 // ---------------------------------------------------------------------------
