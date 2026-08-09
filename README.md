@@ -33,17 +33,21 @@ paste it, and varnick writes the keychain item and carries on. Nothing about
 that step needs a terminal, and the value goes one way — into the host process
 that owns the keychain, never back out, never into the transcript.
 
-The one exception is minting a subscription token, which varnick will not do for
-you: it means running Claude Code, and varnick starts exactly one agent process
-and starts it inside the Sandbox ([ADR-0003](docs/adr/0003-containment-wraps-the-process-tree.md)).
-So run this once, and paste what it prints into the setup screen:
-
-```
-claude setup-token
-```
+**Minting a subscription token is part of that screen too.** Pick "Claude
+subscription", press the button, sign in when the browser opens, and varnick has
+a token — you never see it and never paste it. What that runs is
+`claude setup-token`, on the host rather than inside the Sandbox, which is the
+one bounded exception to
+[ADR-0003](docs/adr/0003-containment-wraps-the-process-tree.md): a fixed argv, no
+session, and a working directory outside this clone so there are no
+agent-authored hooks anywhere near it. The token goes from the terminal that
+printed it into the keychain without being logged, shown, or crossing into the
+window. If the browser does not open, the screen shows the URL to sign in at,
+which is what makes the whole thing survivable.
 
 The terminal route still works and is the right one for a machine with no
-window — CI has neither a window nor a keychain. For a subscription:
+window — CI has neither a window nor a keychain — and it is what to fall back on
+if the mint fails for any reason. For a subscription:
 
 ```
 claude setup-token

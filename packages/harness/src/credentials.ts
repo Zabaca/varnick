@@ -31,6 +31,14 @@
  * than in context, and the host answers with a tag. Nothing between the field
  * and the keychain can say it back.
  *
+ * **And one credential is made rather than moved.** {@link mintSubscriptionToken}
+ * asks the host to run `claude setup-token`; the token is read off a pty and
+ * written to the keychain inside that process, so it crosses nothing — not this
+ * module, not the bridge, not a log. What comes back here is a URL to sign in at
+ * and, at the end, `void`. That is a stronger position than the store's, not a
+ * weaker one: a store has a value in hand for the length of one call, and a mint
+ * never has one at all.
+ *
  * The kind is the second fact rather than a setting: the host decides it from
  * what it resolved, and it decides which variable the agent is spawned with —
  * ADR-0011. varnick never reads Claude Code's own credential store to get one.
@@ -45,7 +53,10 @@
  * be the one that spawns the agent subprocess.
  */
 
-import { HarnessUnavailable, callHarness, tauriHarnessBridge } from './bridge.ts'
+import { HarnessUnavailable, callHarness, tauriHarnessBridge, type HarnessBridge } from './bridge.ts'
+import { CREDENTIAL_MINT_FAILURES, type CredentialMintFailure, type MintEvent } from './mint.ts'
+
+export { CREDENTIAL_MINT_FAILURES, type CredentialMintFailure, type MintEvent } from './mint.ts'
 
 /** Which store answered. Reportable — the value it held is not. */
 export type CredentialSource = 'keychain' | 'env'
@@ -126,8 +137,14 @@ export const CREDENTIAL_SETUP_COMMANDS: Readonly<Record<CredentialKind, string>>
  * that as a boundary rather than a convenience, because the access token in it
  * expires in about an hour and consuming it would mean varnick implementing
  * OAuth refresh against an item another process is also writing. `claude
- * setup-token` mints a long-lived token for exactly this, and the developer
- * stores it beside the API key.
+ * setup-token` mints a long-lived token for exactly this, and the token goes in
+ * the keychain beside the API key.
+ *
+ * **varnick now runs this itself**, on the host, on a pty — see
+ * {@link mintSubscriptionToken} and src-tauri/src/mint.rs. The string is still
+ * here because the terminal route still exists and is the right one for a
+ * machine with no window, and because every failure of the mint ends in the
+ * same advice: run it yourself and paste the result in.
  */
 export const SUBSCRIPTION_TOKEN_COMMAND = 'claude setup-token'
 
@@ -140,16 +157,21 @@ export const SUBSCRIPTION_TOKEN_COMMAND = 'claude setup-token'
 export function credentialGuidance(absence: CredentialAbsence): string {
   switch (absence) {
     case 'nothing-stored':
-      // Both kinds, because a developer who pays for a subscription and is
+      // The window first, because the window can now do the whole of it —
+      // varnick runs the mint itself, so a developer with a subscription
+      // supplies nothing but a sign-in. The terminal route stays named because
+      // it is the right one for a machine with no window, and because both
+      // kinds have to be named: a developer who pays for a subscription and is
       // told only about an API key is being asked to pay for the same work
-      // twice. The subscription comes first for the same reason it wins in
-      // `resolve()`. Neither line mentions an environment variable: those are
-      // the escape hatch for CI, not the advice a fresh clone opens with.
+      // twice. Neither line mentions an environment variable — those are the
+      // escape hatch for CI, not the advice a fresh clone opens with.
       return (
-        'nothing is stored. For a Claude subscription, run ' +
-        `\`${SUBSCRIPTION_TOKEN_COMMAND}\` and paste the token into ` +
-        `\`${CREDENTIAL_SETUP_COMMANDS.subscription}\`; for an Anthropic API key, ` +
-        `paste it into \`${CREDENTIAL_SETUP_COMMANDS['api-key']}\`. Then try again.`
+        'nothing is stored. The setup screen is where that is fixed: varnick can ' +
+        'get a subscription token for you, or take a pasted key or token straight ' +
+        `into the keychain. From a terminal instead, run \`${SUBSCRIPTION_TOKEN_COMMAND}\` ` +
+        `and paste the token into \`${CREDENTIAL_SETUP_COMMANDS.subscription}\`; ` +
+        `for an Anthropic API key, paste it into \`${CREDENTIAL_SETUP_COMMANDS['api-key']}\`. ` +
+        'Then try again.'
       )
     case 'store-unreadable':
       return `the keychain would not answer. Open Keychain Access and allow varnick to read the "${CREDENTIAL_KEYCHAIN_SERVICE}" item, then try again.`
@@ -405,6 +427,156 @@ export async function storeCredential(
   }
   // Nothing is returned, and nothing the writer resolved with is read. A writer
   // that answered with the value has no way to hand it on.
+}
+
+/**
+ * What to do about a mint that produced no credential, in one sentence.
+ *
+ * Authored here and selected by the tag, like every other message in this
+ * module — and more strictly, because a mint is the one moment in this system
+ * where the thing that failed was holding a live credential when it did.
+ * Nothing the command printed is interpolated into any of these, and there is no
+ * path by which it could be: every tag is a `&'static str` chosen by a match arm
+ * in src-tauri/src/mint.rs.
+ *
+ * Every failure ends in something the developer can do, and for most of them
+ * that is the terminal route this replaced. A mint that will not work is not a
+ * dead end — it is one step longer.
+ */
+export function credentialMintGuidance(failure: CredentialMintFailure): string {
+  switch (failure) {
+    case 'no-host':
+      return 'There is no host process here to run it. varnick mints the token in the desktop app — run `bun tauri dev` rather than opening the dev server in a browser.'
+    case 'no-command':
+      return `There is no \`claude\` on the PATH varnick was launched with, and minting a token runs \`${SUBSCRIPTION_TOKEN_COMMAND}\`. Install Claude Code, or paste a token you minted elsewhere.`
+    case 'no-terminal':
+      return `varnick could not open a terminal to run the command on. The token is drawn into one rather than printed, so there is nothing to read without it — run \`${SUBSCRIPTION_TOKEN_COMMAND}\` yourself and paste the result here.`
+    case 'no-workspace':
+      return 'varnick could not create the temporary directory it runs the command in — the directory it keeps deliberately outside this clone. Check that your temporary directory is writable, then try again.'
+    case 'already-minting':
+      return 'A sign-in is already running. Finish that one in the browser, or wait for it to give up, rather than starting a second — two would race each other into the same keychain item.'
+    case 'no-token':
+      return 'The sign-in finished without producing a token. That is what declining in the browser looks like, and also what an account with no Claude subscription looks like — an Anthropic API key is the other way in.'
+    case 'unreadable-token':
+      return `A token was produced and varnick could not read it back in one piece, so nothing was stored: half a credential authenticates nothing and would fail days from now, far from the cause. Run \`${SUBSCRIPTION_TOKEN_COMMAND}\` yourself and paste the result here.`
+    case 'store-refused':
+      return `The token was minted and the keychain refused to store it, and nothing was changed. Open Keychain Access and allow varnick to write the "${CREDENTIAL_KEYCHAIN_SERVICE}" item, then try again.`
+    case 'no-keychain':
+      return 'There is no system keychain on this machine for varnick to write the token to. Export `CLAUDE_CODE_OAUTH_TOKEN` in the environment varnick is launched from instead.'
+    case 'mint-failed':
+      return `The sign-in did not produce a stored token, and this build does not recognise the reason. Run \`${SUBSCRIPTION_TOKEN_COMMAND}\` yourself and paste the result here.`
+  }
+}
+
+/**
+ * A mint that produced no credential, carrying which failure it was.
+ *
+ * `message` is the guidance verbatim, the same shape as
+ * {@link CredentialUnavailable} and {@link CredentialNotStored} — so a failed
+ * read, a failed store and a failed mint all reach `credential.absent` looking
+ * like one another, and the surface has one field to render whichever it was.
+ */
+export class CredentialNotMinted extends Error {
+  readonly failure: CredentialMintFailure
+
+  constructor(failure: CredentialMintFailure) {
+    super(credentialMintGuidance(failure))
+    this.name = 'CredentialNotMinted'
+    this.failure = failure
+  }
+}
+
+/**
+ * What the window is told while a mint is running.
+ *
+ * One thing, and it is a URL. The flow tries to open a browser and prints this
+ * as a fallback for when it cannot — which is the whole of what makes the mint
+ * possible at all, because a window that could only say "a browser should have
+ * opened" would strand every developer whose browser did not.
+ *
+ * A port rather than a return value, for the same reason {@link TurnObserver}
+ * in packages/core/src/actors/live.ts is one: an actor resolves once, and this
+ * arrives while it is still running.
+ */
+export interface MintObserver {
+  /** The URL to sign in at. Never a credential — see ./mint.ts. */
+  authorizing(url: string): void
+}
+
+/** Pull a failure out of whatever the bridge rejected with, without quoting it. */
+function mintFailureOf(rejection: unknown): CredentialMintFailure {
+  if (rejection instanceof HarnessUnavailable) {
+    if (rejection.failure === 'no-host') return 'no-host'
+    if (rejection.failure === 'refused') {
+      const tag = rejection.detail
+      if ((CREDENTIAL_MINT_FAILURES as readonly string[]).includes(tag ?? '')) {
+        return tag as CredentialMintFailure
+      }
+    }
+  }
+  // Anything else — a panic, a bridge that never reached the host, a tag this
+  // build does not know. Deliberately not reported verbatim: an unrecognised
+  // payload is exactly the payload nobody has checked for a secret, and the
+  // process on the other end of this one is holding a live credential.
+  return 'mint-failed'
+}
+
+/**
+ * Ask the host to mint a subscription token, and learn nothing but whether it
+ * worked.
+ *
+ * Realizes the `mintSubscriptionToken` actor contract: input `{}`, output
+ * nothing, error a thrown {@link CredentialNotMinted}. The value it produces
+ * never comes near this function — the host runs the command, reads the token
+ * off a pty and writes it into the keychain, all in the one process that is
+ * allowed to hold one. There is no shape on the success path here for a
+ * credential to arrive in, which is why the success path is `void`.
+ *
+ * Two calls, and the loop between them is what a long operation costs a
+ * request/response seam: the mint is started, and then this waits on what it has
+ * to say until it says it is done. Exactly the shape a Turn has, and for the
+ * blunter reason — the middle of a mint is a person signing in to a website.
+ *
+ * A successful mint is followed by a read, not by a claim: the machine sends
+ * `credential.minting` to `credential.reading`, so the host resolves what it is
+ * holding by looking, the way it does on any other launch. ADR-0011 is
+ * untouched by this.
+ */
+export async function mintSubscriptionToken(
+  observer: MintObserver,
+  bridge: HarnessBridge | null = tauriHarnessBridge(),
+): Promise<void> {
+  if (bridge === null) throw new CredentialNotMinted('no-host')
+
+  try {
+    await callHarness({ kind: 'mint-subscription-token' }, bridge)
+  } catch (rejection) {
+    throw new CredentialNotMinted(mintFailureOf(rejection))
+  }
+
+  for (;;) {
+    let event: MintEvent | null
+    try {
+      ;({ event } = await callHarness({ kind: 'next-mint-event' }, bridge))
+    } catch (rejection) {
+      throw new CredentialNotMinted(mintFailureOf(rejection))
+    }
+
+    // Nothing said yet. A mint that is waiting on a person is a working mint.
+    if (event === null) continue
+
+    switch (event.kind) {
+      case 'authorize':
+        observer.authorizing(event.url)
+        break
+      case 'stored':
+        // Nothing is returned and nothing is claimed. The token is in the
+        // keychain; the machine reads it back from there like any other.
+        return
+      case 'failed':
+        throw new CredentialNotMinted(event.failure)
+    }
+  }
 }
 
 /**

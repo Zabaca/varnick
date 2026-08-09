@@ -215,8 +215,13 @@ export function ChatSurface({
     question, same probe, one answer.
   */
   const settingUp = snapshot.can({ type: 'STORE_CREDENTIAL', kind: ctx.storingKind, value: 'x' })
-  const storing = toPath((snapshot.value as Record<string, unknown>).credential) === 'storing'
-  const starting = !session && !problem && !settingUp && !storing
+  const credentialState = toPath((snapshot.value as Record<string, unknown>).credential)
+  const storing = credentialState === 'storing'
+  // A mint is the same moment as a store from the surface's side — first-run
+  // setup, in flight — and a different wait: it takes minutes and it is waiting
+  // on the developer rather than on the keychain.
+  const minting = credentialState === 'minting'
+  const starting = !session && !problem && !settingUp && !storing && !minting
 
   /*
     First run takes the whole surface, and that is the honest rendering rather
@@ -233,20 +238,14 @@ export function ChatSurface({
     The sandbox problem line stays, because it is the one thing that can be
     wrong while setup is on screen and pasting a credential will not fix it.
   */
-  if (settingUp || storing) {
+  if (settingUp || storing || minting) {
     return (
       <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="space-y-3" style={{ maxWidth: 'var(--prose)' }}>
             <CredentialSetup snapshot={snapshot} send={send} />
 
-            {storing && (
-              <div style={{ color: 'var(--fg-faint)' }}>
-                Storing your{' '}
-                {ctx.storingKind === 'subscription' ? 'subscription token' : 'API key'} in the
-                keychain…
-              </div>
-            )}
+            <CredentialWaiting snapshot={snapshot} />
 
             {problem && (
               <div style={{ color: 'var(--bad)' }}>
@@ -313,13 +312,7 @@ export function ChatSurface({
               */}
               <CredentialSetup snapshot={snapshot} send={send} />
 
-              {storing && (
-                <div style={{ color: 'var(--fg-faint)', maxWidth: 'var(--prose)' }}>
-                  Storing your{' '}
-                  {ctx.storingKind === 'subscription' ? 'subscription token' : 'API key'} in the
-                  keychain…
-                </div>
-              )}
+              <CredentialWaiting snapshot={snapshot} />
 
               {problem && (
                 <div style={{ color: 'var(--bad)' }}>
@@ -740,20 +733,20 @@ function harnessProblem(ctx: HarnessSnapshot['context'], agentState: string): Pr
  *
  * Written from the developer's side rather than the machine's: the difference
  * that matters at this moment is what it costs them, not which environment
- * variable it becomes. `claude setup-token` is named because it is the one step
- * varnick does not yet do for them.
+ * variable it becomes.
  *
- * The reason is narrower than it first looks, and this comment said the wider
- * version: ADR-0003 forbids a Claude Code process *outside* the Sandbox, not a
- * Claude Code process. Run wrapped, under its own policy, minting a token is
- * allowed by that rule rather than an exception to it — ticket 25, which is
- * filed blocked on four measurements rather than started on an assumption.
+ * `claude setup-token` used to be named here as the one step varnick did not do
+ * for them. It does it now — the host runs that command itself, on a pty, and
+ * the token goes from the terminal into the keychain without being shown to
+ * anybody (ticket 25, and the bounded exception in ADR-0003). The command is
+ * still named because minting it yourself and pasting the result still works,
+ * and is what a developer does when the button fails.
  */
 const CREDENTIAL_CHOICES = [
   {
     kind: 'subscription' as const,
     label: 'Claude subscription',
-    note: 'Uses the plan you already pay for. Run `claude setup-token` once in a terminal to mint a long-lived token, then paste it here.',
+    note: 'Uses the plan you already pay for. varnick can get a long-lived token for you — you sign in, and the token goes straight into the keychain without ever being shown. If you would rather mint it yourself, `claude setup-token` prints one to paste here.',
     placeholder: 'Paste the token from `claude setup-token`',
   },
   {
@@ -763,6 +756,70 @@ const CREDENTIAL_CHOICES = [
     placeholder: 'Paste your API key',
   },
 ]
+
+/**
+ * Setup, while something it started is still running.
+ *
+ * Two waits with one thing in common — a credential is on its way into the
+ * keychain and there is nothing for the developer to do here — and one
+ * difference that decides how each reads. A store is a keychain write: seconds,
+ * and the machine is the only actor. A mint is a person signing in to a website
+ * in another window: minutes, and *they* are the actor, so this has to say what
+ * they are waiting on and where to do it.
+ *
+ * Read off the machine's own state rather than from a prop, so a card at
+ * `#/states` parked in either one shows this component and not a picture of it.
+ *
+ * The URL is rendered as text to copy rather than as a link, and that is the
+ * honest control rather than a missing one: this is a webview, a bare `href`
+ * navigates *it* rather than a browser, and a window that replaced varnick with
+ * an authorization page would be a worse failure than the one this is the
+ * fallback for.
+ */
+function CredentialWaiting({ snapshot }: { snapshot: HarnessSnapshot }) {
+  const ctx = snapshot.context
+  const state = toPath((snapshot.value as Record<string, unknown>).credential)
+
+  if (state === 'storing') {
+    return (
+      <div style={{ color: 'var(--fg-faint)', maxWidth: 'var(--prose)' }}>
+        Storing your {ctx.storingKind === 'subscription' ? 'subscription token' : 'API key'} in the
+        keychain…
+      </div>
+    )
+  }
+
+  if (state !== 'minting') return null
+
+  return (
+    <section className="space-y-2" style={{ maxWidth: 'var(--prose)' }}>
+      <div style={{ color: 'var(--fg-dim)' }}>
+        Waiting for you to sign in to Claude. varnick opened your browser; finish there and the
+        token is written to the keychain here, without being shown to anyone.
+      </div>
+
+      {/*
+        The fallback, and the reason the whole feature works from inside the
+        window: the command tries to open a browser and prints this when it
+        cannot. A machine with no default browser is not an edge case, and
+        without this it would be a dead end with a spinner on it.
+      */}
+      {ctx.mintUrl && (
+        <div className="space-y-1">
+          <div style={{ color: 'var(--fg-faint)' }}>
+            Browser didn&rsquo;t open? Copy this into one:
+          </div>
+          <code
+            className="block break-all px-2 py-1.5 select-all"
+            style={{ border: '1px solid var(--rule)', color: 'var(--fg-dim)' }}
+          >
+            {ctx.mintUrl}
+          </code>
+        </div>
+      )}
+    </section>
+  )
+}
 
 /**
  * The screen a fresh clone opens on, and the whole of first-run setup.
@@ -860,6 +917,32 @@ function CredentialSetup({
       </div>
 
       <p style={{ color: 'var(--fg-faint)' }}>{choice.note}</p>
+
+      {/*
+        The step that needs nothing typed, and it is offered first because it is
+        the shorter path: a developer with a subscription signs in and is done.
+
+        Two questions, both answered rather than assumed. Whether the machine
+        would take a mint at all is `can()`, like every other control here.
+        Whether *this* screen should offer one is the kind — a mint produces a
+        subscription token, so offering it beside the API-key field would be a
+        button that fills in the item the developer just said they did not want.
+      */}
+      {kind === 'subscription' && snapshot.can({ type: 'MINT_CREDENTIAL' }) && (
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <button
+            onClick={() => send({ type: 'MINT_CREDENTIAL' })}
+            className="px-3 py-1.5"
+            style={{ color: 'var(--accent)', border: '1px solid var(--rule)' }}
+          >
+            sign in and get a token
+          </button>
+          <span style={{ color: 'var(--fg-faint)' }}>
+            Opens your browser. varnick never sees the token — it goes from the command that
+            printed it into the keychain.
+          </span>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <input

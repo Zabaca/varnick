@@ -2,8 +2,10 @@ import { fromPromise } from 'xstate'
 import { callHarness } from '@varnick/harness/bridge'
 import {
   CREDENTIAL_REJECTED_DETAIL,
+  mintSubscriptionToken as mintSubscriptionTokenOnHost,
   readCredential as readCredentialFromHost,
   storeCredential as storeCredentialOnHost,
+  type MintObserver,
 } from '@varnick/harness/credentials'
 import {
   compactionFailureMessage,
@@ -98,6 +100,24 @@ const silentObserver: TurnObserver = {
 }
 
 /**
+ * What a running mint says that is not its result.
+ *
+ * The same shape as {@link TurnObserver} and for the same reason: the URL to
+ * sign in at arrives while the actor is still running, and an actor resolves
+ * once. It is addressed to the Harness, which is also the machine that invoked
+ * the actor — so unlike a delta this one could in principle have come back
+ * another way, and it still cannot: by the time the promise settles the sign-in
+ * is over and the link is of no use to anybody.
+ *
+ * Re-exported from the Harness rather than declared here, so the port the actor
+ * is written against and the port the host's caller takes are one type.
+ */
+export type { MintObserver }
+
+/** A mint nobody is watching. What a run with no owner gets. */
+const silentMint: MintObserver = { authorizing: () => {} }
+
+/**
  * A name for one Turn, unique within this window.
  *
  * A counter rather than `crypto.randomUUID`, which is only defined in a secure
@@ -126,7 +146,10 @@ const nextTurnId = () => `turn-${++turnsStarted}`
 let usageReadsStarted = 0
 const nextUsageReadId = () => `usage-${++usageReadsStarted}`
 
-export function liveActors(observer: TurnObserver = silentObserver) {
+export function liveActors(
+  observer: TurnObserver = silentObserver,
+  mint: MintObserver = silentMint,
+) {
   return {
     /*
       Establishes the real srt policy scoped to the clone, or fails.
@@ -166,6 +189,30 @@ export function liveActors(observer: TurnObserver = silentObserver) {
     */
     storeCredential: fromPromise<void, { kind: CredentialKind; value: string }>(({ input }) =>
       storeCredentialOnHost({ kind: input.kind, value: input.value }),
+    ),
+
+    /*
+      Real. The host runs `claude setup-token` on a pty, reads the token out of
+      the terminal UI it draws, and writes it into the keychain — all in the one
+      process that may hold a credential.
+
+      This actor is the strictest of the three credential actors and the reason
+      is worth stating rather than assumed: a read answers with two facts, a
+      store carries a value one way, and a mint carries nothing at all. There is
+      no input, because the command is a constant on the host; there is no
+      output, because the token is stored on the far side; and the one string
+      that comes back — the URL to sign in at — is an OAuth request the
+      developer's browser is about to make.
+
+      Running a Claude Code process on the host is what ADR-0003's last
+      consequence is about, and this is its one bounded exception, recorded
+      there. The concern that rule exists for is that a *session* runs
+      `SessionStart` hooks out of the clone, which the agent can write. This
+      opens no session, runs a fixed argv, and is pointed at a directory outside
+      the clone — so there is no such file to find. See src-tauri/src/mint.rs.
+    */
+    mintSubscriptionToken: fromPromise<void, Record<string, never>>(() =>
+      mintSubscriptionTokenOnHost(mint),
     ),
 
     /*

@@ -10,6 +10,7 @@ import {
   resolveActorMode,
   defaultSeedControls,
   type ActorMode,
+  type MintObserver,
   type SeedControls,
   type TurnObserver,
 } from './actors/index.ts'
@@ -85,7 +86,11 @@ export function useHarness(
     addressed to the machine that invoked it. A delta is the Session's; a
     rejected credential is the Harness's.
   */
-  const signals = useRef<TurnObserver>({ delta: () => {}, credentialRejected: () => {} })
+  const signals = useRef<TurnObserver & MintObserver>({
+    delta: () => {},
+    credentialRejected: () => {},
+    authorizing: () => {},
+  })
   const observer = useMemo<TurnObserver>(
     () => ({
       delta: (text) => signals.current.delta(text),
@@ -93,8 +98,22 @@ export function useHarness(
     }),
     [],
   )
+  /*
+    The same arrangement for the mint, and it is a second port rather than a
+    third method on the first because the two are about different things: a Turn
+    is a conversation, and a mint is a credential coming into existence. They
+    share the indirection, which is the ordering problem — the actors are built
+    before `useMachine` runs, and the way to send an event only exists after it.
+  */
+  const mint = useMemo<MintObserver>(
+    () => ({ authorizing: (url) => signals.current.authorizing(url) }),
+    [],
+  )
 
-  const seeds = useMemo(() => actorsFor(mode, controls, observer), [mode, controls, observer])
+  const seeds = useMemo(
+    () => actorsFor(mode, controls, observer, mint),
+    [mode, controls, observer, mint],
+  )
   const log = useRef<Transition[]>([])
   const last = useRef<Record<string, string>>({})
   const [, bumpLog] = useReducer((n: number) => n + 1, 0)
@@ -106,6 +125,7 @@ export function useHarness(
           checkSandbox: seeds.checkSandbox,
           readCredential: seeds.readCredential,
           storeCredential: seeds.storeCredential,
+          mintSubscriptionToken: seeds.mintSubscriptionToken,
           spawnAgent: seeds.spawnAgent,
           readSubscriptionUsage: seeds.readSubscriptionUsage,
           surface: surfaceMachine.provide({ actors: { loadSurface } }),
@@ -163,6 +183,10 @@ export function useHarness(
         actorRef.getSnapshot().context.session?.send({ type: 'STREAM_DELTA', text })
       },
       credentialRejected: (detail) => send({ type: 'CREDENTIAL_REJECTED', detail }),
+      // And where the mint's one signal lands. `credential.minting` is the only
+      // state that accepts it, so a URL from an attempt that has already ended
+      // is dropped by the machine rather than guarded against here.
+      authorizing: (url) => send({ type: 'MINT_URL', url }),
     }
   }, [actorRef, send])
 

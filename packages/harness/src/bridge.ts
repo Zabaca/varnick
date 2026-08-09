@@ -55,6 +55,13 @@
  * Harness runtime, which would be a second process holding a credential.
  * Nothing in Core keeps it after the call — see ./credentials.ts.
  *
+ * **And one call makes a credential without either side holding it.**
+ * {@link MintSubscriptionTokenRequest} asks the Rust host to run
+ * `claude setup-token`; the token is read off a pty and written to the keychain
+ * inside that process, so it crosses this bridge in neither direction. What
+ * comes back through {@link NextMintEventRequest} is an authorize URL — an OAuth
+ * request the developer's browser is about to make — and an outcome tag.
+ *
  * ## Nothing here may import Node
  *
  * This module is bundled into the webview. `import type` only, and the request
@@ -62,6 +69,7 @@
  * never imports.
  */
 
+import { parseMintEvent, type MintEvent } from './mint.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
 import { PLAN_USAGE_UNAVAILABLE, parsePlanUsageAnswer, type PlanUsage } from './subscription.ts'
 import { parseTurnEvent, type TurnEvent } from './turn.ts'
@@ -99,6 +107,43 @@ export interface StoreCredentialRequest {
   readonly kind: 'store-credential'
   readonly credentialKind: 'api-key' | 'subscription'
   readonly value: string
+}
+
+/**
+ * Mint a subscription token, host-side. Answers `{ ok: true }` and returns at
+ * once.
+ *
+ * **The one call that creates a credential rather than moving one.** The Rust
+ * host runs `claude setup-token` on a pty, reads the token out of the terminal
+ * UI it draws, and writes it into the keychain — all inside that process. There
+ * is no field on this request and no shape on its answer that a token could
+ * travel in, because the token never travels: it is minted and stored on the
+ * same side of the bridge.
+ *
+ * There is nothing to configure and no argument to give. The command is a
+ * constant in src-tauri/src/mint.rs, which is what
+ * docs/adr/0003-containment-wraps-the-process-tree.md's bounded exception is
+ * written around: one argv, never `query()`, never an SDK entry point.
+ *
+ * It returns before the mint finishes, exactly as `run-turn` does, and for a
+ * blunter reason: the middle of it is a person signing in to a website in their
+ * own browser. What happens meanwhile arrives through
+ * {@link NextMintEventRequest}.
+ */
+export interface MintSubscriptionTokenRequest {
+  readonly kind: 'mint-subscription-token'
+}
+
+/**
+ * Wait for the next thing the running mint has to say.
+ *
+ * The same shape as `next-turn-event`, and `event: null` means the same thing:
+ * nothing said yet, which for a mint is most of its life. Two events matter —
+ * the authorize URL, shown as a fallback for a browser that did not open, and
+ * the outcome — and neither is the token.
+ */
+export interface NextMintEventRequest {
+  readonly kind: 'next-mint-event'
 }
 
 /** Write a transcript to the host-side Session mirror. */
@@ -259,6 +304,8 @@ export type HarnessRequest =
   | CheckSandboxRequest
   | ReadCredentialRequest
   | StoreCredentialRequest
+  | MintSubscriptionTokenRequest
+  | NextMintEventRequest
   | PersistSessionRequest
   | ReadSessionRequest
   | SpawnAgentRequest
@@ -281,6 +328,12 @@ export interface HarnessAnswers {
   }
   // A constant. A store has nothing to report and no shape to report it in.
   'store-credential': { readonly ok: true }
+  // A constant too, and for a sharper reason: the mint it starts produces a
+  // credential, and this answer is what a credential would ride back in if
+  // there were anywhere for it to sit.
+  'mint-subscription-token': { readonly ok: true }
+  // What the mint said, or that it has said nothing yet. Never the token.
+  'next-mint-event': { readonly event: MintEvent | null }
   'persist-session': { readonly ok: true }
   'read-session': RestoredTranscript
   'spawn-agent': { readonly pid: number }
@@ -513,6 +566,28 @@ function turnEventAnswer(answer: unknown): { event: TurnEvent | null } {
 }
 
 /**
+ * Read one thing the mint said, or that it has said nothing yet.
+ *
+ * Strict for the same reason a Turn event is: an unreadable event skipped as if
+ * it were nothing would drop the outcome, and the machine would sit in
+ * `credential.minting` against a command that finished. An absent event is a
+ * different thing from an unreadable one, and only the first is a value.
+ */
+function mintEventAnswer(answer: unknown): { event: MintEvent | null } {
+  const payload = answer as { event?: unknown } | null | undefined
+  if (payload === null || typeof payload !== 'object' || !('event' in payload)) {
+    throw new HarnessUnavailable('malformed')
+  }
+  if (payload.event === null) return { event: null }
+
+  // Rebuilt, like every other answer, and this one is read out of the same
+  // buffer a live credential is in — see ./mint.ts.
+  const event = parseMintEvent(payload.event)
+  if (event === null) throw new HarnessUnavailable('malformed')
+  return { event }
+}
+
+/**
  * Read the two figures, or fail.
  *
  * Three outcomes and no fourth, which is the point of this function existing at
@@ -573,10 +648,13 @@ export async function callHarness<R extends HarnessRequest>(
       return exitAnswer(answer) as HarnessAnswers[R['kind']]
     case 'next-turn-event':
       return turnEventAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'next-mint-event':
+      return mintEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'read-plan-usage':
       return planUsageAnswer(request.requestId, answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
     case 'store-credential':
+    case 'mint-subscription-token':
     case 'persist-session':
     case 'stop-agent':
     case 'run-turn':

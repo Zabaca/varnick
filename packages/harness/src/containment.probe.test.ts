@@ -1127,14 +1127,24 @@ test.skipIf(blocked !== null)(
       says nothing about — the allowlist bounds where the agent may reach, not
       who may reach the agent.
 
-      Measured because ticket 25 needed the opposite answer. `claude setup-token`
-      finishes by bouncing the browser to `http://localhost:<ephemeral>/callback`,
-      so minting a token confined requires binding, and that command's policy
-      therefore has to set this true where the agent's leaves it false. Before
-      widening anything for one command it is worth knowing the setting does
-      something, and this is that check. It asserts the deny only: the allow is
-      ticket 25's to carry, against its own policy, and does not belong in the
-      suite that guards the agent's.
+      Measured because ticket 25 looked as though it needed the opposite answer.
+      `claude setup-token` finishes by bouncing the browser to
+      `http://localhost:<ephemeral>/callback`, so minting a token *confined*
+      would have required binding, and that command's policy would have had to
+      set this true where the agent's leaves it false.
+
+      **It did not come to that, and this probe outlived the reason it was
+      written.** Ticket 25 mints on the host: the installed `claude` is a
+      self-extracting executable that has to read itself, so it cannot run under
+      any policy denying `$HOME`, and the widening that would have bought was
+      far larger than local binding. The exception is bounded in ADR-0003 and
+      uses no policy at all, so nothing anywhere sets `allowLocalBinding: true`
+      and the deny below is the whole of the story again.
+
+      The probe stays, and it is worth more now than when it was written: it was
+      one line in sandbox.ts that nothing held to the kernel, and it guards a
+      channel the allowlist says nothing about — the allowlist bounds where the
+      agent may reach, not who may reach the agent.
     */
     const listener = join(insideDir, 'listen.py')
     writeFileSync(

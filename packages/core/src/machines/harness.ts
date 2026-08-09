@@ -24,6 +24,7 @@ import { sessionMachine, type SessionInput } from './session.ts'
 
 export const HARNESS_STATE_PATHS = [
   'credential.absent',
+  'credential.minting',
   'credential.storing',
   'credential.reading',
   'credential.present',
@@ -43,7 +44,7 @@ export const HARNESS_STATE_PATHS = [
 ] as const
 export type HarnessStatePath = (typeof HARNESS_STATE_PATHS)[number]
 
-export type CredentialState = 'absent' | 'storing' | 'reading' | 'present' | 'rejected'
+export type CredentialState = 'absent' | 'minting' | 'storing' | 'reading' | 'present' | 'rejected'
 export type SandboxState = 'unchecked' | 'checking' | 'available' | 'unavailable'
 
 export interface HarnessContext {
@@ -85,6 +86,24 @@ export interface HarnessContext {
    * is gone the moment the actor settles.
    */
   storingKind: CredentialKind
+  /**
+   * Where to sign in, while a mint is waiting for someone to.
+   *
+   * The flow tries to open a browser and prints this as a fallback when it
+   * cannot, and the fallback is what makes the whole feature survive contact
+   * with a machine whose default browser is not set. Held in context because the
+   * view is a pure function of `(snapshot, send)` — a URL living in a component
+   * would be a piece of the minting screen the states page could not park in.
+   *
+   * `null` outside a mint, and cleared on the way in rather than on the way out,
+   * so a second attempt never shows the first one's link.
+   *
+   * Not a credential and structurally cannot be one: it is an OAuth request the
+   * developer's browser is about to make, parsed out of the render by a
+   * function that requires a scheme and an authorize endpoint. See
+   * `the_url_is_never_the_token` in src-tauri/src/mint.rs.
+   */
+  mintUrl: string | null
   sandboxState: SandboxState
   refusal: StartRefusal | null
   sandboxError: string | null
@@ -121,6 +140,7 @@ export interface HarnessInput {
   policy: SandboxPolicy
   credentialKind?: CredentialKind | null
   storingKind?: CredentialKind
+  mintUrl?: string | null
   enterCredential?: string | null
   enterSandbox?: string | null
   enterAgent?: string | null
@@ -156,6 +176,23 @@ export type HarnessEvent =
    * from what it finds (ADR-0011).
    */
   | { type: 'CHOOSE_CREDENTIAL_KIND'; kind: CredentialKind }
+  /**
+   * Get a subscription token, rather than being told where to get one.
+   *
+   * The developer asked; nothing about the command is theirs to decide. It
+   * carries no argument for exactly that reason — `claude setup-token` is a
+   * constant on the host, and a field here would be a field something could put
+   * a different command in. See src-tauri/src/mint.rs.
+   */
+  | { type: 'MINT_CREDENTIAL' }
+  /**
+   * The flow published a URL to sign in at.
+   *
+   * Something the world did, delivered as an event, the same shape as
+   * `AGENT_EXIT` and `STREAM_DELTA` — an actor resolves once, and this arrives
+   * while the mint is still running. Never a credential: see `mintUrl`.
+   */
+  | { type: 'MINT_URL'; url: string }
   | { type: 'CREDENTIAL_REJECTED'; detail: string }
   | { type: 'START' }
   | { type: 'STOP' }
@@ -227,6 +264,25 @@ export const harnessMachine = setup({
     storeCredential: fromPromise<void, { kind: CredentialKind; value: string }>(
       async () => {},
     ),
+    /*
+      Real-service contract for mintSubscriptionToken:
+        input  {} — there is nothing to decide. The command is a constant on the
+               host, so there is no field here something could put a different
+               one in.
+        output nothing. The token is minted, read off a pty and written to the
+               keychain inside the host process, so there is no shape on the
+               success path a credential could come back in — and unlike the
+               store, this side never holds one at all.
+        error  thrown Error — the sign-in was declined, the account has no
+               subscription, the token could not be read back whole, the
+               keychain refused it. Authored from a tag; nothing the command
+               printed is in it. See packages/harness/src/credentials.ts.
+
+      What it says while it runs — the URL to sign in at — arrives as
+      `MINT_URL` rather than as a result, because an actor resolves once and
+      that happens well before this one does.
+    */
+    mintSubscriptionToken: fromPromise<void, Record<string, never>>(async () => {}),
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
     })),
@@ -291,6 +347,7 @@ export const harnessMachine = setup({
     // developer already paying for a plan should not be shown a bill-per-request
     // key as the obvious choice.
     storingKind: input.storingKind ?? 'subscription',
+    mintUrl: input.mintUrl ?? null,
     sandboxState: (input.enterSandbox as SandboxState | undefined) ?? 'unchecked',
     refusal: input.refusal ?? null,
     sandboxError: input.sandboxError ?? null,
@@ -347,6 +404,7 @@ export const harnessMachine = setup({
             { target: 'rejected', guard: ({ context }) => context.enterCredential === 'rejected' },
             { target: 'reading', guard: ({ context }) => context.enterCredential === 'reading' },
             { target: 'storing', guard: ({ context }) => context.enterCredential === 'storing' },
+            { target: 'minting', guard: ({ context }) => context.enterCredential === 'minting' },
             { target: 'absent' },
           ],
         },
@@ -358,11 +416,75 @@ export const harnessMachine = setup({
             // over a credential that is present would replace a working one by
             // accident, and one during a read would race the read it invalidates.
             STORE_CREDENTIAL: { target: 'storing', guard: 'credentialPasted' },
+            // The other way out, and the one that needs nothing pasted. Offered
+            // in the same state as the paste and for the same reason: a mint
+            // over a credential that is present would replace a working one,
+            // and this one takes minutes and opens a browser while it does it.
+            MINT_CREDENTIAL: 'minting',
             // Accepted only where a store is, so the two controls appear and
             // disappear together rather than leaving a choice with nothing to
             // choose for.
             CHOOSE_CREDENTIAL_KIND: {
               actions: assign({ storingKind: ({ event }) => event.kind }),
+            },
+          },
+        },
+        /*
+          The sign-in, while it is happening.
+
+          A state of its own because it is a long operation that can fail, and
+          because there is something to say for the whole of it: the URL to sign
+          in at, which is what a developer whose browser did not open needs and
+          the only thing they need. `MINT_URL` is accepted here and nowhere
+          else, so a late one from an attempt that has already ended cannot put
+          a stale link on a screen that has moved on.
+
+          What it is *not* is a place a credential passes through. The token is
+          minted, read and stored inside the host process; this side learns
+          whether it worked. That makes this state stricter than `storing`,
+          which does at least hand a value on — see
+          packages/harness/src/credentials.ts.
+
+          A success re-reads, exactly as a store does, and for the same reason:
+          one code path establishes the credential however it got there, and the
+          host decides what it is holding by resolving rather than by being
+          told (ADR-0011).
+        */
+        minting: {
+          entry: assign({ credentialState: 'minting' as const, credentialError: null }),
+          /*
+            Cleared on the way out, and only there.
+
+            Out is enough: every way of leaving this state goes through it, so a
+            mint always starts with nothing to show and a second attempt can
+            never display the first one's link — which would send a developer to
+            an authorization that finishes into a process that is gone.
+
+            And in would be wrong. The states page parks a card here through
+            `enterCredential`, with a URL supplied as input, and an entry action
+            would wipe it before the card rendered — leaving a scenario about
+            the fallback that could not show the fallback.
+          */
+          exit: assign({ mintUrl: null }),
+          on: {
+            MINT_URL: { actions: assign({ mintUrl: ({ event }) => event.url }) },
+          },
+          invoke: {
+            src: 'mintSubscriptionToken',
+            input: () => ({}) as Record<string, never>,
+            onDone: 'reading',
+            // Back where it started, saying why — the same shape a failed read
+            // and a failed store take, so the surface has one field to render
+            // whichever of the three went wrong. Nothing of the token is in the
+            // message: it is authored from a tag in
+            // packages/harness/src/credentials.ts.
+            onError: {
+              target: 'absent',
+              actions: assign({
+                credentialError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+                credentialKind: null,
+              }),
             },
           },
         },

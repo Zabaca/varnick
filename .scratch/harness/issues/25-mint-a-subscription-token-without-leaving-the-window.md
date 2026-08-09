@@ -1,14 +1,10 @@
 # 25 — Mint a subscription token without leaving the window
 
-**What to build:** The setup screen offers to get a subscription token for the developer. They click, they authorise in a browser, and varnick has a token — without them typing a command anywhere. `claude setup-token` runs **inside `srt`**, so nothing about [ADR-0003](../../../docs/adr/0003-containment-wraps-the-process-tree.md) moves.
+**What to build:** The setup screen offers to get a subscription token for the developer. They click, they authorise in a browser, and varnick has a token — without them typing a command anywhere.
 
 **Blocked by:** 24. It owns the setup screen and the write path; this adds a second way to fill the same field.
 
-**Status:** ready-for-agent. Every measurement that decides feasibility is taken and the answer is yes; what remains is measurement 4 (does a wrapping survive being spawned by another process) and the capture problem, which are implementation questions rather than existential ones.
-
-**The developer has accepted the trade** that this command's policy sets `allowLocalBinding: true` where the agent's leaves it `false`. That acceptance is about *this command's* policy only — the agent's is unchanged and the ticket fails if it moves.
-
-**The measurements corrected the ticket twice**, and both corrections are left visible below rather than tidied away. The first draft said the flow could not run confined because it opens a browser; it prints the URL as a fallback, so it can. The second said it was paste-the-code with no local server; it is a local callback on an ephemeral port, and it needs `allowLocalBinding`, which the agent's policy sets to `false`.
+**Status:** fixed.
 
 ## Read this before running anything
 
@@ -16,13 +12,27 @@
 
 Nothing in this ticket may be developed by running the real flow and capturing its output into a log, a scratch file, a test fixture, or a terminal whose scrollback is kept. The value is a credential from the moment it exists. Develop against a recorded *shape* — the lines below, with the token replaced — and let the one real run be the human's, at the end, into the real keychain.
 
-**Realizes:** no state path yet. If minting needs a state of its own — it probably does, since it is a long operation that can fail — that is a change to `CONTEXT.md` and the machines, and it is this ticket's to make.
+## The design below is superseded. This is what was built.
 
-## Why this is not an ADR-0003 exception
+**The mint runs on the host, unwrapped, and everything in this ticket about narrow policies, `allowLocalBinding` and computing a wrapping in a second process is gone.** The developer decided that after the spike, and the reasoning is the ticket's real conclusion rather than a shortcut around it:
 
-The rule is that varnick never spawns a Claude Code process **outside `srt`**. Running `claude setup-token` wrapped is inside, so the rule is satisfied rather than amended. This was nearly recorded as a bounded exception with the process on the host; that draft is not in the repository, and the reason it is not is that "spawn it" was being read as "spawn it unconfined", which it never had to mean.
+`srt` exists to confine *the agent* — a nondeterministic actor that might try to reach things. Minting a token is deterministic application setup with a fixed argv, started by a person clicking a button, with no agent input anywhere in it. That is the same class of work as reading the Keychain, which the Rust host already does. **ADR-0003 now carries a bounded exception** saying exactly what is permitted (one argv, never `query()`, never an SDK entry point), why the `SessionStart`-hook concern is closed by construction, and that the developer chose this after the alternatives were put to them.
 
-**It is not, however, strictly stricter than the agent's boundary, which an earlier draft of this ticket claimed.** The agent's policy sets `allowLocalBinding: false`, and this command cannot work without a local listener — see the measurement below. So its policy is narrower in two dimensions (no clone access, one writable directory, a single allowed host) and wider in exactly one, deliberately, for one short-lived command that is not the agent. That trade is the thing to review, and stating it as "stricter" would have hidden it.
+What that means for the paragraphs further down: **"Why this is not an ADR-0003 exception" is wrong** — it is one, and it is written down. **"The shape, given those answers" is wrong** — there is no second Node process and no second policy. **The `allowLocalBinding` trade is not taken**; nothing anywhere sets it true, `sandboxPolicyFor` is untouched, and `sandbox-policy.json` is byte-identical before and after because no policy is generated for this at all. The measurements themselves all still stand, and are left below.
+
+### What was built
+
+- **`src-tauri/src/mint.rs`.** `openpty`, then `claude setup-token` with all three descriptors on the terminal, `setsid` so it leads its own process group, and a wide window so the renderer does not wrap what it prints. A plain pipe yields nothing at all — the token is drawn into a terminal UI rather than written to stdout.
+- **`CLAUDE_CONFIG_DIR` and the working directory** both point at a directory varnick creates for the run, under the OS temp root, deleted afterwards. This is what closes ADR-0003's stated concern rather than accepting it: the rule exists because a session runs `SessionStart` hooks from the clone's `.claude/settings.json`, which the agent can write — point the command away from the clone and there is no such file to find. Said at the spawn, in the code.
+- **`ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are removed from the child's environment.** Never hand a credential to the thing minting one.
+- **The authorize URL is surfaced in the window**, parsed by endpoint rather than by the sentence above it, and shown as text to copy — a bare `href` in a webview navigates *varnick* rather than a browser.
+- **The token is cut from `sk-ant-oat01-` to `Store this token` / `Use this token`, then to the first blank line, then all whitespace is deleted** — the renderer wraps the value mid-string, so a parse that stopped at a newline would store half a credential. The result is checked against `^sk-ant-oat01-[A-Za-z0-9_-]+$` and refused loudly if it does not match.
+- **It is stored with ticket 24's `store_credential`.** There is no second keychain writer, and the mint's tests assert the exact bytes reaching that path.
+- **`credential.minting`** is the new state, with the URL in context, a card at `#/states`, and `MINT_CREDENTIAL` / `MINT_URL` on the Harness.
+
+### What holds the credential rule
+
+The token is never printed, never logged, never written to a file and never crosses the bridge. `Rendered` — the pty capture — has no `Serialize` and a `Debug` that prints `[redacted]`, the parsed value is a `Secret`, and every failure out of the mint is a `&'static str` tag chosen by a match arm, so there is no `String` on any path for a value to be formatted into. The actor on the Core side takes no input and answers with `void`: unlike a store there is not even a value passing through. No test runs the real flow.
 
 ## What was measured
 
@@ -37,29 +47,20 @@ Browser didn't open? Use the url below to sign in (c to copy)
 Paste code here if prompted >
 ```
 
-So the launch is an attempt with a fallback, and the fallback is the whole flow: varnick shows the URL, the developer authorises in their own browser — which is outside the Sandbox and always was — and pastes the code back. **Launch Services refusing `open` under the policy is not fatal**, which was the thing that could have killed this outright.
+So the launch is an attempt with a fallback, and the fallback is the whole flow: varnick shows the URL and the developer authorises in their own browser.
 
 **Two details that shape the design more than the confinement question does:**
 
-- **It is a local callback, and this was measured wrong once before it was measured right.** The `redirect_uri` in the authorize URL is a *hosted* page on `platform.claude.com`, and the CLI prints "Paste code here if prompted", so the first reading was that the flow is paste-the-code with no local listener. It is not. The hosted page bounces the browser to `http://localhost:<ephemeral>/callback?code=…` — observed as port 53267, so the port is not fixed — and the paste prompt is the fallback for when that fails. The way this was established is worth copying: the flow was started, the process killed before anyone authorised, and the browser then showed `ERR_CONNECTION_REFUSED` against the localhost callback. A refusal proved the listener existed more cleanly than a success would have.
-- **The token is printed into a terminal UI, not to stdout.** It arrives wrapped in cursor positioning and colour, split across escape sequences, beside the sentence "Store this token securely. You won't be able to see it again." Capturing it means running a pty and parsing rendered terminal output. **That is now the hard part of this ticket**, and it is fragile in a way the confinement never was: a change to that CLI's rendering breaks the parse, and the failure mode is a truncated credential that fails authentication far from its cause. Whatever is built must verify what it captured looks like a token before storing it, and say so plainly when it does not.
+- **It is a local callback, and this was measured wrong once before it was measured right.** The `redirect_uri` in the authorize URL is a *hosted* page on `platform.claude.com`, and the CLI prints "Paste code here if prompted", so the first reading was that the flow is paste-the-code with no local listener. It is not. The hosted page bounces the browser to `http://localhost:<ephemeral>/callback?code=…` — observed as port 53267, so the port is not fixed — and the paste prompt is the fallback for when that fails. The way this was established is worth copying: the flow was started, the process killed before anyone authorised, and the browser then showed `ERR_CONNECTION_REFUSED` against the localhost callback. A refusal proved the listener existed more cleanly than a success would have. **Nothing follows from it now** — the command runs on the host, where binding was never in question — but it is why nobody has to paste anything.
+- **The token is printed into a terminal UI, not to stdout.** It arrives wrapped in cursor positioning and colour, split across escape sequences, beside the sentence "Store this token securely. You won't be able to see it again." Capturing it means running a pty and parsing rendered terminal output. **That was the hard part of this ticket**, and it is fragile in a way the confinement never was: a change to that CLI's rendering breaks the parse, and the failure mode is a truncated credential that fails authentication far from its cause. What was built refuses loudly instead — `unreadable-token`, and nothing written.
 
-**4. What it writes — partly answered.** It says the value cannot be shown again, which means it is not being kept anywhere the developer can retrieve it. Whether it also writes into its own configuration is still unmeasured, and is why `CLAUDE_CONFIG_DIR` must point at a directory varnick owns.
+**2. Which hosts does the flow contact? — Answered.** `claude.com/cai/oauth/authorize` and `platform.claude.com/oauth/code/{callback,success}` are the *developer's browser*. The one the CLI itself calls is **`platform.claude.com/v1/oauth/token`**, read out of the shipped binary's strings. **This no longer touches any allowlist**: the command is not inside `srt`, so no policy mentions it, and `DEFAULT_ALLOWED_HOSTS` stays `api.anthropic.com` and `registry.npmjs.org`.
 
-## The remaining measurements
+**3. Does a sandboxed process's local listener work, and can something outside reach it? — Answered, both halves.** Under the shipped policy with `allowLocalBinding: false`, a Python HTTP server binding `127.0.0.1:0` fails with `PermissionError [Errno 1] Operation not permitted`, against a control proving the interpreter runs. That is **probe 10** in `containment.probe.test.ts`, and it stays — it was one line in `sandbox.ts` that nothing held to the kernel, and it guards a channel the allowlist says nothing about. With `allowLocalBinding: true` the same server bound an ephemeral port and an unsandboxed process reached it. That measurement is now unused: nothing sets it true.
 
-Each of these is a command, not a judgement. Write down what came back.
+**4. Does an `srt` wrapping computed in one process still work when another process spawns it? — Moot.** No wrapping is computed for this command.
 
-1. ~~Does it need to open a browser itself?~~ **Answered above: no.**
-2. ~~Which hosts does the flow contact?~~ **Answered.** `claude.com/cai/oauth/authorize` and `platform.claude.com/oauth/code/{callback,success}` are the *developer's browser* and need nothing from the policy — the browser was never inside it. The one the CLI itself calls is **`platform.claude.com/v1/oauth/token`**, read out of the shipped binary's strings rather than inferred from what a browser was sent to. That host goes in **this command's** allowlist and **never** in the agent's; `DEFAULT_ALLOWED_HOSTS` stays `api.anthropic.com` and `registry.npmjs.org`. Worth confirming against a real run once, since a string in a binary is evidence of an endpoint and not proof it is the one used.
-
-3. ~~Does a sandboxed process's local listener work, and can something outside reach it?~~ **Answered — both halves, and this is what unblocks the ticket.**
-
-   Under the shipped policy, with `allowLocalBinding: false`, a Python HTTP server binding `127.0.0.1:0` fails with `PermissionError [Errno 1] Operation not permitted`, against a control proving the interpreter itself runs. So the setting does something and the agent genuinely cannot listen. That is now **probe 10** in `containment.probe.test.ts`, because it was one line in `sandbox.ts` that nothing held to the kernel, and it guards a channel the allowlist says nothing about: the allowlist bounds where the agent may reach, not who may reach the agent.
-
-   With the same policy and `allowLocalBinding: true`, the same server bound an ephemeral port (53340 in the run), and an **unsandboxed** process fetched `http://127.0.0.1:<port>/callback` and got its marker back. So the browser reaching inward works, which is exactly the shape of the OAuth callback.
-4. **Does an `srt` wrapping computed in one process still work when another process spawns it?** The agent spawn already relies on this — the runtime computes the wrapping, the Rust host performs the spawn (ADR-0008) — but it has only ever been relied on for a policy the wrapping process itself initialized. If `wrapWithSandboxArgv` writes a profile to a temp path, confirm that path outlives the process that made it.
-5. **What does it write, and where?** Point `CLAUDE_CONFIG_DIR` at a directory varnick owns for this and nothing else. `allowWrite` for this command is that directory alone — not the clone.
+**5. What does it write, and where? — Answered by construction.** `CLAUDE_CONFIG_DIR` and the working directory are a varnick-owned temp directory, created for the run and removed when it ends. Whatever the command writes, it writes there.
 
 ## What the spike found, and why it changed the plan
 
@@ -80,31 +81,22 @@ keepKeys     exit 0   2.1.226
 That is `claude --version`, not `setup-token` — so it is nothing to do with OAuth, browsers or listeners. Two things follow:
 
 - **`denyRead` beats `allowRead`.** Adding `~/.local/share/claude/**` to `allowRead` does not lift a path out of a denied root. Neither does hardlinking the binary into the writable root, which was the obvious way to keep the boundary and was tried.
-- **It is a different case from ADR-0003's correction.** That correction says `(allow process-exec)` is unconditional, and it was measured on `/usr/bin` system binaries, which execute while unreadable. This binary is a 280MB self-extracting single-file executable — it has to *read itself* — so denying read does deny it, and the earlier finding does not generalise the way its wording suggests. Worth a line in ADR-0003 whoever picks this up.
+- **It is a different case from ADR-0003's correction.** That correction says `(allow process-exec)` is unconditional, and it was measured on `/usr/bin` system binaries, which execute while unreadable. This binary is a 280MB self-extracting single-file executable — it has to *read itself* — so denying read does deny it, and the earlier finding does not generalise the way its wording suggests.
 
-**The way out is to not run that binary.** The Agent SDK's `getDefaultExecutable()` returns `"bun"`, and varnick never sets `pathToClaudeCodeExecutable` — so the agent runs Claude Code *as JavaScript under bun*, which is why the agent is unaffected by any of this. Confirmed rather than assumed: probe 6 driven with a deliberately invalid key reaches "the Session ended as failed" — a result message, so the CLI launched inside `srt` and failed on the credential, which is the expected outcome.
-
-So the first thing this ticket should try is minting through the same JS entry the agent already uses, rather than through the installed `claude`. If that is not reachable, the fallback is a policy for this command that does not deny `$HOME` — which is a far larger widening than `allowLocalBinding` and should be argued for explicitly, not slipped in.
-
-## The shape, given those answers
-
-`SandboxManager.initialize()` is process-wide: one policy per process, and `wrap()` uses whatever was initialized. The runtime already holds the agent's policy, so a second, narrower policy needs a second process. That is not the process-per-call ADR-0008 rejected — that argument was about losing the *agent's* Sandbox between calls, and this establishes a different Sandbox for a different command that runs once.
-
-The credential rule is unchanged and is what makes the shape non-obvious: **the token must never enter a Node process.** So the split is the same one the agent spawn uses — a short-lived Node process computes the wrapping for the narrow policy and answers with argv, env and cwd, carrying no secret; the Rust host spawns `claude setup-token` with that wrapping and captures its output, where the value already belongs. **Not stdout — a pty**, per the measurement above: the token is rendered into a terminal UI and a plain pipe produces nothing at all. `Secret` holds it, the Keychain receives it, and nothing crosses the bridge.
+The remaining way to run it confined would have been a policy for this one command that does not deny the home directory — a far larger widening than `allowLocalBinding`, for a command that is not the agent. That is the trade that was put to the developer, and it is the one they declined in favour of the host. A second spike ran it host-side and minted a real token into the keychain, which is the measurement this implementation is built from.
 
 ## Watch for
 
-- **The policy for this command is not the agent's policy.** It is its own: `platform.claude.com` and nothing else, one writable directory, no clone access, and `allowLocalBinding: true`. **If implementing this makes the agent's policy wider in any way — the allowlist, or local binding especially — that is the wrong implementation**, and `sandbox-policy.json` being byte-identical before and after is how you prove it did not.
-- **A minted token is a credential and is treated as one from the first byte.** It is not logged, not echoed to the renderer, not written anywhere but the Keychain, and not printed even in a debug path. `security` receives it over stdin, hex-encoded, the way `secrets.ts` already does.
-- **`setup-token` fails in ways this must show rather than swallow** — the developer declines in the browser, the flow times out, the account has no subscription. Each needs a sentence, and none of them may quote what the command printed.
-- **No test may run the real flow.** It opens a browser and authenticates a human. The seam is the wrapping and the capture; the flow itself is measured once, by hand, and recorded here.
+- **A minted token is a credential and is treated as one from the first byte.** It is not logged, not echoed to the renderer, not written anywhere but the Keychain, and not printed even in a debug path. `security` receives it over stdin, hex-encoded, the way ticket 24 already does.
+- **`setup-token` fails in ways this must show rather than swallow** — the developer declines in the browser, the flow times out, the account has no subscription. Each has its own sentence, authored in `packages/harness/src/credentials.ts` and selected by a tag, and none of them quotes what the command printed.
+- **No test may run the real flow.** It opens a browser and authenticates a human. The seam is the parse and the spawn's construction; the flow itself is measured once, by hand, and recorded here.
 
-- [ ] The two measurements still open are recorded here with what came back
-- [ ] `claude setup-token` runs wrapped by `srt` under a policy narrower than the agent's, and the agent's policy is byte-identical before and after
-- [ ] The token reaches the Keychain without entering a Node process, a log, an error, the renderer, or the mirror — and without a pty capture surviving anywhere on disk
-- [ ] What was captured is checked to look like a token before it is stored, and a parse that came back short says so rather than storing a truncated credential
-- [ ] A developer with a subscription gets a working token from the setup screen having run no command
-- [ ] Every failure of the flow reaches the screen as a sentence naming what to do
-- [ ] `CONTEXT.md` gains whatever state this needs, and `#/states` gains its card
+- [x] The two measurements still open are recorded here with what came back
+- [x] ~~`claude setup-token` runs wrapped by `srt` under a policy narrower than the agent's~~ — superseded: it runs on the host under ADR-0003's bounded exception. **The agent's policy is byte-identical before and after**, which is still the check that matters and is now trivially true: `sandboxPolicyFor` is untouched and no policy is generated for this command.
+- [x] The token reaches the Keychain without entering a Node process, a log, an error, the renderer, or the mirror — and without a pty capture surviving anywhere on disk
+- [x] What was captured is checked to look like a token before it is stored, and a parse that came back short says so rather than storing a truncated credential
+- [ ] A developer with a subscription gets a working token from the setup screen having run no command — **the one box a human has to tick**, because ticking it means signing in for real. Everything up to the browser is tested; the browser is not.
+- [x] Every failure of the flow reaches the screen as a sentence naming what to do
+- [x] `CONTEXT.md` gains whatever state this needs, and `#/states` gains its card
 
-Follows the developer's decision that setting up varnick should require no terminal, and their correction that the mint can run confined.
+Follows the developer's decision that setting up varnick should require no terminal, and their correction that the mint belongs on the host.
