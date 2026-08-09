@@ -257,7 +257,18 @@ describe('wrap-agent-command computes the wrapping and nothing else', () => {
     // run stays in when `check-sandbox` fails. No flag reaches past it, because
     // there is no flag: the only thing that sets the Sandbox is establishing
     // one.
-    await expect(hostCapabilities().wrapAgentCommand()).rejects.toThrow(/not established/)
+    await expect(
+      hostCapabilities({ cloneRoot: process.cwd() }).wrapAgentCommand(),
+    ).rejects.toThrow(/not established/)
+  })
+
+  test('the real capabilities are built for one named root', async () => {
+    // Ticket 28. `hostCapabilities()` took nothing and the root arrived from
+    // `process.cwd()` four hops later; it is an argument now, and the Sandbox
+    // this refuses to establish is the one for the root it was given.
+    await expect(
+      hostCapabilities({ cloneRoot: '/Users/dev/moved-away-1234' }).establishSandbox(),
+    ).rejects.toThrow(/no directory at \/Users\/dev\/moved-away-1234/)
   })
 
   test('the runtime never spawns the agent itself', async () => {

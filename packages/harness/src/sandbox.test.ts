@@ -13,6 +13,7 @@ import {
   describeSandboxPolicy,
   describeSandboxViolation,
   ensureSandboxPolicy,
+  establishSandbox,
   interpreterRoot,
   isUnexpectedViolation,
   materializeSandboxPolicy,
@@ -779,5 +780,61 @@ describe('sandbox violations', () => {
     expect(text).toContain('file-read-data')
     expect(text).toContain('agent.ts')
     expect(text).toContain(SANDBOX_POLICY_FILENAME)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Which root the boundary is drawn around
+// ---------------------------------------------------------------------------
+
+describe('which root the boundary is drawn around', () => {
+  /*
+    The clone root used to arrive as a working directory and nothing named it.
+    These tests are the two halves of fixing that: the root is checked before a
+    Sandbox is established for it, and every entry in the policy is built from
+    the root it was *given* rather than from the process's own cwd.
+
+    See docs/adr/0012-the-clone-root-is-an-input.md and clone-root.ts.
+  */
+
+  test('a Sandbox is never established for a directory that is not there', async () => {
+    // The failure this replaces: a policy generated for a moved checkout, and a
+    // Sandbox reported available for a directory that no longer existed.
+    await expect(establishSandbox({ cloneRoot: '/Users/dev/moved-away-1234' })).rejects.toThrow(
+      /no directory at \/Users\/dev\/moved-away-1234/,
+    )
+  })
+
+  test('the root is checked before the platform is, so the reason is the root', async () => {
+    // Ordering matters for the message. On a platform srt does not support, a
+    // root varnick cannot use must still be reported as the root — the
+    // developer fixes the path, not the operating system.
+    await expect(establishSandbox({ cloneRoot: 'relative/clone' })).rejects.toThrow(
+      /not an absolute path/,
+    )
+  })
+
+  test('the Core/Userspace write boundary is drawn around the root it was given', () => {
+    // ADR-0002's boundary, per root. Two roots on one machine get two
+    // boundaries, and neither of them is the process's working directory.
+    const one = sandboxPolicyFor({ cloneRoot: '/opt/a', homeDir: HOME, tmpDir: TMP })
+    const two = sandboxPolicyFor({ cloneRoot: '/opt/b', homeDir: HOME, tmpDir: TMP })
+
+    expect(one.filesystem.denyWrite).toContain('/opt/a/packages/core/**')
+    expect(one.filesystem.denyWrite).toContain('/opt/a/packages/harness/**')
+    expect(one.filesystem.denyWrite.join(' ')).not.toContain('/opt/b')
+    expect(two.filesystem.denyWrite).toContain('/opt/b/packages/core/**')
+    expect(two.filesystem.denyWrite.join(' ')).not.toContain('/opt/a')
+
+    // And the writable tree is that root, never the one varnick was built from.
+    expect(one.filesystem.allowWrite).toContain('/opt/a')
+    expect(one.filesystem.allowWrite).not.toContain(process.cwd())
+  })
+
+  test('a second root cannot write the first', () => {
+    // The half of "two roots cannot reach each other" that this policy does
+    // settle. Reads are the half it does not — see ADR-0012.
+    const second = sandboxPolicyFor({ cloneRoot: '/opt/b', homeDir: HOME, tmpDir: TMP })
+    expect(second.filesystem.allowWrite.some((path) => path.startsWith('/opt/a'))).toBe(false)
   })
 })

@@ -9,7 +9,18 @@
 
 import type { SurfaceDescriptor } from './domain.ts'
 
-/** Where Surfaces live, relative to the clone root. */
+/**
+ * Where Surfaces live, relative to a clone root.
+ *
+ * *Which* root is not this module's to say and never was — this half takes the
+ * scan as an argument. It matters more than it used to: since ticket 28 the
+ * clone the agent works in is chosen at launch, and the record of Surfaces this
+ * path is joined onto is Vite's, produced at transform time from the root
+ * varnick was **built** from. Those are the same directory under `bun tauri
+ * dev` and need not be. See actors/surface-loader.ts, which is where the scan
+ * comes from and where that limit is stated, and
+ * docs/adr/0012-the-clone-root-is-an-input.md.
+ */
 export const SURFACES_DIR = 'packages/userspace/surfaces'
 
 /**

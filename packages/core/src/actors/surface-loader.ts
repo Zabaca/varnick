@@ -22,6 +22,27 @@ import type { SurfaceDescriptor } from '../domain.ts'
  * is a Vite construct and is `undefined` under bun. The half that can be tested
  * headlessly is in surfaces.ts, which is why that file takes the record as an
  * argument instead of reaching for one.
+ *
+ * ## Which root this names, and the one it cannot
+ *
+ * **The root varnick was built from.** The glob below is relative to *this
+ * file*, and Vite resolves it at transform time — so the Surfaces in the window
+ * are the ones in the tree the renderer bundle was produced from, decided before
+ * the process started and not reachable from a value at run time.
+ *
+ * That was invisible while there was one clone root. Since ticket 28 there can
+ * be two, and this is the one subsystem of the four that does not follow the
+ * chosen one: point `VARNICK_CLONE_ROOT` at another clone and the agent writes
+ * Surfaces into *that* tree while the window keeps showing this one's. Named
+ * here rather than left to be discovered, and recorded as open in
+ * docs/adr/0012-the-clone-root-is-an-input.md — it is the same seam ADR-0008
+ * already calls unsolved for packaging, because both are "varnick's own code
+ * resolves relative to the repository it was built in".
+ *
+ * Closing it means loading Userspace modules from a path decided at run time,
+ * which is a different loader and not a bigger glob: `import.meta.glob` cannot
+ * take a variable, and ADR-0004 requires every Surface import stay dynamic and
+ * individually catchable.
  */
 const FOUND = discoverFrom(
   import.meta.glob('../../../userspace/surfaces/*/index.tsx') as Record<

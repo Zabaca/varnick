@@ -53,6 +53,22 @@ pub const ENTRY_VAR: &str = "VARNICK_HARNESS_ENTRY";
 /// The environment variable that names the runner. `bun` unless told otherwise.
 pub const RUNNER_VAR: &str = "VARNICK_HARNESS_RUNNER";
 
+/// The environment variable that chooses the clone the agent works in.
+///
+/// The third of the three, and the one that was missing. `VARNICK_HARNESS_ENTRY`
+/// says which script the runtime runs and `VARNICK_HARNESS_RUNNER` says what
+/// runs it; until ticket 28 nothing said which tree the agent works in, because
+/// nothing had ever chosen it — see {@link clone_root}.
+///
+/// Read here and nowhere else. This process resolves it once, validates it, and
+/// hands the answer to the runtime as an argument; the runtime does not read the
+/// variable a second time. Two readers of one variable are two answers waiting
+/// to disagree, and the Sandbox and the Session mirror have to be about the same
+/// directory. Mirrored as `CLONE_ROOT_ENV_VAR` in
+/// packages/harness/src/clone-root.ts, where it is a literal because TypeScript
+/// cannot read this one.
+pub const CLONE_ROOT_VAR: &str = "VARNICK_CLONE_ROOT";
+
 /// Why a call produced no answer.
 ///
 /// Mirrored as `HarnessFailure` in packages/harness/src/bridge.ts. A tag, not a
@@ -206,11 +222,69 @@ pub fn runtime_entry(override_: Option<String>) -> PathBuf {
 }
 
 /// The repository root, as it was when this crate was compiled.
+///
+/// `env!` is a compile-time macro, so this is a literal frozen into the binary
+/// when `cargo build` ran — it appears twice in `target/debug/varnick`. It is
+/// **not** where the process is run: launch the binary from anywhere and it
+/// still names the machine it was built on. The two coincide in development only
+/// because `bun tauri dev` is `cargo run`, which recompiles in the checkout
+/// every time.
+///
+/// That is right for varnick's *own* code, which is what {@link runtime_entry}
+/// uses it for and what ADR-0008 records as unsolved for packaging. It was
+/// wrong for the clone the agent works in, which is a separate question with a
+/// separate answer — see {@link clone_root}.
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// The clone the agent works in.
+///
+/// The one function that says where the agent works and why. Until ticket 28
+/// there was none: this host spawned the runtime with
+/// `.current_dir(project_root())`, `runtime.ts` called `establishSandbox()` with
+/// no argument, and `sandbox.ts` fell back to `process.cwd()` — four hops, no
+/// name, and the answer was a path baked into the binary rather than one anybody
+/// chose. See docs/adr/0012-the-clone-root-is-an-input.md.
+///
+/// The compile-time constant stays the default, deliberately. A developer
+/// running `bun tauri dev` in a checkout gets exactly what they got before, and
+/// {@link CLONE_ROOT_VAR} is how somebody says otherwise.
+pub fn clone_root(override_: Option<String>) -> PathBuf {
+    match override_ {
+        Some(path) => PathBuf::from(path),
+        None => project_root(),
+    }
+}
+
+/// The root, checked, or the sentence a developer needs instead.
+///
+/// Checked *here*, before the spawn, and again in the runtime before a Sandbox
+/// is established. Not redundant: they guard different things. `Command` with a
+/// `current_dir` that does not exist fails with a bare io error this host can
+/// only report as `no-runtime`, which names nothing — and the runtime's own
+/// check is the one that keeps `establishSandbox` honest when it is called from
+/// a test or by hand, where this host is not involved at all.
+///
+/// A `refused` rather than a tag, because this is the one host-side failure
+/// whose detail is worth reading: the fix is a path, and the message has to
+/// carry it. Nothing secret can be in it — it is a directory a developer typed
+/// into {@link CLONE_ROOT_VAR}, or the build path of this binary.
+fn checked_clone_root(root: PathBuf) -> Result<PathBuf, Failure> {
+    if root.is_dir() {
+        return Ok(root);
+    }
+
+    Err(Failure::refused(format!(
+        "There is no directory at {}, so there is nothing for the agent to work in. \
+         Set {} to the clone varnick should work in, or — if it is unset — check that \
+         the clone this build came from has not been moved or deleted.",
+        root.display(),
+        CLONE_ROOT_VAR
+    )))
 }
 
 /// The runtime process and the two pipes that reach it.
@@ -332,10 +406,23 @@ fn exchange(channel: &mut Channel, id: u64, request: &Value) -> Result<Value, Fa
 }
 
 fn start_runtime() -> Result<Channel, Failure> {
+    // Resolved and checked before anything is spawned. A root that is not there
+    // used to become a Sandbox established for a directory that no longer
+    // existed; now it is a refusal naming the path.
+    let root = checked_clone_root(clone_root(std::env::var(CLONE_ROOT_VAR).ok()))?;
+
     let mut child = Command::new(runtime_runner(std::env::var(RUNNER_VAR).ok()))
+        // Two paths, and they are two different questions. The entry is where
+        // varnick's own code is — the build path, which ADR-0008 records as
+        // unsolved for packaging. The argument after it is the clone the agent
+        // works in, which is now a choice.
         .arg(runtime_entry(std::env::var(ENTRY_VAR).ok()))
-        // The Sandbox is generated for the clone the runtime runs in.
-        .current_dir(project_root())
+        .arg(&root)
+        // Still set, and no longer load-bearing. The runtime reads its root from
+        // the argument above; this only keeps relative resolution inside the
+        // runtime agreeing with it. Nothing downstream infers the clone from it
+        // any more — that inference was ticket 28.
+        .current_dir(&root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         // stdout is the wire. Diagnostics go to the terminal varnick was
@@ -518,7 +605,10 @@ pub fn harness_call(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_reply, encode_call, route_of, runtime_entry, runtime_runner, Failure, Route};
+    use super::{
+        checked_clone_root, clone_root, decode_reply, encode_call, route_of, runtime_entry,
+        runtime_runner, Failure, PathBuf, Route, CLONE_ROOT_VAR,
+    };
     use serde_json::json;
 
     #[test]
@@ -741,5 +831,60 @@ mod tests {
             runtime_entry(Some("/elsewhere/serve.ts".into())),
             std::path::Path::new("/elsewhere/serve.ts")
         );
+    }
+
+    #[test]
+    fn the_clone_root_is_the_build_path_unless_the_environment_names_another() {
+        /*
+          Ticket 28. The default has to stay exactly what it was — a developer
+          running `bun tauri dev` in a checkout sees no change — and there has to
+          be a way to say otherwise, which there was not.
+
+          The default is asserted against `runtime_entry(None)` rather than
+          against a literal, because both come from the same compile-time
+          constant and the point of the test is that they still do.
+        */
+        assert!(runtime_entry(None).starts_with(clone_root(None)));
+        assert_eq!(
+            clone_root(Some("/opt/work/varnick".into())),
+            std::path::Path::new("/opt/work/varnick")
+        );
+    }
+
+    #[test]
+    fn a_clone_root_that_is_not_there_is_refused_by_name() {
+        /*
+          The ticket's own criterion, and the failure it replaces. Moving a
+          checkout after building used to produce a Sandbox established for a
+          directory that no longer existed; the runtime's own error named
+          `sandbox-policy.json` inside it, which is a file nobody created in a
+          directory nobody has.
+
+          A `refused` carrying the path, not a tag: the fix *is* the path.
+        */
+        let refusal = checked_clone_root(PathBuf::from("/Users/dev/moved-away-1234"))
+            .expect_err("a root that is not there cannot be used");
+        assert_eq!(refusal.failure, "refused");
+        let detail = refusal.detail.expect("the refusal names the path");
+        assert!(detail.contains("/Users/dev/moved-away-1234"));
+        assert!(detail.contains(CLONE_ROOT_VAR));
+    }
+
+    #[test]
+    fn a_file_is_not_a_clone_root() {
+        // A path that exists is not enough. `Command::current_dir` on a file
+        // fails inside the spawn, where the only thing this host can say is
+        // `no-runtime`.
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        assert!(file.is_file(), "the fixture has to be a real file");
+        assert!(checked_clone_root(file).is_err());
+    }
+
+    #[test]
+    fn the_root_this_build_defaults_to_is_a_directory_that_is_there() {
+        // The default path has to survive its own check, or every launch of a
+        // fresh build would refuse. This is also the regression guard on
+        // `project_root()` losing its `.parent()`.
+        assert!(checked_clone_root(clone_root(None)).is_ok());
     }
 }
