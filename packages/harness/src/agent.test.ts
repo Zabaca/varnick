@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  developerToolsBin,
   AGENT_ENTRY_RELATIVE_PATH,
   CLAUDE_CONFIG_DIR_ENV_VAR,
   CLAUDE_CONFIG_RELATIVE_PATH,
@@ -989,5 +990,49 @@ describe('the control channel refuses what it does not understand', () => {
     // A turn that was sent and never answered is the worst available state:
     // `sending` for ever, with nothing to retry or dismiss.
     expect(written).toEqual([{ kind: 'failed', turnId: 't1', failure: 'authentication' }])
+  })
+})
+
+describe('the real git, ahead of the shim', () => {
+  /*
+    `/usr/bin/git` is not git. It is an xcode-select shim that reads the symlink
+    `/var/select/developer_dir` to find the real binary, and that link is in a
+    directory the Sandbox denies. Measured under a deny-by-default read policy:
+    the shim exits 1 with "unable to read data link", the real binary exits 0.
+    Allowing the link's *target* does not help — the denial is of traversing the
+    link — so the fix is PATH, which costs the boundary nothing.
+
+    It matters under the shipped policy too: reads are allow-by-default there, so
+    the shim resolves today only because nothing denies the link.
+  */
+
+  test('the toolchain goes in front of PATH, where /usr/bin already is', () => {
+    const env = agentEnvironment(
+      { PATH: '/usr/bin:/bin' },
+      { cloneRoot: CLONE, inherit: false, toolsBin: '/toolchain/usr/bin' },
+    )
+    expect(env.PATH).toBe('/toolchain/usr/bin:/usr/bin:/bin')
+  })
+
+  test('a machine with no toolchain keeps the PATH it had', () => {
+    // Nothing to lose: no toolchain means no working git to have broken.
+    const env = agentEnvironment({ PATH: '/usr/bin' }, { cloneRoot: CLONE, inherit: false, toolsBin: null })
+    expect(env.PATH).toBe('/usr/bin')
+  })
+
+  test('it looks for git itself, not merely for the directory', () => {
+    // A toolchain directory that exists without git in it is not a toolchain,
+    // and putting it first would shadow nothing while claiming to fix this.
+    const seen: string[] = []
+    const found = developerToolsBin((path) => {
+      seen.push(path)
+      return path === '/Library/Developer/CommandLineTools/usr/bin/git'
+    })
+    expect(found).toBe('/Library/Developer/CommandLineTools/usr/bin')
+    expect(seen.every((path) => path.endsWith('/git'))).toBe(true)
+  })
+
+  test('neither location present is null rather than a guess', () => {
+    expect(developerToolsBin(() => false)).toBe(null)
   })
 })

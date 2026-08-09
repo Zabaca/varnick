@@ -41,6 +41,7 @@
  * takes a flag to inherit. See ADR-0010, and `agentEnvironment` below.
  */
 
+import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { credentialRejection } from './credentials.ts'
@@ -255,6 +256,49 @@ export interface AgentEnvironmentInput {
   readonly cloneRoot: string
   /** True when {@link INHERIT_CLAUDE_CONFIG_ENV_VAR} was set. */
   readonly inherit: boolean
+  /**
+   * The real developer toolchain's `bin`, prepended to `PATH`. Null when there
+   * is none — see {@link developerToolsBin}.
+   */
+  readonly toolsBin?: string | null
+}
+
+/**
+ * Where the real `git` is, as opposed to where `git` appears to be.
+ *
+ * `/usr/bin/git` on macOS is not git. It is an `xcode-select` shim that finds
+ * the real binary by reading the symlink `/var/select/developer_dir`, and that
+ * link lives in a directory the Sandbox denies. Measured under a policy that
+ * denies reads by default:
+ *
+ * ```
+ * /usr/bin/git --version                            exit 1  xcode-select: unable to read data link
+ * <toolchain>/usr/bin/git --version                 exit 0  git version 2.50.1 (Apple Git-155)
+ * ```
+ *
+ * The denial is of *traversing* the link, so allowing its target does not fix
+ * it — `/private/var`, `/private/var/select` and the toolchain directory were
+ * each tried and each failed. Putting the real binary ahead of the shim on
+ * `PATH` does, and costs the boundary nothing.
+ *
+ * **This matters under the shipped policy too, which is why it is not filed
+ * with the deny-by-default work.** Reads are currently allow-by-default, so the
+ * shim resolves and `git` works — but only because nothing denies the link. An
+ * agent's `git` should not depend on the read boundary being the permissive
+ * one; ticket 18 may invert it, and this is one thing that then does not break.
+ *
+ * Both locations are checked because a machine with full Xcode has neither the
+ * Command Line Tools path nor a guarantee about ordering. `null` means neither
+ * exists, and `PATH` is left exactly as it was — a machine with no toolchain
+ * had no working `git` to lose.
+ */
+export const DEVELOPER_TOOLCHAIN_BINS = [
+  '/Library/Developer/CommandLineTools/usr/bin',
+  '/Applications/Xcode.app/Contents/Developer/usr/bin',
+] as const
+
+export function developerToolsBin(exists: (path: string) => boolean): string | null {
+  return DEVELOPER_TOOLCHAIN_BINS.find((bin) => exists(join(bin, 'git'))) ?? null
 }
 
 /**
@@ -299,6 +343,16 @@ export function agentEnvironment(
   }
 
   environment[CLAUDE_CONFIG_DIR_ENV_VAR] = claudeConfigDir(input.cloneRoot)
+
+  // The real toolchain ahead of the shim, so `git` is git. See
+  // {@link developerToolsBin} for what the shim does and why allowing its
+  // target is not the fix. Prepended rather than appended: /usr/bin is already
+  // on PATH and would otherwise win.
+  if (input.toolsBin) {
+    const path = environment.PATH
+    environment.PATH = path ? `${input.toolsBin}:${path}` : input.toolsBin
+  }
+
   return environment
 }
 
@@ -1076,7 +1130,11 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       // ADR-0010. Isolated by default; `VARNICK_INHERIT_CLAUDE_CONFIG=1` is the
       // flag out. `env` replaces the subprocess environment outright, which is
       // why agentEnvironment returns the whole of it rather than an overlay.
-      env: agentEnvironment(process.env, { cloneRoot, inherit }),
+      env: agentEnvironment(process.env, {
+        cloneRoot,
+        inherit,
+        toolsBin: developerToolsBin(existsSync),
+      }),
       hooks: {
         PostCompact: [
           {
