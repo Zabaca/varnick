@@ -63,6 +63,7 @@ import {
   beginCompaction,
   beginTurn,
   COMPACT_COMMAND,
+  CLEAR_COMMAND,
   encodeTurnEvent,
   normaliseCommands,
   parseControlRequest,
@@ -1203,6 +1204,24 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     // channel is a way in rather than a robustness feature.
     if (request === null) return
     if (request.kind === 'run-turn') return start(request)
+    /*
+      Forget the conversation, on the Session that is already open.
+
+      Fire and forget, and the confirmation is a fact rather than a promise:
+      the CLI answers with `conversation_reset` carrying a new id, which is
+      recorded below and shown in the window's runtime panel. A clear that did
+      not happen leaves the old id on screen — which is the difference between
+      an empty transcript that means something and one that does not.
+    */
+    if (request.kind === 'clear') {
+      try {
+        session.prompt(CLEAR_COMMAND)
+      } catch {
+        // Nothing to fail here: there is no Turn to report against, and the
+        // panel still shows the conversation this agent is actually in.
+      }
+      return
+    }
     if (request.kind === 'compact') return compact(request)
     if (request.kind === 'describe-secrets') {
       // Handed straight over and never kept here. This loop has no use for the
@@ -1270,6 +1289,20 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
         pushes the whole list and says to replace the cached one, which is what
         this does — a merge would go on offering a skill that has gone.
       */
+      /*
+        The conversation was reset — by `/clear`, or by anything else the CLI
+        does it for. The pointer has to follow, or the next launch resumes the
+        conversation this one was told to forget.
+      */
+      if (sdk?.type === 'conversation_reset') {
+        const fresh = (message as { new_conversation_id?: unknown }).new_conversation_id
+        if (typeof fresh === 'string' && fresh.length > 0) {
+          input.sessionStarted?.(fresh)
+          if (runtime !== null) runtime = { ...runtime, sessionId: fresh }
+        }
+        continue
+      }
+
       if (sdk?.type === 'system' && sdk.subtype === 'commands_changed') {
         const pushed = normaliseCommands((message as { commands?: unknown }).commands)
         commands = pushed
@@ -1407,6 +1440,27 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       // `undefined` on a key the CLI checks for presence is the kind of thing
       // that works until it does not.
       ...(resuming === null ? {} : { resume: resuming }),
+      /*
+        Claude Code's own system prompt, asked for rather than assumed.
+
+        **The agent did not know what directory it was in.** Not confused —
+        uninformed: it ran `pwd` because that was genuinely the only way to find
+        out. The SDK does not give you Claude Code's prompt by default; it is a
+        preset you opt into, and it is the only thing that carries the working
+        directory, the memory path and git status ("per-user dynamic sections",
+        in the SDK's own words). Omitting it left an agent with no idea where it
+        was standing, in a product whose whole subject is a clone.
+
+        Not the same question as `settingSources`, which stays `[]`. That is
+        ADR-0010's isolation and it is why `CLAUDE.md` is not loaded as a memory
+        file: memory files come with the project source, and so do hooks, which
+        the agent can write. This is a prompt varnick asks the CLI for — nothing
+        agent-authored runs because of it, and the boundary does not move.
+
+        `excludeDynamicSections` is deliberately left off: stripping the working
+        directory back out is the whole of what this fixes.
+      */
+      systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
       // What makes an answer arrive in pieces. Without it the SDK reports one
       // assembled message when the Turn is over, and "working" would be
       // indistinguishable from "hung" for the whole of it.

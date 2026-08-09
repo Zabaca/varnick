@@ -14,6 +14,7 @@ import {
   type SeedControls,
   type TurnObserver,
 } from './actors/index.ts'
+import { liveForgetAgentContext } from './actors/live.ts'
 import { loadUserspaceSurface } from './actors/surface-loader.ts'
 import { regionOf } from './domain.ts'
 import { seedPolicy } from './data/seed.ts'
@@ -138,6 +139,13 @@ export function useHarness(
               persistSession: seeds.persistSession,
               compactSession: seeds.compactSession,
             },
+            /*
+              The other half of a clear, supplied at the same seam the actors
+              are. A seeded run keeps the machine's no-op: there is no agent to
+              tell, and a seeded clear that reached for the bridge would be a
+              browser tab calling a host it does not have.
+            */
+            actions: mode === 'live' ? { forgetAgentContext: () => void liveForgetAgentContext() } : {},
           }),
         },
       }),

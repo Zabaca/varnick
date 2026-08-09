@@ -134,6 +134,22 @@ export const sessionMachine = setup({
   },
   actions: {
     /**
+     * Tell the running agent to forget the conversation too.
+     *
+     * **A stub here, and provided at the same seam the actors are.** ADR-0001
+     * keeps this machine free of implementations: it declares what has to
+     * happen and the shell supplies how, which is what lets one machine run
+     * frozen, seeded and live. A no-op is the honest default — the states page
+     * has no agent to tell.
+     *
+     * It exists because clearing was half a clear. This machine emptied the
+     * transcript and nothing said anything to the agent, which went on holding
+     * every word of it: an empty window over a full memory. That was invisible
+     * while the agent forgot on every launch anyway; resume made the memory
+     * real and the gap visible.
+     */
+    forgetAgentContext: () => {},
+    /**
      * A Turn boundary — the moment the transcript stops changing.
      *
      * Raised rather than left to a caller, so the mirror is written by the
@@ -216,15 +232,20 @@ export const sessionMachine = setup({
         idle: {
           on: {
           CLEAR: {
-            actions: assign({
-              messages: [],
-              partial: '',
-              turnError: null,
-              compactError: null,
-              draft: '',
-              menuIndex: 0,
-              tokensUsed: 0,
-            }),
+            // The transcript and the agent's memory of it, together. Either one
+            // alone is a window and an agent that disagree about what was said.
+            actions: [
+              assign({
+                messages: [],
+                partial: '',
+                turnError: null,
+                compactError: null,
+                draft: '',
+                menuIndex: 0,
+                tokensUsed: 0,
+              }),
+              'forgetAgentContext',
+            ],
           },
           COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             // Guarded with no fallback: an empty draft is not a refusal worth
@@ -414,15 +435,20 @@ export const sessionMachine = setup({
         failed: {
           on: {
           CLEAR: {
-            actions: assign({
-              messages: [],
-              partial: '',
-              turnError: null,
-              compactError: null,
-              draft: '',
-              menuIndex: 0,
-              tokensUsed: 0,
-            }),
+            // The transcript and the agent's memory of it, together. Either one
+            // alone is a window and an agent that disagree about what was said.
+            actions: [
+              assign({
+                messages: [],
+                partial: '',
+                turnError: null,
+                compactError: null,
+                draft: '',
+                menuIndex: 0,
+                tokensUsed: 0,
+              }),
+              'forgetAgentContext',
+            ],
           },
           COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             RETRY_TURN: 'answering',

@@ -891,6 +891,39 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   actor.stop()
 }
 
+{
+  /*
+    Clearing is two things, and it used to be one.
+
+    The transcript emptied and the agent was told nothing, so the window showed
+    an empty conversation over an agent still holding every word of it. That was
+    invisible while the agent forgot on each launch anyway; resume made the
+    memory real and left the gap on screen.
+
+    Asserted at the seam rather than against a live agent: the machine declares
+    that something must tell the agent, and the shell supplies what. This is the
+    same shape as an actor, and it is testable for the same reason.
+  */
+  let forgotten = 0
+  const actor = createActor(
+    sessionMachine.provide({
+      actions: { forgetAgentContext: () => { forgotten += 1 } },
+      actors: { persistSession: resolves<{ ok: true }, unknown>({ ok: true }) },
+    }),
+    { input: { sessionId: 'clear-1', messages: [{ id: 'm1', role: 'agent', text: 'said something' }] } },
+  ).start()
+
+  check('a conversation starts with something in it', actor.getSnapshot().context.messages.length === 1)
+  actor.send({ type: 'CLEAR' })
+  check('clearing empties the transcript', actor.getSnapshot().context.messages.length === 0)
+  check('clearing also tells the agent to forget', forgotten === 1)
+
+  // The failed turn accepts CLEAR too, and it must clear both halves there as
+  // well — a conversation abandoned after an error is exactly one someone wants
+  // gone from both sides.
+  actor.stop()
+}
+
 // ---------------------------------------------------------------------------
 // The command menu — what a query means
 // ---------------------------------------------------------------------------

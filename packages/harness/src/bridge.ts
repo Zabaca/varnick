@@ -189,6 +189,16 @@ export interface StopAgentRequest {
  * a poll would make `agent.running` mean "running as of a second ago", so this
  * waits instead.
  */
+/**
+ * Forget the conversation the agent is holding.
+ *
+ * The other half of `/clear`, and it carries nothing: what the confined process
+ * runs is a constant in ./turn.ts, so there is no field here for a prompt.
+ */
+export interface ClearSessionRequest {
+  readonly kind: 'clear-session'
+}
+
 export interface AwaitAgentExitRequest {
   readonly kind: 'await-agent-exit'
 }
@@ -305,6 +315,7 @@ export type HarnessRequest =
   | RunTurnRequest
   | NextTurnEventRequest
   | InterruptTurnRequest
+  | ClearSessionRequest
   | CompactSessionRequest
 
 /** What each call answers with, on success. */
@@ -332,6 +343,7 @@ export interface HarnessAnswers {
   'run-turn': { readonly ok: true }
   'next-turn-event': { readonly event: TurnEvent | null }
   'interrupt-turn': { readonly ok: true }
+  'clear-session': { readonly ok: true }
   'compact-session': { readonly ok: true }
 }
 
@@ -617,6 +629,7 @@ export async function callHarness<R extends HarnessRequest>(
     case 'run-turn':
     case 'interrupt-turn':
     case 'compact-session':
+    case 'clear-session':
       return okAnswer(answer) as HarnessAnswers[R['kind']]
   }
 }

@@ -531,6 +531,22 @@ export async function liveAgentExit(): Promise<string> {
  * behind it would keep running, which would make `agent.down` a claim about the
  * UI rather than about the machine's world.
  */
+export async function liveForgetAgentContext(): Promise<void> {
+  /*
+    The other half of `/clear`.
+
+    Fire and forget by construction: the machine has already emptied the
+    transcript, and there is no state waiting on this. What confirms it is a
+    fact rather than a promise — the CLI answers `conversation_reset` with a new
+    id, which the runtime panel shows. A clear that did not reach the agent
+    leaves the old id on screen.
+
+    A failure is swallowed for the same reason: no agent running is a perfectly
+    ordinary reason for this to do nothing, and it is not a failed clear.
+  */
+  await callHarness({ kind: 'clear-session' }).catch(() => {})
+}
+
 export async function liveStopAgent(): Promise<void> {
   await callHarness({ kind: 'stop-agent' })
 }
