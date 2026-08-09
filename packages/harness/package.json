@@ -10,6 +10,7 @@
     "./runtime": "./src/runtime.ts",
     "./sandbox": "./src/sandbox.ts",
     "./credentials": "./src/credentials.ts",
+    "./fence": "./src/fence.ts",
     "./secret-resolution": "./src/secret-resolution.ts",
     "./secrets": "./src/secrets.ts",
     "./session": "./src/session.ts",

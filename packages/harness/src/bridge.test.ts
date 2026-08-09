@@ -72,6 +72,7 @@ describe('a missing host is a value to branch on, not an exception to catch', ()
       { kind: 'next-turn-event' },
       { kind: 'interrupt-turn', turnId: 't1' },
       { kind: 'list-worktrees' },
+      { kind: 'read-worktree-diff', path: '/w/one' },
     ]
     for (const request of requests) {
       expect((await failureOf(request, null)).failure).toBe('no-host')
@@ -369,6 +370,35 @@ describe('the answer is rebuilt, never passed through', () => {
     ]
     for (const bridge of unreadable) {
       expect((await failureOf({ kind: 'list-worktrees' }, bridge)).failure).toBe('malformed')
+    }
+  })
+
+  test('a diff comes back as the text git printed and nothing else', async () => {
+    const hunks = '@@ -1 +1 @@\n-was\n+is\n'
+    const answer = await callHarness(
+      { kind: 'read-worktree-diff', path: '/w/one' },
+      answers({ diff: hunks, token: LOOKS_LIKE_A_KEY }),
+    )
+    expect(answer).toEqual({ diff: hunks })
+    expect(JSON.stringify(answer)).not.toContain(LOOKS_LIKE_A_KEY)
+  })
+
+  test('an empty diff is an answer, because a commit can change nothing tracked', async () => {
+    expect(await callHarness({ kind: 'read-worktree-diff', path: '/w/one' }, answers({ diff: '' }))).toEqual({
+      diff: '',
+    })
+  })
+
+  test('a diff the bridge cannot read is malformed rather than an empty one', async () => {
+    /*
+      The same distinction the listing keeps. An unreadable answer flattened to
+      `''` would reach `worktreeDiff.loaded` with no files in it — a view saying
+      this branch changed nothing, over a read that did not happen.
+    */
+    for (const bridge of [answers({}), answers({ diff: 7 }), answers(undefined), answers(null)]) {
+      expect((await failureOf({ kind: 'read-worktree-diff', path: '/w/one' }, bridge)).failure).toBe(
+        'malformed',
+      )
     }
   })
 })

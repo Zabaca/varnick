@@ -3,6 +3,7 @@ import { useMachine } from '@xstate/react'
 import { fromPromise, type AnyActorRef, type InspectionEvent } from 'xstate'
 import { harnessMachine, type HarnessEvent } from './machines/harness.ts'
 import { surfaceMachine } from './machines/surface.ts'
+import { worktreeDiffMachine } from './machines/worktree-diff.ts'
 import { sessionMachine, type SessionInput } from './machines/session.ts'
 import {
   actorsFor,
@@ -133,6 +134,9 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
           spawnAgent: seeds.spawnAgent,
           listWorktrees: seeds.listWorktrees,
           surface: surfaceMachine.provide({ actors: { loadSurface } }),
+          worktreeDiff: worktreeDiffMachine.provide({
+            actors: { readWorktreeDiff: seeds.readWorktreeDiff },
+          }),
           session: sessionMachine.provide({
             actors: {
               runTurn: seeds.runTurn,

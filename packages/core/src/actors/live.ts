@@ -433,6 +433,26 @@ export function liveActors(
       Record<string, never>
     >(() => callHarness({ kind: 'list-worktrees' })),
 
+    /*
+      Real, and the same actor one row down: git, host-side, for the one
+      worktree a developer opened.
+
+      The call carries which worktree and nothing else — no ref, no range, no
+      command. The host compares that path against git's own listing and uses
+      the ref git printed, so nothing composed on this side chooses what is
+      read; see packages/harness/src/worktrees.ts, where that rule lives and is
+      asserted.
+
+      What comes back is the text git printed. Core parses it for the view
+      (../diff.ts) rather than being handed a parsed shape, so nothing between
+      git and the screen can drop a hunk while still answering the call — which
+      matters more here than anywhere else on this surface, because this is the
+      view a widening has to get past.
+    */
+    readWorktreeDiff: fromPromise<{ diff: string }, { path: string }>(({ input }) =>
+      callHarness({ kind: 'read-worktree-diff', path: input.path }),
+    ),
+
     // `loadSurface` is deliberately absent from both this list and the seeded
     // one. It has no seeded half in either mode — see actors/index.ts.
   }

@@ -10,6 +10,7 @@ import { ClaudeThinking } from './brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
+import { ReviewPanel, WorktreeDiffView } from './worktree-review.tsx'
 import {
   commandLabel,
   commandArgument,
@@ -137,7 +138,13 @@ export function ChatSurface({
   const session = ctx.session
   // Surfaces run on their own clocks, so one failing has to reach React here or
   // the panel keeps claiming `loading` for a module that gave up.
-  useChildRevision([...ctx.surfaces, ...(session ? [session] : [])])
+  useChildRevision([
+    ...ctx.surfaces,
+    ...(session ? [session] : []),
+    // An open diff runs on its own clock too: without it here, a read that
+    // failed would leave the column claiming to be loading a diff that gave up.
+    ...(ctx.worktreeDiff ? [ctx.worktreeDiff] : []),
+  ])
   const s = session?.getSnapshot()
 
   const agentState = toPath((snapshot.value as Record<string, unknown>).agent)
@@ -374,6 +381,31 @@ export function ChatSurface({
             )}
           </div>
         </div>
+      </div>
+    )
+  }
+
+  /*
+    Reading a Worktree's changes takes the whole surface, for the reason first-run
+    setup does above it rather than as a second answer to the same question.
+
+    A diff is what The Wide Measure Rule is written about — prose caps at 110ch
+    and a diff must not wrap at all — so it takes the widest thing on screen, and
+    a large diff is the normal case here rather than the edge case. Reading four
+    hundred lines of one in the 320px panel beside the chat is not reading it.
+
+    Nothing is lost while it is open. The Session, the agent and the listing are
+    machines this does not touch, so `close` brings the conversation back exactly
+    as it was — which is also why this is a branch in the render rather than a
+    route: a route would be a second place the window can be, and this is one
+    thing a developer is doing with the window they are already in.
+  */
+  if (ctx.worktreeDiff) {
+    return (
+      <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
+        {/* The admission stays. A seeded run invents this diff too. */}
+        <SeededStrip mode={mode} />
+        <WorktreeDiffView diff={ctx.worktreeDiff} snapshot={snapshot} send={send} />
       </div>
     )
   }
@@ -801,6 +833,16 @@ export function ChatSurface({
           style={{ borderLeft: '1px solid var(--rule)' }}
         >
           <RuntimePanel report={ctx.runtime} agentState={agentState} />
+          {/*
+            What is waiting to be merged, under what is running.
+
+            Core's own, like the runtime panel above it, and above the Surfaces
+            rather than below them: a clone with no Surfaces is every clone on
+            its first launch, and *nothing the agent finished should wait
+            unnoticed* is a claim that cannot be made from behind whatever
+            somebody built.
+          */}
+          <ReviewPanel snapshot={snapshot} send={send} />
           {ctx.surfaces.map((ref) => (
             <SurfacePanel
               key={ref.id}

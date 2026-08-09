@@ -62,7 +62,11 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { agentCommand, commandsCachePath } from './agent.ts'
-import { listPendingWorktrees, type PendingWorktree } from './worktrees.ts'
+import {
+  listPendingWorktrees,
+  readPendingWorktreeDiff,
+  type PendingWorktree,
+} from './worktrees.ts'
 import { readLines } from './framing.ts'
 import {
   establishSandbox,
@@ -151,6 +155,20 @@ export interface HarnessCapabilities {
    * `review.empty` against `review.listFailed` in the Harness machine.
    */
   listWorktrees(): Promise<readonly PendingWorktree[]>
+  /**
+   * Everything one pending Worktree changed, as git printed it.
+   *
+   * The contents behind one row of the listing, read when a developer opens it,
+   * and here for the same two reasons: it needs a subprocess, and it must not be
+   * the agent's account of its own work. The list is what makes a branch
+   * visible; this is what makes a widening inside one visible, so of the two
+   * this is the one that must not be composed.
+   *
+   * `path` is a **selector against git's own listing**, not an argument git is
+   * handed — the whole of that rule is in ./worktrees.ts, and a path matching no
+   * pending worktree **throws** rather than reading something else.
+   */
+  readWorktreeDiff(path: string): Promise<string>
 }
 
 export interface HostCapabilitiesInput {
@@ -292,6 +310,11 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
     },
 
     listWorktrees: async () => listPendingWorktrees({ git: gitIn(cloneRoot), cloneRoot }),
+
+    // The clone is this process's, as it is for the listing; the path names
+    // which of the worktrees git reported in it. Nothing chooses the tree.
+    readWorktreeDiff: async (path) =>
+      readPendingWorktreeDiff({ git: gitIn(cloneRoot), cloneRoot, path }),
   }
 }
 
@@ -439,6 +462,21 @@ async function answer(
       // survives a build the agent just broke, which is the case resume exists
       // for. See docs/adr/0009-resume-reads-the-mirror.md.
       return { ...restoredTranscript(await capabilities.readSession(sessionId)) }
+    }
+
+    case 'read-worktree-diff': {
+      const { path } = request as Record<string, unknown>
+      /*
+        Refused rather than defaulted. There is no worktree this could sensibly
+        be about when none was named, and picking one — the first pending, the
+        most recent — would be the host deciding what a developer is reviewing.
+      */
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error('A diff is of one worktree, and this request named none.')
+      }
+      // Whether that path is one anybody may open is decided by ./worktrees.ts
+      // against git's own listing, and a path that is not throws from there.
+      return { diff: await capabilities.readWorktreeDiff(path) }
     }
 
     case 'list-worktrees': {

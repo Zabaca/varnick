@@ -50,6 +50,7 @@ const capabilities = (over: Partial<HarnessCapabilities> = {}): HarnessCapabilit
   readCommands: async () => [],
   readSecretNames: async () => [],
   listWorktrees: async () => [],
+  readWorktreeDiff: async () => '',
   ...over,
 })
 

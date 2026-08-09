@@ -46,6 +46,7 @@ export const ACTOR_NAMES = [
   'runTurn',
   'persistSession',
   'listWorktrees',
+  'readWorktreeDiff',
   'loadSurface',
 ] as const
 export type ActorName = (typeof ACTOR_NAMES)[number]

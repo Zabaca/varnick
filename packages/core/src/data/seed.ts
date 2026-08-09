@@ -48,3 +48,71 @@ export const brokenSurfaceErrorFor = (modulePath: string) =>
 
 /** A Surface module that will not compile — the case ADR-0004 exists for. */
 export const brokenSurfaceError = brokenSurfaceErrorFor(seedSurfaces[2]!.modulePath)
+
+/**
+ * A branch's changes, as git prints them.
+ *
+ * Made up, and visibly so — like the mint card's URL beside it. Nothing on the
+ * states page runs git, and a seed that shelled out would make "design mode"
+ * mean "whatever this machine happens to have checked out".
+ *
+ * What it is *shaped* like is not arbitrary. It touches the Fence and Core in
+ * one branch, because the distinction the diff view exists to draw is invisible
+ * in a diff where every file is the same kind of file — and the Fence hunk is
+ * the second one rather than the first, because a marking that only works when
+ * the thing marked is at the top is a marking that does not work.
+ *
+ * The change it depicts is the one worth being able to recognise: a line added
+ * to the Sandbox policy generator that widens what the agent may write. That is
+ * three characters of diff inside a file of ordinary refactoring, and the whole
+ * argument for this view is that a developer sees it.
+ */
+export const seedWorktreeDiff = [
+  'diff --git a/packages/core/src/pages/DesignedPage.tsx b/packages/core/src/pages/DesignedPage.tsx',
+  'index 3c1f2a1..9b7e004 100644',
+  '--- a/packages/core/src/pages/DesignedPage.tsx',
+  '+++ b/packages/core/src/pages/DesignedPage.tsx',
+  '@@ -27,9 +27,10 @@ export function DesignedPage() {',
+  '   const mode = resolveActorMode()',
+  '   const resume = useResume(mode)',
+  ' ',
+  '-  if (resume.status === "reading") {',
+  '-    return <StartupNote text="Reading the conversation…" />',
+  '-  }',
+  '+  if (resume.status === "reading") return <StartupNote text="Reading the conversation…" />',
+  '+',
+  '+  // One line, so the three branches below read as three answers to one question',
+  '+  // rather than as a paragraph with an early return buried in it.',
+  ' ',
+  '   return <LiveChat mode={mode} sessionInput={resume.input} redacted={resume.redacted} />',
+  ' }',
+  'diff --git a/packages/harness/src/sandbox.ts b/packages/harness/src/sandbox.ts',
+  'index 5a2b1c9..7d4e88f 100644',
+  '--- a/packages/harness/src/sandbox.ts',
+  '+++ b/packages/harness/src/sandbox.ts',
+  '@@ -88,7 +88,7 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {',
+  '     denyWrite: [',
+  '       `${root}/packages/core/**`,',
+  '-      `${root}/packages/harness/**`,',
+  '+      // temporarily relaxed while the worktree flow is being built',
+  '       `${root}/src-tauri/**`,',
+  '     ],',
+  ' ',
+  '@@ -140,6 +140,7 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {',
+  '     allowedHosts: [...DEFAULT_ALLOWED_HOSTS, ...(input.allowedHosts ?? [])],',
+  '+    allowLocalBinding: true,',
+  '   }',
+  ' }',
+  '',
+].join('\n')
+
+/**
+ * What a diff that could not be read says.
+ *
+ * git's own phrasing, because that is what reaches this state: the read is three
+ * commands in the developer's own clone, and the reason a card shows has to be
+ * one a developer could actually be looking at. A `failed` card with no message
+ * is not an honest rendering of the state.
+ */
+export const seedWorktreeDiffError =
+  'fatal: bad object HEAD...refs/heads/ticket/48-launch-preview'

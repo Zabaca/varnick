@@ -237,6 +237,27 @@ export interface ListWorktreesRequest {
   readonly kind: 'list-worktrees'
 }
 
+/**
+ * Everything one pending Worktree changed, as a unified diff.
+ *
+ * The contents behind one row of the listing above, asked for when a developer
+ * opens it. Answered by the same runtime for the same reasons, and produced by
+ * git rather than by the agent for a sharper version of the same one: a listing
+ * the agent could shade hides a branch, and a diff the agent could shade hides a
+ * widening inside a branch somebody is about to merge.
+ *
+ * **This is the one call on the review path that carries a field**, and the
+ * field is a selector rather than an argument. `path` is compared against what
+ * `git worktree list` reported and the ref that reaches git's argv is the one
+ * git printed; a path matching no pending worktree produces no diff command at
+ * all. See ./worktrees.ts.
+ */
+export interface ReadWorktreeDiffRequest {
+  readonly kind: 'read-worktree-diff'
+  /** The absolute path of a pending worktree, as the listing reported it. */
+  readonly path: string
+}
+
 export interface AwaitAgentExitRequest {
   readonly kind: 'await-agent-exit'
 }
@@ -342,6 +363,7 @@ export type HarnessRequest =
   | InterruptTurnRequest
   | ReadCommandsRequest
   | ListWorktreesRequest
+  | ReadWorktreeDiffRequest
 
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
@@ -373,6 +395,11 @@ export interface HarnessAnswers {
   // developer opens it; a list that carried every hunk of every branch would
   // read the whole of a large branch before it could draw a row.
   'list-worktrees': { readonly worktrees: readonly PendingWorktree[] }
+  // The hunks of one of them, as git printed them. A string rather than a
+  // parsed shape: what crosses is what git said, and Core parses it for the
+  // view — so nothing between git and the screen can drop a hunk while still
+  // answering the call.
+  'read-worktree-diff': { readonly diff: string }
 }
 
 /**
@@ -650,6 +677,22 @@ function worktreesAnswer(answer: unknown): { worktrees: readonly PendingWorktree
 }
 
 /**
+ * Read one worktree's hunks back.
+ *
+ * Strict for the reason the listing is strict, one step along: an answer this
+ * module could not read, flattened into an empty string, would reach
+ * `worktreeDiff.loaded` with no files in it — a view stating that the branch
+ * about to be merged changed nothing, over a read that did not happen. An empty
+ * diff is a real answer and is kept as one; anything that is not a string is a
+ * failure.
+ */
+function diffAnswer(answer: unknown): { diff: string } {
+  const payload = answer as { diff?: unknown } | null | undefined
+  if (typeof payload?.diff !== 'string') throw new HarnessUnavailable('malformed')
+  return { diff: payload.diff }
+}
+
+/**
  * Ask the host to do one thing.
  *
  * Every path out is either the declared answer or a thrown
@@ -689,6 +732,8 @@ export async function callHarness<R extends HarnessRequest>(
       return mintEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'list-worktrees':
       return worktreesAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'read-worktree-diff':
+      return diffAnswer(answer) as HarnessAnswers[R['kind']]
     case 'check-sandbox':
     case 'store-credential':
     case 'mint-subscription-token':
