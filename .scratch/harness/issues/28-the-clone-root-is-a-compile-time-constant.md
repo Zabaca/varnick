@@ -16,7 +16,15 @@ fn project_root() -> PathBuf {
         .parent()                                // the repo root
 ```
 
-`env!` is a compile-time macro, so that path is frozen into the binary at build time. From there nothing passes it anywhere — it propagates by being a working directory:
+`env!` is a compile-time macro, so that path is frozen into the binary at build time. Confirmed rather than reasoned — the literal appears twice in `src-tauri/target/debug/varnick`:
+
+```
+/Users/uptown/Projects/zabaca/varnick/src-tauri
+```
+
+**It is not where the process is run.** Launch that binary from any directory and it still names the one above. The two coincide in development only because `bun tauri dev` is `cargo run`, which recompiles in the checkout every time, so the build path and the working directory are never different — which is exactly why this has never been noticed.
+
+The direction is also the reverse of the intuition: the host does not *read* a working directory, it **sets** one. From there nothing passes the root anywhere — it propagates by being that working directory:
 
 1. `bridge.rs` spawns the Harness runtime with `.current_dir(project_root())`.
 2. `runtime.ts` calls `establishSandbox()` with **no argument**.
