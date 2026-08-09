@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import {
   DEFAULT_ALLOWED_HOSTS,
+  GIT_EXECUTABLE_CONFIG,
   MACHINE_KEYCHAIN_DIR,
   MEASURED_SYSTEM_READ_PATHS,
   PRIVATE_LINK_PATHS,
@@ -11,6 +12,7 @@ import {
   claudeScratchDirFor,
   CLAUDE_CWD_MARKER_GLOB,
   SANDBOX_POLICY_FILENAME,
+  TRACKED_HOOKS_DIR,
   UNREADABLE_BINARIES,
   describeSandboxPolicy,
   describeSandboxViolation,
@@ -75,6 +77,19 @@ const policy = () => sandboxPolicyFor(machine({ cloneRoot: CLONE, homeDir: HOME,
 /** Does `allowed` re-open `path`, either exactly or as an ancestor directory? */
 const reopens = (allowed: string, path: string) =>
   allowed === path || path.startsWith(allowed.endsWith(sep) ? allowed : allowed + sep)
+
+/**
+ * Would this `denyWrite` entry refuse a write to `path`?
+ *
+ * The list holds three shapes — a literal file, a directory, and a glob — and a
+ * developer reading it asks one question of all three. Deliberately generous:
+ * it is used to assert that something is *not* denied, so a matcher that
+ * under-matched would let a denial grow past what the test claims to bound.
+ */
+const coversWrite = (denied: string, path: string) =>
+  denied === path ||
+  path.startsWith(denied.endsWith(sep) ? denied : denied + sep) ||
+  new Bun.Glob(denied).match(path)
 
 describe('what the policy denies', () => {
   test('reads are denied by default, and the root is what says so', () => {
@@ -277,8 +292,78 @@ describe('what the policy denies', () => {
     // A host matching neither list must be denied outright rather than fall
     // through to a callback that could say yes.
     expect(network.strictAllowlist).toBe(true)
-    expect(network.allowLocalBinding).toBe(false)
     expect(network.allowAllUnixSockets).toBe(false)
+  })
+
+  test('the agent may bind a local port, and that is not an egress widening', () => {
+    /*
+      ADR-0015. `allowLocalBinding` was `false` with no comment beside it —
+      srt's default carried through rather than a decision — and it cost the
+      agent the whole of its ability to observe its own work: no dev server, no
+      test server, no headless browser, no CDP.
+
+      Measured in srt 0.0.67, the flag adds exactly three Seatbelt rules:
+      `network-bind` and `network-inbound` on `(local ip "*:*")`, and
+      `network-outbound` on `(remote ip "localhost:*")`. The last is the one
+      that matters here: srt uses the `localhost` form on purpose so that the
+      egress allowlist stays enforced under this flag (its issues #225, #88).
+
+      So the three assertions below travel together on purpose. The flag is only
+      admissible while the allowlist beside it is untouched, and a change that
+      widened egress to buy local binding would fail here rather than in a probe.
+    */
+    const { network } = policy()
+    expect(network.allowLocalBinding).toBe(true)
+    expect(network.allowedDomains).toEqual([...DEFAULT_ALLOWED_HOSTS])
+    expect(network.strictAllowlist).toBe(true)
+    // Unix sockets are a second inbound channel and are *not* what this buys.
+    expect(network.allowAllUnixSockets).toBe(false)
+  })
+
+  test("git's own executable configuration is unwritable", () => {
+    /*
+      ADR-0016. `.git` is the one part of the repository no diff ever shows, so
+      a write there executes ahead of the review gate rather than behind it: a
+      `pre-commit` the agent planted runs unconfined on the developer's next
+      commit, including the merge commit that was supposed to be the gate.
+
+      Both entries or neither. `.git/config` holds `core.hooksPath`, so denying
+      the hooks directory alone is decorative — the agent redirects hooks to a
+      directory it can still write — and the same file defines the
+      `filter.<name>.clean`/`.smudge` commands `.gitattributes` invokes.
+    */
+    const { denyWrite } = policy().filesystem
+    for (const entry of GIT_EXECUTABLE_CONFIG) {
+      expect(denyWrite).toContain(`${CLONE}/${entry}`)
+    }
+    // Named as a pair rather than assumed to be one: a future edit that drops
+    // `.git/config` and keeps the hooks directory fails here.
+    expect([...GIT_EXECUTABLE_CONFIG]).toEqual(['.git/hooks/**', '.git/config'])
+  })
+
+  test('what a worktree, a commit and a merge write inside .git stays writable', () => {
+    /*
+      The measured half of ADR-0016, asserted so the deny above cannot quietly
+      grow into the whole of `.git` and take the Worktree model with it.
+
+      `git worktree add` does not write `.git/config` — md5 identical before and
+      after. What it and every commit and merge do write is below, and none of
+      it is denied.
+    */
+    const { denyWrite } = policy().filesystem
+    for (const needed of [
+      `${CLONE}/.git/worktrees/some-worktree/HEAD`,
+      `${CLONE}/.git/objects/ab/cdef`,
+      `${CLONE}/.git/refs/heads/main`,
+      `${CLONE}/.git/index`,
+      `${CLONE}/.git/COMMIT_EDITMSG`,
+      // The tracked hooks directory git is pointed at instead. It is Userspace
+      // as far as the boundary is concerned: the agent writes hooks freely and
+      // they arrive through a diff a human read.
+      `${CLONE}/${TRACKED_HOOKS_DIR}/pre-commit`,
+    ]) {
+      expect(denyWrite.some((denied) => coversWrite(denied, needed))).toBe(false)
+    }
   })
 
   test('the allowlist stays minimal', () => {
@@ -327,6 +412,34 @@ describe('readable without reading the source', () => {
     expect(text).toContain('/usr/bin/security')
     // The honest limit, stated where the allowlist is read.
     expect(text.toLowerCase()).toContain('exfiltration')
+  })
+
+  test('the description says what local binding grants and what it does not', () => {
+    /*
+      Someone reads the generated file before they read ADR-0015, and
+      `"allowLocalBinding": true` on its own reads like a network widening. The
+      comment block is where that is settled: the two things it grants named
+      rather than glossed, and the one thing it does not.
+    */
+    const text = describeSandboxPolicy(policy())
+    expect(text).toContain('allowLocalBinding')
+    // Ingress on any interface, not loopback — srt's bind rule is `local ip
+    // "*:*"`, because a dual-stack runtime binds 127.0.0.1 as ::ffff:127.0.0.1
+    // and Seatbelt's `localhost` token does not match that.
+    expect(text.toLowerCase()).toContain('any interface')
+    // And the half that is not widened, which is the reason the flag is
+    // admissible at all.
+    expect(text.toLowerCase()).toContain('egress')
+  })
+
+  test("the description says why git's own directory is denied", () => {
+    // The only two denials in the file whose reason is "no diff shows this".
+    // A developer who deletes them should have read that first.
+    const text = describeSandboxPolicy(policy())
+    expect(text).toContain('.git/hooks')
+    expect(text).toContain('.git/config')
+    expect(text).toContain(TRACKED_HOOKS_DIR)
+    expect(text).toContain('core.hooksPath')
   })
 
   test('the description does not claim the denied binaries cannot run', () => {
@@ -555,6 +668,122 @@ describe('a strengthening reaches a clone that already has a policy', () => {
       // that say it was theirs.
       expect(report.yours.some((c) => c.direction === 'weaker')).toBe(true)
       expect(report.lines.join('\n')).toContain('weaker')
+    })
+  })
+
+  /**
+   * The policy as the generator produced it before ADR-0015 and ADR-0016 —
+   * local binding off, and `.git` writable.
+   *
+   * A second plant beside `olderGenerator`, because ticket 45 ships a
+   * strengthening and a widening in the same release and they reach an existing
+   * clone by different routes. The three tests below are the measurement ticket
+   * 17's rule asks for.
+   */
+  const beforeTicket45 = (clone: string): SandboxPolicy => {
+    const older = sandboxPolicyFor({ cloneRoot: clone })
+    older.network.allowLocalBinding = false
+    older.filesystem.denyWrite = older.filesystem.denyWrite.filter(
+      (path) => !GIT_EXECUTABLE_CONFIG.some((entry) => path === `${clone}/${entry}`),
+    )
+    return older
+  }
+
+  const plant45 = (clone: string, options: { recordBaseline: boolean }) => {
+    const older = beforeTicket45(clone)
+    if (options.recordBaseline) {
+      writeFileSync(
+        sandboxBaselinePath(clone),
+        `${JSON.stringify(normalizeSandboxPolicy(older, { cloneRoot: clone }), null, 2)}\n`,
+      )
+    }
+    writeFileSync(sandboxPolicyPath(clone), `${JSON.stringify(older, null, 2)}\n`)
+  }
+
+  test("the .git denials reach a clone whose baseline predates them", () => {
+    /*
+      Ticket 17's rule applied to ticket 45's strengthening. `filesystem.denyWrite`
+      strengthens by growing, so a clone that never disagreed about it takes the
+      generator's current list — which is the whole of the fix reaching an
+      existing clone rather than new ones only.
+    */
+    withClone((clone) => {
+      plant45(clone, { recordBaseline: true })
+
+      const { policy, report } = ensureSandboxPolicy({ cloneRoot: clone })
+
+      for (const entry of GIT_EXECUTABLE_CONFIG) {
+        expect(policy.filesystem.denyWrite).toContain(`${clone}/${entry}`)
+      }
+      expect(report.outcome).toBe('updated')
+      // Said in words on stderr as well as written to the file.
+      expect(report.lines.join('\n')).toContain('.git/hooks')
+    })
+  })
+
+  test('the .git denials reach a clone with no baseline at all, by the union', () => {
+    // The unattributable clone, which can credit nothing to anybody and so
+    // takes the stronger side of every difference. For a denial that is the
+    // union, so the two new entries land here too.
+    withClone((clone) => {
+      plant45(clone, { recordBaseline: false })
+
+      const { policy, report } = ensureSandboxPolicy({ cloneRoot: clone })
+
+      expect(report.unattributed).toBe(true)
+      for (const entry of GIT_EXECUTABLE_CONFIG) {
+        expect(policy.filesystem.denyWrite).toContain(`${clone}/${entry}`)
+      }
+    })
+  })
+
+  test('local binding is a widening, so it reaches only a clone that can attribute it', () => {
+    /*
+      The finding ticket 45's "watch for" asks about, and it is the *other*
+      half. `network.allowLocalBinding` strengthens by being false, so it is a
+      widening and the merge treats it as one — which is right, and it means the
+      two changes in this release reach an existing clone by different routes.
+
+      **Attributable clone: it lands.** The developer never touched the field,
+      so the generator's current value wins, and the widening is reported as
+      `[weaker]` where they will read it rather than found in a diff.
+
+      **Unattributable clone: it does not, and it never will.** Nothing can be
+      credited to anybody, so the stronger side of every difference wins, and
+      for this field the stronger side is `false`. That run then records a
+      baseline saying `true`, so from the next launch on the difference reads as
+      the developer's own edit and is kept exactly. A clone that has never
+      recorded a baseline therefore keeps `allowLocalBinding: false` for good.
+
+      That is the merge working, not a defect: "nothing is ever resolved to the
+      weaker side" is the rule this whole mechanism exists to keep, and forcing
+      a widening past it to make a dev server work would be exactly the trade
+      the rule forbids. The fix for such a clone is one hand edit, or deleting
+      `sandbox-policy.json` and letting it be generated again. It is written
+      down here because the alternative is somebody rediscovering it as "the dev
+      server works on my machine and not on this one".
+    */
+    withClone((clone) => {
+      plant45(clone, { recordBaseline: true })
+      const attributable = ensureSandboxPolicy({ cloneRoot: clone })
+      expect(attributable.policy.network.allowLocalBinding).toBe(true)
+      expect(
+        attributable.report.ours.some(
+          (c) => c.field === 'network.allowLocalBinding' && c.direction === 'weaker',
+        ),
+      ).toBe(true)
+      expect(attributable.report.lines.join('\n')).toContain('weaker')
+    })
+
+    withClone((clone) => {
+      plant45(clone, { recordBaseline: false })
+      const first = ensureSandboxPolicy({ cloneRoot: clone })
+      expect(first.report.unattributed).toBe(true)
+      expect(first.policy.network.allowLocalBinding).toBe(false)
+      // And it stays that way once a baseline exists, because by then the
+      // difference is indistinguishable from a developer's own narrowing.
+      const second = ensureSandboxPolicy({ cloneRoot: clone })
+      expect(second.policy.network.allowLocalBinding).toBe(false)
     })
   })
 

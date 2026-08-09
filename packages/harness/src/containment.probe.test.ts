@@ -1150,44 +1150,52 @@ test.skipIf(blocked !== null)(
 // ---------------------------------------------------------------------------
 
 test.skipIf(blocked !== null)(
-  'the agent cannot open a listening socket, and that is what allowLocalBinding buys',
+  'the agent opens a listening socket, and that buys no egress',
   async () => {
     /*
-      `allowLocalBinding: false` is one line in sandbox.ts and nothing held it to
-      the kernel. It matters more than it looks: a listener is how a confined
-      process accepts an *inbound* connection, which is a channel the allowlist
-      says nothing about — the allowlist bounds where the agent may reach, not
-      who may reach the agent.
+      **This probe's verdict is inverted, and the probe itself is unchanged in
+      what it does.** It was written for ticket 25 against
+      `allowLocalBinding: false`, and it measured a refusal: a listener is how a
+      confined process accepts an *inbound* connection, which is a channel the
+      allowlist says nothing about — the allowlist bounds where the agent may
+      reach, not who may reach the agent.
 
-      Measured because ticket 25 looked as though it needed the opposite answer.
-      `claude setup-token` finishes by bouncing the browser to
-      `http://localhost:<ephemeral>/callback`, so minting a token *confined*
-      would have required binding, and that command's policy would have had to
-      set this true where the agent's leaves it false.
+      ADR-0015 decided the other way, and the reason is that the refusal cost
+      the whole of the agent's ability to observe its own work: no dev server,
+      no test server, no headless browser, no CDP, in a product whose premise is
+      that the agent builds UI. It was `false` with no comment beside it — srt's
+      default carried through, never decided.
 
-      **It did not come to that, and this probe outlived the reason it was
-      written.** Ticket 25 mints on the host: the installed `claude` is a
-      self-extracting executable that has to read itself, so it cannot run under
-      any policy denying `$HOME`, and the widening that would have bought was
-      far larger than local binding. The exception is bounded in ADR-0003 and
-      uses no policy at all, so nothing anywhere sets `allowLocalBinding: true`
-      and the deny below is the whole of the story again.
+      So what this measures is the same channel with the answer reversed, plus
+      the assertion that makes the reversal admissible. Measured in srt 0.0.67,
+      the flag adds `network-bind` and `network-inbound` on `(local ip "*:*")`
+      and `network-outbound` on `(remote ip "localhost:*")` — the last written
+      that way on purpose so the egress allowlist stays enforced under it
+      (srt #225, #88). The second half below is that claim at the kernel, in the
+      same sandbox as the first, which is what stops a future release from
+      buying binding with egress and finding this probe still green.
 
-      The probe stays, and it is worth more now than when it was written: it was
-      one line in sandbox.ts that nothing held to the kernel, and it guards a
-      channel the allowlist says nothing about — the allowlist bounds where the
-      agent may reach, not who may reach the agent.
+      Probe 3 above already measures the allowlist on its own. The point of
+      asking again here is the *conjunction*: these two facts have to be true at
+      the same time, of the same policy.
     */
     const listener = join(insideDir, 'listen.py')
     writeFileSync(
       listener,
       [
-        'import http.server, sys',
+        'import http.server, sys, threading, urllib.request',
         'try:',
-        "    s = http.server.HTTPServer(('127.0.0.1', 0), http.server.BaseHTTPRequestHandler)",
+        "    s = http.server.HTTPServer(('127.0.0.1', 0), http.server.SimpleHTTPRequestHandler)",
         'except Exception as e:',
         "    print('BIND-REFUSED', type(e).__name__, flush=True); sys.exit(1)",
         "print('BOUND', s.server_address[1], flush=True)",
+        'threading.Thread(target=s.handle_request, daemon=True).start()',
+        'try:',
+        '    code = urllib.request.urlopen(',
+        '        "http://127.0.0.1:%d/" % s.server_address[1], timeout=5).status',
+        "    print('SERVED', code, flush=True)",
+        'except Exception as e:',
+        "    print('SERVE-FAILED', type(e).__name__, flush=True)",
       ].join('\n'),
       'utf8',
     )
@@ -1195,22 +1203,33 @@ test.skipIf(blocked !== null)(
     try {
       const run = runner(await freshSandbox(repoRoot))
 
-      // The control: python runs, so a refusal below is about the bind rather
+      // The control: python runs, so anything below is about the network rather
       // than about the interpreter being unreachable.
       const control = await run('python3 -c "print(6*7)"')
       expect(control.code).toBe(0)
       expect(control.stdout.trim()).toBe('42')
 
       const bind = await run(`python3 ${JSON.stringify(listener)}`)
+      const unlisted = await run(
+        'curl -sS -o /dev/null -w "%{http_code}" --max-time 20 https://example.com/',
+      )
 
-      report('probe 10 — a listening socket under the shipped policy', [
+      report('probe 10 — a listening socket, and the egress allowlist beside it', [
         ['python3 runs at all  (control)', outcome(control)],
-        ['bind 127.0.0.1:0', outcome(bind)],
+        ['bind 127.0.0.1:0 and serve over it', outcome(bind)],
+        ['GET https://example.com  (unlisted)', outcome(unlisted)],
       ])
 
-      // The boundary. The agent may not listen.
-      expect(bind.stdout).not.toContain('BOUND')
-      expect(bind.stdout).toContain('BIND-REFUSED')
+      // What the flag buys: a port, and a request answered on it. A bind that
+      // succeeded and could not be connected to would be no dev server.
+      expect(bind.stdout).toContain('BOUND')
+      expect(bind.stdout).not.toContain('BIND-REFUSED')
+      expect(bind.stdout).toContain('SERVED 200')
+
+      // And what it does not: an unlisted host is still refused, in the same
+      // sandbox and in the same run.
+      expect(unlisted.code).not.toBe(0)
+      expect(unlisted.stdout.trim()).not.toMatch(/^2\d\d$/)
     } finally {
       rmSync(listener, { force: true })
       await releaseSandbox()

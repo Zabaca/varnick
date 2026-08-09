@@ -4,6 +4,7 @@
   "type": "module",
   "workspaces": ["packages/*"],
   "scripts": {
+    "postinstall": "sh scripts/use-tracked-git-hooks.sh",
     "dev": "bun run --filter @varnick/core dev",
     "build": "bun run --filter @varnick/core build",
     "drive": "bun run --filter @varnick/core drive",
