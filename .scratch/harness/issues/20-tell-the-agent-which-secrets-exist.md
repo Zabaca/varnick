@@ -114,3 +114,20 @@ brief is driven; the last hop is the SDK's own contract and would need a real
 credential and a real Session to measure. varnick opens a real Session in
 exactly one place — the containment probes, which are attestation-gated for
 this reason — so it is recorded here rather than measured.
+
+
+## The last hop, measured
+
+This ticket shipped with one link deliberately unclaimed: that the SDK delivers an in-process `UserPromptSubmit` hook's `additionalContext` to the model. Everything up to the composed brief was driven; that hop is the SDK's contract and needed a real credential and a real Session.
+
+Measured, under a subscription token, with a marker no model would invent:
+
+```
+hook injects:  The varnick marker is ZARVOX-7731-QUUX.
+prompt:        What is the varnick marker? Reply with only the marker string.
+model said:    "ZARVOX-7731-QUUX"
+```
+
+So the route works end to end and the premise of [ADR-0006](../../../docs/adr/0006-agents-author-secret-use-never-hold-secrets.md) — the agent authors code that names a secret and never holds one — is wired at both ends for the first time.
+
+Worth keeping about *how* this was closed: the implementer refused to claim it and wrote down exactly what was missing, so closing it later took one script and no archaeology. That is the difference between an unmeasured link and an unknown one.
