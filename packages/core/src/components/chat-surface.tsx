@@ -43,6 +43,22 @@ import type { SessionEvent } from '../machines/session.ts'
  * at all times; that is what it is for.
  */
 
+/**
+ * The effort chip's glyph, filling as effort rises.
+ *
+ * Taken from brainless's own table rather than invented — the status line moved
+ * out of its component and the look should not move with it. Kept here because
+ * that component no longer renders this, and a constant nothing reads would be
+ * worse than a duplicate that does.
+ */
+const EFFORT_GLYPH: Record<string, string> = {
+  low: '○',
+  medium: '◐',
+  high: '●',
+  xhigh: '◉',
+  max: '◈',
+}
+
 export type HarnessSnapshot = SnapshotFrom<typeof harnessMachine>
 
 export interface ChatSurfaceProps {
@@ -525,7 +541,12 @@ export function ChatSurface({
                   keystroke earlier. On the chat's own background it read as a
                   line of the conversation rather than as part of the composer.
                 */
-                className="mb-2 flex items-baseline gap-2 px-2 py-1 text-[11.5px]"
+                /*
+                  Flush against the composer, with no gap. It is about the line
+                  you are typing, and a space between them made it read as a
+                  note about the conversation instead.
+                */
+                className="flex items-baseline gap-2 px-2 py-1 text-[11.5px]"
                 style={{
                   color: 'var(--fg-faint)',
                   background: 'var(--ground-raised)',
@@ -544,13 +565,21 @@ export function ChatSurface({
               placeholder={
                 working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
               }
-              effort={s?.context.effort ?? 'xhigh'}
-              model={`${modelLabel} · ${formatContext(
-                s?.context.tokensUsed ?? 0,
-                CONTEXT_WINDOW[s?.context.model ?? 'claude-opus-5'],
-              )}`}
-              // No mode cycling in varnick, so the mode line would describe a
-              // control that does not exist.
+              /*
+                Both status lines off, and the status moved below.
+
+                brainless renders the effort chip *above* the input, which put
+                it between the signature bar and the field the bar is about —
+                so the one line explaining what you are typing was separated
+                from where you type it. The facts are the same; they are now a
+                footer under the composer, which is also where every terminal
+                client puts them.
+
+                `mode` was already off: varnick has no mode cycling, so the
+                line would describe a control that does not exist.
+              */
+              effort={false}
+              model={undefined}
               mode={false}
               onChange={(e) => session?.send({ type: 'EDIT_DRAFT', text: e.target.value })}
               onKeyDown={(e) => {
@@ -586,6 +615,31 @@ export function ChatSurface({
                 }
               }}
             />
+
+            {/*
+              What this Session is set to, under the thing it is set on.
+
+              Order is what you change most often first: the model, then the
+              effort, then how full the window is — which is a reading rather
+              than a setting and belongs at the end. The `/effort` hint that
+              used to ride the chip is gone: it named a command in a status
+              line, and the menu is where commands are found.
+            */}
+            <div
+              className="mt-1.5 flex items-baseline gap-2 px-1 text-[11.5px]"
+              style={{ color: 'var(--fg-faint)' }}
+            >
+              <span style={{ color: 'var(--fg-dim)' }}>{modelLabel}</span>
+              <span aria-hidden>·</span>
+              <span>{EFFORT_GLYPH[s?.context.effort ?? 'xhigh']} {s?.context.effort ?? 'xhigh'}</span>
+              <span aria-hidden>·</span>
+              <span data-numeric>
+                {formatContext(
+                  s?.context.tokensUsed ?? 0,
+                  CONTEXT_WINDOW[s?.context.model ?? 'claude-opus-5'],
+                )}
+              </span>
+            </div>
           </div>
         </div>
 
