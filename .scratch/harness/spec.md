@@ -233,3 +233,93 @@ Four tickets deliberately name no state path — 04 (containment probes), 10 and
 Open decisions carried from `PRODUCT.md`: the open-source licence, and whether built binaries are distributed. Neither the Session mirror's mechanism nor the Secrets Store's is among them any more — both were settled in stage 6 and are recorded under Implementation Decisions. A new one opened in their place: **where the Secrets Store should live now that the Sandbox is measured not to keep the agent out of the keychain**, recorded in the correction to [ADR-0003](../../docs/adr/0003-containment-wraps-the-process-tree.md).
 
 **Nothing carries a Harness call from the renderer to the host yet** *(stage 6)*. Core's live actors run in the Tauri webview and the Harness needs a host process: a filesystem for the mirror, a keychain for the credential, a subprocess for the agent. `persistSession` calls the real store through a filesystem port and works from any host process; in the webview it throws into `persistence.saveFailed` with a message naming the missing bridge. Every ticket that wires a live actor meets this, so the bridge wants to be one piece of work rather than five.
+
+---
+
+# Core in a Worktree — amendment
+
+**Status:** ready-for-agent
+
+Amends the spec above. Everything before this line still holds except where named.
+
+## Problem Statement
+
+The developer asks the agent for a change and is told it cannot be made. Core is denied at the kernel, so the agent can build *around* varnick and never build varnick itself — which is the thing the product exists to allow. The design had an answer, [ADR-0005](../../docs/adr/0005-two-profiles-live-userspace-cloned-core.md): a second Profile working in a disposable Clone, a queued Escalation, a host-initiated Collect. None of it was built, and its premise turned out to be wrong.
+
+Two measurements settle it. A linked worktree's whole git surface — `<main>/.git/worktrees/<name>` for HEAD, index, logs and refs, and `<main>/.git` for objects via `commondir` — sits inside the clone, which the Sandbox names in both `allowRead` and `allowWrite`. And `denyWrite` names *absolute live-tree paths*, so a worktree's `packages/core/**` matches nothing.
+
+So the agent can already author Core in a worktree, and the change becomes running code only when a human merges it. What is missing is everything that makes that loop usable: the agent cannot run what it wrote, cannot show it to anyone, and the developer has no way to see what changed.
+
+## Solution
+
+The agent authors Core in a git worktree under `.claude/worktrees/` — Claude Code's own default, so `EnterWorktree` and subagent worktree isolation work unmodified.
+
+It proves the change headlessly with the tools it already has, and can now bind a local port, so a dev server, a test server and a headless browser all work. When the change is worth looking at, it asks the host to launch a **Preview**: a second varnick running from the worktree, in its own window. A Preview whose worktree touches **Fence** code raises a native dialog first; everything else launches without asking.
+
+The developer sees what changed in a diff view that ships in Core, with Fence hunks distinct. They merge with git, restart, and the change is live.
+
+## User Stories
+
+1. As a developer, I want the agent to make Core changes, so that varnick can become the thing I want rather than only host the thing I build beside it.
+2. As a developer, I want those changes to reach the running app only through a merge I performed, so that a confined agent stays confined.
+3. As a developer, I want the agent to use worktrees the way Claude Code already uses them, so that I am not learning a bespoke mechanism.
+4. As a developer, I want the agent to run a dev server, so that it can prove a UI change rather than describe one.
+5. As a developer, I want the agent to run a headless browser, so that it finds a rendering defect before I do.
+6. As the agent, I want to bind a local port without egress widening, so that observing my own work costs the developer no boundary.
+7. As a developer, I want to ask for a Preview and get a window, so that reviewing a change means using it.
+8. As a developer, I want a Preview of an ordinary Core change to launch without asking, so that the flow is fast where it is safe.
+9. As a developer, I want a native dialog before a Preview whose worktree edits the Fence, so that the one path from confined to unconfined is one I chose.
+10. As a developer, I want that dialog to show the hunks, so that I approve bytes rather than a sentence the agent wrote.
+11. As a developer, I want that dialog drawn by the host, so that Userspace cannot forge one and train me to click through.
+12. As a developer, I want a Preview to run beside the varnick I am already using, so that I do not lose my conversation to look at a change.
+13. As a developer, I want a Preview to have its own Session, so that its conversation does not enter mine.
+14. As a developer, I want to see every worktree with pending Core changes, so that nothing the agent finished waits unnoticed.
+15. As a developer, I want Fence hunks rendered distinctly in that diff, so that a widening cannot hide in four hundred lines.
+16. As a developer, I want that diff view in Core rather than as a Surface, so that the agent cannot rewrite the thing that shows what the agent changed.
+17. As a developer, I want a Core change to reload the window rather than hot-swap a module, so that I do not lose the conversation that asked for the change.
+18. As a developer, I want git hooks to be tracked files, so that code that runs on my machine at commit time arrives through the same review as everything else.
+19. As a developer, I want `.git/hooks` and `.git/config` denied to the agent, so that the one thing no diff shows cannot execute ahead of the gate.
+20. As a developer, I want the claim that a nested sandbox cannot widen the outer one measured rather than assumed, so that a load-bearing belief is not prose.
+
+## Implementation Decisions
+
+- **One Profile.** The Userspace/Core Profile split collapses; see [ADR-0014](../../docs/adr/0014-core-is-authored-in-a-worktree.md). **Clone**, **Escalation** and **Collect** retire.
+- **The gate is `denyWrite`, not a permission system.** Landing a Core change means writing `packages/core/**` in the live tree, which the kernel refuses. A developer who deletes those entries gets agent-merges, and that is their call.
+- **Worktree base is `.claude/worktrees/`** — already inside the clone, already gitignored, outside Vite's root. Nothing to configure.
+- **`allowLocalBinding: true`.** Measured against srt 0.0.67: egress stays bounded by the allowlist. See [ADR-0015](../../docs/adr/0015-the-agent-binds-local-ports.md).
+- **`.git/hooks/**` and `.git/config` join `denyWrite`; `core.hooksPath` points at a tracked `.githooks/`.** See [ADR-0016](../../docs/adr/0016-gits-own-directory-is-outside-the-review-path.md).
+- **The dev server's port becomes an input**, threaded to `tauri.conf.json`'s `devUrl`, so a Preview does not collide with `1420`.
+- **A change under `packages/core/**` triggers a full page reload, never a module swap.** Safe because the Session resumes from the mirror.
+- **`launch_preview` is a Custom Tool whose work happens outside the Sandbox.** A confined process cannot open a window — srt gates mach lookups by service name and varnick's policy names none. The tool takes a worktree name validated against what git reports, never a command: it is a host-side process spawn driven by agent input.
+- **The dialog is native, drawn by the Rust host**, and shows the Fence hunks.
+- **Fence is `packages/harness/**`, `src-tauri/**`, `sandbox-policy.baseline.json`.** Smaller than Core: `packages/core/**`, `vite.config.*` and `package.json` are Core and launch silently.
+- **The diff view ships in Core, not as a Surface**, because a Surface is Userspace and the agent writes Userspace freely.
+- **The Preview's agent is git-blind**, accepted for v1. Its `allowRead` is the worktree; the worktree's `.git` points outside it. The fix, if it bites, is `allowRead` on the clone root instead.
+
+## Testing Decisions
+
+Existing seams, in order of preference — no new seam is proposed:
+
+- **`sandbox.ts`'s policy generation**, asserted by `sandbox.test.ts` and `sandbox.boundary.test.ts`. Owns the policy changes. The boundary assertions are load-bearing and may only be strengthened.
+- **`containment.probe.test.ts`**, which runs real operations under a real policy. Owns the nested-sandbox claim, because a probe is the only honest form of that assertion.
+- **`drive.ts`**, the actor seam, headless. Owns every machine and view change: the worktree list, the diff view's states, the reload rule's pure half.
+- **Rust `#[cfg(test)]` in `src-tauri`**, which owns route dispatch and argument validation. Owns the worktree-name validation and the spawn's argument shape. No test may open a dialog or spawn a real Preview.
+- **`bun test packages`** for the harness units: the control-request round trip for `launch_preview`, and the Fence classification of a changed path.
+
+What makes a good test here is what already makes one in this repo: assert the refusal, not only the success. A `launch_preview` that accepts `../..` as a worktree name is the failure that matters, and it is invisible in a passing happy path.
+
+## Out of Scope
+
+- Escalation queues, approval inboxes, and anything else that asks a human for a decision varnick could have declined to need.
+- varnick rendering a general git client. The diff view shows pending worktree changes and nothing else.
+- Giving the Preview's agent git. Named, deferred, fix recorded.
+- Fixing ticket 30's second-root case. A Preview launched *in* its worktree has build root == clone root, which is the default path, so ticket 30 does not gate this work.
+- Windows and Linux. Unmeasured, as before.
+
+## Further Notes
+
+**Bootstrapping.** The diff view is Core, so the agent cannot build it, and every later change to it goes through the flow it enables. The first one is hand-written.
+
+**The one path from confined to unconfined is now short and named.** Agent edits `sandbox.ts` in a worktree, calls `launch_preview`, host spawns a varnick whose fence the agent wrote. The dialog is what stands in it. That is worth stating plainly rather than leaving in an ADR, because everything else in this amendment is a convenience and this is not.
+
+**A claim carried in as reasoning, not measurement.** Nested Seatbelt profiles are believed to intersect, which is why a Preview launched from inside the Sandbox would be safe-but-useless and why `enableWeakerNestedSandbox: false` means what it says. Ticket 47 turns it into a probe.

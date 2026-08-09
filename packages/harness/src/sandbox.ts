@@ -435,12 +435,16 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           lives. The host is the fourth thing with the same property and it lives
           somewhere else in the tree.
 
-          This is not a new rule. ADR-0005 already routes Core changes through a
-          Clone and a human-reviewed Collect — precisely because "any path from
-          Userspace to Core is a path from confined to unconfined". This line is
-          that ADR being enforced rather than assumed. When the agent genuinely
-          needs native capability, the answers are a host command added
-          deliberately, or an Escalation — not a writable host.
+          This is not a new rule. ADR-0014 routes Core changes through a Worktree
+          and a human's `git merge` — precisely because "any path from Userspace
+          to Core is a path from confined to unconfined". This line is that ADR
+          being enforced rather than assumed, and it is what makes the Worktree
+          model work at all: because this entry names an *absolute* live-tree
+          path, the same path inside a worktree matches nothing, so the agent
+          authors Core there freely and the change becomes running code only
+          when someone merges it. When the agent genuinely needs native
+          capability, the answer is a Custom Tool added deliberately — not a
+          writable host.
         */
         join(clone, 'src-tauri/**'),
         /*

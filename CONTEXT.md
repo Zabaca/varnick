@@ -43,7 +43,7 @@ The kernel-level restrictions the agent's process tree runs under, applied with 
 _Avoid_: seatbelt (one backend, not the concept), permissions (the SDK's prompt layer, which this replaces)
 
 **Profile**:
-A named preset deciding what an agent is — its instructions, tools, model, Sandbox policy, and where it may act. varnick ships two: one for Userspace and one for Core.
+A named preset deciding what an agent is — its instructions, tools, model, Sandbox policy, and where it may act. varnick ships **one**. It shipped two in the design: a Userspace Profile editing the live clone, and a Core Profile confined to a disposable checkout. They collapsed once the write boundary was read literally — `denyWrite` names absolute live-tree paths, so the same Profile edits Userspace in place and Core in a **Worktree** with no second configuration. See [ADR-0014](./docs/adr/0014-core-is-authored-in-a-worktree.md).
 _Avoid_: mode, persona, preset (the Agent SDK uses "preset" for its own system prompt)
 
 **Custom Tool**:
@@ -70,17 +70,25 @@ Which store answered — `keychain` or `env`. Orthogonal to Kind: either Kind ca
 
 ### Changing Core
 
-**Clone**:
-A disposable `git clone` of the project under a temp root, where the Core Profile works. Not a linked worktree — a worktree's `.git` file points back into the denied path, so it cannot work under the Sandbox.
-_Avoid_: worktree, checkout, sandbox (that is the enforcement, not the place)
+**Worktree**:
+A git worktree under `.claude/worktrees/`, where Core is authored. Core's paths are denied at the live tree's absolute path, so a worktree's copy of them matches nothing and the agent writes them freely — a change becomes running code only when a human merges it and restarts. See [ADR-0014](./docs/adr/0014-core-is-authored-in-a-worktree.md).
 
-**Escalation**:
-A request from the Userspace agent for a change it cannot make, raised through a Custom Tool and queued for a human. Escalation is privilege escalation by construction — the Core Profile can rewrite the Sandbox policy — so it is always gated twice.
-_Avoid_: elevation, handoff, delegation
+The location is Claude Code's own default, and that is the point: `EnterWorktree` and subagent worktree isolation work unmodified. It is already inside the clone, already in `.gitignore`, and outside Vite's root.
+_Avoid_: branch (a Worktree has one; it is not one), checkout, sandbox (that is the enforcement, not the place), **Clone** — a retired term for a disposable `git clone` under a temp root, built on the belief that a worktree could not work under the Sandbox
 
-**Collect**:
-The host-initiated step that brings a Core Profile's branch out of its Clone and into the project. The only moment work crosses the boundary, and never agent-initiated.
-_Avoid_: merge (Collect stops short of merging; the merge is a human's), sync, push
+**Preview**:
+A second varnick launched from a Worktree so a Core change can be run before it is merged. Requested by the agent through a Custom Tool and spawned by the host, because a confined process cannot open a window: srt gates mach lookups by service name and varnick's policy names none, so `com.apple.windowserver.active` is unreachable.
+
+A Preview runs unconfined, which it must — it reads the Keychain to resolve a Credential. So launching one whose **Fence** the agent has edited is privilege escalation in three steps, and that case, and only that case, raises a native dialog. Everything else launches without asking.
+_Avoid_: staging, sandbox, dev build, second instance (there may be several)
+
+**Fence**:
+The code that decides what the agent may do: `packages/harness/**`, which generates the Sandbox policy; `src-tauri/**`, which holds the Credential; and `sandbox-policy.baseline.json`, which is how a widening is told from varnick's own work. Named because three separate mechanisms key off the same list — the Preview dialog, the diff view's highlighting, and `denyWrite` itself.
+
+Distinct from Core, which is larger. `packages/core/**`, `vite.config.*` and `package.json` are Core and are not Fence: they are denied so a broken edit cannot take the conversation down, not because they decide the boundary.
+_Avoid_: privileged paths, protected files, boundary (the boundary is what the Fence produces)
+
+Retired with the Clone: **Escalation**, a queued request for a change the agent could not make, and **Collect**, the host-initiated step that brought a branch out of a Clone. Both are `git merge` now. The gate needs nothing built, because landing a Core change means writing `packages/core/**` in the live tree and `denyWrite` refuses it — a mechanism rather than a policy, which is why a developer who deletes those entries gets agent-merges and that is their call.
 
 ### Conversation
 
