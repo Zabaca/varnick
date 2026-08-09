@@ -1,40 +1,57 @@
 # ship loop — state
 
-Written before a context compaction so the loop can continue without it. Delete when the run is over.
+Written so the loop can continue across a context compaction. Delete when the run is over.
 
 ## Where things are
 
-`main` at `9431e9c`, clean tree, **not pushed**.
+`main` at `884bc4d` — the domain model for the worktree amendment. Clean tree, **not pushed**.
 
-Suite on `main`: `bun test packages` 358 tests / 1 skip, `bun run drive` 276 assertions, `cargo test` 59, `bun run build` clean, `bun run lint` clean.
+Baseline suite on `884bc4d`, measured before any fan-out:
 
-**There are six commands now.** Ticket 14 added `bun run lint` — it runs eslint from the root using the parser in `packages/lint`, which exists because typescript-eslint does not support TypeScript 7.
+- `bun test packages` — **492 tests, 1 skip, 0 fail**, 1350 expect() calls, 16 files
+- `bun run drive` — green
+- `cargo test` — **109 passed, 0 failed**
+- `bun run typecheck` — clean
+- `bun run lint` — clean
 
 **`cargo` is at `~/.cargo/bin` and is not on the default PATH.** `export PATH="$HOME/.cargo/bin:$PATH"` before any Rust command.
 
+**A fresh worktree has no `node_modules`.** Git does not track it, so every worktree agent runs `bun install` first. For Rust, `export CARGO_TARGET_DIR=/Users/uptown/Projects/zabaca/varnick/src-tauri/target` rather than rebuilding Tauri per worktree — safe while only one Rust ticket is in flight at a time.
+
+## The work
+
+Spec amendment: `.scratch/harness/spec.md`, the "Core in a Worktree — amendment" section at the end.
+ADRs: 0014 (supersedes 0005), 0015, 0016.
+
+Six tickets, 45–50. The graph:
+
+```
+45  sandbox policy: local binding + git's executable config   ─ no blockers
+46  second varnick beside the first; Core reloads             ─ no blockers ──┐
+47  nested sandbox probe                                      ─ no blockers   │
+49  pending worktree changes reach Core                       ─ no blockers ─┐│
+                                                                             ││
+48  launch_preview: agent asks, host spawns              blocked by 46 ◄──────┘│
+50  the diff view, Fence hunks distinct                  blocked by 49 ◄───────┘
+```
+
 ## In flight
 
-One worktree agent: **12 secret resolution**, on `ticket/12-secret-resolution`, branched from `9431e9c`. It is the last ticket.
+Round one, four worktree agents, branched from `884bc4d`:
 
-When it returns: review the diff, run all six commands, merge, run the full suite again, mark it done, reap the worktree.
+- **45** on `ticket/45-sandbox-policy`
+- **46** on `ticket/46-port-and-reload`
+- **47** on `ticket/47-nested-sandbox-probe`
+- **49** on `ticket/49-worktree-changes`
 
-## Then
+When each returns: read the diff, run the full suite, merge in dependency order, re-run the suite, mark the ticket done, reap the worktree. Then fan out 48 (once 46 lands) and 50 (once 49 lands).
 
-**18** is `needs-info` — a decision for the developer, not an agent. Ticket 11's fourth criterion and ticket 09's marker criterion are deliberately unticked with reasons in their Comments.
+## Things that will bite
 
-After 12: full suite, `/code-review`, `/impeccable document` (the UI changed — ticket 11 moved the default route and ticket 14 renders Surfaces), then the PR.
+**Ticket 47 may come back with a negative result**, and that is a legitimate outcome rather than a failure. If a nested sandbox *can* widen the outer one, `enableWeakerNestedSandbox: false` does not mean what its name says and ADR-0014's Preview argument needs rewriting. Do not let it be quietly assertion-fitted.
 
-## Things that will bite a merge
+**Ticket 45 and ticket 47 both touch the containment story** and may collide in `packages/harness/src/`. Merge 45 first.
 
-- **Worktrees are checked out stale.** Every agent so far found its worktree at an old commit and had to branch from `main` itself. Check `git log --oneline -3` in the worktree before trusting a diff.
-- **Resolve conflicts by hand, not with a regex that keeps both sides.** Doing that dropped a whole function (`toolProbe`) and an unclosed `describe` block in two separate merges. Both were caught by typecheck, not by review.
-- **`git add -A` will sweep `.claude/worktrees/` into the commit** as embedded repos if the ignore rule is ever lost.
-- **A clean merge is not a green merge.** Ticket 16 merged with no conflicts and went red, because it renamed `DENIED_BINARIES` while ticket 03 was in flight.
-- **Ticket 17 merges the policy forward**, so a test that deliberately writes a weaker `sandbox-policy.json` gets it strengthened back. Record a baseline first — see probe 2b in `containment.probe.test.ts`.
+**Ticket 49 adds state names**, which means `CONTEXT.md`, the machine's exported path list, and a card on `#/states` all have to agree, or the coverage banner fails. That is the gate, and it is the most likely thing to come back half-done.
 
-## Do not undo
-
-- No unconfined fallback, under any flag or state.
-- No second `query()` — every SDK control request rides the confined session. ADR-0003's last consequence; ticket 09 broke it once.
-- The login-Keychain, `/Library/Keychains`, write-boundary and probe-7 assertions in `containment.probe.test.ts` and `sandbox.boundary.test.ts` are load-bearing. Strengthen only.
-- No test may touch the real Keychain. `security add-generic-password`'s keychain argument is positional and `-w VALUE` before it has caused an accidental write to the real Keychain twice in this run.
+**Ticket 46's acceptance criteria are partly unmeasurable headlessly** — two Tauri windows is not something a subagent should attempt. Expect an honest "not measured" on those, and verify them by hand before calling the ticket done.
