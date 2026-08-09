@@ -152,30 +152,18 @@ export function ChatSurface({
       available: sessionCan({ type: 'COMPACT' }) && (s?.context.messages.length ?? 0) > 0,
       run: () => session?.send({ type: 'COMPACT' }),
     },
-    {
-      name: 'retry',
-      description: 'Retry the turn that failed',
-      argumentHint: '',
-      source: 'varnick' as const,
-      available: sessionCan({ type: 'RETRY_TURN' }),
-      run: () => session?.send({ type: 'RETRY_TURN' }),
-    },
-    {
-      name: 'interrupt',
-      description: 'Stop the turn in progress',
-      argumentHint: '',
-      source: 'varnick' as const,
-      available: sessionCan({ type: 'INTERRUPT' }),
-      run: () => session?.send({ type: 'INTERRUPT' }),
-    },
-    {
-      name: 'restart',
-      description: 'Restart the agent',
-      argumentHint: '',
-      source: 'varnick' as const,
-      available: snapshot.can({ type: 'RESTART' }),
-      run: () => send({ type: 'RESTART' }),
-    },
+    /*
+      `/retry`, `/interrupt` and `/restart` were here and are not commands.
+
+      Each already has a control where the thing it acts on is: a failed Turn
+      renders its own retry, a crashed agent renders its own restart, and an
+      answer in flight is stopped with Escape. A menu row for each was a third
+      copy of an affordance that was already on screen twice — and it put
+      varnick's plumbing in a list whose subject is what the *agent* can do.
+
+      What is left here is what the agent has no version of, or has a version
+      of that would leave the two halves disagreeing.
+    */
     /*
       One row each, taking a value.
 
