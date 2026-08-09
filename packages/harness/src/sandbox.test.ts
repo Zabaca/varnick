@@ -6,6 +6,7 @@ import {
   DEFAULT_ALLOWED_HOSTS,
   MACHINE_KEYCHAIN_DIR,
   SANDBOX_BASELINE_FILENAME,
+  claudeScratchDirFor,
   SANDBOX_POLICY_FILENAME,
   UNREADABLE_BINARIES,
   describeSandboxPolicy,
@@ -117,8 +118,33 @@ describe('what the policy denies', () => {
     expect(policy().filesystem.denyWrite).toContain(`${CLONE}/${SANDBOX_BASELINE_FILENAME}`)
   })
 
-  test('writes reach the clone and the temp directory and nothing else', () => {
-    expect(policy().filesystem.allowWrite).toEqual([CLONE, TMP])
+  test('writes reach the clone, the temp directory, and one scratch path — nothing else', () => {
+    /*
+      The third entry is the one that needs justifying, and it was added against
+      a measurement rather than a preference.
+
+      Claude Code writes its scratch to `/tmp/claude-<uid>`, which is not
+      `os.tmpdir()`. Without it every Bash command the agent ran failed at
+      `mkdir` before executing, so the agent could read files and run nothing —
+      ticket 27, found when the product was first driven under a real credential.
+      `TMPDIR` does not move it; that was measured too.
+
+      Asserted as an exact list because the danger is drift upward. `/tmp` itself
+      is world-writable and shared with every process on the machine; this is one
+      per-user subdirectory of it, which is the same kind of access `TMP` above
+      already grants. A future edit that reaches for the parent fails here.
+    */
+    expect(policy().filesystem.allowWrite).toEqual([CLONE, TMP, claudeScratchDirFor(process.getuid?.() ?? 0)])
+  })
+
+  test('the scratch grant is the subdirectory, never the whole of /tmp', () => {
+    // The line above would still pass if `claudeScratchDirFor` started
+    // answering `/private/tmp`, since both sides read from it. This one does
+    // not: it names the parent literally.
+    const writable = policy().filesystem.allowWrite
+    expect(writable).not.toContain('/private/tmp')
+    expect(writable).not.toContain('/tmp')
+    expect(claudeScratchDirFor(501)).toBe('/private/tmp/claude-501')
   })
 
   test('the network is denied except for the allowlist', () => {

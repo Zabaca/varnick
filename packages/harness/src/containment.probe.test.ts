@@ -16,6 +16,7 @@ import { CREDENTIAL_ENV_VAR_NAMES, SELFTEST_MARKER, agentCommand } from './agent
 import {
   UNREADABLE_BINARIES,
   DEFAULT_ALLOWED_HOSTS,
+  claudeScratchDirFor,
   establishSandbox,
   releaseSandbox,
   ensureSandboxPolicy,
@@ -977,6 +978,56 @@ test.skipIf(blocked !== null)(
       expect(processes.code).not.toBe(0)
       expect(opened.code).not.toBe(0)
     } finally {
+      await releaseSandbox()
+    }
+  },
+  120_000,
+)
+
+// ---------------------------------------------------------------------------
+// 9b. The scratch directory every Bash command needs
+// ---------------------------------------------------------------------------
+
+test.skipIf(blocked !== null)(
+  "the agent can create Claude Code's scratch directory, and still cannot write /tmp itself",
+  async () => {
+    /*
+      Ticket 27, as a boundary rather than a bug report.
+
+      Claude Code writes its scratch to `/tmp/claude-<uid>/…`, which is not
+      `os.tmpdir()`. Without that path in `allowWrite` every Bash command failed
+      at `mkdir` before running, so the agent could read files and execute
+      nothing — and the first Turn ever run in the application opened by saying
+      so. Nothing in the suite could see it: Bash is the agent's tool, the agent
+      needs a Session, and the only probe with a Session skips without a
+      credential.
+
+      Both halves are asserted, because the grant is only defensible if it is the
+      subdirectory and not the parent. `/tmp` is world-writable and shared with
+      every process on the machine; `/tmp/claude-<uid>` is one per-user scratch
+      path, which is what `os.tmpdir()` already grants elsewhere.
+    */
+    const scratch = claudeScratchDirFor(process.getuid?.() ?? 0)
+    const mine = join(scratch, `varnick-probe-${process.pid}`)
+
+    try {
+      const run = runner(await freshSandbox(repoRoot))
+
+      const allowed = await run(`mkdir -p ${JSON.stringify(mine)} && touch ${JSON.stringify(join(mine, 'probe'))}`)
+      const parent = await run(`touch ${JSON.stringify(`/private/tmp/varnick-probe-${process.pid}`)}`)
+
+      report('probe 9b — the scratch directory Bash needs', [
+        [`write ${scratch}/…`, outcome(allowed)],
+        ['write /private/tmp directly', outcome(parent)],
+      ])
+
+      // The grant: without this the agent cannot run a single command.
+      expect(allowed.code).toBe(0)
+      // And its limit: the parent stays refused.
+      expect(parent.code).not.toBe(0)
+      expect(existsSync(`/private/tmp/varnick-probe-${process.pid}`)).toBe(false)
+    } finally {
+      rmSync(mine, { recursive: true, force: true })
       await releaseSandbox()
     }
   },

@@ -172,6 +172,17 @@ function usersRootOf(homeDir: string): string {
  * Pure: same input, same policy. Everything that touches the filesystem or the
  * kernel lives below this.
  */
+/**
+ * Where Claude Code keeps its per-run scratch directory.
+ *
+ * A fixed `/tmp/claude-<uid>`, not a resolved temp directory — see the comment
+ * at `allowWrite`. Exported so the boundary probe asserts against the same path
+ * the policy grants rather than a second spelling of it.
+ */
+export function claudeScratchDirFor(uid: number): string {
+  return `/private/tmp/claude-${uid}`
+}
+
 export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
   const home = input.homeDir ?? homedir()
   const temp = input.tmpDir ?? tmpdir()
@@ -209,7 +220,31 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
       // broader — an allow beats a deny, so `/` or `/usr` here would hand back
       // every binary above.
       allowRead: [clone],
-      allowWrite: [clone, temp],
+      /*
+        The clone, the OS per-user temp, and one more the agent cannot work
+        without.
+
+        Claude Code writes its scratch directory to `/tmp/claude-<uid>/…`, and
+        `/tmp` is not `os.tmpdir()` — on macOS that is a private per-user path
+        under `/var/folders`. With only the first two entries every Bash command
+        failed before it ran, with `EPERM … mkdir '/private/tmp/claude-501/…'`,
+        so the agent had `Read` and no way to execute anything at all. That is
+        ticket 27, and it went unseen because the only probe that opens a real
+        Session skips without a credential and had never once run.
+
+        Measured before it was widened: Claude Code does **not** honour `TMPDIR`.
+        A run with it pointed elsewhere still created the directory under
+        `/tmp/claude-<uid>`, so there was no way to satisfy this by pointing the
+        agent at the temp directory already allowed.
+
+        Deliberately not `/tmp`. That is world-writable and shared with every
+        process on the machine; this is one per-user subdirectory of it, which is
+        the same *kind* of access the `temp` entry beside it already grants —
+        granted where the tool actually looks. The uid is read at generation
+        time rather than hardcoded, so a fresh clone on another machine gets its
+        own path and not this author's.
+      */
+      allowWrite: [clone, temp, claudeScratchDirFor(process.getuid?.() ?? 0)],
       denyWrite: [
         // ADR-0002: Core is separated from Userspace by the policy, not by
         // convention. The agent's blast radius is Userspace.
