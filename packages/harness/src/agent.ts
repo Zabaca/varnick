@@ -55,6 +55,9 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// Type only, and deliberately: `bun:ffi` is imported for real inside nestProbe
+// and nowhere else, so the agent host does not link libsandbox to run an agent.
+import type { Pointer } from 'bun:ffi'
 import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
 import { readLines } from './framing.ts'
 import { watchForOrphaning } from './orphan.ts'
@@ -832,6 +835,126 @@ async function selfTest(sdkEntry: string, deniedPath: string, allowedPath: strin
   process.stdout.write(`${JSON.stringify(report)}\n`)
 }
 
+/**
+ * The second profile the nested-Sandbox probe tries to put itself under.
+ *
+ * Two things at once, and both are load-bearing.
+ *
+ * `(allow default)` is the **widening**: it grants a read under `$HOME`, which
+ * the outer policy denies and which is where the Keychain sits. That is the
+ * operation the probe is about.
+ *
+ * The `deny` is the **witness**: `allowedDir` is inside the clone, which the
+ * outer policy reads back out, so it is permitted before this profile and
+ * refused after it — but only if this profile is actually in force. Without it,
+ * "the nested policy was established and the read was still denied" and "nothing
+ * was established" are the same output, and a probe that cannot tell them apart
+ * has measured nothing. See ADR-0014.
+ */
+export function nestedProbeProfile(allowedDir: string): string {
+  return ['(version 1)', '(allow default)', `(deny file-read* (subpath ${JSON.stringify(allowedDir)}))`].join(
+    '\n',
+  )
+}
+
+/**
+ * Try to put this process under a second, wider Seatbelt profile, and report
+ * what the kernel said and what changed.
+ *
+ * ADR-0014 asserted in prose that a nested sandbox cannot widen the outer one,
+ * and marked the sentence as reasoning about Seatbelt semantics rather than a
+ * result. This is the result — ticket 47.
+ *
+ * **In-process, and not by shelling out to `sandbox-exec`.** That is the same
+ * distinction ADR-0003 was written about: `Read`, `Grep` and `Glob` walked past
+ * the Agent SDK's `sandbox` option because they never handed anything to a
+ * shell. A widening attempt that only ever ran `sandbox-exec` would measure the
+ * shell path and leave the interesting one — `libsandbox` linked into the
+ * agent's own process, forty lines of code away from any binary — unmeasured.
+ * `sandbox_compile_string` and `sandbox_apply` are exactly that path.
+ *
+ * Every step is reported rather than collapsed into a verdict, because the
+ * failure mode that matters is a nested sandbox that never started: the read
+ * would be refused, the probe would go green, and nothing would have been
+ * measured.
+ */
+async function nestProbe(deniedPath: string, allowedPath: string): Promise<void> {
+  const { readFileSync } = await import('node:fs')
+  const { dirname } = await import('node:path')
+  const report: Record<string, string> = {}
+
+  const read = (path: string): string => {
+    try {
+      return readFileSync(path, 'utf8').includes(SELFTEST_MARKER) ? 'permitted' : 'no match'
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code
+      return `denied:${typeof code === 'string' ? code : 'unknown'}`
+    }
+  }
+
+  const allowedDir = dirname(allowedPath)
+  const profile = nestedProbeProfile(allowedDir)
+  report.profile = profile.replaceAll('\n', ' ')
+
+  // Before. The widening's target is refused and the witness's target is not —
+  // which is what makes the two lines after the attempt mean anything.
+  report.deniedBefore = read(deniedPath)
+  report.allowedBefore = read(allowedPath)
+
+  try {
+    const { dlopen, FFIType, ptr, read: readMemory, CString } = await import('bun:ffi')
+    const sandbox = dlopen('/usr/lib/libsandbox.1.dylib', {
+      sandbox_compile_string: {
+        args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.ptr,
+      },
+      sandbox_apply: { args: [FFIType.ptr], returns: FFIType.i32 },
+    })
+    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
+      __error: { args: [], returns: FFIType.ptr },
+      strerror: { args: [FFIType.i32], returns: FFIType.ptr },
+    })
+    report.dlopen = 'opened'
+
+    // `sandbox_compile_string(profile, params, &error)`. Compiled separately from
+    // applied so that a refusal cannot be mistaken for a profile this probe wrote
+    // wrong — a syntax error and a kernel denial are different answers.
+    const error = new BigUint64Array(1)
+    // The out-parameter is an address the callee writes, so it comes back as a
+    // number and has to be handed to `CString` as a pointer.
+    const at = (address: bigint): Pointer => Number(address) as unknown as Pointer
+    const compiled = sandbox.symbols.sandbox_compile_string(
+      ptr(Buffer.from(`${profile}\0`, 'utf8')),
+      null,
+      ptr(error),
+    )
+    report.compiled = compiled ? 'compiled' : 'failed'
+    if (error[0]) {
+      report.compileError = new CString(at(error[0])).toString()
+    }
+
+    if (compiled) {
+      const rc = sandbox.symbols.sandbox_apply(compiled)
+      report.applyRc = String(rc)
+      if (rc !== 0) {
+        const errnoPtr = libc.symbols.__error()
+        const errno = errnoPtr === null ? 0 : readMemory.i32(errnoPtr)
+        const message = libc.symbols.strerror(errno)
+        report.applyErrno = String(errno)
+        report.applyError = message === null ? '' : new CString(message).toString()
+      }
+    }
+  } catch (thrown) {
+    report.dlopen = `failed: ${thrown instanceof Error ? thrown.message : String(thrown)}`
+  }
+
+  // After. `deniedAfter` is the boundary; `allowedAfter` is the witness, and it
+  // is the line that says whether a second profile ever took effect.
+  report.deniedAfter = read(deniedPath)
+  report.allowedAfter = read(allowedPath)
+
+  process.stdout.write(`${JSON.stringify(report)}\n`)
+}
 
 /**
  * Ask a real Session to point its own `Read`, `Grep` and `Glob` at both sides of
@@ -1745,12 +1868,12 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
   })
 }
 
-// `agent.ts <sdkEntry> [--selftest|--toolprobe <deniedPath> <allowedPath>]`,
+// `agent.ts <sdkEntry> [--selftest|--toolprobe|--nestprobe <deniedPath> <allowedPath>]`,
 // spawned by src-tauri/src/agent.rs through the wrapping the runtime computed.
 // The SDK's location is an argument rather than a bare import — see
-// agentSdkEntry above for the measurement that forced that. Both flags belong to
-// the containment probes in containment.probe.test.ts; neither is reachable from
-// the host, which passes the SDK path and nothing else.
+// agentSdkEntry above for the measurement that forced that. All three flags
+// belong to the containment probes in containment.probe.test.ts; none is
+// reachable from the host, which passes the SDK path and nothing else.
 if (import.meta.main) {
   const [sdkEntry, flag, deniedPath, allowedPath] = process.argv.slice(2)
   if (sdkEntry === undefined) {
@@ -1761,6 +1884,12 @@ if (import.meta.main) {
     await selfTest(sdkEntry, deniedPath ?? '', allowedPath ?? '')
   } else if (flag === '--toolprobe') {
     await toolProbe(sdkEntry, deniedPath ?? '', allowedPath ?? '')
+    process.exit(0)
+  } else if (flag === '--nestprobe') {
+    // The one probe that changes this process irreversibly if it succeeds: a
+    // second profile cannot be lifted once applied. So it is the last thing this
+    // process does, and the process is the probe's own.
+    await nestProbe(deniedPath ?? '', allowedPath ?? '')
     process.exit(0)
   } else {
     /*

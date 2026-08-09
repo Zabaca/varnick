@@ -615,6 +615,14 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
     // sandboxed command launch an application that runs *outside* the sandbox,
     // which removes code-execution isolation rather than weakening it.
     allowAppleEvents: false,
+    // Off because every weakening option is off, and for no reason more specific
+    // than that. It reads as though it governs whether a nested policy could
+    // widen this one; it does not. srt passes it only in its `case 'linux'`
+    // branch, where it decides whether bubblewrap mounts a fresh `/proc` under an
+    // unshared PID namespace in a Docker container — the macOS branch never reads
+    // it. What actually stops a nested widening is that the kernel refuses
+    // `sandbox_apply` inside any established profile at all; probe 11 in
+    // containment.probe.test.ts measures that, and ADR-0014 records it.
     enableWeakerNestedSandbox: false,
     enableWeakerNetworkIsolation: false,
   }
