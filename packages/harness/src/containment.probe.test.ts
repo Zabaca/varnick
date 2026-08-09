@@ -759,6 +759,14 @@ test.skipIf(toolProbeBlocked !== null)(
       ['Glob  inside  (control)', answers.globControl ?? '(nothing)'],
       ['', ''],
       ['tools the Session actually called', answers.called || '(none)'],
+      ...(['read', 'grep', 'glob'] as const).flatMap((tool) => {
+        // What a tool answered when it did not reach the file. Printed only when
+        // there is something to print, because the first time a control here
+        // failed, the report said "denied" and nothing else — and the tool had
+        // in fact succeeded and answered with a relative path.
+        const why = answers[`${tool}ControlAnswered`]
+        return why === undefined ? [] : [[`${tool} control answered`, why] as const]
+      }),
     ])
 
     // A Session that could not run is not a boundary result. Reported and

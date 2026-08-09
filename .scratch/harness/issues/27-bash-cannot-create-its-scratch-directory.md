@@ -22,7 +22,7 @@ It also noticed the irony itself: *"Fitting, given your own README documents tha
 
 `allowWrite` is exactly two entries: the clone, and the OS per-user temp directory, which on this machine is `/var/folders/vf/…/T`. Claude Code creates a scratch directory under `/tmp` instead — `/private/tmp/claude-<uid>/<project>/<session>` — and `/tmp` is not `os.tmpdir()`. It is not in `allowWrite`, so the `mkdir` is refused, so the tool that needs it never gets to run a command.
 
-This is not the same defect as ticket 26. That one is `Grep` shelling out to a binary under `$HOME`; this one is a directory the policy does not name. Same symptom class, unrelated fixes.
+This was filed alongside ticket 26, which claimed `Grep` and `Glob` were broken too. **That one was retracted** — those tools worked, and the probe's control was comparing an absolute path against a relative answer. This ticket is the real half: a directory the policy does not name, measured as a refused `mkdir` rather than inferred from a failed assertion.
 
 ## The decision
 

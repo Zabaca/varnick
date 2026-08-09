@@ -46,4 +46,10 @@ tools the Session actually called   Read:denied, Read:allowed, Grep:denied, Grep
 
 So a subscription authenticates what varnick spawns, which is what this decision claimed and what nothing had shown.
 
-The same run found a defect, which is what happens when a probe that has always skipped finally runs: `Grep` is refused inside the clone as well as outside it, because it shells out to the Claude Code executable and that binary lives under `$HOME`, which `denyRead` covers. That is ticket 26, and it is not a consequence of this decision — it was equally true under an API key, and no measurement had ever been in a position to see it.
+The same run failed, which is what happens when a probe that has always skipped finally runs. It failed twice over, and only one of them was a real defect.
+
+The real one is ticket 27: every Bash command was refused, because Claude Code writes its scratch directory to `/tmp/claude-<uid>` and `allowWrite` named only the clone and `os.tmpdir()`. Fixed, with a probe holding it.
+
+The other was the probe itself. `Grep` and `Glob` answer with paths relative to the working directory, and the control compared against absolute ones — so two working tools read as denied, and that was written up as a product defect before anyone printed what the tools had returned. Retracted in ticket 26. With the comparison fixed, every control passes and every denial holds.
+
+Neither is a consequence of this decision; both were equally true under an API key. What the credential unlocked was the ability to see them at all.

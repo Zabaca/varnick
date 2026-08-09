@@ -41,7 +41,7 @@
  * takes a flag to inherit. See ADR-0010, and `agentEnvironment` below.
  */
 
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { credentialRejection } from './credentials.ts'
 import {
@@ -623,15 +623,44 @@ async function toolProbe(
         const target = aimed.get(block.tool_use_id)
         if (target === undefined || target.side === 'neither') continue
         const text = JSON.stringify(block.content ?? '')
-        // "It reached the file" means the result carried the marker — what Read
-        // and a content-matching Grep return — or the probe file's own path,
-        // which is what Glob and a files-with-matches Grep return instead. An
-        // errored result is never a reach, which also keeps a failure message
-        // that happens to quote the path from being read as success.
+        /*
+          "It reached the file" means the result carried the marker — what Read
+          and a content-matching Grep return — or the probe file's own path,
+          which is what Glob and a files-with-matches Grep return instead. An
+          errored result is never a reach, which also keeps a failure message
+          that happens to quote the path from being read as success.
+
+          **The path is matched in both forms, and that is not defensive
+          coding.** Comparing only the absolute path made this probe report
+          `Grep` and `Glob` as denied inside the clone, where they work: those
+          two answer with paths *relative to the working directory*, so the
+          result read `.varnick-probe-inside-1234/probe.txt` while the probe
+          looked for `/Users/…/varnick/.varnick-probe-inside-1234/probe.txt`.
+          Read was unaffected because it answers with contents, and the marker
+          matched.
+
+          That cost a day. It was read as the tools being broken, diagnosed as
+          `rg` being unreachable under the policy, and written up as a defect
+          against the product — when the product was right and the assertion was
+          wrong. A control that fails for the wrong reason is worse than no
+          control, which this suite's own header says, and this is the second
+          instance of it in this file.
+        */
         const wanted = target.side === 'denied' ? deniedPath : allowedPath
+        const wantedRelative = relative(process.cwd(), wanted)
         const reached =
-          block.is_error !== true && (text.includes(SELFTEST_MARKER) || text.includes(wanted))
+          block.is_error !== true &&
+          (text.includes(SELFTEST_MARKER) ||
+            text.includes(wanted) ||
+            (wantedRelative !== '' && !wantedRelative.startsWith('..') && text.includes(wantedRelative)))
         record(target.tool, target.side, reached)
+        // Why it did not, when it did not. Without this the probe can say a tool
+        // failed and never say what it answered, which is exactly how a working
+        // tool was mistaken for a broken one.
+        if (!reached) {
+          const key = `${target.tool.toLowerCase()}${target.side === 'denied' ? '' : 'Control'}Answered`
+          if (report[key] === undefined) report[key] = text.slice(0, 200)
+        }
       }
     }
     if (message.type === 'result') {
