@@ -49,9 +49,3 @@ src-tauri/gen/
 
 # Worktrees for parallel ticket agents. Checkouts, not history.
 /.claude/worktrees/
-
-# Plugins the agent loads, copied in from wherever they were installed.
-# Untracked pending a licensing decision: mattpocock-skills is MIT with a repo
-# link, caveman states no licence at all — see ticket 38. They work either way;
-# tracking them is what makes a clone self-contained.
-.claude/plugins/
