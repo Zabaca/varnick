@@ -87,27 +87,51 @@ fn watch_for_signals(app: tauri::AppHandle) {
 #[cfg(not(unix))]
 fn watch_for_signals(_app: tauri::AppHandle) {}
 
-/// The window's own controls: reload the page, restart the app.
+/// Where every rendering is, as a menu id.
 ///
-/// **These are two different repairs and the labels must not blur them.** A
-/// reload restarts the renderer only — the runtime channel and the agent
-/// process are managed state in *this* process and survive it untouched, so it
-/// fixes a stuck window and does nothing for a stuck host. Restart is the one
-/// that replaces everything, and it is only reasonable to offer because the
+/// Three renderings ship (CLAUDE.md: the bare page and the states page are
+/// product code, not scaffolding) and until ticket 41 two of them were
+/// unreachable. `#/bare` and `#/states` each render a nav; `#/designed` renders
+/// none and is where the window opens — so the pages that could navigate were
+/// the two nobody could get to.
+///
+/// The hash rather than a navigation: `App.tsx` listens for `hashchange`, so
+/// switching costs no reload and loses no state. The route strings are
+/// duplicated from there, which is the one thing to keep an eye on — a route
+/// renamed in Core and not here is a menu item that goes nowhere. Cheap to
+/// notice, and the alternative is Rust reading a TypeScript constant.
+const ROUTES: [(&str, &str, &str, &str); 3] = [
+    ("route-designed", "Chat", "#/designed", "CmdOrCtrl+1"),
+    ("route-bare", "Bare", "#/bare", "CmdOrCtrl+2"),
+    ("route-states", "States", "#/states", "CmdOrCtrl+3"),
+];
+
+/// The window's own controls: reload the page, restart the app, and go to a
+/// rendering.
+///
+/// **Reload and Restart are two different repairs and the labels must not blur
+/// them.** A reload restarts the renderer only — the runtime channel and the
+/// agent process are managed state in *this* process and survive it untouched,
+/// so it fixes a stuck window and does nothing for a stuck host. Restart is the
+/// one that replaces everything, and it is only reasonable to offer because the
 /// agent now resumes its conversation (ticket 33).
 ///
 /// A native menu rather than a key handler in the webview, and that is the
 /// point: the case you need this in most is a window that is not answering, and
-/// a renderer that cannot paint cannot handle a keystroke either.
+/// a renderer that cannot paint cannot handle a keystroke either. It is also
+/// why the route switcher lives here rather than as a nav bar on the chat —
+/// a route switcher on the designed rendering would put developer chrome in the
+/// product, and the whole argument for three renderings is that the designed
+/// one is the app rather than a demo of itself.
 ///
 /// Added to the default menu rather than replacing it. ⌘Q, Copy and Paste all
 /// come from the default, and building a menu from scratch would silently drop
 /// them.
 fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
-    use tauri::menu::{MenuItemBuilder, SubmenuBuilder};
+    use tauri::menu::{MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 
     let menu = tauri::menu::Menu::default(app)?;
-    let view = SubmenuBuilder::new(app, "View")
+    let mut view = SubmenuBuilder::new(app, "View")
         .item(
             &MenuItemBuilder::with_id("reload", "Reload")
                 .accelerator("CmdOrCtrl+R")
@@ -118,10 +142,30 @@ fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
                 .accelerator("Shift+CmdOrCtrl+R")
                 .build(app)?,
         )
-        .build()?;
+        .item(&PredefinedMenuItem::separator(app)?);
+    for (id, label, _, accelerator) in ROUTES {
+        view = view.item(
+            &MenuItemBuilder::with_id(id, label)
+                .accelerator(accelerator)
+                .build(app)?,
+        );
+    }
+    let view = view.build()?;
     menu.append(&view)?;
     app.set_menu(menu)?;
     Ok(())
+}
+
+/// The route a menu id means, or `None` for an id that is not one.
+///
+/// Split out so the lookup is a unit test rather than a `match` arm nobody can
+/// reach without a window — the same reason `route_of` in bridge.rs is its own
+/// function.
+fn route_for(id: &str) -> Option<&'static str> {
+    ROUTES
+        .iter()
+        .find(|(menu_id, _, _, _)| *menu_id == id)
+        .map(|(_, _, route, _)| *route)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -129,12 +173,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         // One command for the whole Harness — see bridge.rs. The credential and
         // everything downstream of it are answered here: storing one, minting
-        // one, the agent process it is injected into, and the Turns and
-        // Compactions that ride that process's Session. What is
-        // forwarded to the Harness runtime is what needs the Sandbox or a
-        // filesystem — the sandbox check and both directions of the Session
-        // mirror. `route_of` is where that split is decided, and it is a unit
-        // test rather than a convention.
+        // one, the agent process it is injected into, and the Turns that ride
+        // that process's Session. What is forwarded to the Harness runtime is
+        // what needs the Sandbox or a filesystem — the sandbox check and both
+        // directions of the Session mirror. `route_of` is where that split is
+        // decided, and it is a unit test rather than a convention.
         .manage(credential::CredentialStore::default())
         .manage(bridge::HarnessRuntime::default())
         // The agent process. Held here rather than in the runtime because the
@@ -166,7 +209,19 @@ pub fn run() {
                 shut_down(app);
                 app.restart();
             }
-            _ => {}
+            // A rendering. Nothing is torn down and nothing reloads: the hash
+            // is what `App.tsx` routes on, so the window changes page with its
+            // machines still running.
+            id => {
+                if let Some(route) = route_for(id) {
+                    if let Some(window) = app.get_webview_window("main") {
+                        // `route` comes from the constant above and never from
+                        // anything the window said, so there is no string here
+                        // a caller could put something else in.
+                        let _ = window.eval(format!("window.location.hash = '{route}'"));
+                    }
+                }
+            }
         })
         // `build` rather than `run`, for the callback below. It is the only
         // place an exit can be observed at all.
@@ -178,4 +233,44 @@ pub fn run() {
             shut_down(app);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_rendering_the_window_ships_has_a_way_in() {
+        // The defect this closes: two of the three renderings were product code
+        // with no route to them. Asserted by route rather than by count, so
+        // dropping one from the menu fails here instead of quietly shipping a
+        // page nobody can open again.
+        assert_eq!(route_for("route-designed"), Some("#/designed"));
+        assert_eq!(route_for("route-bare"), Some("#/bare"));
+        assert_eq!(route_for("route-states"), Some("#/states"));
+    }
+
+    #[test]
+    fn a_menu_id_that_is_not_a_rendering_is_not_one() {
+        // The route arm is the fall-through of `on_menu_event`, so every id the
+        // menu has that is *not* a route reaches it. It has to say no rather
+        // than guess — a default menu item that navigated the window would be a
+        // Copy that changed the page.
+        assert_eq!(route_for("reload"), None);
+        assert_eq!(route_for("restart"), None);
+        assert_eq!(route_for(""), None);
+    }
+
+    #[test]
+    fn no_route_can_carry_anything_but_a_hash() {
+        // The route is interpolated into a line of JavaScript. It comes from
+        // the constant above and never from the window, and this is what keeps
+        // that true if someone adds a fourth: a route with a quote in it would
+        // end the string literal.
+        for (_, _, route, _) in ROUTES {
+            assert!(route.starts_with("#/"), "{route} is not a hash route");
+            assert!(!route.contains('\''), "{route} could close the literal");
+            assert!(!route.contains('\\'), "{route} could escape the literal");
+        }
+    }
 }
