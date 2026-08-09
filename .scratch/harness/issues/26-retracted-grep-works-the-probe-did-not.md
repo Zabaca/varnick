@@ -64,8 +64,14 @@ What the rule does not cover is that a printed reason answers *"why is this skip
 - **The banner moved.** `if (blocked) console.log(...)` at the bottom of the file ran at module *evaluation*, before probe 1, and was then buried under ten report blocks. It is an `afterAll` now, which is as late as the file can reach: Bun's default reporter prints nothing for a passing or skipped test, so there is no such thing as a loud skip in the summary and the last console output is the loudest position available.
 - The README's *Where confinement stops* says plainly that a green suite is not a measurement of that section, and names the one claim on the page whose confirming probe has never run.
 
-What this does **not** do: make `bun test packages` red because probe 6 has never run. That failure would be identical on every clone and on CI, clearable only by a maintainer with a credential, which is the ignored red the header forbids. The honest summary is that the skip is now visible in a committed file, in the README, and in the last thing the suite prints — and a determined reader can still scroll past all three. What cannot be scrolled past is `bun run probe`, and the README points at it from the section it qualifies.
+**And then it was made red, because the probe was actually run.** The paragraph that stood here said this deliberately stopped short: a suite red for "nobody has ever measured this" would be identical on every clone and on CI, clearable only by someone with a credential — and the author had none, so shipping it meant shipping a red nobody present could clear, whose only other route to green was fabricating an attestation. That reasoning was right and the restraint was right.
+
+It ships now because the probe has been run for real. `bun run probe` completed under a subscription credential — 13 probes, probe 6 among them, all six verdicts recorded — and the record is committed. So `expect(everCompleted).toBe(true)` runs unconditionally: on Linux, on CI, on a fresh clone, with no credential and no kernel support.
+
+It is not the ignored red the header forbids, and the distinction is the whole argument. That red is one nobody can act on. This one is a fact about the repository, cleared permanently by a single real run committed once, and silent forever after unless someone deletes the evidence. Verified by deleting it: blanking `lastCompleted` turns the suite red on that line, restoring it turns it green.
+
+**The repository can no longer be in the state "nobody has ever measured this" while the suite is green.** That is the entire ticket, and it took a credential to close rather than a better idea.
 
 - [x] The path comparison is fixed and probe 6 passes end to end under a real credential
 - [x] The probe records what a tool answered when it did not reach the file
-- [x] `bun test packages` fails, or says something loud, when the only probe that drives a real Session has never run — a printed reason was not enough, because nobody read it
+- [x] `bun test packages` **fails** when the only probe that drives a real Session has never run — not merely says something loud. A printed reason was not enough, because nobody read it

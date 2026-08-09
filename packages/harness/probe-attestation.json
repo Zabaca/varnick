@@ -22,9 +22,17 @@
     "probe": "containment probe 6 — the Agent SDK's own Read, Grep and Glob tools, driven by a real Session",
     "measures": "that the tools themselves, inside the Claude Code process the SDK starts, are denied a file outside the clone and reach one inside it",
     "needs": "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN — there is deliberately no faked substitute; see packages/harness/src/agent.ts toolProbe",
-    "lastCompleted": null,
-    "commit": null,
-    "platform": null,
-    "verdicts": null
+    "lastCompleted": "2026-08-09",
+    "commit": "f2dfb3d",
+    "platform": "darwin-arm64",
+    "verdicts": {
+      "read": "denied",
+      "grep": "denied",
+      "glob": "denied",
+      "readControl": "permitted",
+      "grepControl": "permitted",
+      "globControl": "permitted",
+      "session": "ok — subtype success"
+    }
   }
 }

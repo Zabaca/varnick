@@ -1224,6 +1224,32 @@ test(`probe 6, the one probe a machine can be unable to run — on record: ${sdk
   if (toolProbeBlocked === null) {
     expect(sdkToolProbeCompleted).toBe(true)
   }
+
+  /*
+    And the one that fails *everywhere*, which was deliberately not shipped
+    until it could be cleared.
+
+    This is red on a fresh clone, on CI, on Linux, with no credential — for
+    exactly as long as the repository says nobody has ever completed this probe.
+    That sounds like the ignored-red-suite the header forbids, and it is not,
+    because of one property: it is a fact about the repository, it is cleared
+    permanently by a single real run committed once, and after that it never
+    fires again unless someone deletes the evidence.
+
+    It was written and rejected once for the right reason — the author had no
+    credential, so shipping it meant shipping a red nobody present could clear,
+    and the only way to make it green would have been to fabricate an
+    attestation, which is precisely the sin this ticket exists to prevent. It
+    ships now because the probe has actually been run: probe 6 completed under a
+    real subscription credential and its six verdicts are in the record beside
+    this line.
+
+    What it buys, and it is narrow but it is the whole ticket: the repository can
+    never again be in the state "nobody has ever measured this" while the suite
+    is green. Someone has to notice the record, rather than having to notice a
+    line of output that scrolled past.
+  */
+  expect(sdkToolProbeStanding().everCompleted).toBe(true)
 })
 
 /*
