@@ -64,12 +64,14 @@ import {
   beginTurn,
   COMPACT_COMMAND,
   encodeTurnEvent,
+  normaliseCommands,
   parseControlRequest,
   runtimeReportFrom,
   type CompactionRun,
   type CompactionSettlement,
   type TurnEvent,
   type RuntimeReport,
+  type SlashCommand,
   type TurnFailure,
   type TurnRun,
 } from './turn.ts'
@@ -938,6 +940,23 @@ export interface AgentSessionPort {
    * reading rather than an estimate.
    */
   contextTokens(): Promise<number | null>
+  /**
+   * Every slash command this runtime will accept, with what each one does.
+   *
+   * The sixth member, and the argument for it is the one this interface's own
+   * doc asks for: **nothing else can see this list.** It is assembled inside the
+   * Claude Code process from the CLI's own commands, the skills it discovered
+   * and the plugins it loaded, and it changes while the agent works — a skill
+   * found in a subdirectory appears mid-session. The init message carries names
+   * only; the descriptions and argument hints, which come from each command's
+   * own frontmatter, are here or nowhere.
+   *
+   * Reading it is not running one. Executing a command already worked — a
+   * message whose text is `/compact` is handed to the SDK like any other and the
+   * CLI runs it — and this is about *discovery*: until now the window listed
+   * thirteen commands varnick wrote itself and nothing the agent actually had.
+   */
+  supportedCommands(): Promise<readonly SlashCommand[]>
 }
 
 export interface ServeTurnsInput {
@@ -1030,6 +1049,40 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
    * without a new `init`, and if one arrives it overwrites this.
    */
   let runtime: RuntimeReport | null = null
+
+  /**
+   * Every command the runtime will accept, as it last said.
+   *
+   * Held and replayed for the same reason the report above is: the answer
+   * arrives outside any Turn — once when the Session opens, and again whenever
+   * the CLI discovers a skill mid-session — and an update with no Turn to stamp
+   * it with is dropped by the rule this loop's own doc describes.
+   *
+   * `null` until the runtime has said anything, which is a different fact from
+   * the empty list. Empty means it was asked and has none; `null` means nobody
+   * has asked yet, and the window keeps showing varnick's own commands rather
+   * than announcing an emptiness nothing has evidence for.
+   */
+  let commands: readonly SlashCommand[] | null = null
+
+  /**
+   * Ask the runtime what it will accept, and say so.
+   *
+   * Best-effort on purpose. This is a description of the agent, not a step in
+   * answering anything, and a Session that will not answer the question is a
+   * Session that still runs Turns — with a menu one refresh out of date, which
+   * is a far better failure than a Turn that did not happen.
+   */
+  const askForCommands = async (turnId: string | null) => {
+    let answer: readonly SlashCommand[]
+    try {
+      answer = await session.supportedCommands()
+    } catch {
+      return
+    }
+    commands = answer
+    if (turnId !== null) emit([{ kind: 'commands', turnId, commands: answer }])
+  }
 
   const emit = (events: readonly TurnEvent[]) => {
     for (const event of events) write(encodeTurnEvent(event))
@@ -1126,6 +1179,7 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     // is worth knowing while the Turn runs, and a report that waited for the
     // answer would arrive at the moment it stopped being interesting.
     if (runtime !== null) emit([{ kind: 'runtime', turnId: request.turnId, report: runtime }])
+    if (commands !== null) emit([{ kind: 'commands', turnId: request.turnId, commands }])
     try {
       // Before the prompt, so the Turn runs on what it was started with. A
       // SET_MODEL that arrives mid-Turn belongs to the next one, and applying
@@ -1198,6 +1252,29 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
         // when a report reaches Core rather than two that can disagree.
         if (running !== null && !running.finished) {
           emit([{ kind: 'runtime', turnId: running.turnId, report: runtime }])
+        }
+        // The described list, which the init message does not carry: it has
+        // `slash_commands` as bare names, and what makes a menu usable — the
+        // description and the argument hint, both out of each command's own
+        // frontmatter — has to be asked for. Not awaited, because this loop is
+        // reading a live message stream and a Turn must not wait behind a
+        // description of one.
+        void askForCommands(running !== null && !running.finished ? running.turnId : null)
+        continue
+      }
+
+      /*
+        The runtime discovered something while it was working.
+
+        A skill found in a subdirectory, a plugin loaded mid-session. The SDK
+        pushes the whole list and says to replace the cached one, which is what
+        this does — a merge would go on offering a skill that has gone.
+      */
+      if (sdk?.type === 'system' && sdk.subtype === 'commands_changed') {
+        const pushed = normaliseCommands((message as { commands?: unknown }).commands)
+        commands = pushed
+        if (running !== null && !running.finished) {
+          emit([{ kind: 'commands', turnId: running.turnId, commands: pushed }])
         }
         continue
       }
@@ -1451,6 +1528,11 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       // on the session already open — the same rule the whole channel exists
       // for — and the reason the meter after a Compaction is a reading rather
       // than a subtraction someone worked out.
+      // The runtime's own list, asked of the Session that is already open —
+      // the same rule the whole port follows. `supportedCommands` tracks the
+      // latest `commands_changed` push, so re-asking after one is redundant
+      // rather than wrong; this is asked once, when the Session opens.
+      supportedCommands: async () => normaliseCommands(await session.supportedCommands()),
       contextTokens: async () => {
         const usage = await session.getContextUsage()
         const total = usage?.totalTokens

@@ -2,7 +2,7 @@ import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
 // A type and nothing else. `turn` is one of the three Harness subpaths that
 // reach no Node built-in, which is what makes it importable from Core at all —
 // see the lint rule in eslint.config.js.
-import type { RuntimeReport } from '@varnick/harness/turn'
+import type { RuntimeReport, SlashCommand } from '@varnick/harness/turn'
 import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
   CredentialKind,
@@ -128,6 +128,19 @@ export interface HarnessContext {
    * `RuntimeReport`, which has no field a credential could arrive in.
    */
   runtime: RuntimeReport | null
+  /**
+   * Every command the running agent will accept, as it last said.
+   *
+   * Empty until a Turn has run, and empty again when the agent goes — the same
+   * lifetime as the report above and for the same reason: it describes a
+   * process, and offering a skill from an agent that is no longer there is the
+   * menu claiming something exists when it does not.
+   *
+   * The window's own commands are not in here. They belong to machines that are
+   * running whether or not an agent is, and they are composed in the view where
+   * their `can()` gating lives.
+   */
+  commands: readonly SlashCommand[]
   session: ActorRefFrom<typeof sessionMachine> | null
   /**
    * What the Session is spawned with.
@@ -158,6 +171,7 @@ export interface HarnessInput {
   sessionInput?: SessionInput
   /** Seeded only by the states page, which parks a machine with a report in it. */
   runtime?: RuntimeReport | null
+  commands?: readonly SlashCommand[]
   refusal?: StartRefusal | null
   agentError?: string | null
   sandboxError?: string | null
@@ -219,6 +233,14 @@ export type HarnessEvent =
    * that refused it in `starting` would drop the only one a Session sends.
    */
   | { type: 'RUNTIME_REPORTED'; report: RuntimeReport }
+  /**
+   * The runtime said which commands it accepts.
+   *
+   * A replacement rather than an addition, which is what the SDK's own
+   * `commands_changed` asks of a client: a merge would go on offering a skill
+   * that has gone.
+   */
+  | { type: 'COMMANDS_REPORTED'; commands: readonly SlashCommand[] }
   | { type: 'DISCOVER_SURFACES'; descriptors: SurfaceDescriptor[] }
   | { type: 'UNLOAD_SURFACE'; id: string }
 
@@ -350,6 +372,7 @@ export const harnessMachine = setup({
     credentialError: input.credentialError ?? null,
     surfaces: [],
     runtime: input.runtime ?? null,
+    commands: input.commands ?? [],
     session: null,
     sessionInput: input.sessionInput ?? { sessionId: LIVE_SESSION_ID },
     enterCredential: input.enterCredential ?? null,
@@ -398,6 +421,12 @@ export const harnessMachine = setup({
     */
     RUNTIME_REPORTED: {
       actions: assign({ runtime: ({ event }) => event.report }),
+    },
+    // At the root for the same reason, and it is the same fact one level along:
+    // the list is read off the message stream and replayed at the start of each
+    // Turn, so it can arrive when the `agent` region has no opinion about it.
+    COMMANDS_REPORTED: {
+      actions: assign({ commands: ({ event }) => event.commands }),
     },
   },
   states: {
@@ -710,7 +739,7 @@ export const harnessMachine = setup({
           // process is gone, so the description goes with it rather than
           // outliving what it describes — the panel says "no agent has reported"
           // instead of confidently describing a runtime that is not there.
-          exit: assign({ runtime: null }),
+          exit: assign({ runtime: null, commands: [] }),
           on: {
             STOP: 'down',
             AGENT_EXIT: {

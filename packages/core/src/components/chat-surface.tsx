@@ -7,11 +7,17 @@ import { ClaudeHeader } from './brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from './brainless/claude/claude-message.tsx'
 import { ClaudeThinking } from './brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
-import { SlashMenu, type Command } from './slash-menu.tsx'
+import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
 import {
+  commandLabel,
   commandQuery,
   invokedCommand,
+  matchCommands,
+  mergeCommands,
+  signatureFor,
+  completionFor,
+  type MenuCommand,
   formatContext,
   CONTEXT_WINDOW,
   EFFORTS,
@@ -105,39 +111,67 @@ export function ChatSurface({
   }, [s?.context.messages.length, s?.context.partial, turn])
 
   /*
-    Commands are the events the machines currently accept, nothing more. A
-    command that cannot run is not offered — the same rule as every other
-    control here, so the menu cannot drift into advertising capability the
-    product does not have.
+    Two lists, one menu.
+
+    **varnick's own commands are events the machines accept**, gated by `can()`
+    like every other control here, so the menu cannot advertise a capability the
+    product does not have. That rule is unchanged and applies to these rows only.
+
+    **The agent's commands are text the Session runs.** They come from the
+    runtime — the CLI's own, plus every skill and plugin it loaded — and until
+    now none of them had ever appeared here: the menu was thirteen entries
+    varnick wrote about itself, in a window whose whole subject is an agent with
+    dozens. Executing them already worked, because a message whose text is
+    `/foo` is handed to the SDK like any other and the CLI runs it. What did not
+    exist was any way to know they were there.
+
+    So they are offered rather than run: picking one completes it into the
+    composer and Enter sends it. The send path is untouched, which is what keeps
+    this a discovery feature rather than a second way to run things.
   */
-  const allCommands: Command[] = [
+  /*
+    `available` is local to this list and never leaves it: a command that cannot
+    run is not offered, so the filter below is what turns these into menu rows
+    rather than a flag the menu has to remember to check.
+  */
+  const varnickCommands: (MenuCommand & { available: boolean })[] = [
     {
-      name: '/clear',
+      name: 'clear',
       description: 'Clear the conversation',
+      argumentHint: '',
+      source: 'varnick' as const,
       available: sessionCan({ type: 'CLEAR' }) && (s?.context.messages.length ?? 0) > 0,
       run: () => session?.send({ type: 'CLEAR' }),
     },
     {
-      name: '/compact',
+      name: 'compact',
       description: 'Summarise the conversation to free context',
+      argumentHint: '',
+      source: 'varnick' as const,
       available: sessionCan({ type: 'COMPACT' }) && (s?.context.messages.length ?? 0) > 0,
       run: () => session?.send({ type: 'COMPACT' }),
     },
     {
-      name: '/retry',
+      name: 'retry',
       description: 'Retry the turn that failed',
+      argumentHint: '',
+      source: 'varnick' as const,
       available: sessionCan({ type: 'RETRY_TURN' }),
       run: () => session?.send({ type: 'RETRY_TURN' }),
     },
     {
-      name: '/interrupt',
+      name: 'interrupt',
       description: 'Stop the turn in progress',
+      argumentHint: '',
+      source: 'varnick' as const,
       available: sessionCan({ type: 'INTERRUPT' }),
       run: () => session?.send({ type: 'INTERRUPT' }),
     },
     {
-      name: '/restart',
+      name: 'restart',
       description: 'Restart the agent',
+      argumentHint: '',
+      source: 'varnick' as const,
       available: snapshot.can({ type: 'RESTART' }),
       run: () => send({ type: 'RESTART' }),
     },
@@ -151,28 +185,49 @@ export function ChatSurface({
       most of why anyone types /model.
     */
     ...EFFORTS.map((e) => ({
-      name: `/effort ${e}`,
+      name: `effort ${e}`,
       description:
         e === s?.context.effort ? `Current — next turn runs at ${e}` : `Run the next turn at ${e} effort`,
+      argumentHint: '',
+      source: 'varnick' as const,
       available: Boolean(session),
       run: () => session?.send({ type: 'SET_EFFORT', effort: e }),
     })),
     ...MODELS.map((m) => ({
-      name: `/model ${m.label}`,
+      name: `model ${m.label}`,
       description:
         m.id === s?.context.model ? `Current — next turn runs on ${m.label}` : `Run the next turn on ${m.label}`,
+      argumentHint: '',
+      source: 'varnick' as const,
       available: Boolean(session),
       run: () => session?.send({ type: 'SET_MODEL', model: m.id }),
     })),
-  ]
+  ].filter((c) => c.available)
 
-  const query = commandQuery(draft).toLowerCase()
-  const commands = allCommands.filter(
-    (c) => c.available && c.name.toLowerCase().startsWith(query),
-  )
-  const availableNames = allCommands.filter((c) => c.available).map((c) => c.name)
+  /*
+    varnick's first, so a collision resolves its way — `/compact` in this window
+    means the Compaction this window implements, not the CLI command that would
+    be sent as text. See `mergeCommands`, which also merges the duplicate the
+    runtime reports for anything that is both a command and a skill.
+  */
+  const allCommands = mergeCommands([
+    ...varnickCommands,
+    ...ctx.commands.map((c) => ({ ...c, source: 'agent' as const })),
+  ])
+
+  const query = commandQuery(draft)
+  const commands = matchCommands(allCommands, query.startsWith('/') ? query.slice(1) : query)
+  const availableNames = allCommands.map(commandLabel)
   const menuOpen = Boolean(s?.context.menuOpen)
   const menuIndex = Math.min(s?.context.menuIndex ?? 0, Math.max(commands.length - 1, 0))
+  /*
+    What the command in the draft takes, once the menu has closed over it.
+
+    Accepting `/agents` settles the command and closes the list, which is the
+    moment its `[name]` stops being visible anywhere — so it is shown here
+    instead, above the composer, for exactly as long as the arguments are blank.
+  */
+  const signature = signatureFor(allCommands, draft)
 
   // The machine derives menu state from the names, so they have to stay current
   // as availability changes.
@@ -185,14 +240,22 @@ export function ChatSurface({
   const complete = (i: number) => {
     const c = commands[i]
     if (!c) return
-    session?.send({ type: 'MENU_COMPLETE', name: c.name })
+    // `completionFor` decides the trailing space: a command that takes an
+    // argument leaves you mid-sentence, one that does not is finished.
+    session?.send({ type: 'MENU_COMPLETE', name: completionFor(c).trimEnd() })
   }
 
   /** Enter: send. A draft that names a command runs it instead of posting it. */
   const submit = () => {
-    const name = invokedCommand(draft, allCommands.map((c) => c.name))
-    const command = name ? allCommands.find((c) => c.name === name) : undefined
-    if (command?.available) {
+    const name = invokedCommand(draft, allCommands.map(commandLabel))
+    const command = name ? allCommands.find((c) => commandLabel(c) === name) : undefined
+    /*
+      Only varnick's commands are run here. An agent command has no `run` and is
+      deliberately not given one: it is sent, as text, and the CLI executes it —
+      which is how it worked before this menu could name them, and the path this
+      change was careful not to touch.
+    */
+    if (command?.run) {
       command.run()
       session?.send({ type: 'EDIT_DRAFT', text: '' })
       return
@@ -433,6 +496,19 @@ export function ChatSurface({
                 onHover={(i) => session?.send({ type: 'MENU_MOVE', delta: i - menuIndex, count: commands.length })}
                 onPick={complete}
               />
+            )}
+            {/*
+              What the accepted command takes, in the gap the menu leaves.
+
+              Accepting `/agents` settles the command and closes the list, which
+              is the moment its `[name]` stops being visible anywhere. Shown only
+              while the arguments are blank: once you have typed one you are
+              answering the question rather than asking it.
+            */}
+            {!menuOpen && signature !== null && (
+              <div className="mb-2 px-1 text-[11.5px]" style={{ color: 'var(--fg-faint)' }}>
+                {commandLabel(signature)} {signature.argumentHint}
+              </div>
             )}
             <ClaudePrompt
               value={draft}

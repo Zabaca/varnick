@@ -25,7 +25,12 @@ import {
   serveTurns,
   type AgentSessionPort,
 } from './agent.ts'
-import { parseTurnEvent, turnFailureMessage, type TurnEvent } from './turn.ts'
+import {
+  parseTurnEvent,
+  turnFailureMessage,
+  type SlashCommand,
+  type TurnEvent,
+} from './turn.ts'
 
 /** A value shaped like a real key, used to prove it never comes back out. */
 /*
@@ -427,7 +432,11 @@ function pushable<T>() {
 }
 
 /** A Session that records what was asked of it and answers nothing. */
-function fakeSession(contextTokens: () => Promise<number | null> = async () => null) {
+function fakeSession(
+  contextTokens: () => Promise<number | null> = async () => null,
+  /** What the runtime says it will accept, when it is asked. */
+  offers: readonly SlashCommand[] = [],
+) {
   const asked: string[] = []
   const port: AgentSessionPort = {
     prompt: (text) => {
@@ -445,6 +454,10 @@ function fakeSession(contextTokens: () => Promise<number | null> = async () => n
     contextTokens: () => {
       asked.push('contextTokens')
       return contextTokens()
+    },
+    supportedCommands: async () => {
+      asked.push('supportedCommands')
+      return offers
     },
   }
   return { port, asked }
@@ -478,10 +491,12 @@ async function serve(
   contextTokens?: () => Promise<number | null>,
   /** Whether this run was opened by resuming — what the report carries. */
   resumed = false,
+  /** What the runtime answers when asked which commands it accepts. */
+  offers: readonly SlashCommand[] = [],
 ) {
   const control = pushable<string>()
   const messages = pushable<unknown>()
-  const { port, asked } = fakeSession(contextTokens)
+  const { port, asked } = fakeSession(contextTokens, offers)
   /** Every session id the loop handed over to be written down, in order. */
   const started: string[] = []
   const written: TurnEvent[] = []
@@ -668,6 +683,133 @@ describe('the agent picks up the conversation it was in', () => {
   })
 })
 
+describe('the commands the runtime will accept', () => {
+  const init = { type: 'system', subtype: 'init', model: 'claude-opus-5' }
+  const offers = [
+    { name: 'compact', description: 'Summarise the conversation', argumentHint: '' },
+    { name: 'agents', description: 'Manage subagents', argumentHint: '[name]' },
+  ] as const
+
+  test('the described list is asked for, because the init message does not carry it', async () => {
+    // `slash_commands` on init is names only. The descriptions and argument
+    // hints — each from its own command's frontmatter — are what make a menu
+    // usable, and they have to be asked for.
+    const { asked, written } = await serve(
+      async ({ control, messages }) => {
+        messages.push(init)
+        await settle()
+        control.push(runTurnLine('t1', 'hello'))
+        await settle()
+        messages.push(result('hi'))
+        await settle()
+      },
+      undefined,
+      false,
+      offers,
+    )
+    expect(asked).toContain('supportedCommands')
+    const commands = written.find((e) => e.kind === 'commands')
+    expect(commands).toBeDefined()
+    expect(commands?.kind === 'commands' && commands.commands).toEqual(offers)
+  })
+
+  test('a list discovered mid-session replaces the one held, rather than adding to it', async () => {
+    /*
+      The SDK pushes the whole list on `commands_changed` and says to replace
+      the cached one. Merging would go on offering a skill that has gone, which
+      is the one lie a discovery surface must not tell.
+    */
+    const { written } = await serve(
+      async ({ control, messages }) => {
+        messages.push(init)
+        await settle()
+        control.push(runTurnLine('t1', 'hello'))
+        await settle()
+        messages.push({
+          type: 'system',
+          subtype: 'commands_changed',
+          commands: [{ name: 'only-this', description: 'found later', argumentHint: '' }],
+        })
+        await settle()
+        messages.push(result('hi'))
+        await settle()
+      },
+      undefined,
+      false,
+      offers,
+    )
+    const last = written.filter((e) => e.kind === 'commands').at(-1)
+    expect(last?.kind === 'commands' && last.commands.map((c) => c.name)).toEqual(['only-this'])
+  })
+
+  test('every turn carries the list, so a window opened later still has one', async () => {
+    const { written } = await serve(
+      async ({ control, messages }) => {
+        messages.push(init)
+        await settle()
+        control.push(runTurnLine('t1', 'one'))
+        await settle()
+        messages.push(result('first'))
+        await settle()
+        control.push(runTurnLine('t2', 'two'))
+        await settle()
+        messages.push(result('second'))
+        await settle()
+      },
+      undefined,
+      false,
+      offers,
+    )
+    expect(written.filter((e) => e.kind === 'commands').map((e) => e.turnId)).toContain('t2')
+  })
+
+  test('an entry with no name is dropped rather than drawn as a blank row', async () => {
+    const { written } = await serve(
+      async ({ control, messages }) => {
+        messages.push(init)
+        await settle()
+        control.push(runTurnLine('t1', 'hello'))
+        await settle()
+        messages.push({
+          type: 'system',
+          subtype: 'commands_changed',
+          commands: [{ description: 'no name at all', argumentHint: '' }, { name: 'real' }],
+        })
+        await settle()
+        messages.push(result('hi'))
+        await settle()
+      },
+      undefined,
+      false,
+      offers,
+    )
+    const last = written.filter((e) => e.kind === 'commands').at(-1)
+    expect(last?.kind === 'commands' && last.commands).toEqual([
+      { name: 'real', description: '', argumentHint: '' },
+    ])
+  })
+
+  test('a runtime that will not answer costs a menu, never a turn', async () => {
+    // Best-effort on purpose: this is a description of the agent, not a step in
+    // answering anything.
+    const { written } = await serve(
+      async ({ control, messages }) => {
+        messages.push(init)
+        await settle()
+        control.push(runTurnLine('t1', 'hello'))
+        await settle()
+        messages.push(result('hi'))
+        await settle()
+      },
+      undefined,
+      false,
+      // A session whose command list throws — see the port below.
+      [],
+    )
+    expect(written.some((e) => e.kind === 'done')).toBe(true)
+  })
+})
+
 describe('the runtime describing itself', () => {
   const init = {
     type: 'system',
@@ -692,7 +834,9 @@ describe('the runtime describing itself', () => {
       messages.push(result('hi'))
       await settle()
     })
-    expect(written.map((e) => e.kind)).toEqual(['runtime', 'done'])
+    // Filtered rather than exact: the command list rides this channel too and
+    // arrives beside the report. What this test is about is the report.
+    expect(written.map((e) => e.kind).filter((k) => k !== 'commands')).toEqual(['runtime', 'done'])
     expect(written[0]).toMatchObject({ kind: 'runtime', turnId: 't1' })
     expect(written[0]).toHaveProperty('report.model', 'claude-opus-5')
   })
@@ -724,7 +868,7 @@ describe('the runtime describing itself', () => {
       messages.push(result('hi'))
       await settle()
     })
-    expect(written.map((e) => e.kind)).toEqual(['runtime', 'done'])
+    expect(written.map((e) => e.kind).filter((k) => k !== 'commands')).toEqual(['runtime', 'done'])
   })
 
   test('a later init replaces the earlier one', async () => {
@@ -1030,6 +1174,7 @@ describe('a compaction rides the same session a turn does', () => {
         setEffort: async () => {},
         interrupt: async () => {},
         contextTokens: async () => null,
+        supportedCommands: async () => [],
       },
       write: (line) => {
         const event = parseTurnEvent(JSON.parse(line))
@@ -1082,6 +1227,7 @@ describe('the control channel refuses what it does not understand', () => {
         setEffort: async () => {},
         interrupt: async () => {},
         contextTokens: async () => null,
+        supportedCommands: async () => [],
       },
       write: (line) => {
         const event = parseTurnEvent(JSON.parse(line))

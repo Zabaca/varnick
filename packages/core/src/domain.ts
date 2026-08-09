@@ -187,6 +187,173 @@ export function isCommandDraft(draft: string, names: readonly string[]): boolean
   return names.some((n) => n.toLowerCase().startsWith(typed))
 }
 
+/*
+  ---------------------------------------------------------------------------
+  The command menu
+
+  Ported from the sibling `forge` service, whose rules were each learned from a
+  live runtime rather than reasoned out. varnick's menu was thirteen commands it
+  wrote itself, filtered by one `startsWith`; the runtime it talks to has
+  skills, plugins and the CLI's own commands, and none of them had ever appeared
+  in it.
+  ---------------------------------------------------------------------------
+*/
+
+/**
+ * One row in the menu, whoever it belongs to.
+ *
+ * Names are bare — `compact`, not `/compact` — because that is how the runtime
+ * reports them and the slash is presentation. {@link commandLabel} puts it back.
+ *
+ * `source` is not decoration. A varnick command is an event this window sends
+ * and a guard decides whether it is offered; an agent command is text the
+ * Session runs. They are two different mechanisms sharing one list, and the
+ * distinction has to survive to the point where one is picked.
+ */
+export interface MenuCommand {
+  readonly name: string
+  readonly description: string
+  readonly argumentHint: string
+  readonly aliases?: readonly string[]
+  readonly source: 'varnick' | 'agent'
+  /** Only varnick's rows have one; an agent command is sent, not run. */
+  readonly run?: () => void
+}
+
+/** What a command is called on screen. */
+export function commandLabel(command: MenuCommand): string {
+  return `/${command.name}`
+}
+
+/**
+ * One row per name, with varnick's own winning.
+ *
+ * Two things this settles, and the second is the reason it is a function rather
+ * than a spread.
+ *
+ * **A name can arrive twice from the runtime alone.** forge observed
+ * `caveman:caveman` coming back both as a command, carrying its argument hint,
+ * and as the skill of the same name, carrying a paragraph and no hint. Two rows
+ * under one name asks you to choose between two things that are the same thing.
+ * Merged rather than dropped, because each copy knows something the other does
+ * not: the hint from whichever has one, the longest description, aliases unioned.
+ *
+ * **And a name can collide across the two sources.** `/compact` is varnick's
+ * Compaction — a machine state that can fail and says so — and it is also a CLI
+ * command that would be sent as text. varnick's wins, because a developer
+ * typing `/compact` in this window means the one this window implements.
+ */
+export function mergeCommands(commands: readonly MenuCommand[]): readonly MenuCommand[] {
+  const byName = new Map<string, MenuCommand>()
+  for (const command of commands) {
+    const seen = byName.get(command.name)
+    if (seen === undefined) {
+      byName.set(command.name, command)
+      continue
+    }
+    // The first varnick entry for a name is final. Nothing an agent reports can
+    // replace a control this window owns, or take its `run` away.
+    if (seen.source === 'varnick') continue
+    if (command.source === 'varnick') {
+      byName.set(command.name, command)
+      continue
+    }
+    const aliases = [...new Set([...(seen.aliases ?? []), ...(command.aliases ?? [])])]
+    byName.set(command.name, {
+      ...seen,
+      description:
+        command.description.length > seen.description.length ? command.description : seen.description,
+      argumentHint: seen.argumentHint || command.argumentHint,
+      ...(aliases.length > 0 ? { aliases } : {}),
+    })
+  }
+  return [...byName.values()]
+}
+
+/**
+ * How well a command answers a query, lowest first. `null` when it does not.
+ *
+ * Two rules here are the difference between a filter that narrows and one that
+ * widens, and both were found by using forge's rather than by thinking about it:
+ *
+ * **Aliases match exactly and never by prefix.** `/usage` carries the alias
+ * `cost`, so a prefix rule makes a lone `c` drag it in beside `compact` and
+ * `clear` — the first keystroke of a hunt returning *more* than the last.
+ *
+ * **Substrings count only from two characters.** A single letter is inside half
+ * the names and all of the descriptions; `c` found `mem-search`.
+ */
+function rankOf(command: MenuCommand, query: string): number | null {
+  const name = command.name.toLowerCase()
+  if (name === query) return 0
+  if (command.aliases?.some((alias) => alias.toLowerCase() === query)) return 1
+  if (name.startsWith(query)) return 2
+  if (query.length < 2) return null
+  if (name.includes(query)) return 3
+  if (command.description.toLowerCase().includes(query)) return 4
+  return null
+}
+
+/**
+ * The commands a query means, best first.
+ *
+ * An empty query is everything, in the order it was given. **A query nothing
+ * answers is nothing** — not the full list. A filter that falls back to
+ * everything on no match tells you a command exists when it does not, which is
+ * the one lie a discovery surface must not tell.
+ */
+export function matchCommands(
+  commands: readonly MenuCommand[],
+  query: string,
+): readonly MenuCommand[] {
+  const wanted = query.toLowerCase()
+  if (wanted === '') return commands
+
+  return commands
+    .map((command, index) => ({ command, index, rank: rankOf(command, wanted) }))
+    .filter((scored): scored is { command: MenuCommand; index: number; rank: number } => scored.rank !== null)
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((scored) => scored.command)
+}
+
+/**
+ * The command a draft has already chosen, while its arguments are still blank.
+ *
+ * **The gap the menu leaves behind.** Accepting `/agents` closes the menu —
+ * correctly, the command is settled — and closes the argument list with it. So
+ * the single moment you need to know it takes `[name]` is the moment nothing on
+ * screen says so.
+ *
+ * `null` once an argument has been typed: by then you are answering the
+ * question rather than asking it. `null` too for a command that takes nothing,
+ * because a signature bar with no signature in it is a row that says nothing.
+ */
+export function signatureFor(
+  commands: readonly MenuCommand[],
+  draft: string,
+): MenuCommand | null {
+  const named = /^\/(\S+)\s?$/.exec(draft)?.[1]?.toLowerCase()
+  if (named === undefined) return null
+
+  const found = commands.find(
+    (command) =>
+      command.name.toLowerCase() === named ||
+      command.aliases?.some((alias) => alias.toLowerCase() === named),
+  )
+  return found?.argumentHint ? found : null
+}
+
+/**
+ * What accepting a command puts in the composer.
+ *
+ * The trailing space is the whole decision: a command that takes an argument
+ * leaves you mid-sentence, and one that does not is finished — so the next
+ * Enter sends it rather than adding a space nobody wanted.
+ */
+export function completionFor(command: MenuCommand): string {
+  return `${commandLabel(command)}${command.argumentHint ? ' ' : ''}`
+}
+
 /**
  * The command a draft invokes, if any.
  *

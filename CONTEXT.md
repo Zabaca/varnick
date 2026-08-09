@@ -125,7 +125,7 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 
 ### Event names
 
-`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `RUNTIME_REPORTED`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
+`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `RUNTIME_REPORTED`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface. `COMMANDS_REPORTED` joins `RUNTIME_REPORTED` on the Harness: both are the runtime describing itself, and both are dropped when the agent is.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
 

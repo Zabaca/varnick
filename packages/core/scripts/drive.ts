@@ -26,6 +26,10 @@ import {
   invokedCommand,
   isCommandDraft,
   formatContext,
+  matchCommands,
+  mergeCommands,
+  signatureFor,
+  completionFor,
 } from '../src/domain.ts'
 import { compactionFailureMessage, parseControlRequest } from '@varnick/harness/turn'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
@@ -885,6 +889,120 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
     !textsOf(spy.last).includes('half an answer') && actor.getSnapshot().context.partial === 'half an answer',
   )
   actor.stop()
+}
+
+// ---------------------------------------------------------------------------
+// The command menu — what a query means
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    Ported from forge with its rules intact. Each one is here because the
+    obvious alternative was tried against a live runtime and made the list
+    *wider* as more was typed — which is the opposite of what a filter is for.
+  */
+  const agent = (name: string, description = '', argumentHint = '', aliases?: string[]) => ({
+    name,
+    description,
+    argumentHint,
+    source: 'agent' as const,
+    ...(aliases ? { aliases } : {}),
+  })
+
+  const list = [
+    { name: 'compact', description: 'Summarise the conversation', argumentHint: '', source: 'varnick' as const, run: () => {} },
+    agent('usage', 'What this session has cost', '', ['cost']),
+    agent('clear-cache', 'Drop the local cache'),
+    agent('agents', 'Manage subagents', '[name]'),
+    agent('mem-search', 'Search memory', '<query>'),
+  ]
+
+  check('an empty query is everything', matchCommands(list, '').length === list.length)
+
+  check(
+    'an exact name comes first',
+    matchCommands(list, 'usage')[0]?.name === 'usage',
+  )
+
+  check(
+    'an exact alias finds the command it belongs to',
+    matchCommands(list, 'cost')[0]?.name === 'usage',
+  )
+
+  /*
+    The rule that stops a hunt widening. `/usage` carries the alias `cost`, so a
+    prefix rule on aliases drags it in beside `compact` and `clear-cache` on a
+    lone `c` — the first keystroke returning more than no keystroke did.
+  */
+  check(
+    'an alias never matches by prefix',
+    !matchCommands(list, 'c').some((c) => c.name === 'usage'),
+  )
+
+  /*
+    And the rule that stops a single letter matching everything: one character
+    is inside half the names and all of the descriptions.
+  */
+  check(
+    'one character is a prefix hunt and nothing more',
+    matchCommands(list, 'm').map((c) => c.name).join(' ') === 'mem-search',
+  )
+  check(
+    'two characters may match inside a name',
+    matchCommands(list, 'em').some((c) => c.name === 'mem-search'),
+  )
+  check(
+    'two characters may match a description',
+    matchCommands(list, 'subagents').some((c) => c.name === 'agents'),
+  )
+
+  /*
+    The one lie a discovery surface must not tell. A filter that falls back to
+    everything on no match says a command exists when it does not.
+  */
+  check('a query nothing answers is nothing', matchCommands(list, 'zzzz').length === 0)
+
+  // Merging, which is about two different collisions.
+  const merged = mergeCommands([
+    { name: 'compact', description: "varnick's own", argumentHint: '', source: 'varnick' as const, run: () => {} },
+    agent('compact', 'the CLI command', '[instructions]'),
+    agent('caveman:caveman', '', '[lite|full]'),
+    agent('caveman:caveman', 'A long description from the skill'),
+  ])
+
+  check('one row per name', merged.length === 2)
+  check(
+    "varnick's own wins a collision, and keeps what it does",
+    merged.find((c) => c.name === 'compact')?.source === 'varnick',
+  )
+  check(
+    'a command that is also a skill keeps the hint from one and the words from the other',
+    merged.find((c) => c.name === 'caveman:caveman')?.argumentHint === '[lite|full]' &&
+      (merged.find((c) => c.name === 'caveman:caveman')?.description.length ?? 0) > 0,
+  )
+
+  // The signature bar exists for the gap accepting a command opens.
+  check(
+    'a settled command with blank arguments shows what it takes',
+    signatureFor(merged, '/caveman:caveman ')?.name === 'caveman:caveman',
+  )
+  check(
+    'a command that takes nothing has no signature to show',
+    signatureFor(merged, '/compact ') === null,
+  )
+  check(
+    'an argument already typed answers the question the bar was asking',
+    signatureFor(merged, '/caveman:caveman full') === null,
+  )
+
+  check(
+    'completing a command that takes an argument leaves you mid-sentence',
+    completionFor(agent('agents', '', '[name]')) === '/agents ',
+  )
+  check(
+    'completing one that takes nothing finishes the draft',
+    completionFor(agent('clear-cache')) === '/clear-cache',
+  )
 }
 
 // ---------------------------------------------------------------------------

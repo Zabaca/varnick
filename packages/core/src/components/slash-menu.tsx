@@ -4,15 +4,14 @@
  * brainless ships a ClaudeSlashMenu, but it owns its own state and renders its
  * own composer. State here lives in the session machine, so this is the list
  * only — same colours, same fixed name column, same listbox semantics.
+ *
+ * It shows two kinds of row now. varnick's own commands are events the machines
+ * accept; the rest come from the runtime — the CLI's commands, and every skill
+ * and plugin the agent loaded. They are marked rather than separated, because
+ * what someone hunting for a command wants is one ranked list, and which half a
+ * row came from only matters once they have found it.
  */
-
-export type Command = {
-  name: string
-  description: string
-  /** Only listed when this is true. A command that cannot run is not offered. */
-  available: boolean
-  run: () => void
-}
+import { commandLabel, type MenuCommand } from '../domain.ts'
 
 const ACTIVE = '#afd7ff'
 const INACTIVE = '#949494'
@@ -24,7 +23,7 @@ export function SlashMenu({
   onHover,
   onPick,
 }: {
-  commands: Command[]
+  commands: readonly MenuCommand[]
   activeIndex: number
   onHover: (i: number) => void
   onPick: (i: number) => void
@@ -62,9 +61,26 @@ export function SlashMenu({
             style={{ color: active ? ACTIVE : INACTIVE }}
           >
             <span className="inline-block" style={{ width: `${NAME_COLS}ch` }}>
-              {c.name}
+              {commandLabel(c)}
+              {/*
+                What the command takes, beside its name rather than in place of
+                its description. It is the one piece of a command's frontmatter
+                that changes what you type next.
+              */}
+              {c.argumentHint && (
+                <span style={{ color: INACTIVE, opacity: 0.7 }}> {c.argumentHint}</span>
+              )}
             </span>
             {c.description}
+            {/*
+              Whose command this is, said once and quietly. A varnick row is an
+              event this window sends; an agent row is text the Session runs.
+              Unmarked, a menu that suddenly lists thirty entries gives no way to
+              tell the two apart — and they fail in different places.
+            */}
+            {c.source === 'agent' && (
+              <span style={{ color: INACTIVE, opacity: 0.55 }}> · agent</span>
+            )}
           </li>
         )
       })}

@@ -12,6 +12,7 @@ import {
   isCredentialRejection,
   turnFailureMessage,
   type RuntimeReport,
+  type SlashCommand,
 } from '@varnick/harness/turn'
 import { compactedTranscript } from '../domain.ts'
 import type {
@@ -98,6 +99,14 @@ export interface TurnObserver {
    * happened to arrive during.
    */
   runtimeReported(report: RuntimeReport): void
+  /**
+   * The runtime said which commands it accepts.
+   *
+   * Sent to the Harness as `COMMANDS_REPORTED`, beside the report and for the
+   * same reason: it is a fact about the agent process rather than about the
+   * conversation, and it outlives the Turn it happened to arrive during.
+   */
+  commandsReported(commands: readonly SlashCommand[]): void
 }
 
 /** An observer that drops everything. What a run with no owner gets. */
@@ -105,6 +114,7 @@ const silentObserver: TurnObserver = {
   delta: () => {},
   credentialRejected: () => {},
   runtimeReported: () => {},
+  commandsReported: () => {},
 }
 
 /**
@@ -294,6 +304,9 @@ export function liveActors(
           case 'runtime':
             observer.runtimeReported(event.report)
             break
+          case 'commands':
+            observer.commandsReported(event.commands)
+            break
           case 'done':
             return { text: event.text, tokensUsed: event.tokensUsed }
           case 'failed': {
@@ -394,6 +407,9 @@ export function liveActors(
           // the fact is about the agent and is true whichever run carried it.
           case 'runtime':
             observer.runtimeReported(event.report)
+            break
+          case 'commands':
+            observer.commandsReported(event.commands)
             break
           // `done` belongs to a Turn. A Compaction that produced one is a Turn
           // that was mistaken for a Compaction, and taking it would replace the

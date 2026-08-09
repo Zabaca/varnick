@@ -300,6 +300,27 @@ export interface RuntimeReport {
 }
 
 /**
+ * One slash command the runtime will accept.
+ *
+ * Mirrors the SDK's `SlashCommand` rather than importing it — this type is
+ * bundled into the webview, and the SDK is a host-side module that reads a
+ * credential when it loads.
+ *
+ * `argumentHint` is a string upstream and stays one: empty means the command
+ * takes nothing, which is a different fact from "we do not know". Both it and
+ * `description` come from the command's own frontmatter, which is why they are
+ * worth carrying at all — the init message's `slash_commands` is names only, and
+ * a menu of thirty bare names is a list rather than a way to find anything.
+ */
+export interface SlashCommand {
+  readonly name: string
+  readonly description: string
+  readonly argumentHint: string
+  /** Other names the runtime resolves to this one — `/cost` for `/usage`. */
+  readonly aliases?: readonly string[]
+}
+
+/**
  * How long a single name may be.
  *
  * A cwd is the longest honest field here and a deep clone path is well under
@@ -364,6 +385,38 @@ export function runtimeReportFrom(message: unknown, resumed = false): RuntimeRep
         })
       : [],
   }
+}
+
+/**
+ * A command list from the runtime, normalised.
+ *
+ * Shared by the two ways it arrives — the `commands_changed` push and the
+ * `supportedCommands()` request — so both agree on what a bad entry is. A name
+ * is required and everything else is filled in: these come from plugins and
+ * skills as much as from the CLI, and an entry authored badly enough to have no
+ * name would otherwise draw a blank row you can select.
+ *
+ * How many rather than how long is the cap here. A runtime with a thousand
+ * commands is a runtime this menu cannot help with anyway, and the limit exists
+ * for the same reason every other one on this wire does: nothing from outside
+ * arrives at whatever size it was sent at.
+ */
+const COMMAND_LIMIT = 400
+
+export function normaliseCommands(list: unknown): readonly SlashCommand[] {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter(
+      (one): one is Record<string, unknown> =>
+        one !== null && typeof one === 'object' && typeof one['name'] === 'string' && one['name'] !== '',
+    )
+    .slice(0, COMMAND_LIMIT)
+    .map((one) => ({
+      name: name(one['name']),
+      description: name(one['description']),
+      argumentHint: name(one['argumentHint']),
+      ...(Array.isArray(one['aliases']) ? { aliases: names(one['aliases']) } : {}),
+    }))
 }
 
 /**
@@ -438,6 +491,15 @@ export type TurnUpdate =
    * running when it was read, and Core drops the Turn and keeps the report.
    */
   | { readonly kind: 'runtime'; readonly report: RuntimeReport }
+  /**
+   * Every command the runtime will accept, as it currently stands.
+   *
+   * The second update that is not about the Turn, riding this channel for the
+   * reason the first one does. **A replacement, never an addition** — the SDK's
+   * own `commands_changed` says clients should replace their cached list, and a
+   * merge would keep offering a skill that has gone.
+   */
+  | { readonly kind: 'commands'; readonly commands: readonly SlashCommand[] }
 
 /** A {@link TurnUpdate} and the Turn it belongs to. */
 export type TurnEvent = TurnUpdate & { readonly turnId: string }
@@ -580,10 +642,8 @@ export function encodeTurnEvent(event: TurnEvent): string {
  * where it would reach the Session mirror.
  */
 export function parseTurnEvent(value: unknown): TurnEvent | null {
-  const { kind, turnId, text, summary, tokensUsed, failure, report } = (value ?? {}) as Record<
-    string,
-    unknown
-  >
+  const { kind, turnId, text, summary, tokensUsed, failure, report, commands } = (value ??
+    {}) as Record<string, unknown>
   if (typeof turnId !== 'string' || turnId.length === 0) return null
 
   switch (kind) {
@@ -616,6 +676,20 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
       const parsed = parseRuntimeReport(report)
       return parsed === null ? null : { kind, turnId, report: parsed }
     }
+    case 'commands':
+      /*
+        An array or nothing, and an *empty* array is a real answer rather than a
+        malformed one: a runtime with no commands at all is what a stripped
+        configuration looks like, and reading it as a bad line would leave the
+        menu showing a list the agent no longer has.
+
+        `normaliseCommands` is the same rebuild the agent host used on the way
+        out. Running it again here is not redundant — this is the boundary a
+        field nobody agreed to would have to cross to reach the machines.
+      */
+      return Array.isArray(commands)
+        ? { kind, turnId, commands: normaliseCommands(commands) }
+        : null
     default:
       return null
   }
