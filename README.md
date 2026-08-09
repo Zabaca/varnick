@@ -211,6 +211,15 @@ to taking the stronger side of every difference and says so.
 Read this part before you walk away from an agent running unattended. Each item
 is a limit somebody measured, written at the strength the measurement supports.
 
+**A green `bun test packages` is not a measurement of this section.** It means
+every probe your machine could run, ran. One of them needs a credential — probe
+6, the Agent SDK's own `Read`, `Grep` and `Glob` driven by a real Session — and
+on a machine without one it skips, correctly, because a suite that fails on a
+fresh clone is a suite people learn to ignore. Whether it has *ever* completed is
+recorded in [`packages/harness/probe-attestation.json`](packages/harness/probe-attestation.json);
+open it before quoting anything below. `bun run probe` is the command that has no
+skip in it and fails when it cannot measure.
+
 - **Reads are allow-by-default; only the listed roots are denied.** The denied
   reads are `/Users`, your home inside it, `/Library/Keychains`, and four
   binaries. Everything else on the filesystem stays readable — `/etc`, `/usr`,
@@ -270,6 +279,20 @@ is a limit somebody measured, written at the strength the measurement supports.
   unconfined in your session, with your permissions. If you run Claude Code in a
   repo an agent has been working in, read that file the way you would read a
   `postinstall`.
+- **One claim on this page rests on a probe that has never run.** Everything
+  above about `Read`, `Grep` and `Glob` comes from probe 1, which runs those
+  syscalls in the agent's own process under the real policy — the load-bearing
+  measurement, and it passes on every machine. Probe 6 runs the SDK's *actual*
+  tool implementations, in the Claude Code process the SDK starts, and it needs a
+  credential; it skipped from the day it was written until somebody went looking.
+  What sat behind that skip was not nothing: a defect where every `Bash` command
+  the agent ran died at `mkdir` before executing, and a fictional defect that cost
+  most of a day. Neither was visible to a green suite. The skip is right — there
+  is no honest way to fake a Session, and the sandbox denies local binding and
+  every unlisted host precisely so a stub API cannot be reached — so what changed
+  is that "has this ever run" is now a committed fact rather than a line of test
+  output. Read `probe-attestation.json`, and run `bun run probe` before you rely
+  on this bullet.
 - **Only macOS is claimed.** Every measurement on this page is Darwin 25.5 on
   arm64. `sandbox-runtime` has bubblewrap and Windows backends; neither has been
   exercised here, so neither is claimed. The probes skip with a printed reason on
@@ -283,6 +306,7 @@ bun install
 bun tauri dev             # the desktop app, which is the one that has a host
 bun run dev               # the same interface in a browser, with no host
 bun test packages         # unit tests plus the real-kernel boundary probes
+bun run probe             # the same probes with no skip in them; needs a credential
 bun run drive             # the state-machine driver
 bun run typecheck
 bun run build
@@ -298,5 +322,14 @@ holding no `varnick` binary, no `.dylib` and no `.a`, so everything that only
 happens at the real link — the three crate types the Tauri app is assembled
 from — is exercised nowhere else in the loop.
 
-The boundary probes skip loudly rather than fail on a platform that cannot run
-them.
+The boundary probes skip rather than fail where the platform, the network or a
+missing credential makes one unrunnable, because a suite that is red on every
+fresh clone is a suite people stop reading. `bun run probe` is the other side of
+that trade: it takes the same probes, refuses to skip any of them, and exits
+non-zero when this machine cannot measure — no credential, wrong platform, or a
+probe that ran and reached no tool. It ends by checking that a completion was
+actually written to `packages/harness/probe-attestation.json`, because probe 6
+can exit green having measured nothing at all, and the exit code cannot tell you
+which happened. Run it before you trust *Where confinement stops*, and commit the
+file it changes: the record is the evidence, and an uncommitted one leaves the
+repository still saying nobody has ever run it.
