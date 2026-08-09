@@ -85,3 +85,14 @@ export {
   type SandboxPolicyReport,
   type WrappedCommand,
 } from './sandbox.ts'
+
+// Where the agent works, and why. Upstream of everything above it: the Sandbox
+// is established for this root, the Session mirror is keyed by it, and the
+// Core/Userspace boundary is drawn around it. It used to be none of those —
+// see docs/adr/0012-the-clone-root-is-an-input.md.
+export {
+  CLONE_ROOT_ENV_VAR,
+  cloneRootFromLaunch,
+  requireCloneRoot,
+  type CloneRootChecks,
+} from './clone-root.ts'

@@ -4,10 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  adoptLegacySessionMirror,
   createSessionStore,
-  defaultSessionRoot,
+  nodeSessionFs,
   redactSecrets,
   restoredTranscript,
+  sessionMirrorRoot,
   type SessionStore,
   type StoredMessage,
 } from './session.ts'
@@ -447,12 +449,126 @@ describe('a session id cannot leave the store', () => {
 
 describe('the default root', () => {
   test('is under the app-data directory and named for the app', () => {
-    const path = defaultSessionRoot()
+    const path = sessionMirrorRoot('/Users/dev/code/varnick')
     expect(path).toContain('com.zabaca.varnick')
     expect(path.length).toBeGreaterThan('com.zabaca.varnick'.length)
   })
 
   test('is not what any test writes to', () => {
-    expect(store.pathFor('s1').startsWith(defaultSessionRoot())).toBe(false)
+    expect(store.pathFor('s1').startsWith(sessionMirrorRoot('/Users/dev/code/varnick'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Which root the mirror belongs to — ticket 28
+// ---------------------------------------------------------------------------
+
+describe('which root the mirror belongs to', () => {
+  /*
+    The mirror used to be one directory per *machine*. That was invisible while
+    there was one clone root, and wrong the moment there were two: the live
+    Session id is a constant (`LIVE_SESSION_ID` in packages/core/src/domain.ts),
+    so two roots would have read and appended the same file and each would have
+    shown the other's conversation. See ADR-0012.
+  */
+
+  const A = '/Users/dev/code/varnick'
+  const B = '/opt/work/varnick'
+
+  test('two roots on one machine get two mirrors', () => {
+    expect(sessionMirrorRoot(A)).not.toBe(sessionMirrorRoot(B))
+  })
+
+  test('the same root always gets the same mirror', () => {
+    // A path derived from a hash still has to be stable across launches, or a
+    // relaunch resumes from a directory nothing ever wrote to.
+    expect(sessionMirrorRoot(A)).toBe(sessionMirrorRoot(A))
+  })
+
+  test('the directory carries the clone’s own name, so a developer can find it', () => {
+    expect(sessionMirrorRoot('/Users/dev/code/second-varnick')).toContain('second-varnick')
+  })
+
+  test('two roots with the same directory name are still two mirrors', () => {
+    // The name alone cannot be the key: `~/code/varnick` and `/opt/varnick` are
+    // different Workspaces with the same basename.
+    expect(sessionMirrorRoot('/Users/dev/code/varnick')).not.toBe(
+      sessionMirrorRoot('/opt/varnick'),
+    )
+  })
+
+  test('the mirror stays outside the clone, so the agent cannot rewrite the record', () => {
+    // ADR-0008's third consequence. Per-root must not become "inside the root".
+    expect(sessionMirrorRoot(A).startsWith(A)).toBe(false)
+  })
+})
+
+describe('a mirror written before there was more than one root', () => {
+  /*
+    One-time adoption. Every clone that ran varnick before ticket 28 has its
+    transcript at `<app-data>/com.zabaca.varnick/sessions`, and moving the
+    mirror under a per-root directory would otherwise resume that developer into
+    an empty conversation over a file that is not empty — the exact failure
+    ADR-0009 exists to prevent.
+  */
+
+  let appData: string
+
+  beforeEach(async () => {
+    appData = await mkdtemp(join(tmpdir(), 'varnick-appdata-'))
+  })
+
+  afterEach(async () => {
+    await rm(appData, { recursive: true, force: true })
+  })
+
+  const legacy = () => join(appData, 'sessions')
+
+  test('the transcript that was there is adopted by the first root to run', async () => {
+    const fs = nodeSessionFs()
+    await fs.makeDir(legacy())
+    await fs.replaceFile(join(legacy(), 'session-1.jsonl'), '{"id":"m1"}\n')
+
+    const mine = join(appData, 'workspaces', 'varnick-abc123', 'sessions')
+    await adoptLegacySessionMirror({ appDataRoot: appData, mirrorRoot: mine, fs })
+
+    expect(await fs.readFile(join(mine, 'session-1.jsonl'))).toBe('{"id":"m1"}\n')
+    // Moved, not copied: a second root must not find it and adopt it too.
+    expect(await fs.listDir(legacy())).toEqual([])
+  })
+
+  test('a second root finds nothing left to adopt and starts empty', async () => {
+    const fs = nodeSessionFs()
+    await fs.makeDir(legacy())
+    await fs.replaceFile(join(legacy(), 'session-1.jsonl'), '{"id":"m1"}\n')
+
+    const first = join(appData, 'workspaces', 'first', 'sessions')
+    const second = join(appData, 'workspaces', 'second', 'sessions')
+    await adoptLegacySessionMirror({ appDataRoot: appData, mirrorRoot: first, fs })
+    await adoptLegacySessionMirror({ appDataRoot: appData, mirrorRoot: second, fs })
+
+    expect(await fs.listDir(first)).toEqual(['session-1.jsonl'])
+    expect(await fs.listDir(second)).toEqual([])
+  })
+
+  test('a root that already has a mirror is left alone', async () => {
+    const fs = nodeSessionFs()
+    await fs.makeDir(legacy())
+    await fs.replaceFile(join(legacy(), 'session-1.jsonl'), 'legacy\n')
+
+    const mine = join(appData, 'workspaces', 'mine', 'sessions')
+    await fs.makeDir(mine)
+    await fs.replaceFile(join(mine, 'session-1.jsonl'), 'mine\n')
+
+    await adoptLegacySessionMirror({ appDataRoot: appData, mirrorRoot: mine, fs })
+
+    expect(await fs.readFile(join(mine, 'session-1.jsonl'))).toBe('mine\n')
+  })
+
+  test('no legacy mirror at all is not an error', async () => {
+    const fs = nodeSessionFs()
+    const mine = join(appData, 'workspaces', 'mine', 'sessions')
+    await adoptLegacySessionMirror({ appDataRoot: appData, mirrorRoot: mine, fs })
+    expect(await fs.listDir(mine)).toEqual([])
   })
 })

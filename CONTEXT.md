@@ -20,6 +20,8 @@ _Avoid_: page, screen, panel, widget, component (a Surface is composed of compon
 
 **Workspace**:
 The environment a person builds around themselves inside their clone — the accumulated Surfaces, integrations, and data that make varnick theirs. What the product exists to let you grow.
+
+One per clone, and therefore **not** one per machine: the clone varnick works in is chosen at launch (`VARNICK_CLONE_ROOT`, defaulting to the tree varnick was built in), so one machine can hold several. That used to be true by construction and stated nowhere, which is what made the Session mirror machine-wide and would have put two Workspaces' conversations in one file. See [ADR-0012](./docs/adr/0012-the-clone-root-is-an-input.md), which also records the one thing that does not yet follow the chosen root: Surface discovery, which names the tree varnick was built from.
 _Avoid_: instance, install, project. **Note:** `zbc` uses this word for a disposable clone the agent is confined to — the opposite scope. In varnick, that is a **Clone**.
 
 ### Confinement

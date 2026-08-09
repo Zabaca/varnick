@@ -29,6 +29,7 @@ import {
 // boundary — and the alternative is not watching the kernel at all.
 import { startMacOSSandboxLogMonitor } from '@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js'
 import { agentSdkEntry, developerToolsBin, sandboxEnvOverlay } from './agent.ts'
+import { requireCloneRoot } from './clone-root.ts'
 
 /**
  * Binaries the agent cannot **open for reading**. It can still run them.
@@ -116,7 +117,16 @@ export const SANDBOX_POLICY_FILENAME = 'sandbox-policy.json'
 export const SANDBOX_BASELINE_FILENAME = 'sandbox-policy.baseline.json'
 
 export interface SandboxPolicyInput {
-  /** The clone the agent works inside: the one writable tree. */
+  /**
+   * The clone the agent works inside: the one writable tree.
+   *
+   * *Which* clone is chosen at launch and passed down — `VARNICK_CLONE_ROOT`,
+   * defaulting to the path varnick was built from. It is never `process.cwd()`
+   * and never the directory this process happens to be running in; see
+   * ./clone-root.ts and docs/adr/0012-the-clone-root-is-an-input.md. Every path
+   * the generator builds below hangs off this one value, which is what makes
+   * two roots on one machine two boundaries rather than two names for one.
+   */
   readonly cloneRoot: string
   /** Defaults to the host user's home directory. */
   readonly homeDir?: string
@@ -258,6 +268,12 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
       denyWrite: [
         // ADR-0002: Core is separated from Userspace by the policy, not by
         // convention. The agent's blast radius is Userspace.
+        //
+        // Every entry is joined onto `clone` — the root this policy was
+        // generated for, not the one varnick was built from and not the
+        // process's working directory. That is what a second root means: a
+        // second boundary, drawn around its own Core. `sandbox.test.ts` asserts
+        // that two roots produce two boundaries with nothing in common.
         join(clone, 'packages/core/**'),
         join(clone, 'vite.config.*'),
         join(clone, 'package.json'),
@@ -1472,14 +1488,27 @@ export interface EstablishedSandbox {
 /**
  * Establish the sandbox, or fail.
  *
- * There is no third outcome. An unsupported platform, a missing dependency, a
- * policy the schema rejects, and a proxy that will not start all raise; none of
- * them degrade to running the agent unconfined.
+ * There is no third outcome. A root that is not there, an unsupported platform,
+ * a missing dependency, a policy the schema rejects, and a proxy that will not
+ * start all raise; none of them degrade to running the agent unconfined.
+ *
+ * ## The root is an argument, and it used to be a working directory
+ *
+ * `cloneRoot` is required. It defaulted to `process.cwd()` until ticket 28, and
+ * that default was the last hop of a chain nobody could see: the Tauri host
+ * spawned the runtime with `.current_dir(project_root())`, `project_root()` was
+ * `env!("CARGO_MANIFEST_DIR")` — a compile-time literal — and this line turned
+ * that back into "the clone". Four hops and no name. See ./clone-root.ts.
+ *
+ * The check comes *first*, before the platform and before the dependencies,
+ * because the message a developer needs is about the thing they can fix. A root
+ * that is not there used to surface here as `ENOENT … sandbox-policy.json`,
+ * which names a file they never created inside a directory they no longer have.
  */
 export async function establishSandbox(
-  input: Partial<SandboxPolicyInput> = {},
+  input: SandboxPolicyInput,
 ): Promise<EstablishedSandbox> {
-  const cloneRoot = input.cloneRoot ?? process.cwd()
+  const cloneRoot = requireCloneRoot(input.cloneRoot)
 
   if (!SandboxManager.isSupportedPlatform()) {
     throw new Error(

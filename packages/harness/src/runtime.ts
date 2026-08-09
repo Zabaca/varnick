@@ -55,9 +55,12 @@ import {
   type WrappedCommand,
 } from './sandbox.ts'
 import {
+  adoptLegacySessionMirror,
+  appDataRoot,
   createSessionStore,
-  defaultSessionRoot,
+  nodeSessionFs,
   restoredTranscript,
+  sessionMirrorRoot,
   type SessionStore,
   type StoredMessage,
 } from './session.ts'
@@ -91,8 +94,25 @@ export interface HarnessCapabilities {
   readSession(sessionId: string): Promise<readonly StoredMessage[]>
 }
 
+export interface HostCapabilitiesInput {
+  /**
+   * The clone the agent works in — everything this runtime does is about this
+   * one directory, and it arrives as an argument.
+   *
+   * Required, and it is the whole of ticket 28. It was not here at all: the
+   * Tauri host set a working directory computed from `env!("CARGO_MANIFEST_DIR")`
+   * and `establishSandbox()` picked it back up out of `process.cwd()` four hops
+   * later. The runtime does not read `VARNICK_CLONE_ROOT` itself — the host
+   * resolves it once and passes the answer, because two readers of one variable
+   * are two answers waiting to disagree, and the Sandbox must be established for
+   * the same root the mirror is keyed by. See ./clone-root.ts and
+   * docs/adr/0012-the-clone-root-is-an-input.md.
+   */
+  readonly cloneRoot: string
+}
+
 /**
- * The real capabilities, built once for the life of the process.
+ * The real capabilities, built once for the life of the process, for one root.
  *
  * The Session mirror is made on first use rather than at module load: it needs
  * an app-data directory, and constructing it eagerly would make a runtime that
@@ -116,14 +136,24 @@ export interface HarnessCapabilities {
  * so `persistence.saveFailed` says so rather than a transcript being written
  * that nothing can promise is clean.
  */
-export function hostCapabilities(): HarnessCapabilities {
+export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilities {
+  const cloneRoot = input.cloneRoot
   let opened: Promise<{ store: SessionStore; secrets: SecretsStore }> | null = null
 
   function open() {
     opened ??= (async () => {
       const secrets = await openSecretsStore({ keychain: securityKeychain() })
+      // Keyed by the clone root, so two roots on one machine are two
+      // Workspaces with two transcripts rather than one file both append to —
+      // see sessionMirrorRoot. The adoption that follows runs once per machine
+      // and is what stops the change resuming an existing developer into an
+      // empty conversation over a mirror that is not empty.
+      const fs = nodeSessionFs()
+      const root = sessionMirrorRoot(cloneRoot)
+      await adoptLegacySessionMirror({ appDataRoot: appDataRoot(), mirrorRoot: root, fs })
       const store = createSessionStore({
-        root: defaultSessionRoot(),
+        root,
+        fs,
         secretValues: () => secrets.secretValues(),
       })
       return { store, secrets }
@@ -148,7 +178,11 @@ export function hostCapabilities(): HarnessCapabilities {
 
   return {
     establishSandbox: async () => {
-      sandbox = await establishSandbox()
+      // The root this runtime was launched for, passed rather than inherited.
+      // It used to be no argument at all, which meant `process.cwd()` inside
+      // sandbox.ts, which meant the directory the Tauri host had set from a
+      // path compiled into the binary. Nothing in that chain was a decision.
+      sandbox = await establishSandbox({ cloneRoot })
     },
 
     wrapAgentCommand: async () => {
@@ -323,11 +357,18 @@ export async function answerHarnessLine(
  * Calls are answered one at a time. The Sandbox is established once and the
  * mirror serialises its own saves, so concurrency here would buy latency in
  * exchange for two callers racing to establish the same sandbox.
+ *
+ * `capabilities` has no default any more. It used to fall back to
+ * `hostCapabilities()`, and that default was one of the four hops that let the
+ * clone root arrive without anybody choosing it — a caller who supplied nothing
+ * got a runtime bound to whatever directory the process happened to be in. The
+ * root is now an argument all the way down, so the capabilities are too, and
+ * ./serve.ts is where it is resolved.
  */
 export async function serveHarness(
   input: AsyncIterable<Uint8Array | string>,
   write: (reply: string) => void,
-  capabilities: HarnessCapabilities = hostCapabilities(),
+  capabilities: HarnessCapabilities,
 ): Promise<void> {
   await readLines(input, async (line) => {
     write(await answerHarnessLine(line, capabilities))

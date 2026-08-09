@@ -14,6 +14,7 @@
 // the bridge (./bridge.ts) and never imports this file, which is what lets it
 // import `node:fs` like any other host module.
 
+import { createHash } from 'node:crypto'
 import fsp from 'node:fs/promises'
 
 /** A message as the mirror stores it. Structurally what Core calls a `Message`,
@@ -44,6 +45,15 @@ export interface SessionFs {
   makeDir(path: string): Promise<void>
   /** Names of the entries in a directory; empty when it does not exist. */
   listDir(path: string): Promise<string[]>
+  /**
+   * Move every entry of `from` into `to`, leaving `from` empty.
+   *
+   * Entry by entry rather than renaming the directory itself, because `to` has
+   * already been created by the time this is called and a rename onto it would
+   * depend on the platform's opinion of that. Used once, by
+   * {@link adoptLegacySessionMirror}.
+   */
+  moveInto(from: string, to: string): Promise<void>
 }
 
 export interface SessionStoreOptions {
@@ -381,19 +391,19 @@ export function createSessionStore(options: SessionStoreOptions): SessionStore {
 }
 
 /**
- * Where the mirror lives when varnick is running for real.
+ * varnick's own directory under the platform's app-data root.
  *
  * The Tauri app-data directory, per platform, under the bundle identifier. Kept
- * out of `createSessionStore` on purpose: a store that defaulted to this would
- * let a test write to the developer's real transcripts by leaving an argument
- * out.
+ * out of `createSessionStore` on purpose: a store that defaulted to anything
+ * below here would let a test write to the developer's real transcripts by
+ * leaving an argument out.
  */
-export function defaultSessionRoot(): string {
+export function appDataRoot(): string {
   const env = globalThis.process?.env
   const platform = globalThis.process?.platform
   if (env === undefined || platform === undefined) {
     throw new Error(
-      'The Session mirror has no app-data directory here — defaultSessionRoot() needs a host process, and the renderer has none. Pass an explicit root, or reach the store through the host.',
+      'The Session mirror has no app-data directory here — it needs a host process, and the renderer has none. Pass an explicit root, or reach the store through the host.',
     )
   }
 
@@ -405,7 +415,97 @@ export function defaultSessionRoot(): string {
         ? (env.APPDATA ?? `${home}/AppData/Roaming`)
         : (env.XDG_DATA_HOME ?? `${home}/.local/share`)
 
-  return `${base}/${APP_IDENTIFIER}/sessions`
+  return `${base}/${APP_IDENTIFIER}`
+}
+
+/**
+ * One Workspace's directory name: the clone's own name, and what tells it from
+ * another clone with the same one.
+ *
+ * Both halves earn their place. The basename is there so a developer can find
+ * their transcripts without computing a hash; the digest is there because
+ * `~/code/varnick` and `/opt/varnick` are two Workspaces with one basename, and
+ * a key that collided would put two conversations in one file.
+ *
+ * The digest is over the whole absolute root, so it is stable across launches
+ * and different for every root. Truncated because this is a directory name and
+ * not a security claim — nothing is authenticated by it, and a collision costs
+ * a shared transcript rather than a boundary.
+ */
+export function workspaceKeyOf(cloneRoot: string): string {
+  const name = cloneRoot.split(/[\\/]/).filter(Boolean).pop() ?? 'clone'
+  const digest = createHash('sha256').update(cloneRoot).digest('hex').slice(0, 12)
+  return `${name}-${digest}`
+}
+
+/**
+ * Where the mirror lives when varnick is running for real, for one clone root.
+ *
+ * ## Why this takes an argument now
+ *
+ * It did not. It was `defaultSessionRoot()`, one directory per *machine*, and
+ * that was invisible for exactly as long as there was one clone root. The live
+ * Session id is a constant — `LIVE_SESSION_ID` in packages/core/src/domain.ts —
+ * so two roots sharing this directory would have appended to the same file and
+ * each would have shown the other's conversation. A Workspace is per clone
+ * (CONTEXT.md), so its Sessions are too. See
+ * docs/adr/0012-the-clone-root-is-an-input.md.
+ *
+ * ## And why it is still outside the clone
+ *
+ * `<app-data>/…/workspaces/<key>/sessions`, not `<clone>/.varnick/sessions`.
+ * ADR-0008's third consequence is that the mirror lives outside the agent's
+ * writable tree, so the agent cannot tamper with the record of what it did.
+ * Per-root must not quietly become inside-the-root; it is keyed by the clone,
+ * not kept in it.
+ */
+export function sessionMirrorRoot(cloneRoot: string): string {
+  return `${appDataRoot()}/workspaces/${workspaceKeyOf(cloneRoot)}/sessions`
+}
+
+/**
+ * Where every mirror lived before there was more than one root.
+ *
+ * Deliberately a sibling of `workspaces/` rather than a parent of it, so
+ * adopting it is one rename rather than a walk.
+ */
+const legacyMirrorRoot = (root: string) => `${root}/sessions`
+
+export interface AdoptLegacyMirrorInput {
+  /** varnick's app-data directory — {@link appDataRoot} in a real run. */
+  readonly appDataRoot: string
+  /** Where this root's mirror belongs — {@link sessionMirrorRoot}. */
+  readonly mirrorRoot: string
+  readonly fs: SessionFs
+}
+
+/**
+ * Move a pre-ticket-28 mirror under the root that is running now. Once.
+ *
+ * Every clone that ran varnick before the mirror was keyed by root has its
+ * transcript at `<app-data>/<id>/sessions`. Leaving it there would resume that
+ * developer into an empty conversation over a file that is not empty, which is
+ * the precise failure ADR-0009 exists to prevent — so the first root to launch
+ * after the change adopts it.
+ *
+ * "The first root", and not a guess about which root it belonged to, because
+ * there is nothing on disk that records that: the old layout held one mirror
+ * because there was one root, and the only honest reading is that it belongs to
+ * whichever root arrives first. A rename rather than a copy, so the second root
+ * finds nothing and starts empty instead of inheriting a conversation twice.
+ *
+ * A root that already has its own mirror is left alone — it has been through
+ * this, and re-adopting would overwrite a live transcript with an older one.
+ */
+export async function adoptLegacySessionMirror(input: AdoptLegacyMirrorInput): Promise<void> {
+  const { fs } = input
+  const legacy = legacyMirrorRoot(input.appDataRoot)
+
+  if ((await fs.listDir(input.mirrorRoot)).length > 0) return
+  if ((await fs.listDir(legacy)).length === 0) return
+
+  await fs.makeDir(input.mirrorRoot)
+  await fs.moveInto(legacy, input.mirrorRoot)
 }
 
 /**
@@ -465,6 +565,19 @@ export function nodeSessionFs(): SessionFs {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
         throw error
+      }
+    },
+
+    async moveInto(from, to) {
+      let entries: string[]
+      try {
+        entries = await fsp.readdir(from)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+        throw error
+      }
+      for (const entry of entries) {
+        await fsp.rename(`${from}/${entry}`, `${to}/${entry}`)
       }
     },
   }
