@@ -519,8 +519,18 @@ export function ChatSurface({
             */}
             {!menuOpen && signature !== null && (
               <div
-                className="mb-1.5 flex items-baseline gap-2 px-1 text-[11.5px]"
-                style={{ color: 'var(--fg-faint)' }}
+                /*
+                  The same surface the menu has, because it occupies the same
+                  slot: the bar appears exactly where the list was standing a
+                  keystroke earlier. On the chat's own background it read as a
+                  line of the conversation rather than as part of the composer.
+                */
+                className="mb-2 flex items-baseline gap-2 px-2 py-1 text-[11.5px]"
+                style={{
+                  color: 'var(--fg-faint)',
+                  background: 'var(--ground-raised)',
+                  border: '1px solid var(--rule)',
+                }}
               >
                 <span style={{ color: 'var(--accent)' }}>{commandLabel(signature)}</span>
                 <span style={{ color: 'var(--fg-dim)' }}>{signature.argumentHint}</span>
