@@ -41,6 +41,7 @@
  * takes a flag to inherit. See ADR-0010, and `agentEnvironment` below.
  */
 
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { credentialRejection } from './credentials.ts'
@@ -115,6 +116,43 @@ export function agentEntryPath(cloneRoot: string): string {
  */
 export function agentSdkEntry(): string {
   return fileURLToPath(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))
+}
+
+/**
+ * Where the developer toolchain's own binaries live, newest choice first.
+ *
+ * `/usr/bin/git` on macOS is a shim: it hands over to whichever developer
+ * directory `xcode-select` has active, and the real `git` — along with `clang`,
+ * `make` and the rest — lives under one of these two. Which one depends on
+ * whether Xcode is installed, and they are not in the same tree, so a policy
+ * that named a path here would be right on one machine and wrong on the next.
+ *
+ * The Command Line Tools directory is first because that is what a plain
+ * `xcode-select --install` selects, and because it is the narrower of the two.
+ */
+export const DEVELOPER_TOOLS_CANDIDATES = [
+  '/Library/Developer/CommandLineTools/usr/bin',
+  '/Applications/Xcode.app/Contents/Developer/usr/bin',
+] as const
+
+/**
+ * The active developer toolchain's `bin`, or null when this machine has none.
+ *
+ * Probed rather than resolved by running `xcode-select -p`. This is called from
+ * the Sandbox policy generator, and a generator that spawns a process to decide
+ * what a policy says is a generator that cannot be run twice cheaply, cannot be
+ * tested without the toolchain installed, and fails in a new way when the spawn
+ * does. The answer is a directory either way.
+ *
+ * Null is not an error. It is a machine where the agent cannot run `git`, which
+ * is a problem the agent reports the first time it tries — unlike a policy that
+ * silently omits the path, which is `exit 133`.
+ *
+ * `exists` is injected so the tests can ask about a machine that is not this
+ * one; nothing else passes it.
+ */
+export function developerToolsBin(exists: (path: string) => boolean = existsSync): string | null {
+  return DEVELOPER_TOOLS_CANDIDATES.find((path) => exists(path)) ?? null
 }
 
 export interface AgentCommandInput {

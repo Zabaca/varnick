@@ -5,13 +5,20 @@ import { join, sep } from 'node:path'
 import {
   DEFAULT_ALLOWED_HOSTS,
   MACHINE_KEYCHAIN_DIR,
+  MEASURED_SYSTEM_READ_PATHS,
   SANDBOX_BASELINE_FILENAME,
   SANDBOX_POLICY_FILENAME,
   UNREADABLE_BINARIES,
   describeSandboxPolicy,
+  describeSandboxViolation,
   ensureSandboxPolicy,
+  interpreterRoot,
+  isUnexpectedViolation,
   materializeSandboxPolicy,
   normalizeSandboxPolicy,
+  packageStoreRoot,
+  parseSandboxViolation,
+  readAllowlistFor,
   readSandboxBaseline,
   readSandboxPolicy,
   sandboxBaselinePath,
@@ -519,5 +526,232 @@ describe('a strengthening reaches a clone that already has a policy', () => {
     expect(normalized.filesystem.denyRead).toContain('<home>')
     expect(normalized.filesystem.denyRead).toContain('<users>')
     expect(materializeSandboxPolicy(normalized, input)).toEqual(original)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The read allowlist a denied root would need — computed, and deliberately not
+// in the policy
+// ---------------------------------------------------------------------------
+
+describe('the read allowlist a denied root would need', () => {
+  /*
+    Ticket 18's first prerequisite. Inverting reads means naming everything the
+    toolchain has to reach, and the list is not the same on two machines: this
+    one runs `~/.bun`, the next runs node out of Homebrew or nvm. So the parts
+    that vary are derived from the process that is already running and only the
+    parts that do not are constants.
+
+    Nothing here is wired into `sandboxPolicyFor`. The last two tests in this
+    block are why, and they are the judgement the ticket asked for rather than a
+    note in a report: under allow-by-default reads these entries buy nothing —
+    every one of them is already readable — and cost the four denied binaries
+    and both keychains, because `allowRead` beats `denyRead`.
+  */
+
+  const EXEC = '/Users/dev/.bun/bin/bun'
+  const SDK = '/Users/dev/code/varnick/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'
+  const TOOLS = '/Applications/Xcode.app/Contents/Developer/usr/bin'
+
+  const allowlist = (overrides: Partial<Parameters<typeof readAllowlistFor>[0]> = {}) =>
+    readAllowlistFor({
+      cloneRoot: CLONE,
+      execPath: EXEC,
+      sdkEntry: SDK,
+      developerToolsBin: TOOLS,
+      ...overrides,
+    })
+
+  test('the clone comes first, because it is the one entry the policy already has', () => {
+    expect(allowlist()[0]).toBe(CLONE)
+  })
+
+  test("the interpreter is derived from the running process, not named", () => {
+    // The whole reason this is a function. `~/.bun` is this machine's answer;
+    // a clone with node under Homebrew or nvm has a different one, and a
+    // constant would be right here and wrong there.
+    expect(allowlist()).toContain('/Users/dev/.bun')
+    expect(interpreterRoot('/Users/dev/.bun/bin/bun')).toBe('/Users/dev/.bun')
+    expect(interpreterRoot('/opt/homebrew/bin/node')).toBe('/opt/homebrew')
+    // An interpreter that is not in a `bin` directory keeps its own directory
+    // rather than handing back its parent, which would be a wider allow than
+    // anything measured.
+    expect(interpreterRoot('/opt/weird/bun')).toBe('/opt/weird')
+  })
+
+  test('the SDK is allowed through the node_modules it was installed into', () => {
+    // `agentSdkEntry()` resolves a file; what the resolver needs is the tree it
+    // sits in, because the SDK's own dependencies are its siblings there.
+    expect(packageStoreRoot(SDK)).toBe('/Users/dev/code/varnick/node_modules')
+    expect(packageStoreRoot('/opt/pkgs/sdk/index.js')).toBe('/opt/pkgs/sdk')
+  })
+
+  test('an SDK inside the clone adds nothing, because the clone already covers it', () => {
+    // The usual case, and the one that would otherwise put a second entry in
+    // the file naming a subdirectory of the first.
+    expect(allowlist().filter((path) => path.startsWith(CLONE))).toEqual([CLONE])
+  })
+
+  test('the developer toolchain is derived too, and survives an Xcode install', () => {
+    // `/Library/Developer/CommandLineTools/usr/bin` is swallowed by the
+    // measured `/Library`; an Xcode.app install is not under any measured path,
+    // so deriving it is what keeps `git` reachable on that machine.
+    expect(allowlist()).toContain(TOOLS)
+    expect(allowlist({ developerToolsBin: '/Library/Developer/CommandLineTools/usr/bin' })).not
+      .toContain('/Library/Developer/CommandLineTools/usr/bin')
+    // A machine with no developer tools at all is not an error; it is a machine
+    // where the agent cannot run git, which is its own visible problem.
+    expect(allowlist({ developerToolsBin: null }).length).toBe(allowlist().length - 1)
+  })
+
+  test('the system paths are the eight that were measured, and are still constants', () => {
+    // Measured on this machine by dropping each one and watching the agent
+    // fail — see the comment on MEASURED_SYSTEM_READ_PATHS. They are constants
+    // because they are the same on every macOS install; everything above is a
+    // function because it is not.
+    expect([...MEASURED_SYSTEM_READ_PATHS]).toEqual([
+      '/usr',
+      '/bin',
+      '/System',
+      '/Library',
+      '/etc',
+      '/dev',
+      '/private/var/db',
+      '/private/var/select',
+    ])
+    for (const path of MEASURED_SYSTEM_READ_PATHS) expect(allowlist()).toContain(path)
+  })
+
+  test('no entry is contained by another', () => {
+    // An allowlist that names a directory and something inside it says the same
+    // thing twice, and the second copy is what a reader has to check against
+    // the deny list for nothing.
+    const list = allowlist()
+    for (const outer of list) {
+      for (const inner of list) {
+        if (outer === inner) continue
+        expect(reopens(outer, inner)).toBe(false)
+      }
+    }
+  })
+
+  test('adding it to the policy today would re-open both keychains and all four binaries', () => {
+    /*
+      The judgement. `allowRead` beats `denyRead`, so `/usr` hands back
+      /usr/bin/security, /usr/bin/osascript, /usr/bin/open and /usr/bin/sudo,
+      and `/Library` hands back /Library/Keychains — the directory ticket 16
+      denied after dumping 37 generic passwords out of it.
+
+      Under allow-by-default reads that is a pure loss: every one of these paths
+      is *already* readable, so the entries buy nothing and cost the denials.
+      This test exists so that wiring the list in fails here with the reason
+      rather than in a probe with a keychain dump.
+    */
+    const list = allowlist()
+    const reopened = [MACHINE_KEYCHAIN_DIR, ...UNREADABLE_BINARIES].filter((denied) =>
+      list.some((allowed) => reopens(allowed, denied)),
+    )
+    expect(reopened).toEqual([MACHINE_KEYCHAIN_DIR, ...UNREADABLE_BINARIES])
+  })
+
+  test('so the policy still reads back exactly the clone and nothing else', () => {
+    expect(policy().filesystem.allowRead).toEqual([CLONE])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// What the kernel refused, and which refusals are news
+// ---------------------------------------------------------------------------
+
+describe('sandbox violations', () => {
+  /*
+    Ticket 18's second prerequisite. srt watches the kernel's deny events and
+    varnick never listened, so a missing allowlist entry is `exit 133` and
+    nothing else — the failure shape this project has already lost a day to.
+
+    Every line below is one srt's monitor really produced on this machine,
+    copied out of its callback rather than invented.
+  */
+
+  const READ_OUTSIDE = 'cat(28194) deny(1) file-read-data /opt/toolchain/lib/libthing.dylib'
+  const READ_HOME = 'cat(28194) deny(1) file-read-data /Users/uptown/.zshrc'
+  const SYSCTL = 'bash(28194) deny(1) sysctl-read kern.iossupportversion'
+
+  test('a violation line is read into the operation and what it was refused on', () => {
+    const violation = parseSandboxViolation(READ_HOME, 'cat "/Users/uptown/.zshrc"')
+    expect(violation.operation).toBe('file-read-data')
+    expect(violation.subject).toBe('/Users/uptown/.zshrc')
+    expect(violation.command).toBe('cat "/Users/uptown/.zshrc"')
+    // The raw line is kept, because the classification below can be wrong and
+    // the line is the evidence.
+    expect(violation.line).toBe(READ_HOME)
+  })
+
+  test('a denial the policy asked for is not news', () => {
+    // `denyRead` names $HOME. A refusal there is the fence working, and a
+    // developer who is told about it on every launch stops reading the channel
+    // this exists to use.
+    expect(isUnexpectedViolation(policy(), parseSandboxViolation(READ_HOME))).toBe(false)
+  })
+
+  test('a read the policy never meant to deny is', () => {
+    expect(isUnexpectedViolation(policy(), parseSandboxViolation(READ_OUTSIDE))).toBe(true)
+  })
+
+  test('the sysctl denial every wrapped command produces is silent', () => {
+    /*
+      Measured, and the reason this is filtered at all: *every* command run
+      under the policy produces two of these, one for the wrapping bash and one
+      for the command itself. An unfiltered monitor is therefore two lines of
+      noise per command before anything has gone wrong.
+    */
+    expect(isUnexpectedViolation(policy(), parseSandboxViolation(SYSCTL))).toBe(false)
+  })
+
+  test('a denied host and a refused Apple Event are silent too', () => {
+    // Both are what the policy asks for — `strictAllowlist` and
+    // `allowAppleEvents: false` — so neither is a gap in the read allowlist.
+    for (const line of [
+      'curl(1) deny(1) network-outbound example.com:443',
+      'osascript(1) deny(1) appleevent-send com.apple.finder',
+    ]) {
+      expect(isUnexpectedViolation(policy(), parseSandboxViolation(line))).toBe(false)
+    }
+  })
+
+  test('a denied root does not silence the monitor', () => {
+    /*
+      The property that has to hold *after* reads are inverted, asserted before
+      the inversion lands. `denyRead: ['/']` puts every path in the filesystem
+      under a denial, so a filter that asked only "is this path denied?" would
+      go quiet at exactly the moment it starts being the only thing that says
+      why the agent will not start.
+
+      The root is the mechanism, not an intention. What varnick means to deny is
+      the named list beside it, and that is what stays silent.
+    */
+    const inverted = policy()
+    inverted.filesystem.denyRead = [sep, ...inverted.filesystem.denyRead]
+
+    expect(isUnexpectedViolation(inverted, parseSandboxViolation(READ_OUTSIDE))).toBe(true)
+    expect(isUnexpectedViolation(inverted, parseSandboxViolation(READ_HOME))).toBe(false)
+  })
+
+  test('a line nothing can parse is reported when it mentions a read', () => {
+    // Swallowing it would be the failure this whole mechanism exists to stop,
+    // one format change later.
+    const odd = parseSandboxViolation('something new deny file-read-data somewhere')
+    expect(isUnexpectedViolation(policy(), odd)).toBe(true)
+    expect(isUnexpectedViolation(policy(), parseSandboxViolation('unrecognisable'))).toBe(false)
+  })
+
+  test('what a developer is told names the path, the command, and what to do', () => {
+    const text = describeSandboxViolation(
+      parseSandboxViolation(READ_OUTSIDE, 'bun /clone/packages/harness/src/agent.ts'),
+    )
+    expect(text).toContain('/opt/toolchain/lib/libthing.dylib')
+    expect(text).toContain('file-read-data')
+    expect(text).toContain('agent.ts')
+    expect(text).toContain(SANDBOX_POLICY_FILENAME)
   })
 })

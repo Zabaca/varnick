@@ -16,12 +16,16 @@ import { CREDENTIAL_ENV_VAR_NAME, SELFTEST_MARKER, agentCommand } from './agent.
 import {
   UNREADABLE_BINARIES,
   DEFAULT_ALLOWED_HOSTS,
+  describeSandboxViolation,
   establishSandbox,
+  isUnexpectedViolation,
   releaseSandbox,
   ensureSandboxPolicy,
   sandboxPolicyFor,
   sandboxPolicyPath,
+  sandboxViolations,
   type EstablishedSandbox,
+  type SandboxPolicy,
 } from './sandbox.ts'
 
 /*
@@ -964,6 +968,106 @@ test.skipIf(blocked !== null)(
     } finally {
       await releaseSandbox()
     }
+  },
+  120_000,
+)
+
+// ---------------------------------------------------------------------------
+// 10. The violation monitor
+// ---------------------------------------------------------------------------
+
+test.skipIf(blocked !== null)(
+  'the kernel denials reach varnick, and only the unintended ones are said out loud',
+  async () => {
+    /*
+      Ticket 18's first prerequisite, measured rather than reasoned. `srt` has
+      watched the kernel's deny log all along and varnick never listened, so a
+      missing read allowlist entry has been `exit 133` and nothing else — the
+      failure shape this project has already lost a day to.
+
+      Two halves, and the second is the one that keeps the first usable.
+
+      **It sees them.** `establishSandbox` starts the monitor, so the events
+      below come out of the shipped path rather than out of a watcher this test
+      set up for itself.
+
+      **And it says almost nothing.** Measured here: every command run under
+      the policy trips `sysctl-read kern.iossupportversion` twice — once for the
+      wrapping shell, once for the command — so an unfiltered monitor is two
+      lines of noise per command before anything has gone wrong. A read under
+      `$HOME` is refused too, and that is the product working rather than news.
+
+      The control for the reporting half is the same real kernel event
+      classified against a policy that did *not* name `$HOME` — a fork that
+      narrowed `denyRead`, which is a policy that can exist. It speaks there,
+      which is what makes the silence above a decision instead of a dead pipe.
+    */
+    const sandbox = await freshSandbox(repoRoot)
+    const run = runner(sandbox)
+
+    const denied = await run(`cat ${JSON.stringify(join(homedir(), '.zshrc'))}`)
+    expect(denied.code).not.toBe(0)
+
+    // `log stream` is a child process reading a system log, so the event
+    // arrives after the command has exited. Polled rather than slept on, so a
+    // fast machine does not pay for a slow one.
+    const deadline = Date.now() + 30_000
+    const reads = () =>
+      sandboxViolations().filter((violation) => violation.operation.startsWith('file-read'))
+    while (reads().length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+
+    const observed = sandboxViolations()
+    const said = observed.filter((violation) => isUnexpectedViolation(sandbox.policy, violation))
+
+    // A policy that never denied the home directory. Same events, different
+    // intent — this is the control, not a policy anything establishes.
+    const narrowed: SandboxPolicy = {
+      ...sandbox.policy,
+      filesystem: {
+        ...sandbox.policy.filesystem,
+        denyRead: sandbox.policy.filesystem.denyRead.filter(
+          (path) => !homedir().startsWith(path),
+        ),
+      },
+    }
+    const saidIfHomeWereOpen = observed.filter((violation) =>
+      isUnexpectedViolation(narrowed, violation),
+    )
+
+    report('probe 10 — the kernel denials varnick now hears', [
+      ['denials observed in this run', String(observed.length)],
+      ['  of which file reads', String(reads().length)],
+      [
+        '  of which the sysctl every command trips',
+        String(observed.filter((v) => v.operation === 'sysctl-read').length),
+      ],
+      ['reported to the developer  (the policy is correct)', String(said.length)],
+      [
+        'the same events, under a policy that never denied $HOME  (control)',
+        String(saidIfHomeWereOpen.length),
+      ],
+      [
+        'what one reads like',
+        (saidIfHomeWereOpen[0] === undefined
+          ? '(none)'
+          : describeSandboxViolation(saidIfHomeWereOpen[0]).split('\n')[1] ?? ''
+        ).trim(),
+      ],
+    ])
+
+    // The pipe is live: the read that was refused is a denial varnick can see.
+    expect(reads().length).toBeGreaterThan(0)
+    expect(reads().some((violation) => violation.subject.startsWith(homedir()))).toBe(true)
+
+    // And nothing was said, because nothing went wrong. This is what a
+    // developer sees on a correct policy: no line at all.
+    expect(said).toEqual([])
+
+    // The control. The same real denial, under a policy that did not intend it,
+    // is reported — so the silence above is a judgement and not a dead channel.
+    expect(saidIfHomeWereOpen.length).toBeGreaterThan(0)
   },
   120_000,
 )
