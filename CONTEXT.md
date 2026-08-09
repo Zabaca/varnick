@@ -95,7 +95,7 @@ One exchange: a prompt sent and the answer to it. The unit that can be interrupt
 _Avoid_: message (a Turn produces two), request, exchange
 
 **Compaction**:
-Replacing earlier messages with a summary to free context. Named as its own Turn state because it can fail, and when it fails the conversation is explicitly unchanged.
+Replacing earlier messages with a summary to free context. **Something the agent does to itself, which varnick hears about.** It was a Turn state once — varnick asked for one and watched it run — and that covered the compactions varnick asked for and none of the others: Claude Code has its own `/compact`, and an auto-compaction has no command at all, it happens because the window filled. Both rewrote the agent's context while the transcript kept every message that had stopped existing. There is no state for it now and nothing to fail, because varnick performs no act: a compaction that did not happen is a transcript that did not change.
 _Avoid_: summarise (the mechanism), truncate, prune (both lose the fact that nothing is discarded blindly)
 
 ### State names
@@ -112,7 +112,7 @@ These are machine state names before they are UI words, and the two must not div
 `down` is stopped on purpose; `crashed` is stopped on its own and carries a reason. `startRefused` is a start that was asked for and declined, holding the refusal so it can be read.
 _Avoid_: stopped, idle, dead, paused, blocked
 
-**Session — `turn`**: `idle`, `answering.sending`, `answering.streaming`, `interrupting`, `compacting`, `failed`.
+**Session — `turn`**: `idle`, `answering.sending`, `answering.streaming`, `interrupting`, `failed`.
 `answering` is a Turn in flight, and it is one state because it runs one actor. Its children say how far along the answer is: `sending` is posted with nothing back yet, `streaming` is output arriving. They were siblings once, and each invoked the Turn — so the first streamed token aborted the Turn and started it again. `interrupting` keeps the partial — an interrupted Turn still said something. A Session resumed on launch enters `idle`: a Turn in flight when the process died is an answer that stopped early, which is what an interrupt already is, and nothing observed a failure to report.
 
 **Session — `persistence`**: `saved`, `saving`, `saveFailed`. Independent of `turn`, which is the point: a failed save must not cancel a Turn.
@@ -125,10 +125,12 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 
 ### Event names
 
-`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `RUNTIME_REPORTED`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface. `COMMANDS_REPORTED` joins `RUNTIME_REPORTED` on the Harness: both are the runtime describing itself, and both are dropped when the agent is.
+`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `RUNTIME_REPORTED`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACTED`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface. `COMMANDS_REPORTED` joins `RUNTIME_REPORTED` on the Harness: both are the runtime describing itself, and both are dropped when the agent is.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
 
-`CLEAR` is the one that changed sides. It was a command — varnick's own `/clear`, which emptied the transcript and told the agent to forget — and it is now a **report**: the runtime announces `conversation_reset` and the transcript follows. The distinction is not pedantry. Claude Code has its own `/clear`, so a clear could be asked for in two places and only one of them was heard; listening for the announcement covers both, and there is one way for a conversation to empty rather than two that can disagree.
+`CLEAR` and `COMPACTED` are the two that changed sides, and they changed it the same way. Each was a command — varnick's own `/clear`, which emptied the transcript and told the agent to forget, and varnick's own `/compact`, which asked for a summary and waited in `turn.compacting` for it. Both are **reports** now: the runtime announces `conversation_reset` or produces a compaction summary, and the transcript follows.
+
+The distinction is not pedantry. Claude Code has both commands, so either could be asked for in two places and only one of them was heard — and a compaction needs no asking at all, because the window fills up and the agent summarises itself. Listening covers however it was asked for, including when nobody asked, which is the case a command could never reach. It also settles where they are handled: a state may decide what to *do* with a fact and may not decline one, so both sit at the machine's root and are accepted mid-Turn, which is exactly when they arrive.
 
 `STORE_CREDENTIAL` carries the one value in Core that must not survive the interaction. It is read by the store actor's input and never assigned into context, so the machine that carried it holds nothing afterwards — which is why `CHOOSE_CREDENTIAL_KIND` is a separate event: the kind is not secret, belongs in context where the view can read it, and says only which item a store would write. Which credential varnick *uses* is still resolved by the host from what it finds ([ADR-0011](./docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md)).

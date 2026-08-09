@@ -82,10 +82,6 @@ export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
             { ok: true },
             { sessionId: string; messages: readonly Message[] }
           >(),
-          compactSession: never<
-            { messages: Message[]; tokensUsed: number },
-            { sessionId: string; messages: readonly Message[]; model: ModelId }
-          >(),
         },
         delays: { interruptGrace: HELD },
       }),

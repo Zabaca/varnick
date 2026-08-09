@@ -8,13 +8,11 @@ import {
   type MintObserver,
 } from '@varnick/harness/credentials'
 import {
-  compactionFailureMessage,
   isCredentialRejection,
   turnFailureMessage,
   type RuntimeReport,
   type SlashCommand,
 } from '@varnick/harness/turn'
-import { compactedTranscript } from '../domain.ts'
 import type {
   CredentialKind,
   CredentialReading,
@@ -117,6 +115,23 @@ export interface TurnObserver {
    * only one way the transcript can empty.
    */
   conversationReset(): void
+  /**
+   * The agent summarised the conversation, and here is what it kept.
+   *
+   * Sent to the Session as `COMPACTED`, and — like {@link conversationReset} —
+   * it is the only thing that sends it. varnick used to own a `/compact` that
+   * asked for a summarisation and rewrote the transcript with the answer. That
+   * covered the compactions varnick was asked for and no others: the CLI has
+   * its own `/compact`, and an **auto-compaction has no command at all**, so a
+   * full context window rewrote the agent and left the window showing a
+   * conversation the agent no longer held.
+   *
+   * `tokensUsed` is what the Session measured afterwards, never what a summary
+   * was assumed to cost — and `null` when it could not be measured, which
+   * leaves the meter alone rather than replacing it with a figure nobody took.
+   * The transcript follows either way.
+   */
+  conversationCompacted(summary: string, tokensUsed: number | null): void
 }
 
 /** An observer that drops everything. What a run with no owner gets. */
@@ -126,6 +141,7 @@ const silentObserver: TurnObserver = {
   runtimeReported: () => {},
   commandsReported: () => {},
   conversationReset: () => {},
+  conversationCompacted: () => {},
 }
 
 /**
@@ -321,6 +337,17 @@ export function liveActors(
           case 'reset':
             observer.conversationReset()
             break
+          /*
+            The Session summarised itself part-way through this Turn — because
+            the window filled, or because the developer typed the CLI's own
+            `/compact`. Not part of the answer either, and deliberately not
+            ending the Turn: the agent is still working, on a context it has
+            just rewritten, and the answer that arrives belongs after the
+            summary rather than instead of it.
+          */
+          case 'compacted':
+            observer.conversationCompacted(event.summary, event.tokensUsed)
+            break
           case 'done':
             return { text: event.text, tokensUsed: event.tokensUsed }
           case 'failed': {
@@ -359,102 +386,22 @@ export function liveActors(
     ),
 
     /*
-      Real. The Session summarises itself, on the same channel a Turn rides.
+      `compactSession` was here — the actor `turn.compacting` invoked, which put
+      `/compact` on the Session's own input and waited for the summary to come
+      back.
 
-      The obvious implementation of this actor is the one ADR-0003's last
-      consequence was written about. Summarising is a model call, the host has
-      an SDK, and `query()` with "summarise the following" is four lines — and
-      it would put a second Claude Code process on the machine outside `srt`, in
-      a clone the agent can write `.claude/settings.json` into. It would also
-      not work: a summary produced by a session that is not *this* session frees
-      no context at all, because the context that is full belongs to the agent
-      process. The only thing that can compact this conversation is the thing
-      holding it.
+      It is gone with the state that invoked it. A compaction happens whether or
+      not varnick asks: the CLI has the command, and a full context window needs
+      no command at all. So varnick listens for the summary on the Turn channel
+      instead — see the `compacted` case in `runTurn` above — which covers every
+      way it can happen, including the way asking never could.
 
-      So one call goes out, `compact-session`, carrying a Turn id and no text —
-      what the confined process runs is a constant inside the Sandbox — and the
-      answer comes back through the same event loop a Turn reads.
-
-      Nothing is written until it comes back. The replacement transcript is
-      built by `compactedTranscript` from the summary, as a value, and returned;
-      until then the conversation this actor was handed is the conversation
-      still on screen. The failure path does not so much as touch it — see the
-      `messages` input in packages/core/src/machines/session.ts, which hands
-      over a copy so that "not partially rewritten before the failure" is a
-      property of the code rather than a discipline.
+      What survives from it is the reason it was a control request rather than a
+      `query()` on the host: summarising is a model call on *this* Session, and
+      a summary produced by any other session frees no context at all, because
+      the context that is full belongs to the agent process. Nothing here opens
+      a session, which is what ADR-0003's last consequence is about.
     */
-    compactSession: fromPromise<
-      { messages: Message[]; tokensUsed: number },
-      { sessionId: string; messages: readonly Message[]; model: ModelId }
-    >(async ({ input, signal }) => {
-      const turnId = nextTurnId()
-      await callHarness({ kind: 'compact-session', turnId })
-
-      for (;;) {
-        const { event } = await callHarness({ kind: 'next-turn-event' })
-
-        /*
-          `turn.compacting` has no INTERRUPT — a summarisation with half a
-          summary is worth nothing, so there is no partial to keep and nothing
-          for the state to be about. The check stays anyway: an actor the
-          machine has stopped for any reason has no state left to reach, and a
-          loop that kept reading events after that would read the next Turn's.
-        */
-        if (signal.aborted) throw new Error('The compaction was stopped.')
-
-        if (event === null || event.turnId !== turnId) continue
-
-        switch (event.kind) {
-          /*
-            A Compaction is not a Turn and says nothing while it runs. Deltas
-            and tool calls belong to a Turn that is not this one — a stale
-            answer still on the wire behind it — and posting them would put
-            another Turn's words into the transcript this one is about to
-            replace. `turn.compacting` is what the developer is shown instead.
-          */
-          case 'delta':
-          case 'tool':
-            break
-          // A report stamped with this Compaction's id, which nothing emits
-          // today — the runtime describes itself when a Turn starts, and a
-          // Compaction is not one. Taken rather than ignored if it ever does:
-          // the fact is about the agent and is true whichever run carried it.
-          case 'runtime':
-            observer.runtimeReported(event.report)
-            break
-          case 'commands':
-            observer.commandsReported(event.commands)
-            break
-          // A compaction cannot reset the conversation, but the channel is one
-          // channel and a kind it ignored would be a kind it dropped.
-          case 'reset':
-            observer.conversationReset()
-            break
-          // `done` belongs to a Turn. A Compaction that produced one is a Turn
-          // that was mistaken for a Compaction, and taking it would replace the
-          // conversation with an answer.
-          case 'done':
-            throw new Error(compactionFailureMessage('unknown'))
-          case 'compacted':
-            return {
-              messages: compactedTranscript(input.messages, event.summary),
-              // What the Session measured, never what a summary was assumed to
-              // cost. The meter drops by the difference between two readings.
-              tokensUsed: event.tokensUsed,
-            }
-          case 'failed': {
-            // Same two states as a failed Turn, said differently: the
-            // credential's own state explains the credential, and this one is
-            // rendered inside "Could not compact — …. The conversation is
-            // unchanged." Authored from the tag, never from what the API said.
-            if (isCredentialRejection(event.failure)) {
-              observer.credentialRejected(CREDENTIAL_REJECTED_DETAIL)
-            }
-            throw new Error(compactionFailureMessage(event.failure))
-          }
-        }
-      }
-    }),
 
     // `loadSurface` is deliberately absent from both this list and the seeded
     // one. It has no seeded half in either mode — see actors/index.ts.

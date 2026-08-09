@@ -516,10 +516,12 @@ async function serve(
     control: ReturnType<typeof pushable<string>>
     messages: ReturnType<typeof pushable<unknown>>
     asked: string[]
-    /** What the `PostCompact` hook would report, from outside the message stream. */
+    /**
+     * What the `PostCompact` hook would report, from outside the message
+     * stream. Every compaction reaches the loop this way, whether the developer
+     * asked for one or the window filled up on its own.
+     */
     summarised: (summary: string) => void
-    /** A compaction the agent performed without being asked. */
-    compactedOnItsOwn: (summary: string) => void
   }) => Promise<void>,
   contextTokens?: () => Promise<number | null>,
   /** Whether this run was opened by resuming — what the report carries. */
@@ -536,7 +538,7 @@ async function serve(
   // Everything the loop wrote, unfiltered. The channel carries more than Turn
   // events now, and a helper that only kept those could not see the rest.
   const lines: string[] = []
-  let report: (summary: string, asked: boolean) => void = () => {}
+  let report: (summary: string) => void = () => {}
   /** Every list of secret names the loop handed over, in order. */
   const described: (readonly string[])[] = []
 
@@ -565,10 +567,7 @@ async function serve(
     control,
     messages,
     asked,
-    summarised: (summary) => report(summary, true),
-    // A compaction nobody asked for: the CLI's own `/compact`, or the window
-    // filling up. The agent's context is rewritten either way.
-    compactedOnItsOwn: (summary) => report(summary, false),
+    summarised: (summary) => report(summary),
   })
   control.close()
   messages.close()
@@ -851,7 +850,7 @@ describe('the commands the runtime will accept', () => {
   })
 })
 
-describe('a compaction nobody asked for', () => {
+describe('a compaction varnick did not perform', () => {
   test('the window is told, so the transcript follows the context', async () => {
     /*
       The live half of this: an auto-compaction fires when the window fills,
@@ -860,52 +859,70 @@ describe('a compaction nobody asked for', () => {
       agent no longer held, which is the `/clear` disagreement with nothing to
       blame it on.
     */
-    const { written } = await serve(async ({ control, messages, compactedOnItsOwn }) => {
+    const { written } = await serve(async ({ control, messages, summarised }) => {
       control.push(runTurnLine('t1', 'carry on'))
       await settle()
-      compactedOnItsOwn('everything so far, in short')
+      summarised('everything so far, in short')
       await settle()
       messages.push(result('carried on'))
       await settle()
     })
     const compacted = written.find((e) => e.kind === 'compacted')
-    expect(compacted).toBeDefined()
+    expect(compacted?.turnId).toBe('t1')
     expect(compacted?.kind === 'compacted' && compacted.summary).toBe('everything so far, in short')
   })
 
   test('an empty summary is not a compaction to report', async () => {
-    // A transcript replaced by nothing is a transcript discarded, which is the
-    // rule the asked-for path already follows.
-    const { written } = await serve(async ({ control, compactedOnItsOwn }) => {
+    // A transcript replaced by nothing is a transcript discarded, reported as
+    // a success.
+    const { written } = await serve(async ({ control, summarised }) => {
       control.push(runTurnLine('t1', 'carry on'))
       await settle()
-      compactedOnItsOwn('   ')
+      summarised('   ')
       await settle()
     })
     expect(written.some((e) => e.kind === 'compacted')).toBe(false)
   })
 
-  test('one varnick asked for still settles the run that asked', async () => {
-    /*
-      The path that existed, and it must not have moved. It settles on *both*
-      halves — the boundary that says a compaction happened and the summary that
-      says what it produced — which is why this test needs the boundary message
-      and the unasked-for ones above do not: there is no run waiting on halves.
-    */
+  test('the summary does not end the Turn it arrived during', async () => {
+    // A compaction mid-answer is not an answer. The agent carries on with a
+    // context it has just rewritten, and what it says next belongs after the
+    // summary rather than instead of it.
     const { written } = await serve(async ({ control, messages, summarised }) => {
-      control.push(`${JSON.stringify({ kind: 'compact', turnId: 'c1' })}\n`)
+      control.push(runTurnLine('t1', 'carry on'))
       await settle()
-      messages.push({
-        type: 'system',
-        subtype: 'compact_boundary',
-        compact_metadata: { trigger: 'manual', pre_tokens: 812_000, post_tokens: 4_000 },
-      })
-      summarised('the asked-for summary')
+      summarised('everything so far, in short')
+      await settle()
+      messages.push(result('carried on'))
       await settle()
     })
-    const compacted = written.find((e) => e.kind === 'compacted')
-    expect(compacted?.turnId).toBe('c1')
-    expect(compacted?.kind === 'compacted' && compacted.tokensUsed).toBe(4_000)
+    const kinds = written.map((e) => e.kind)
+    expect(kinds.indexOf('compacted')).toBeLessThan(kinds.indexOf('done'))
+    const done = written.find((e) => e.kind === 'done')
+    expect(done?.kind === 'done' && done.text).toContain('carried on')
+  })
+
+  test('varnick cannot ask for one, so the word is refused on the control channel', async () => {
+    // `compact` was a control request. Nothing sends it now, and a host that
+    // still accepted it would be a second way to do the thing this listener
+    // exists to hear about.
+    const { written } = await serve(async ({ control, asked }) => {
+      control.push(`${JSON.stringify({ kind: 'compact', turnId: 'c1' })}\n`)
+      await settle()
+      expect(asked).toEqual([])
+    })
+    expect(written).toEqual([])
+  })
+
+  test('a compaction with no Turn to stamp is dropped rather than misattributed', async () => {
+    // The same rule every message on this stream follows. Nothing fills a
+    // context when nothing is running, so this is a case that does not happen
+    // rather than one that is lost.
+    const { written } = await serve(async ({ summarised }) => {
+      summarised('a summary with nowhere to go')
+      await settle()
+    })
+    expect(written.some((e) => e.kind === 'compacted')).toBe(false)
   })
 })
 
@@ -1113,216 +1130,26 @@ describe('interrupting', () => {
 })
 
 /*
-  A "plan usage rides the session that is already open" suite stood here: eight
-  tests over a `read-plan-usage` control request, including that a read did not
-  disturb a streaming Turn and that an interrupt was still answered while one
-  was in flight.
+  Two suites stood here.
 
-  They demonstrated ADR-0003's last consequence — the loop answers off a session
-  it did not create — and that property is still demonstrated, by the Compaction
-  suite below, which is on the channel for exactly the same reason and is still
-  a thing the product does. Ticket 31 cut the read itself: no credential varnick
-  can hold reports plan windows, so there was never a figure at the far end.
+  A "plan usage rides the session that is already open" suite: eight tests over
+  a `read-plan-usage` control request, cut by ticket 31 because no credential
+  varnick can hold reports plan windows, so there was never a figure at the far
+  end.
+
+  A "compaction rides the same session a turn does" suite beside it: fifteen
+  tests over a `compact` control request, its two-halved settlement, and the
+  failures it could report. varnick does not ask for a compaction any more — it
+  hears about the one the Session performed, whoever asked and even when nobody
+  did — so there is no request left to test. What survives of it is in "a
+  compaction varnick did not perform" above, which asserts the same things
+  about the half that is still there: the summary, the measurement, and the
+  refusal to invent one.
+
+  Both suites also demonstrated ADR-0003's last consequence — the loop answers
+  off a session it did not create — and that is still demonstrated by every
+  Turn in this file, which is the same property on the kind that remained.
 */
-
-describe('a compaction rides the same session a turn does', () => {
-  const compactLine = (turnId: string) => `${JSON.stringify({ kind: 'compact', turnId })}\n`
-
-  const boundary = (post?: number) => ({
-    type: 'system',
-    subtype: 'compact_boundary',
-    compact_metadata: {
-      trigger: 'manual',
-      pre_tokens: 812_000,
-      ...(post === undefined ? {} : { post_tokens: post }),
-    },
-  })
-
-  test('summarising is a command on the session already open, not a second one', async () => {
-    // The whole of ADR-0003's last consequence. The only thing that happens on
-    // a compaction is a prompt onto the pipe the confined process is reading.
-    const { asked } = await serve(async ({ control }) => {
-      control.push(compactLine('c1'))
-      await settle()
-    })
-    expect(asked).toEqual(['prompt:/compact'])
-  })
-
-  test('a compaction reports the summary and what the context now measures', async () => {
-    const { written } = await serve(async ({ control, messages, summarised }) => {
-      control.push(compactLine('c1'))
-      await settle()
-      summarised('Earlier: the developer wired the sandbox policy.')
-      messages.push(boundary(4_000))
-      await settle()
-    })
-    expect(written).toEqual([
-      {
-        kind: 'compacted',
-        turnId: 'c1',
-        summary: 'Earlier: the developer wired the sandbox policy.',
-        tokensUsed: 4_000,
-      },
-    ])
-  })
-
-  test('a boundary that reported no size is measured by asking the session', async () => {
-    // Never estimated. The figure is either the compaction's own or the
-    // Session's answer to what it now holds.
-    const { written, asked } = await serve(
-      async ({ control, messages, summarised }) => {
-        control.push(compactLine('c1'))
-        await settle()
-        summarised('a summary')
-        messages.push(boundary())
-        await settle()
-      },
-      async () => 5_500,
-    )
-    expect(asked).toContain('contextTokens')
-    expect(written).toEqual([
-      { kind: 'compacted', turnId: 'c1', summary: 'a summary', tokensUsed: 5_500 },
-    ])
-  })
-
-  test('the compaction is not asked how big it is when it already said', async () => {
-    const { asked } = await serve(async ({ control, messages, summarised }) => {
-      control.push(compactLine('c1'))
-      await settle()
-      summarised('a summary')
-      messages.push(boundary(4_000))
-      await settle()
-    })
-    expect(asked).not.toContain('contextTokens')
-  })
-
-  test('a compaction nobody could measure fails rather than showing a figure it invented', async () => {
-    const { written } = await serve(
-      async ({ control, messages, summarised }) => {
-        control.push(compactLine('c1'))
-        await settle()
-        summarised('a summary')
-        messages.push(boundary())
-        await settle()
-      },
-      async () => null,
-    )
-    expect(written).toEqual([
-      { kind: 'failed', turnId: 'c1', failure: 'compaction-unmeasured' },
-    ])
-  })
-
-  test('a session that throws when asked its size is the same answer as no answer', async () => {
-    const { written } = await serve(
-      async ({ control, messages, summarised }) => {
-        control.push(compactLine('c1'))
-        await settle()
-        summarised('a summary')
-        messages.push(boundary())
-        await settle()
-      },
-      async () => {
-        throw new Error('the control request was refused')
-      },
-    )
-    expect(written).toEqual([
-      { kind: 'failed', turnId: 'c1', failure: 'compaction-unmeasured' },
-    ])
-  })
-
-  test('a compaction that never happened is a failure and nothing else', async () => {
-    // Nothing is emitted that Core could turn into a transcript, which is what
-    // makes "the conversation is unchanged" a property of the wire rather than
-    // of whoever reads it.
-    const { written } = await serve(async ({ control, messages }) => {
-      control.push(compactLine('c1'))
-      await settle()
-      messages.push({ type: 'system', subtype: 'status', status: null, compact_result: 'failed' })
-      await settle()
-    })
-    expect(written).toEqual([{ kind: 'failed', turnId: 'c1', failure: 'compaction' }])
-  })
-
-  test('the summary may arrive after the boundary and still complete the compaction', async () => {
-    const { written } = await serve(async ({ control, messages, summarised }) => {
-      control.push(compactLine('c1'))
-      await settle()
-      messages.push(boundary(4_000))
-      await settle()
-      summarised('a summary')
-      await settle()
-    })
-    expect(written).toEqual([
-      { kind: 'compacted', turnId: 'c1', summary: 'a summary', tokensUsed: 4_000 },
-    ])
-  })
-
-  test('a summary reported with no compaction running is not attributed to one', async () => {
-    // Auto-compaction fires the same hook. A conversation nobody asked to
-    // compact must not be rewritten because the window filled up.
-    const { written } = await serve(async ({ messages, summarised }) => {
-      summarised('an auto-compaction happened')
-      messages.push(boundary(4_000))
-      await settle()
-    })
-    expect(written).toEqual([])
-  })
-
-  test('a compaction ends exactly once, however much the session keeps saying', async () => {
-    const { written } = await serve(async ({ control, messages, summarised }) => {
-      control.push(compactLine('c1'))
-      await settle()
-      summarised('a summary')
-      messages.push(boundary(4_000))
-      await settle()
-      messages.push(boundary(9_000))
-      summarised('another summary')
-      await settle()
-    })
-    expect(written).toHaveLength(1)
-  })
-
-  test('an interrupt reaches a compaction by name, like any other turn', async () => {
-    const { asked } = await serve(async ({ control }) => {
-      control.push(compactLine('c1'))
-      await settle()
-      control.push(`${JSON.stringify({ kind: 'interrupt', turnId: 'c1' })}\n`)
-      await settle()
-    })
-    expect(asked).toContain('interrupt')
-  })
-
-  test('a session that refuses the compaction fails it rather than hanging it', async () => {
-    const control = pushable<string>()
-    const messages = pushable<unknown>()
-    const written: TurnEvent[] = []
-    const served = serveTurns({
-      control,
-      messages,
-      session: {
-        prompt: () => {
-          throw new Error('401 unauthorized')
-        },
-        setModel: async () => {},
-        setEffort: async () => {},
-        interrupt: async () => {},
-        contextTokens: async () => null,
-        supportedCommands: async () => [],
-      },
-      write: (line) => {
-        const event = parseTurnEvent(JSON.parse(line))
-        if (event !== null) written.push(event)
-      },
-    })
-    control.push(compactLine('c1'))
-    await settle()
-    control.close()
-    messages.close()
-    await served
-
-    expect(written).toEqual([{ kind: 'failed', turnId: 'c1', failure: 'authentication' }])
-  })
-})
 
 describe('the control channel refuses what it does not understand', () => {
   test('a line that is not a control request is ignored rather than acted on', async () => {

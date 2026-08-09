@@ -155,9 +155,7 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // runtime. See mint.rs.
         "read-credential" | "store-credential" | "mint-subscription-token"
         | "next-mint-event" | "spawn-agent" | "stop-agent" | "await-agent-exit"
-        | "run-turn" | "next-turn-event" | "interrupt-turn" | "compact-session" => {
-            Some(Route::Host)
-        }
+        | "run-turn" | "next-turn-event" | "interrupt-turn" => Some(Route::Host),
         // `read-commands` is the runtime's because it is a file read, and the
         // runtime is the process with a filesystem. It answers what the *agent*
         // last reported — written by the agent host, read back for a window
@@ -672,10 +670,10 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
                 let reason = agent.await_exit()?;
                 Ok(serde_json::json!({ "reason": reason }))
             }
-            // A prompt, an interrupt and a compaction are the same act from
-            // here: one control line onto the pipe the agent process is
-            // listening on. None of their answers comes back through this call.
-            "run-turn" | "interrupt-turn" | "compact-session" => {
+            // A prompt and an interrupt are the same act from here: one control
+            // line onto the pipe the agent process is listening on. Neither
+            // answer comes back through this call.
+            "run-turn" | "interrupt-turn" => {
                 /*
                   A Turn, and only a Turn, is preceded by the names of the
                   stored secrets — ADR-0006's naming end.
@@ -689,11 +687,9 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
                   taken at start-up.
 
                   Not before an interrupt, which stops an answer and asks the
-                  agent for nothing, and not before a compaction, which
-                  summarises what has already been said. Both would pay a
-                  round-trip to the runtime for a brief nothing is going to read,
-                  and an interrupt paying for one is the exact delay interrupting
-                  exists to avoid.
+                  agent for nothing. It would pay a round-trip to the runtime
+                  for a brief nothing is going to read, which is the exact delay
+                  interrupting exists to avoid.
 
                   Both steps are deliberately unchecked. A runtime that will not
                   answer, or an agent that is not running, leaves the agent
@@ -859,12 +855,14 @@ mod tests {
     }
 
     #[test]
-    fn a_compaction_is_answered_where_the_agent_process_is() {
-        // Summarising is a model call on the Session the agent already holds.
-        // Routing it to the runtime — the process that has a filesystem, and
-        // the obvious home for "do some work" — would mean opening a session
-        // there, which is the second Claude Code process ADR-0003 forbids.
-        assert_eq!(route_of("compact-session"), Some(Route::Host));
+    fn a_compaction_is_no_longer_a_kind_this_bridge_carries() {
+        // It used to route to the host, because summarising is a model call on
+        // the Session the agent already holds and opening one in the runtime
+        // would be the second Claude Code process ADR-0003 forbids. varnick
+        // does not ask for a compaction at all now — it hears about the one the
+        // Session performed — so the kind falls through to the closed default,
+        // the same place `read-plan-usage` went.
+        assert_eq!(route_of("compact-session"), None);
     }
 
     #[test]

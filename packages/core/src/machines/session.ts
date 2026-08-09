@@ -1,6 +1,6 @@
 import { setup, assign, fromPromise, raise } from 'xstate'
 import type { Message } from '../domain.ts'
-import { isCommandDraft } from '../domain.ts'
+import { compactedTranscript, isCommandDraft } from '../domain.ts'
 import type { Effort, ModelId } from '../domain.ts'
 
 /**
@@ -19,7 +19,6 @@ export const SESSION_STATE_PATHS = [
   'turn.answering.streaming',
   'turn.interrupting',
   'turn.failed',
-  'turn.compacting',
   'persistence.saved',
   'persistence.saving',
   'persistence.saveFailed',
@@ -53,7 +52,6 @@ export interface SessionContext {
   effort: Effort
   /** Cumulative tokens the conversation currently occupies. */
   tokensUsed: number
-  compactError: string | null
   readonly enterTurn: string | null
   readonly enterPersistence: string | null
 }
@@ -71,7 +69,6 @@ export interface SessionInput {
   model?: ModelId
   effort?: Effort
   tokensUsed?: number
-  compactError?: string | null
   enterTurn?: string | null
   enterPersistence?: string | null
 }
@@ -95,7 +92,9 @@ export type SessionEvent =
   | { type: 'SET_MODEL'; model: ModelId }
   | { type: 'SET_EFFORT'; effort: Effort }
   | { type: 'SET_COMMANDS'; names: readonly string[] }
-  | { type: 'COMPACT' }
+  /** The agent summarised the conversation. A report, like `CLEAR`. `null`
+   *  tokens means the Session would not say what it now holds. */
+  | { type: 'COMPACTED'; summary: string; tokensUsed: number | null }
 
 /**
  * Real-service contracts:
@@ -117,16 +116,6 @@ export const sessionMachine = setup({
       { text: string; tokensUsed: number },
       { sessionId: string; prompt: string; model: ModelId; effort: Effort }
     >(async () => ({ text: '', tokensUsed: 0 })),
-    /*
-      Real-service contract for compactSession:
-        input  { sessionId, messages, model }
-        output { messages, tokensUsed } — the summarised history and its new cost
-        error  thrown Error, shown in turn.compacting's failure path
-    */
-    compactSession: fromPromise<
-      { messages: Message[]; tokensUsed: number },
-      { sessionId: string; messages: readonly Message[]; model: ModelId }
-    >(async ({ input }) => ({ messages: [...input.messages], tokensUsed: 0 })),
     persistSession: fromPromise<
       { ok: true },
       { sessionId: string; messages: readonly Message[] }
@@ -170,7 +159,6 @@ export const sessionMachine = setup({
     model: input.model ?? 'claude-opus-5',
     effort: input.effort ?? 'xhigh',
     tokensUsed: input.tokensUsed ?? 0,
-    compactError: input.compactError ?? null,
     enterTurn: input.enterTurn ?? null,
     enterPersistence: input.enterPersistence ?? null,
   }),
@@ -206,11 +194,44 @@ export const sessionMachine = setup({
         messages: [],
         partial: '',
         turnError: null,
-        compactError: null,
         draft: '',
         menuIndex: 0,
         tokensUsed: 0,
       }),
+    },
+    /*
+      The agent summarised, so the window shows what it kept — in whatever
+      state it is in, for the same reason `CLEAR` is at the root.
+
+      varnick used to *ask* for this. `COMPACT` sent the CLI's command down the
+      control channel and `turn.compacting` waited for the answer, which is a
+      reasonable shape for a request and covers only the compactions varnick
+      made. The CLI has its own `/compact`, and an **auto-compaction has no
+      command at all** — it happens because the window filled. Both rewrote the
+      agent's context while the transcript kept every message that had just
+      stopped existing, and nothing on screen disagreed.
+
+      It arrives mid-Turn by construction: a context fills up while an answer is
+      being written, and the CLI's `/compact` is itself a Turn. A state that
+      refused it would refuse it in exactly the case it happens in.
+
+      `saveTranscript`, because this is the one boundary that *replaces* rather
+      than appends — an append-only mirror would keep both the summary and
+      everything it summarised, and a restart would hand the window back the
+      conversation the agent had already given up.
+    */
+    COMPACTED: {
+      actions: [
+        assign({
+          messages: ({ context, event }) => compactedTranscript(context.messages, event.summary),
+          // Measured by the Session after the rewrite, never assumed from the
+          // summary's length. A compaction it would not measure leaves the
+          // meter where it was: too high, and visibly so, which is a better
+          // wrong than a meter reading zero over a conversation that exists.
+          tokensUsed: ({ context, event }) => event.tokensUsed ?? context.tokensUsed,
+        }),
+        'saveTranscript',
+      ],
     },
     SET_COMMANDS: { actions: assign({ commandNames: ({ event }) => event.names }) },
     SET_MODEL: { actions: assign({ model: ({ event }) => event.model }) },
@@ -235,15 +256,12 @@ export const sessionMachine = setup({
               target: 'interrupting',
               guard: ({ context }) => context.enterTurn === 'interrupting',
             },
-            { target: 'compacting', guard: ({ context }) => context.enterTurn === 'compacting' },
             { target: 'failed', guard: ({ context }) => context.enterTurn === 'failed' },
             { target: 'idle' },
           ],
         },
         idle: {
           on: {
-
-          COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             // Guarded with no fallback: an empty draft is not a refusal worth
             // explaining, it is a button that should read as inert.
             SEND: {
@@ -375,63 +393,8 @@ export const sessionMachine = setup({
             },
           },
         },
-        compacting: {
-          invoke: {
-            src: 'compactSession',
-            input: ({ context }) => ({
-              sessionId: context.sessionId,
-              /*
-                A copy, and the one line that makes "the conversation is
-                explicitly unchanged" structural rather than a rule an
-                implementation has to remember.
-
-                `readonly Message[]` is a compile-time claim and nothing at run
-                time: a compaction that assembled the replacement in the array
-                it was handed and then threw would leave a half-rewritten
-                conversation behind a state that says nothing happened. Handing
-                over a copy means the replacement can only arrive as the
-                actor's *result*, so there is no way to change the transcript
-                except by finishing.
-              */
-              messages: [...context.messages],
-              model: context.model,
-            }),
-            onDone: {
-              target: 'idle',
-              // Compaction rewrites history rather than extending it, which the
-              // mirror has to be told about — an append-only file would keep
-              // both the summary and everything it replaced.
-              actions: [
-                assign({
-                  messages: ({ event }) => event.output.messages,
-                  tokensUsed: ({ event }) => event.output.tokensUsed,
-                  compactError: null,
-                }),
-                'saveTranscript',
-              ],
-            },
-            onError: {
-              target: 'idle',
-              /*
-                No boundary, deliberately. Every other exit from a Turn raises
-                SAVE; this one must not. A compaction that failed changed
-                nothing, and the transcript it would hand the store is the one
-                already on disk — but Compaction is the boundary that takes the
-                store's *replace* path, and a failure that reached it would put
-                the mirror one atomic rewrite away from a conversation nobody
-                rewrote. Nothing happened, so nothing is written.
-              */
-              actions: assign({
-                compactError: ({ event }) =>
-                  event.error instanceof Error ? event.error.message : String(event.error),
-              }),
-            },
-          },
-        },
         failed: {
           on: {
-
-          COMPACT: { target: 'compacting', actions: assign({ compactError: null }) },
             RETRY_TURN: 'answering',
             DISMISS_TURN_ERROR: { target: 'idle', actions: assign({ turnError: null }) },
           },

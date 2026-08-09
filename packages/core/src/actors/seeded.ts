@@ -7,7 +7,6 @@ import type {
   ModelId,
   SandboxPolicy,
 } from '../domain.ts'
-import { compactedTranscript } from '../domain.ts'
 import { brokenSurfaceError } from '../data/seed.ts'
 
 /**
@@ -40,8 +39,6 @@ export interface SeedControls {
   failTurn: boolean
   /** Make persistence fail. */
   failSave: boolean
-  /** Make compaction fail. */
-  failCompact: boolean
 }
 
 export const defaultSeedControls: SeedControls = {
@@ -51,7 +48,6 @@ export const defaultSeedControls: SeedControls = {
   failMint: false,
   failTurn: false,
   failSave: false,
-  failCompact: false,
 }
 
 export function seededActors(controls: SeedControls) {
@@ -128,26 +124,6 @@ export function seededActors(controls: SeedControls) {
       turnTokens += 240 + input.prompt.length * 4
       return {
         text: `Acknowledged on ${input.model} at ${input.effort} effort: ${input.prompt}`,
-        tokensUsed: turnTokens,
-      }
-    }),
-
-    compactSession: fromPromise<
-      { messages: Message[]; tokensUsed: number },
-      { sessionId: string; messages: readonly Message[]; model: ModelId }
-    >(async ({ input }) => {
-      await wait(700)
-      if (controls.failCompact) throw new Error('could not summarise the conversation')
-      turnTokens = 300
-      // The same builder the live compaction uses, so a seeded run and a real
-      // one produce a transcript of the same shape. A seed that composed its
-      // own would be a second answer to what a compacted conversation looks
-      // like, and the states page compares between runs.
-      return {
-        messages: compactedTranscript(
-          input.messages,
-          'The developer asked about the harness and the agent answered. Nothing is outstanding.',
-        ),
         tokensUsed: turnTokens,
       }
     }),

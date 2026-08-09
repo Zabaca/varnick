@@ -41,7 +41,7 @@ existed there was nothing to save to. A failed Turn saving is the case worth
 keeping in mind: the user's message is in the transcript whether or not an
 answer ever arrived, and that is the loss the mirror exists to prevent.
 
-## Amended again while building Compaction
+## Amended again while building Compaction (since reversed — see below)
 
 **`compactSession` is handed a copy of the transcript.** One line, in the
 actor's `input`, and it is what turns "a failed compaction leaves the
@@ -75,3 +75,41 @@ They are now children of an `answering` state that holds the invoke. The state p
 Two things worth keeping from how this was missed. The two blocks were byte-identical — the fingerprint of a bad conflict resolution, and this run produced four of those. And `drive.ts` had a census asserting that `sending` and `streaming` accept the same events, which passed *because* they were duplicates: it compared them to each other rather than to the model. The assertion that catches it counts actor invocations across a streamed Turn, and fails the moment a second invoke reappears.
 
 The same change moved the prompt-append out of the state's entry and onto `SEND`. `RETRY_TURN` re-enters `answering`, and by then the draft has been consumed — an entry action appended an empty user message and retried with an empty prompt, writing the empty message to the mirror on the way.
+
+## Amended again: Compaction is not a state, because varnick does not perform one
+
+Both amendments about Compaction above are now history rather than rules. They
+were careful answers to a real hazard — a summarisation that half-rewrites the
+transcript, and a failed one that writes the mirror — and the hazard was created
+by varnick doing the summarising. It no longer does.
+
+`turn.compacting` covered the compactions varnick was asked for and none of the
+others. Claude Code has its own `/compact`, and an **auto-compaction has no
+command at all** — it fires because the window filled, with nothing on screen to
+notice. Every one of those rewrote the agent's context while the transcript kept
+the messages it had replaced, which is the same disagreement `/clear` had, with
+nobody able to see it happen.
+
+So the state, its actor, its control request and its two failure tags are gone,
+and what replaced them is a report at the machine's root: `COMPACTED`, carrying
+the summary the Session produced and what its context now measures. Three
+consequences, each of which was an argument in the sections above:
+
+- **The half-rewrite hazard is structural rather than guarded.** There is no
+  actor holding the transcript, so there is nothing to rewrite in place. The
+  event carries a summary and the machine builds the replacement from it.
+- **The `SAVE` that was deliberately absent is now deliberately present.** A
+  compaction that reaches varnick is one that already happened, so the mirror
+  must take the replace path or a restart hands the window back a conversation
+  the agent gave up. The old omission was about a compaction that *failed*, and
+  varnick can no longer see one — a compaction that did not happen is a
+  transcript that did not change.
+- **The meter is still a reading or nothing.** `tokensUsed` is measured after
+  the rewrite and may be `null`, which leaves the meter where it was. The old
+  code failed the whole Compaction rather than show a figure nobody took; there
+  is nothing to fail now, and `0` would be the worst available lie.
+
+`SESSION_STATE_PATHS` lost a path and the states page lost two cards, which is
+the change the two amendments above were each careful to say they had *not*
+made. One card replaced them: a transcript after a compaction, which is what a
+developer actually sees.

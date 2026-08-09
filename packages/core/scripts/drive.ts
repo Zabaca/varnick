@@ -31,7 +31,7 @@ import {
   signatureFor,
   completionFor,
 } from '../src/domain.ts'
-import { compactionFailureMessage, parseControlRequest } from '@varnick/harness/turn'
+import { parseControlRequest } from '@varnick/harness/turn'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
 import { describeSecretsForAgent, openSecretsStore } from '@varnick/harness/secrets'
 import { answerHarnessLine, type HarnessCapabilities } from '@varnick/harness/runtime'
@@ -693,27 +693,23 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 {
   // Compaction rewrites history rather than extending it, so the boundary has
   // to be reported or the mirror keeps the summary and everything it replaced.
+  // It is a *report* now — the agent summarised itself and said so — which is
+  // why this arrives with no command and while a Turn is running.
   const { spy, actor: persistSession } = saveSpy(false)
   const actor = createActor(
-    sessionMachine.provide({
-      actors: {
-        runTurn: turnNever(),
-        compactSession: resolves<CompactOutput, CompactInput>({
-          messages: [{ id: 'c1', role: 'agent', text: 'summary so far' }],
-          tokensUsed: 10,
-        }),
-        persistSession,
-      },
-    }),
+    sessionMachine.provide({ actors: { runTurn: turnNever(), persistSession } }),
     { input: { sessionId: 'p4', messages: [{ id: 'm1', role: 'user', text: 'one' }] } },
   ).start()
 
-  actor.send({ type: 'COMPACT' })
+  actor.send({ type: 'COMPACTED', summary: 'summary so far', tokensUsed: 10 })
   check(
     'a compaction reaches the mirror',
-    await reaches(waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle' && spy.calls > 0, soon)),
+    await reaches(waitFor(actor, (s) => spy.calls > 0, soon)),
   )
-  check('a compaction mirrors the rewritten history', textsOf(spy.last) === 'summary so far')
+  check(
+    'a compaction mirrors the rewritten history',
+    textsOf(spy.last).includes('summary so far'),
+  )
   actor.stop()
 }
 
@@ -1243,14 +1239,12 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
       sessionId: 's11b',
       messages: [{ id: 'm1', role: 'user', text: 'a long conversation' }],
       tokensUsed: 812_000,
-      compactError: 'the rate limit was reached',
     },
   }).start()
 
   actor.send({ type: 'CLEAR' })
   const cleared = actor.getSnapshot().context
   check('clearing resets the transcript and the count together', cleared.messages.length === 0 && cleared.tokensUsed === 0)
-  check('and takes the stale compaction error with it', cleared.compactError === null)
   actor.stop()
 }
 
@@ -1321,18 +1315,26 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 }
 
 {
-  // Compaction replaces the history with a summary and resets what the
-  // conversation costs. Like CLEAR it is only legal on a settled turn.
+  /*
+    A compaction is something the agent does and varnick hears about.
+
+    It used to be something varnick asked for: `COMPACT`, an actor, and a
+    `turn.compacting` state to watch it in. That covered the compactions varnick
+    asked for and no others — the CLI has its own `/compact`, and an
+    auto-compaction has no command at all — so the two most common ones rewrote
+    the agent's context while the transcript kept every message it had replaced.
+
+    So the assertions changed shape with the thing they are about. There is no
+    failure path left to test, because varnick performs no act that can fail:
+    a compaction that did not happen is a transcript that did not change, which
+    is what the window is already showing.
+  */
   const actor = createActor(
     sessionMachine.provide({
       actors: {
         runTurn: fromPromise<TurnOutput, TurnInput>(async () => ({
           text: 'reply',
           tokensUsed: 8_000,
-        })),
-        compactSession: fromPromise<CompactOutput, CompactInput>(async ({ input }) => ({
-          messages: [{ id: 'c', role: 'agent' as const, text: `Summary of ${input.messages.length}` }],
-          tokensUsed: 300,
         })),
       },
     }),
@@ -1344,106 +1346,51 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
   check('a completed turn records what it cost', actor.getSnapshot().context.tokensUsed === 8_000)
 
-  check('compacting is possible once settled', actor.getSnapshot().can({ type: 'COMPACT' }))
-  actor.send({ type: 'COMPACT' })
-  check('compacting is its own state', regionOf(actor.getSnapshot().value, 'turn') === 'compacting')
-  check('and refuses SEND while it runs', !actor.getSnapshot().can({ type: 'SEND' }))
-
-  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
-  check('compaction replaces the history', actor.getSnapshot().context.messages.length === 1)
-  check('and resets the cost', actor.getSnapshot().context.tokensUsed === 300)
-  actor.stop()
-}
-
-{
-  // A failed compaction must leave the conversation alone. Losing the history
-  // to a failed summarisation is the one outcome worse than a full context.
-  const before = [
-    { id: 'm1', role: 'user' as const, text: 'one' },
-    { id: 'm2', role: 'agent' as const, text: 'two' },
-  ]
-  const actor = createActor(
-    sessionMachine.provide({
-      actors: {
-        runTurn: turnNever(),
-        compactSession: rejects<CompactOutput, CompactInput>('could not summarise'),
-      },
-    }),
-    { input: { sessionId: 's15', messages: before, tokensUsed: 5_000 } },
-  ).start()
-
-  actor.send({ type: 'COMPACT' })
-  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
-
-  check('a failed compaction keeps the messages', actor.getSnapshot().context.messages.length === 2)
-  check('a failed compaction keeps the cost', actor.getSnapshot().context.tokensUsed === 5_000)
-  check('and says why', actor.getSnapshot().context.compactError === 'could not summarise')
+  actor.send({ type: 'COMPACTED', summary: 'what was said, in short', tokensUsed: 300 })
+  const after = actor.getSnapshot().context
+  check('a compaction replaces the history', after.messages.length === 1)
+  check('with the summary the agent produced', after.messages[0]?.text.includes('what was said, in short') === true)
+  check('and says how much was replaced', after.messages[0]?.text.includes('earlier messages') === true)
+  check('and the meter follows the measurement', after.tokensUsed === 300)
+  check('the turn is not disturbed by it', regionOf(actor.getSnapshot().value, 'turn') === 'idle')
   actor.stop()
 }
 
 {
   /*
-    "Unchanged" is checked as identity, not as a count.
-
-    A compaction that built the replacement *in place* and then failed would
-    pass every assertion above: two messages, the same cost, an error to show.
-    The conversation would still be half-rewritten, and the state would say
-    nothing happened. So the messages the Session started with are the exact
-    objects it ends with, and the transcript reads word for word as it did.
+    The case that made this a report rather than a command: it arrives *during*
+    an answer. A context fills up while the agent is writing, and the CLI's own
+    `/compact` is itself a Turn. A state that refused it would refuse it in
+    exactly the circumstance it happens in — which is the mistake `CLEAR` made
+    and was measured making, in the running app.
   */
-  const before: Message[] = [
-    { id: 'm1', role: 'user', text: 'what does the sandbox deny' },
-    { id: 'm2', role: 'agent', text: 'the home directory, and both keychains' },
-  ]
-  const wording = textsOf(before)
-
-  const { spy, actor: persistSession } = saveSpy(true)
   const actor = createActor(
-    sessionMachine.provide({
-      actors: {
-        runTurn: turnNever(),
-        /*
-          The mistake, written out. This compaction rewrites the transcript it
-          was handed and *then* fails — which is exactly what a future
-          implementation that saves an allocation would do, and it is not a
-          contrived one: `readonly Message[]` stops the compiler complaining and
-          stops nothing at run time.
-
-          It passes every count-based assertion above. The machine is what has
-          to make it harmless.
-        */
-        compactSession: fromPromise<CompactOutput, CompactInput>(async ({ input }) => {
-          const rewriting = input.messages as Message[]
-          rewriting.splice(0, rewriting.length, { id: 'c1', role: 'agent', text: 'half a summary' })
-          throw new Error('the API was overloaded')
-        }),
-        persistSession,
-      },
-    }),
-    { input: { sessionId: 's15b', messages: before, tokensUsed: 5_000 } },
+    sessionMachine.provide({ actors: { runTurn: turnNever() } }),
+    { input: { sessionId: 's14b', draft: 'go' } },
   ).start()
 
-  actor.send({ type: 'COMPACT' })
-  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+  actor.send({ type: 'SEND' })
+  check('a compaction is accepted mid-answer', actor.getSnapshot().can({ type: 'COMPACTED', summary: 's', tokensUsed: 1 }))
+  actor.send({ type: 'COMPACTED', summary: 'the middle of an answer', tokensUsed: 42 })
+  const during = actor.getSnapshot()
+  check('and the transcript follows while the turn keeps running', during.context.messages.length === 1)
+  check('the turn is still answering', regionOf(during.value, 'turn').startsWith('answering'))
+  actor.stop()
+}
 
-  const after = actor.getSnapshot().context.messages
-  check('a compaction cannot rewrite the transcript in place', after.length === 2)
-  check('a failed compaction leaves the transcript word for word', textsOf(after) === wording)
-  check('and the messages handed in are untouched too', textsOf(before) === wording)
-  check('a failed compaction keeps the cost it could not reduce', actor.getSnapshot().context.tokensUsed === 5_000)
+{
+  // A measurement or nothing. A Session that will not say what it now holds
+  // leaves the meter where it was — too high, and visibly so — rather than
+  // reading zero over a conversation that exists.
+  const actor = createActor(
+    sessionMachine.provide({ actors: { runTurn: turnNever() } }),
+    { input: { sessionId: 's15', messages: [{ id: 'm1', role: 'user', text: 'one' }], tokensUsed: 5_000 } },
+  ).start()
 
-  /*
-    And no boundary is raised.
-
-    Compaction is the one Turn boundary that takes the store's *replace* path
-    rather than its append path — the transcript it saves is not a prefix of
-    what is on disk. A failed compaction that raised SAVE anyway would hand the
-    store an unchanged transcript and, being a prefix, it would append nothing;
-    but the moment anything about it differed, a compaction that changed
-    nothing would rewrite the mirror. The state says nothing happened, so
-    nothing is written.
-  */
-  check('a failed compaction writes nothing to the mirror', spy.calls === 0)
+  actor.send({ type: 'COMPACTED', summary: 'a summary', tokensUsed: null })
+  const after = actor.getSnapshot().context
+  check('an unmeasured compaction still replaces the transcript', after.messages.length === 1)
+  check('and leaves the meter alone rather than inventing a figure', after.tokensUsed === 5_000)
   actor.stop()
 }
 
@@ -2390,7 +2337,7 @@ async function turnPath(
     { type: 'SET_MODEL', model: 'claude-opus-5' },
     { type: 'SET_EFFORT', effort: 'low' },
     { type: 'SET_COMMANDS', names: [] },
-    { type: 'COMPACT' },
+    { type: 'COMPACTED', summary: 's', tokensUsed: 1 },
   ]
 
   const accepts = (actor: ReturnType<typeof createActor<typeof sessionMachine>>) =>
@@ -2428,21 +2375,9 @@ async function turnPath(
     actor.stop()
   }
 
-  {
-    const actor = createActor(
-      sessionMachine.provide({
-        actors: { runTurn: turnNever(), compactSession: never<CompactOutput, CompactInput>() },
-      }),
-      { input: { sessionId: 'x8', messages: [{ id: 'm1', role: 'user', text: 'one' }] } },
-    ).start()
-    actor.send({ type: 'COMPACT' })
-    at.set('compacting', accepts(actor))
-    actor.stop()
-  }
-
   check(
     'idle accepts what idle has always accepted',
-    at.get('idle') === 'EDIT_DRAFT SEND SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACT',
+    at.get('idle') === 'EDIT_DRAFT SEND SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACTED',
   )
   /*
     `CLEAR` joins every one of these, and the literals move for a reason rather
@@ -2456,7 +2391,7 @@ async function turnPath(
   check(
     'sending accepts a delta, an interrupt, and the report that the agent forgot',
     at.get('sending') ===
-      'EDIT_DRAFT STREAM_DELTA INTERRUPT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS',
+      'EDIT_DRAFT STREAM_DELTA INTERRUPT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACTED',
   )
   check(
     'streaming accepts exactly the same, which is why a delta needed no new state',
@@ -2464,24 +2399,31 @@ async function turnPath(
   )
   check(
     'interrupting accepts nothing new, not even another interrupt',
-    at.get('interrupting') === 'EDIT_DRAFT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS',
+    at.get('interrupting') === 'EDIT_DRAFT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACTED',
   )
   check(
-    'turn-failed offers retry and dismiss, and the two settled commands',
+    'turn-failed offers retry and dismiss, and nothing else new',
     at.get('failed') ===
-      'EDIT_DRAFT RETRY_TURN DISMISS_TURN_ERROR SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACT',
+      'EDIT_DRAFT RETRY_TURN DISMISS_TURN_ERROR SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS COMPACTED',
   )
+  /*
+    `COMPACTED` joins `CLEAR` in every one of these, and the literals move for a
+    reason rather than to make a failure go away.
+
+    A `turn.compacting` row stood here, asserting that a Compaction refused
+    everything a running Turn refuses and could not be interrupted. There is no
+    such state: varnick does not perform a compaction, so there is nothing to
+    watch and nothing to interrupt. What replaced it is the line above — the
+    report is accepted everywhere, which is the property the state was never
+    able to have.
+  */
   check(
-    'compacting refuses everything a running turn refuses, including another compaction',
-    at.get('compacting') === 'EDIT_DRAFT SAVE CLEAR SET_MODEL SET_EFFORT SET_COMMANDS',
-  )
-  check(
-    'a compaction cannot be interrupted, so nothing may offer to',
-    at.get('compacting')?.includes('INTERRUPT') === false,
+    'the report that the agent summarised is accepted in every turn state',
+    [...at.values()].every((set) => set.includes('COMPACTED')),
   )
   check('the composer and the model are legal in every turn state', [...at.values()].every((set) => set.startsWith('EDIT_DRAFT') && set.includes('SET_MODEL')))
   /*
-    This asserted `at.size === 6` and could not fail: `at` is filled by six
+    This asserted a count and could not fail: `at` is filled by six
     literal `at.set` calls with distinct keys, so its size is six whatever the
     machine does. The fact worth holding is that the six measured here are
     *exactly* the turn states the machine declares — so adding a turn state
@@ -2588,7 +2530,6 @@ async function turnPath(
   // stayed on the list would keep the seeded marker claiming a real turn is
   // fake; one that left it while still throwing would claim the opposite.
   check('the turn actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('runTurn'))
-  check('the compaction actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('compactSession'))
   // The Surface loader is real in both modes and has no seeded half — there is
   // no service behind an import to stand in for. Listing it would tell a reader
   // the panel beside the chat is showing something invented.
@@ -2670,65 +2611,73 @@ async function turnPath(
 
 {
   /*
-    The live actor, against a host that answers — the only place Core's half of
-    a Compaction can be driven without a Claude Code process anywhere.
+    The live half of a compaction, against a host that answers — the only place
+    Core's side of it can be driven without a Claude Code process anywhere.
 
     `tauriHarnessBridge()` reads `__TAURI_INTERNALS__`, which is the same seam
     the real app arrives through, so this exercises the actor exactly as it
-    runs. Nothing here starts a session: the actor's whole job is to put a
-    `compact-session` on the bridge and read events back.
+    runs. Nothing here starts a session, and nothing here *asks* for a
+    compaction: the actor is `runTurn`, and the compaction is something that
+    happens to the Turn while it is running.
   */
   const realInternals = (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
-  let queued: unknown = null
+  const queue: unknown[] = []
   const asked: string[] = []
   ;(globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
     invoke: async (_command: string, payload: { request: { kind: string } }) => {
       const kind = payload.request.kind
       asked.push(kind)
-      if (kind === 'compact-session') return { ok: true }
-      if (kind === 'next-turn-event') {
-        const event = queued
-        queued = null
-        return { event }
-      }
+      if (kind === 'run-turn') return { ok: true }
+      if (kind === 'next-turn-event') return { event: queue.shift() ?? null }
       throw { failure: 'malformed' }
     },
   }
 
-  const before: Message[] = [
-    { id: 'm1', role: 'user', text: 'what does the sandbox deny' },
-    { id: 'm2', role: 'agent', text: 'the home directory, and both keychains' },
-  ]
-  const wording = textsOf(before)
+  const heard: { summary: string; tokensUsed: number | null }[] = []
+  const observer = {
+    delta: () => {},
+    credentialRejected: () => {},
+    runtimeReported: () => {},
+    commandsReported: () => {},
+    conversationReset: () => {},
+    conversationCompacted: (summary: string, tokensUsed: number | null) => {
+      heard.push({ summary, tokensUsed })
+    },
+  }
 
-  const compact = liveActors().compactSession
-  const run = (input: CompactInput) =>
-    new Promise<{ output?: CompactOutput; error?: unknown }>((resolve) => {
-      const actor = createActor(compact, { input })
+  const turn = liveActors(observer).runTurn
+  const run = (input: TurnInput) =>
+    new Promise<{ output?: TurnOutput; error?: unknown }>((resolve) => {
+      const actor = createActor(turn, { input })
       actor.subscribe({
         next: (snapshot) => {
-          if (snapshot.status === 'done') resolve({ output: snapshot.output as CompactOutput })
+          if (snapshot.status === 'done') resolve({ output: snapshot.output as TurnOutput })
         },
         error: (error) => resolve({ error }),
       })
       actor.start()
     })
 
-  queued = { kind: 'compacted', turnId: 'turn-1', summary: 'so far: the sandbox', tokensUsed: 4_000 }
-  const done = await run({ sessionId: 'live-1', messages: before, model: 'claude-opus-5' })
-  check('the live compaction asks the confined session and nothing else', asked.every((kind) => kind === 'compact-session' || kind === 'next-turn-event'))
-  check('a live compaction answers with the replacement transcript', done.output?.messages.length === 1)
-  check('and with what the context now measures, not an estimate', done.output?.tokensUsed === 4_000)
-  check('the live compaction leaves the transcript it was given alone', textsOf(before) === wording)
-
-  queued = { kind: 'failed', turnId: 'turn-2', failure: 'overloaded' }
-  const failed = await run({ sessionId: 'live-1', messages: before, model: 'claude-opus-5' })
-  check('a live compaction that failed throws rather than answering', failed.output === undefined)
-  check(
-    'and reads as a clause inside the sentence the surface owns',
-    failed.error instanceof Error && failed.error.message === compactionFailureMessage('overloaded'),
+  queue.push(
+    { kind: 'compacted', turnId: 'turn-1', summary: 'so far: the sandbox', tokensUsed: 4_000 },
+    { kind: 'done', turnId: 'turn-1', text: 'and then this', tokensUsed: 4_200 },
   )
-  check('a failed live compaction leaves the transcript untouched', textsOf(before) === wording)
+  const done = await run({ sessionId: 'live-1', prompt: 'carry on', model: 'claude-opus-5', effort: 'xhigh' })
+  check('the live turn asks the confined session and nothing else', asked.every((kind) => kind === 'run-turn' || kind === 'next-turn-event'))
+  check('a compaction mid-turn is reported to the window', heard.length === 1)
+  check('with the summary the Session produced', heard[0]?.summary === 'so far: the sandbox')
+  check('and with what the context now measures, not an estimate', heard[0]?.tokensUsed === 4_000)
+  check('and it does not end the turn it arrived during', done.output?.text === 'and then this')
+
+  queue.push(
+    { kind: 'compacted', turnId: 'turn-2', summary: 'a summary', tokensUsed: null },
+    { kind: 'done', turnId: 'turn-2', text: 'carried on', tokensUsed: 1 },
+  )
+  await run({ sessionId: 'live-1', prompt: 'again', model: 'claude-opus-5', effort: 'xhigh' })
+  check(
+    'a compaction the Session would not measure still reaches the window',
+    heard.length === 2 && heard[1]?.tokensUsed === null,
+  )
 
   if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
   else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = realInternals

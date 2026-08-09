@@ -153,22 +153,19 @@ export function ChatSurface({
   */
   const varnickCommands: (MenuCommand & { available: boolean })[] = [
     /*
-      `/clear` is the agent's now, not varnick's.
+      `/clear` and `/compact` are the agent's now, not varnick's.
 
-      Ours emptied the transcript and told the agent to forget. The CLI has its
-      own, which the menu offers, and that one went round the outside — so
-      whichever you picked, one half could be left holding a conversation the
-      other had thrown away. varnick listens for `conversation_reset` instead,
-      which is announced whichever way the clear was asked for.
+      Each of ours did the thing *and* updated varnick's copy of it — the
+      transcript, the token meter. That covered the times varnick was asked and
+      no others. The CLI has both commands and they went round the outside, and
+      a compaction needs no command at all: the window fills and the agent
+      summarises itself. Every one of those left one half holding a conversation
+      the other had already replaced.
+
+      varnick listens instead — for `conversation_reset` and for the summary the
+      `PostCompact` hook reports — which covers however it was asked for,
+      including when nobody asked.
     */
-    {
-      name: 'compact',
-      description: 'Summarise the conversation to free context',
-      argumentHint: '',
-      source: 'varnick' as const,
-      available: sessionCan({ type: 'COMPACT' }) && (s?.context.messages.length ?? 0) > 0,
-      run: () => session?.send({ type: 'COMPACT' }),
-    },
     /*
       `/retry`, `/interrupt` and `/restart` were here and are not commands.
 
@@ -220,10 +217,11 @@ export function ChatSurface({
   ].filter((c) => c.available)
 
   /*
-    varnick's first, so a collision resolves its way — `/compact` in this window
-    means the Compaction this window implements, not the CLI command that would
-    be sent as text. See `mergeCommands`, which also merges the duplicate the
-    runtime reports for anything that is both a command and a skill.
+    varnick's first, so a collision would resolve its way. Nothing collides
+    today — every command in this menu is the agent's — and the ordering is
+    kept because it is the rule, not because anything currently needs it. See
+    `mergeCommands`, which also merges the duplicate the runtime reports for
+    anything that is both a command and a skill.
   */
   const allCommands = mergeCommands([
     ...varnickCommands,
@@ -453,17 +451,6 @@ export function ChatSurface({
               {s?.context.partial && <ClaudeMessage>{s.context.partial}</ClaudeMessage>}
 
               {working && <ClaudeThinking running showTokens={false} />}
-
-              {turn === 'compacting' && (
-                <div style={{ color: 'var(--fg-dim)' }}>Summarising the conversation…</div>
-              )}
-
-              {s?.context.compactError && turn !== 'compacting' && (
-                <div style={{ color: 'var(--warn)' }}>
-                  <span aria-hidden>⚠ </span>
-                  Could not compact — {s.context.compactError}. The conversation is unchanged.
-                </div>
-              )}
 
               {turn === 'failed' && s?.context.turnError && (
                 <div className="flex flex-wrap items-baseline gap-x-3" style={{ color: 'var(--bad)' }}>

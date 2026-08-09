@@ -45,7 +45,6 @@ export const ACTOR_NAMES = [
   'spawnAgent',
   'runTurn',
   'persistSession',
-  'compactSession',
   'loadSurface',
 ] as const
 export type ActorName = (typeof ACTOR_NAMES)[number]

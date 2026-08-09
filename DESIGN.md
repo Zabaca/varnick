@@ -113,7 +113,7 @@ Ten tokens, inherited from the transcript, and most of a screen uses three of th
 - **Signal Cyan** (`accent`): the one colour that means *you can act on this*. Every inline action, the focus outline, the caret, and the selected state of a choice. It appears a few times per screen and never as decoration.
 
 ### Secondary
-- **Instrument Amber** (`warn`): the build admitting something about itself — the seeded-data marker, a compaction that failed, a transcript restored with redactions. Caution about the *reporting*, not about the work.
+- **Instrument Amber** (`warn`): the build admitting something about itself — the seeded-data marker, a transcript restored with redactions, a Surface that would not load. Caution about the *reporting*, not about the work.
 
 ### Tertiary
 - **Fault Rose** (`bad`): a thing that did not happen. Sandbox unavailable, credential rejected, turn failed, agent crashed. Paired with the sentence that says what to do.

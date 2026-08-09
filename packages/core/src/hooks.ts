@@ -93,6 +93,7 @@ export function useHarness(
     runtimeReported: () => {},
     commandsReported: () => {},
     conversationReset: () => {},
+    conversationCompacted: () => {},
     authorizing: () => {},
   })
   const observer = useMemo<TurnObserver>(
@@ -102,6 +103,8 @@ export function useHarness(
       runtimeReported: (report) => signals.current.runtimeReported(report),
       commandsReported: (commands) => signals.current.commandsReported(commands),
       conversationReset: () => signals.current.conversationReset(),
+      conversationCompacted: (summary, tokensUsed) =>
+        signals.current.conversationCompacted(summary, tokensUsed),
     }),
     [],
   )
@@ -139,7 +142,6 @@ export function useHarness(
             actors: {
               runTurn: seeds.runTurn,
               persistSession: seeds.persistSession,
-              compactSession: seeds.compactSession,
             },
           }),
         },
@@ -204,6 +206,16 @@ export function useHarness(
       */
       conversationReset: () => {
         actorRef.getSnapshot().context.session?.send({ type: 'CLEAR' })
+      },
+      /*
+        And the transcript follows the agent's *summary* the same way it
+        follows its forgetting. This is the only sender of `COMPACTED`. varnick
+        used to ask for a compaction and rewrite the transcript with what came
+        back, which covered the ones varnick asked for — not the CLI's own
+        `/compact`, and not an auto-compaction, which nobody asks for at all.
+      */
+      conversationCompacted: (summary, tokensUsed) => {
+        actorRef.getSnapshot().context.session?.send({ type: 'COMPACTED', summary, tokensUsed })
       },
       // And where the mint's one signal lands. `credential.minting` is the only
       // state that accepts it, so a URL from an attempt that has already ended

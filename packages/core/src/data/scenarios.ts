@@ -2,7 +2,7 @@ import type { HarnessInput } from '../machines/harness.ts'
 import { HARNESS_STATE_PATHS } from '../machines/harness.ts'
 import { SESSION_STATE_PATHS } from '../machines/session.ts'
 import { SURFACE_STATE_PATHS } from '../machines/surface.ts'
-import { MODELS, type SurfaceDescriptor } from '../domain.ts'
+import { MODELS, compactedTranscript, type SurfaceDescriptor } from '../domain.ts'
 import type { SurfaceOutcome } from '../actors/frozen.ts'
 import { seedPolicy, seedMessages, statesSurface } from './seed.ts'
 
@@ -356,34 +356,21 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: 'compacting',
-    title: 'Compacting',
-    blurb: 'The conversation is being summarised to free context. Nothing else is blocked.',
-    question: 'Does compaction read as a maintenance step rather than as data loss?',
-    covers: ['turn.compacting'],
-    input: {
-      ...up,
-      sessionInput: {
-        sessionId: 'states-compacting',
-        messages: seedMessages,
-        enterTurn: 'compacting',
-        tokensUsed: 812_000,
-      },
-    },
-  },
-  {
-    id: 'compact-failed',
-    title: 'Compaction failed',
-    blurb: 'Summarising threw. The conversation is explicitly unchanged.',
-    question: 'Is "nothing happened" stated, or left to be inferred?',
+    id: 'compacted',
+    title: 'Summarised',
+    blurb:
+      'The agent compacted the conversation — because the window filled, or because the CLI was asked to. varnick did not ask and does not have a command for it; it heard.',
+    question: 'Is it clear that nothing was discarded blindly, and that the meter is a reading?',
     covers: ['turn.idle'],
     input: {
       ...up,
       sessionInput: {
-        sessionId: 'states-compact-failed',
-        messages: seedMessages,
-        compactError: 'could not summarise the conversation',
-        tokensUsed: 812_000,
+        sessionId: 'states-compacted',
+        messages: compactedTranscript(
+          seedMessages,
+          'The developer asked about the harness and the agent answered. Nothing is outstanding.',
+        ),
+        tokensUsed: 34_000,
       },
     },
   },
