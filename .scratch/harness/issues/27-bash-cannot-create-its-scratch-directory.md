@@ -4,7 +4,7 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent — but the fix is a policy change, so read "The decision" first.
+**Status:** ready-for-human — fixed and held by probe 9b. The last box needs a person: a Bash command run in the window, which is what the ticket said would close it and what no test can do.
 
 **Realizes:** no state path.
 
@@ -33,10 +33,10 @@ The narrow fix is one path in `allowWrite`, and it is genuinely narrow: `/privat
 What must not happen is widening `allowWrite` to `/tmp` wholesale. That is a world-writable directory shared with every other process on the machine, and the agent having free rein there is a different proposition from having its own subdirectory in it.
 
 - [x] Whether Claude Code honours `TMPDIR` is measured and recorded — it does not
-- [ ] `allowWrite` gains the per-user scratch path and nothing broader — never `/tmp` itself
-- [ ] The entry is derived from the running uid rather than hardcoded, so it is right in a fresh clone on another machine
+- [x] `allowWrite` gains the per-user scratch path and nothing broader — never `/tmp` itself
+- [x] The entry is derived from the running uid rather than hardcoded, so it is right in a fresh clone on another machine
 - [ ] A Bash command runs end to end under a real Turn, and that is what closes this rather than a unit test
-- [ ] The boundary probes gain a case for it, so a policy that loses this entry fails something
+- [x] The boundary probes gain a case for it, so a policy that loses this entry fails something — probe 9b, which also asserts `/private/tmp` itself stays refused and the file never appears
 
 ## What this says about the probes
 
