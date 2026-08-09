@@ -26,7 +26,33 @@ A full reload is safe here and a hot swap is not. The Session is durable host-si
 - The reload rule wants a pure function deciding reload-or-not from a path, so `drive.ts` can assert it without a dev server.
 - `1420` stays the default. A developer running `bun tauri dev` in a fresh checkout must see no difference.
 
-- [ ] Two varnicks run at once, each serving its own frontend in its own window
+- [x] Two varnicks run at once, each serving its own frontend in its own window
+
+  Left unticked by the implementer, who measured the two frontends coexisting
+  and the `--config` overlay reaching `build > devUrl`, and declined to claim
+  the windows from that — two Tauri *hosts* is not observable headlessly and no
+  subagent should open one. Measured by hand at close-out instead, with a
+  varnick already holding 1420:
+
+  ```
+  16179 bun tauri dev                                                    ← the developer's
+  16182   node .../tauri dev
+  26264     target/debug/varnick                                         ← host one, :1420
+  29692 bun tauri dev --config {"build":{"devUrl":"http://localhost:1421"}}
+  29696   node .../tauri dev --config …
+  30029     target/debug/varnick                                         ← host two, :1421
+  ```
+
+  Two hosts, two frontends, neither disturbed. The second one's agent started
+  and its violation monitor reported `file-read-metadata /home` as a gap in the
+  read allowlist rather than a boundary holding — pre-existing, the same class
+  as the `systemkeychaincheck.done` line the boundary probes print, and worth a
+  ticket of its own rather than a note here.
+
+  One thing the teardown showed, caused by how it was torn down rather than by
+  this ticket: `kill -9` on the Tauri CLI orphans the Vite dev server, which
+  keeps holding the port. A SIGTERM to the launcher cleans up properly. Ticket
+  35's parent-death detection covers `serve.ts` and `agent.ts`, not this.
 - [x] The default port is unchanged and a fresh checkout behaves exactly as before
 - [x] `devUrl` cannot disagree with the port the dev server bound
 - [x] A change under `packages/core/**` reloads the window
