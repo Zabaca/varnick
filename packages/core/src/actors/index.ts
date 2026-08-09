@@ -4,6 +4,7 @@ import {
   liveAgentExit,
   liveStopAgent,
   LIVE_NOT_IMPLEMENTED,
+  type MintObserver,
   type TurnObserver,
 } from './live.ts'
 
@@ -40,6 +41,7 @@ export const ACTOR_NAMES = [
   'checkSandbox',
   'readCredential',
   'storeCredential',
+  'mintSubscriptionToken',
   'spawnAgent',
   'readSubscriptionUsage',
   'runTurn',
@@ -65,13 +67,18 @@ export const UNIMPLEMENTED: readonly ActorName[] = LIVE_NOT_IMPLEMENTED
  * promise, because an actor resolves once and both happen before that. A seeded
  * run ignores it: the seeded turn is one `await` and a string, and the bare
  * page's `STREAM_DELTA` button is how streaming is reached without an agent.
+ *
+ * `mint` is the same arrangement for the one other long-running actor: the URL
+ * a sign-in prints, which arrives minutes before the mint settles. A seeded run
+ * ignores that too, and deliberately makes up no link — see seeded.ts.
  */
 export function actorsFor(
   mode: ActorMode,
   controls: SeedControls = defaultSeedControls,
   observer?: TurnObserver,
+  mint?: MintObserver,
 ) {
-  return mode === 'live' ? liveActors(observer) : seededActors(controls)
+  return mode === 'live' ? liveActors(observer, mint) : seededActors(controls)
 }
 
 /**
@@ -128,4 +135,4 @@ export function resolveActorMode(): ActorMode {
 }
 
 export { seededActors, defaultSeedControls, type SeedControls } from './seeded.ts'
-export type { TurnObserver } from './live.ts'
+export type { MintObserver, TurnObserver } from './live.ts'

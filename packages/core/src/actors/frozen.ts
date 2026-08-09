@@ -60,6 +60,7 @@ export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
       checkSandbox: never<{ ok: true }, { policy: SandboxPolicy }>(),
       readCredential: never<CredentialReading, Record<string, never>>(),
       storeCredential: never<void, { kind: CredentialKind; value: string }>(),
+      mintSubscriptionToken: never<void, Record<string, never>>(),
       spawnAgent: never<{ pid: number }, { policy: SandboxPolicy }>(),
       readSubscriptionUsage: never<SubscriptionUsage, Record<string, never>>(),
       surface: surfaceMachine.provide({

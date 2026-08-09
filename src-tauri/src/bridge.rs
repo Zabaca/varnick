@@ -44,6 +44,7 @@ use tauri::State;
 
 use crate::agent::AgentProcess;
 use crate::credential::CredentialStore;
+use crate::mint::Minting;
 
 /// The environment variable that points at the runtime entry, for a build that
 /// does not sit beside the repository.
@@ -126,9 +127,17 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // value *into* the host, from the window a developer pasted it into.
         // Forwarding it would put a credential on the pipe to the Node runtime,
         // which is a second process holding one.
-        "read-credential" | "store-credential" | "spawn-agent" | "stop-agent"
-        | "await-agent-exit" | "run-turn" | "next-turn-event" | "interrupt-turn"
-        | "read-plan-usage" | "compact-session" => Some(Route::Host),
+        //
+        // Minting one is here for the first reason too, and it is the sharpest
+        // case of it: the value does not come from the window at all, it is
+        // *created* in this process by a command this process runs, and it goes
+        // into the keychain without ever being anywhere else. Forwarding either
+        // half of it would put the pty — and therefore the token — in the Node
+        // runtime. See mint.rs.
+        "read-credential" | "store-credential" | "mint-subscription-token"
+        | "next-mint-event" | "spawn-agent" | "stop-agent" | "await-agent-exit"
+        | "run-turn" | "next-turn-event" | "interrupt-turn" | "read-plan-usage"
+        | "compact-session" => Some(Route::Host),
         "check-sandbox" | "persist-session" | "read-session" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
@@ -335,6 +344,7 @@ pub fn harness_call(
     credentials: State<'_, CredentialStore>,
     runtime: State<'_, HarnessRuntime>,
     agent: State<'_, AgentProcess>,
+    mint: State<'_, Minting>,
 ) -> Result<Value, Failure> {
     let kind = request.get("kind").and_then(Value::as_str).unwrap_or("");
 
@@ -382,6 +392,24 @@ pub fn harness_call(
                 .map_err(Failure::refused)?;
                 Ok(serde_json::json!({ "ok": true }))
             }
+            /*
+              The credential minted, in the one process allowed to hold one.
+
+              Two calls with the same shape a Turn has, and for the same reason:
+              a mint takes as long as a person takes to sign in to a website, so
+              starting it and hearing from it have to be separate or the window
+              would freeze for the length of an authentication.
+
+              What comes back is an authorize URL and an outcome. Never the
+              token: it goes from the pty into `Secret` and from there into the
+              keychain, inside this process, and every failure is a tag chosen
+              by a match arm — see mint.rs.
+            */
+            "mint-subscription-token" => {
+                mint.start()?;
+                Ok(serde_json::json!({ "ok": true }))
+            }
+            "next-mint-event" => Ok(serde_json::json!({ "event": mint.next_event() })),
             // Two steps, in this order, with no third: ask the runtime how to
             // run the agent under the Sandbox it established, then run that with
             // the credential added. A runtime that refuses the first step ends
@@ -450,6 +478,23 @@ mod tests {
           passing tests could not see.
         */
         assert_eq!(route_of("store-credential"), Some(Route::Host));
+    }
+
+    #[test]
+    fn minting_a_credential_is_answered_by_this_process_and_never_forwarded() {
+        /*
+          The sharpest case of the same rule. A store carries a value the
+          developer already had; a mint *creates* one, on a pty this process
+          owns, and the whole of what it produces is a credential. Forwarding
+          either half would put the terminal — and therefore the token — in the
+          Harness runtime, which is a second process holding one.
+
+          Both halves, because the polling call is the one that would look
+          harmless enough to move: it carries a URL and an outcome, and it is
+          reading the same buffer the token is in.
+        */
+        assert_eq!(route_of("mint-subscription-token"), Some(Route::Host));
+        assert_eq!(route_of("next-mint-event"), Some(Route::Host));
     }
 
     #[test]

@@ -180,6 +180,25 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: 'minting-token',
+    title: 'Minting a subscription token',
+    blurb:
+      'varnick is running `claude setup-token` on the host and waiting for a sign-in. The browser it tried to open may not have opened, so the URL is on screen — that fallback is the whole reason the flow can be driven from in here at all. Nothing about the token it produces reaches this side: it is read off a terminal and written to the keychain in the host process.',
+    question:
+      'Does a wait that depends on the developer doing something elsewhere say what that something is?',
+    covers: ['credential.minting'],
+    input: {
+      policy: seedPolicy,
+      enterCredential: 'minting',
+      enterSandbox: 'available',
+      // A literal, and visibly one. The seeded mint deliberately invents no
+      // URL — a made-up authorize link is a link somebody eventually clicks —
+      // so the card supplies its own where it can be read as scenario data.
+      mintUrl:
+        'https://claude.com/cai/oauth/authorize?code=true&client_id=00000000-0000-0000-0000-000000000000&response_type=code&scope=user%3Ainference&state=example',
+    },
+  },
+  {
     id: 'start-refused',
     title: 'Start refused',
     blurb:

@@ -35,6 +35,8 @@ export interface SeedControls {
   failCredential: boolean
   /** Make storeCredential fail, as the keychain does when it refuses a write. */
   failStore: boolean
+  /** Make the mint fail, as a sign-in does when it is declined. */
+  failMint: boolean
   /** Make the next turn fail. */
   failTurn: boolean
   /** Make persistence fail. */
@@ -47,6 +49,7 @@ export const defaultSeedControls: SeedControls = {
   failSandbox: false,
   failCredential: false,
   failStore: false,
+  failMint: false,
   failTurn: false,
   failSave: false,
   failCompact: false,
@@ -87,6 +90,25 @@ export function seededActors(controls: SeedControls) {
     storeCredential: fromPromise<void, { kind: CredentialKind; value: string }>(async () => {
       await wait(400)
       if (controls.failStore) throw new Error('the keychain refused to store it')
+    }),
+
+    /*
+      A mint that mints nothing.
+
+      The one seed that must never reach a real service, more sharply than the
+      store above: the live implementation runs a command that authenticates a
+      human and produces a credential valid for a year. A seeded run that fell
+      through to it would open a browser and mint a real token because somebody
+      was looking at a design.
+
+      It reports no URL either. A seeded run is a design against plausible data
+      and a link is not plausible data — an authorize URL made up here would be
+      a link somebody eventually clicks. The `minting` card supplies one through
+      `mintUrl`, where it is visibly a scenario's literal.
+    */
+    mintSubscriptionToken: fromPromise<void, Record<string, never>>(async () => {
+      await wait(500)
+      if (controls.failMint) throw new Error('the sign-in produced no token')
     }),
 
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => {

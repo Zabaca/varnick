@@ -23,6 +23,13 @@ const HARNESS_EVENTS: HarnessEvent[] = [
   { type: 'RESTART' },
   { type: 'AGENT_EXIT', detail: 'killed from the bare page' },
   { type: 'CREDENTIAL_REJECTED', detail: '401 from the API' },
+  // Accepted only in `credential.absent`, like the paste — so the button is
+  // gone the moment there is a credential to replace.
+  { type: 'MINT_CREDENTIAL' },
+  // The one thing a running mint says. A literal here rather than a real
+  // authorize URL, because the seeded mint invents none and this page's job is
+  // to reach the state, not to send anybody to an authorization.
+  { type: 'MINT_URL', url: 'https://claude.com/cai/oauth/authorize?state=from-the-bare-page' },
   // Accepted only under a Credential Kind of `subscription`, so this button is
   // simply not here under an API key — which is the gate itself, shown on the
   // one surface with nothing covering for it. The strip's absence in the app
@@ -100,6 +107,7 @@ export function BarePage() {
             ['failSandbox', 'sandbox check fails'],
             ['failCredential', 'credential read fails'],
             ['failStore', 'credential store fails'],
+            ['failMint', 'token mint fails'],
             ['failTurn', 'turn fails'],
             ['failSave', 'save fails'],
           ] as const
@@ -152,6 +160,16 @@ export function BarePage() {
           <dd>{ctx.credentialError ?? '—'}</dd>
           <dt>kind a store would write</dt>
           <dd>{ctx.storingKind}</dd>
+          {/*
+            The mint's one signal, shown whether or not a mint is running.
+
+            A URL sitting here outside `credential.minting` would be the bug the
+            machine's `exit` action exists to prevent — a link from an attempt
+            that has ended, offered as though it were live — so it is worth
+            being able to see that it is not there.
+          */}
+          <dt>sign-in URL</dt>
+          <dd>{ctx.mintUrl ?? '— no mint running'}</dd>
         </dl>
 
         {/*

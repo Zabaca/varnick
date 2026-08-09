@@ -29,6 +29,7 @@ import {
   formatContext,
 } from '../src/domain.ts'
 import { compactionFailureMessage } from '@varnick/harness/turn'
+import { credentialMintGuidance } from '@varnick/harness/credentials'
 import { openSecretsStore } from '@varnick/harness/secrets'
 import { hostSecretResolution } from '@varnick/harness/secret-resolution'
 import { createSessionStore } from '@varnick/harness/session'
@@ -2638,6 +2639,263 @@ const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
     !JSON.stringify(spy.last).includes(PASTED),
   )
   actor.stop()
+}
+
+// ---------------------------------------------------------------------------
+// The credential, minted from inside the window
+//
+// The other way out of `credential.absent`, and the shorter one: a developer
+// with a subscription signs in and supplies nothing. These are the machine
+// facts of it. What the host does — a pty, a parse, a keychain write — is
+// tested in src-tauri/src/mint.rs, and no test anywhere runs the real flow,
+// because the real flow opens a browser and authenticates a human.
+//
+// The property this section exists to hold is that *nothing about a token is
+// representable here*. The actor takes no input and answers with none, so
+// unlike the store there is not even a value passing through to assert the
+// absence of.
+// ---------------------------------------------------------------------------
+
+/** An authorize URL, as the host would report one. Not a credential. */
+const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
+
+{
+  // Only `absent` starts one, exactly as only `absent` takes a paste. A mint
+  // over a credential that is present would replace a working one, and this one
+  // takes minutes and opens a browser while it does it.
+  const fresh = createActor(harnessMachine, { input: { policy: seedPolicy } }).start()
+  check('a fresh clone can be told to get a token', fresh.getSnapshot().can({ type: 'MINT_CREDENTIAL' }))
+  check(
+    'and a fresh clone has no sign-in URL to show for a mint nobody started',
+    fresh.getSnapshot().context.mintUrl === null,
+  )
+  fresh.stop()
+
+  for (const enterCredential of ['reading', 'present', 'rejected'] as const) {
+    const actor = createActor(harnessMachine, {
+      input: { policy: seedPolicy, enterCredential, credentialKind: 'subscription' },
+    }).start()
+    check(
+      `credential.${enterCredential} refuses a mint`,
+      !actor.getSnapshot().can({ type: 'MINT_CREDENTIAL' }),
+    )
+    actor.stop()
+  }
+}
+
+{
+  /*
+    A mint that worked re-reads, and lands where a paste lands.
+
+    The same rule ADR-0011 puts on a store, and it costs nothing extra here: the
+    host wrote a keychain item, and which credential varnick *uses* is still
+    decided by resolving on the next read. A machine that declared the
+    credential present because a mint said so would be trusting a write it never
+    read back.
+  */
+  let inputs: unknown[] = []
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        mintSubscriptionToken: fromPromise<void, Record<string, never>>(async ({ input }) => {
+          inputs.push(input)
+        }),
+        readCredential: resolves<CredentialReading, Record<string, never>>({
+          source: 'keychain',
+          kind: 'subscription',
+        }),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  actor.send({ type: 'MINT_CREDENTIAL' })
+  check('minting is its own state', regionOf(actor.getSnapshot().value, 'credential') === 'minting')
+
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
+  check('a minted token is read back rather than assumed', inputs.length === 1)
+  check(
+    'the kind that lands in context is the one the read resolved',
+    actor.getSnapshot().context.credentialKind === 'subscription',
+  )
+  /*
+    The assertion this whole path exists for, and it is about the *shape* rather
+    than about a value that happened not to appear. A mint is handed nothing:
+    the command is a constant on the host, so there is no field here that could
+    name a different one, and no input a token could be smuggled in through.
+  */
+  check('a mint is handed nothing at all', JSON.stringify(inputs) === '[{}]')
+  check(
+    'and nothing in the machine holds anything a token could be',
+    !JSON.stringify(actor.getSnapshot().context, (_k, v) =>
+      typeof v === 'object' && v !== null && 'send' in (v as object) ? undefined : v,
+    ).includes('sk-'),
+  )
+  actor.stop()
+}
+
+{
+  /*
+    The URL, which is the one thing a running mint says.
+
+    It is accepted in `minting` and nowhere else, and it is cleared on the way
+    out — so a link from an attempt that has ended can never sit on a screen
+    that has moved on, offering an authorization that would finish into a
+    process that is gone.
+  */
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        mintSubscriptionToken: never<void, Record<string, never>>(),
+        readCredential: rejects<CredentialReading, Record<string, never>>('nothing is stored'),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  check(
+    'a machine with no mint running refuses a sign-in URL',
+    !actor.getSnapshot().can({ type: 'MINT_URL', url: SIGN_IN_AT }),
+  )
+
+  actor.send({ type: 'MINT_CREDENTIAL' })
+  check('a running mint accepts one', actor.getSnapshot().can({ type: 'MINT_URL', url: SIGN_IN_AT }))
+  actor.send({ type: 'MINT_URL', url: SIGN_IN_AT })
+  check('and shows it', actor.getSnapshot().context.mintUrl === SIGN_IN_AT)
+  check(
+    'a sign-in URL is not a credential and does not make one',
+    regionOf(actor.getSnapshot().value, 'credential') === 'minting' &&
+      actor.getSnapshot().context.credentialKind === null,
+  )
+  actor.stop()
+}
+
+{
+  // A mint that failed comes back to `absent` carrying the reason, exactly as a
+  // failed store and a failed read do — one place for the surface to look,
+  // whichever of the three went wrong. And it takes its URL with it.
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: {
+        mintSubscriptionToken: rejects<void, Record<string, never>>(
+          'The sign-in finished without producing a token.',
+        ),
+        readCredential: rejects<CredentialReading, Record<string, never>>('nothing is stored'),
+      },
+    }),
+    { input: { policy: seedPolicy } },
+  ).start()
+
+  actor.send({ type: 'MINT_CREDENTIAL' })
+  actor.send({ type: 'MINT_URL', url: SIGN_IN_AT })
+  await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'absent')
+  check(
+    'a failed mint says why',
+    actor.getSnapshot().context.credentialError === 'The sign-in finished without producing a token.',
+  )
+  check('a failed mint leaves no kind standing', actor.getSnapshot().context.credentialKind === null)
+  check('and no stale sign-in URL', actor.getSnapshot().context.mintUrl === null)
+  check('a failed mint can be tried again', actor.getSnapshot().can({ type: 'MINT_CREDENTIAL' }))
+  check(
+    'and the paste is still there beside it',
+    actor.getSnapshot().can({ type: 'STORE_CREDENTIAL', kind: 'subscription', value: 'a-token' }),
+  )
+  actor.stop()
+}
+
+{
+  /*
+    And the states page can park a card here with a URL already showing.
+
+    The reason this is asserted rather than assumed: clearing the URL on *entry*
+    is the obvious way to make a second attempt start clean, and it would wipe a
+    card's input before it rendered — a scenario about the fallback that could
+    not show the fallback. Clearing on exit does the same job, which is what the
+    check above proves, and leaves this one possible.
+  */
+  const actor = createActor(
+    harnessMachine.provide({
+      actors: { mintSubscriptionToken: never<void, Record<string, never>>() },
+    }),
+    { input: { policy: seedPolicy, enterCredential: 'minting', mintUrl: SIGN_IN_AT } },
+  ).start()
+  check(
+    'a card can be parked mid-sign-in with a URL on screen',
+    regionOf(actor.getSnapshot().value, 'credential') === 'minting' &&
+      actor.getSnapshot().context.mintUrl === SIGN_IN_AT,
+  )
+  actor.stop()
+}
+
+{
+  /*
+    The live actor, against a host that answers.
+
+    Two calls and no third: start the mint, then read what it says until it says
+    it is done. Nothing here can produce a credential — the host mints one and
+    stores it — so what this checks is the traffic, and that the only string
+    that came back was the URL.
+  */
+  const realInternals = (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+  const asked: string[] = []
+  let queued: unknown[] = []
+  ;(globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+    invoke: async (_command: string, payload: { request: { kind: string } }) => {
+      const kind = payload.request.kind
+      asked.push(kind)
+      if (kind === 'mint-subscription-token') return { ok: true }
+      if (kind === 'next-mint-event') return { event: queued.shift() ?? null }
+      throw { failure: 'malformed' }
+    },
+  }
+
+  const seen: string[] = []
+  const mint = liveActors(undefined, { authorizing: (url) => seen.push(url) }).mintSubscriptionToken
+  const run = () =>
+    new Promise<{ done: boolean; output?: unknown; error?: unknown }>((resolve) => {
+      const actor = createActor(mint, { input: {} as Record<string, never> })
+      actor.subscribe({
+        next: (snapshot) => {
+          if (snapshot.status === 'done') resolve({ done: true, output: snapshot.output })
+        },
+        error: (error) => resolve({ done: false, error }),
+      })
+      actor.start()
+    })
+
+  queued = [{ kind: 'authorize', url: SIGN_IN_AT }, null, { kind: 'stored' }]
+  const done = await run()
+  check('a live mint settles when the host says the token is stored', done.done)
+  check(
+    'and asks for nothing but the mint and what it has to say',
+    asked.every((kind) => kind === 'mint-subscription-token' || kind === 'next-mint-event'),
+  )
+  check('the URL reaches the window', seen.join('|') === SIGN_IN_AT)
+  check(
+    'and a successful mint answers with nothing, so there is nothing it could answer with',
+    done.output === undefined,
+  )
+
+  asked.length = 0
+  queued = [{ kind: 'failed', failure: 'no-token' }]
+  const failed = await run()
+  check('a live mint that produced no token throws rather than settling', !failed.done)
+  check(
+    'and reads as the sentence Core authors for that tag',
+    failed.error instanceof Error && failed.error.message === credentialMintGuidance('no-token'),
+  )
+
+  asked.length = 0
+  queued = [{ kind: 'failed', failure: 'an-invented-reason' }]
+  const unknownTag = await run()
+  check(
+    'a failure tag this build does not know is not repeated back',
+    unknownTag.error instanceof Error &&
+      unknownTag.error.message === credentialMintGuidance('mint-failed'),
+  )
+
+  if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+  else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = realInternals
 }
 
 // ---------------------------------------------------------------------------
