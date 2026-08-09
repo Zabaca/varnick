@@ -22,7 +22,6 @@ import {
 import {
   regionOf,
   canStartAgent,
-  hasPlanUsage,
   compactedTranscript,
   invokedCommand,
   isCommandDraft,
@@ -2313,10 +2312,6 @@ async function turnPath(
   // stayed on the list would keep the seeded marker claiming a real turn is
   // fake; one that left it while still throwing would claim the opposite.
   check('the turn actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('runTurn'))
-  check(
-    'the plan-usage actor is no longer listed as unimplemented',
-    !UNIMPLEMENTED.includes('readSubscriptionUsage'),
-  )
   check('the compaction actor is no longer listed as unimplemented', !UNIMPLEMENTED.includes('compactSession'))
   // The Surface loader is real in both modes and has no seeded half — there is
   // no service behind an import to stand in for. Listing it would tell a reader
@@ -2348,231 +2343,22 @@ async function turnPath(
   check('and points at the flag that would fail on it', oneMissing.exit.includes('?actors=live'))
 }
 
-// ---------------------------------------------------------------------------
-// Plan usage — a figure, or the last one there was
-// ---------------------------------------------------------------------------
-
 /*
-  The product rule that outlives whatever is behind the read: the strip renders
-  beside the words "plan usage", so a number there was measured or there is no
-  number. The Harness parses and refuses; the machine keeps or replaces. These
-  drive the machine half, which nothing was asserting.
+  A "Plan usage" section stood here — six blocks driving the `subscription`
+  region: that the read is gated on the Credential Kind, that a re-read under an
+  API key is refused, that a good read is kept and a failed one invents nothing.
+
+  Every one of them passed, and none of them was measuring the product. They
+  drove a machine whose actor could never return a figure in any configuration
+  varnick ships: under the only subscription it can hold, a `claude setup-token`
+  credential, the session answers `rate_limits_available: false` and does not
+  identify itself as a subscription at all. The gate these blocks proved correct
+  was correct, and was never the thing standing between the developer and a
+  number.
+
+  The region, the actor and the strip are gone; see ticket 31 and ADR-0011.
+  Nothing replaced these assertions because there is nothing left to assert.
 */
-
-type Usage = { fiveHourPct: number; weeklyPct: number; source: 'live' | 'seeded' }
-
-{
-  /*
-    The read only happens where there is a plan for it to be about — ADR-0011.
-
-    Under an API key the `subscription` region stays `unread`. That is not a
-    broken region and it is not a fourth state meaning "not applicable": the
-    kind is a fact in context, and a state for a fact that is not a state is
-    what CONTEXT.md's naming discipline exists to prevent.
-
-    **Counted, not looked at.** "The strip was empty" is equally true of a read
-    that ran and failed, which is precisely the outcome that shipped and could
-    never have been anything else — so an assertion phrased that way would pass
-    on the bug. What ADR-0011 claims is that the actor does not run, so that is
-    what is counted. One counter, both kinds, in one loop: an assertion that
-    zero calls happened cannot pass by counting a call that could never have
-    been made, because the same counter has to reach one on the branch above it.
-  */
-  for (const [kind, wanted] of [
-    ['subscription', 1],
-    ['api-key', 0],
-  ] as const) {
-    const under = kind === 'api-key' ? 'an API key' : 'a subscription'
-    let invocations = 0
-    const actor = createActor(
-      harnessMachine.provide({
-        actors: {
-          readSubscriptionUsage: fromPromise<Usage, Record<string, never>>(async () => {
-            invocations++
-            return { fiveHourPct: 11, weeklyPct: 54, source: 'live' as const }
-          }),
-        },
-      }),
-      { input: { policy: seedPolicy, credentialKind: kind } },
-    ).start()
-
-    // The event, and the strip, read one rule. `hasPlanUsage` is that rule —
-    // exported for the same reason `canStartAgent` is, so the affordance and
-    // the gate cannot drift into two answers to one question.
-    check(
-      `under ${under}, READ_SUBSCRIPTION is ${wanted === 1 ? 'accepted' : 'refused'}`,
-      actor.getSnapshot().can({ type: 'READ_SUBSCRIPTION' }) === (wanted === 1),
-    )
-    check(
-      `and under ${under} the strip's rule agrees with the region's`,
-      hasPlanUsage(actor.getSnapshot().context.credentialKind) === (wanted === 1),
-    )
-
-    actor.send({ type: 'READ_SUBSCRIPTION' })
-    if (wanted === 1) {
-      await reaches(waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'read', soon))
-    } else {
-      // Nothing to wait for, which is the claim. A macrotask is more than an
-      // immediately-resolved actor needs to have run and reported.
-      await new Promise((r) => setTimeout(r, 20))
-    }
-
-    check(
-      `under ${under} the plan-usage actor runs ${wanted === 1 ? 'once' : 'not at all'}`,
-      invocations === wanted,
-    )
-    check(
-      `and under ${under} the region lands in ${wanted === 1 ? 'read' : 'unread'}`,
-      regionOf(actor.getSnapshot().value, 'subscription') === (wanted === 1 ? 'read' : 'unread'),
-    )
-    actor.stop()
-  }
-}
-
-{
-  /*
-    A credential re-read that turns out to be an API key takes the strip away.
-
-    The figures stay in context, and deliberately: they were measured, nothing
-    unmeasured them, and a machine that blanked them on a credential event would
-    be reporting a failed read that never happened. What changed is that there is
-    no longer a plan for them to be about — which is the strip's question, not
-    the region's, and `hasPlanUsage` is where both ask it.
-
-    The actor here throws on sight. If the gate were removed, the re-read below
-    would run it, fail, and drop the region out of `read` — so this block fails
-    from two directions rather than one.
-  */
-  const actor = createActor(
-    harnessMachine.provide({
-      actors: {
-        readCredential: resolves<CredentialReading, Record<string, never>>({
-          source: 'keychain',
-          kind: 'api-key',
-        }),
-        readSubscriptionUsage: rejects<Usage, Record<string, never>>('there is no plan to ask'),
-      },
-    }),
-    {
-      input: {
-        policy: seedPolicy,
-        enterCredential: 'present',
-        credentialKind: 'subscription',
-        enterSubscription: 'read',
-        subscription: { fiveHourPct: 11, weeklyPct: 54, source: 'live' },
-      },
-    },
-  ).start()
-
-  check(
-    'a subscription harness with figures shows the strip',
-    hasPlanUsage(actor.getSnapshot().context.credentialKind),
-  )
-
-  actor.send({ type: 'READ_CREDENTIAL' })
-  await waitFor(actor, (s) => s.context.credentialKind === 'api-key', soon)
-
-  check(
-    'a credential that turns out to be an API key takes the strip away',
-    !hasPlanUsage(actor.getSnapshot().context.credentialKind),
-  )
-  check(
-    'without discarding what was measured while there was a plan',
-    actor.getSnapshot().context.subscription?.fiveHourPct === 11,
-  )
-  check(
-    'and a re-read is refused from `read` as well as from `unread`',
-    !actor.getSnapshot().can({ type: 'READ_SUBSCRIPTION' }),
-  )
-
-  actor.send({ type: 'READ_SUBSCRIPTION' })
-  await new Promise((r) => setTimeout(r, 20))
-  check(
-    'so the region stays where it was rather than failing a read nobody could make',
-    regionOf(actor.getSnapshot().value, 'subscription') === 'read',
-  )
-  actor.stop()
-}
-
-{
-  const actor = createActor(
-    harnessMachine.provide({
-      actors: {
-        readSubscriptionUsage: resolves<Usage, Record<string, never>>({
-          fiveHourPct: 11,
-          weeklyPct: 54,
-          source: 'live',
-        }),
-      },
-    }),
-    // Every block below runs under a subscription, because that is the only
-    // configuration in which a plan-usage read happens at all. They were
-    // written without a kind, when there was no kind — which made them the
-    // measurement of a configuration the product does not ship.
-    { input: { policy: seedPolicy, credentialKind: 'subscription' } },
-  ).start()
-
-  check('plan usage starts unread', regionOf(actor.getSnapshot().value, 'subscription') === 'unread')
-  check('and with nothing to show', actor.getSnapshot().context.subscription === null)
-
-  actor.send({ type: 'READ_SUBSCRIPTION' })
-  await waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'read')
-  check(
-    'a successful read is what the actor measured',
-    actor.getSnapshot().context.subscription?.fiveHourPct === 11,
-  )
-  check(
-    'and says where it came from, so the surface never has to guess',
-    actor.getSnapshot().context.subscription?.source === 'live',
-  )
-  actor.stop()
-}
-
-{
-  // The criterion in full: a failed read leaves whatever was last known, and
-  // what was last known may be nothing.
-  const actor = createActor(
-    harnessMachine.provide({
-      actors: { readSubscriptionUsage: rejects<Usage, Record<string, never>>('no session to ask') },
-    }),
-    { input: { policy: seedPolicy, credentialKind: 'subscription' } },
-  ).start()
-
-  actor.send({ type: 'READ_SUBSCRIPTION' })
-  await waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'unread')
-  check(
-    'a failed first read invents nothing at all',
-    actor.getSnapshot().context.subscription === null,
-  )
-  actor.stop()
-}
-
-{
-  // The other half, and the one a default would break silently: a read that
-  // fails after a good one must not blank it or replace it with a plausible
-  // zero. The strip keeps showing the last measurement.
-  const actor = createActor(
-    harnessMachine.provide({
-      actors: { readSubscriptionUsage: rejects<Usage, Record<string, never>>('the agent stopped') },
-    }),
-    {
-      input: {
-        policy: seedPolicy,
-        credentialKind: 'subscription',
-        subscription: { fiveHourPct: 11, weeklyPct: 54, source: 'live' },
-        enterSubscription: 'read',
-      },
-    },
-  ).start()
-
-  actor.send({ type: 'READ_SUBSCRIPTION' })
-  await waitFor(actor, (s) => regionOf(s.value, 'subscription') === 'unread')
-  const kept = actor.getSnapshot().context.subscription
-  check('a failed read leaves the last measurement standing', kept?.fiveHourPct === 11)
-  check('all of it, not the half that was easy to keep', kept?.weeklyPct === 54)
-  check('still labelled as the measurement it was', kept?.source === 'live')
-  actor.stop()
-}
 
 // ---------------------------------------------------------------------------
 // Compaction — building the replacement, and only then swapping

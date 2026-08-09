@@ -6,10 +6,12 @@
 
 **Realizes:** no new state path. The `subscription` region keeps its three states and gains a reason not to leave `unread`.
 
-**Status:** ready-for-human — built and green on all seven commands. The one
-criterion left is the measurement ADR-0011's last consequence asks for, which
-needs a real subscription token and a running agent. See "The measurement, and
-how to take it" at the foot of this file.
+**Status:** done — and then removed by ticket 31, which is not the same as
+having been wrong. The gate this ticket built was correct: `readSubscriptionUsage`
+was not invoked under an API key, and the strip was absent rather than
+permanently empty. It was simply never the thing standing between the developer
+and a figure. The measurement it was waiting for was taken, reported nothing, and
+closed the feature instead of the ticket. See the foot of this file.
 
 ## What is true today
 
@@ -168,3 +170,19 @@ a `READ_SUBSCRIPTION` button that is simply **not there** under an API key. So:
 Measured after merge, with a real subscription token: `rate_limits_available` is `false` and `subscription_type` is `null`. So the read refuses under a subscription too, and the strip is absent in every configuration rather than only under an API key.
 
 Nothing here was wrong. The gate is correct, the actor is not invoked under an API key, and absent-not-empty is the right rendering. It is that the remaining branch was assumed to work and could not be tested until a subscription token existed — one does now, and it does not. Ticket 31 carries the decision.
+
+## Closed — the decision was to cut it
+
+Ticket 31 measured four routes to the windows and found all four closed, because
+Claude Code treats a `claude setup-token` session as **API authentication, not as
+a plan** — its own banner says `Claude API`. The strip, the `subscription`
+region, `readSubscriptionUsage`, the `read-plan-usage` control kind and this
+ticket's `api-key-no-plan` scenario card are all removed.
+
+**The record this ticket is owed:** its gate was correct and is not what failed.
+A reader coming to this file later should take away that the work here was
+sound and aimed at the wrong half of the problem — the question the strip needed
+answered was never "is this credential a subscription" but "does this credential
+report rolling windows", and those turn out to be different questions with
+different answers. That is the reusable part, and it is why this file is kept
+rather than deleted.

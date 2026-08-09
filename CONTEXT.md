@@ -52,7 +52,9 @@ _Avoid_: vault, keychain, credentials (credentials are what authenticate the age
 What authenticates the agent itself — distinct from a Secret, which is what the agent's code uses. Read by the Tauri host, held only there, and injected into the agent subprocess. Nothing about it crosses into the webview except two facts about the reading.
 
 **Credential Kind**:
-Which of the two things the Credential is: an `api-key` (an Anthropic API key) or a `subscription` (a Claude subscription token from `claude setup-token`). Decided by the host from what it resolved, never configured, and it decides both which variable the agent is spawned with and whether plan usage exists to read. varnick never reads Claude Code's own credential store; see [ADR-0011](./docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md).
+Which of the two things the Credential is: an `api-key` (an Anthropic API key) or a `subscription` (a Claude subscription token from `claude setup-token`). Decided by the host from what it resolved, never configured, and it decides which variable the agent is spawned with — which is now the whole of what it decides. varnick never reads Claude Code's own credential store; see [ADR-0011](./docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md).
+
+It used to decide a second thing, "whether plan usage exists to read", and nothing on screen turns on it any more. A `claude setup-token` session reports no plan — Claude Code treats it as API authentication — so the strip that read it could never populate, and it was cut with its region and its actor. The Kind is still a real fact about a real credential; it simply has no appearance.
 _Avoid_: auth mode, provider, account type
 
 **Credential Source**:
@@ -100,8 +102,6 @@ These are machine state names before they are UI words, and the two must not div
 `down` is stopped on purpose; `crashed` is stopped on its own and carries a reason. `startRefused` is a start that was asked for and declined, holding the refusal so it can be read.
 _Avoid_: stopped, idle, dead, paused, blocked
 
-**Harness — `subscription`**: `unread`, `reading`, `read`. Plan usage across the rolling windows. A failed read leaves whatever was last known and never invents a figure. The region only runs under a Credential Kind of `subscription` — an API key has no plan to have windows, so `unread` is where it stays and nothing is rendered.
-
 **Session — `turn`**: `idle`, `answering.sending`, `answering.streaming`, `interrupting`, `compacting`, `failed`.
 `answering` is a Turn in flight, and it is one state because it runs one actor. Its children say how far along the answer is: `sending` is posted with nothing back yet, `streaming` is output arriving. They were siblings once, and each invoked the Turn — so the first streamed token aborted the Turn and started it again. `interrupting` keeps the partial — an interrupted Turn still said something. A Session resumed on launch enters `idle`: a Turn in flight when the process died is an answer that stopped early, which is what an interrupt already is, and nothing observed a failure to report.
 
@@ -115,7 +115,7 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 
 ### Event names
 
-`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `READ_SUBSCRIPTION`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
+`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACT`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
 

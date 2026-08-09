@@ -9,7 +9,6 @@ import type {
   Message,
   ModelId,
   SandboxPolicy,
-  SubscriptionUsage,
 } from '../domain.ts'
 import { brokenSurfaceErrorFor } from '../data/seed.ts'
 
@@ -62,7 +61,6 @@ export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
       storeCredential: never<void, { kind: CredentialKind; value: string }>(),
       mintSubscriptionToken: never<void, Record<string, never>>(),
       spawnAgent: never<{ pid: number }, { policy: SandboxPolicy }>(),
-      readSubscriptionUsage: never<SubscriptionUsage, Record<string, never>>(),
       surface: surfaceMachine.provide({
         actors: {
           loadSurface: fromPromise<{ ok: true }, { modulePath: string }>(({ input }) => {

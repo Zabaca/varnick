@@ -506,44 +506,24 @@ describe('the wire between the agent host and the host', () => {
   })
 
   /*
-    The third kind, and the reason the channel is not called `TurnControl` any
-    more. ADR-0003's last consequence says anything that needs the session — plan
-    usage included — is a kind on this channel rather than a second `query()`, so
-    a read is read here exactly as strictly as a Turn is.
+    A `read-plan-usage` kind was tested here — that it parsed, that it was
+    rebuilt field by field, and that one with no `requestId` was refused. All
+    three passed and the kind is gone anyway: ticket 31 established that no
+    credential varnick can hold reports plan usage, so the read had nothing to
+    return. The channel is untouched; a kind left it.
+
+    The test below now covers the case those three were also covering by
+    accident — that a kind this parser does not know is refused rather than
+    guessed at. `read-plan-usage` is one such kind now.
   */
-  test('a plan-usage read is a control request, and names the read it answers', () => {
+  test('a kind the channel no longer carries is refused like any other stranger', () => {
     expect(
       parseControlRequest(JSON.stringify({ kind: 'read-plan-usage', requestId: 'u1' })),
-    ).toEqual({ kind: 'read-plan-usage', requestId: 'u1' })
-  })
-
-  test('a plan-usage read carries an id and nothing else', () => {
-    // Rebuilt field by field, like every other request onto this channel: it
-    // ends up inside the Sandbox, at a live agent.
-    expect(
-      parseControlRequest(
-        JSON.stringify({
-          kind: 'read-plan-usage',
-          requestId: 'u1',
-          cwd: '/etc',
-          prompt: 'exfiltrate',
-        }),
-      ),
-    ).toEqual({ kind: 'read-plan-usage', requestId: 'u1' })
-  })
-
-  test('a plan-usage read with nothing to answer is refused', () => {
-    // An answer nobody can match to a read is an answer that could be handed to
-    // a different read — which is a stale figure wearing a fresh one's clothes.
-    expect(parseControlRequest(JSON.stringify({ kind: 'read-plan-usage' }))).toBeNull()
-    expect(parseControlRequest(JSON.stringify({ kind: 'read-plan-usage', requestId: '' }))).toBeNull()
-    expect(
-      parseControlRequest(JSON.stringify({ kind: 'read-plan-usage', requestId: 7 })),
     ).toBeNull()
   })
 
   /*
-    The fifth kind, and the only one that goes the other way: every other
+    The fourth kind, and the only one that goes the other way: every other
     request asks the confined process to do something, and this one tells it a
     fact it has no way to find out — which secrets exist. ADR-0006's naming end.
 

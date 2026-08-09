@@ -30,11 +30,6 @@ const HARNESS_EVENTS: HarnessEvent[] = [
   // authorize URL, because the seeded mint invents none and this page's job is
   // to reach the state, not to send anybody to an authorization.
   { type: 'MINT_URL', url: 'https://claude.com/cai/oauth/authorize?state=from-the-bare-page' },
-  // Accepted only under a Credential Kind of `subscription`, so this button is
-  // simply not here under an API key — which is the gate itself, shown on the
-  // one surface with nothing covering for it. The strip's absence in the app
-  // and this button's absence here are the same fact (ADR-0011).
-  { type: 'READ_SUBSCRIPTION' },
   // The real scan, not a seed. The bare page's job is to prove behaviour with
   // nothing covering for it, and a seeded descriptor list would prove that a
   // literal can be spawned from.
@@ -129,25 +124,17 @@ export function BarePage() {
           <dt>agent</dt>
           <dd>{String((snapshot.value as Record<string, unknown>).agent)}</dd>
           {/*
-            The fourth region, and the fact that gates it.
+            The kind, with no region behind it any more.
 
-            Both are here because the one thing plan usage is hard to tell apart
-            from the outside is a read that was refused from a read that was
-            never made: each leaves the strip absent. A region that passed
-            through `reading` was attempted; one sitting in `unread` beside a
-            kind of `api-key` was never asked for. That is the distinction this
-            page exists to make visible.
+            It is still shown because it is still a fact the host decided and
+            still decides which variable the agent is spawned with — which this
+            page cannot show directly, since the injection happens in the host
+            process. What it no longer gates is a `subscription` region: that
+            was cut in ticket 31, because no credential varnick can hold reports
+            plan usage at all.
           */}
-          <dt>subscription</dt>
-          <dd>{String((snapshot.value as Record<string, unknown>).subscription)}</dd>
           <dt>credential kind</dt>
           <dd>{ctx.credentialKind ?? '— none read'}</dd>
-          <dt>plan usage</dt>
-          <dd>
-            {ctx.subscription
-              ? `5h ${ctx.subscription.fiveHourPct}% · week ${ctx.subscription.weeklyPct}% (${ctx.subscription.source})`
-              : '— nothing measured'}
-          </dd>
           <dt>can start</dt>
           <dd>{ready ? 'yes' : 'no — START will be refused and say why'}</dd>
           <dt>refusal</dt>

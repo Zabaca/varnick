@@ -59,12 +59,6 @@ import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
 import { readLines } from './framing.ts'
 import { describeSecretsForAgent } from './secrets.ts'
 import {
-  encodePlanUsageAnswer,
-  readSubscriptionUsage,
-  reportFromSession,
-  type ReadPlanUsageReport,
-} from './subscription.ts'
-import {
   beginCompaction,
   beginTurn,
   COMPACT_COMMAND,
@@ -801,16 +795,18 @@ async function toolProbe(
  * `srt` on a developer's machine, which is exactly what ADR-0003's last
  * consequence forbids.
  *
- * Six members, and each one was a decision. Four are what a Turn cannot be run
- * without, {@link usage} is what a plan-usage read needs, and
- * {@link contextTokens} is what a Compaction needs; `usage` is a property
- * because the Session hands over the reader rather than the figures, and it is
- * called like the rest. This is the surface something outside the Sandbox can
- * reach into the Sandbox with, so it grows one member at a time and each one
- * has to be argued for — and, read the other way, it is the whole list of
- * questions that do not need a second session to answer. Nothing here can
- * create one: there is no `query` in this interface and no way to get at the
- * one `runAgentHost` holds.
+ * Five members, and each one was a decision. Four are what a Turn cannot be run
+ * without, and {@link contextTokens} is what a Compaction needs. This is the
+ * surface something outside the Sandbox can reach into the Sandbox with, so it
+ * grows one member at a time and each one has to be argued for — and, read the
+ * other way, it is the whole list of questions that do not need a second
+ * session to answer. Nothing here can create one: there is no `query` in this
+ * interface and no way to get at the one `runAgentHost` holds.
+ *
+ * It was six. A `usage` member handed over the SDK's `get_usage` reader for the
+ * plan-usage read, and went with it in ticket 31 — the read had no figure to
+ * return under any credential varnick can hold. Shrinking this interface is the
+ * one direction it is always safe to move in.
  *
  * {@link contextTokens} is the one added for Compaction. It reads and cannot
  * write, takes no argument, and answers with a number — and the alternative to
@@ -825,15 +821,6 @@ export interface AgentSessionPort {
   setEffort(effort: string): Promise<void>
   /** Stop the answer in flight. What has arrived stays arrived. */
   interrupt(): Promise<void>
-  /**
-   * What the plan has left, as the plan reports it.
-   *
-   * The fifth method, and the one ADR-0003's amendment was written for. It is
-   * the SDK's `get_usage` control request on this Session — measured
-   * server-side, across every device on the plan — rather than anything this
-   * process counted.
-   */
-  readonly usage: ReadPlanUsageReport
   /**
    * How much context the Session now holds, or `null` if it would not say.
    *
@@ -1009,34 +996,6 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     }
   }
 
-  /**
-   * Answer one plan-usage read off the Session this process is holding.
-   *
-   * The whole of ADR-0003's last consequence, in one function: the reader handed
-   * to `readSubscriptionUsage` is the Session that already exists, so there is
-   * nothing here that could open a second one even by accident.
-   *
-   * Always answers. A read that produced no figures answers with `null` rather
-   * than staying quiet, because silence is what a slow agent also looks like and
-   * the caller would wait out its whole patience before failing. Nothing the
-   * failure said is carried: the read runs against the API, so its prose is
-   * exactly where a rejected credential would be.
-   */
-  async function answerUsage(requestId: string): Promise<void> {
-    let usage = null
-    try {
-      usage = await readSubscriptionUsage(session.usage)
-    } catch {
-      // Deliberately empty. `null` is the answer, and there is no second thing
-      // to say about a figure that does not exist.
-    }
-    try {
-      write(encodePlanUsageAnswer({ requestId, usage }))
-    } catch {
-      // The pipe is gone, which means so is whoever asked.
-    }
-  }
-
   async function handle(line: string): Promise<void> {
     const request = parseControlRequest(line)
     // A line this host does not understand is dropped rather than guessed at.
@@ -1044,13 +1003,6 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
     // channel is a way in rather than a robustness feature.
     if (request === null) return
     if (request.kind === 'run-turn') return start(request)
-    if (request.kind === 'read-plan-usage') {
-      // Started, not awaited. A usage read is a round-trip to the Claude Code
-      // process, and holding the control loop for it would make an interrupt
-      // cost that round-trip — the exact delay interrupting exists to avoid.
-      void answerUsage(request.requestId)
-      return
-    }
     if (request.kind === 'compact') return compact(request)
     if (request.kind === 'describe-secrets') {
       // Handed straight over and never kept here. This loop has no use for the
@@ -1310,12 +1262,6 @@ async function runAgentHost(sdkEntry: string): Promise<void> {
       interrupt: async () => {
         await session.interrupt()
       },
-      // The plan's own windows, off this Session. `reportFromSession` is the one
-      // place the SDK's experimental usage method is named, and the session it
-      // adapts is the one above — created here, inside `srt`, once. There is no
-      // other `query()` in the Harness and this is why: a read that opened its
-      // own would run the clone's `SessionStart` hooks unconfined (ADR-0003).
-      usage: reportFromSession(session),
       // What `/context` shows, asked of the Session itself. A control request
       // on the session already open — the same rule the whole channel exists
       // for — and the reason the meter after a Compaction is a reading rather

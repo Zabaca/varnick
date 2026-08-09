@@ -43,21 +43,26 @@ import type { NonNullableUsage, SDKMessage } from '@anthropic-ai/claude-agent-sd
 /**
  * A control request, as one line on the agent host's stdin.
  *
- * Five, and each one is a decision rather than a convenience. The agent host is
+ * Four, and each one is a decision rather than a convenience. The agent host is
  * a Claude Code session inside the Sandbox; every additional thing it can be
  * asked to do is another thing something outside the Sandbox can make it do.
  *
- * Two of them are a Turn. Two more are here for the same reason, which is
- * ADR-0003's last consequence: a plan-usage read rides a live session, and
- * summarising a conversation is a model call on *this* session. Either one
- * implemented the obvious way — `query()` on the host — would be a second
- * Claude Code process outside `srt`, running whatever `SessionStart` hook the
- * agent last wrote into the clone. So they are kinds here, or they do not
- * happen.
+ * Two of them are a Turn. A third is here for the same reason, which is
+ * ADR-0003's last consequence: summarising a conversation is a model call on
+ * *this* session, and implemented the obvious way — `query()` on the host — it
+ * would be a second Claude Code process outside `srt`, running whatever
+ * `SessionStart` hook the agent last wrote into the clone. So it is a kind
+ * here, or it does not happen.
  *
- * The fifth goes the other way. Every other kind asks the confined process to
+ * The fourth goes the other way. Every other kind asks the confined process to
  * *do* something; {@link DescribeSecretsRequest} tells it something it has no
  * way to find out — see there for why the environment could not carry it.
+ *
+ * There were five. `read-plan-usage` was on this channel for exactly the same
+ * ADR-0003 reason as `compact`, and ticket 31 removed it — not because the
+ * reasoning was wrong but because the read had no figure to return under any
+ * credential varnick can hold. The channel itself is untouched and load-bearing;
+ * one kind left it.
  *
  * The type is no longer called `TurnControl` for that reason: the channel
  * carries control requests, of which a Turn is two.
@@ -71,16 +76,6 @@ export type ControlRequest =
       readonly effort: string
     }
   | { readonly kind: 'interrupt'; readonly turnId: string }
-  /**
-   * Ask the session this process is holding what the plan has left.
-   *
-   * `requestId` rather than `turnId` because it is not a Turn and never becomes
-   * one — nothing about it reaches the transcript. It is required for the same
-   * reason a Turn's id is: an answer nobody can match to a read is an answer
-   * that could be handed to a different read, and a stale figure that looks
-   * fresh is exactly what this ticket rules out.
-   */
-  | { readonly kind: 'read-plan-usage'; readonly requestId: string }
   /** Summarise the conversation on this session. Carries a Turn id and nothing
    *  else — there is no prompt on it to smuggle anything through, because the
    *  prompt is a constant this module owns ({@link COMPACT_COMMAND}). */
@@ -159,16 +154,7 @@ export function parseControlRequest(line: string): ControlRequest | null {
     return null
   }
 
-  const { kind, turnId, requestId, prompt, model, effort, names } = (value ?? {}) as Record<
-    string,
-    unknown
-  >
-
-  // Each kind names its own id. One shared field would have made a Turn and a
-  // read interchangeable to anything reading only the id.
-  if (kind === 'read-plan-usage') {
-    return typeof requestId === 'string' && requestId.length > 0 ? { kind, requestId } : null
-  }
+  const { kind, turnId, prompt, model, effort, names } = (value ?? {}) as Record<string, unknown>
 
   /*
     Rebuilt to `kind` and `names`, which is what makes "no value can arrive
@@ -245,8 +231,9 @@ export const TURN_FAILURES = [
    *
    * Separate from `compaction` because the sentence differs: this one did
    * summarise. varnick declines the rewrite anyway rather than showing a meter
-   * it did not measure — the same rule `subscription` follows, which never
-   * invents a figure.
+   * it did not measure. That rule outlived the plan-usage strip it was shared
+   * with — the strip is gone (ticket 31) and the meter is still a reading or
+   * nothing.
    */
   'compaction-unmeasured',
   'unknown',

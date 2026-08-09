@@ -94,33 +94,6 @@ function LiveChat({
   }, [ctx.credentialState, send])
 
   /*
-    Plan usage is asked for once the credential turns out to be a subscription,
-    and again once the agent is up.
-
-    The first of those was a bare mount effect, sent before anything had been
-    read. It cost nothing then because the read was possible in every
-    configuration — and possible in none of them: the API key varnick spawned
-    with has no plan, so `rate_limits_available` was false and the strip was
-    permanently empty (ADR-0011). The kind is what decides whether there is a
-    plan at all, so the question is asked at the first moment there is an answer
-    to it rather than at the first moment the page exists.
-
-    Still both, because the read rides the confined session (ADR-0003) and there
-    is no session before there is an agent. Under a subscription with no agent
-    yet the read refuses and leaves the strip with whatever was last known —
-    nothing, on a first run — and `running` is the first moment it can succeed.
-
-    The machine refuses this event under an API key regardless; that guard is
-    where the rule is enforced, and this is where the page stops asking a
-    question it has been told the answer to. Not a retry loop either way: each
-    fires once per thing changing, and a failed read that re-fired on its own is
-    the hot loop READ_CREDENTIAL was fixed for.
-  */
-  useEffect(() => {
-    if (ctx.credentialKind === 'subscription') send({ type: 'READ_SUBSCRIPTION' })
-  }, [ctx.credentialKind, send])
-
-  /*
     Surfaces are discovered at launch, not gated on the agent.
 
     Deliberately outside the start-up chain above: a Surface is a file that is
@@ -131,12 +104,6 @@ function LiveChat({
   useEffect(() => {
     send({ type: 'DISCOVER_SURFACES', descriptors: discoverSurfaces() })
   }, [send])
-
-  useEffect(() => {
-    if (agentState === 'running' && ctx.credentialKind === 'subscription') {
-      send({ type: 'READ_SUBSCRIPTION' })
-    }
-  }, [agentState, ctx.credentialKind, send])
 
   /*
     The Sandbox is checked on start-up, not after a credential arrives.

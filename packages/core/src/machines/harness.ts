@@ -1,11 +1,10 @@
 import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
-import { canStartAgent, hasPlanUsage, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
+import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
   CredentialKind,
   CredentialReading,
   SandboxPolicy,
   StartRefusal,
-  SubscriptionUsage,
   SurfaceDescriptor,
 } from '../domain.ts'
 import { surfaceMachine } from './surface.ts'
@@ -29,9 +28,6 @@ export const HARNESS_STATE_PATHS = [
   'credential.reading',
   'credential.present',
   'credential.rejected',
-  'subscription.unread',
-  'subscription.reading',
-  'subscription.read',
   'sandbox.unchecked',
   'sandbox.checking',
   'sandbox.available',
@@ -67,6 +63,10 @@ export interface HarnessContext {
    * rather than a state of its own — ADR-0011 adds two facts to a reading, and
    * a state per kind would double the region for a distinction no transition
    * depends on.
+   *
+   * Nothing in this machine now transitions on it at all: it decides which
+   * variable the host spawns the agent with, which happens host-side. It once
+   * also gated a `subscription` region, and ticket 31 cut that.
    *
    * Nothing here is or could be the value; see packages/harness/src/credentials.ts.
    */
@@ -112,12 +112,6 @@ export interface HarnessContext {
   surfaces: ActorRefFrom<typeof surfaceMachine>[]
   session: ActorRefFrom<typeof sessionMachine> | null
   /**
-   * Plan usage across the rolling windows. Null until something reads it, and
-   * carrying its own provenance so the view can refuse to present an unwired
-   * number as a measurement.
-   */
-  subscription: SubscriptionUsage | null
-  /**
    * What the Session is spawned with.
    *
    * The states page parks a Session in a named turn state, and the only way in
@@ -133,7 +127,6 @@ export interface HarnessContext {
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
-  readonly enterSubscription: string | null
 }
 
 export interface HarnessInput {
@@ -144,13 +137,11 @@ export interface HarnessInput {
   enterCredential?: string | null
   enterSandbox?: string | null
   enterAgent?: string | null
-  enterSubscription?: string | null
   sessionInput?: SessionInput
   refusal?: StartRefusal | null
   agentError?: string | null
   sandboxError?: string | null
   credentialError?: string | null
-  subscription?: SubscriptionUsage | null
 }
 
 export type HarnessEvent =
@@ -200,7 +191,6 @@ export type HarnessEvent =
   | { type: 'AGENT_EXIT'; detail: string }
   | { type: 'DISCOVER_SURFACES'; descriptors: SurfaceDescriptor[] }
   | { type: 'UNLOAD_SURFACE'; id: string }
-  | { type: 'READ_SUBSCRIPTION' }
 
 /**
  * Real-service contracts:
@@ -286,35 +276,10 @@ export const harnessMachine = setup({
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
     })),
-    /*
-      Real-service contract for readSubscriptionUsage:
-        input  {}
-        output SubscriptionUsage — percentages plus where they came from. Live,
-               this is the plan's own 5-hour and weekly windows, read through
-               the Agent SDK's `get_usage` control request.
-        error  thrown Error, including when the session has no plan to have
-               windows. `unread` keeps whatever was last known rather than
-               clearing it — a failed read must not blank a good reading, and
-               must never substitute a default.
-
-      Like every actor here, the default is a stub the machine never relies on;
-      the mode chosen in actors/index.ts supplies the real one.
-    */
-    readSubscriptionUsage: fromPromise<SubscriptionUsage, Record<string, never>>(
-      async () => ({ fiveHourPct: 0, weeklyPct: 0, source: 'seeded' as const }),
-    ),
   },
   guards: {
     canStart: ({ context }) =>
       canStartAgent({ credential: context.credentialState, sandbox: context.sandboxState }),
-    /**
-     * There is a plan for plan usage to be about.
-     *
-     * Reads the same context fact the strip reads, through the same predicate —
-     * the region cannot decide the read is pointless while the view still
-     * renders a place for its answer. See `hasPlanUsage` in ../domain.ts.
-     */
-    underSubscription: ({ context }) => hasPlanUsage(context.credentialKind),
     /*
       Something was actually pasted.
 
@@ -355,12 +320,10 @@ export const harnessMachine = setup({
     credentialError: input.credentialError ?? null,
     surfaces: [],
     session: null,
-    subscription: input.subscription ?? null,
     sessionInput: input.sessionInput ?? { sessionId: LIVE_SESSION_ID },
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
-    enterSubscription: input.enterSubscription ?? null,
   }),
   on: {
     // Surfaces are discovered, never registered — adding one must not require
@@ -627,57 +590,25 @@ export const harnessMachine = setup({
       },
     },
 
-    subscription: {
-      initial: 'routing',
-      states: {
-        routing: {
-          always: [
-            { target: 'read', guard: ({ context }) => context.enterSubscription === 'read' },
-            { target: 'reading', guard: ({ context }) => context.enterSubscription === 'reading' },
-            { target: 'unread' },
-          ],
-        },
-        /*
-          READ_SUBSCRIPTION is handled inside the region, never at the machine
-          root. A root-level transition with a target is external: it exits and
-          re-enters every parallel region, which tore down the Session actor —
-          and with it the whole conversation — on first load.
+    /*
+      A `subscription` region was here — `unread`, `reading`, `read`, fed by a
+      `readSubscriptionUsage` actor and gated on the Credential Kind.
 
-          Guarded, and with no fallback: under an API key there is no plan, so
-          the read is refused and the region stays here. `unread` is the whole
-          of what "there was nothing to read" needs to say — a fourth state
-          meaning "not applicable" would name a fact that is already in context
-          and is not a state (ADR-0011, and CONTEXT.md on naming).
+      It is gone because it described something that does not happen. The gate
+      asked whether the credential was a subscription; the strip needed to know
+      whether the credential *reports rolling windows*, and no credential
+      varnick can hold does. Measured against a real `claude setup-token`
+      credential driving a real Session: `subscription_type: null`,
+      `rate_limits_available: false`, `rate_limits: null`. Claude Code's own
+      banner calls such a session `Claude API` — it is API authentication, not a
+      plan. Four routes to a figure were measured and all four are closed; the
+      only credential that answers is the interactive OAuth login, which
+      ADR-0011 refuses to hold for reasons that have not changed.
 
-          Unlike START, this refusal is silent on purpose. A refused start is a
-          thing the user asked for and must be told about; a plan-usage read is
-          asked for by the page on the user's behalf, and there is nothing to
-          report beyond the strip not being there.
-        */
-        unread: { on: { READ_SUBSCRIPTION: { target: 'reading', guard: 'underSubscription' } } },
-        reading: {
-          invoke: {
-            src: 'readSubscriptionUsage',
-            input: () => ({}) as Record<string, never>,
-            onDone: {
-              target: 'read',
-              actions: assign({ subscription: ({ event }) => event.output }),
-            },
-            // A failed read leaves whatever was last known, which may be
-            // nothing. It never invents a figure.
-            onError: 'unread',
-          },
-        },
-        // Guarded here too, and not only for symmetry: the credential can be
-        // re-read, and one that comes back an API key leaves a `read` region
-        // holding figures from a plan that is no longer in play. Refusing the
-        // re-read is what stops it being replaced by a failed one — the last
-        // measurement stands, and the strip stops being rendered because the
-        // strip asks `hasPlanUsage`, not the region.
-        read: { on: { READ_SUBSCRIPTION: { target: 'reading', guard: 'underSubscription' } } },
-      },
-    },
-
+      So the region could only ever sit in `unread`, and a state machine that
+      describes something that does not happen is worse than no machine at all.
+      See ticket 31 and ADR-0011.
+    */
     agent: {
       initial: 'routing',
       states: {

@@ -4,9 +4,13 @@
 
 **Blocked by:** None.
 
-**Status:** needs-info — cutting a shipped feature is the developer's call.
+**Status:** done — option 1. The developer chose to cut it after four routes were
+measured and all four were closed. The `subscription` region, its states,
+`READ_SUBSCRIPTION`, `readSubscriptionUsage`, the strip, the `read-plan-usage`
+control kind and the scenarios are removed; `bun run drive` is green at 373
+assertions, which is what proves nothing is left naming them.
 
-**Realizes:** the `subscription` region, which may stop existing.
+**Realizes:** the `subscription` region — by removing it.
 
 ## The measurement
 
@@ -75,9 +79,55 @@ Ticket 23's gate is not wrong. It is just never the thing standing between the d
 - Whatever is chosen, `#/states` and its coverage check follow: cutting the region removes cards, and drive.ts fails the build if a scenario names a state that no longer exists.
 - Ticket 09's record should say what its measurement actually measured — an interactive login, not what varnick spawns. It was amended once already by ticket 23; this is the second correction to the same sentence.
 
-- [ ] The choice is recorded, in ADR-0011 if the credential decision is unchanged
-- [ ] If cut, the region, the actor, the strip, the scenarios and the `CONTEXT.md` entry all go together, and `bun run drive` proves nothing was left naming them
-- [ ] If kept, the README says plainly that plan usage does not populate and why
-- [ ] Either way, no surface shows a number it did not measure
+- [x] The choice is recorded, in ADR-0011 if the credential decision is unchanged
+- [x] If cut, the region, the actor, the strip, the scenarios and the `CONTEXT.md` entry all go together, and `bun run drive` proves nothing was left naming them
+- [x] ~~If kept~~ — not kept. The README never described the strip, so it needed no correction.
+- [x] Either way, no surface shows a number it did not measure
 
 Found by the developer noticing the strip was missing in the running app, and by asking a real session what it knew.
+
+## What was removed
+
+**Core** — the `subscription` region and its three states; `READ_SUBSCRIPTION`;
+the `subscription` context field and `enterSubscription` input; `hasPlanUsage`;
+`SubscriptionUsage`; the `readSubscriptionUsage` actor in all four places it was
+declared (machine stub, live, seeded, frozen) and its entry in `ACTOR_NAMES`; the
+`PlanUsage` component and its render site; the `subscription`, `plan usage` and
+`READ_SUBSCRIPTION` rows on `#/bare`; both start-up asks in `DesignedPage`; the
+`api-key-no-plan` scenario and the `enterSubscription`/`subscription` inputs on
+the rest; and six blocks of `drive.ts`.
+
+**Harness** — `subscription.ts` and `subscription.test.ts`, its `package.json`
+export, the `read-plan-usage` `ControlRequest` kind and its parse branch, the
+`ReadPlanUsageRequest`/`HarnessAnswers` entries, `planUsageAnswer`, the
+`AgentSessionPort.usage` member, `answerUsage`, and the two test suites over
+them.
+
+**Rust** — `usage_answer_of`, `PlanUsageAnswers` and its `impl`, `read_plan_usage`,
+`USAGE_WAIT`, `NO_SESSION_TO_ASK`, `NO_ANSWER_IN_TIME`, the `read-plan-usage`
+arms in `control_line_for`, `route_of` and the bridge match, and eleven tests.
+
+## What was deliberately kept
+
+- **The control channel.** `read-plan-usage` was one kind on it; `compact` and
+  `describe-secrets` are others and are load-bearing. The kind left, the channel
+  did not — including the `ControlRequest` name, which was right for a reason
+  plan usage only happened to be the first instance of.
+- **`credentialKind`.** It still decides which variable the agent is spawned
+  with, which is ADR-0011's first consequence and unaffected. It is now a fact
+  with no appearance: nothing varnick renders differs by kind.
+- **ADR-0003's containment rule and every probe and assertion under it.** Nothing
+  in this removal touches the Sandbox policy or a containment claim.
+
+## Two things the removal surfaced
+
+- **`SeededMarker` was reachable only through the plan-usage strip.** Cutting the
+  strip would have silently removed the build's only "seeded data — nothing here
+  is measured" admission, and in an API-key seeded run it had already been saying
+  nothing at all. It is now its own row, gated on `mode` alone, which is what it
+  always claimed to gate on.
+- **`describe_secrets` was borrowing the plan-usage refusal sentence.** With no
+  agent running it refused with *"there is no session to ask for plan usage…
+  the figures are read from the plan itself"*. Nobody ever saw it, because the
+  call is best-effort and its caller drops the refusal — which is exactly how a
+  wrong sentence survives. It has its own constant now.

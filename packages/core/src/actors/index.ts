@@ -43,7 +43,6 @@ export const ACTOR_NAMES = [
   'storeCredential',
   'mintSubscriptionToken',
   'spawnAgent',
-  'readSubscriptionUsage',
   'runTurn',
   'persistSession',
   'compactSession',
