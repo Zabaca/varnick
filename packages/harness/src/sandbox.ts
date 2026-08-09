@@ -187,6 +187,19 @@ function usersRootOf(homeDir: string): string {
  * kernel lives below this.
  */
 /**
+ * The marker file Claude Code writes after every Bash command, as a glob.
+ *
+ * Separate from the scratch directory above and discovered separately: with the
+ * directory granted, commands ran and still reported failure, because this write
+ * was refused and its exit code was the one the agent saw.
+ *
+ * A glob because the middle is a per-session token — `claude-eaa4-cwd` on the
+ * run that found it. It is the narrowest shape that works: measured, a sibling
+ * `claude-eaa4-evil` and a plain `/tmp` file are both still refused.
+ */
+export const CLAUDE_CWD_MARKER_GLOB = '/private/tmp/claude-*-cwd'
+
+/**
  * Where Claude Code keeps its per-run scratch directory.
  *
  * A fixed `/tmp/claude-<uid>`, not a resolved temp directory — see the comment
@@ -263,8 +276,33 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
         granted where the tool actually looks. The uid is read at generation
         time rather than hardcoded, so a fresh clone on another machine gets its
         own path and not this author's.
+
+        The fourth entry is a *file*, not a directory, and it is a second and
+        separate path — which is why fixing the first did not finish the job.
+        After the scratch directory was granted, Bash ran and every command still
+        reported failure:
+
+          zsh:1: operation not permitted: /tmp/claude-eaa4-cwd
+
+        That is Claude Code's post-command step recording the working directory,
+        into a marker file directly in `/tmp` rather than under the per-user
+        directory. The command itself succeeds and its output is correct, so this
+        does not look like a boundary problem from the outside — it looks like a
+        tool that fails at random. The damage is that the **exit code is the
+        blocked write's**, so the agent cannot tell a command that worked from
+        one that did not, and `cd` does not persist between calls.
+
+        Granted as a glob and nothing wider, measured: the marker is writable,
+        `claude-eaa4-evil` beside it is refused, and a plain file in `/tmp` is
+        refused. If Claude Code writes other markers there, the violation monitor
+        names them now — which is the first time that has been true.
       */
-      allowWrite: [clone, temp, claudeScratchDirFor(process.getuid?.() ?? 0)],
+      allowWrite: [
+        clone,
+        temp,
+        claudeScratchDirFor(process.getuid?.() ?? 0),
+        CLAUDE_CWD_MARKER_GLOB,
+      ],
       denyWrite: [
         // ADR-0002: Core is separated from Userspace by the policy, not by
         // convention. The agent's blast radius is Userspace.

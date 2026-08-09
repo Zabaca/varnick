@@ -8,6 +8,7 @@ import {
   MEASURED_SYSTEM_READ_PATHS,
   SANDBOX_BASELINE_FILENAME,
   claudeScratchDirFor,
+  CLAUDE_CWD_MARKER_GLOB,
   SANDBOX_POLICY_FILENAME,
   UNREADABLE_BINARIES,
   describeSandboxPolicy,
@@ -142,7 +143,12 @@ describe('what the policy denies', () => {
       per-user subdirectory of it, which is the same kind of access `TMP` above
       already grants. A future edit that reaches for the parent fails here.
     */
-    expect(policy().filesystem.allowWrite).toEqual([CLONE, TMP, claudeScratchDirFor(process.getuid?.() ?? 0)])
+    expect(policy().filesystem.allowWrite).toEqual([
+      CLONE,
+      TMP,
+      claudeScratchDirFor(process.getuid?.() ?? 0),
+      CLAUDE_CWD_MARKER_GLOB,
+    ])
   })
 
   test('the scratch grant is the subdirectory, never the whole of /tmp', () => {

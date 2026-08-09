@@ -1106,6 +1106,23 @@ test.skipIf(blocked !== null)(
 
       // The grant: without this the agent cannot run a single command.
       expect(allowed.code).toBe(0)
+
+      /*
+        And the marker file beside it, which is a separate grant and was a
+        separate defect. With the directory allowed, Bash ran and every command
+        still reported failure — `zsh:1: operation not permitted:
+        /tmp/claude-eaa4-cwd` — because Claude Code records the working directory
+        into a file directly in /tmp after each command. The command works and
+        its output is right, so it reads as a flaky tool rather than a boundary:
+        what the agent sees is the blocked write's exit code.
+      */
+      const marker = await run(`touch ${JSON.stringify(`/private/tmp/claude-probe${process.pid}-cwd`)}`)
+      const sibling = await run(`touch ${JSON.stringify(`/private/tmp/claude-probe${process.pid}-evil`)}`)
+      expect(marker.code).toBe(0)
+      // The glob is the narrowest shape that works, and this is what makes that
+      // a measurement rather than a claim.
+      expect(sibling.code).not.toBe(0)
+      rmSync(`/private/tmp/claude-probe${process.pid}-cwd`, { force: true })
       // And its limit: the parent stays refused.
       expect(parent.code).not.toBe(0)
       expect(existsSync(`/private/tmp/varnick-probe-${process.pid}`)).toBe(false)
