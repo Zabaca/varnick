@@ -35,16 +35,44 @@ Six tickets, 45–50. The graph:
 50  the diff view, Fence hunks distinct                  blocked by 49 ◄───────┘
 ```
 
+## Merged
+
+**45, 47, 46, 49** — in that order, full suite between each, four worktrees reaped. Suite after 49:
+
+- `bun test packages` — **546 tests, 1 skip, 0 fail**, 1508 expect() calls, 18 files
+- `bun run drive` — **537 assertions**
+- `cargo test --lib` — **110 passed**
+
 ## In flight
 
-Round one, four worktree agents, branched from `884bc4d`:
+- **48** on `ticket/48-launch-preview` — unblocked by 46
+- **50** on `ticket/50-diff-view` — unblocked by 49
 
-- **45** on `ticket/45-sandbox-policy`
-- **46** on `ticket/46-port-and-reload`
-- **47** on `ticket/47-nested-sandbox-probe`
-- **49** on `ticket/49-worktree-changes`
+When each returns: read the diff, run the full suite, merge, re-run, mark done, reap.
 
-When each returns: read the diff, run the full suite, merge in dependency order, re-run the suite, mark the ticket done, reap the worktree. Then fan out 48 (once 46 lands) and 50 (once 49 lands).
+## Owed before this is closed out
+
+**Ticket 46's first acceptance box is deliberately unticked.** Two Tauri *windows* is not observable headlessly and the subagent was told not to try. What was measured: two frontends coexisting on 1420 and 1421, and `tauri dev --config` reaching `build > devUrl`. That two Tauri *hosts* then coexist is inference.
+
+Verify it once at close-out rather than now — a `tauri dev` build contends with the in-flight agents for `CARGO_TARGET_DIR`, and it is one check either way:
+
+```
+bun run dev:app --port 1421     # beside a varnick already holding 1420
+```
+
+## Findings carried out of review, already fixed
+
+- `scripts/**` was writable while the `package.json` that invokes it was denied. Same shape as `.git/hooks` without `.git/config`; now denied.
+- `.git/config` → `.git/config*`, so the lock goes with the file.
+- `sandbox.ts` held a literal NUL byte, so git treated the Fence's own generator as **binary and showed no diff for it**. Replaced with an escape.
+- ADR-0003 and ticket 25 both claimed `allowLocalBinding` stays `false`; corrected in place, not deleted.
+- `CLAUDE.md` still named Clone, Collect and Escalation, and listed an incomplete `denyWrite`.
+
+## Open, not fixed
+
+**Fence is defined in four places, not one.** `FENCE_PATHS` in `packages/harness/src/fence.ts` is the single list for the three consumers, and `fence.test.ts` asserts every entry appears in the generated `denyWrite` — so the two readings fail a test if they drift. `sandbox.ts` was deliberately *not* refactored to consume it: that is policy generation, and rewriting it to remove a duplication risks the fence. If the literal single list is wanted, it is its own careful ticket.
+
+**`sandbox-policy.json` is on `denyWrite` but is not Fence** under the wording in ADR-0014 and `CONTEXT.md` — the generator and the baseline are, the generated output is not. It reads surprising and it is harmless for the dialog, because the file is gitignored and can never appear in a worktree diff.
 
 ## Things that will bite
 
