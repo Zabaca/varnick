@@ -4,7 +4,7 @@
 
 **Blocked by:** 24. It owns the setup screen and the write path; this adds a second way to fill the same field.
 
-**Status:** fixed.
+**Status:** ready-for-human — built, merged and green on all seven commands. The one box left needs a browser and a person; see the foot of this file.
 
 ## Read this before running anything
 

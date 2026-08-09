@@ -46,7 +46,7 @@ The spawn asks the store what to inject and is told a name as well as a value. `
 - [x] `credential.present` carries the kind into Core, and nothing carries the value — `HarnessContext.credentialKind`, assigned from the reading and cleared on a failed read. `readCredential` narrows the host's answer to `{ source, kind }` and refuses a kind it does not recognise rather than defaulting one.
 - [x] The first-run message names both ways to supply a credential, and names `claude setup-token` for the subscription one
 - [x] `cargo test` and `cargo build` both run — 74 tests pass and the build is clean, no warnings
-- [ ] **One measurement, recorded in this ticket:** an agent started under a subscription token that answers a Turn. Nothing else proves this works, and ADR-0011 exists because a previous feature was verified in a configuration the product does not ship
+- [x] **One measurement, recorded in this ticket:** an agent started under a subscription token that answers a Turn. Nothing else proves this works, and ADR-0011 exists because a previous feature was verified in a configuration the product does not ship
 
 ## The measurement, and how to take it
 
@@ -87,3 +87,18 @@ out of the agent's environment by the `CLAUDE` prefix rule, and
 `VARNICK_OWNED_VARIABLES` in `packages/harness/src/agent.ts` is where to look.
 
 Closes the decision half of ticket 19. Relates to stories 11–15.
+
+
+## The measurement, taken
+
+A token minted with `claude setup-token`, stored as `varnick`/`claude-oauth-token`, and used to drive containment probe 6 — the only test that opens a real Session. The agent authenticated, started, and called every tool:
+
+```
+how the Session ended              ok — subtype success
+Read / Grep / Glob  outside        denied
+Read / Grep / Glob  inside         permitted
+```
+
+Recorded in `packages/harness/probe-attestation.json`, which is committed, so the claim is a property of the repository rather than of a terminal that scrolled away.
+
+**What this is and is not.** It is an agent authenticating under a subscription and doing work, which is what ADR-0011 asked for and what nothing had shown. It is not a prompt typed into the window and an answer streaming back — no Turn has been driven through the chat surface by a person. That is tickets 23, 24 and 27's remaining boxes, and it stays unticked here rather than being folded in.
