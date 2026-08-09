@@ -270,7 +270,10 @@ function CardBody({
   linked: boolean
   onReset: () => void
 }) {
-  const machine = useMemo(() => frozenHarness(scenario.surfaceOutcome), [scenario.surfaceOutcome])
+  const machine = useMemo(
+    () => frozenHarness(scenario.surfaceOutcome, scenario.diffOutcome),
+    [scenario.surfaceOutcome, scenario.diffOutcome],
+  )
   const [snapshot, send] = useMachine(machine, { input: scenario.input })
 
   // Discovery is an event, not an input — a Surface arrives when the filesystem
@@ -281,8 +284,17 @@ function CardBody({
     if (surfaces) send({ type: 'DISCOVER_SURFACES', descriptors: [...surfaces] })
   }, [surfaces, send])
 
+  // And a diff arrives when a developer opens a row, for the same reason: it is
+  // an event rather than something a Harness is created with. drive.ts sends
+  // this one from the same field too.
+  const opensWorktree = scenario.opensWorktree
+  useEffect(() => {
+    if (opensWorktree) send({ type: 'OPEN_WORKTREE', path: opensWorktree })
+  }, [opensWorktree, send])
+
   const session = snapshot.context.session
-  useChildRevision(session ? [session] : [])
+  const diff = snapshot.context.worktreeDiff
+  useChildRevision([...(session ? [session] : []), ...(diff ? [diff] : [])])
 
   const now = liveState(snapshot, session)
   const initial = useRef(now)

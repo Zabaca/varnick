@@ -20,6 +20,7 @@ interface Recorded {
   secretNameReads: number
   worktreeListings: number
   fenceDiffs: string[]
+  diffReads: string[]
 }
 
 function capabilities(
@@ -32,6 +33,7 @@ function capabilities(
     secretNameReads: 0,
     worktreeListings: 0,
     fenceDiffs: [],
+    diffReads: [],
   }
   return {
     recorded,
@@ -62,6 +64,10 @@ function capabilities(
     },
     readFenceDiff: async (worktree) => {
       recorded.fenceDiffs.push(worktree)
+      return ''
+    },
+    readWorktreeDiff: async (path) => {
+      recorded.diffReads.push(path)
       return ''
     },
     ...overrides,
@@ -544,6 +550,77 @@ describe('read-fence-diff answers with hunks and takes a path it was given', () 
       expect(answer.ok).toBeUndefined()
       expect(answer.error).toBeTypeOf('string')
     }
+  })
+})
+
+/*
+  The hunks of the one worktree a developer opened.
+
+  The only call on the review path carrying a field, so the tests here are about
+  the field: that it reaches the capability unchanged, that a request without one
+  is refused rather than guessed at, and that a capability which refused the path
+  refuses the call. Which paths are *allowed* is worktrees.ts's assertion — this
+  is the wire.
+*/
+describe('read-worktree-diff answers with the hunks git printed', () => {
+  const opened = '/Users/dev/code/varnick/.claude/worktrees/49'
+  const hunks = 'diff --git a/x b/x\n@@ -1 +1 @@\n-was\n+is\n'
+
+  test('the diff comes back, for the worktree that was asked about', async () => {
+    const asked: string[] = []
+    const answer = await reply(
+      call(1, { kind: 'read-worktree-diff', path: opened }),
+      capabilities({
+        readWorktreeDiff: async (path) => {
+          asked.push(path)
+          return hunks
+        },
+      }),
+    )
+    expect(answer.ok).toEqual({ diff: hunks })
+    // The path crosses unchanged. Which paths may be opened is decided against
+    // git's own listing one layer down, and asserted in worktrees.test.ts.
+    expect(asked).toEqual([opened])
+  })
+
+  test('a request naming no worktree is refused rather than answered about some other one', async () => {
+    const caps = capabilities()
+    const answer = await reply(call(1, { kind: 'read-worktree-diff' }), caps)
+    expect(answer.ok).toBeUndefined()
+    expect(answer.error).toBeTypeOf('string')
+    expect(caps.recorded.diffReads).toEqual([])
+  })
+
+  test('a path that is not a pending worktree is the capability’s refusal, carried through', async () => {
+    const answer = await reply(
+      call(1, { kind: 'read-worktree-diff', path: '/somewhere/else' }),
+      capabilities({
+        readWorktreeDiff: async () => {
+          throw new Error('/somewhere/else is not a worktree with unmerged commits')
+        },
+      }),
+    )
+    expect(answer.ok).toBeUndefined()
+    expect(answer.error).toContain('not a worktree')
+  })
+
+  test('an empty diff is an answer rather than a refusal', async () => {
+    const answer = await reply(call(1, { kind: 'read-worktree-diff', path: opened }))
+    expect(answer.ok).toEqual({ diff: '' })
+  })
+
+  test('a diff with a newline in every line still crosses as one line', async () => {
+    // The framing this pipe rests on, exercised by the one call whose payload is
+    // guaranteed to be full of newlines. `serde_json` and `JSON.stringify` both
+    // escape them; that is what makes "one call per line" a framing rather than
+    // a hope, and a diff is where it would first stop being true.
+    const raw = await answerHarnessLine(
+      call(1, { kind: 'read-worktree-diff', path: opened }),
+      capabilities({ readWorktreeDiff: async () => hunks }),
+    )
+    expect(raw.endsWith('\n')).toBe(true)
+    expect(raw.slice(0, -1)).not.toContain('\n')
+    expect(JSON.parse(raw)).toMatchObject({ id: 1, ok: { diff: hunks } })
   })
 })
 

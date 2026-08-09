@@ -167,8 +167,16 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // it that belongs on this side — and it must never be answered by
         // anything the agent writes, because the list is what shows what the
         // agent changed. See packages/harness/src/worktrees.ts.
+        //
+        // `read-worktree-diff` is the hunks behind one row of that list, and it
+        // is here for those reasons and one of its own. It is the only call on
+        // the review path that carries a field, and the field is a *selector*:
+        // the path is compared against git's own listing where git runs, and the
+        // ref that reaches argv is the one git printed. This host forwards it —
+        // it holds no listing to check a path against, and a validation written
+        // twice is a validation that drifts.
         "check-sandbox" | "persist-session" | "read-session" | "read-commands"
-        | "list-worktrees" => Some(Route::Runtime),
+        | "list-worktrees" | "read-worktree-diff" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
         // capability the renderer has.
@@ -856,6 +864,35 @@ mod tests {
           shade.
         */
         assert_eq!(route_of("list-worktrees"), Some(Route::Runtime));
+    }
+
+    #[test]
+    fn the_diff_of_one_worktree_is_read_by_the_runtime_too() {
+        /*
+          The hunks behind one row of that list, and the only call on the review
+          path carrying a field.
+
+          It is the runtime's for the same reasons the list is — a subprocess and
+          a filesystem, no credential — and it must not be answered by anything
+          the agent writes for a sharper version of the same reason: a listing
+          the agent could shade hides a branch, and a diff the agent could shade
+          hides a widening inside a branch somebody is about to merge.
+
+          What the field can name is decided where git runs, in
+          packages/harness/src/worktrees.ts: the path is compared against git's
+          own listing and the ref that reaches argv is the one git printed. This
+          host forwards; it does not validate a path it has no listing to check
+          against.
+        */
+        assert_eq!(route_of("read-worktree-diff"), Some(Route::Runtime));
+    }
+
+    #[test]
+    fn a_worktree_diff_is_never_answered_where_the_credential_is() {
+        // The other direction, stated on its own: this call is not the Host's.
+        // Answering it here would put a git subprocess in the process holding
+        // the credential, for a question that needs neither.
+        assert_ne!(route_of("read-worktree-diff"), Some(Route::Host));
     }
 
     #[test]

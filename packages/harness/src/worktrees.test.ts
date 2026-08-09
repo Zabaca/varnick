@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { listPendingWorktrees, parseWorktreeList, type GitRunner } from './worktrees.ts'
+import {
+  listPendingWorktrees,
+  parseWorktreeList,
+  readPendingWorktreeDiff,
+  type GitRunner,
+} from './worktrees.ts'
 
 /*
   The seam: what git said, turned into what varnick knows.
@@ -268,5 +273,168 @@ describe('what an entry carries, and what it deliberately does not', () => {
 
     const [entry] = await listPendingWorktrees({ git, cloneRoot: CLONE })
     expect(entry?.changed).toEqual([])
+  })
+})
+
+/*
+  The hunks, for the one worktree a developer opened.
+
+  The summary above is what a list is read for; this is what is read after
+  choosing one. Everything in this block is about the same property, stated two
+  ways: the diff is git's, and the only thing the caller decides is *which* of
+  the worktrees git already reported it wants. A path is compared against that
+  listing and is never an argument — so there is no version of this where a name
+  the renderer composed selects what git is asked about.
+*/
+describe('the diff of one pending worktree', () => {
+  const HUNKS = [
+    'diff --git a/src-tauri/src/bridge.rs b/src-tauri/src/bridge.rs',
+    '@@ -1,2 +1,2 @@',
+    '-let denied = false;',
+    '+let denied = true;',
+    '',
+  ].join('\n')
+
+  const opened = (name: string) => `${CLONE}/.claude/worktrees/${name}`
+
+  test("is git's own, for the ref git itself named", async () => {
+    const { git } = fakeGit({
+      'worktree list --porcelain': listing(main, linked('48')),
+      'rev-list --count HEAD..refs/heads/ticket/48': '1\n',
+      'diff --no-color HEAD...refs/heads/ticket/48': HUNKS,
+    })
+
+    expect(await readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') })).toBe(HUNKS)
+  })
+
+  test('the three dots are the branch since it diverged, not two trees compared', async () => {
+    /*
+      The same range the name list uses, and it has to be: a worktree branched a
+      week ago is not responsible for what the live tree did in the meantime, and
+      a two-dot diff would show the developer their own merged work as though
+      the agent had proposed it.
+    */
+    const { git, asked } = fakeGit({
+      'worktree list --porcelain': listing(main, linked('48')),
+      'rev-list --count HEAD..refs/heads/ticket/48': '1\n',
+      'diff --no-color HEAD...refs/heads/ticket/48': HUNKS,
+    })
+
+    await readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') })
+    expect(asked.some((args) => args.includes('HEAD...refs/heads/ticket/48'))).toBe(true)
+    expect(asked.some((args) => args.includes('HEAD..refs/heads/ticket/48'))).toBe(true)
+  })
+
+  test('a path nobody listed is refused, and never reaches git', async () => {
+    /*
+      The refusal that matters. This is the one call on the review path that
+      takes an argument from the renderer, so the argument is a *selector*
+      against git's own listing rather than something git is handed. A path that
+      matches no entry produces no diff command at all — which is what makes
+      `../../..`, a sibling clone, or anything else composed elsewhere unable to
+      choose what is read.
+    */
+    const invented = '/Users/dev/code/other-project'
+    const { git, asked } = fakeGit({ 'worktree list --porcelain': listing(main, linked('48')) })
+
+    await expect(
+      readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: invented }),
+    ).rejects.toThrow(/not a worktree/i)
+
+    for (const args of asked) {
+      for (const arg of args) expect(arg).not.toContain(invented)
+    }
+  })
+
+  test('the main worktree cannot be opened, because it is what everything is measured against', async () => {
+    const { git } = fakeGit({ 'worktree list --porcelain': listing(main, linked('48')) })
+    await expect(readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: CLONE })).rejects.toThrow(
+      /not a worktree/i,
+    )
+  })
+
+  test('and neither can the tree varnick is running from', async () => {
+    // A Preview runs from a worktree. Opening its own tree would be varnick
+    // offering to review the code it is running.
+    const preview = opened('48')
+    const { git } = fakeGit({ 'worktree list --porcelain': listing(main, linked('48')) })
+    await expect(
+      readPendingWorktreeDiff({ git, cloneRoot: preview, path: preview }),
+    ).rejects.toThrow(/not a worktree/i)
+  })
+
+  test('a worktree with no commits yet has no diff to open', async () => {
+    // The same rule the list follows: an agent that has started is not an agent
+    // that has finished, and it is left out rather than opened onto nothing.
+    const { git, asked } = fakeGit({
+      'worktree list --porcelain': listing(main, linked('48')),
+      'rev-list --count HEAD..refs/heads/ticket/48': '0\n',
+    })
+
+    await expect(
+      readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') }),
+    ).rejects.toThrow(/not a worktree/i)
+    expect(asked.some((args) => args[0] === 'diff')).toBe(false)
+  })
+
+  test('a git that fails rejects, carrying what it said', async () => {
+    const git: GitRunner = async () => {
+      throw new Error('fatal: bad revision')
+    }
+    await expect(
+      readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') }),
+    ).rejects.toThrow('fatal: bad revision')
+  })
+
+  test('every command asked of git only reads', async () => {
+    const { git, asked } = fakeGit({
+      'worktree list --porcelain': listing(main, linked('48')),
+      'rev-list --count HEAD..refs/heads/ticket/48': '1\n',
+      'diff --no-color HEAD...refs/heads/ticket/48': HUNKS,
+    })
+
+    await readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') })
+    expect(asked.length).toBeGreaterThan(0)
+    for (const args of asked) {
+      expect(['worktree', 'rev-list', 'diff']).toContain(args[0] ?? '')
+    }
+  })
+
+  test('colour is refused, so what crosses is text rather than terminal escapes', async () => {
+    // `color.ui = always` in a developer's own config would otherwise put ANSI
+    // sequences through the bridge and into a renderer that draws its own
+    // colours — and the one colour in that view means Fence.
+    const { git, asked } = fakeGit({
+      'worktree list --porcelain': listing(main, linked('48')),
+      'rev-list --count HEAD..refs/heads/ticket/48': '1\n',
+      'diff --no-color HEAD...refs/heads/ticket/48': HUNKS,
+    })
+
+    await readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') })
+    expect(asked.find((args) => args[0] === 'diff')).toContain('--no-color')
+  })
+
+  test('a detached worktree is opened by the commit it is on', async () => {
+    const head = '3333333333333333333333333333333333333333'
+    const { git } = fakeGit({
+      'worktree list --porcelain': listing(main, `worktree /w/detached\nHEAD ${head}\ndetached`),
+      [`rev-list --count HEAD..${head}`]: '1\n',
+      [`diff --no-color HEAD...${head}`]: HUNKS,
+    })
+
+    expect(await readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: '/w/detached' })).toBe(HUNKS)
+  })
+
+  test('a diff with nothing in it is an empty diff, not a refusal', async () => {
+    // A branch that is ahead by a commit that changed nothing tracked. Rare and
+    // real; the surface says the file list is empty rather than that the read
+    // failed.
+    const { git } = fakeGit({
+      'worktree list --porcelain': listing(main, linked('48')),
+      'rev-list --count HEAD..refs/heads/ticket/48': '1\n',
+      'diff --no-color HEAD...refs/heads/ticket/48': '',
+    })
+
+    expect(await readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') })).toBe('')
   })
 })

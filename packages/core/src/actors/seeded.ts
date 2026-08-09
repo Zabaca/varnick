@@ -9,7 +9,7 @@ import type {
   PendingWorktree,
   SandboxPolicy,
 } from '../domain.ts'
-import { brokenSurfaceError } from '../data/seed.ts'
+import { brokenSurfaceError, seedWorktreeDiff } from '../data/seed.ts'
 
 /**
  * Seeded actor implementations for development.
@@ -166,6 +166,25 @@ export function seededActors() {
           },
         ],
       }
+    }),
+
+    /*
+      One branch's changes, made up like the two entries above it.
+
+      It touches the Fence and Core in the same branch, because a seeded run is
+      how this view gets designed and a diff whose files are all the same kind
+      designs nothing: the one thing the view has to do is make the Fence hunk
+      unmissable, and that is not visible in a screen with nothing to be
+      unmissable against.
+
+      The path is ignored, deliberately. A seeded run answers about whatever was
+      opened, because there is no git behind it to disagree — and the seeded
+      list has two entries, so a seed that answered only about one of them would
+      make the other row's `open` do nothing.
+    */
+    readWorktreeDiff: fromPromise<{ diff: string }, { path: string }>(async () => {
+      await wait(300)
+      return { diff: seedWorktreeDiff }
     }),
 
     // No `loadSurface`. Importing a file is not a service call, so there is

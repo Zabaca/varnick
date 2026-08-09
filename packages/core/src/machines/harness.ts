@@ -1,4 +1,4 @@
-import { setup, assign, fromPromise, type ActorRefFrom } from 'xstate'
+import { setup, assign, fromPromise, stopChild, type ActorRefFrom } from 'xstate'
 // A type and nothing else. `turn` is one of the three Harness subpaths that
 // reach no Node built-in, which is what makes it importable from Core at all —
 // see the lint rule in eslint.config.js.
@@ -13,6 +13,7 @@ import type {
   SurfaceDescriptor,
 } from '../domain.ts'
 import { surfaceMachine } from './surface.ts'
+import { worktreeDiffMachine } from './worktree-diff.ts'
 import { sessionMachine, type SessionInput } from './session.ts'
 
 /**
@@ -178,6 +179,20 @@ export interface HarnessContext {
   worktrees: readonly PendingWorktree[]
   /** Why the last listing failed, for as long as one has. */
   worktreeError: string | null
+  /**
+   * The Worktree whose changes somebody is reading, while somebody is.
+   *
+   * `null` the rest of the time, and at most one: opening a second over the
+   * first is refused by a guard rather than by a hidden control, which is what
+   * keeps the closing of the first from being something this machine has to
+   * remember to do. Closing stops the child and drops the ref together.
+   *
+   * A child rather than a fifth region, like a Surface and for the same reasons
+   * — see machines/worktree-diff.ts. It is deliberately *not* torn down by a
+   * re-listing: the list is a fact about a filesystem that changes while varnick
+   * runs, and refreshing it must not shut what somebody is reading.
+   */
+  worktreeDiff: ActorRefFrom<typeof worktreeDiffMachine> | null
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
@@ -283,6 +298,29 @@ export type HarnessEvent =
    * so a second ask cannot restart the actor answering the first.
    */
   | { type: 'LIST_WORKTREES' }
+  /**
+   * A developer opened one of the Worktrees on the list, to read what changed.
+   *
+   * `path` names **which of the entries the machine is already holding**, and
+   * the guard checks it against them: this window says which of git's own
+   * answers it wants, and does not get to say what the answer should be about.
+   * The host checks again against git, and neither check is the other's excuse —
+   * this one is what stops the surface offering to open something that was never
+   * on it. See packages/harness/src/worktrees.ts.
+   *
+   * Accepted only in `review.listed`, because that is the only state with rows
+   * in it, and only while nothing else is open.
+   */
+  | { type: 'OPEN_WORKTREE'; path: string }
+  /**
+   * Done reading. Named for what the developer did, like every other event here.
+   *
+   * At the root rather than in the `review` region, because what it closes is
+   * not part of that region's state: the list can be re-read, fail, and empty
+   * while a diff stays open, and a close that lived inside `listed` would be
+   * refused in exactly those moments.
+   */
+  | { type: 'CLOSE_WORKTREE' }
 
 /**
  * Real-service contracts:
@@ -323,6 +361,7 @@ export const harnessMachine = setup({
   },
   actors: {
     surface: surfaceMachine,
+    worktreeDiff: worktreeDiffMachine,
     session: sessionMachine,
     checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(async () => ({
       ok: true,
@@ -418,6 +457,19 @@ export const harnessMachine = setup({
     nothingPending: ({ event }) =>
       'output' in event &&
       (event.output as { worktrees: readonly PendingWorktree[] }).worktrees.length === 0,
+    /*
+      A Worktree this machine is holding, and nothing already open.
+
+      Two questions in one guard because they answer the same control: the row's
+      `open` appears when the machine would accept opening *that* row, which is
+      false for a path nobody listed and false for every row while one is open.
+      Both are the affordance rather than a rule the view has to remember.
+    */
+    openable: ({ context, event }) =>
+      event.type === 'OPEN_WORKTREE' &&
+      context.worktreeDiff === null &&
+      context.worktrees.some((entry) => entry.path === event.path),
+    somethingOpen: ({ context }) => context.worktreeDiff !== null,
   },
   actions: {
     recordRefusal: assign({
@@ -452,6 +504,7 @@ export const harnessMachine = setup({
     sessionInput: input.sessionInput ?? { sessionId: LIVE_SESSION_ID },
     worktrees: input.worktrees ?? [],
     worktreeError: input.worktreeError ?? null,
+    worktreeDiff: null,
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
@@ -505,6 +558,22 @@ export const harnessMachine = setup({
     // Turn, so it can arrive when the `agent` region has no opinion about it.
     COMMANDS_REPORTED: {
       actions: assign({ commands: ({ event }) => event.commands }),
+    },
+    /*
+      Done reading a diff, wherever the listing has got to since it was opened.
+
+      At the root rather than in `review`, because the two are not the same
+      subject: the list can be re-read, fail and empty while somebody reads a
+      branch, and a close scoped to `listed` would be refused in exactly those
+      moments — a view somebody could not get out of.
+
+      The child is stopped and the ref dropped in one action. Dropping alone
+      would leave an actor running with nothing pointing at it, which is the
+      leak `UNLOAD_SURFACE` avoids by never sending the child's own event.
+    */
+    CLOSE_WORKTREE: {
+      guard: 'somethingOpen',
+      actions: [stopChild(({ context }) => context.worktreeDiff!), assign({ worktreeDiff: null })],
     },
   },
   states: {
@@ -857,8 +926,10 @@ export const harnessMachine = setup({
       The hunks are deliberately not carried: a list that read every diff of
       every branch before drawing a row would spend the whole of a large branch
       to show a row that says which branch it is, and this list is what a
-      developer reads to *choose* the branch whose diff they want. The diff view
-      fetches the contents of the one they opened. Path names are carried
+      developer reads to *choose* the branch whose diff they want.
+      `OPEN_WORKTREE` spawns the child that fetches the contents of the one they
+      opened — see machines/worktree-diff.ts, and `worktreeDiff` in context for
+      why it is a child rather than a fifth region. Path names are carried
       because they are cheap and because they are what makes the Fence flag
       auditable — a row claiming Fence with no path that is one is a row nobody
       can check.
@@ -919,7 +990,37 @@ export const harnessMachine = setup({
         // Three resting states, each with the same way out. None is terminal:
         // the filesystem changes while varnick runs — an agent finishes a
         // branch, a developer merges one — so any of them can be asked again.
-        listed: { on: { LIST_WORKTREES: 'listing' } },
+        listed: {
+          on: {
+            LIST_WORKTREES: 'listing',
+            /*
+              The one state with rows in it, and therefore the only one where
+              opening means anything.
+
+              An internal transition: reading a branch is not a state of the
+              listing, and moving the region would say the list had stopped
+              being listed because somebody looked at one of its rows.
+            */
+            OPEN_WORKTREE: {
+              guard: 'openable',
+              actions: assign({
+                worktreeDiff: ({ context, event, spawn }) => {
+                  // From the machine's own list rather than from the event: the
+                  // guard has already established it is there, and taking the
+                  // entry from git's answer is what keeps the branch and the
+                  // count above the hunks the same facts the row showed.
+                  const worktree = context.worktrees.find((entry) => entry.path === event.path)
+                  if (worktree === undefined) return context.worktreeDiff
+                  return spawn('worktreeDiff', {
+                    id: 'worktree-diff',
+                    syncSnapshot: true,
+                    input: { worktree },
+                  })
+                },
+              }),
+            },
+          },
+        },
         empty: { on: { LIST_WORKTREES: 'listing' } },
         listFailed: { on: { LIST_WORKTREES: 'listing' } },
       },

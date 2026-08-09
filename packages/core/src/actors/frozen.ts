@@ -2,6 +2,7 @@ import { fromPromise } from 'xstate'
 import { harnessMachine } from '../machines/harness.ts'
 import { sessionMachine } from '../machines/session.ts'
 import { surfaceMachine } from '../machines/surface.ts'
+import { worktreeDiffMachine } from '../machines/worktree-diff.ts'
 import type { PastedImage } from '@varnick/harness/turn'
 import type {
   CredentialKind,
@@ -12,7 +13,7 @@ import type {
   PendingWorktree,
   SandboxPolicy,
 } from '../domain.ts'
-import { brokenSurfaceErrorFor } from '../data/seed.ts'
+import { brokenSurfaceErrorFor, seedWorktreeDiff, seedWorktreeDiffError } from '../data/seed.ts'
 
 /**
  * The Harness, frozen.
@@ -55,7 +56,21 @@ const HELD = 24 * 60 * 60 * 1000
  */
 export type SurfaceOutcome = 'holds' | 'loads' | 'fails'
 
-export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
+/**
+ * And what the frozen diff reader does with the Worktree a card opens.
+ *
+ * The same three, for the same reason: `loading` is a card frozen the way every
+ * other card is frozen, and `loaded` and `failed` are states a diff can only be
+ * in because a read finished. The alternative — an entry point routing a card
+ * straight into `loaded` — would be a card showing a state nothing produced,
+ * with a diff in it that no read returned.
+ */
+export type DiffOutcome = 'holds' | 'loads' | 'fails'
+
+export function frozenHarness(
+  surfaceOutcome: SurfaceOutcome = 'holds',
+  diffOutcome: DiffOutcome = 'holds',
+) {
   return harnessMachine.provide({
     actors: {
       checkSandbox: never<{ ok: true }, { policy: SandboxPolicy }>(),
@@ -67,6 +82,15 @@ export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
       // — the state every card whose scenario names no other one is in, because
       // the region starts in flight rather than at rest.
       listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(),
+      worktreeDiff: worktreeDiffMachine.provide({
+        actors: {
+          readWorktreeDiff: fromPromise<{ diff: string }, { path: string }>(() => {
+            if (diffOutcome === 'holds') return new Promise<{ diff: string }>(() => {})
+            if (diffOutcome === 'fails') return Promise.reject(new Error(seedWorktreeDiffError))
+            return Promise.resolve({ diff: seedWorktreeDiff })
+          }),
+        },
+      }),
       surface: surfaceMachine.provide({
         actors: {
           loadSurface: fromPromise<{ ok: true }, { modulePath: string }>(({ input }) => {

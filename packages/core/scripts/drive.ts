@@ -20,6 +20,11 @@ import {
   SURFACE_UNCARDED_STATE_PATHS,
 } from '../src/machines/surface.ts'
 import {
+  worktreeDiffMachine,
+  WORKTREE_DIFF_STATE_PATHS,
+} from '../src/machines/worktree-diff.ts'
+import { parseDiff } from '../src/diff.ts'
+import {
   regionOf,
   canStartAgent,
   compactedTranscript,
@@ -1817,6 +1822,7 @@ export default function Billing() {
     readCommands: unreached,
     listWorktrees: unreached,
     readFenceDiff: unreached,
+    readWorktreeDiff: unreached,
     readSecretNames: async () => {
       await secrets.reload()
       return secrets.names()
@@ -2304,6 +2310,539 @@ export default function Billing() {
 }
 
 // ---------------------------------------------------------------------------
+// The diff of one Worktree — what git printed, read as what changed
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The parser between git and the screen.
+
+    Pure, and here rather than in a component for the reason ADR-0001 gives for
+    everything else on this surface: a rule inside a `.tsx` is a rule this script
+    cannot reach, and this is the rule that decides whether a Fence hunk is drawn
+    as one. It is the same arrangement `markdown.ts` has beside it.
+
+    What is asserted is what a reviewer's eye depends on: that every hunk git
+    printed becomes a hunk, that a path is classified by the Harness's one
+    definition of Fence rather than by a second list written here, and that
+    nothing on the way through can quietly drop a file.
+  */
+  const diff = [
+    'diff --git a/packages/core/src/App.tsx b/packages/core/src/App.tsx',
+    'index 1111111..2222222 100644',
+    '--- a/packages/core/src/App.tsx',
+    '+++ b/packages/core/src/App.tsx',
+    '@@ -12,7 +12,7 @@ export function App() {',
+    ' const route = routeOf(hash)',
+    '-  return <DesignedPage />',
+    '+  return <DesignedPage wide />',
+    ' }',
+    'diff --git a/src-tauri/src/bridge.rs b/src-tauri/src/bridge.rs',
+    'index 3333333..4444444 100644',
+    '--- a/src-tauri/src/bridge.rs',
+    '+++ b/src-tauri/src/bridge.rs',
+    '@@ -164,6 +164,7 @@ pub fn route_of(kind: &str) -> Option<Route> {',
+    '         | "list-worktrees" => Some(Route::Runtime),',
+    '+        "read-anything" => Some(Route::Runtime),',
+    '@@ -900,3 +901,4 @@ mod tests {',
+    '+    // and a second hunk in the same file',
+    '',
+  ].join('\n')
+
+  const files = parseDiff(diff)
+
+  check('every file git named is a file', files.length === 2)
+  check(
+    'and it is named as git names it, repository-relative',
+    files.map((file) => file.path).join('|') === 'packages/core/src/App.tsx|src-tauri/src/bridge.rs',
+  )
+  check('a file with two hunks keeps both', files[1]?.hunks.length === 2)
+  check('and one with a single hunk keeps one', files[0]?.hunks.length === 1)
+
+  /*
+    The one visual requirement, decided here.
+
+    `isFencePath` is the Harness's, imported rather than restated: three
+    mechanisms key off that list — the pending list's flag, the Preview dialog,
+    and this — and a fourth glob written here would drift from the other three
+    invisibly. Each caller goes on working, and the one that fell behind stops
+    marking a file the others still mark.
+  */
+  check('a path that decides what the agent may do is Fence', files[1]?.fence === true)
+  check('and Core that does not is not', files[0]?.fence === false)
+
+  const hunk = files[1]?.hunks[0]
+  check(
+    'the hunk keeps its @@ header, as git wrote it',
+    hunk?.header.startsWith('@@ -164,6 +164,7 @@') === true,
+  )
+  check(
+    'a line says which of the three it is',
+    hunk?.lines.map((line) => line.kind).join('|') === 'context|add',
+  )
+  check(
+    'and its text is the line without the marker, so the view draws the marker',
+    hunk?.lines[1]?.text === '        "read-anything" => Some(Route::Runtime),',
+  )
+
+  {
+    // A removal is a line, not an absence. The `-` half of a hunk is most of
+    // what a reviewer is reading — what is being taken out.
+    const removed = files[0]?.hunks[0]?.lines.filter((line) => line.kind === 'remove') ?? []
+    check('a removed line survives as a removed line', removed.length === 1)
+    check('carrying what was removed', removed[0]?.text === '  return <DesignedPage />')
+  }
+
+  // Nothing at all is no files. `worktreeDiff.loaded` with an empty diff is a
+  // branch that changed nothing tracked, which is a real answer — the view says
+  // so rather than showing an empty frame.
+  check('an empty diff is no files', parseDiff('').length === 0)
+  check('and so is whitespace', parseDiff('\n\n').length === 0)
+
+  {
+    // A file with no hunks git can print still has to appear. A binary blob
+    // added under src-tauri is a Fence change, and it is exactly the change a
+    // hunk-only renderer would leave off the screen entirely.
+    const binary = parseDiff(
+      [
+        'diff --git a/src-tauri/icons/icon.png b/src-tauri/icons/icon.png',
+        'new file mode 100644',
+        'Binary files /dev/null and b/src-tauri/icons/icon.png differ',
+        '',
+      ].join('\n'),
+    )
+    check('a binary file is still a file', binary.length === 1)
+    check('marked Fence when it is one', binary[0]?.fence === true)
+    check(
+      'with no hunks and a reason there are none',
+      binary[0]?.hunks.length === 0 && binary[0]?.note === 'binary',
+    )
+  }
+
+  {
+    // A deletion has no `+++ b/…` to take a name from, and a file that lost its
+    // name would be a file nobody could see was deleted.
+    const deleted = parseDiff(
+      [
+        'diff --git a/packages/harness/src/old.ts b/packages/harness/src/old.ts',
+        'deleted file mode 100644',
+        '--- a/packages/harness/src/old.ts',
+        '+++ /dev/null',
+        '@@ -1,2 +0,0 @@',
+        '-export const gone = true',
+        '',
+      ].join('\n'),
+    )
+    check('a deleted file keeps the name it had', deleted[0]?.path === 'packages/harness/src/old.ts')
+    check('and says it was deleted', deleted[0]?.note === 'deleted')
+    check('and is Fence, because that is where it was', deleted[0]?.fence === true)
+  }
+
+  {
+    /*
+      A rename out of the Fence is a Fence change, and the path it arrives at is
+      not one.
+
+      The case a new-path-only classification gets wrong in the direction that
+      matters: moving `sandbox.ts` into `packages/core/` is an edit to what
+      decides the boundary, rendered as an ordinary Core change.
+    */
+    const moved = parseDiff(
+      [
+        'diff --git a/packages/harness/src/sandbox.ts b/packages/core/src/sandbox.ts',
+        'similarity index 98%',
+        'rename from packages/harness/src/sandbox.ts',
+        'rename to packages/core/src/sandbox.ts',
+        '',
+      ].join('\n'),
+    )
+    check(
+      'a renamed file is named where it landed',
+      moved[0]?.path === 'packages/core/src/sandbox.ts',
+    )
+    check(
+      'and says where it came from',
+      moved[0]?.note === 'renamed from packages/harness/src/sandbox.ts',
+    )
+    check('a move out of the Fence is still a Fence change', moved[0]?.fence === true)
+  }
+
+  {
+    // The `diff --git` line is the only place a path can be read when git
+    // printed no `---`/`+++` pair — a pure mode change does not.
+    const mode = parseDiff(
+      [
+        'diff --git a/src-tauri/build.rs b/src-tauri/build.rs',
+        'old mode 100644',
+        'new mode 100755',
+        '',
+      ].join('\n'),
+    )
+    check(
+      'a file git described without a hunk is still named',
+      mode[0]?.path === 'src-tauri/build.rs',
+    )
+    check('and still Fence', mode[0]?.fence === true)
+  }
+
+  {
+    /*
+      A line that begins with `--` inside a hunk is a removed line, not a header.
+
+      The parse bug that hides a hunk: `--- a/x` is a header and `--foo` is a
+      removal, and a parser that tests only the first characters outside a hunk's
+      bounds eats the second. In a diff of this repository's own agent argv, that
+      is a removed flag disappearing from the review.
+    */
+    const tricky = parseDiff(
+      [
+        'diff --git a/src-tauri/src/agent.rs b/src-tauri/src/agent.rs',
+        '@@ -1,3 +1,3 @@',
+        '---dangerously-skip-permissions',
+        '+++safe',
+        ' end',
+        '',
+      ].join('\n'),
+    )
+    check(
+      'a removed line that looks like a header is a removed line',
+      tricky[0]?.hunks[0]?.lines.map((line) => line.kind).join('|') === 'remove|add|context',
+    )
+    check(
+      'with its text intact',
+      tricky[0]?.hunks[0]?.lines[0]?.text === '--dangerously-skip-permissions',
+    )
+  }
+
+  {
+    // `\ No newline at end of file` is git talking about the file rather than a
+    // line of it, and rendering it as context would put a line in the diff that
+    // is not in the file.
+    const noNewline = parseDiff(
+      [
+        'diff --git a/a.txt b/a.txt',
+        '@@ -1 +1 @@',
+        '-one',
+        '+two',
+        '\\ No newline at end of file',
+        '',
+      ].join('\n'),
+    )
+    check(
+      'git talking about the file is not a line of it',
+      noNewline[0]?.hunks[0]?.lines.at(-1)?.kind === 'meta',
+    )
+  }
+
+  {
+    // An empty context line arrives as an empty string rather than a space from
+    // anything that trims. It is still a line of the file.
+    const blank = parseDiff(
+      ['diff --git a/a.txt b/a.txt', '@@ -1,3 +1,3 @@', ' one', '', '+three', ''].join('\n'),
+    )
+    check('an empty line inside a hunk is context', blank[0]?.hunks[0]?.lines[1]?.kind === 'context')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The diff view — opening one Worktree, reading it, and failing to
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    A child per opened diff, like a Surface, and for the same reasons: it has
+    something to wait on, it can fail, and it must fail without disturbing
+    anything beside it.
+
+    What is asserted is the shape of the opening — that only a worktree git
+    listed can be opened, that the call carries nothing but which one, and that
+    a failure keeps a reason and a way back.
+  */
+  const fence: PendingWorktree = {
+    path: '/Users/dev/code/varnick/.claude/worktrees/48',
+    branch: 'ticket/48-launch-preview',
+    commits: 4,
+    changed: ['src-tauri/src/bridge.rs'],
+    touchesFence: true,
+  }
+  const plain: PendingWorktree = {
+    path: '/Users/dev/code/varnick/.claude/worktrees/50',
+    branch: 'ticket/50-diff-view',
+    commits: 2,
+    changed: ['packages/core/src/pages/DesignedPage.tsx'],
+    touchesFence: false,
+  }
+
+  const HUNKS =
+    'diff --git a/src-tauri/src/bridge.rs b/src-tauri/src/bridge.rs\n@@ -1 +1 @@\n-was\n+is\n'
+
+  const listed = (readWorktreeDiff: unknown) =>
+    createActor(
+      harnessMachine.provide({
+        actors: {
+          listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(),
+          worktreeDiff: worktreeDiffMachine.provide({
+            actors: { readWorktreeDiff: readWorktreeDiff as never },
+          }),
+        },
+      }),
+      { input: { policy: seedPolicy, enterReview: 'listed', worktrees: [fence, plain] } },
+    ).start()
+
+  const diffOf = (actor: ReturnType<typeof listed>) => actor.getSnapshot().context.worktreeDiff
+
+  {
+    const actor = listed(never<{ diff: string }, { path: string }>())
+    check('nothing is open until something is opened', diffOf(actor) === null)
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    check('opening a listed worktree gives it a diff of its own', diffOf(actor) !== null)
+    check(
+      'which starts by loading, because there is something to wait for',
+      String(diffOf(actor)?.getSnapshot().value) === 'loading',
+    )
+    check(
+      'and it knows which worktree it is of',
+      diffOf(actor)?.getSnapshot().context.worktree.path === fence.path,
+    )
+    actor.stop()
+  }
+
+  {
+    /*
+      A path nobody listed cannot be opened.
+
+      The renderer names which of git's own entries it wants and nothing else, so
+      the machine checks the name against the list it was given rather than
+      forwarding it. The host checks again against git — see
+      packages/harness/src/worktrees.ts — and neither check is the other's
+      excuse: this one is what stops the surface offering to open something that
+      was never on it.
+    */
+    const actor = listed(never<{ diff: string }, { path: string }>())
+    check(
+      'a worktree that is not in the listing is refused',
+      !actor.getSnapshot().can({ type: 'OPEN_WORKTREE', path: '/somewhere/else' }),
+    )
+    actor.send({ type: 'OPEN_WORKTREE', path: '/somewhere/else' })
+    check('and sending it anyway opens nothing', diffOf(actor) === null)
+    actor.stop()
+  }
+
+  {
+    // A second worktree cannot be opened over the first. One diff is open at a
+    // time, so the control to open another appears when this one is closed —
+    // `can()` answering, rather than a button being hidden.
+    const actor = listed(never<{ diff: string }, { path: string }>())
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    check(
+      'with one open, opening another is refused rather than leaking the first',
+      !actor.getSnapshot().can({ type: 'OPEN_WORKTREE', path: plain.path }),
+    )
+    check('closing is offered while one is open', actor.getSnapshot().can({ type: 'CLOSE_WORKTREE' }))
+    actor.send({ type: 'CLOSE_WORKTREE' })
+    check('closing puts the diff away', diffOf(actor) === null)
+    check('and there is nothing left to close', !actor.getSnapshot().can({ type: 'CLOSE_WORKTREE' }))
+    check(
+      'so the other one can be opened now',
+      actor.getSnapshot().can({ type: 'OPEN_WORKTREE', path: plain.path }),
+    )
+    actor.stop()
+  }
+
+  {
+    // The call carries which worktree and nothing else. There is no field for a
+    // ref, a range or a command: the host resolves the ref from git's own
+    // listing, and a second way to say it would be a second way to be wrong.
+    const asked: unknown[] = []
+    const actor = listed(
+      fromPromise<{ diff: string }, { path: string }>(async ({ input }) => {
+        asked.push(input)
+        return { diff: HUNKS }
+      }),
+    )
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    await waitFor(
+      actor,
+      (s) => String(s.context.worktreeDiff?.getSnapshot().value) === 'loaded',
+      soon,
+    )
+    check(
+      'the read names one worktree and nothing else',
+      JSON.stringify(asked) === JSON.stringify([{ path: fence.path }]),
+    )
+    check(
+      'and what came back is held as git printed it',
+      diffOf(actor)?.getSnapshot().context.diff === HUNKS,
+    )
+    actor.stop()
+  }
+
+  {
+    // A branch whose commits changed nothing tracked. `loaded` with an empty
+    // diff, never `failed`: git answered, and the answer was nothing.
+    const actor = listed(resolves<{ diff: string }, { path: string }>({ diff: '' }))
+    actor.send({ type: 'OPEN_WORKTREE', path: plain.path })
+    await waitFor(
+      actor,
+      (s) => String(s.context.worktreeDiff?.getSnapshot().value) === 'loaded',
+      soon,
+    )
+    check('an empty diff is a loaded diff', String(diffOf(actor)?.getSnapshot().value) === 'loaded')
+    check('and it is empty rather than absent', diffOf(actor)?.getSnapshot().context.diff === '')
+    actor.stop()
+  }
+
+  {
+    const actor = listed(rejects<{ diff: string }, { path: string }>('fatal: bad object HEAD'))
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    await waitFor(
+      actor,
+      (s) => String(s.context.worktreeDiff?.getSnapshot().value) === 'failed',
+      soon,
+    )
+
+    const child = diffOf(actor)!
+    check('a read that failed reaches failed', String(child.getSnapshot().value) === 'failed')
+    check('carrying what git said', child.getSnapshot().context.error === 'fatal: bad object HEAD')
+    check(
+      'a failed read offers a retry, because the state has a handler',
+      child.getSnapshot().can({ type: 'RETRY' }),
+    )
+    check('and holds no diff it cannot vouch for', child.getSnapshot().context.diff === null)
+
+    child.send({ type: 'RETRY' })
+    check('retrying loads again', String(child.getSnapshot().value) === 'loading')
+    check('and says which attempt this is', child.getSnapshot().context.attempts === 2)
+    check(
+      'with the previous reason cleared, so a second failure is not read as the first',
+      child.getSnapshot().context.error === null,
+    )
+    check('a diff still loading has nothing to retry', !child.getSnapshot().can({ type: 'RETRY' }))
+    actor.stop()
+  }
+
+  {
+    // A loaded diff has no retry, for the same reason a loaded Surface has none:
+    // the state has no handler. Nothing is hidden.
+    const actor = listed(resolves<{ diff: string }, { path: string }>({ diff: HUNKS }))
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    await waitFor(
+      actor,
+      (s) => String(s.context.worktreeDiff?.getSnapshot().value) === 'loaded',
+      soon,
+    )
+    check('a loaded diff accepts no retry', !diffOf(actor)!.getSnapshot().can({ type: 'RETRY' }))
+    actor.stop()
+  }
+
+  {
+    /*
+      A diff that failed disturbs nothing beside it.
+
+      The same isolation a Surface has, and it matters more here: a developer
+      reviewing a branch is doing it *while* an agent works, and a git that will
+      not answer must not touch the conversation, the listing, or the agent.
+    */
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          listWorktrees: resolves<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>({
+            worktrees: [fence, plain],
+          }),
+          readCredential: resolves<CredentialReading, Record<string, never>>({
+            source: 'keychain',
+            kind: 'subscription',
+          }),
+          checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+          worktreeDiff: worktreeDiffMachine.provide({
+            actors: {
+              readWorktreeDiff: rejects<{ diff: string }, { path: string }>('fatal: no git'),
+            },
+          }),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    await waitFor(
+      actor,
+      (s) => String(s.context.worktreeDiff?.getSnapshot().value) === 'failed',
+      soon,
+    )
+
+    check(
+      'the listing beside it is untouched',
+      regionOf(actor.getSnapshot().value, 'review') === 'listed',
+    )
+    check('and still holds every entry', actor.getSnapshot().context.worktrees.length === 2)
+    actor.send({ type: 'READ_CREDENTIAL' })
+    await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present', soon)
+    check(
+      'a diff that would not load refuses nothing else',
+      regionOf(actor.getSnapshot().value, 'credential') === 'present',
+    )
+    actor.stop()
+  }
+
+  {
+    // Re-listing while a diff is open leaves it open. The list is a fact about a
+    // filesystem that changes while varnick runs, and refreshing it must not
+    // shut what somebody is reading.
+    const actor = listed(never<{ diff: string }, { path: string }>())
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    actor.send({ type: 'LIST_WORKTREES' })
+    check('a fresh listing does not close an open diff', diffOf(actor) !== null)
+    check(
+      'and the region is listing again',
+      regionOf(actor.getSnapshot().value, 'review') === 'listing',
+    )
+    actor.stop()
+  }
+
+  {
+    /*
+      The live actor, against a host that answers.
+
+      One call, carrying one path, and what comes back is the text git printed —
+      not a shape this side assembled. A host that volunteered a parsed file list
+      could not get one into the machine, because there is nowhere for it to
+      arrive.
+    */
+    const realInternals = (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+    const asked: { kind: string; path?: string }[] = []
+    ;(globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: async (_command: string, payload: { request: { kind: string; path?: string } }) => {
+        asked.push(payload.request)
+        if (payload.request.kind !== 'read-worktree-diff') throw { failure: 'malformed' }
+        return { diff: HUNKS, files: ['VOLUNTEERED'] }
+      },
+    }
+
+    const actor = listed(liveActors().readWorktreeDiff)
+    actor.send({ type: 'OPEN_WORKTREE', path: fence.path })
+    await waitFor(
+      actor,
+      (s) => String(s.context.worktreeDiff?.getSnapshot().value) === 'loaded',
+      soon,
+    )
+
+    check(
+      'the live read asks the host for one diff and nothing else',
+      asked.map((request) => request.kind).join('|') === 'read-worktree-diff',
+    )
+    check('naming the worktree that was opened', asked[0]?.path === fence.path)
+    const held = JSON.stringify(diffOf(actor)?.getSnapshot().context)
+    check('and nothing the host volunteered rides along', !held.includes('VOLUNTEERED'))
+    actor.stop()
+
+    if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+    else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = realInternals
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The states page — coverage, and that every card is what it claims
 // ---------------------------------------------------------------------------
 
@@ -2316,9 +2855,30 @@ export default function Billing() {
   // created cold, with the same frozen build the page uses, and asked where it
   // actually is.
   for (const scenario of SCENARIOS) {
-    const actor = createActor(frozenHarness(scenario.surfaceOutcome), {
+    const actor = createActor(frozenHarness(scenario.surfaceOutcome, scenario.diffOutcome), {
       input: scenario.input,
     }).start()
+
+    /*
+      A diff arrives by event too, and for the same reason a Surface does: a
+      developer opens one. The path comes from the scenario's own listing, so a
+      card that opened something it does not show would be refused by the guard
+      rather than drawn.
+    */
+    if (scenario.opensWorktree) {
+      actor.send({ type: 'OPEN_WORKTREE', path: scenario.opensWorktree })
+      for (const path of scenario.covers) {
+        if (!path.startsWith('worktreeDiff.')) continue
+        const want = path.slice('worktreeDiff.'.length)
+        await reaches(
+          waitFor(
+            actor,
+            (s) => String(s.context.worktreeDiff?.getSnapshot().value) === want,
+            soon,
+          ),
+        )
+      }
+    }
 
     /*
       A Surface arrives by event, and its load settles on a later tick.
@@ -2379,9 +2939,13 @@ export default function Billing() {
       }
     }
     // Surfaces are children rather than regions, so they are read off the
-    // parent's context instead of out of its state value.
+    // parent's context instead of out of its state value. An open diff is one
+    // too, and there is at most one.
     for (const ref of snap.context.surfaces) {
       reached.add(`surface.${String(ref.getSnapshot().value)}`)
+    }
+    if (snap.context.worktreeDiff) {
+      reached.add(`worktreeDiff.${String(snap.context.worktreeDiff.getSnapshot().value)}`)
     }
 
     for (const path of scenario.covers) {
@@ -3738,6 +4302,7 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     ...HARNESS_STATE_PATHS,
     ...SESSION_STATE_PATHS,
     ...[...SURFACE_STATE_PATHS, ...SURFACE_UNCARDED_STATE_PATHS].map((p) => `surface.${p}`),
+    ...WORKTREE_DIFF_STATE_PATHS.map((p) => `worktreeDiff.${p}`),
   ]
 
   let briefs: string[] = []

@@ -2,8 +2,9 @@ import type { HarnessInput } from '../machines/harness.ts'
 import { HARNESS_STATE_PATHS } from '../machines/harness.ts'
 import { SESSION_STATE_PATHS } from '../machines/session.ts'
 import { SURFACE_STATE_PATHS } from '../machines/surface.ts'
-import { MODELS, compactedTranscript, type SurfaceDescriptor } from '../domain.ts'
-import type { SurfaceOutcome } from '../actors/frozen.ts'
+import { WORKTREE_DIFF_STATE_PATHS } from '../machines/worktree-diff.ts'
+import { MODELS, compactedTranscript, type PendingWorktree, type SurfaceDescriptor } from '../domain.ts'
+import type { DiffOutcome, SurfaceOutcome } from '../actors/frozen.ts'
 import { seedPolicy, seedMessages, statesSurface } from './seed.ts'
 
 /**
@@ -75,6 +76,19 @@ export interface Scenario {
   readonly surfaces?: readonly SurfaceDescriptor[]
   /** What the frozen loader does with them. See actors/frozen.ts. */
   readonly surfaceOutcome?: SurfaceOutcome
+  /**
+   * The Worktree this card opens, sent as `OPEN_WORKTREE` once the actor runs.
+   *
+   * Not part of `input` for the reason `surfaces` is not: opening a diff is
+   * something a developer does to a listing that is already on screen, and the
+   * event is the only way in. The path has to be one of this scenario's own
+   * `worktrees`, or the machine's guard refuses it — which is the same rule the
+   * live surface follows and the reason a card cannot show a diff of something
+   * the list beside it never mentioned.
+   */
+  readonly opensWorktree?: string
+  /** What the frozen reader does with it. See actors/frozen.ts. */
+  readonly diffOutcome?: DiffOutcome
 }
 
 /** Harness held up, ready for a Session. */
@@ -118,6 +132,35 @@ const up = {
     plugins: [{ name: 'caveman', path: '/Users/you/varnick/.claude/plugins/caveman', version: null }],
   },
 } satisfies HarnessInput
+
+/**
+ * Two branches waiting, one of which edits the Fence.
+ *
+ * Literal scenario data, like the mint card's URL: made up, and visibly so —
+ * nothing on this page runs git. One list rather than one per card, because the
+ * four cards below it are one screen at four moments: a listing, and the same
+ * listing with one of its rows opened three ways. A second copy is how the row
+ * a card opens comes to name a worktree the card does not show.
+ */
+const statesWorktrees: readonly PendingWorktree[] = [
+  {
+    path: '/Users/you/varnick/.claude/worktrees/ticket-48',
+    branch: 'ticket/48-launch-preview',
+    commits: 4,
+    changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
+    touchesFence: true,
+  },
+  {
+    path: '/Users/you/varnick/.claude/worktrees/ticket-50',
+    branch: 'ticket/50-diff-view',
+    commits: 2,
+    changed: ['packages/core/src/pages/DesignedPage.tsx'],
+    touchesFence: false,
+  },
+]
+
+/** The one a diff card opens: the branch that edits the Fence. */
+const openedWorktree = statesWorktrees[0]!.path
 
 export const SCENARIOS: readonly Scenario[] = [
   // -- Start-up ------------------------------------------------------------
@@ -551,24 +594,7 @@ export const SCENARIOS: readonly Scenario[] = [
     input: {
       ...up,
       sessionInput: { sessionId: 'states-worktrees-listed', messages: seedMessages },
-      // Literal scenario data, like the mint card's URL: made up, and visibly
-      // so. Nothing on this page runs git.
-      worktrees: [
-        {
-          path: '/Users/you/varnick/.claude/worktrees/ticket-48',
-          branch: 'ticket/48-launch-preview',
-          commits: 4,
-          changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
-          touchesFence: true,
-        },
-        {
-          path: '/Users/you/varnick/.claude/worktrees/ticket-50',
-          branch: 'ticket/50-diff-view',
-          commits: 2,
-          changed: ['packages/core/src/pages/DesignedPage.tsx'],
-          touchesFence: false,
-        },
-      ],
+      worktrees: statesWorktrees,
       enterReview: 'listed',
     },
   },
@@ -601,6 +627,61 @@ export const SCENARIOS: readonly Scenario[] = [
       worktreeError: 'fatal: not a git repository',
     },
   },
+
+  // The same listing with one of its rows opened, three ways. The branch opened
+  // is the one that edits the Fence, because that is the reading this view
+  // exists for: everything else about a diff renderer is a convenience.
+  {
+    id: 'worktree-diff-loading',
+    group: 'Pending Core changes',
+    title: 'Opening a worktree',
+    blurb:
+      'A branch was opened and git is being asked what changed in it. The list stays beside it — the summaries were cheap, and this is where the cost of reading one branch is paid.',
+    question: 'Is a diff on its way distinguishable from a diff with nothing in it?',
+    covers: ['worktreeDiff.loading'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-diff-loading', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+    },
+    opensWorktree: openedWorktree,
+    diffOutcome: 'holds',
+  },
+  {
+    id: 'worktree-diff-loaded',
+    group: 'Pending Core changes',
+    title: 'Reading what changed',
+    blurb:
+      'Two files in one branch: a Core refactor, and an edit to the Sandbox policy generator that widens what the agent may write. The second is Fence — the code that decides what the agent may do — and the whole point of this card is whether you found it before reading this sentence.',
+    question: 'Could a widening sit unremarked in four hundred lines of this?',
+    covers: ['worktreeDiff.loaded'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-diff-loaded', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+    },
+    opensWorktree: openedWorktree,
+    diffOutcome: 'loads',
+  },
+  {
+    id: 'worktree-diff-failed',
+    group: 'Pending Core changes',
+    title: 'The diff would not load',
+    blurb:
+      'git answered the listing and would not answer this. The reason is git’s own, and the retry is offered because `failed` accepts one — not because a control was left enabled.',
+    question: 'Does the reason say enough to act on, and is the way back obvious?',
+    covers: ['worktreeDiff.failed'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-diff-failed', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+    },
+    opensWorktree: openedWorktree,
+    diffOutcome: 'fails',
+  },
 ]
 
 /**
@@ -617,6 +698,7 @@ export const COVERED_PATHS: readonly StatePath[] = [
   ...HARNESS_STATE_PATHS,
   ...SESSION_STATE_PATHS,
   ...SURFACE_STATE_PATHS.map((p) => `surface.${p}`),
+  ...WORKTREE_DIFF_STATE_PATHS.map((p) => `worktreeDiff.${p}`),
 ]
 
 /** Paths with no scenario. Empty is the only green result. */

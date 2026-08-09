@@ -6,16 +6,23 @@
 //
 // This barrel is host-side: it re-exports ./sandbox.ts, which imports node built
 // -ins. Core imports the subpaths it needs — `@varnick/harness/bridge`,
-// `@varnick/harness/credentials` and `@varnick/harness/turn`, three modules that
-// import no Node — and never this one. ./runtime.ts is not re-exported at all;
-// it is loaded by the runtime process and by nothing else.
+// `@varnick/harness/credentials`, `@varnick/harness/fence` and
+// `@varnick/harness/turn`, four modules that import no Node — and never this
+// one. ./runtime.ts is not re-exported at all; it is loaded by the runtime
+// process and by nothing else.
 //
 // The count above was two for as long as `turn` did not exist, and stayed two
 // after it did. It is checked now rather than described: eslint.config.js carries
-// the same three names, and `bun run lint` fails on a Core source file importing
-// this barrel or any Harness subpath outside that list. `packages/core/scripts/`
-// is deliberately outside the rule — drive.ts is a headless Node script and
-// imports session, secrets and secret-resolution because it may.
+// the same names, and `bun run lint` fails on a Core source file importing this
+// barrel or any Harness subpath outside that list. `packages/core/scripts/` is
+// deliberately outside the rule — drive.ts is a headless Node script and imports
+// session, secrets and secret-resolution because it may.
+//
+// `fence` is the fourth, and it is on the list for a reason the other three do
+// not have. It is not a capability behind the bridge: it is one pure function
+// over one path, and Core's diff view has to ask exactly the question the
+// pending-worktree list and the Preview dialog ask. Three glob lists would
+// drift, and the drift is invisible — see ./fence.ts.
 //
 // Four responsibilities, each with an ADR behind it:
 //   sandbox      — @anthropic-ai/sandbox-runtime around the agent's whole

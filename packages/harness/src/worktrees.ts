@@ -14,17 +14,28 @@
  * host-side Node process — and arrives in Core over the bridge as
  * `list-worktrees`, which the renderer asks for and nothing else can.
  *
- * ## The summary, not the hunks
+ * ## The summary, then the hunks
  *
  * An entry is a branch, a path, how far ahead it is, which paths it changed and
- * whether any of them is Fence. The hunks are not here, and that is a decision
+ * whether any of them is Fence. The hunks are not in it, and that is a decision
  * rather than an omission: a list that read every diff of every branch to draw
  * a row would spend the whole of a large branch before showing anything, and the
- * list is what a developer reads to decide which branch to open. Ticket 50
- * fetches the contents for the one they opened.
+ * list is what a developer reads to decide which branch to open.
+ * {@link readPendingWorktreeDiff} reads the contents of the one they opened.
  *
  * Path names are cheap and are what makes the Fence flag auditable — a row
  * claiming Fence with no path that is one is a row nobody can check.
+ *
+ * ## What a caller may decide, and what it may not
+ *
+ * The listing takes nothing. The diff takes one path, and that path is a
+ * **selector against git's own listing** rather than an argument git is handed:
+ * it is compared with what `git worktree list` reported, and the ref that
+ * reaches argv is the one git printed for the entry it matched. A path matching
+ * no entry produces no diff command at all. That is what keeps a name composed
+ * anywhere else from choosing what a host-side git reads — the same shape
+ * ADR-0014 gives `launch_preview`, which validates a worktree name against what
+ * git reports rather than taking a command.
  *
  * ## Nothing here runs a process
  *
@@ -136,23 +147,11 @@ export interface ListPendingInput {
  */
 export async function listPendingWorktrees(input: ListPendingInput): Promise<PendingWorktree[]> {
   const entries = parseWorktreeList(await input.git(['worktree', 'list', '--porcelain']))
-  const root = withoutTrailingSlash(input.cloneRoot)
   const pending: PendingWorktree[] = []
 
-  for (const [index, entry] of entries.entries()) {
-    if (index === 0 || entry.bare) continue
-    if (withoutTrailingSlash(entry.path) === root) continue
-
-    // The branch when there is one, the commit when there is not. Both come
-    // from git's own listing, so nothing a caller supplied reaches an argument.
-    const ref = entry.branch ?? entry.head
-    if (ref === null) continue
-
-    const commits = Number.parseInt(await input.git(['rev-list', '--count', `HEAD..${ref}`]), 10)
-    // A count that did not parse is not a zero. Left out rather than shown,
-    // like a worktree with no commits, because a row saying `NaN commits` is
-    // worse than a row nobody drew.
-    if (!Number.isFinite(commits) || commits <= 0) continue
+  for (const { entry, ref } of reviewable(entries, input.cloneRoot)) {
+    const commits = await commitsAhead(input.git, ref)
+    if (commits === null) continue
 
     const changed = splitNulTerminated(
       // Three dots: everything on the branch since it diverged, rather than
@@ -171,6 +170,104 @@ export async function listPendingWorktrees(input: ListPendingInput): Promise<Pen
   }
 
   return pending
+}
+
+export interface ReadDiffInput {
+  readonly git: GitRunner
+  /** The clone this varnick is running from — see {@link listPendingWorktrees}. */
+  readonly cloneRoot: string
+  /**
+   * Which pending worktree, by the absolute path the listing reported.
+   *
+   * The only field on the review path a caller decides, and it decides *which
+   * of git's own entries* rather than what git is asked. It is compared, never
+   * passed: see the module header.
+   */
+  readonly path: string
+}
+
+/**
+ * Everything one pending Worktree changed, as a unified diff.
+ *
+ * The contents behind one row of the list, read when a developer opens it. Git
+ * produces it — this is the mechanism that shows what the agent changed, and a
+ * diff the agent composed is a diff the agent can shade, which is a sharper
+ * problem here than in the list: a shaded row is a branch nobody looked at, and
+ * a shaded hunk is a widening somebody approved.
+ *
+ * **Refuses anything that is not a Worktree with unmerged commits**, by the same
+ * three rules the list applies — not the main worktree, not the tree varnick is
+ * running from, not a branch that is level with HEAD. The refusal is what keeps
+ * the one argument on this path from being able to name a tree.
+ *
+ * Rejects with git's own reason, which reaches `worktreeDiff.failed`. An empty
+ * diff is an empty string and not a rejection: a commit that changed nothing
+ * tracked is a real answer, and a surface that turned it into a failure would
+ * report a git that answered as a git that would not.
+ */
+export async function readPendingWorktreeDiff(input: ReadDiffInput): Promise<string> {
+  const entries = parseWorktreeList(await input.git(['worktree', 'list', '--porcelain']))
+  const wanted = withoutTrailingSlash(input.path)
+
+  for (const { entry, ref } of reviewable(entries, input.cloneRoot)) {
+    if (withoutTrailingSlash(entry.path) !== wanted) continue
+    if ((await commitsAhead(input.git, ref)) === null) break
+
+    // `--no-color`, because a developer's own `color.ui = always` would
+    // otherwise put terminal escapes through the bridge and into a renderer
+    // that draws its own — and the one colour in that view means Fence.
+    return input.git(['diff', '--no-color', `HEAD...${ref}`])
+  }
+
+  throw new Error(
+    `${input.path} is not a worktree with unmerged commits, so there is nothing to review in it.`,
+  )
+}
+
+/** One worktree the review path will consider, with the ref git named for it. */
+interface Reviewable {
+  readonly entry: WorktreeEntry
+  readonly ref: string
+}
+
+/**
+ * The worktrees a review is about, before anything has asked how far ahead they
+ * are.
+ *
+ * Written once and read by both callers, because the two must agree about what
+ * is reviewable: a diff view that could open a tree the list refuses to show
+ * would be a way to read something the surface declined to mention, and a list
+ * showing a row that could not be opened is a row that does nothing.
+ *
+ * The `ref` is git's own — the branch when there is one, the commit when there
+ * is not — so nothing a caller supplied ever becomes an argument.
+ */
+function reviewable(entries: readonly WorktreeEntry[], cloneRoot: string): Reviewable[] {
+  const root = withoutTrailingSlash(cloneRoot)
+  const found: Reviewable[] = []
+
+  for (const [index, entry] of entries.entries()) {
+    if (index === 0 || entry.bare) continue
+    if (withoutTrailingSlash(entry.path) === root) continue
+    const ref = entry.branch ?? entry.head
+    if (ref === null) continue
+    found.push({ entry, ref })
+  }
+
+  return found
+}
+
+/**
+ * How far ahead of the live tree a ref is, or `null` for "not pending".
+ *
+ * A count that did not parse is not a zero. Both answers leave the worktree
+ * out rather than showing it, because a row saying `NaN commits` is worse than
+ * a row nobody drew — and a worktree at zero is an agent that has started
+ * rather than one that has finished.
+ */
+async function commitsAhead(git: GitRunner, ref: string): Promise<number | null> {
+  const commits = Number.parseInt(await git(['rev-list', '--count', `HEAD..${ref}`]), 10)
+  return Number.isFinite(commits) && commits > 0 ? commits : null
 }
 
 const HEADS = 'refs/heads/'

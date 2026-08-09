@@ -130,10 +130,11 @@ const NO_NODE_HARNESS = {
     '@varnick/harness/*',
     '!@varnick/harness/bridge',
     '!@varnick/harness/credentials',
+    '!@varnick/harness/fence',
     '!@varnick/harness/turn',
   ],
   message:
-    'Core may only import the Harness subpaths that import no Node — bridge, credentials, turn. Everything else reaches a kernel, a keychain or a filesystem the webview does not have; it belongs behind the bridge. See packages/harness/src/index.ts.',
+    'Core may only import the Harness subpaths that import no Node — bridge, credentials, fence, turn. Everything else reaches a kernel, a keychain or a filesystem the webview does not have; it belongs behind the bridge. See packages/harness/src/index.ts.',
 }
 
 const NO_ACTOR_IMPLEMENTATIONS = {
