@@ -28,12 +28,13 @@ import {
  *
  * ## The index, and why a long scroll needs one
  *
- * Twenty-four cards is past the point where the page can be read by scrolling
- * it. Without a map you cannot see what is on the page without paging through
- * it, you cannot get back to a card you passed, and you cannot tell anyone else
- * where one is. The nav on the left answers all three, and the third is the one
- * that matters most here — a ticket that says "see `#/states`" is pointing at
- * forty screens.
+ * One card per state is past the point where the page can be read by scrolling
+ * it, and the count only goes up — a state added to a machine is a card added
+ * here, or an amber banner. Without a map you cannot see what is on the page
+ * without paging through it, you cannot get back to a card you passed, and you
+ * cannot tell anyone else where one is. The nav on the left answers all three,
+ * and the third is the one that matters most — a ticket that says "see
+ * `#/states`" is pointing at the whole page.
  *
  * One predicate feeds the index and the grid, so the count in the nav and the
  * number of cards beside it cannot disagree. There is deliberately no
