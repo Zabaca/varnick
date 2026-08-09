@@ -53,3 +53,22 @@ The real one is ticket 27: every Bash command was refused, because Claude Code w
 The other was the probe itself. `Grep` and `Glob` answer with paths relative to the working directory, and the control compared against absolute ones — so two working tools read as denied, and that was written up as a product defect before anyone printed what the tools had returned. Retracted in ticket 26. With the comparison fixed, every control passes and every denial holds.
 
 Neither is a consequence of this decision; both were equally true under an API key. What the credential unlocked was the ability to see them at all.
+
+
+## What the subscription token turned out not to carry
+
+Measured after this decision shipped, against a real `claude setup-token` credential driving a real Session:
+
+```
+subscription_type:       null
+rate_limits_available:   false
+rate_limits:             null
+```
+
+**A subscription token authenticates, and reports no plan.** It does not even identify itself as a subscription. So the second of this decision's two consequences — "whether plan usage exists to be read" — has only one answer in practice, and the plan-usage strip is unreachable under every credential varnick can hold.
+
+The first consequence is unaffected and this decision stands: the token authenticates, an agent runs under it, and the developer's plan pays for the tokens rather than an API key billing per request. That was the reason for choosing it and it holds.
+
+What this does undo is the assumption underneath ticket 23. The windows ticket 09 measured came from the developer's *interactive* Claude Code login — the OAuth pair in `Claude Code-credentials`, which this ADR refuses to read and gives measured reasons for. The credential that reports plan usage is precisely the one varnick will not hold.
+
+Ticket 31 carries the decision that follows: cut the strip, or keep the machinery and say plainly that it cannot populate.

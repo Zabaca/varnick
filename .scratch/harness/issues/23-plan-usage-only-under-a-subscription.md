@@ -161,3 +161,10 @@ a `READ_SUBSCRIPTION` button that is simply **not there** under an API key. So:
   is whether the session reported `rate_limits_available: false`. It is not
   something to weaken; press the button and watch the region pass through
   `reading` to confirm.
+
+
+## The branch this ticket left standing does not work either
+
+Measured after merge, with a real subscription token: `rate_limits_available` is `false` and `subscription_type` is `null`. So the read refuses under a subscription too, and the strip is absent in every configuration rather than only under an API key.
+
+Nothing here was wrong. The gate is correct, the actor is not invoked under an API key, and absent-not-empty is the right rendering. It is that the remaining branch was assumed to work and could not be tested until a subscription token existed — one does now, and it does not. Ticket 31 carries the decision.
