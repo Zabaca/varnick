@@ -1131,14 +1131,18 @@ describe('the agent is told which secrets exist', () => {
 describe('the real git, ahead of the shim', () => {
   /*
     `/usr/bin/git` is not git. It is an xcode-select shim that reads the symlink
-    `/var/select/developer_dir` to find the real binary, and that link is in a
-    directory the Sandbox denies. Measured under a deny-by-default read policy:
-    the shim exits 1 with "unable to read data link", the real binary exits 0.
-    Allowing the link's *target* does not help — the denial is of traversing the
-    link — so the fix is PATH, which costs the boundary nothing.
+    `/var/select/developer_dir` to find the real binary, and under the denied
+    root that link is denied. Measured: the shim exits 1 with "unable to read
+    data link", the real binary exits 0. Allowing the link's *target* does not
+    help — `/private/var/select` is in the allowlist and the shim still failed —
+    because what is refused is reading `/var`, the link one level up. The fix
+    here is PATH, which costs the boundary nothing.
 
-    It matters under the shipped policy too: reads are allow-by-default there, so
-    the shim resolves today only because nothing denies the link.
+    Ticket 18 later added `/var` itself to the read allowlist for exactly that
+    denial, so the shim does resolve under the shipped policy again. This stays
+    because it is the cheaper of the two and does not depend on it: an agent
+    whose `git` works only because a symlink at the filesystem root happens to be
+    readable is an agent one policy edit away from having no `git`.
   */
 
   test('the toolchain goes in front of PATH, where /usr/bin already is', () => {

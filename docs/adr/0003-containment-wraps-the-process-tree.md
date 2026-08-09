@@ -159,7 +159,7 @@ The control is the point: the same read is refused under `$HOME`, so this is abo
 
 **Nothing is widened or narrowed here; what changed is what is claimed.** `sandbox.ts` says which shape it uses at the `denyRead` list, `README.md` states the asymmetry under *Where confinement stops* rather than implying a filesystem-wide boundary, and ADR-0002 no longer says the protection covers repositories generally. The fix for a repository on `/opt`, `/srv`, `/Volumes` or an external disk is to add the path to `denyRead` yourself.
 
-**Whether reads should be deny-by-default at all is open, and is a decision rather than an implementation.** `srt`'s filesystem config accepts a `denyAllExcept` shape; inverting the boundary is strictly stronger and would have made three of this project's four wrong turns impossible to make. The cost is that an interpreter, its standard library, `git`, the system libraries every process links, and the CA bundle all have to be reachable and are not in one place, and an allowlist that is nearly right fails as a startup error with no obvious cause. Ticket 18 holds the trade-off and stays `needs-info` until someone weighs it; a deny-by-default policy that has not started an agent would not be evidence of anything.
+**Whether reads should be deny-by-default at all was left open here, as a decision rather than an implementation.** It has since been made, and the answer was yes — see *The decision* below, which is what this correction turned into.
 
 ### Two things the inversion needs first, and they are in
 
@@ -178,7 +178,58 @@ Silent are: anything that is not a read — `sysctl-read` twice per command, `ne
 
 **And the read allowlist is computed rather than written down.** `readAllowlistFor` in `packages/harness/src/sandbox.ts` derives the interpreter's install root from `process.execPath`, the SDK's tree from `agentSdkEntry()`, and the developer toolchain from `developerToolsBin()` — `git` on macOS lives under Xcode or under the Command Line Tools, and those are different trees. `~/.bun` is the whole argument: this machine's interpreter is there, the next machine's is under Homebrew or nvm, and a constant would be right here and `exit 133` there. Only `MEASURED_SYSTEM_READ_PATHS` — `/usr`, `/bin`, `/System`, `/Library`, `/etc`, `/dev`, `/private/var/db`, `/private/var/select` — stays a constant, and each was verified load-bearing by dropping it and watching the agent fail.
 
-**It is deliberately not in the policy, and that is the load-bearing judgement.** Under allow-by-default reads it is a pure weakening: every path on it is already readable, so it permits nothing new, while `allowRead` beats `denyRead` — `/usr` hands back all four `UNREADABLE_BINARIES` and `/Library` hands back `/Library/Keychains`, the directory the second correction denied after dumping 37 generic passwords out of it. All cost, no benefit. `sandbox.test.ts` asserts exactly that overlap, so wiring the list in fails there with the reason rather than in a probe with a keychain dump. The inversion cannot be "add these lines": it has to restore those denials some other way in the same change.
+**It was deliberately not in the policy, and that was the load-bearing judgement at the time.** Under allow-by-default reads it was a pure weakening: every path on it was already readable, so it permitted nothing new, while `allowRead` beats `denyRead` — `/usr` hands back all four `UNREADABLE_BINARIES` and `/Library` hands back `/Library/Keychains`. All cost, no benefit, and `sandbox.test.ts` asserted exactly that overlap so wiring the list in would fail there rather than in a probe with a keychain dump. The next section is what happened when the root was denied and the same overlap stopped being a reason not to.
+
+## The decision: reads are deny-by-default, and this one cannot be taken back
+
+Not a correction. The four above are things this project believed and measured to be false; this is a trade the developer weighed and accepted, and the only entry here that changes what the Sandbox permits rather than what is claimed about it.
+
+**`denyRead` names `/`.** `filesystem.allowRead` is now the whole of what the agent can read, and everything else on the disk is refused. The named denials stay beside the root — `/Users`, `$HOME`, `/Library/Keychains` and the four binaries — because three things read that list rather than the root: srt's re-emission pass, `isUnexpectedViolation`, and a developer trying to learn what varnick *meant* to deny.
+
+**It is a one-way door for existing clones, and that is by design.** `strongerLeaf` merges a clone's policy forward by taking the stronger side of every difference — union for a denial. So a clone that runs once under this keeps `denyRead: ['/']` permanently: reverting the generator does nothing, and going back means editing `sandbox-policy.json` by hand in every clone. That is the third correction working as intended, and it is why this was put to the developer as a decision rather than shipped as a fix.
+
+### What it cost, measured rather than estimated
+
+The whole existing suite was run under it — `containment.probe.test.ts` and `sandbox.boundary.test.ts` both drive real processes — and the read allowlist grew from what the spike had found. Everything below was a *silent* failure under the shipped policy until the violation monitor named the path:
+
+```
+                        without it
+/private/etc            curl: /private/etc/ssl/openssl.cnf — every request fails
+/etc                    curl: CAfile /etc/ssl/cert.pem;  git: /etc/gitconfig
+/var                    xcode-select: unable to read data link /var/select/developer_dir
+                        — git and python3 do not resolve at all
+/tmp                    mkdir: /tmp: Operation not permitted — every Bash command
+$TMPDIR                 touch $TMPDIR/x refused;  git: cannot open xcrun_db
+/private/tmp/claude-<uid>  touch in the scratch directory refused
+```
+
+Two lessons in that table, and neither was in the spike.
+
+**The three root symlinks grant the link and not the tree.** `/etc`, `/tmp` and `/var` point into `/private`, and the kernel canonicalizes a real access below one of them — so a `(subpath "/tmp")` rule matches the link node and nothing under it. Measured: with `/tmp` allowed, `mkdir -p /tmp/claude-<uid>` succeeds while `ls /tmp` and a read of a file under it are still refused. That is why `/etc` and `/private/etc` are both on the list and why neither makes the other redundant — different code inside `curl` reaches the same configuration by both spellings.
+
+**A writable tree has to be readable.** `touch` stats before it creates and `mkdir -p` stats every component on the way down, so `allowWrite` without a matching `allowRead` is not a grant at all. Under allow-by-default that was invisible. The scratch directory is ticket 27 for the second time, by a different mechanism.
+
+### Why the denials survive being inside the allowances
+
+`/usr` contains all four `UNREADABLE_BINARIES` and `/Library` contains `/Library/Keychains`, and under a denied root neither `/usr` nor `/Library` is optional. So the denials are no longer kept by the *shape* of the list; they are kept by `srt`. `generateReadRules` emits `(allow file-read*)`, then the denies, then the allows — last match wins — and then a final pass re-emits any **literal** deny that sits strictly inside an allowed subpath, putting the specific rule last again. Measured at the kernel under the shipped policy:
+
+```
+cat /usr/bin/security                      Operation not permitted
+cat /Library/Keychains/System.keychain     Operation not permitted
+security dump-keychain .../System.keychain empty
+security list-keychains                    unchanged  (the positive control)
+curl https://api.anthropic.com/v1/messages 405        (TLS unaffected)
+```
+
+**The caveat is the thing to remember.** Glob denies are *not* re-emitted — srt's own comment says so, and its schema's `denyReadAlways` is the lever for that case. A denial written as a pattern rather than a literal path is therefore silently re-opened by any allowance containing it. Every entry in `denyRead` is a literal, and `sandbox.test.ts` asserts that for the whole list rather than for the six paths that happen to be affected today.
+
+### One more thing the merge could not do on its own
+
+Union for a denial and intersection for an allowance are each right, and together they are wrong for this pair. A clone with no baseline can attribute nothing, so it takes the stronger side of everything — which adopts `denyRead: ['/']` *and* intersects `allowRead` down to the single entry the old policy had. That policy denies the filesystem and reads back one directory: `/bin/bash` cannot be mapped, nothing runs, and the failure is `exit 133` with no message. It is not a stronger boundary; it is no product. So when the merged policy denies the root, every entry the generator's allowlist names is kept, and the widening is reported to the developer as `[weaker]` rather than left to a diff.
+
+### What is still true, and what this does not buy
+
+The agent can still read `/usr`, `/Library` and `/System` in full, so this bounds what it can reach *on your disk* rather than what it can learn about the machine. It does not touch the network allowlist, the write boundary, or anything the four corrections above established. And a second root on the same machine is still readable from the first only if it is inside an allowed tree — ADR-0012's open half is now closed for roots outside the allowlist and left open for a clone that sits inside one.
 
 ## What the probes measure, and what they do not
 
@@ -191,7 +242,9 @@ Silent are: anything that is not a read — `sysctl-read` twice per command, `ne
 4. a clone whose policy the schema rejects raises rather than proceeding.
 5. the write boundary — Core, the Harness, the root `package.json`, the generated policy and a root `vite.config` refused, with Userspace, its own manifest and the OS temp directory writable in the same run.
 6. the SDK's *own* `Read`, `Grep` and `Glob` tools, driven by a real Session.
-7. a git repository outside every home directory: readable, and refused a write.
+7. a git repository outside every home directory: refused a read and a write. It
+   was readable until the root was denied; the probe is unchanged and its verdict
+   is inverted, with a read inside the clone added as the control the flip needed.
 8. `/Users` and `/Users/Shared` — the root above every home directory, and a path under it that is under no home directory.
 9. Apple Events and Launch Services: an event only a running application can answer is refused, and so is `open`.
 10. the violation monitor: the kernel's denials reach varnick, and none of them is said out loud while the policy is correct — with the same real denial, classified against a policy that never denied `$HOME`, as the control that proves the channel is not simply dead.
