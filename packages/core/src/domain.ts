@@ -51,6 +51,53 @@ export interface SandboxPolicy {
   readonly denyRead: readonly string[]
 }
 
+/**
+ * One Worktree holding Core changes nobody has merged.
+ *
+ * **Produced by running git, host-side.** Not by the agent, and the distinction
+ * is the whole point of the surface this feeds: it is the mechanism that shows
+ * what the agent changed, and a report the agent composes is a report the agent
+ * can shade. See packages/harness/src/worktrees.ts, which runs the three
+ * read-only commands, and ADR-0014.
+ *
+ * A summary rather than a diff. `changed` is path names and nothing else, and
+ * there is deliberately no field for a hunk: a list that read every diff of
+ * every branch would spend the whole of a large branch before drawing a row,
+ * and the list is what a developer reads to decide which branch to open. The
+ * contents are fetched for the one they opened.
+ *
+ * Spelled out here rather than imported from the Harness, like
+ * {@link CredentialReading} and {@link SandboxPolicy} above: Core owns the shape
+ * it renders, the bridge rebuilds what the host answered into it, and the
+ * dependency runs Core -> Harness rather than both ways.
+ */
+export interface PendingWorktree {
+  /** Where it is on disk, absolute, as git reports it. */
+  readonly path: string
+  /** Short branch name, or `null` for a detached HEAD. */
+  readonly branch: string | null
+  /**
+   * Commits this worktree has that the live tree does not.
+   *
+   * Always at least one, because a worktree at zero is not pending — it is an
+   * agent that has started rather than one that has finished, and it is left
+   * out of the list rather than shown with a zero on it.
+   */
+  readonly commits: number
+  /** Repository-relative paths changed since the branch diverged. Names only. */
+  readonly changed: readonly string[]
+  /**
+   * Whether any changed path is Fence.
+   *
+   * The field the next ticket turns into colour. Decided by one pure function
+   * in the Harness — `isFencePath` — because three separate things key off the
+   * same list: this row, the Preview dialog, and the diff view's highlighting.
+   * Three glob lists would drift, and the drift is invisible until the one that
+   * fell behind stops raising a dialog for a file the others still colour.
+   */
+  readonly touchesFence: boolean
+}
+
 /** A Surface as discovered on disk, before anything tries to load it. */
 export interface SurfaceDescriptor {
   readonly id: string

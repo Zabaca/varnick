@@ -71,6 +71,7 @@ describe('a missing host is a value to branch on, not an exception to catch', ()
       { kind: 'run-turn', turnId: 't1', prompt: 'hi', model: 'claude-opus-5', effort: 'xhigh' },
       { kind: 'next-turn-event' },
       { kind: 'interrupt-turn', turnId: 't1' },
+      { kind: 'list-worktrees' },
     ]
     for (const request of requests) {
       expect((await failureOf(request, null)).failure).toBe('no-host')
@@ -295,6 +296,80 @@ describe('the answer is rebuilt, never passed through', () => {
     expect((await failureOf({ kind: 'check-sandbox' }, answers(undefined))).failure).toBe(
       'malformed',
     )
+  })
+
+  test('a pending worktree is rebuilt field by field', async () => {
+    const answer = await callHarness(
+      { kind: 'list-worktrees' },
+      answers({
+        worktrees: [
+          {
+            path: '/Users/dev/code/varnick/.claude/worktrees/49',
+            branch: 'ticket/49',
+            commits: 3,
+            changed: ['src-tauri/src/bridge.rs'],
+            touchesFence: true,
+            // What a host that has been rewritten might volunteer. The diff is
+            // ticket 50's, fetched for one worktree; a body arriving here would
+            // be rendered by a list that promised not to read one.
+            diff: '@@ -1 +1 @@',
+            token: LOOKS_LIKE_A_KEY,
+          },
+        ],
+      }),
+    )
+    expect(answer).toEqual({
+      worktrees: [
+        {
+          path: '/Users/dev/code/varnick/.claude/worktrees/49',
+          branch: 'ticket/49',
+          commits: 3,
+          changed: ['src-tauri/src/bridge.rs'],
+          touchesFence: true,
+        },
+      ],
+    })
+    expect(JSON.stringify(answer)).not.toContain(LOOKS_LIKE_A_KEY)
+  })
+
+  test('nothing pending is an answer, not a malformed one', async () => {
+    // `review.empty` is reached from this, and it is a real state. A listing
+    // that found nothing must never arrive as a failure.
+    expect(await callHarness({ kind: 'list-worktrees' }, answers({ worktrees: [] }))).toEqual({
+      worktrees: [],
+    })
+  })
+
+  test('a detached worktree has a null branch rather than none', async () => {
+    const answer = await callHarness(
+      { kind: 'list-worktrees' },
+      answers({
+        worktrees: [{ path: '/w/one', branch: null, commits: 1, changed: [], touchesFence: false }],
+      }),
+    )
+    expect(answer.worktrees[0]?.branch).toBeNull()
+  })
+
+  test('a listing the bridge cannot read is malformed rather than an empty one', async () => {
+    /*
+      The distinction the machine keeps as two states. An unreadable listing
+      flattened into `[]` would reach `review.empty`, which says "nothing is
+      waiting to be merged" — the one sentence a review surface must not say
+      when it does not know.
+    */
+    const unreadable = [
+      answers({}),
+      answers({ worktrees: 'none' }),
+      answers({ worktrees: [{ path: 7, branch: null, commits: 1, changed: [], touchesFence: false }] }),
+      answers({ worktrees: [{ path: '/w', branch: null, commits: 'three', changed: [], touchesFence: false }] }),
+      answers({ worktrees: [{ path: '/w', branch: null, commits: 1, changed: 'one', touchesFence: false }] }),
+      answers({ worktrees: [{ path: '/w', branch: null, commits: 1, changed: [7], touchesFence: false }] }),
+      answers({ worktrees: [{ path: '/w', branch: null, commits: 1, changed: [] }] }),
+      answers(undefined),
+    ]
+    for (const bridge of unreadable) {
+      expect((await failureOf({ kind: 'list-worktrees' }, bridge)).failure).toBe('malformed')
+    }
   })
 })
 

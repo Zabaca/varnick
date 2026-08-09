@@ -7,6 +7,7 @@ import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.
 import type {
   CredentialKind,
   CredentialReading,
+  PendingWorktree,
   SandboxPolicy,
   StartRefusal,
   SurfaceDescriptor,
@@ -41,11 +42,16 @@ export const HARNESS_STATE_PATHS = [
   'agent.starting',
   'agent.running',
   'agent.crashed',
+  'review.listing',
+  'review.listed',
+  'review.empty',
+  'review.listFailed',
 ] as const
 export type HarnessStatePath = (typeof HARNESS_STATE_PATHS)[number]
 
 export type CredentialState = 'absent' | 'minting' | 'storing' | 'reading' | 'present' | 'rejected'
 export type SandboxState = 'unchecked' | 'checking' | 'available' | 'unavailable'
+export type ReviewState = 'listing' | 'listed' | 'empty' | 'listFailed'
 
 export interface HarnessContext {
   policy: SandboxPolicy
@@ -155,9 +161,27 @@ export interface HarnessContext {
    * already renders. See docs/adr/0009-resume-reads-the-mirror.md.
    */
   readonly sessionInput: SessionInput
+  /**
+   * The Worktrees holding Core changes nobody has merged, as git last described
+   * them.
+   *
+   * Empty in `review.empty` — which is a state and not this field being short —
+   * and emptied when a listing fails, because a list left standing over a git
+   * that would not answer is the surface presenting a stale answer as current.
+   * The same rule `credentialKind` follows on a failed read.
+   *
+   * **Summaries, and no hunks.** See `PendingWorktree`: the decision is that a
+   * list which read every diff of every branch to draw a row would spend the
+   * whole of a large branch before showing anything, and a list is what you
+   * read to decide which branch to open.
+   */
+  worktrees: readonly PendingWorktree[]
+  /** Why the last listing failed, for as long as one has. */
+  worktreeError: string | null
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
+  readonly enterReview: string | null
 }
 
 export interface HarnessInput {
@@ -168,6 +192,10 @@ export interface HarnessInput {
   enterCredential?: string | null
   enterSandbox?: string | null
   enterAgent?: string | null
+  enterReview?: string | null
+  /** Seeded only by the states page, which parks a card over a listing. */
+  worktrees?: readonly PendingWorktree[]
+  worktreeError?: string | null
   sessionInput?: SessionInput
   /** Seeded only by the states page, which parks a machine with a report in it. */
   runtime?: RuntimeReport | null
@@ -243,6 +271,18 @@ export type HarnessEvent =
   | { type: 'COMMANDS_REPORTED'; commands: readonly SlashCommand[] }
   | { type: 'DISCOVER_SURFACES'; descriptors: SurfaceDescriptor[] }
   | { type: 'UNLOAD_SURFACE'; id: string }
+  /**
+   * Ask git again which Worktrees hold unmerged Core changes.
+   *
+   * Named for the act rather than for the state it produces, like
+   * `CHECK_SANDBOX` beside it. It carries nothing: the listing is of the clone
+   * varnick is running in, which the host resolved once at launch (ADR-0012),
+   * and a field here would be a field something could name another tree in.
+   *
+   * Accepted in the three resting states and not while a listing is in flight,
+   * so a second ask cannot restart the actor answering the first.
+   */
+  | { type: 'LIST_WORKTREES' }
 
 /**
  * Real-service contracts:
@@ -328,6 +368,29 @@ export const harnessMachine = setup({
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
     })),
+    /*
+      Real-service contract for listWorktrees:
+        input  {} — and it is empty on purpose. The renderer asks what is
+               pending; it does not get to say what the answer should be about.
+               A worktree name here would be agent-reachable input to a
+               host-side git call, which is the shape ADR-0014 is careful about
+               for `launch_preview`.
+        output { worktrees } — one entry per Worktree holding commits the live
+               tree does not: branch, path, how far ahead, which paths changed,
+               and whether any of them is Fence. Summaries; the hunks are
+               fetched for the one worktree a developer opens.
+        error  thrown Error — git could not be run or would not answer. Distinct
+               from an empty list, which is a listing that worked and found
+               nothing: `review.listFailed` against `review.empty`.
+
+      Produced host-side by running git, and never by the agent — this is the
+      mechanism that shows what the agent changed. See
+      packages/harness/src/worktrees.ts.
+    */
+    listWorktrees: fromPromise<
+      { worktrees: readonly PendingWorktree[] },
+      Record<string, never>
+    >(async () => ({ worktrees: [] })),
   },
   guards: {
     canStart: ({ context }) =>
@@ -343,6 +406,18 @@ export const harnessMachine = setup({
     */
     credentialPasted: ({ event }) =>
       event.type === 'STORE_CREDENTIAL' && event.value.trim().length > 0,
+    /*
+      Nothing is waiting to be merged.
+
+      A guard rather than a field the surface reads, because `review.empty` is a
+      state: nothing pending and a listing that failed are different problems
+      with different copy, and a view branching on `worktrees.length === 0`
+      would have to invent that difference back — which is the branch that
+      eventually says "nothing is waiting" over a git that never answered.
+    */
+    nothingPending: ({ event }) =>
+      'output' in event &&
+      (event.output as { worktrees: readonly PendingWorktree[] }).worktrees.length === 0,
   },
   actions: {
     recordRefusal: assign({
@@ -375,9 +450,12 @@ export const harnessMachine = setup({
     commands: input.commands ?? [],
     session: null,
     sessionInput: input.sessionInput ?? { sessionId: LIVE_SESSION_ID },
+    worktrees: input.worktrees ?? [],
+    worktreeError: input.worktreeError ?? null,
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
+    enterReview: input.enterReview ?? null,
   }),
   on: {
     // Surfaces are discovered, never registered — adding one must not require
@@ -751,6 +829,99 @@ export const harnessMachine = setup({
         crashed: {
           on: { RESTART: 'starting', STOP: 'down' },
         },
+      },
+    },
+
+    /*
+      What is waiting to be merged.
+
+      A fourth region, and independent of the other three in both directions: a
+      git that will not answer says nothing about the credential, the sandbox or
+      the agent, and an agent that crashed says nothing about which branches are
+      finished. The Worktrees exist whether or not varnick is running an agent
+      at all — they are a fact about the clone, not about this process — which is
+      the same argument ADR-0007 makes for keeping the first three apart.
+
+      **It starts in flight, with no resting state before it, and that is the
+      one thing here that differs from its neighbours.** Each of those waits for
+      something a person decides: a credential is read when someone asks, the
+      sandbox is checked, an agent is started. Nothing decides to list — the
+      listing is three read-only git commands, and the user story is that
+      *nothing the agent finished waits unnoticed*, which a state meaning "not
+      asked yet" would quietly defeat. So there is no `unlisted`: the region is
+      `listing` from the moment the machine exists.
+
+      ## Summaries here, hunks in the diff view
+
+      An entry is a branch, a path, a count and a flag — see `PendingWorktree`.
+      The hunks are deliberately not carried: a list that read every diff of
+      every branch before drawing a row would spend the whole of a large branch
+      to show a row that says which branch it is, and this list is what a
+      developer reads to *choose* the branch whose diff they want. The diff view
+      fetches the contents of the one they opened. Path names are carried
+      because they are cheap and because they are what makes the Fence flag
+      auditable — a row claiming Fence with no path that is one is a row nobody
+      can check.
+
+      ## Nothing here is composed by the agent
+
+      The list is produced host-side by running git — see
+      packages/harness/src/worktrees.ts and the route in src-tauri/src/bridge.rs.
+      This is the mechanism that shows what the agent changed, and a report the
+      agent composes is a report the agent can shade. The actor takes no input
+      for the same reason.
+    */
+    review: {
+      initial: 'routing',
+      states: {
+        routing: {
+          always: [
+            { target: 'listed', guard: ({ context }) => context.enterReview === 'listed' },
+            { target: 'empty', guard: ({ context }) => context.enterReview === 'empty' },
+            { target: 'listFailed', guard: ({ context }) => context.enterReview === 'listFailed' },
+            { target: 'listing' },
+          ],
+        },
+        listing: {
+          // Cleared on the way in, so a second attempt never shows the first
+          // one's reason beside a listing that is still running.
+          entry: assign({ worktreeError: null }),
+          invoke: {
+            src: 'listWorktrees',
+            input: () => ({}) as Record<string, never>,
+            onDone: [
+              // Order matters and the first entry is the ticket's own rule:
+              // nothing pending is `empty`, never `listed` with a count of zero.
+              {
+                target: 'empty',
+                guard: 'nothingPending',
+                actions: assign({ worktrees: [] }),
+              },
+              {
+                target: 'listed',
+                actions: assign({ worktrees: ({ event }) => event.output.worktrees }),
+              },
+            ],
+            onError: {
+              target: 'listFailed',
+              actions: assign({
+                worktreeError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+                // And forget the previous list. A listing left standing over a
+                // git that would not answer is the surface presenting a stale
+                // answer as the current one — the same rule a failed credential
+                // read follows with the kind it can no longer vouch for.
+                worktrees: [],
+              }),
+            },
+          },
+        },
+        // Three resting states, each with the same way out. None is terminal:
+        // the filesystem changes while varnick runs — an agent finishes a
+        // branch, a developer merges one — so any of them can be asked again.
+        listed: { on: { LIST_WORKTREES: 'listing' } },
+        empty: { on: { LIST_WORKTREES: 'listing' } },
+        listFailed: { on: { LIST_WORKTREES: 'listing' } },
       },
     },
   },

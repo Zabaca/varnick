@@ -131,6 +131,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
           storeCredential: seeds.storeCredential,
           mintSubscriptionToken: seeds.mintSubscriptionToken,
           spawnAgent: seeds.spawnAgent,
+          listWorktrees: seeds.listWorktrees,
           surface: surfaceMachine.provide({ actors: { loadSurface } }),
           session: sessionMachine.provide({
             actors: {

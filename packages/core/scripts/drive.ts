@@ -60,6 +60,7 @@ import type {
   Effort,
   Message,
   ModelId,
+  PendingWorktree,
   SandboxPolicy,
 } from '../src/domain.ts'
 
@@ -1812,6 +1813,7 @@ export default function Billing() {
     persist: unreached,
     readSession: unreached,
     readCommands: unreached,
+    listWorktrees: unreached,
     readSecretNames: async () => {
       await secrets.reload()
       return secrets.names()
@@ -2064,6 +2066,238 @@ export default function Billing() {
   actor.send({ type: 'DISCOVER_SURFACES', descriptors: seedSurfaces })
   check('an unloaded Surface can be rediscovered', actor.getSnapshot().context.surfaces.length === 3)
   actor.stop()
+}
+
+// ---------------------------------------------------------------------------
+// Harness — which Worktrees hold Core changes nobody has merged
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The region exists so that nothing the agent finished waits unnoticed, and
+    every assertion here is about one of three things: that a listing is asked
+    for without anybody deciding to, that nothing-pending and a listing that
+    failed stay two different answers, and that neither of them can disturb the
+    conversation running beside them.
+
+    What cannot be asserted at this seam is where the data came from — that is
+    src-tauri/src/bridge.rs routing the call to the runtime, and
+    packages/harness/src/worktrees.ts running git. What *can* be asserted here
+    is that Core never says what the answer should be about: see the input
+    assertion below.
+  */
+  const seen = (worktrees: readonly PendingWorktree[]) =>
+    resolves<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>({ worktrees })
+
+  const oneEntry: PendingWorktree = {
+    path: '/Users/dev/code/varnick/.claude/worktrees/49',
+    branch: 'ticket/49',
+    commits: 3,
+    changed: ['packages/core/src/machines/harness.ts'],
+    touchesFence: false,
+  }
+
+  {
+    // Nobody asked. The region is in flight from the moment the machine exists,
+    // because there is no decision to make: the other three regions rest until
+    // a credential, a check or a start is asked for, and a listing is neither
+    // expensive nor a choice.
+    const actor = createActor(
+      harnessMachine.provide({ actors: { listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>() } }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    check('a fresh Harness is already asking which worktrees are pending', regionOf(actor.getSnapshot().value, 'review') === 'listing')
+    check(
+      'and a second ask while one is in flight is refused rather than queued',
+      !actor.getSnapshot().can({ type: 'LIST_WORKTREES' }),
+    )
+    actor.stop()
+  }
+
+  {
+    // The renderer asks what is pending. It does not get to say what the answer
+    // should be about — no worktree name, no path, no ref. That is what keeps
+    // agent-authored input out of the host-side git call.
+    const inputs: unknown[] = []
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          listWorktrees: fromPromise<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
+            async ({ input }) => {
+              inputs.push(input)
+              return { worktrees: [] }
+            },
+          ),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'empty', soon)
+    check('the listing is asked for with nothing to narrow it', JSON.stringify(inputs) === '[{}]')
+    actor.stop()
+  }
+
+  {
+    const actor = createActor(
+      harnessMachine.provide({ actors: { listWorktrees: seen([oneEntry]) } }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
+    check('a listing that found something reaches listed', regionOf(actor.getSnapshot().value, 'review') === 'listed')
+    check('and the entry is held as git described it', JSON.stringify(actor.getSnapshot().context.worktrees) === JSON.stringify([oneEntry]))
+    actor.stop()
+  }
+
+  {
+    /*
+      The ticket's own line: `review.empty` is a real state and is not `listed`
+      with a count of zero.
+
+      Nothing pending and a listing that failed are different problems with
+      different copy, and a surface branching on `worktrees.length === 0` would
+      have to invent the difference back — which is the branch that eventually
+      renders "nothing is waiting to be merged" over a git that never answered.
+    */
+    const actor = createActor(
+      harnessMachine.provide({ actors: { listWorktrees: seen([]) } }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'empty', soon)
+    check('nothing pending reaches empty rather than listed', regionOf(actor.getSnapshot().value, 'review') === 'empty')
+    check('and empty holds no entries', actor.getSnapshot().context.worktrees.length === 0)
+    actor.stop()
+  }
+
+  {
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          listWorktrees: rejects<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
+            'fatal: not a git repository',
+          ),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listFailed', soon)
+    check('a git that failed reaches listFailed', regionOf(actor.getSnapshot().value, 'review') === 'listFailed')
+    check('carrying what it said', actor.getSnapshot().context.worktreeError === 'fatal: not a git repository')
+    actor.stop()
+  }
+
+  {
+    // A failed re-listing leaves no stale list standing. The same rule the
+    // credential kind follows: a fact about something nobody can currently see
+    // is a fact the surface would present as current.
+    let listings = 0
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          listWorktrees: fromPromise<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
+            async () => {
+              if (listings++ === 0) return { worktrees: [oneEntry] }
+              throw new Error('fatal: not a git repository')
+            },
+          ),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
+    actor.send({ type: 'LIST_WORKTREES' })
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listFailed', soon)
+    check('a failed re-listing keeps no list it can no longer vouch for', actor.getSnapshot().context.worktrees.length === 0)
+    actor.stop()
+  }
+
+  {
+    // Every resting state can be asked again. A listing is a fact about a
+    // filesystem that changes while varnick runs — an agent finishes a branch,
+    // a developer merges one — so none of the three is terminal.
+    for (const enterReview of ['listed', 'empty', 'listFailed'] as const) {
+      const actor = createActor(
+        harnessMachine.provide({ actors: { listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>() } }),
+        { input: { policy: seedPolicy, enterReview, worktrees: [oneEntry] } },
+      ).start()
+      check(`a card parked in review.${enterReview} is in review.${enterReview}`, regionOf(actor.getSnapshot().value, 'review') === enterReview)
+      actor.send({ type: 'LIST_WORKTREES' })
+      check(`review.${enterReview} can be listed again`, regionOf(actor.getSnapshot().value, 'review') === 'listing')
+      actor.stop()
+    }
+  }
+
+  {
+    /*
+      The region is independent of the other three, which is the whole reason it
+      is a region rather than a field.
+
+      A git that will not answer says nothing about the credential, the sandbox
+      or the agent — and an agent that crashed says nothing about what is
+      waiting to be merged. A status enum shared with the rest would make each
+      of those a lie in one direction or the other.
+    */
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          listWorktrees: rejects<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>('fatal: no git'),
+          readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'subscription' }),
+          checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listFailed', soon)
+    actor.send({ type: 'READ_CREDENTIAL' })
+    await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present', soon)
+    actor.send({ type: 'CHECK_SANDBOX' })
+    await waitFor(actor, (s) => regionOf(s.value, 'sandbox') === 'available', soon)
+    actor.send({ type: 'START' })
+
+    check(
+      'a listing that failed refuses nothing else',
+      regionOf(actor.getSnapshot().value, 'agent') === 'starting' &&
+        regionOf(actor.getSnapshot().value, 'review') === 'listFailed',
+    )
+    actor.stop()
+  }
+
+  {
+    /*
+      The live actor, against a host that answers.
+
+      One call and no other, and — the part worth taking here rather than at the
+      bridge's own seam — a host that volunteered a diff cannot get one into the
+      machine's context. The list is summaries; the hunks are fetched for the
+      worktree a developer opened.
+    */
+    const realInternals = (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+    const asked: string[] = []
+    ;(globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: async (_command: string, payload: { request: { kind: string } }) => {
+        asked.push(payload.request.kind)
+        if (payload.request.kind !== 'list-worktrees') throw { failure: 'malformed' }
+        return {
+          worktrees: [{ ...oneEntry, diff: '@@ -1 +1 @@ VOLUNTEERED' }],
+        }
+      },
+    }
+
+    const actor = createActor(
+      harnessMachine.provide({ actors: { listWorktrees: liveActors().listWorktrees } }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
+
+    check('the live listing asks the host for the list and nothing else', asked.join('|') === 'list-worktrees')
+    const held = JSON.stringify(actor.getSnapshot().context.worktrees)
+    check('and what it holds is what the entry declares, field for field', held === JSON.stringify([oneEntry]))
+    check('nothing the host volunteered rides along', !held.includes('VOLUNTEERED'))
+    actor.stop()
+
+    if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+    else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = realInternals
+  }
 }
 
 // ---------------------------------------------------------------------------

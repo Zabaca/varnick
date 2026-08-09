@@ -20,6 +20,7 @@ import type {
   Effort,
   Message,
   ModelId,
+  PendingWorktree,
   SandboxPolicy,
 } from '../domain.ts'
 import type { SessionInput } from '../machines/session.ts'
@@ -410,6 +411,27 @@ export function liveActors(
       the context that is full belongs to the agent process. Nothing here opens
       a session, which is what ADR-0003's last consequence is about.
     */
+
+    /*
+      Real. The host runs git in the clone and answers with what it said.
+
+      The one actor whose value is that it is *not* the agent's. Everything else
+      here reaches a service the agent has nothing to do with; this reaches a
+      repository the agent has been writing to, and reports on it. So it is a
+      bridge call rather than anything Core assembles, and the call carries no
+      argument — the renderer asks what is pending, and does not get to say what
+      the answer should be about. See packages/harness/src/worktrees.ts for the
+      three read-only commands, and the route in src-tauri/src/bridge.rs.
+
+      A host that is not there — a browser tab at the dev server — reaches
+      `review.listFailed` with the reason, like every other call. That is the
+      right state: nothing is known about what is pending, which is a different
+      thing from knowing that nothing is.
+    */
+    listWorktrees: fromPromise<
+      { worktrees: readonly PendingWorktree[] },
+      Record<string, never>
+    >(() => callHarness({ kind: 'list-worktrees' })),
 
     // `loadSurface` is deliberately absent from both this list and the seeded
     // one. It has no seeded half in either mode — see actors/index.ts.

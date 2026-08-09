@@ -9,6 +9,7 @@ import type {
   Effort,
   Message,
   ModelId,
+  PendingWorktree,
   SandboxPolicy,
 } from '../domain.ts'
 import { brokenSurfaceErrorFor } from '../data/seed.ts'
@@ -62,6 +63,10 @@ export function frozenHarness(surfaceOutcome: SurfaceOutcome = 'holds') {
       storeCredential: never<void, { kind: CredentialKind; value: string }>(),
       mintSubscriptionToken: never<void, Record<string, never>>(),
       spawnAgent: never<{ pid: number }, { policy: SandboxPolicy }>(),
+      // Frozen like the rest, which is what lets a card sit in `review.listing`
+      // — the state every card whose scenario names no other one is in, because
+      // the region starts in flight rather than at rest.
+      listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(),
       surface: surfaceMachine.provide({
         actors: {
           loadSurface: fromPromise<{ ok: true }, { modulePath: string }>(({ input }) => {

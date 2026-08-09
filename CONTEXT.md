@@ -85,7 +85,9 @@ _Avoid_: staging, sandbox, dev build, second instance (there may be several)
 **Fence**:
 The code that decides what the agent may do: `packages/harness/**`, which generates the Sandbox policy; `src-tauri/**`, which holds the Credential; and `sandbox-policy.baseline.json`, which is how a widening is told from varnick's own work. Named because three separate mechanisms key off the same list — the Preview dialog, the diff view's highlighting, and `denyWrite` itself.
 
-Distinct from Core, which is larger. `packages/core/**`, `vite.config.*` and `package.json` are Core and are not Fence: they are denied so a broken edit cannot take the conversation down, not because they decide the boundary.
+Distinct from Core, which is larger. `packages/core/**`, `vite.config.*` and `package.json` are Core and are not Fence: they are denied so a broken edit cannot take the conversation down, not because they decide the boundary. `sandbox-policy.json` is not Fence either, and for a subtler reason: it is the generated *output*, compared against the baseline and regenerated from the generator, both of which are.
+
+The list lives once, as `FENCE_PATHS` and `isFencePath` in `packages/harness/src/fence.ts` — a pure function over one repository-relative path, with no imports, so the host-side listing, the Rust host's dialog and the webview's diff view can all ask the same question. Three glob lists would drift, and the drift is invisible: each caller goes on working, and the one that fell behind stops raising a dialog for a file the other two still colour.
 _Avoid_: privileged paths, protected files, boundary (the boundary is what the Fence produces)
 
 Retired with the Clone: **Escalation**, a queued request for a change the agent could not make, and **Collect**, the host-initiated step that brought a branch out of a Clone. Both are `git merge` now. The gate needs nothing built, because landing a Core change means writing `packages/core/**` in the live tree and `denyWrite` refuses it — a mechanism rather than a policy, which is why a developer who deletes those entries gets agent-merges and that is their call.
@@ -120,6 +122,15 @@ These are machine state names before they are UI words, and the two must not div
 `down` is stopped on purpose; `crashed` is stopped on its own and carries a reason. `startRefused` is a start that was asked for and declined, holding the refusal so it can be read.
 _Avoid_: stopped, idle, dead, paused, blocked
 
+**Harness — `review`**: `listing`, `listed`, `empty`, `listFailed`.
+Which **Worktrees** hold commits the live tree does not, and what changed in each. **Produced host-side by running git, and never by the agent** — this is the mechanism that shows what the agent changed, and a report the agent composes is a report the agent can shade. Three read-only commands in `packages/harness/src/worktrees.ts`, routed to the Harness runtime because it is the process with a filesystem, reaching Core over the existing bridge.
+
+It is the one region with no resting state before its work, and the omission is deliberate: the other three wait on something a person decides — read this credential, check the sandbox, start the agent — and nothing decides to list. So there is no `unlisted`, and the region is `listing` from the moment the machine exists, because *nothing the agent finished should wait unnoticed*.
+
+`empty` is a real state and not `listed` with a count of zero. Nothing pending and a listing that failed are different problems with different copy: one says everything has landed, the other says nobody can currently tell. `listFailed` carries git's own reason and forgets the previous list, for the same reason a failed credential read forgets the Kind — a listing left standing over a git that would not answer is a stale answer presented as the current one. A Worktree whose branch holds no commits yet is not pending at all: it is an agent that has started rather than one that has finished, and it is left out rather than shown with a zero on it.
+
+An entry carries the branch, the path, how far ahead it is, the paths it changed and whether any of them is **Fence** — summaries, never hunks. A list that read every diff of every branch to draw a row would spend the whole of a large branch before showing anything, and this list is what a developer reads to *choose* the branch whose diff they want; the diff view fetches the contents of the one they opened. Path names are carried because they are cheap and because they are what makes the Fence flag auditable.
+
 **Session — `turn`**: `idle`, `answering.sending`, `answering.streaming`, `interrupting`, `failed`.
 `answering` is a Turn in flight, and it is one state because it runs one actor. Its children say how far along the answer is: `sending` is posted with nothing back yet, `streaming` is output arriving. They were siblings once, and each invoked the Turn — so the first streamed token aborted the Turn and started it again. `interrupting` keeps the partial — an interrupted Turn still said something. A Session resumed on launch enters `idle`: a Turn in flight when the process died is an answer that stopped early, which is what an interrupt already is, and nothing observed a failure to report.
 
@@ -133,7 +144,7 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 
 ### Event names
 
-`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `RUNTIME_REPORTED`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACTED`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface. `COMMANDS_REPORTED` joins `RUNTIME_REPORTED` on the Harness: both are the runtime describing itself, and both are dropped when the agent is.
+`READ_CREDENTIAL`, `STORE_CREDENTIAL`, `MINT_CREDENTIAL`, `MINT_URL`, `CHOOSE_CREDENTIAL_KIND`, `CREDENTIAL_REJECTED`, `CHECK_SANDBOX`, `START`, `STOP`, `RESTART`, `AGENT_EXIT`, `RUNTIME_REPORTED`, `DISCOVER_SURFACES`, `UNLOAD_SURFACE`, `LIST_WORKTREES` on the Harness. `EDIT_DRAFT`, `SEND`, `STREAM_DELTA`, `INTERRUPT`, `RETRY_TURN`, `DISMISS_TURN_ERROR`, `COMPACTED`, `CLEAR`, `SAVE`, `RETRY_SAVE`, `SET_MODEL`, `SET_EFFORT`, `SET_COMMANDS`, `MENU_MOVE`, `MENU_COMPLETE`, `MENU_DISMISS` on the Session. `RETRY`, `UNLOAD` on a Surface. `COMMANDS_REPORTED` joins `RUNTIME_REPORTED` on the Harness: both are the runtime describing itself, and both are dropped when the agent is.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
 
