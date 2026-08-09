@@ -89,6 +89,69 @@ export const MACHINE_KEYCHAIN_DIR = '/Library/Keychains'
  */
 export const DEFAULT_ALLOWED_HOSTS = ['api.anthropic.com', 'registry.npmjs.org'] as const
 
+/**
+ * The parts of `.git` that decide what git *executes*, relative to the clone.
+ *
+ * `.git` is not versioned, which is the whole argument: it is in no branch, no
+ * diff and no merge, so a write here takes effect with nothing for anybody to
+ * read. A `pre-commit` the agent planted runs unconfined on the developer's
+ * next commit — **including the merge commit that was supposed to be the gate**
+ * — so it executes ahead of review rather than behind it. Worktrees sharpen
+ * this rather than soften it: they share one `.git` through `commondir`, so a
+ * single write covers every worktree at once.
+ *
+ * Both entries or neither. `.git/config` holds `core.hooksPath`, so denying the
+ * hooks directory alone is decorative — the agent points hooks at a directory
+ * it can still write. The same file defines the `filter.<name>.clean` and
+ * `.smudge` commands that a `.gitattributes` entry invokes, which is a second
+ * path to the same place.
+ *
+ * `config*` rather than `config`, for a nuisance rather than an escalation.
+ * `.git/config.lock` is a separate path, and git writes the lock and renames it
+ * over the target — so the rename is what the deny catches and `.git/config`
+ * stays byte-identical either way. What the bare spelling leaves behind is a
+ * stale lock the agent could not finish with, which makes the *developer's*
+ * next `git config` fail until someone removes it. The glob also covers
+ * `config.worktree`, which is the same file under `extensions.worktreeConfig`.
+ *
+ * See docs/adr/0016-gits-own-directory-is-outside-the-review-path.md, and
+ * {@link TRACKED_HOOKS_DIR} for where hooks live instead.
+ */
+export const GIT_EXECUTABLE_CONFIG = ['.git/hooks/**', '.git/config*'] as const
+
+/**
+ * The repository's own scripts, which the host runs.
+ *
+ * `package.json` at the root is denied because its scripts execute on the
+ * developer's machine, and this is that denial finishing the sentence: a
+ * `postinstall` that reads `sh scripts/…` is a pointer, and denying the pointer
+ * while leaving the target writable is the same decorative deny that
+ * {@link GIT_EXECUTABLE_CONFIG} rejects one paragraph up. The agent would not
+ * need to touch `package.json` at all — it would rewrite the file
+ * `package.json` names, and the developer's next `bun install` would run it
+ * unconfined.
+ *
+ * Narrow on purpose. This is the directory the root manifest invokes, not
+ * "scripts" as a category: `packages/core/scripts/drive.ts` is Core's own and
+ * is already covered, and Userspace may hold whatever it likes.
+ */
+export const HOST_INVOKED_SCRIPTS = 'scripts/**'
+
+/**
+ * Where hooks live instead: a tracked directory, which is what husky and
+ * lefthook do.
+ *
+ * The agent loses nothing it can use, and hooks come back **better** than they
+ * were. As tracked files they appear in the diff, travel through the merge, and
+ * are gated by the same review as everything else — the agent writes them
+ * freely and a human reads them, which was never true of `.git/hooks`.
+ *
+ * Not written into the policy: this is a *grant* by omission, so naming it here
+ * is what lets `sandbox.test.ts` assert it is not denied and lets the bootstrap
+ * in `scripts/use-tracked-git-hooks.sh` spell it the same way.
+ */
+export const TRACKED_HOOKS_DIR = '.githooks'
+
 /** Where the generated policy lives inside the clone. */
 export const SANDBOX_POLICY_FILENAME = 'sandbox-policy.json'
 
@@ -257,7 +320,46 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
       // question, and no ask callback is ever registered.
       deniedDomains: [],
       strictAllowlist: true,
-      allowLocalBinding: false,
+      /*
+        The agent binds local ports — a dev server, a test server, a headless
+        browser and CDP. See docs/adr/0015-the-agent-binds-local-ports.md.
+
+        This was `false` with no comment beside it, which made it the one field
+        in this file carrying no argument: srt's default, carried through, never
+        decided. What it cost is the whole of the agent's ability to observe its
+        own work, in a product whose premise is that the agent builds UI.
+
+        **It is not an egress widening, and that is measured rather than
+        assumed.** In srt 0.0.67 the flag adds exactly three Seatbelt rules:
+
+          (allow network-bind     (local  ip "*:*"))
+          (allow network-inbound  (local  ip "*:*"))
+          (allow network-outbound (remote ip "localhost:*"))
+
+        srt's own comments say bind and inbound are local operations with no
+        remote endpoint, so wildcarding them grants no egress, and that outbound
+        is written as `localhost` precisely so the allowlist stays enforced under
+        this flag — something srt was patched for twice, with issue numbers (#225,
+        #88). `allowedDomains` above is untouched and the proxy still enforces it.
+
+        **What it does grant, named rather than glossed.** Ingress on *any*
+        interface: the bind rule is `local ip "*:*"` and not loopback, because a
+        dual-stack runtime binds `127.0.0.1` as `::ffff:127.0.0.1`, which
+        Seatbelt's `localhost` token does not match. So the agent can bind
+        `0.0.0.0` and something on the same network can connect in — the shape
+        packages/core/vite.config.ts already warns about for `VARNICK_HOST`, now
+        true of a second process nobody configured. There is no loopback-only
+        form of this flag; the narrower thing is convention, not enforcement.
+        And loopback egress: the agent can reach other services on this machine.
+
+        **What it does not reach.** The Harness and the Tauri host both speak
+        NDJSON over stdio rather than sockets, so binding reaches neither.
+
+        The kernel half is `sandbox.boundary.test.ts`, which binds a port and
+        serves over it *and* asks for an unlisted host in the same sandbox — the
+        second assertion is what keeps the first admissible.
+      */
+      allowLocalBinding: true,
       allowAllUnixSockets: false,
     },
     filesystem: {
@@ -447,6 +549,50 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           writable host.
         */
         join(clone, 'src-tauri/**'),
+        /*
+          The one part of the repository no diff shows.
+
+          Every entry above is denied because a write to it changes the fence on
+          the next *launch*, and a human's `git merge` is what stands between the
+          agent and that. These two are denied because there is no merge to stand
+          there at all: `.git` is not versioned, so a write here is on no branch,
+          in no diff, and in nobody's review.
+
+          What that buys an agent is code execution on the developer's machine
+          ahead of the gate rather than behind it. A planted `pre-commit` runs
+          unconfined on the next commit — including the merge commit that was
+          supposed to be the gate. Worktrees make it worse rather than better:
+          they share one `.git` through `commondir`, so one write covers every
+          worktree at once, and the Worktree model (ADR-0014) is what will have
+          the agent touching `.git` constantly.
+
+          See {@link GIT_EXECUTABLE_CONFIG} for why `.git/config` is not
+          separable from the hooks directory, and ADR-0016 for the rest.
+
+          **This is deliberately narrow, and the narrowness is load-bearing.**
+          Denying `.git` outright would take ADR-0014 with it. `git worktree
+          add`, `git commit` and `git merge` write `.git/worktrees/**`,
+          `.git/objects/**`, `.git/refs/**` and the index, and none of those is
+          denied. Measured for ADR-0016, because it was the one thing that could
+          have made this expensive: `git worktree add` does not write
+          `.git/config` — md5 identical before and after.
+
+          What the agent loses is `git remote add`, `git config` and
+          `--set-upstream`, and it cannot reach a forge with this allowlist
+          anyway. What it gets back is better than what it had: hooks live in
+          {@link TRACKED_HOOKS_DIR}, where they are tracked files the agent
+          writes freely and a human reads in a diff.
+        */
+        ...GIT_EXECUTABLE_CONFIG.map((entry) => join(clone, entry)),
+        /*
+          And the scripts the root manifest runs, for the reason `package.json`
+          itself is denied. Found reviewing this ticket: it added a
+          `postinstall` reading `sh scripts/use-tracked-git-hooks.sh`, so
+          denying the manifest while leaving the script writable would have let
+          the agent choose what the developer's next `bun install` executes
+          without touching a denied file at all. See {@link HOST_INVOKED_SCRIPTS}.
+        */
+        join(clone, HOST_INVOKED_SCRIPTS),
         /*
           Knowingly not here: the paths that run code on the *developer's*
           machine through an install rather than a build.
@@ -1252,11 +1398,38 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     '  ...never these, whatever else allows them:',
     list(policy.filesystem.denyWrite),
     '',
+    `  The two ${GIT_EXECUTABLE_CONFIG.join(' and ')} entries above are denied for a`,
+    '  reason none of the others share: .git is not versioned, so a write there is',
+    '  on no branch, in no diff, and in nobody’s review. A pre-commit hook the',
+    '  agent plants runs unconfined on your next commit — including the merge',
+    '  commit that was meant to be the gate. .git/config goes with it because it',
+    '  holds core.hooksPath, which would make denying the hooks directory alone',
+    '  decorative, and because it defines the filter commands .gitattributes runs.',
+    '',
+    `  Hooks live in ${TRACKED_HOOKS_DIR}/ instead, with core.hooksPath pointed at it —`,
+    '  the same thing husky and lefthook do. They come back better than they were:',
+    '  tracked files, in the diff, read by a human before they run. Nothing else in',
+    '  .git is denied, so git worktree add, git commit and git merge all still work.',
+    '',
     '  Reachable over the network: only these hosts:',
     list(policy.network.allowedDomains),
     '',
     '  Every host in that list is an exfiltration path. The allowlist bounds',
     '  the blast radius; it does not prevent data leaving.',
+    '',
+    `  allowLocalBinding is ${String(policy.network.allowLocalBinding)}, and it grants no egress. It is not part of`,
+    '  that list and does not change it. What it grants is inbound: the agent can',
+    '  bind a port and serve over it, which is what a dev server, a test server and',
+    '  a headless browser need. Measured in srt 0.0.67, it adds network-bind and',
+    '  network-inbound on (local ip "*:*") and network-outbound on',
+    '  (remote ip "localhost:*") — the last written that way on purpose, so the',
+    '  egress allowlist above stays enforced. Two things it does grant, said',
+    '  plainly. The',
+    '  bind is on any interface rather than loopback, because a dual-stack runtime',
+    '  binds 127.0.0.1 as ::ffff:127.0.0.1 and Seatbelt’s localhost token does not',
+    '  match that — so the agent can bind 0.0.0.0 and something on your network can',
+    '  connect in. And the agent can reach other services on this machine over',
+    '  loopback. It reaches neither varnick nor its host: both speak stdio.',
     '',
     '  security, osascript, open and sudo are made unreadable. They still run:',
     '  srt allows process-exec unconditionally, and denying read is a different',
@@ -1687,7 +1860,7 @@ export function watchSandboxViolations(input: SandboxViolationWatchInput): Sandb
     const violation = parseSandboxViolation(event.line, event.command)
     seen.push(violation)
     if (!isUnexpectedViolation(input.policy, violation)) return
-    const key = `${violation.operation} ${violation.subject}`
+    const key = `${violation.operation}\u0000${violation.subject}`
     if (said.has(key)) return
     said.add(key)
     report(describeSandboxViolation(violation), violation)

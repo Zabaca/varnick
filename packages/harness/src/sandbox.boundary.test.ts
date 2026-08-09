@@ -1,5 +1,14 @@
 import { afterAll, expect, test } from 'bun:test'
-import { accessSync, constants, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
@@ -7,6 +16,7 @@ import { CLAUDE_CONFIG_RELATIVE_PATH, SELFTEST_MARKER, agentCommand } from './ag
 
 import {
   MACHINE_KEYCHAIN_DIR,
+  TRACKED_HOOKS_DIR,
   establishSandbox,
   releaseSandbox,
   sandboxBaselinePath,
@@ -370,6 +380,201 @@ test.skipIf(offline !== null)(
     )
     expect(npm.code).toBe(0)
     expect(npm.stdout.trim()).toBe('200')
+  },
+  120_000,
+)
+
+test.skipIf(blocked !== null)(
+  "git's own executable configuration is refused by the kernel, and the rest of .git is not",
+  async () => {
+    /*
+      ADR-0016, measured rather than asserted about the generated file.
+
+      `.git` is the one part of a repository no diff shows, so a `pre-commit`
+      the agent planted executes ahead of the review gate — including on the
+      merge commit that was supposed to *be* the gate. `.git/config` goes with
+      it: it holds `core.hooksPath`, which makes denying the hooks directory
+      alone decorative, and it defines the filter commands `.gitattributes`
+      invokes.
+
+      The second half is what stops this from being a denial of `.git` outright.
+      A worktree, a commit and a merge write `.git/worktrees`, `.git/objects`,
+      `.git/refs` and the index, and every one of them stays writable — which is
+      what ADR-0014's whole model rests on. Measured for ADR-0016: `git worktree
+      add` does not write `.git/config` at all, md5 identical before and after.
+    */
+    await releaseSandbox()
+
+    /*
+      A real repository rather than a `.git` skeleton, because the interesting
+      question is not whether a shell redirect is refused. It is whether *git*
+      is: `git config` writes through `.git/config.lock` and renames it into
+      place, which is a path the deny has to hold on the destination of rather
+      than on the write itself. It does, measured below, and the file is
+      unchanged after.
+    */
+    const gitDir = join(clone, '.git')
+    const q = JSON.stringify(clone)
+    for (const argv of [
+      ['init', '-q', '-b', 'main', clone],
+      ['-C', clone, 'config', 'user.email', 'probe@varnick.invalid'],
+      ['-C', clone, 'config', 'user.name', 'varnick boundary probe'],
+    ]) {
+      const init = Bun.spawnSync({ cmd: ['git', ...argv], cwd: clone })
+      expect(init.exitCode).toBe(0)
+    }
+    writeFileSync(join(clone, 'tracked.txt'), 'a\n', 'utf8')
+    Bun.spawnSync({ cmd: ['git', '-C', clone, 'add', '-A'] })
+    Bun.spawnSync({ cmd: ['git', '-C', clone, 'commit', '-q', '-m', 'first'], cwd: clone })
+    mkdirSync(join(clone, TRACKED_HOOKS_DIR), { recursive: true })
+    const configBefore = readFileSync(join(gitDir, 'config'), 'utf8')
+
+    const run = runner(await establishSandbox({ cloneRoot: clone }))
+
+    // The control, and it is the one that makes the denials mean something: the
+    // clone is writable, so a refusal below is these two paths and not the
+    // wrapper.
+    const control = await run(`printf x > ${JSON.stringify(join(clone, 'writable.txt'))}`)
+    expect(control.code).toBe(0)
+
+    // The boundary. A hook the agent plants would run unconfined at commit time.
+    const hook = await run(
+      `printf '#!/bin/sh\\necho pwned\\n' > ${JSON.stringify(join(gitDir, 'hooks', 'pre-commit'))}`,
+    )
+    expect(hook.code).not.toBe(0)
+    expect(hook.stderr).toMatch(/not permitted|Permission denied|read-only/i)
+    expect(existsSync(join(gitDir, 'hooks', 'pre-commit'))).toBe(false)
+
+    // And the redirect that would make the line above decorative — asked for
+    // twice, because git does not write this file the way a shell does.
+    const redirected = await run(
+      `printf '[core]\\n\\thooksPath = /tmp\\n' > ${JSON.stringify(join(gitDir, 'config'))}`,
+    )
+    expect(redirected.code).not.toBe(0)
+    expect(redirected.stderr).toMatch(/not permitted|Permission denied|read-only/i)
+
+    const viaGit = await run(`cd ${q} && git config core.hooksPath /tmp/evil`)
+    expect(viaGit.code).not.toBe(0)
+    expect(viaGit.stderr).toMatch(/could not write config file|not permitted/i)
+    expect(readFileSync(join(gitDir, 'config'), 'utf8')).toBe(configBefore)
+
+    /*
+      What a worktree, a commit and a merge need, asked of git itself for the
+      same reason. This is ADR-0014's whole model: the agent authors Core in a
+      worktree under `.claude/worktrees/`, and a deny that grew into the rest of
+      `.git` would take that with it — failing in a developer's `git commit` a
+      week later rather than here.
+    */
+    const worktree = await run(`cd ${q} && git worktree add -q .claude/worktrees/probe -b probe`)
+    expect(worktree.code).toBe(0)
+
+    const committed = await run(
+      `cd ${q}/.claude/worktrees/probe && printf b > b.txt && git add -A && git commit -q -m second`,
+    )
+    expect(committed.code).toBe(0)
+
+    const merged = await run(`cd ${q} && git merge --no-ff -m merged probe`)
+    expect(merged.code).toBe(0)
+
+    // And the tracked hooks directory the agent is given instead: it writes one
+    // freely, and git runs what it finds there.
+    const wroteHook = await run(
+      `printf '#!/bin/sh\\necho HOOK-RAN >&2\\n' > ${q}/${TRACKED_HOOKS_DIR}/pre-commit` +
+        ` && chmod +x ${q}/${TRACKED_HOOKS_DIR}/pre-commit`,
+    )
+    expect(wroteHook.code).toBe(0)
+
+    const ranHook = await run(
+      `cd ${q} && git -c core.hooksPath=${TRACKED_HOOKS_DIR} commit -q --allow-empty -m hooked`,
+    )
+    expect(ranHook.code).toBe(0)
+    expect(ranHook.stderr).toContain('HOOK-RAN')
+
+    // Nothing in all of that touched the one file the deny is about.
+    expect(readFileSync(join(gitDir, 'config'), 'utf8')).toBe(configBefore)
+
+    console.log(
+      'boundary probe: .git/hooks and .git/config are refused by the kernel — including' +
+        " through git's own lock-and-rename — while worktree add, commit, merge and a" +
+        ` hook in ${TRACKED_HOOKS_DIR}/ all still work.`,
+    )
+  },
+  120_000,
+)
+
+test.skipIf(blocked !== null)(
+  'the agent can bind a local port, and the egress allowlist is unchanged by it',
+  async () => {
+    /*
+      ADR-0015, at the kernel. `allowLocalBinding: true` is what buys the agent a
+      dev server, a test server and a headless browser — the whole of its
+      ability to observe its own work.
+
+      The two halves ship together because the first is only admissible while
+      the second holds. srt's flag adds `network-bind` and `network-inbound` on
+      `(local ip "*:*")` and `network-outbound` on `(remote ip "localhost:*")` —
+      the last written that way on purpose so the allowlist stays enforced
+      (srt #225, #88). This measures both against the same policy in the same
+      run, so a future release that traded egress for binding fails here.
+
+      The listener is python's stdlib rather than a dependency, for the same
+      reason probe 10 in containment.probe.test.ts uses it: it is on the machine
+      and it is not part of what is being measured.
+    */
+    await releaseSandbox()
+
+    const listener = join(clone, 'listen.py')
+    writeFileSync(
+      listener,
+      [
+        'import http.server, sys, threading, urllib.request',
+        'try:',
+        "    s = http.server.HTTPServer(('127.0.0.1', 0), http.server.SimpleHTTPRequestHandler)",
+        'except Exception as e:',
+        "    print('BIND-REFUSED', type(e).__name__, flush=True); sys.exit(1)",
+        "print('BOUND', s.server_address[1], flush=True)",
+        'threading.Thread(target=s.handle_request, daemon=True).start()',
+        'try:',
+        '    code = urllib.request.urlopen(',
+        '        "http://127.0.0.1:%d/" % s.server_address[1], timeout=5).status',
+        "    print('SERVED', code, flush=True)",
+        'except Exception as e:',
+        "    print('SERVE-FAILED', type(e).__name__, flush=True)",
+      ].join('\n'),
+      'utf8',
+    )
+
+    try {
+      const run = runner(await establishSandbox({ cloneRoot: clone }))
+
+      // The control: python runs, so anything below is about the network and
+      // not about an unreachable interpreter.
+      const control = await run('python3 -c "print(6*7)"')
+      expect(control.code).toBe(0)
+      expect(control.stdout.trim()).toBe('42')
+
+      // Half one: it binds, and it serves over what it bound. A bind that
+      // succeeded and could not be connected to would be no dev server.
+      const bound = await run(`python3 ${JSON.stringify(listener)}`)
+      expect(bound.stdout).toContain('BOUND')
+      expect(bound.stdout).not.toContain('BIND-REFUSED')
+      expect(bound.stdout).toContain('SERVED 200')
+
+      // Half two, in the same sandbox: an unlisted host is still refused. This
+      // is the assertion that keeps the first one admissible.
+      const unlisted = await run(
+        'curl -sS -o /dev/null -w "%{http_code}" --max-time 20 https://example.com/',
+      )
+      expect(unlisted.code).not.toBe(0)
+      expect(unlisted.stdout.trim()).not.toMatch(/^2\d\d$/)
+
+      console.log(
+        'boundary probe: the agent bound an ephemeral port and served over it, and' +
+          ' example.com was still refused in the same sandbox.',
+      )
+    } finally {
+      rmSync(listener, { force: true })
+    }
   },
   120_000,
 )
