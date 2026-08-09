@@ -20,6 +20,24 @@ rate_limits:             null
 
 `readSubscriptionUsage` refuses on exactly that condition, so the read fails and the strip stays absent. **The session does not even know it is a subscription.** As far as usage reporting is concerned, a `setup-token` session is indistinguishable from an API-key one.
 
+### The timing explanation, tested and rejected
+
+The developer's own statusline shows `5h:21% wk:75%`, which looked like a contradiction. It is not, and the way it was resolved is worth keeping because the obvious answer was wrong twice.
+
+Their statusline script calls nothing. It reads `.rate_limits.five_hour.used_percentage` out of the JSON Claude Code pipes to it, and its own comment says:
+
+```
+# Rate-limit usage (Pro/Max only; populated after first API response in a session)
+```
+
+"Populated after first API response" is a real condition, and the first measurement above did not meet it — the usage request was fired alongside the start of the session. So the reading was retested with the input stream held open, the way `runAgentHost` keeps a session alive, and the request made *after* a completed `result`. Same answer: `subscription_type: null`, `rate_limits_available: false`, `rate_limits: null`.
+
+**So it is the credential, not the timing.** The statusline has figures because that session is the developer's interactive login. A `setup-token` session reports nothing, warm or cold.
+
+### One lead not yet closed
+
+The Claude Code binary contains an endpoint, `/api/oauth/usage`, which would report plan usage without a session at all. Called three times with the subscription token it answered **429** rather than 401 — so it exists and did not reject the credential, but nothing was read from it. That is not evidence either way and the calls were stopped rather than repeated. If plan usage is worth keeping, this is where to look before cutting: an endpoint read with the token varnick already holds would need no session, no control request, and no `subscription` region.
+
 ## Why this was not caught before, which is the part worth keeping
 
 This is [ADR-0011](../../../docs/adr/0011-varnick-takes-a-subscription-token-not-the-subscription.md)'s own warning, repeating one level down.
