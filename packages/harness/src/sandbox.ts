@@ -443,6 +443,22 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           deliberately, or an Escalation — not a writable host.
         */
         join(clone, 'src-tauri/**'),
+        /*
+          Knowingly not here: the paths that run code on the *developer's*
+          machine through an install rather than a build.
+
+          `package.json` at the root is denied, but `packages/userspace/`
+          has its own, and a dependency added there with a `postinstall` script
+          runs on the host the next time someone runs `bun install`. Same shape
+          as the host above, one ecosystem over — and one more step removed,
+          since it needs an install rather than a launch.
+
+          Left open deliberately: *"i'm ok with cargo as well. it's a potential
+          gap but i don't want to segment this yet."* Written down because the
+          difference between a gap that was accepted and a gap that was missed
+          is invisible in a list, and this list has already lost one entry to
+          exactly that.
+        */
       ],
     },
     // `open` and `osascript` need Apple Events. Allowing them would let a

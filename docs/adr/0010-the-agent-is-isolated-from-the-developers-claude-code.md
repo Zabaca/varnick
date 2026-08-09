@@ -43,6 +43,20 @@ So the session is isolated by default, and
 > before: what the agent loads now lives *in the clone*, so it travels with it.
 > A plugin under `~/.claude` was never reproducible and was never reachable
 > either. One is copied into `.claude/plugins/` or it does not exist.
+>
+> **One consequence, examined and accepted.** `.claude/**` is agent-writable,
+> and the developer's *own* Claude Code sessions run in this directory and load
+> the same settings and plugins. So a hook the agent writes fires in those
+> sessions, unconfined — varnick honours the invariant above, and the
+> developer's other tooling is not varnick.
+>
+> The alternative was a varnick-only plugin directory the agent could write and
+> nothing else would read, at the cost of the agent being unable to give itself
+> a hook at all. The developer chose to share: *"leave .claude alone, i think it
+> makes sense to share."* Recorded here rather than left implicit, because a
+> reader finding a writable `.claude` later should be able to tell a decision
+> from an oversight — which is precisely the distinction the host's own deny
+> line went missing inside.
 
 ## What isolation is, exactly
 
