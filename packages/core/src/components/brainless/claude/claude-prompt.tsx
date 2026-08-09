@@ -95,8 +95,8 @@ export function ClaudePrompt({
 }: {
   value?: string;
   defaultValue?: string;
-  onChange?: React.ChangeEventHandler<HTMLInputElement>;
-  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
+  onChange?: React.ChangeEventHandler<HTMLTextAreaElement>;
+  onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
   placeholder?: string;
   /** Pass `false` to hide the mode line, as `effort` already allows. */
   mode?: ClaudeMode | false;
@@ -112,6 +112,24 @@ export function ClaudePrompt({
   const e = effort === false ? null : EFFORTS[effort];
   const controlled = value !== undefined;
   const rainbow = Boolean(e?.rainbow);
+
+  /*
+    Local change: the field is a textarea, and it is one line until the text
+    needs two.
+
+    An `<input>` cannot hold a newline at all, so a prompt with a blank line in
+    it arrived at the agent as one run-on line and read back the same way. The
+    height is measured rather than guessed — reset to `auto` first, because a
+    height already set is a floor `scrollHeight` can never fall below, and the
+    field would grow and never shrink.
+  */
+  const ref = React.useRef<HTMLTextAreaElement>(null);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  });
 
   return (
     <div className={cn("min-w-0 font-mono text-[13px] leading-[1.6]", className)}>
@@ -133,7 +151,10 @@ export function ClaudePrompt({
       ) : null}
 
       <div
-        className="flex min-w-0 items-center gap-0 border-y py-0.5"
+        // items-start rather than items-center: the caret glyph belongs beside
+        // the *first* line of the prompt, and a centred one drifts down the
+        // side of a growing textarea.
+        className="flex min-w-0 items-start gap-0 border-y py-0.5"
         style={
           rainbow
             ? {
@@ -150,8 +171,9 @@ export function ClaudePrompt({
         <span aria-hidden className="shrink-0 pl-0 pr-0" style={{ color: FG }}>
           ❯
         </span>
-        <input
-          type="text"
+        <textarea
+          ref={ref}
+          rows={1}
           aria-label="Prompt"
           placeholder={placeholder}
           onKeyDown={onKeyDown}
@@ -159,7 +181,7 @@ export function ClaudePrompt({
             ? { value, onChange }
             : { defaultValue, onChange })}
           className={cn(
-            "term-input min-w-0 flex-1 bg-transparent py-0.5 pl-[1ch] outline-none placeholder:text-[#565f89]",
+            "term-input min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0.5 pl-[1ch] outline-none placeholder:text-[#565f89]",
             inputClassName,
           )}
           style={{ color: FG, caretColor: FG, caretShape: "block" } as React.CSSProperties}

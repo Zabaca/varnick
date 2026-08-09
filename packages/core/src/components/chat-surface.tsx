@@ -594,7 +594,10 @@ export function ChatSurface({
                     return
                   }
                 }
-                if (e.key === 'Enter') {
+                // Enter sends; shift+Enter is how a second line is typed. The
+                // field is a textarea now (see claude-prompt.tsx), and one
+                // whose Enter always submits is an input with extra steps.
+                if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
                   submit()
                 }

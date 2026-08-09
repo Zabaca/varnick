@@ -30,7 +30,10 @@ export function ClaudeMessage({
         {/* one terminal cell between caret and text — a trailing space inside
             a flex child collapses, so use an explicit width */}
         <span aria-hidden className="shrink-0" style={{ display: "inline-block", width: "1ch" }} />
-        <span className="min-w-0 flex-1 break-words" style={{ color: "#ffffff" }}>
+        <span
+          className="min-w-0 flex-1 whitespace-pre-wrap break-words"
+          style={{ color: "#ffffff" }}
+        >
           {children}
         </span>
       </div>
@@ -38,7 +41,10 @@ export function ClaudeMessage({
   }
   return (
     <div
-      className={cn("font-mono text-[13px] leading-[1.6] text-[#c0caf5]", className)}
+      className={cn(
+        "whitespace-pre-wrap font-mono text-[13px] leading-[1.6] text-[#c0caf5]",
+        className,
+      )}
     >
       {children}
     </div>

@@ -45,7 +45,7 @@ export function ClaudeSlashMenu({
     ? Math.min(active, list.length - 1)
     : 0;
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (!list.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
