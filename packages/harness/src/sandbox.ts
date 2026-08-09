@@ -106,10 +106,36 @@ export const DEFAULT_ALLOWED_HOSTS = ['api.anthropic.com', 'registry.npmjs.org']
  * `.smudge` commands that a `.gitattributes` entry invokes, which is a second
  * path to the same place.
  *
+ * `config*` rather than `config`, for a nuisance rather than an escalation.
+ * `.git/config.lock` is a separate path, and git writes the lock and renames it
+ * over the target — so the rename is what the deny catches and `.git/config`
+ * stays byte-identical either way. What the bare spelling leaves behind is a
+ * stale lock the agent could not finish with, which makes the *developer's*
+ * next `git config` fail until someone removes it. The glob also covers
+ * `config.worktree`, which is the same file under `extensions.worktreeConfig`.
+ *
  * See docs/adr/0016-gits-own-directory-is-outside-the-review-path.md, and
  * {@link TRACKED_HOOKS_DIR} for where hooks live instead.
  */
-export const GIT_EXECUTABLE_CONFIG = ['.git/hooks/**', '.git/config'] as const
+export const GIT_EXECUTABLE_CONFIG = ['.git/hooks/**', '.git/config*'] as const
+
+/**
+ * The repository's own scripts, which the host runs.
+ *
+ * `package.json` at the root is denied because its scripts execute on the
+ * developer's machine, and this is that denial finishing the sentence: a
+ * `postinstall` that reads `sh scripts/…` is a pointer, and denying the pointer
+ * while leaving the target writable is the same decorative deny that
+ * {@link GIT_EXECUTABLE_CONFIG} rejects one paragraph up. The agent would not
+ * need to touch `package.json` at all — it would rewrite the file
+ * `package.json` names, and the developer's next `bun install` would run it
+ * unconfined.
+ *
+ * Narrow on purpose. This is the directory the root manifest invokes, not
+ * "scripts" as a category: `packages/core/scripts/drive.ts` is Core's own and
+ * is already covered, and Userspace may hold whatever it likes.
+ */
+export const HOST_INVOKED_SCRIPTS = 'scripts/**'
 
 /**
  * Where hooks live instead: a tracked directory, which is what husky and
@@ -558,6 +584,15 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           writes freely and a human reads in a diff.
         */
         ...GIT_EXECUTABLE_CONFIG.map((entry) => join(clone, entry)),
+        /*
+          And the scripts the root manifest runs, for the reason `package.json`
+          itself is denied. Found reviewing this ticket: it added a
+          `postinstall` reading `sh scripts/use-tracked-git-hooks.sh`, so
+          denying the manifest while leaving the script writable would have let
+          the agent choose what the developer's next `bun install` executes
+          without touching a denied file at all. See {@link HOST_INVOKED_SCRIPTS}.
+        */
+        join(clone, HOST_INVOKED_SCRIPTS),
         /*
           Knowingly not here: the paths that run code on the *developer's*
           machine through an install rather than a build.
@@ -1825,7 +1860,7 @@ export function watchSandboxViolations(input: SandboxViolationWatchInput): Sandb
     const violation = parseSandboxViolation(event.line, event.command)
     seen.push(violation)
     if (!isUnexpectedViolation(input.policy, violation)) return
-    const key = `${violation.operation} ${violation.subject}`
+    const key = `${violation.operation}\u0000${violation.subject}`
     if (said.has(key)) return
     said.add(key)
     report(describeSandboxViolation(violation), violation)

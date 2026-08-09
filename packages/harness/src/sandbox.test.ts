@@ -5,6 +5,7 @@ import { join, sep } from 'node:path'
 import {
   DEFAULT_ALLOWED_HOSTS,
   GIT_EXECUTABLE_CONFIG,
+  HOST_INVOKED_SCRIPTS,
   MACHINE_KEYCHAIN_DIR,
   MEASURED_SYSTEM_READ_PATHS,
   PRIVATE_LINK_PATHS,
@@ -338,7 +339,28 @@ describe('what the policy denies', () => {
     }
     // Named as a pair rather than assumed to be one: a future edit that drops
     // `.git/config` and keeps the hooks directory fails here.
-    expect([...GIT_EXECUTABLE_CONFIG]).toEqual(['.git/hooks/**', '.git/config'])
+    expect([...GIT_EXECUTABLE_CONFIG]).toEqual(['.git/hooks/**', '.git/config*'])
+    // `config*`, so the lock goes with the file. Measured during review: the
+    // agent could write `.git/config.lock` under the bare spelling. That was a
+    // nuisance and not an escalation — git writes the lock and renames it over
+    // the target, and the rename is what the deny catches — but a stale lock
+    // the agent could not finish with fails the *developer's* next `git config`.
+    expect(GIT_EXECUTABLE_CONFIG[1]).toBe('.git/config*')
+  })
+
+  test('the scripts the root manifest runs are unwritable', () => {
+    /*
+      `package.json` at the root is denied because its scripts run on the
+      developer's machine. Found while reviewing ticket 45, which added a
+      `postinstall` reading `sh scripts/use-tracked-git-hooks.sh`: denying the
+      manifest while leaving the script it names writable is the same
+      decorative deny the test above rejects for `.git/hooks` without
+      `.git/config`. The agent would never touch a denied file — it would
+      rewrite what the denied file invokes.
+    */
+    const { denyWrite } = policy().filesystem
+    expect(denyWrite).toContain(`${CLONE}/${HOST_INVOKED_SCRIPTS}`)
+    expect(denyWrite).toContain(`${CLONE}/package.json`)
   })
 
   test('what a worktree, a commit and a merge write inside .git stays writable', () => {
