@@ -64,6 +64,28 @@ Two things measured while doing this by hand:
   three. Killing the wrong one leaves exactly the process tree ADR-0003 exists
   to prevent.
 
+### Get the agent out before removing the directory
+
+**Order matters, and it is the opposite of the obvious one.** `EnterWorktree` is
+*session* state in Claude Code, not process state, and it survives a restart with
+the resumed conversation. Remove the directory first and the session is left
+naming a worktree that does not exist.
+
+Measured, immediately after doing exactly this by hand: the directory was gone,
+`git worktree list` showed only the live tree, and **both the runtime and the
+agent process had the clone root as their cwd** — so commands still worked and
+`git log main` still answered. What was wrong was only the agent's belief about
+where it was standing, which it reported as *"every command I run here now
+operates on dead state"*. That conclusion was wrong; the confusion behind it was
+not.
+
+Nothing broke, because the agent stopped and asked before acting. That is luck
+and good manners, not a property of the design.
+
+So the sequence is: stop any Preview, **tell the agent to leave the worktree**,
+confirm it has, then remove. The notification below is not only courtesy — it is
+load-bearing, and it has to arrive before the directory goes rather than after.
+
 ## The agent is told, because it is the author
 
 When a merge lands, **send the agent a system message saying so.** It wrote the
