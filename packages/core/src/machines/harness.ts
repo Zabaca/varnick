@@ -456,6 +456,20 @@ export const harnessMachine = setup({
       { worktrees: readonly PendingWorktree[] },
       Record<string, never>
     >(async () => ({ worktrees: [] })),
+    /*
+      Collects what the agent says without being asked, for as long as it runs.
+
+      Declared as an actor with a do-nothing default like every other one here:
+      the machine says a pump exists and never says what it reads, so `#/states`
+      and `drive.ts` render this region without a host — see ADR-0001. The live
+      implementation is `pumpUnprompted` in actors/live.ts.
+
+      It never resolves. That is the shape rather than an oversight: it stops
+      when the state it is invoked on is left, which is when the agent stops.
+    */
+    pumpUnprompted: fromPromise<void, Record<string, never>>(
+      () => new Promise<void>(() => {}),
+    ),
   },
   guards: {
     canStart: ({ context }) =>
@@ -973,6 +987,30 @@ export const harnessMachine = setup({
             },
             agentError: null,
           }),
+          /*
+            And a pump, for exactly as long as there is an agent to hear from.
+
+            **This is what makes an answer nobody asked for arrive when it
+            happens.** Until it existed, the only reader of the wire was a Turn,
+            so an unprompted answer waited for the developer to say something —
+            and a developer who is waiting is precisely the one who says nothing.
+
+            Invoked here rather than on the Session because the fact it carries
+            is about the agent process, which this region owns: it starts when
+            the agent does, and whichever way this state is left, it stops. It
+            reads its own queue and can never take an event a Turn is waiting
+            for; see `next-unprompted-event`.
+
+            No `onDone` and no `onError`: it does not finish while the agent
+            lives, and if it fails it must not take the conversation with it. An
+            answer that could not be collected is the state varnick was already
+            in.
+          */
+          invoke: {
+            src: 'pumpUnprompted',
+            id: 'unprompted-pump',
+            input: () => ({}) as Record<string, never>,
+          },
           // A report describes a process. Whichever way this state is left the
           // process is gone, so the description goes with it rather than
           // outliving what it describes — the panel says "no agent has reported"

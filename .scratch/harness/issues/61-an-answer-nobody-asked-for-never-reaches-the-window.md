@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent — the losing half is fixed; immediacy remains
+**Status:** done
 
 **Realizes:** no new state path, unless the answer turns out to need one.
 
@@ -111,29 +111,29 @@ Two constraints worth stating before anyone designs it:
 - [x] It survives a restart and resume like any other message
 - [x] The transcript does not attribute the trigger to the developer
 - [x] The window says what prompted an unprompted answer
-- [ ] **It appears when it happens, rather than at the start of the next Turn**
+- [x] **It appears when it happens, rather than at the start of the next Turn**
 - [ ] A prompt-free Turn can be interrupted
 
-## What remains, and why it was split
+## How it arrives when it happens
 
-The answer is no longer lost — that was the defect and it is fixed. What is not
-fixed is *when* it appears.
+A first pass shipped the answer arriving at the *start of the next Turn* — not
+lost, but useless to the person it is for: **a developer who is waiting is
+precisely the one who types nothing.** "It appears when you next speak" is not a
+fix for waiting.
 
-Nothing in Core polls while idle: `next-turn-event` is called only from inside
-`runTurn`, which exists only while a Turn does. So an unprompted answer queues
-host-side and is drained by the **next Turn**, which collects it and appends it
-whole. In practice that means it appears the moment the developer next says
-anything — which is when they are looking, and is why this was worth shipping
-before the rest.
+So there is a pump, invoked on `agent.running`, alive for exactly as long as
+there is an agent to hear from and stopped however that state is left.
 
-Making it immediate means a second consumer of that queue, and the two would
-race at exactly the idle-to-answering boundary this feature lives on. The clean
-answer is one pump for the life of the agent, with `runTurn` reduced to posting
-the prompt and forwarding the interrupt — a real refactor of the `turn` region,
-and the reason it is a separate piece of work rather than a line in this one.
+**It reads its own queue.** The host sorts events on the way in by whether the
+`turnId` carries the unprompted stamp, so a Turn and the pump can never hold an
+event the other is waiting for. That is not tidiness: a wait lasts up to
+`EVENT_WAIT` — fifteen seconds — in the host, so one already in flight when a
+Turn starts could otherwise swallow that Turn's first event. Splitting the queue
+means the window does not exist rather than being small enough to argue about.
 
-No new state path was needed for the shipped half, which is why there is no card:
-an unprompted answer is an event that appends a message, like `COMPACTED`.
+`is_unprompted` in `src-tauri/src/agent.rs` is where the sorting happens, and it
+duplicates the prefix across the language boundary like every other constant
+that crosses it.
 
 Found by comparing the SDK's own transcript against the Session mirror after the
 developer asked why the agent had not reported a completion it had, in fact,

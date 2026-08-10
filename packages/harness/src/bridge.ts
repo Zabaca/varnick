@@ -329,6 +329,23 @@ export interface NextTurnEventRequest {
   readonly kind: 'next-turn-event'
 }
 
+/**
+ * The next thing the agent said that nobody asked it for.
+ *
+ * A second queue rather than a filter over the one above, and the separation is
+ * the whole point. A Turn drains the prompted queue while it runs; this is
+ * drained by a pump that runs for the life of the agent — so an answer the
+ * developer did not prompt reaches the window **when it happens**, instead of
+ * waiting for whenever a Turn next happens to drain the wire.
+ *
+ * Two readers on one queue would race: a wait here lasts up to fifteen seconds
+ * host-side, and one already in flight when a Turn starts could swallow that
+ * Turn's first event. Sorted on the way in, that window does not exist.
+ */
+export interface NextUnpromptedEventRequest {
+  readonly kind: 'next-unprompted-event'
+}
+
 /** Stop the Turn named, keeping what has already arrived. */
 export interface InterruptTurnRequest {
   readonly kind: 'interrupt-turn'
@@ -360,6 +377,7 @@ export type HarnessRequest =
   | AwaitAgentExitRequest
   | RunTurnRequest
   | NextTurnEventRequest
+  | NextUnpromptedEventRequest
   | InterruptTurnRequest
   | ReadCommandsRequest
   | ListWorktreesRequest
@@ -389,6 +407,9 @@ export interface HarnessAnswers {
   'await-agent-exit': { readonly reason: string }
   'run-turn': { readonly ok: true }
   'next-turn-event': { readonly event: TurnEvent | null }
+  // The same shape, from the other queue. Rebuilt by the same function: an
+  // event is an event, and where it was waiting says nothing about its fields.
+  'next-unprompted-event': { readonly event: TurnEvent | null }
   'interrupt-turn': { readonly ok: true }
   'read-commands': { readonly commands: readonly SlashCommand[] }
   // Summaries, never hunks. The diff of one worktree is fetched when a
@@ -727,6 +748,7 @@ export async function callHarness<R extends HarnessRequest>(
       // Rebuilt like every other answer that crosses into Core.
       return { commands: normaliseCommands((answer as { commands?: unknown })?.commands) } as HarnessAnswers[R['kind']]
     case 'next-turn-event':
+    case 'next-unprompted-event':
       return turnEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'next-mint-event':
       return mintEventAnswer(answer) as HarnessAnswers[R['kind']]

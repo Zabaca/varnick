@@ -1502,6 +1502,34 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 
 {
   /*
+    And something collects them while nothing else is happening.
+
+    This is the half that matters to a developer who is *waiting*: until the
+    pump existed the only reader of the wire was a Turn, so an unprompted answer
+    sat there until the developer typed — and a developer who is waiting types
+    nothing. "It arrives when you next speak" is not a fix for that.
+
+    Asserted against the machine's own definition rather than by driving it to
+    `agent.running`: the fact worth holding is *where* the pump is invoked, and
+    that is what decides its lifetime. Invoked there, it starts when the agent
+    starts and stops however that state is left — including a crash, which is
+    the case a pump left running would be waiting on a queue nothing can fill.
+  */
+  const agentRegion = harnessMachine.states.agent!
+  const invoked = agentRegion.states.running!.invoke.map((one) => one.src)
+  check('a running agent is being listened to', invoked.includes('pumpUnprompted'))
+  check(
+    'and it is invoked there rather than somewhere that outlives the agent',
+    agentRegion.states.down!.invoke.length === 0,
+  )
+  check(
+    'the pump is a declared actor like every other one',
+    (ACTOR_NAMES as readonly string[]).includes('pumpUnprompted'),
+  )
+}
+
+{
+  /*
     Which subagents are running, and when the panel empties.
 
     The defect this measures: a Turn that spawned subagents was indistinguishable

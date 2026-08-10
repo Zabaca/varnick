@@ -137,6 +137,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
           mintSubscriptionToken: seeds.mintSubscriptionToken,
           spawnAgent: seeds.spawnAgent,
           listWorktrees: seeds.listWorktrees,
+          pumpUnprompted: seeds.pumpUnprompted,
           surface: surfaceMachine.provide({ actors: { loadSurface } }),
           worktreeDiff: worktreeDiffMachine.provide({
             actors: { readWorktreeDiff: seeds.readWorktreeDiff },

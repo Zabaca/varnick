@@ -11,7 +11,6 @@ import {
   isCredentialRejection,
   turnFailureMessage,
   type PastedImage,
-  isUnpromptedTurn,
   UNPROMPTED_CAUSE_UNKNOWN,
   type RuntimeReport,
   type RunningTask,
@@ -295,6 +294,74 @@ export function liveActors(
     ),
 
     /*
+      Real. Everything the agent says that nobody asked it for, as it happens.
+
+      **The defect this closes:** two complete answers were produced and never
+      seen, because the only reader of the wire was a Turn — so an answer to a
+      subagent finishing waited until the developer next typed something, and a
+      developer who is waiting types nothing. That is the whole complaint.
+
+      Its own queue, host-side, so it can never take an event a Turn is waiting
+      for. A single queue with two readers would race: a wait lasts up to
+      fifteen seconds in the host, and one already in flight when a Turn starts
+      could swallow that Turn's first event.
+
+      Runs until the state it is invoked on is left, which is when the agent
+      stops. A failed call is retried rather than thrown: the pump going quiet
+      would return varnick to the silence this replaced, and `callHarness`
+      answers with a value rather than throwing when there is no host at all.
+    */
+    pumpUnprompted: fromPromise<void, Record<string, never>>(async ({ signal }) => {
+      let text = ''
+      let cause: string = UNPROMPTED_CAUSE_UNKNOWN
+      while (!signal.aborted) {
+        const answer = await callHarness({ kind: 'next-unprompted-event' }).catch(() => null)
+        if (signal.aborted) return
+        // No host, or a call that failed. Nothing to report and nothing to fix
+        // from here; the next wait is the retry.
+        if (answer === null) continue
+        const event = answer.event
+        // Nothing said in that window. A quiet agent is an ordinary agent.
+        if (event === null) continue
+        switch (event.kind) {
+          case 'cause':
+            cause = event.text
+            break
+          case 'delta':
+          case 'tool':
+          case 'hook':
+          case 'task-line':
+            text += event.text
+            break
+          case 'done':
+            /*
+              `event.text` is the run's own accumulation, tool calls included,
+              so it is preferred over what was watched arriving here — the same
+              rule a prompted Turn follows.
+
+              Reset afterwards, because the next unprompted answer is a
+              different answer: leaving the cause standing would put the last
+              one's divider over it.
+            */
+            observer.unpromptedAnswer(event.text || text, cause)
+            text = ''
+            cause = UNPROMPTED_CAUSE_UNKNOWN
+            break
+          case 'failed':
+            // An unprompted answer that failed is not a failed conversation.
+            // Nothing was asked, so there is nothing to report as refused —
+            // and the transcript is not the place to log the agent's own
+            // background trouble.
+            text = ''
+            cause = UNPROMPTED_CAUSE_UNKNOWN
+            break
+          default:
+            break
+        }
+      }
+    }),
+
+    /*
       Real. One Turn on the Session the agent process is already holding.
 
       Three calls, and none of them starts anything: `run-turn` puts the prompt
@@ -323,15 +390,6 @@ export function liveActors(
       // Chosen here so an interrupt can name the Turn it means and a late event
       // from an abandoned Turn can be told from this one's first word.
       const turnId = nextTurnId()
-
-      /*
-        An unprompted answer, collected while this Turn drains the wire. Local
-        to the actor because it belongs to no Turn — including this one — and
-        putting it in the machine's context would make it a thing the Session
-        has to forget.
-      */
-      let unpromptedText = ''
-      let unpromptedCause: string = UNPROMPTED_CAUSE_UNKNOWN
 
       await callHarness({
         kind: 'run-turn',
@@ -365,41 +423,11 @@ export function liveActors(
         if (event === null) continue
 
         /*
-          An answer nobody asked for, waiting on the wire.
-
-          The agent answers things the developer did not type — a subagent
-          finishing, a background command's output — and those answers used to
-          be discarded host-side. They are not any more, and this is where they
-          are collected: they queue until something drains the wire, and the
-          only thing that ever does is a Turn.
-
-          So they arrive at the *start of the next Turn* rather than as they
-          happen. That is late and it is not lost, which is the whole of the
-          defect this fixes — and it is a separate ticket to make it immediate,
-          because immediate means Core polling while idle, which is a second
-          consumer of this queue and a race at the boundary if it is added
-          carelessly.
-
-          Accumulated whole rather than streamed into `partial`: two answers
-          interleaving into one buffer would produce a message that is neither.
+          Something said by a Turn that is not this one — including an answer
+          nobody asked for, which has its own reader now and must not be
+          collected twice. `pumpUnprompted` above owns those, and it owns them
+          from a separate queue, so nothing that reaches here belongs to it.
         */
-        if (isUnpromptedTurn(event.turnId)) {
-          if (event.kind === 'cause') unpromptedCause = event.text
-          if (event.kind === 'delta' || event.kind === 'tool' || event.kind === 'hook') {
-            unpromptedText += event.text
-          }
-          if (event.kind === 'done') {
-            // `event.text` is the run's own accumulation — tool calls included —
-            // so it is preferred over what was watched arriving here.
-            observer.unpromptedAnswer(event.text || unpromptedText, unpromptedCause)
-            unpromptedText = ''
-            unpromptedCause = UNPROMPTED_CAUSE_UNKNOWN
-          }
-          continue
-        }
-
-        // Something said by a Turn that is not this one. Ordinary: an
-        // interrupted Turn's last words are still on the wire behind it.
         if (event.turnId !== turnId) continue
 
         switch (event.kind) {

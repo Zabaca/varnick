@@ -296,6 +296,38 @@ struct EventQueueInner {
 struct EventQueueState {
     generation: u64,
     events: VecDeque<Value>,
+    /// Events belonging to a Turn nobody asked for. See `UNPROMPTED_PREFIX`.
+    unprompted: VecDeque<Value>,
+}
+
+/// How the agent host stamps a Turn the world started rather than varnick.
+///
+/// Mirrors `UNPROMPTED_TURN_PREFIX` in packages/harness/src/turn.ts. Duplicated
+/// across the language boundary rather than shared, like every other constant
+/// that crosses it — and load-bearing here for one reason: **it is what keeps
+/// the two readers off each other's events.**
+///
+/// A Turn drains the prompted queue for as long as it runs; a pump drains the
+/// unprompted one for the life of the agent. If both read one queue, the pump's
+/// in-flight wait — up to `EVENT_WAIT`, fifteen seconds — can swallow the first
+/// event of a Turn that started while it was blocked. Splitting them here means
+/// there is no window in which that is possible, rather than a window small
+/// enough to argue about.
+const UNPROMPTED_PREFIX: &str = "u";
+
+/// Was this event stamped by a Turn nobody asked for?
+///
+/// Read off `turnId`, which is the only place the distinction is carried — see
+/// `UNPROMPTED_TURN_PREFIX` in packages/harness/src/turn.ts, where the stamp is
+/// applied. An event with no `turnId` is not one, and goes to the Turn queue
+/// where the reader that expects it will discard it; treating a malformed event
+/// as unprompted would put it in front of a developer as something the agent
+/// said.
+fn is_unprompted(event: &Value) -> bool {
+    event
+        .get("turnId")
+        .and_then(Value::as_str)
+        .is_some_and(|id| id.starts_with(UNPROMPTED_PREFIX))
 }
 
 impl EventQueue {
@@ -307,6 +339,7 @@ impl EventQueue {
         };
         state.generation += 1;
         state.events.clear();
+        state.unprompted.clear();
         state.generation
     }
 
@@ -314,7 +347,13 @@ impl EventQueue {
     pub fn push(&self, generation: u64, event: Value) {
         if let Ok(mut state) = self.inner.state.lock() {
             if state.generation == generation {
-                state.events.push_back(event);
+                // Sorted on the way in rather than filtered on the way out, so
+                // neither reader ever holds an event the other is waiting for.
+                if is_unprompted(&event) {
+                    state.unprompted.push_back(event);
+                } else {
+                    state.events.push_back(event);
+                }
             }
         }
         self.inner.arrived.notify_all();
@@ -325,16 +364,39 @@ impl EventQueue {
     /// `None` means nothing was said in that time, which is not a failure: a
     /// Turn that is thinking is a working Turn.
     pub fn next(&self, limit: Duration) -> Option<Value> {
+        self.next_from(limit, false)
+    }
+
+    /// The next event of a Turn nobody asked for.
+    ///
+    /// Read by a pump that runs for the life of the agent, so an answer the
+    /// developer did not prompt reaches the window **when it happens** rather
+    /// than whenever a Turn next happens to drain the wire.
+    pub fn next_unprompted(&self, limit: Duration) -> Option<Value> {
+        self.next_from(limit, true)
+    }
+
+    fn next_from(&self, limit: Duration, unprompted: bool) -> Option<Value> {
         let mut state = self.inner.state.lock().ok()?;
         let deadline = std::time::Instant::now() + limit;
         loop {
-            if let Some(event) = state.events.pop_front() {
+            let queue = if unprompted {
+                &mut state.unprompted
+            } else {
+                &mut state.events
+            };
+            if let Some(event) = queue.pop_front() {
                 return Some(event);
             }
             let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
             let (guard, timed_out) = self.inner.arrived.wait_timeout(state, remaining).ok()?;
             state = guard;
-            if timed_out.timed_out() && state.events.is_empty() {
+            let empty = if unprompted {
+                state.unprompted.is_empty()
+            } else {
+                state.events.is_empty()
+            };
+            if timed_out.timed_out() && empty {
                 return None;
             }
         }
@@ -660,6 +722,11 @@ impl AgentProcess {
     /// The next thing the running Turn had to say, or nothing yet.
     pub fn next_event(&self) -> Option<Value> {
         self.events.next(EVENT_WAIT)
+    }
+
+    /// The next thing the agent said that nobody asked it for, or nothing yet.
+    pub fn next_unprompted_event(&self) -> Option<Value> {
+        self.events.next_unprompted(EVENT_WAIT)
     }
 
     /// Wait for the agent to exit and say why, or say it is still running.

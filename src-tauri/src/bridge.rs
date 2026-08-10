@@ -155,7 +155,9 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // runtime. See mint.rs.
         "read-credential" | "store-credential" | "mint-subscription-token"
         | "next-mint-event" | "spawn-agent" | "stop-agent" | "await-agent-exit"
-        | "run-turn" | "next-turn-event" | "interrupt-turn" => Some(Route::Host),
+        | "run-turn" | "next-turn-event" | "next-unprompted-event" | "interrupt-turn" => {
+            Some(Route::Host)
+        }
         // `read-commands` is the runtime's because it is a file read, and the
         // runtime is the process with a filesystem. It answers what the *agent*
         // last reported — written by the agent host, read back for a window
@@ -752,6 +754,13 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
             // `null` is "nothing yet", which is a working Turn rather than a
             // failed one.
             "next-turn-event" => Ok(serde_json::json!({ "event": agent.next_event() })),
+            // Read by a pump that outlives every Turn, so an answer nobody
+            // asked for arrives when it happens. A separate queue rather than a
+            // filter on the one above — see `is_unprompted` for why the two
+            // readers must never contend.
+            "next-unprompted-event" => {
+                Ok(serde_json::json!({ "event": agent.next_unprompted_event() }))
+            }
             // Unreachable while `route_of` and this match agree, and a closed
             // default rather than a forward if they ever stop agreeing.
             _ => Err(Failure::of("malformed")),
@@ -933,6 +942,7 @@ mod tests {
         // is a second Claude Code session, which ADR-0003 forbids.
         assert_eq!(route_of("run-turn"), Some(Route::Host));
         assert_eq!(route_of("next-turn-event"), Some(Route::Host));
+        assert_eq!(route_of("next-unprompted-event"), Some(Route::Host));
         assert_eq!(route_of("interrupt-turn"), Some(Route::Host));
     }
 

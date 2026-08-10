@@ -43,6 +43,18 @@ let turnTokens = 0
 
 export function seededActors() {
   return {
+    /*
+      A pump with nothing to collect.
+
+      Seeded mode has no agent, so nothing ever says anything unprompted — and
+      the honest stand-in is a promise that never settles, because the live one
+      does not settle either. A seed that resolved would end the invoke and make
+      `agent.running` look like a state whose pump had finished.
+    */
+    pumpUnprompted: fromPromise<void, Record<string, never>>(
+      () => new Promise<void>(() => {}),
+    ),
+
     checkSandbox: fromPromise<{ ok: true }, { policy: SandboxPolicy }>(async () => {
       await wait(250)
       return { ok: true }
