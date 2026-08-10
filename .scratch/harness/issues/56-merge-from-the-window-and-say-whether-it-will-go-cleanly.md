@@ -109,6 +109,18 @@ Two things follow that the earlier measurement could not show:
   The lock is held by the `claude` process; the *host* outlives it and resumes.
   Reaping on "lock pid is dead" is the check that caused this, and it is not
   sufficient on its own.
+- **And an absent lock does not mean the worktree is empty.** Measured on the
+  next merge: `git worktree list` reported **no lock at all** — the session that
+  took it had ended in a restart — while `lsof +D` showed a live `claude` whose
+  **cwd was that directory**, parented to the running agent host. Removing it on
+  the strength of "no lock" would have killed the agent exactly as the dead-pid
+  check did.
+
+  So the lock is unreliable in *both* directions: stale when the agent is gone,
+  absent when the agent is there. **It is not the signal.** What is: whether any
+  process has the directory as its working directory. `lsof +D <path>` answers
+  it, and the answer is a fact about the machine rather than a file git happens
+  to have left behind.
 - **Removing the directory is not recoverable by the agent.** It cannot report
   the problem, ask, or step back to the clone root — the SDK treats the missing
   cwd as a terminal error before any of that. So "tell the agent to leave, then
@@ -183,6 +195,7 @@ inviting the developer to hand-resolve someone else's branch.
 - [ ] `worktreeMerge.mergeFailed` carries git's reason and offers a retry
 - [ ] The agent acknowledges leaving the Worktree before the directory is removed
 - [ ] A worktree whose lock pid is dead is still not removed on that basis alone
+- [ ] A worktree with no lock is still not removed while a process has it as its cwd
 - [ ] An agent host that exits is reported in the window rather than leaving a
       live runtime accepting messages nothing will answer
 - [ ] Every new state path is named in `CONTEXT.md` and has a card
