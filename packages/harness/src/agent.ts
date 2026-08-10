@@ -83,6 +83,7 @@ import {
   type TurnFailure,
   type TurnRun,
 } from './turn.ts'
+import { agentSystemPrompt } from './voice.ts'
 
 /**
  * Classify something the Session *threw* rather than reported.
@@ -1975,7 +1976,7 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
         `excludeDynamicSections` is deliberately left off: stripping the working
         directory back out is the whole of what this fixes.
       */
-      systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
+      systemPrompt: agentSystemPrompt(),
       // What makes an answer arrive in pieces. Without it the SDK reports one
       // assembled message when the Turn is over, and "working" would be
       // indistinguishable from "hung" for the whole of it.
