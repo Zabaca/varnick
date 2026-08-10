@@ -58,6 +58,7 @@ import {
   sharedTargetDir,
 } from '../dev-server.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
+import { CREDENTIAL_SHAPE_PROBE } from '@varnick/harness/credentials'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
 import { describeSecretsForAgent, openSecretsStore } from '@varnick/harness/secrets'
 import { answerHarnessLine, type HarnessCapabilities } from '@varnick/harness/runtime'
@@ -321,6 +322,21 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
 
   check('agent runs once both facts hold', regionOf(actor.getSnapshot().value, 'agent') === 'running')
 
+  /*
+    A working credential is not replaceable by accident, which is the rule the
+    `rejected` state's recovery below had to be added *without* breaking. A paste
+    or a mint here would overwrite a credential that works, so neither is offered.
+  */
+  const present = actor.getSnapshot()
+  check(
+    'a present credential is not replaceable by a paste',
+    !present.can({ type: 'STORE_CREDENTIAL', kind: 'subscription', value: CREDENTIAL_SHAPE_PROBE.subscription }),
+  )
+  check(
+    'a present credential is not replaceable by a mint',
+    !present.can({ type: 'MINT_CREDENTIAL' }),
+  )
+
   // The independence that a single status enum would destroy.
   actor.send({ type: 'AGENT_EXIT', detail: 'exit 71' })
   check('a crashed agent leaves the credential alone', regionOf(actor.getSnapshot().value, 'credential') === 'present')
@@ -329,6 +345,38 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
 
   actor.send({ type: 'CREDENTIAL_REJECTED', detail: '401' })
   check('a rejected credential does not restart the agent', regionOf(actor.getSnapshot().value, 'agent') === 'crashed')
+
+  /*
+    The way out of `rejected`, which is the whole of what that state is for.
+
+    It used to accept `READ_CREDENTIAL` and nothing else, and the consequence was
+    not a missing feature but a trap: re-reading resolves the same keychain item,
+    which is rejected again, for ever. The setup screen could not help either — it
+    renders on `can(STORE_CREDENTIAL)`, so it was hidden in the one state where
+    replacing the credential is the only thing that can work. The only escape was
+    deleting the keychain item from a terminal, which no surface can suggest.
+
+    Asserted through `can()` rather than by sending, because `can()` is what the
+    surface asks before drawing a control. A transition that worked while `can()`
+    said no would be a machine that accepts what the window will not offer.
+  */
+  const rejected = actor.getSnapshot()
+  check(
+    'a rejected credential can be replaced by pasting a different one',
+    rejected.can({ type: 'STORE_CREDENTIAL', kind: 'subscription', value: CREDENTIAL_SHAPE_PROBE.subscription }),
+  )
+  check(
+    'a rejected credential can be replaced by minting a new one',
+    rejected.can({ type: 'MINT_CREDENTIAL' }),
+  )
+  check(
+    'the kind can still be chosen while rejected, so the paste and the mint have something to act on',
+    rejected.can({ type: 'CHOOSE_CREDENTIAL_KIND', kind: 'api-key' }),
+  )
+  check(
+    'a rejected credential can still be re-read, for an item fixed underneath varnick',
+    rejected.can({ type: 'READ_CREDENTIAL' }),
+  )
 
   actor.stop()
 }

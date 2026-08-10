@@ -12,6 +12,8 @@ import {
   credentialGuidance,
   credentialRejection,
   credentialStoreGuidance,
+  CREDENTIAL_SHAPE_PROBE,
+  credentialShapeProblem,
   readCredential,
   storeCredential,
   tauriCredentialHost,
@@ -501,5 +503,91 @@ describe('the read rides the one bridge, like every other Harness call', () => {
     // other language's.
     expect(CREDENTIAL_ENV_VARS['api-key']).toBe('ANTHROPIC_API_KEY')
     expect(CREDENTIAL_ENV_VARS.subscription).toBe('CLAUDE_CODE_OAUTH_TOKEN')
+  })
+})
+
+describe('a paste is checked where it is typed, not by the API days later', () => {
+  /*
+    The check exists because of what its absence cost. A value with the wrong
+    shape used to be stored, the agent started, the first turn came back 401,
+    and the surface landed in `credential.rejected` — a state whose only offered
+    recovery re-read the same item. Everything about that was invisible at the
+    moment of the paste, and all of it was decidable there.
+
+    Shape only, deliberately. Whether a credential authenticates is Anthropic's
+    answer; whether it could possibly authenticate is this one.
+
+    The two literals are assembled the way every other token-shaped constant in
+    this repository is: written out, they are what a secret scanner blocks a
+    push for.
+  */
+  const SUBSCRIPTION = `${'sk-'}${'ant-oat01-'}NEVERxLETxTHISxOUT_0123456789-abcdef`
+  const API_KEY = `${'sk-'}${'ant-api'}03-NEVERxLETxTHISxOUT_0123456789-abcdef`
+
+  test('a well-formed value of either kind is accepted', () => {
+    expect(credentialShapeProblem('subscription', SUBSCRIPTION)).toBeNull()
+    expect(credentialShapeProblem('api-key', API_KEY)).toBeNull()
+  })
+
+  test('surrounding whitespace is not the developer’s mistake to fix', () => {
+    // A value copied out of a terminal arrives with a newline on it more often
+    // than not, and refusing that would be refusing the ordinary case.
+    expect(credentialShapeProblem('subscription', `  ${SUBSCRIPTION}\n`)).toBeNull()
+  })
+
+  test('an empty field is refused without being scolded about a prefix', () => {
+    expect(credentialShapeProblem('subscription', '   ')).toBe('Nothing pasted.')
+  })
+
+  test('the two kinds are not interchangeable, and the message says which way round', () => {
+    /*
+      The mistake this is really about: both values start `sk-ant-`, both look
+      like a credential to someone holding one, and the two tabs are next to
+      each other. A check that only asked "does this look like a credential"
+      would accept an API key under the subscription tab and store it in the
+      item the host reads a subscription token out of.
+    */
+    const wrong = credentialShapeProblem('subscription', API_KEY)
+    expect(wrong).not.toBeNull()
+    expect(wrong).toContain('Anthropic API key')
+
+    const other = credentialShapeProblem('api-key', SUBSCRIPTION)
+    expect(other).not.toBeNull()
+    expect(other).toContain('Claude subscription')
+  })
+
+  test('a value copied across a line break says so, because that is the likely cause', () => {
+    const split = `${SUBSCRIPTION.slice(0, 20)} ${SUBSCRIPTION.slice(20)}`
+    expect(credentialShapeProblem('subscription', split)).toContain('line break')
+  })
+
+  test('the prefix on its own is not a credential', () => {
+    expect(credentialShapeProblem('subscription', `${'sk-'}${'ant-oat01-'}`)).toContain('prefix')
+  })
+
+  test('no message quotes the value back', () => {
+    /*
+      The rule the whole module follows, and it applies hardest here: this is
+      the one function handed a live credential that has something to say about
+      it. Every message is authored from a constant.
+    */
+    for (const kind of ['subscription', 'api-key'] as const) {
+      const problem = credentialShapeProblem(kind, 'NEVERxLETxTHISxOUT_0123456789')
+      expect(problem).not.toBeNull()
+      expect(problem).not.toContain('NEVERxLETxTHISxOUT')
+    }
+  })
+
+  test('the probe the surface asks with passes its own check', () => {
+    /*
+      Load-bearing rather than tidy. The setup screen decides whether to render
+      at all by asking the machine `can({ type: 'STORE_CREDENTIAL', … })` with a
+      stand-in, and the guard now checks the shape of what it is given. A probe
+      that fails this answers no in every state, and the screen a stranger with
+      a fresh clone needs is never drawn at all.
+    */
+    for (const kind of ['subscription', 'api-key'] as const) {
+      expect(credentialShapeProblem(kind, CREDENTIAL_SHAPE_PROBE[kind])).toBeNull()
+    }
   })
 })
