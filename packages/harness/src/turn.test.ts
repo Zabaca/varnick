@@ -17,8 +17,18 @@ import {
   beginsAnAnswer,
   UNPROMPTED_TURN_PREFIX,
   UNPROMPTED_CAUSE_UNKNOWN,
+  type RuntimeReport,
   type TurnEvent,
 } from './turn.ts'
+/*
+  The one import here that is not the seam under test, and it is the other half
+  of the same fact: `credentialSource` is measured in the agent host and carried
+  by the report, so a test of the report that could not ask what the measurement
+  answers would pin the wire and leave the reading unpinned. ./agent.ts reaches
+  Node and the SDK, which is fine for a test file and is exactly why ./turn.ts
+  itself must never import it — see the module note there.
+*/
+import { observedCredentialVariable } from './agent.ts'
 
 /*
   The seam: what a Turn makes of the messages a Session hands it.
@@ -652,6 +662,47 @@ describe('what the runtime says it is', () => {
     expect(runtimeReportFrom({ cwd: long }).cwd).toHaveLength(200)
     expect(runtimeReportFrom({ tools: [long] }).tools[0]).toHaveLength(200)
   })
+
+  test('the credential variable is read off the environment, under either kind', () => {
+    /*
+      The measurement the panel's `credential` row is made of, and the reason it
+      is taken here rather than off the init message: the runtime reports which
+      store answered for an API key, and under a subscription there is no API
+      key to have a store. Both variables are asked about, because a row that
+      only worked for one kind would be the previous bug with a smaller
+      audience.
+    */
+    expect(observedCredentialVariable({ ANTHROPIC_API_KEY: 'x' })).toBe('ANTHROPIC_API_KEY')
+    expect(observedCredentialVariable({ CLAUDE_CODE_OAUTH_TOKEN: 'x' })).toBe(
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    )
+    // Neither, which is the reading the row turns into a warning. An empty
+    // value is that reading too: a variable exported as nothing authenticates
+    // nothing, and reporting its name would be the panel claiming an injection
+    // that did not happen.
+    expect(observedCredentialVariable({})).toBe('')
+    expect(observedCredentialVariable({ ANTHROPIC_API_KEY: '' })).toBe('')
+    expect(observedCredentialVariable({ PATH: '/usr/bin' })).toBe('')
+  })
+
+  test('the report carries the name it was handed and never looks for one', () => {
+    // An argument, like `resumed` beside it. Nothing on the init message can
+    // supply it, so an init message that offers one is offering a field this
+    // does not read — asserted, because the day the SDK adds a key of that name
+    // is the day silently preferring it would make the row a guess again.
+    expect(runtimeReportFrom(init, false, 'CLAUDE_CODE_OAUTH_TOKEN').credentialSource).toBe(
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    )
+    expect(runtimeReportFrom(init).credentialSource).toBe('')
+    expect(
+      runtimeReportFrom({ ...init, credentialSource: 'ANTHROPIC_API_KEY' }).credentialSource,
+    ).toBe('')
+    // And the SDK's own field is left exactly as the SDK sent it. varnick
+    // reports beside `apiKeySource`, never over it.
+    expect(runtimeReportFrom({ ...init, apiKeySource: 'none' }, false, 'ANTHROPIC_API_KEY')).toMatchObject(
+      { apiKeySource: 'none', credentialSource: 'ANTHROPIC_API_KEY' },
+    )
+  })
 })
 
 describe('the wire between the agent host and the host', () => {
@@ -734,6 +785,7 @@ describe('the wire between the agent host and the host', () => {
         outputStyle: 'default',
         cwd: '/tmp/clone',
         apiKeySource: 'ANTHROPIC_API_KEY',
+        credentialSource: 'ANTHROPIC_API_KEY',
         tools: ['Read', 'Bash'],
         skills: [],
         slashCommands: ['compact'],
@@ -743,6 +795,25 @@ describe('the wire between the agent host and the host', () => {
       },
     }
     expect(parseTurnEvent(JSON.parse(encodeTurnEvent(event)))).toEqual(event)
+  })
+
+  test('the credential variable survives the wire, which is where it would be dropped', () => {
+    /*
+      Asserted on its own as well as inside the round trip above, because the
+      failure it guards against is silent and asymmetric: `parseRuntimeReport`
+      rebuilds the report field by field, so a member added to the type and not
+      to that rebuild type-checks, encodes, crosses, and arrives empty. The panel
+      would then show the warning over a Session whose credential was injected
+      perfectly — the same class of confidently-wrong row this field was added to
+      remove.
+    */
+    const report = runtimeReportFrom({ type: 'system', subtype: 'init' }, true, 'CLAUDE_CODE_OAUTH_TOKEN')
+    const event: TurnEvent = { kind: 'runtime', turnId: 't1', report }
+    const back = parseTurnEvent(JSON.parse(encodeTurnEvent(event)))
+    expect(back).toEqual(event)
+    expect((back as { report: RuntimeReport }).report.credentialSource).toBe(
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    )
   })
 
   test('a report is rebuilt field by field, like every other event', () => {
@@ -767,6 +838,7 @@ describe('the wire between the agent host and the host', () => {
         outputStyle: '',
         cwd: '',
         apiKeySource: '',
+        credentialSource: '',
         tools: [],
         skills: [],
         slashCommands: [],

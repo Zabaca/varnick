@@ -456,8 +456,10 @@ export type TurnFailure = (typeof TURN_FAILURES)[number]
  * runtime half, the thing that *confines* this process. See CONTEXT.md.
  *
  * Everything here is a name or a count. `apiKeySource` is the SDK's word for
- * which store answered — the same class of fact as Credential Source, and never
- * a credential; there is no field on this type a value could arrive in.
+ * which store answered and {@link RuntimeReport.credentialSource} is the name of
+ * an environment variable — both are the same class of fact as Credential
+ * Source, and neither is a credential; there is no field on this type a value
+ * could arrive in.
  */
 export interface RuntimeReport {
   /**
@@ -486,6 +488,38 @@ export interface RuntimeReport {
   readonly outputStyle: string
   readonly cwd: string
   readonly apiKeySource: string
+  /**
+   * Which credential variable the agent host found in its own environment, by
+   * name — `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or the empty string
+   * when neither is set.
+   *
+   * It exists because `apiKeySource` answers a question nobody asked. That field
+   * is the SDK's word for which store an *API key* came from, and under a
+   * subscription credential there is no API key — so the SDK says `none`,
+   * correctly, and the one row on the panel built to prove that injection worked
+   * printed `none` over an agent that was answering. Which is also exactly what
+   * the genuine failure looks like, where nothing was injected at all. Every
+   * subscription Session since the panel shipped read that way, and those are
+   * most of them.
+   *
+   * Not on the init message, and it could not be: the runtime knows what it
+   * authenticated with and nothing about what varnick put in front of it. So
+   * this is an argument to {@link runtimeReportFrom} for the reason
+   * {@link RuntimeReport.resumed} is one — varnick knows because varnick did it —
+   * and a field read off `init` would be an invented answer rather than a
+   * measured one.
+   *
+   * **A variable's name, never its contents.** The environment is read to ask
+   * whether an entry is empty and for nothing else, and what comes back is one
+   * of two strings this repository wrote itself; see `observedCredentialVariable`
+   * in ./agent.ts, which is the only place the environment is touched.
+   *
+   * Deliberately not spoken of as a Credential Source, which CONTEXT.md already
+   * spends on which *store* answered — `keychain` or `env`. That is a fact about
+   * where the host looked; this is a fact about what the confined process at the
+   * other end of the same injection ended up holding.
+   */
+  readonly credentialSource: string
   readonly tools: readonly string[]
   readonly skills: readonly string[]
   readonly slashCommands: readonly string[]
@@ -588,7 +622,11 @@ const names = (value: unknown): readonly string[] =>
  * init message is assembled from two sides. Mirrored deliberately rather than
  * normalised upstream: this is the one place that shape is known.
  */
-export function runtimeReportFrom(message: unknown, resumed = false): RuntimeReport {
+export function runtimeReportFrom(
+  message: unknown,
+  resumed = false,
+  credentialSource = '',
+): RuntimeReport {
   const init = (message ?? {}) as Record<string, unknown>
   return {
     sessionId: name(init['session_id']),
@@ -602,6 +640,14 @@ export function runtimeReportFrom(message: unknown, resumed = false): RuntimeRep
     outputStyle: name(init['output_style']),
     cwd: name(init['cwd']),
     apiKeySource: name(init['apiKeySource']),
+    // The second argument that is not on the message, and for a sharper version
+    // of the same reason: `apiKeySource` above says which store answered for an
+    // API key, which is a different question from which variable varnick's
+    // credential arrived in — and it is the SDK's question to answer rather than
+    // this module's to correct. Bounded like every other name here even though
+    // this one was written in this repository, because a rule with one exception
+    // in it is a rule somebody has to remember.
+    credentialSource: name(credentialSource),
     tools: names(init['tools']),
     skills: names(init['skills']),
     slashCommands: names(init['slash_commands']),
@@ -713,6 +759,7 @@ function parseRuntimeReport(value: unknown): RuntimeReport | null {
     outputStyle: name(report['outputStyle']),
     cwd: name(report['cwd']),
     apiKeySource: name(report['apiKeySource']),
+    credentialSource: name(report['credentialSource']),
     tools: names(report['tools']),
     skills: names(report['skills']),
     slashCommands: names(report['slashCommands']),

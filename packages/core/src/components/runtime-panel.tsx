@@ -118,6 +118,55 @@ export function runtimeAbsence(agentState: string): string {
   return 'No agent is running. Start one and it reports what it loaded when the first turn begins.'
 }
 
+/**
+ * The SDK's own word for "no API key store answered".
+ *
+ * Read as an absence rather than forwarded as a name, because it is not one. It
+ * is the literal this row printed for every subscription Session varnick ever
+ * ran — there is no API key in one, so the SDK says `none` about a question
+ * nobody asked, and the row that exists to prove injection worked said the
+ * opposite of the truth.
+ */
+const NO_API_KEY_STORE = 'none'
+
+/**
+ * Which name the `credential` row prints, or `null` when there is no name.
+ *
+ * Two fields and three readings. `credentialSource` is varnick's own
+ * measurement, taken inside the confined process — the variable it found in its
+ * environment — so it wins when it is there: it is the fact the row was built to
+ * report. Failing that, an `apiKeySource` that names a store is still a real
+ * answer, and printing it is the row admitting that the runtime found a
+ * credential by a route varnick did not take. Nothing at all is the third
+ * reading, and it is the one this row exists for.
+ *
+ * varnick reports *beside* `apiKeySource` and never over it. The field belongs
+ * to the SDK and its meaning is the SDK's to define; what changed here is what
+ * the panel says, not what the SDK measures.
+ *
+ * A pure function rather than a branch inside the component, for the reason
+ * {@link runtimeAbsence} above is one: a branch inside a `.tsx` cannot be
+ * reached by `drive.ts`, which cannot import a component.
+ */
+export function credentialRowName(credentialSource: string, apiKeySource: string): string | null {
+  if (credentialSource !== '') return credentialSource
+  if (apiKeySource !== '' && apiKeySource !== NO_API_KEY_STORE) return apiKeySource
+  return null
+}
+
+/**
+ * What the row says when there is no name to print.
+ *
+ * A sentence rather than a word, on the same argument the `memory` row makes:
+ * `none` is a thing a reader has to interpret, and the interpretation most of
+ * them reached was "this is broken" on Sessions that were working perfectly.
+ * This says which two things are both true, so that a developer whose agent is
+ * nevertheless answering knows they are looking at a credential varnick did not
+ * supply rather than at a bug.
+ */
+export const CREDENTIAL_UNACCOUNTED =
+  'no credential varnick can account for — nothing it injected is here, and the runtime named no store'
+
 export function RuntimePanel({ report, agentState }: RuntimePanelProps) {
   return (
     <section
@@ -141,12 +190,26 @@ export function RuntimePanel({ report, agentState }: RuntimePanelProps) {
             <Fact name="permissions">{report.permissionMode || '—'}</Fact>
             <Fact name="output style">{report.outputStyle || '—'}</Fact>
             {/*
-              Which store the runtime says answered — a name, never a value, and
-              the same class of fact as Credential Source. It is here because it
-              is the one thing on screen that shows injection worked: the host
-              read a credential and the confined process found it.
+              Which credential the confined process is holding, by the name of
+              the variable it arrived in — a name, never a value, and the same
+              class of fact as Credential Source. It is here because it is the
+              one thing on screen that shows injection worked: the host read a
+              credential and the confined process found it.
+
+              It read `apiKeySource` alone until ticket 68, and so it had never
+              once shown that. A subscription Session has no API key, the SDK
+              says `none` about it, and the row printed `none` beside an agent
+              that was answering — the failure mode this panel was ported from
+              forge to catch, reproduced inside the panel itself. The three
+              readings are argued in `credentialRowName` above; the warning is
+              the colour the `memory` row below uses, because it is the same kind
+              of admission.
             */}
-            <Fact name="credential">{report.apiKeySource || '—'}</Fact>
+            <Fact name="credential">
+              {credentialRowName(report.credentialSource, report.apiKeySource) ?? (
+                <span style={{ color: 'var(--warn)' }}>{CREDENTIAL_UNACCOUNTED}</span>
+              )}
+            </Fact>
             <Fact name="cwd">{report.cwd || '—'}</Fact>
             {/*
               The two rows that answer "does it remember?".

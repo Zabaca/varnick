@@ -23,6 +23,8 @@ import {
   mergeCommands,
   signatureFor,
   completionFor,
+  wordBoundaryBackward,
+  wordBoundaryForward,
   type MenuCommand,
   formatContext,
   CONTEXT_WINDOW,
@@ -358,6 +360,20 @@ export function ChatSurface({
   // One label, read by the welcome box and by the composer, so the two cannot
   // disagree about what the next turn runs on.
   const modelLabel = MODELS.find((m) => m.id === s?.context.model)?.label ?? 'opus-5'
+
+  /*
+    Whether the runtime panel has been put away, read once for the two places
+    that answer to it: the toggle in the status line and the column itself.
+
+    The Session's, not this component's — ADR-0001, and the reason a `useState`
+    here would be worse than indirection: the states page renders this same
+    function with a frozen actor, so a reading held beside the machine is a
+    reading no card could park in and `drive.ts` could never reach. The fallback
+    is the shown reading, which is what a window with no Session yet should
+    look like: on first run there is no conversation and the panel describing
+    the agent is the most useful thing in the window.
+  */
+  const runtimeHidden = s?.context.runtimeHidden ?? false
 
   // Only what is actually wrong, and only while it is wrong.
   const problem = harnessProblem(ctx, agentState)
@@ -897,6 +913,70 @@ export function ChatSurface({
               }}
               onChange={(e) => session?.send({ type: 'EDIT_DRAFT', text: e.target.value })}
               onKeyDown={(e) => {
+                /*
+                  Word motion, and it is the first thing in this handler on
+                  purpose.
+
+                  It matches on `e.code` — the physical key — rather than on
+                  `e.key`, because by the time this runs `e.key` is already `ƒ`
+                  or `∫`: the Option key composes those on a US layout, and a
+                  binding written against them would be a binding for one
+                  keyboard. `preventDefault` is unconditional on a match, and
+                  that is the whole of what stops the glyph reaching the draft;
+                  it is the failure this fixes, and it was found after sending
+                  rather than while typing.
+
+                  Above the slash-menu branch, so a menu that has no use for
+                  these motions does not swallow them: ⌥f while `/mod` is
+                  filtering the list moves the caret and leaves the list exactly
+                  where it was.
+
+                  Every index here comes from `domain.ts` (ADR-0001). What is
+                  left is reading the keystroke, calling the function and
+                  assigning the selection, which is what makes it acceptable
+                  that this branch is the one part of the change `drive.ts`
+                  cannot reach.
+                */
+                if (e.altKey && (e.code === 'KeyF' || e.code === 'KeyB')) {
+                  e.preventDefault()
+                  const field = e.currentTarget
+                  /*
+                    The head is the end that travels and the anchor is the end
+                    that stays, and which is which is the only thing
+                    `selectionDirection` is for. Without it, ⇧⌥b followed by ⇧⌥f
+                    would grow the selection at both ends instead of shrinking
+                    it back, because the anchor would silently become whichever
+                    end happened to be the smaller number.
+                  */
+                  const backwards = field.selectionDirection === 'backward'
+                  const start = field.selectionStart ?? 0
+                  const end = field.selectionEnd ?? start
+                  const head = backwards ? start : end
+                  const anchor = backwards ? end : start
+                  const moved =
+                    e.code === 'KeyF'
+                      ? wordBoundaryForward(field.value, head)
+                      : wordBoundaryBackward(field.value, head)
+                  /*
+                    One call rather than two assignments. `selectionStart` and
+                    `selectionEnd` clamp against each other as they are written,
+                    so setting a start past the current end collapses the
+                    selection on the way through and the second write has
+                    nothing left to extend. `setSelectionRange` sets both and
+                    the direction together, and it is also the only way to say
+                    which end moved.
+                  */
+                  if (e.shiftKey) {
+                    field.setSelectionRange(
+                      Math.min(anchor, moved),
+                      Math.max(anchor, moved),
+                      moved < anchor ? 'backward' : 'forward',
+                    )
+                  } else {
+                    field.setSelectionRange(moved, moved)
+                  }
+                  return
+                }
                 if (menuOpen) {
                   // While the menu is open the keyboard belongs to it. SEND is
                   // already refused by the machine's guard; this is the rest.
@@ -956,6 +1036,52 @@ export function ChatSurface({
                   CONTEXT_WINDOW[s?.context.model ?? 'claude-opus-5'],
                 )}
               </span>
+              {/*
+                And the one control on this line, which is here because the
+                thing it controls can be gone.
+
+                The obvious place for it is the runtime panel's own header, and
+                that place is unusable: the panel is what is being hidden, so a
+                control inside it leaves with it and the only way back would be
+                a menu item or a keystroke nobody was told about. This status
+                line is the one piece of chrome on the surface that is on screen
+                whatever the panel and the Surfaces are doing, which makes it
+                the only honest home for a control that has to survive its own
+                subject.
+
+                Last on the line rather than first, because the three readings
+                before it are what the *next Turn* runs on and this is not about
+                the conversation at all.
+
+                Rendered only when the machine would take the event, like every
+                other control here — with no credential there is no Session,
+                every `session?.send` below it is a no-op, and a word that does
+                nothing when clicked is the affordance this file keeps ruling
+                against. Once a Session exists the event is accepted at the
+                root, so from the developer's side it is simply always there.
+              */}
+              {sessionCan({ type: 'TOGGLE_RUNTIME' }) && (
+                <>
+                  <span aria-hidden>·</span>
+                  {/*
+                    A toggle button rather than two words that swap. `runtime`
+                    stays put and `aria-pressed` carries the reading — pressed
+                    means the panel is up — so a screen reader hears one control
+                    changing state rather than a control appearing and another
+                    vanishing. Sighted readers get the same fact as colour: the
+                    selected/unselected treatment DESIGN.md gives choice buttons,
+                    said with the only two properties a bare word has.
+                  */}
+                  <button
+                    aria-label="Runtime panel"
+                    aria-pressed={!runtimeHidden}
+                    onClick={() => session?.send({ type: 'TOGGLE_RUNTIME' })}
+                    style={{ color: runtimeHidden ? 'var(--fg-dim)' : 'var(--accent)' }}
+                  >
+                    runtime
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -974,33 +1100,46 @@ export function ChatSurface({
           Surfaces at all — which is every clone on its first launch, and the one
           where "what is this agent, actually" is hardest to answer from
           anywhere else.
-        */}
-        <aside
-          className="min-h-0 w-[320px] shrink-0 overflow-y-auto"
-          style={{ borderLeft: '1px solid var(--rule)' }}
-        >
-          <RuntimePanel report={ctx.runtime} agentState={agentState} />
-          {/*
-            The pending list was here, under the runtime panel, and it has moved
-            above the conversation.
 
-            The argument for putting it here was that Core's own panels belong
-            together and a clone with no Surfaces would still have something in
-            this column. Both are still true and neither survived contact with
-            the column scrolling: *nothing the agent finished should wait
-            unnoticed* is not a claim you can make from below the fold. The
-            runtime panel stays, because what the agent is can wait to be
-            scrolled to.
-          */}
-          {ctx.surfaces.map((ref) => (
-            <SurfacePanel
-              key={ref.id}
-              surface={ref}
-              resolveSurface={resolveSurface}
-              onUnload={(id) => send({ type: 'UNLOAD_SURFACE', id })}
-            />
-          ))}
-        </aside>
+          It does have to go when there is nothing left to put in it, and that
+          is why the condition is written out rather than being the panel's own
+          `hidden`. 320px of border and empty scroll area is not a smaller cost
+          than the panel — the transcript caps at `var(--prose)` and on a laptop
+          the column is what pushes it under that measure, so a gutter kept for
+          a panel that is not there would give the developer nothing back for
+          the click. Hiding Core's panel must still leave Userspace's output
+          exactly where it was (ADR-0004), which is why the two halves of this
+          condition are separate and why a loaded Surface keeps the column
+          standing on its own.
+        */}
+        {(!runtimeHidden || ctx.surfaces.length > 0) && (
+          <aside
+            className="min-h-0 w-[320px] shrink-0 overflow-y-auto"
+            style={{ borderLeft: '1px solid var(--rule)' }}
+          >
+            {!runtimeHidden && <RuntimePanel report={ctx.runtime} agentState={agentState} />}
+            {/*
+              The pending list was here, under the runtime panel, and it has moved
+              above the conversation.
+
+              The argument for putting it here was that Core's own panels belong
+              together and a clone with no Surfaces would still have something in
+              this column. Both are still true and neither survived contact with
+              the column scrolling: *nothing the agent finished should wait
+              unnoticed* is not a claim you can make from below the fold. The
+              runtime panel stays, because what the agent is can wait to be
+              scrolled to.
+            */}
+            {ctx.surfaces.map((ref) => (
+              <SurfacePanel
+                key={ref.id}
+                surface={ref}
+                resolveSurface={resolveSurface}
+                onUnload={(id) => send({ type: 'UNLOAD_SURFACE', id })}
+              />
+            ))}
+          </aside>
+        )}
       </div>
     </div>
   )

@@ -143,6 +143,41 @@ function isCredentialVariable(key: string): boolean {
   return (CREDENTIAL_ENV_VAR_NAMES as readonly string[]).includes(key)
 }
 
+/**
+ * Which credential variable an environment actually holds, by name.
+ *
+ * Asked of the agent host's own environment, which makes it the one answer in
+ * the product that comes from the receiving end: the Tauri host injected a
+ * variable and this process is the one that either got it or did not. Everything
+ * else varnick could say about injection is a description of what it meant to
+ * do. It goes onto the Runtime Report as `credentialSource` and is what the
+ * panel's `credential` row prints — see the field's own note in ./turn.ts for
+ * the row it replaces and why that row was wrong.
+ *
+ * **The name, and never the value.** The environment is read to ask whether an
+ * entry is empty, and what is returned is one of the two strings in
+ * {@link CREDENTIAL_ENV_VAR_NAMES}, both of which are written in this
+ * repository. There is no parameter, return type or branch here that a
+ * credential can travel through, which is the same property the read in
+ * ./credentials.ts has and for the same reason.
+ *
+ * Exactly one of the two is ever set on a spawned agent — the host injects the
+ * one matching the Kind it resolved and removes the other — so the order settles
+ * a case that does not arise. It is fixed rather than left to enumeration order
+ * anyway: an answer that depends on how a `Record` happens to iterate is an
+ * answer that can change for a reason nobody wrote down.
+ *
+ * Pure over the environment it is handed so a test can ask it about an
+ * environment rather than about the machine the test is running on.
+ * `process.env` is the default because the fact being reported is about *this*
+ * process.
+ */
+export function observedCredentialVariable(
+  base: Record<string, string | undefined> = process.env,
+): string {
+  return CREDENTIAL_ENV_VAR_NAMES.find((variable) => (base[variable] ?? '') !== '') ?? ''
+}
+
 /** The agent host's path in a given clone. */
 export function agentEntryPath(cloneRoot: string): string {
   return join(cloneRoot, AGENT_ENTRY_RELATIVE_PATH)
@@ -2107,7 +2142,14 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       // whatever is running on it.
       const sdk = message as { type?: string; subtype?: string }
       if (sdk?.type === 'system' && sdk.subtype === 'init') {
-        runtime = runtimeReportFrom(message, input.resumed === true)
+        /*
+          The third argument is this process's own environment, and it is read
+          here because here is the only place that can read it. The init message
+          describes what the runtime authenticated with; it knows nothing about
+          what varnick put in front of it, so a credential row built from it
+          could only ever be a guess wearing a measurement's clothes.
+        */
+        runtime = runtimeReportFrom(message, input.resumed === true, observedCredentialVariable())
         // Written down before anything is answered. A conversation whose
         // pointer was recorded only at the end would lose its continuity to
         // exactly the crash the mirror already survives.

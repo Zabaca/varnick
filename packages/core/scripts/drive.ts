@@ -42,6 +42,8 @@ import {
   mergeSummary,
   signatureFor,
   completionFor,
+  wordBoundaryBackward,
+  wordBoundaryForward,
 } from '../src/domain.ts'
 import {
   DEFAULT_DEV_PORT,
@@ -440,6 +442,7 @@ type CompactOutput = { messages: Message[]; tokensUsed: number }
     outputStyle: 'default',
     cwd: '/tmp/clone',
     apiKeySource: 'ANTHROPIC_API_KEY',
+    credentialSource: 'ANTHROPIC_API_KEY',
     tools: ['Read', 'Bash'],
     skills: [],
     slashCommands: [],
@@ -1084,6 +1087,114 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   check(
     'completing one that takes nothing finishes the draft',
     completionFor(agent('clear-cache')) === '/clear-cache',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The composer — moving by word, which is what ⌥f and ⌥b now do
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    A table of drafts rather than a handful of examples, because the interesting
+    cases here are all boundaries and a boundary is exactly what an example
+    chosen for readability leaves out. Every row is one motion: where the caret
+    was, and where it must be afterwards.
+
+    The two ends are the point. ⌥f at the end of a draft returning the same
+    index is the assertion that stops a wrap — a bug nobody would think to look
+    for, and one that would throw the caret across a paragraph somebody is
+    halfway through writing. The keystroke branch itself is a component and is
+    not driven here; keeping it down to read, call, assign is what makes that
+    acceptable.
+  */
+  const motions: readonly {
+    readonly claim: string
+    readonly text: string
+    readonly forward: boolean
+    readonly at: number
+    readonly lands: number
+  }[] = [
+    // 'hello world' — the shape every other row is a variation on.
+    { claim: 'from the start, to the end of the first word', text: 'hello world', forward: true, at: 0, lands: 5 },
+    { claim: 'from inside a word, to the end of that word and no further', text: 'hello world', forward: true, at: 2, lands: 5 },
+    { claim: 'from the gap, across it and to the end of the word after', text: 'hello world', forward: true, at: 5, lands: 11 },
+    { claim: 'at the end of the draft, nothing happens — never a wrap', text: 'hello world', forward: true, at: 11, lands: 11 },
+    { claim: 'from the end, back to the start of the last word', text: 'hello world', forward: false, at: 11, lands: 6 },
+    { claim: 'from inside a word, back to the start of that word', text: 'hello world', forward: false, at: 8, lands: 6 },
+    { claim: 'from the start of a word, back over the gap to the word before', text: 'hello world', forward: false, at: 6, lands: 0 },
+    { claim: 'at the start of the draft, nothing happens — never a wrap', text: 'hello world', forward: false, at: 0, lands: 0 },
+
+    // An empty composer is both ends at once, and is the first thing a
+    // developer's hands touch on a fresh launch.
+    { claim: 'an empty draft has nowhere forward to go', text: '', forward: true, at: 0, lands: 0 },
+    { claim: 'an empty draft has nowhere back to go', text: '', forward: false, at: 0, lands: 0 },
+
+    // A newline is a gap like any other, which is the whole of what makes a
+    // multi-line prompt navigable.
+    { claim: 'a newline ends the word before it, so a motion stops at the end of the line', text: 'first line\nsecond line', forward: true, at: 5, lands: 10 },
+    { claim: 'and the next motion crosses it — one line to the next is one ⌥f', text: 'first line\nsecond line', forward: true, at: 10, lands: 17 },
+    { claim: 'crossing back over the newline is one ⌥b', text: 'first line\nsecond line', forward: false, at: 11, lands: 6 },
+
+    // A run of punctuation between two words is one gap, not several.
+    { claim: 'a run of punctuation is skipped whole, with the word after it', text: 'alpha -- beta', forward: true, at: 5, lands: 13 },
+    { claim: 'and backwards the same run is still one motion', text: 'alpha -- beta', forward: false, at: 9, lands: 0 },
+    { claim: 'a motion stops before the punctuation that ends a sentence', text: 'done.', forward: true, at: 0, lands: 4 },
+    { claim: 'with no word left after it, the motion runs to the end and stops there', text: 'done.', forward: true, at: 4, lands: 5 },
+
+    // A leading run of spaces is where a wrap would show itself going the other
+    // way: the caret has somewhere to go, and index 0 is all of it.
+    { claim: 'a leading run of spaces is skipped, and the word behind it finished', text: '   indented', forward: true, at: 0, lands: 11 },
+    { claim: 'and backwards over it the caret lands at 0, not at the far end', text: '   indented', forward: false, at: 3, lands: 0 },
+
+    // Non-ASCII, which is the reason the class is `\p{L}` and not `[a-z]`.
+    { claim: 'an accented letter is part of its word, not the end of it', text: 'café naïve 日本語 x', forward: true, at: 0, lands: 4 },
+    { claim: 'and backwards over the same word', text: 'café naïve 日本語 x', forward: false, at: 4, lands: 0 },
+    { claim: 'CJK is a word rather than three pieces of punctuation', text: 'café naïve 日本語 x', forward: true, at: 10, lands: 14 },
+    { claim: 'and backwards it is one motion too', text: 'café naïve 日本語 x', forward: false, at: 14, lands: 11 },
+
+    // The two word characters that are not letters, and the field these are
+    // typed in is full of both.
+    { claim: 'an underscore does not break a word', text: 'snake_case v2 end', forward: true, at: 0, lands: 10 },
+    { claim: 'nor does a digit', text: 'snake_case v2 end', forward: true, at: 10, lands: 13 },
+  ]
+
+  for (const motion of motions) {
+    const moved = motion.forward
+      ? wordBoundaryForward(motion.text, motion.at)
+      : wordBoundaryBackward(motion.text, motion.at)
+    check(`${motion.forward ? '⌥f' : '⌥b'} — ${motion.claim}`, moved === motion.lands)
+  }
+
+  // The pair has to be a pair. Forward then back is how a developer overshoots
+  // and corrects, and landing anywhere but the start of the word just crossed
+  // would make the correction cost a second motion.
+  check(
+    '⌥f then ⌥b returns to the start of the word ⌥f crossed',
+    wordBoundaryBackward('hello world', wordBoundaryForward('hello world', 0)) === 0,
+  )
+
+  /*
+    And the property behind every boundary row above, asserted over every caret
+    a draft has rather than the four somebody thought of: a motion may stand
+    still, but it may never leave the text it was given. This is the row that
+    would catch a wrap introduced in a shape the table does not hold.
+  */
+  const sample = '  a, b\n_c9 é 日 '
+  const carets = [...Array(sample.length + 1).keys()]
+  check(
+    'no forward motion ever leaves the draft',
+    carets.every((caret) => {
+      const moved = wordBoundaryForward(sample, caret)
+      return moved >= caret && moved <= sample.length
+    }),
+  )
+  check(
+    'no backward motion ever leaves the draft',
+    carets.every((caret) => {
+      const moved = wordBoundaryBackward(sample, caret)
+      return moved <= caret && moved >= 0
+    }),
   )
 }
 
@@ -4594,6 +4705,64 @@ async function turnPath(
   check('an interrupted turn keeps the tool calls it made', after.some((m) => m.tool?.argument === 'src/a.ts'))
   check('and the words that followed them', after.at(-1)?.text === 'It says hello.')
   check('said, did, said — three entries and not one block of text', after.filter((m) => m.role === 'agent').length === 3)
+}
+
+{
+  /*
+    The panel goes away while the agent is mid-answer, which is when it is asked
+    for.
+
+    `TOGGLE_RUNTIME` is at the Session's root beside the two tool events, and
+    this is the assertion that keeps it there. The developer who reaches for the
+    width of the window is doing it *because* an answer is arriving and the
+    transcript is capped under its own prose measure by the 320px column beside
+    it — so a toggle scoped to `turn.idle` would be a control that worked only
+    once nobody wanted it. There is no state to check afterwards: the Turn must
+    be exactly where it was, which is the other half of what is asserted here.
+
+    The flip *back* is the reason there are two sends rather than one. A toggle
+    written as `runtimeHidden: true` reads correctly, passes any assertion that
+    only presses it once, and leaves the panel gone for the rest of the session
+    with a control that has stopped meaning anything.
+  */
+  const actor = createActor(sessionMachine.provide({ actors: { runTurn: turnNever() } }), {
+    input: { sessionId: 'x5e', draft: 'go' },
+  }).start()
+
+  check('the panel starts on screen', actor.getSnapshot().context.runtimeHidden === false)
+  actor.send({ type: 'SEND' })
+  check('a turn is in flight', regionOf(actor.getSnapshot().value, 'turn') === 'answering.sending')
+  check('and the machine would take the toggle anyway', actor.getSnapshot().can({ type: 'TOGGLE_RUNTIME' }))
+
+  actor.send({ type: 'TOGGLE_RUNTIME' })
+  check('hiding the panel mid-answer is accepted', actor.getSnapshot().context.runtimeHidden === true)
+  check('and the turn is untouched by it', regionOf(actor.getSnapshot().value, 'turn') === 'answering.sending')
+
+  actor.send({ type: 'TOGGLE_RUNTIME' })
+  check('and it comes back — the toggle turns off as well as on', actor.getSnapshot().context.runtimeHidden === false)
+  actor.stop()
+}
+
+{
+  /*
+    And a Session created with the panel already away reports it.
+
+    This is what a states-page card rests on: a card is a machine created cold
+    from `SessionInput`, so a reading only a click could reach is a reading the
+    page cannot show. The default is the other way — a Session with no opinion
+    starts with the panel up, which is what a first launch should look like, and
+    what makes the collapsed column something a developer asked for rather than
+    something they arrived at.
+  */
+  const seeded = createActor(sessionMachine, {
+    input: { sessionId: 'x5f', runtimeHidden: true },
+  }).start()
+  check('a session seeded with the panel hidden says so', seeded.getSnapshot().context.runtimeHidden === true)
+  seeded.stop()
+
+  const plain = createActor(sessionMachine, { input: { sessionId: 'x5g' } }).start()
+  check('and one that was told nothing starts with it shown', plain.getSnapshot().context.runtimeHidden === false)
+  plain.stop()
 }
 
 {

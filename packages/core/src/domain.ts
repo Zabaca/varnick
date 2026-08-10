@@ -839,6 +839,97 @@ export function commandQuery(draft: string): string {
 }
 
 /*
+  ---------------------------------------------------------------------------
+  Moving by word in the composer
+
+  ⌥f and ⌥b did not move the caret. They inserted `ƒ` and `∫` into the draft,
+  because that is what the Option key composes on a US layout and nothing
+  stopped it — and the developer who typed them found out after sending, since
+  the glyphs are small and the field is dark.
+
+  The composer was never missing word motion: ⌥→ and ⌥← have always worked,
+  because the platform does that for every text field on the system. What was
+  missing were the bindings a terminal-shaped developer reaches for, and
+  reaching for them did not fail cleanly, it edited the message.
+
+  The arithmetic lives here rather than in the keystroke handler, which is
+  ADR-0001 read literally: a boundary rule computed inside `onKeyDown` is a rule
+  `drive.ts` cannot reach, and the boundaries are the whole of what can go wrong
+  here. The component reads the keystroke, calls one of these, and assigns the
+  field's selection.
+  ---------------------------------------------------------------------------
+*/
+
+/**
+ * What counts as part of a word.
+ *
+ * `\p{L}`, `\p{N}` and `_`, with the `u` flag, so `café` is one word rather
+ * than two and `日本語` is one rather than three — an ASCII rule stops at the
+ * accent and treats every CJK character as punctuation, which is not how either
+ * language reads. `_` is in because `snake_case` is one identifier everywhere a
+ * developer has ever typed one, and this is the field they type identifiers in.
+ *
+ * Asked one UTF-16 code unit at a time, because that is the unit a textarea's
+ * selection is measured in and an index this returns has to be usable as one.
+ * An unpaired surrogate matches nothing here, so both halves of a character
+ * outside the Basic Multilingual Plane always fall in the same run and the caret
+ * can never land between them. The cost is that an astral *letter* — a CJK
+ * Extension B character, say — is crossed as though it were punctuation rather
+ * than as a word. That is the one place this differs from Emacs, and it is
+ * written down so the next person meets it as a decision rather than a mystery.
+ */
+const WORD_CHARACTER = /[\p{L}\p{N}_]/u
+
+/**
+ * Where ⌥f leaves the caret: past the end of the next word.
+ *
+ * Emacs semantics, in two halves — skip whatever is not a word, then skip the
+ * word that follows. Both halves stop at the end of the text, and that is what
+ * makes a motion at the boundary a no-op instead of a wrap: called with
+ * `text.length` it returns `text.length`. The wrap is the failure nobody would
+ * think to look for, and it is the worst one available here, because it would
+ * throw the caret to the far end of a draft somebody is in the middle of
+ * writing. `drive.ts` asserts the no-op for that reason.
+ *
+ * A newline is not a word character, so it is skipped like any other gap and a
+ * motion crosses it: the last word of one line and the first of the next are one
+ * ⌥f apart.
+ *
+ * Trailing punctuation with no word behind it still moves, to the end of the
+ * text and no further — `done.` with the caret before the full stop lands after
+ * it. That is Emacs' answer too, and it is the honest one: the caret did have
+ * somewhere left to go.
+ */
+export function wordBoundaryForward(text: string, caret: number): number {
+  let index = caret
+  // `charAt` rather than an index, because it is total: it answers `''` off
+  // either end, which no word class matches, so a caret outside the text walks
+  // back into it instead of reading `undefined` as a character.
+  while (index < text.length && !WORD_CHARACTER.test(text.charAt(index))) index++
+  while (index < text.length && WORD_CHARACTER.test(text.charAt(index))) index++
+  return index
+}
+
+/**
+ * Where ⌥b leaves the caret: at the start of the word behind it.
+ *
+ * The mirror of {@link wordBoundaryForward} in every respect that matters — it
+ * looks at the character *before* the index rather than the one at it, which is
+ * what makes the pair symmetric across a caret sitting between two runs, and it
+ * stops at 0 rather than wrapping round to the end.
+ *
+ * A draft that opens with a run of spaces is the case worth naming: ⌥b from the
+ * first word lands on index 0, not on the space before it and not at the far end
+ * of the draft.
+ */
+export function wordBoundaryBackward(text: string, caret: number): number {
+  let index = caret
+  while (index > 0 && !WORD_CHARACTER.test(text.charAt(index - 1))) index--
+  while (index > 0 && WORD_CHARACTER.test(text.charAt(index - 1))) index--
+  return index
+}
+
+/*
   `makeIdFactory` was here, unused. It existed for a real constraint — Core must
   not reach for `Math.random()` or a live clock, or the states page cannot be
   compared between runs — and nothing in Core does either, so the factory was

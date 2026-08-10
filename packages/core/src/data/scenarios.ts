@@ -123,7 +123,17 @@ const up = {
     permissionMode: 'bypassPermissions',
     outputStyle: 'default',
     cwd: '/Users/you/varnick',
-    apiKeySource: 'CLAUDE_CODE_OAUTH_TOKEN',
+    /*
+      What a subscription Session actually reports, which is the pair rather
+      than either half. The SDK is asked which store an *API key* came from and
+      there is no API key in this Session, so it says `none` — and the variable
+      varnick injected the token into is the fact beside it. The seed said
+      `apiKeySource: 'CLAUDE_CODE_OAUTH_TOKEN'` before ticket 68, which is a
+      reading the SDK has never produced and which hid, on this page, the row
+      that was wrong in the live app.
+    */
+    apiKeySource: 'none',
+    credentialSource: 'CLAUDE_CODE_OAUTH_TOKEN',
     tools: ['Task', 'Bash', 'Glob', 'Grep', 'Read', 'Edit', 'Write', 'WebFetch', 'WebSearch'],
     skills: ['caveman', 'to-tickets'],
     slashCommands: ['compact', 'model', 'caveman'],
@@ -340,6 +350,32 @@ export const SCENARIOS: readonly Scenario[] = [
       enterSandbox: 'available',
       enterAgent: 'crashed',
       agentError: 'exit code 137',
+    },
+  },
+  {
+    id: 'credential-unaccounted',
+    group: 'Refusals and failures',
+    title: 'A credential varnick cannot account for',
+    blurb:
+      'The agent is up and neither credential variable reached it, while the runtime names no store either. Everything else on the panel is a healthy session — which is the point: this is a warning about one row rather than a broken screen.',
+    question: 'Does the one row built to prove injection worked say so when it did not?',
+    /*
+      A card for a row rather than for a state, and it is here because the row
+      has no state to park in: `credentialSource` is a fact on the Runtime
+      Report, and a report is something the agent said rather than somewhere the
+      machine is. So the covered path is the ordinary running one, and what makes
+      the card worth having is the report seeded under it.
+
+      It exists so the warning is a thing that was looked at during design. The
+      reading it shows ran in the live app on every subscription Session varnick
+      ever had and was never once on this page, because the seed beside it was a
+      pair the SDK does not produce.
+    */
+    covers: ['agent.running'],
+    input: {
+      ...up,
+      runtime: { ...up.runtime, apiKeySource: 'none', credentialSource: '' },
+      sessionInput: { sessionId: 'states-credential-unaccounted', messages: seedMessages },
     },
   },
 
@@ -602,6 +638,39 @@ export const SCENARIOS: readonly Scenario[] = [
         // One row now, not one per value — see the composer's command list.
         // The card's draft is `/mo`, which this still answers.
         commandNames: ['/model', '/effort', '/compact'],
+      },
+    },
+  },
+  {
+    id: 'runtime-hidden',
+    group: 'The conversation',
+    title: 'Runtime panel out of the way',
+    blurb:
+      'The same running conversation with the runtime panel put away. There are no Surfaces in this card, so the right-hand column is not rendered at all and the transcript has the whole width — which is the point of the toggle rather than a side effect of it.',
+    /*
+      Not a state, and it has a card anyway.
+
+      `runtimeHidden` is a field on the Session's context, so nothing in
+      SESSION_STATE_PATHS changed and the coverage banner would never have asked
+      for this card. It is here because the collapsed reading is a *layout* — the
+      column gone, the composer's status line still carrying the way back — and a
+      layout nobody looked at is a layout that ships with a gutter in it. The
+      question below is what to judge it on.
+    */
+    question: 'Does the window read as one with no panel, rather than one with a gap where a panel was?',
+    // The states this card is parked in are the ordinary ones. What it is for is
+    // beside them, which is why it claims nothing the machines do not declare.
+    covers: ['turn.idle', 'composer.typing'],
+    input: {
+      ...up,
+      sessionInput: {
+        sessionId: 'states-runtime-hidden',
+        messages: seedMessages,
+        // Seeded rather than clicked to. `SessionInput` takes it for this
+        // reason: a card is a machine created cold, and a reading only a
+        // `TOGGLE_RUNTIME` could reach would be a reading this page cannot show.
+        runtimeHidden: true,
+        tokensUsed: 12_400,
       },
     },
   },

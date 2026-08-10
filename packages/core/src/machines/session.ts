@@ -71,6 +71,23 @@ export interface SessionContext {
    * each one wrote when it started and finished.
    */
   tasks: readonly RunningTask[]
+  /**
+   * Whether the runtime panel has been put away.
+   *
+   * A fact about the window rather than about the conversation, and it lives
+   * here for the reason every other view decision does: the surface is a pure
+   * function of `(snapshot, send)` — ADR-0001 — so a `useState` in the component
+   * would be a reading of the screen that `#/states` cannot park in and
+   * `drive.ts` cannot reach. Held as the *hidden* reading rather than the shown
+   * one so the default is `false` and a Session created with no opinion starts
+   * with the panel up, which is what a first launch should show.
+   *
+   * It is not persisted, and that was decided rather than overlooked: carrying
+   * it across a reload means either this machine reading `localStorage`, which
+   * breaks the same ADR, or the host growing a preference store, which is a
+   * feature and not a fix. A reload starts with the panel shown.
+   */
+  runtimeHidden: boolean
   readonly enterTurn: string | null
   readonly enterPersistence: string | null
 }
@@ -90,6 +107,8 @@ export interface SessionInput {
   effort?: Effort
   tokensUsed?: number
   pending?: readonly PastedImage[]
+  /** Seeded so a card can show the collapsed column without clicking to it. */
+  runtimeHidden?: boolean
   enterTurn?: string | null
   enterPersistence?: string | null
 }
@@ -157,6 +176,22 @@ export type SessionEvent =
    * every Turn showing as still running.
    */
   | { type: 'TOOL_RESULT'; settled: ToolSettled }
+  /**
+   * Put the runtime panel away, or bring it back.
+   *
+   * The one event here that is not about the conversation at all. It sits at the
+   * root beside the two above it and for the same reason: it is a fact about the
+   * window, and no Turn state has standing to decline it. A developer who reaches
+   * for the width of the screen while the agent is four minutes into an answer is
+   * doing so *because* of the answer, and a window that refused them until it
+   * finished would be busy on its own behalf.
+   *
+   * One event rather than a `SET_RUNTIME_HIDDEN` carrying the reading it wants,
+   * because there is one control and it has one meaning: the other way round.
+   * A payload would let two senders disagree about what the screen currently
+   * shows and would make the flip a thing the caller computes.
+   */
+  | { type: 'TOGGLE_RUNTIME' }
   /**
    * The agent answered something the developer did not send.
    *
@@ -299,6 +334,7 @@ export const sessionMachine = setup({
     tokensUsed: input.tokensUsed ?? 0,
     pending: input.pending ?? [],
     tasks: input.tasks ?? [],
+    runtimeHidden: input.runtimeHidden ?? false,
     enterTurn: input.enterTurn ?? null,
     enterPersistence: input.enterPersistence ?? null,
   }),
@@ -439,6 +475,24 @@ export const sessionMachine = setup({
       actions: assign({
         messages: ({ context, event }) => withToolResult(context.messages, event.settled),
       }),
+    },
+    /*
+      And the panel beside the conversation goes away, in whatever state this
+      machine is in.
+
+      At the root beside the two above it, which is the whole of what makes it
+      work: the reason to hide the runtime panel is that the answer being
+      written needs the width, so the moment it is asked for is precisely the
+      moment a Turn is in flight. Scoped to `turn.idle` it would be a control
+      that only worked once the developer no longer wanted it.
+
+      Nothing is saved. This changes no transcript and no message, so a Turn
+      boundary has not been reached and writing the mirror here would be a file
+      write for a fact the mirror does not hold — the panel comes back up on the
+      next launch either way, which is the decision recorded on `runtimeHidden`.
+    */
+    TOGGLE_RUNTIME: {
+      actions: assign({ runtimeHidden: ({ context }) => !context.runtimeHidden }),
     },
     /*
       And an answer nobody asked for joins the transcript, under what caused it.
