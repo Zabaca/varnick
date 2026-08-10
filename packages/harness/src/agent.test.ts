@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import {
   developerToolsBin,
   AGENT_ENTRY_RELATIVE_PATH,
@@ -21,6 +22,8 @@ import {
   agentTempDir,
   agentTempPrefix,
   claudeConfigDir,
+  hookProbePluginDir,
+  hookProbeRecord,
   inheritedConfigVariables,
   inheritsClaudeConfig,
   failureOfThrown,
@@ -1677,6 +1680,113 @@ describe('a node that is bun', () => {
       { cloneRoot: CLONE, inherit: false, agentBin: null },
     )
     expect(env.PATH).toBe('/usr/bin')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The fixture that makes "hooks run" a measurement
+// ---------------------------------------------------------------------------
+
+describe('varnick declares a hook of its own', () => {
+  /*
+    Ticket 58's first two criteria, and the reason they needed a fixture at all.
+
+    The finding was visible only because the `caveman` plugin wrote a flag file
+    that had never appeared — and deleting that plugin took the evidence with
+    it. A plugin varnick owns cannot be removed by a decision about somebody
+    else's plugin, which is the whole argument for this directory existing.
+
+    Two halves are provable here and one is not. That the hook *command* can
+    spawn — the half ticket 58's first commit fixed, `node` on PATH — is proved
+    below by running it. That Claude Code actually *fires* it needs a real
+    Session, which needs a credential, so it is proved at launch instead: the
+    record carries `pluginRoot`, which only Claude Code can supply.
+  */
+
+  const repoRoot = resolve(import.meta.dir, '..', '..', '..')
+
+  test('the clone holds a plugin that declares a SessionStart hook', () => {
+    // The criterion that had nothing to test against once caveman was deleted.
+    const manifest = JSON.parse(
+      readFileSync(join(hookProbePluginDir(repoRoot), '.claude-plugin', 'plugin.json'), 'utf8'),
+    ) as { hooks?: { SessionStart?: unknown[] } }
+
+    expect(manifest.hooks?.SessionStart).toBeArray()
+  })
+
+  test('discovery finds it, so it reaches the agent at all', () => {
+    // Filesystem-based, like every other kind of discovery here — a fixture
+    // that had to be registered in Core would prove something else.
+    const found = agentPlugins(repoRoot).map((plugin) => plugin.path)
+    expect(found).toContain(hookProbePluginDir(repoRoot))
+  })
+
+  test('its command names node, which is the thing that was missing', () => {
+    /*
+      Deliberately asserted rather than assumed. The point of the fixture is to
+      exercise the exact idiom that failed — `node "${CLAUDE_PLUGIN_ROOT}/…"` —
+      and a fixture that quietly said `bun` instead would pass forever while
+      proving nothing about any plugin a developer installs.
+    */
+    const manifest = JSON.parse(
+      readFileSync(join(hookProbePluginDir(repoRoot), '.claude-plugin', 'plugin.json'), 'utf8'),
+    ) as { hooks: { SessionStart: { hooks: { command: string }[] }[] } }
+
+    expect(manifest.hooks.SessionStart[0]?.hooks[0]?.command).toBe(
+      'node "${CLAUDE_PLUGIN_ROOT}/hooks/record.mjs"',
+    )
+  })
+
+  test('the hook writes its record when it is run', async () => {
+    /*
+      Run for real, against a throwaway clone root, with the shim on PATH and
+      `CLAUDE_PLUGIN_ROOT` supplied the way Claude Code supplies it. This is the
+      spawn that used to fail with `node: command not found` and say nothing.
+    */
+    const root = mkdtempSync(join(tmpdir(), 'varnick-hook-probe-'))
+    try {
+      mkdirSync(claudeConfigDir(root), { recursive: true })
+      const bin = writeNodeShim(root, process.execPath, {
+        mkdir: (path) => mkdirSync(path, { recursive: true }),
+        write: (path, contents) => writeFileSync(path, contents),
+        chmod: (path, mode) => chmodSync(path, mode),
+      })
+
+      const pluginRoot = hookProbePluginDir(repoRoot)
+      const child = Bun.spawn({
+        cmd: ['/bin/sh', '-c', `node ${JSON.stringify(join(pluginRoot, 'hooks', 'record.mjs'))}`],
+        env: {
+          PATH: `${bin}:/usr/bin:/bin`,
+          CLAUDE_CONFIG_DIR: claudeConfigDir(root),
+          CLAUDE_PLUGIN_ROOT: pluginRoot,
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const [code, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()])
+
+      expect(code).toBe(0)
+      /*
+        Silence is a requirement, not a detail. A `SessionStart` hook's stdout is
+        injected into the agent's context — a fixture that talked would change
+        the thing it measures, on every session, for ever.
+      */
+      expect(stdout).toBe('')
+
+      const record = hookProbeRecord(root)
+      expect(record).not.toBeNull()
+      expect(record?.pluginRoot).toBe(pluginRoot)
+      // The shim answered, rather than some `node` that happened to be around.
+      expect(record?.argv0).toContain('bun')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('a missing record is null, because absence is the finding', () => {
+    // varnick was in this state for months. A reader that invented a record to
+    // stand in for one would erase the only evidence the defect ever had.
+    expect(hookProbeRecord(mkdtempSync(join(tmpdir(), 'varnick-hook-empty-')))).toBe(null)
   })
 })
 

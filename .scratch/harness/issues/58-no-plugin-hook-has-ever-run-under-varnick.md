@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — the last box needs a launch, and closes at the next one. See the foot.
 
 **Realizes:** no state path.
 
@@ -82,11 +82,65 @@ declared capability real, or admits it is not.
 - Do not solve this by inheriting the developer's environment. `agentEnvironment`
   builds the environment outright on purpose, and that is ADR-0010's isolation.
 
-- [ ] A fixture plugin in the clone declares a `SessionStart` hook
-- [ ] That hook runs, and the flag file it writes is asserted
-- [ ] The measurement says which of `PATH` and `CLAUDE_PLUGIN_ROOT` was missing
-- [ ] A hook that cannot spawn is reported rather than silent
-- [ ] The environment is still built outright, not inherited
-- [ ] ADR-0010's amendment notes that its hook argument was hypothetical until now
+- [x] A fixture plugin in the clone declares a `SessionStart` hook
+- [x] That hook runs, and the flag file it writes is asserted
+- [x] The measurement says which of `PATH` and `CLAUDE_PLUGIN_ROOT` was missing
+- [x] A hook that cannot spawn is reported rather than silent
+- [x] The environment is still built outright, not inherited
+- [x] ADR-0010's amendment notes that its hook argument was hypothetical until now
 
 Found while implementing the Profile's voice: the plugin's own hook was the obvious way to apply it, and the flag file it writes had never appeared.
+
+## The fixture
+
+`.claude/plugins/varnick-hook-probe/` — varnick's own plugin, declaring one
+`SessionStart` hook whose command is the exact idiom that failed:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/hooks/record.mjs"
+```
+
+It writes `hook-probe.json` under `CLAUDE_CONFIG_DIR`, which is inside the clone,
+gitignored, and writable inside the Sandbox — so its presence is a fact about
+*this launch* and not something a commit can fake.
+
+Three rules the fixture lives by, each of them load-bearing:
+
+- **Nothing on stdout.** A `SessionStart` hook's stdout is injected into the
+  agent's context. A fixture that talked would change the thing it measures, on
+  every session, for ever. Asserted.
+- **Never throws, never exits non-zero.** A fixture that can fail a session is
+  worse than the defect it proves. Every failure inside it is swallowed
+  deliberately, and **absence of the file is the negative result** — which is why
+  `hookProbeRecord` answers null rather than inventing a record.
+- **It records what it was given, not what it expected.** `CLAUDE_PLUGIN_ROOT`,
+  `argv0` and the head of `PATH` come from the run.
+
+It replaces evidence that was lost rather than fixed: the finding was only ever
+visible because `caveman` wrote a flag file that had never appeared, and deleting
+that plugin took the evidence with it. A fixture varnick owns cannot be removed
+by a decision about somebody else's plugin.
+
+## What is proved where, and why it is split
+
+**That the hook command can spawn** is proved headlessly, by running it with the
+shim on `PATH` and `CLAUDE_PLUGIN_ROOT` supplied the way Claude Code supplies it.
+This is the spawn that used to fail with `node: command not found` and say
+nothing. It also asserts the silence, and that the interpreter which answered was
+bun.
+
+**That Claude Code fires it** cannot be: a `SessionStart` hook needs a real
+Session, which needs a credential, and the only probe that opens one skips
+without one — the same blindness that hid this defect for months. So the second
+criterion is closed by a launch instead, and `pluginRoot` in the record is what
+makes that check honest: **only Claude Code can set `CLAUDE_PLUGIN_ROOT`**, so a
+record carrying it could not have been written by anything else.
+
+To check it by hand at any time:
+
+```
+cat .varnick/claude/hook-probe.json
+```
+
+A file whose `ran` timestamp is after the current process started is a hook that
+fired this launch. No file is the state varnick was in all along.

@@ -946,6 +946,58 @@ export function agentPermissionOptions(): {
  */
 export const AGENT_PLUGINS_RELATIVE_PATH = '.claude/plugins'
 
+/**
+ * varnick's own fixture plugin, and the file its hook writes.
+ *
+ * Ticket 58's evidence, made permanent. The finding — that no plugin hook had
+ * ever run — was visible only because the `caveman` plugin wrote a flag file
+ * that had never appeared, and deleting that plugin took the evidence with it.
+ * A fixture varnick owns cannot be removed by a decision about somebody else's
+ * plugin.
+ *
+ * The file lands under {@link claudeConfigDir}, which is writable inside the
+ * Sandbox and gitignored, so its presence is a fact about *this launch* rather
+ * than something a commit could fake.
+ *
+ * Read {@link hookProbeRecord} for what it holds and why each field is there.
+ */
+export const HOOK_PROBE_PLUGIN = 'varnick-hook-probe'
+
+/** The fixture plugin's directory in a given clone. */
+export function hookProbePluginDir(cloneRoot: string): string {
+  return join(cloneRoot, AGENT_PLUGINS_RELATIVE_PATH, HOOK_PROBE_PLUGIN)
+}
+
+/**
+ * What the fixture plugin's `SessionStart` hook wrote, if it ran.
+ *
+ * Null when the file is absent or unreadable, which is the negative result and
+ * the state varnick was in for months: **absence is the finding**, so this must
+ * never invent a record to stand in for one.
+ */
+export function hookProbeRecord(
+  cloneRoot: string,
+  read: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): { ran: string; pluginRoot: string | null; argv0: string | null } | null {
+  try {
+    const parsed = JSON.parse(read(join(claudeConfigDir(cloneRoot), 'hook-probe.json'))) as Record<
+      string,
+      unknown
+    >
+    if (typeof parsed.ran !== 'string') return null
+    return {
+      ran: parsed.ran,
+      // The two candidates ticket 58 named. Recorded from the run rather than
+      // reasoned about: varnick supplies `node` on PATH, Claude Code supplies
+      // CLAUDE_PLUGIN_ROOT, and only a run says whether both arrived.
+      pluginRoot: typeof parsed.pluginRoot === 'string' ? parsed.pluginRoot : null,
+      argv0: typeof parsed.argv0 === 'string' ? parsed.argv0 : null,
+    }
+  } catch {
+    return null
+  }
+}
+
 export function agentPlugins(
   cloneRoot: string,
   fs: { readDir: (path: string) => readonly string[]; exists: (path: string) => boolean } = {

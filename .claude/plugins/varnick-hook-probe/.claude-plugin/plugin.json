@@ -1,0 +1,20 @@
+{
+  "name": "varnick-hook-probe",
+  "description": "varnick's own fixture plugin. Declares a SessionStart hook that records that it ran, so that \"a plugin's hooks fire under varnick\" is a measurement rather than a claim. See .scratch/harness/issues/58.",
+  "author": {
+    "name": "varnick"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/record.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

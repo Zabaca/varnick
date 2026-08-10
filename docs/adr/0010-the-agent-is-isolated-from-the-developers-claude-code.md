@@ -58,6 +58,35 @@ So the session is isolated by default, and
 > from an oversight — which is precisely the distinction the host's own deny
 > line went missing inside.
 
+## Second amendment — the hook argument above was hypothetical until now
+
+**Everything this amendment prices about hooks was, at the time it was written,
+describing something that did not happen.** Plugin hooks had never fired under
+varnick, not once. A plugin declares its hook as a command, that command is
+conventionally `node <script>`, and `agentEnvironment` builds the environment
+outright rather than inheriting it — varnick runs on bun, so nothing on the
+agent's `PATH` answered to `node`. A hook that cannot spawn fails silently. That
+is ticket 58, and it means the paragraph above beginning *"The argument that
+changed"* was a careful assessment of a cost varnick was not yet paying.
+
+The gap is closed rather than accepted: varnick writes a `node` onto the agent's
+`PATH` that is bun, and a hook that still cannot run now says so in the
+transcript instead of failing quietly.
+
+**So the reach-through-time cost is real from this commit forward, and that is
+stated rather than slipped past.** The decision itself does not change — the
+argument above was made on the merits and stands on them — but a reader should
+be able to tell when it started being true. `.claude/plugins/varnick-hook-probe`
+is the fixture that keeps the answer checkable: its `SessionStart` hook records
+that it ran, so *"a plugin's hooks fire under varnick"* is something a launch
+demonstrates rather than something this document asserts.
+
+Two things that did **not** move. The environment is still built outright, never
+inherited — the fix is one name on `PATH`, not the developer's shell. And a hook
+from the clone still runs inside the Sandbox, so the invariant this whole
+amendment turns on is untouched: **nothing derived from the clone is ever
+executed outside the Sandbox.**
+
 ## What isolation is, exactly
 
 Two Agent SDK options and one environment rule, all of them in
