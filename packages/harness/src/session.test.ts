@@ -572,3 +572,190 @@ describe('a mirror written before there was more than one root', () => {
     expect(await fs.listDir(mine)).toEqual([])
   })
 })
+
+describe('a tool call is mirrored as a fact, not as a line of prose', () => {
+  const called = (id: string, tool: NonNullable<StoredMessage['tool']>): StoredMessage => ({
+    id,
+    role: 'agent',
+    text: `⚙ ${tool.name}\n`,
+    tool,
+  })
+
+  test('a tool call and its answer come back as they went in', async () => {
+    await store.persist({
+      sessionId: 't1',
+      messages: [
+        user('m1', 'read it'),
+        called('m2', {
+          id: 'tu_1',
+          name: 'Read',
+          argument: 'src/a.ts',
+          result: 'export const a = 1',
+          detail: 'export const a = 1\nexport const b = 2',
+          status: 'success',
+        }),
+      ],
+    })
+
+    const back = await store.read('t1')
+    expect(back[1]?.tool).toEqual({
+      id: 'tu_1',
+      name: 'Read',
+      argument: 'src/a.ts',
+      result: 'export const a = 1',
+      detail: 'export const a = 1\nexport const b = 2',
+      status: 'success',
+    })
+  })
+
+  test('the file a developer reads by hand still says what the tool was', async () => {
+    // The claim the format exists for. `jq '.tool.name'` has to work with
+    // varnick not running, which is the same claim the rest of this file makes
+    // about message text.
+    await store.persist({
+      sessionId: 't2',
+      messages: [called('m1', { id: 'tu_1', name: 'Bash', argument: 'bun test', status: 'pending' })],
+    })
+    const lines = (await readByHand('t2')) as { tool?: { name?: string; status?: string } }[]
+    expect(lines[0]?.tool?.name).toBe('Bash')
+    expect(lines[0]?.tool?.status).toBe('pending')
+  })
+
+  test('a result arriving later rewrites the line rather than adding one', async () => {
+    /*
+      The one case in this store where an existing line changes. A tool is
+      mirrored when it is announced and answers later, so the append fast-path
+      has to notice that the line is no longer the one on disk — otherwise the
+      mirror keeps a tool that is permanently still running.
+    */
+    const running = {
+      id: 'tu_1',
+      name: 'Bash',
+      argument: 'bun test',
+      status: 'pending',
+    } as const
+    await store.persist({ sessionId: 't3', messages: [called('m1', running)] })
+
+    await store.persist({
+      sessionId: 't3',
+      messages: [called('m1', { ...running, result: '675 pass, 2 fail', status: 'error' })],
+    })
+
+    const back = await store.read('t3')
+    expect(back).toHaveLength(1)
+    expect(back[0]?.tool?.status).toBe('error')
+    expect(back[0]?.tool?.result).toBe('675 pass, 2 fail')
+  })
+
+  test('a secret a tool printed does not reach the file', async () => {
+    /*
+      A tool result is the likeliest place in a transcript for a secret to turn
+      up — `Bash(env)`, a config read back, a response body with a token in it —
+      and it arrives from the runtime rather than from anything anybody typed.
+      The mirror is the copy that sits on disk for anyone to `cat`.
+    */
+    const leaky = createSessionStore({ root, secretValues: () => [LEAKED_KEY] })
+    await leaky.persist({
+      sessionId: 't4',
+      messages: [
+        called('m1', {
+          id: 'tu_1',
+          name: 'Bash',
+          argument: `curl -H "key: ${LEAKED_KEY}"`,
+          result: `ANTHROPIC_API_KEY=${LEAKED_KEY}`,
+          detail: `ANTHROPIC_API_KEY=${LEAKED_KEY}\nok`,
+          status: 'success',
+        }),
+      ],
+    })
+
+    const raw = await readFile(store.pathFor('t4'), 'utf8')
+    expect(raw).not.toContain(LEAKED_KEY)
+    // Every field carrying free text, not just the one that is easy to
+    // remember: an argument is as much a place for a token as a result.
+    const back = await leaky.read('t4')
+    expect(back[0]?.tool?.argument).not.toContain(LEAKED_KEY)
+    expect(back[0]?.tool?.result).not.toContain(LEAKED_KEY)
+    expect(back[0]?.tool?.detail).not.toContain(LEAKED_KEY)
+  })
+
+  test('a line written before tool calls existed still loads', async () => {
+    // The compatibility claim. A conversation held by an older build has no
+    // `tool` field anywhere in it, and that is an ordinary transcript rather
+    // than a malformed one.
+    await writeFile(
+      store.pathFor('t5'),
+      `${JSON.stringify({ id: 'm1', role: 'agent', text: '⚙ Read(src/a.ts)\n' })}\n`,
+    )
+    const back = await store.read('t5')
+    expect(back).toHaveLength(1)
+    expect(back[0]?.tool).toBeUndefined()
+  })
+
+  test('a line claiming to be a tool call and failing to be one is refused', async () => {
+    /*
+      Not "drop the field and keep the message". A line that says it is a tool
+      call is one, and reading it back as ordinary text would put the one-line
+      form into the transcript as prose — which is the thing the field exists to
+      stop.
+    */
+    await writeFile(
+      store.pathFor('t6'),
+      `${JSON.stringify({
+        id: 'm1',
+        role: 'agent',
+        text: 'x',
+        tool: { id: 'tu_1', name: 'Read', status: 'invented' },
+      })}\n`,
+    )
+    expect(await store.read('t6')).toHaveLength(0)
+  })
+
+  test('a redaction that happened only inside a tool call still raises the banner', () => {
+    /*
+      The banner asks the same question the redaction answers, and it has to ask
+      it over the same fields. It looked at `message.text` alone, so a
+      transcript whose only redacted value was in a tool result came back with
+      no warning — the developer was told the record was complete while reading
+      one that was not.
+    */
+    const withSecretInResult: StoredMessage = {
+      id: 'm1',
+      role: 'agent',
+      text: '⚙ Bash(env)\n',
+      tool: {
+        id: 'tu_1',
+        name: 'Bash',
+        argument: 'env',
+        result: `ANTHROPIC_API_KEY=${redactSecrets(LEAKED_KEY, [LEAKED_KEY])}`,
+        status: 'success',
+      },
+    }
+    expect(restoredTranscript([withSecretInResult]).redacted).toBe(true)
+  })
+
+  test('a transcript with nothing taken out of it says so', () => {
+    const clean: StoredMessage = {
+      id: 'm1',
+      role: 'agent',
+      text: '⚙ Read(a.ts)\n',
+      tool: { id: 'tu_1', name: 'Read', argument: 'a.ts', result: 'ok', status: 'success' },
+    }
+    expect(restoredTranscript([clean]).redacted).toBe(false)
+  })
+
+  test('the pictures a message carried reach the file too', async () => {
+    /*
+      Not a tool call, and found while adding one. `persist` rebuilt every
+      message as `{id, role, text}` and nothing else, so `attachments` reached
+      the type and the serialiser and never reached the disk: every mirrored
+      message said no pictures went with it. The new field would have been lost
+      the same way, for the same reason, in the same line of code.
+    */
+    await store.persist({
+      sessionId: 't7',
+      messages: [{ id: 'm1', role: 'user', text: 'what is wrong here?', attachments: 2 }],
+    })
+    expect((await store.read('t7'))[0]?.attachments).toBe(2)
+  })
+})

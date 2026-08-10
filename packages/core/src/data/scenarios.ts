@@ -389,6 +389,106 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: 'tool-calls',
+    group: 'The conversation',
+    title: 'Tools, as they run and once they answer',
+    blurb:
+      'A Turn that did work. The words, the calls and the results are separate entries, so a tool reads as a tool — and the one still running says so rather than looking like a window that has stopped.',
+    question: 'Can you tell what it did, what came back, and what is still going?',
+    /*
+      Streaming rather than idle, because the interesting half of this card is
+      the tool that has not answered yet — and a tool can only be pending while
+      something is running. The three statuses are all here on purpose: a card
+      showing only the settled ones would look right and would prove nothing
+      about the four-minute case, which is the case tool calls were made
+      structured for.
+    */
+    covers: ['turn.answering.streaming'],
+    input: {
+      ...up,
+      sessionInput: {
+        sessionId: 'states-tool-calls',
+        messages: [
+          { id: 'm1', role: 'user', text: 'Add the runs Surface and check it builds.' },
+          { id: 'm2', role: 'agent', text: 'Reading what is already there.' },
+          {
+            id: 'm3',
+            role: 'agent',
+            text: '⚙ Read(userspace/surfaces/index.ts)\n',
+            tool: {
+              id: 'tu_1',
+              name: 'Read',
+              argument: 'userspace/surfaces/index.ts',
+              result: 'export const surfaces = [',
+              detail:
+                'export const surfaces = [\n  { id: "notes", name: "Notes", modulePath: "./notes.tsx" },\n]',
+              status: 'success',
+            },
+          },
+          {
+            id: 'm4',
+            role: 'agent',
+            text: '⚙ Write(userspace/surfaces/runs.tsx)\n',
+            tool: {
+              id: 'tu_2',
+              name: 'Write',
+              argument: 'userspace/surfaces/runs.tsx',
+              result: 'wrote userspace/surfaces/runs.tsx',
+              status: 'success',
+            },
+          },
+          {
+            id: 'm5',
+            role: 'agent',
+            text: '⚙ Task(review what the Surface renders)\n',
+            /*
+              A subagent, and it is here to show that it is not a special case:
+              `Task` is a tool, so it arrives on the same path and renders in
+              the same component as the `Read` above it. The live panel beside
+              the working line is the other half — it carries elapsed time and
+              token counts, which a tool result has no field for.
+            */
+            tool: {
+              id: 'tu_task',
+              name: 'Task',
+              argument: 'review what the Surface renders',
+              result: 'One finding: the empty state is unreachable.',
+              detail:
+                'One finding: the empty state is unreachable.\n\nruns.tsx renders the table unconditionally, so the "no runs yet" branch below it is dead code.',
+              status: 'success',
+            },
+          },
+          { id: 'm6', role: 'agent', text: 'Now the build.' },
+          {
+            id: 'm7',
+            role: 'agent',
+            text: '⚙ Bash(bun run typecheck)\n',
+            tool: {
+              id: 'tu_3',
+              name: 'Bash',
+              argument: 'bun run typecheck',
+              result: "userspace/surfaces/runs.tsx(4,18): error TS2304: Cannot find name 'Run'.",
+              detail:
+                "userspace/surfaces/runs.tsx(4,18): error TS2304: Cannot find name 'Run'.\nerror: script \"typecheck\" exited with code 2",
+              status: 'error',
+            },
+          },
+          {
+            id: 'm8',
+            role: 'agent',
+            text: '⚙ Grep(interface Run)\n',
+            // Still running. Nothing behind the disclosure and nothing to
+            // report, which is the whole state: it is working.
+            tool: { id: 'tu_4', name: 'Grep', argument: 'interface Run', status: 'pending' },
+          },
+        ],
+        partial: 'Finding where the type lives',
+        enterTurn: 'streaming',
+        tokensUsed: 21_600,
+      },
+    },
+  },
+  {
     id: 'sending',
     group: 'The conversation',
     title: 'Sending',

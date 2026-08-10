@@ -4541,10 +4541,14 @@ async function turnPath(
 
 {
   /*
-    Tool calls are transcript, not decoration. They reach the machine as
-    `STREAM_DELTA` like any other text, which is what puts them in the partial
-    and therefore in the message an interrupt keeps — the audit trail surviving
-    a turn the developer stopped is the case that matters.
+    Tool calls are transcript, and they are facts rather than sentences.
+
+    They used to arrive as `STREAM_DELTA` — the line `⚙ Read(src/a.ts)` appended
+    to the answer — which put them in the partial and therefore in the message
+    an interrupt keeps. That much still has to hold. What is new is that they
+    are separable: the words before a call, the call, and the words after it are
+    three entries, so the window can render one as a tool and the others as
+    prose, and what the tool *returned* has somewhere to go.
   */
   const actor = createActor(
     sessionMachine.provide({ actors: { runTurn: turnNever() }, delays: { interruptGrace: 1 } }),
@@ -4553,14 +4557,150 @@ async function turnPath(
 
   actor.send({ type: 'EDIT_DRAFT', text: 'read the file' })
   actor.send({ type: 'SEND' })
-  actor.send({ type: 'STREAM_DELTA', text: '⚙ Read(src/a.ts)\n' })
+  actor.send({ type: 'STREAM_DELTA', text: 'Let me look.' })
+  actor.send({
+    type: 'TOOL_CALL',
+    text: '⚙ Read(src/a.ts)\n',
+    call: { id: 'tu_1', name: 'Read', argument: 'src/a.ts', status: 'pending' },
+  })
+
+  const mid = actor.getSnapshot().context
+  check('a tool call closes the message that was streaming', mid.messages.at(-2)?.text === 'Let me look.')
+  check('and becomes an entry of its own', mid.messages.at(-1)?.tool?.name === 'Read')
+  check('which starts out running, because it has not answered yet', mid.messages.at(-1)?.tool?.status === 'pending')
+  check('and the partial starts again empty, for the words that come next', mid.partial === '')
+  /*
+    The one-line form is kept beside the structured call rather than derived
+    from it. It is what the mirror holds, so a transcript written by this build
+    still reads as a conversation under `cat` — and what an unprompted answer
+    collects, because that path assembles an answer whole before anything sees
+    it.
+  */
+  check('the line the transcript has always held is still there', mid.messages.at(-1)?.text.includes('Read(src/a.ts)') === true)
+
+  actor.send({
+    type: 'TOOL_RESULT',
+    settled: { id: 'tu_1', result: 'export const a = 1', status: 'success' },
+  })
+  const settled = actor.getSnapshot().context.messages.at(-1)?.tool
+  check('the result fills in the call it answers', settled?.result === 'export const a = 1')
+  check('and says how it went', settled?.status === 'success')
+
   actor.send({ type: 'STREAM_DELTA', text: 'It says hello.' })
   actor.send({ type: 'INTERRUPT' })
   await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
 
-  const kept = actor.getSnapshot().context.messages.at(-1)?.text ?? ''
-  check('an interrupted turn keeps the tool calls it made', kept.includes('Read(src/a.ts)'))
-  check('and the words that followed them', kept.includes('It says hello.'))
+  const after = actor.getSnapshot().context.messages
+  check('an interrupted turn keeps the tool calls it made', after.some((m) => m.tool?.argument === 'src/a.ts'))
+  check('and the words that followed them', after.at(-1)?.text === 'It says hello.')
+  check('said, did, said — three entries and not one block of text', after.filter((m) => m.role === 'agent').length === 3)
+}
+
+{
+  /*
+    A retry sends what the developer asked for, not the last thing on screen.
+
+    The Turn's prompt used to be `messages.at(-1)`, and that was the same thing
+    while a Turn appended nothing until it ended. Tool calls are entries now and
+    are appended as they happen — so a Turn that called a tool and then failed
+    leaves `⚙ Read(src/a.ts)` at the end of the transcript, and a retry reading
+    the last entry would send the tool line to the agent as the prompt.
+  */
+  const prompts: string[] = []
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: fromPromise<TurnOutput, TurnInput>(async ({ input }) => {
+          prompts.push(input.prompt)
+          throw new Error('nope')
+        }),
+      },
+    }),
+    { input: { sessionId: 'x5d', draft: 'read the file' } },
+  ).start()
+
+  actor.send({ type: 'SEND' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'failed')
+  actor.send({
+    type: 'TOOL_CALL',
+    text: '⚙ Read(src/a.ts)\n',
+    call: { id: 'tu_1', name: 'Read', argument: 'src/a.ts', status: 'pending' },
+  })
+  actor.send({ type: 'RETRY_TURN' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'failed')
+
+  check('the first attempt sent what was typed', prompts[0] === 'read the file')
+  check('and the retry sends it again, not the tool call below it', prompts[1] === 'read the file')
+  actor.stop()
+}
+
+{
+  /*
+    A result is matched to its call by id and never by position.
+
+    Tools run concurrently, so the second result to arrive routinely answers the
+    first call made. Matching on order would attach a `Bash` result to a `Read`
+    — a transcript that is confidently wrong about what a tool returned, which
+    is worse than one that says nothing.
+  */
+  const actor = createActor(sessionMachine.provide({ actors: { runTurn: turnNever() } }), {
+    input: { sessionId: 'x5b', draft: 'go' },
+  }).start()
+  actor.send({ type: 'SEND' })
+  actor.send({
+    type: 'TOOL_CALL',
+    text: '⚙ Bash(slow)\n',
+    call: { id: 'tu_slow', name: 'Bash', argument: 'slow', status: 'pending' },
+  })
+  actor.send({
+    type: 'TOOL_CALL',
+    text: '⚙ Bash(fast)\n',
+    call: { id: 'tu_fast', name: 'Bash', argument: 'fast', status: 'pending' },
+  })
+  actor.send({
+    type: 'TOOL_RESULT',
+    settled: { id: 'tu_fast', result: 'finished first', status: 'success' },
+  })
+
+  const messages = actor.getSnapshot().context.messages
+  const slow = messages.find((m) => m.tool?.id === 'tu_slow')?.tool
+  const fast = messages.find((m) => m.tool?.id === 'tu_fast')?.tool
+  check('the call that answered is the one filled in', fast?.result === 'finished first')
+  check('and the one still running is left running', slow?.status === 'pending')
+
+  // A Compaction can replace the whole transcript while a tool is still
+  // running, so a result for a call that is no longer there is ordinary rather
+  // than exceptional. It must not throw and must not invent an entry.
+  const before = actor.getSnapshot().context.messages.length
+  actor.send({ type: 'TOOL_RESULT', settled: { id: 'tu_gone', result: 'orphan', status: 'success' } })
+  check('a result for a call the transcript no longer holds changes nothing', actor.getSnapshot().context.messages.length === before)
+  actor.stop()
+}
+
+{
+  /*
+    A Turn whose last act was a tool call must not append an empty message.
+
+    `done` carries the tail of the answer, and a Turn that ended on a tool has
+    no tail. Appended unconditionally — which is what it used to do — that is a
+    blank agent message under every such Turn, written to the mirror, where it
+    reads as the agent having answered with silence.
+  */
+  const actor = createActor(
+    sessionMachine.provide({ actors: { runTurn: resolves<TurnOutput, TurnInput>({ text: '', tokensUsed: 7 }) } }),
+    { input: { sessionId: 'x5c', draft: 'go' } },
+  ).start()
+  actor.send({ type: 'SEND' })
+  actor.send({
+    type: 'TOOL_CALL',
+    text: '⚙ Bash(ls)\n',
+    call: { id: 'tu_1', name: 'Bash', argument: 'ls', status: 'pending' },
+  })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+  const ended = actor.getSnapshot().context.messages
+  check('a turn that ended on a tool call appends no empty message', ended.at(-1)?.tool?.name === 'Bash')
+  check('and the tool call is the last thing in the transcript', ended.filter((m) => m.text.trim() === '').length === 0)
+  actor.stop()
 }
 
 {
@@ -4712,6 +4852,8 @@ async function turnPath(
     },
     tasksReported: () => {},
     unpromptedAnswer: () => {},
+    toolCalled: () => {},
+    toolSettled: () => {},
   }
 
   const turn = liveActors(observer).runTurn
@@ -4746,6 +4888,103 @@ async function turnPath(
   check(
     'a compaction the Session would not measure still reaches the window',
     heard.length === 2 && heard[1]?.tokensUsed === null,
+  )
+
+  if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+  else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = realInternals
+}
+
+{
+  /*
+    An unprompted answer that used a tool arrives whole.
+
+    The pump collects an answer as *text* — it is assembled host-side and posted
+    in one piece, so there is no partial for a tool call to close and nothing
+    watching it happen. It used to prefer `done`'s text over its own
+    accumulation, on the grounds that `done` carried the run's whole answer with
+    the tool calls in it.
+
+    That stopped being true the moment a tool call began ending the
+    accumulation, and it failed quietly: an answer that used a tool half way
+    through was posted as its last paragraph and the rest was dropped. It was
+    not even uniformly broken — an answer ending *on* a tool call leaves `done`
+    empty, so the old fallback produced the right thing and the bug hid behind
+    the case that worked.
+  */
+  const realInternals = (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
+  const queue: unknown[] = []
+  ;(globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+    /*
+      An empty queue waits before answering, and that is not padding.
+
+      The pump is a `while (!signal.aborted)` loop with no delay of its own — it
+      is the *host* that blocks, for up to fifteen seconds, and the loop is
+      correct only because of that. A fake that answered `null` instantly turns
+      it into a hot loop that starves the event loop and hangs this script,
+      which is exactly what the first version of this block did.
+    */
+    invoke: async (_command: string, payload: { request: { kind: string } }) => {
+      if (payload.request.kind !== 'next-unprompted-event') return {}
+      if (queue.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return { event: null }
+      }
+      return { event: queue.shift() }
+    },
+  }
+
+  const posted: { text: string; cause: string }[] = []
+  const observer = {
+    delta: () => {},
+    credentialRejected: () => {},
+    runtimeReported: () => {},
+    commandsReported: () => {},
+    conversationReset: () => {},
+    conversationCompacted: () => {},
+    tasksReported: () => {},
+    unpromptedAnswer: (text: string, cause: string) => {
+      posted.push({ text, cause })
+    },
+    toolCalled: () => {},
+    toolSettled: () => {},
+  }
+
+  const drain = async (events: readonly unknown[]) => {
+    queue.length = 0
+    queue.push(...events)
+    const actor = createActor(liveActors(observer).pumpUnprompted, { input: {} }).start()
+    // The pump runs until the state it is invoked on is left. Once the queue is
+    // drained there is nothing further to read and `done` has been answered, so
+    // stopping it is the whole of the teardown.
+    while (queue.length > 0) await new Promise((resolve) => setTimeout(resolve, 1))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    actor.stop()
+  }
+
+  await drain([
+    { kind: 'cause', turnId: 'u1', text: 'a subagent finished' },
+    { kind: 'delta', turnId: 'u1', text: 'I looked at the diff.\n' },
+    {
+      kind: 'tool',
+      turnId: 'u1',
+      text: '⚙ Read(src/a.ts)\n',
+      call: { id: 'tu_1', name: 'Read', argument: 'src/a.ts', status: 'pending' },
+    },
+    { kind: 'delta', turnId: 'u1', text: 'It is fine.' },
+    { kind: 'done', turnId: 'u1', text: 'It is fine.', tokensUsed: 10 },
+  ])
+
+  check('an unprompted answer is posted once', posted.length === 1)
+  check('and it keeps what was said before the tool call', posted[0]?.text.includes('I looked at the diff.') === true)
+  check('and the tool call itself', posted[0]?.text.includes('Read(src/a.ts)') === true)
+  check('and what was said after it', posted[0]?.text.includes('It is fine.') === true)
+  check('under the cause that produced it', posted[0]?.cause === 'a subagent finished')
+
+  posted.length = 0
+  await drain([{ kind: 'done', turnId: 'u2', text: 'a cached answer', tokensUsed: 1 }])
+  check(
+    'an unprompted answer that streamed nothing falls back to what the run reported',
+    posted[0]?.text === 'a cached answer',
   )
 
   if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__

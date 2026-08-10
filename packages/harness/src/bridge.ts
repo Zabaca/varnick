@@ -70,6 +70,7 @@
  */
 
 import { parseMintEvent, type MintEvent } from './mint.ts'
+import { parseStoredTool } from './session.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
 import type { Mergeability, PendingWorktree } from './worktrees.ts'
 import type { CwdHolder, MergeReport } from './merge.ts'
@@ -663,12 +664,37 @@ function transcriptAnswer(answer: unknown): RestoredTranscript {
 
   const messages: StoredMessage[] = []
   for (const entry of payload.messages) {
-    const { id, role, text } = (entry ?? {}) as Record<string, unknown>
+    const { id, role, text, attachments, tool } = (entry ?? {}) as Record<string, unknown>
     if (typeof id !== 'string' || typeof text !== 'string') {
       throw new HarnessUnavailable('malformed')
     }
     if (role !== 'user' && role !== 'agent') throw new HarnessUnavailable('malformed')
-    messages.push({ id, role, text })
+    /*
+      Every field, not just the three that are easy to remember.
+
+      This rebuilt a message as `{id, role, text}` and dropped the rest, which
+      is the same defect the store's own `persist` had on the way out — one
+      layer along, on the read path, and it survived that one being fixed. The
+      consequence is not a missing detail: a restored transcript came back with
+      every tool call flattened to the one-line form `⚙ Read(src/a.ts)` and
+      rendered as Markdown prose, which is precisely the state the structured
+      call exists to get out of. A relaunch undid the feature.
+
+      `parseStoredTool` is the store's own parser rather than a second one
+      written here, so the two doors into the mirror cannot disagree about what
+      a stored tool call is.
+    */
+    const parsedTool = tool === undefined ? null : parseStoredTool(tool)
+    if (tool !== undefined && parsedTool === null) throw new HarnessUnavailable('malformed')
+    messages.push({
+      id,
+      role,
+      text,
+      ...(typeof attachments === 'number' && Number.isInteger(attachments) && attachments > 0
+        ? { attachments }
+        : {}),
+      ...(parsedTool !== null ? { tool: parsedTool } : {}),
+    })
   }
 
   return { messages, redacted: payload.redacted === true }

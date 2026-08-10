@@ -109,11 +109,18 @@ describe('tool calls are the audit trail', () => {
     const call = {
       type: 'assistant',
       message: {
-        content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'src/a.ts' } }],
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: 'src/a.ts' } }],
       },
     }
     const events = play([call, success('read it')])
-    expect(events[0]).toEqual({ kind: 'tool', turnId: 't1', text: toolCallLine('Read', { file_path: 'src/a.ts' }) })
+    expect(events[0]).toEqual({
+      kind: 'tool',
+      turnId: 't1',
+      text: toolCallLine('Read', { file_path: 'src/a.ts' }),
+      // Announced while it is still running. The result is a separate event and
+      // may be minutes behind — see the `pending` cases below.
+      call: { id: 'tu_1', name: 'Read', argument: 'src/a.ts', status: 'pending' },
+    })
   })
 
   test('the line names the tool and what it was pointed at', () => {
@@ -137,27 +144,258 @@ describe('tool calls are the audit trail', () => {
       type: 'assistant',
       message: {
         content: [
-          { type: 'tool_use', name: 'Read', input: { file_path: 'a' } },
-          { type: 'tool_use', name: 'Read', input: { file_path: 'b' } },
+          { type: 'tool_use', id: 'tu_a', name: 'Read', input: { file_path: 'a' } },
+          { type: 'tool_use', id: 'tu_b', name: 'Read', input: { file_path: 'b' } },
         ],
       },
     }
     expect(play([call, success('ok')]).filter((e) => e.kind === 'tool')).toHaveLength(2)
   })
 
-  test('the tool calls survive into the finished answer, not just the live one', () => {
-    // The whole claim is that unattended work is reviewable afterwards. An
-    // answer that dropped its tool calls the moment it finished would be
-    // auditable only by whoever was watching.
+  test('a call with no id is dropped rather than left unanswerable', () => {
+    // Not a shape the runtime produces — every call in the SDK's schema has an
+    // id. But a call the transcript holds and no result can be matched to is a
+    // tool that renders as running for the rest of the conversation, and no
+    // later event could ever settle it.
     const call = {
       type: 'assistant',
-      message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'src/a.ts' } }] },
+      message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'a' } }] },
+    }
+    expect(play([call, success('ok')]).filter((e) => e.kind === 'tool')).toHaveLength(0)
+  })
+
+  test('the tool calls survive the Turn they were made in', () => {
+    /*
+      The whole claim is that unattended work is reviewable afterwards, and it
+      used to be kept by the tool line being *inside* the finished answer.
+
+      It is not any more. A tool call is its own durable event now, and `done`
+      carries only the answer text after the last one — so the assertion is that
+      the call is still there when the Turn ends, not that it is buried in the
+      Turn's text. Reviewability is unchanged; what changed is that the call and
+      the words around it are separable, which is what lets the window render
+      one as a tool and the other as prose.
+    */
+    const call = {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: 'src/a.ts' } }],
+      },
     }
     const events = play([call, textDelta('I read it.'), success('I read it.')])
+    const tool = events.find((e) => e.kind === 'tool')
+    expect(tool?.kind === 'tool' && tool.call.argument).toBe('src/a.ts')
     const done = events.at(-1)
     expect(done?.kind).toBe('done')
-    expect(done?.kind === 'done' && done.text).toContain('src/a.ts')
-    expect(done?.kind === 'done' && done.text).toContain('I read it.')
+    // The tail of the answer, and only the tail: what came before the call is
+    // already in the transcript as the entry above it.
+    expect(done?.kind === 'done' && done.text).toBe('I read it.')
+  })
+
+  test('a tool call ends the segment of answer before it', () => {
+    // Said, did, said — three entries rather than one block of text with a tool
+    // line buried in it. `done` carries the last piece only.
+    const call = {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'Bash', input: { command: 'bun test' } }],
+      },
+    }
+    const events = play([
+      textDelta('Let me run the tests.'),
+      call,
+      textDelta('They pass.'),
+      success('ignored'),
+    ])
+    const done = events.at(-1)
+    expect(done?.kind === 'done' && done.text).toBe('They pass.')
+  })
+
+  test('a Turn that ends on a tool call does not repost the whole answer', () => {
+    /*
+      The `result` field is the fallback for a Turn that streamed nothing at all
+      — a cached or instant answer. A Turn whose last act was a tool call also
+      arrives at `done` with an empty accumulation, and falling back there would
+      post the entire answer a second time underneath the pieces already shown.
+    */
+    const call = {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'Bash', input: { command: 'ls' } }],
+      },
+    }
+    const events = play([call, success('the whole answer again')])
+    const done = events.at(-1)
+    expect(done?.kind === 'done' && done.text).toBe('')
+  })
+
+  test('a Turn that streamed nothing still falls back to the result', () => {
+    // The case the fallback exists for, unchanged: nothing was watched, so
+    // there is nothing but `result` to report.
+    const events = play([success('a cached answer')])
+    const done = events.at(-1)
+    expect(done?.kind === 'done' && done.text).toBe('a cached answer')
+  })
+})
+
+describe('what a tool returned', () => {
+  const call = (id: string, name: string, input: Record<string, unknown>) => ({
+    type: 'assistant',
+    message: { content: [{ type: 'tool_use', id, name, input }] },
+  })
+  const result = (id: string, content: unknown, isError?: boolean) => ({
+    type: 'user',
+    message: {
+      content: [
+        { type: 'tool_result', tool_use_id: id, content, ...(isError ? { is_error: true } : {}) },
+      ],
+    },
+  })
+
+  test('a result is reported against the call it answers', () => {
+    const events = play([
+      call('tu_1', 'Read', { file_path: 'a.ts' }),
+      result('tu_1', 'export const a = 1'),
+      success('done'),
+    ])
+    expect(events.find((e) => e.kind === 'tool-result')).toEqual({
+      kind: 'tool-result',
+      turnId: 't1',
+      id: 'tu_1',
+      result: 'export const a = 1',
+      status: 'success',
+    })
+  })
+
+  test('results are paired by id, not by the order they arrive in', () => {
+    /*
+      The reason the id is carried at all. A Session runs tools concurrently, so
+      the n-th result is not the n-th call — `agent.ts` learned this in the
+      containment probe and its comment records what it cost.
+    */
+    const events = play([
+      call('tu_a', 'Bash', { command: 'slow' }),
+      call('tu_b', 'Bash', { command: 'fast' }),
+      result('tu_b', 'fast finished first'),
+      result('tu_a', 'slow finished second'),
+      success('done'),
+    ])
+    const settled = events.filter((e) => e.kind === 'tool-result')
+    expect(settled.map((e) => e.kind === 'tool-result' && e.id)).toEqual(['tu_b', 'tu_a'])
+    expect(settled[0]?.kind === 'tool-result' && settled[0].result).toBe('fast finished first')
+  })
+
+  test('a failed tool says so, so a reader is not left to guess from the text', () => {
+    const events = play([
+      call('tu_1', 'Bash', { command: 'false' }),
+      result('tu_1', 'command not found', true),
+      success('done'),
+    ])
+    const settled = events.find((e) => e.kind === 'tool-result')
+    expect(settled?.kind === 'tool-result' && settled.status).toBe('error')
+  })
+
+  test('the line is what fits on one, and the rest is behind the disclosure', () => {
+    const events = play([
+      call('tu_1', 'Read', { file_path: 'a.ts' }),
+      result('tu_1', 'first line\nsecond line\nthird line'),
+      success('done'),
+    ])
+    const settled = events.find((e) => e.kind === 'tool-result')
+    expect(settled?.kind === 'tool-result' && settled.result).toBe('first line')
+    expect(settled?.kind === 'tool-result' && settled.detail).toContain('third line')
+  })
+
+  test('a one-line answer has nothing behind the disclosure', () => {
+    // Otherwise every tool call offers an expansion that opens onto a repeat of
+    // the line already on screen.
+    const events = play([
+      call('tu_1', 'Write', { file_path: 'a.ts' }),
+      result('tu_1', 'wrote a.ts'),
+      success('done'),
+    ])
+    const settled = events.find((e) => e.kind === 'tool-result')
+    expect(settled?.kind === 'tool-result' && settled.detail).toBeUndefined()
+  })
+
+  test('a tool that said nothing says that, rather than answering with silence', () => {
+    const events = play([
+      call('tu_1', 'Bash', { command: 'true' }),
+      result('tu_1', '   \n  '),
+      success('done'),
+    ])
+    const settled = events.find((e) => e.kind === 'tool-result')
+    expect(settled?.kind === 'tool-result' && settled.result).toBe('(no output)')
+  })
+
+  test('a result that came back as blocks is read for its text', () => {
+    // Some tools answer with an array rather than a string. The blocks that are
+    // not text contribute nothing: a base64 image in a mirror is the thing the
+    // attachment count exists to avoid.
+    const events = play([
+      call('tu_1', 'Read', { file_path: 'a.png' }),
+      result('tu_1', [
+        { type: 'text', text: 'the readable part' },
+        { type: 'image', source: { data: 'AAAA' } },
+      ]),
+      success('done'),
+    ])
+    const settled = events.find((e) => e.kind === 'tool-result')
+    expect(settled?.kind === 'tool-result' && settled.result).toBe('the readable part')
+    expect(JSON.stringify(events)).not.toContain('AAAA')
+  })
+
+  test('a huge result is cut, so one tool call cannot flood the mirror', () => {
+    const events = play([
+      call('tu_1', 'Read', { file_path: 'big.ts' }),
+      result('tu_1', `first line\n${'x'.repeat(20_000)}`),
+      success('done'),
+    ])
+    const settled = events.find((e) => e.kind === 'tool-result')
+    const detail = settled?.kind === 'tool-result' ? (settled.detail ?? '') : ''
+    expect(detail.length).toBeLessThan(5_000)
+    expect(detail.endsWith('…')).toBe(true)
+  })
+
+  test('a result for a call nobody announced is still reported', () => {
+    // Core matches on id and leaves an unmatched result alone — a Compaction
+    // can replace the transcript while a tool is still running. Dropping it
+    // here would decide that on the Harness's behalf.
+    const events = play([result('tu_unknown', 'orphan'), success('done')])
+    expect(events.filter((e) => e.kind === 'tool-result')).toHaveLength(1)
+  })
+
+  test('a subagent is a tool call like any other, and renders as one', () => {
+    /*
+      The `Task` tool is how a subagent is started, so it arrives on this path
+      with no special handling — named by its description, answered by the
+      report the subagent returned. That is the whole of "subagents render like
+      tools": there is no second mechanism.
+
+      The live panel and the timing line are still separate and still ephemeral
+      or textual respectively — they carry elapsed time, tokens and a tool count
+      that a tool result has no field for. See `RunningTask`.
+    */
+    const events = play([
+      call('tu_1', 'Task', { description: 'review the diff', subagent_type: 'code-reviewer' }),
+      result('tu_1', 'Two findings, both in worktrees.ts.'),
+      success('done'),
+    ])
+    const started = events.find((e) => e.kind === 'tool')
+    expect(started?.kind === 'tool' && started.call.name).toBe('Task')
+    expect(started?.kind === 'tool' && started.call.argument).toBe('review the diff')
+    const settled = events.find((e) => e.kind === 'tool-result')
+    expect(settled?.kind === 'tool-result' && settled.result).toBe('Two findings, both in worktrees.ts.')
+  })
+
+  test('a user message that is not a tool result says nothing about tools', () => {
+    // The same message shape carries an unprompted Turn's cause. The two
+    // readings must not collide.
+    const events = play([
+      { type: 'user', message: { content: [{ type: 'text', text: '<task-notification>' }] } },
+      success('done'),
+    ])
+    expect(events.filter((e) => e.kind === 'tool-result')).toHaveLength(0)
   })
 })
 

@@ -736,12 +736,87 @@ function parseRuntimeReport(value: unknown): RuntimeReport | null {
   }
 }
 
+/**
+ * How a tool call ended, as far as the Turn can tell.
+ *
+ * Structurally what Core calls a `ToolStatus`, declared here because the
+ * dependency runs Core → Harness and this is where the fact is read.
+ */
+export type ToolStatus = 'pending' | 'success' | 'error'
+
+/**
+ * One tool the agent called.
+ *
+ * `id` is the runtime's own `tool_use_id` and is the only thing a result is
+ * paired against — never the order the results arrive in, because a Session
+ * runs tools concurrently and the n-th result is not the n-th call. The
+ * containment probe in `agent.ts` pairs the same way and says so at length; this
+ * is the same rule on the path that ordinary Turns take.
+ *
+ * `result` and `detail` are absent until the result comes back, which may be
+ * minutes later and may be after the Turn has ended.
+ */
+export interface ToolCall {
+  readonly id: string
+  readonly name: string
+  readonly argument?: string
+  readonly result?: string
+  readonly detail?: string
+  readonly status: ToolStatus
+}
+
 /** Everything a Turn tells the machine, before it is stamped with its Turn. */
 export type TurnUpdate =
   /** Answer text, as it arrives. Reaches the machine as `STREAM_DELTA`. */
   | { readonly kind: 'delta'; readonly text: string }
-  /** A tool call, as it happens. Also a `STREAM_DELTA` — it is transcript. */
-  | { readonly kind: 'tool'; readonly text: string }
+  /**
+   * A tool call, the moment the runtime announces it.
+   *
+   * ## It ends the segment of answer before it
+   *
+   * A tool call used to be `text` and nothing else: the line `⚙ Read(/x)` was
+   * appended to the answer, so the whole Turn — words, tools, more words —
+   * arrived as one Markdown document and was stored as one message. That is why
+   * `text` is still here, and it is not vestigial: it is the one-line form the
+   * mirror keeps, and the unprompted-answer path still collects it as text
+   * because an answer nobody asked for is assembled whole before anything sees
+   * it.
+   *
+   * What is new is `call`, and the consequence is that this update **ends the
+   * run's accumulated text**. Everything streamed before it belongs to the
+   * message above the tool call; everything after belongs to the one below. So
+   * the accumulation resets here, and `done` carries only the last segment
+   * rather than the whole answer. A reader of this file who expects `done.text`
+   * to be the entire Turn is reading the previous design.
+   *
+   * ## It is emitted when the call starts, not when it finishes
+   *
+   * Which is the whole reason the pair exists rather than one update carrying
+   * both halves. A tool that runs for four minutes is four minutes in which the
+   * only honest thing a window can say is *this tool is running* — and ticket 62
+   * is the record of what happens when it cannot say that: a Turn doing work is
+   * indistinguishable from a Turn that has hung.
+   */
+  | { readonly kind: 'tool'; readonly text: string; readonly call: ToolCall }
+  /**
+   * What a tool returned, matched to the call by {@link ToolCall.id}.
+   *
+   * Read off the `user` messages the runtime sends back — the half of the
+   * stream this module used to discard entirely, which is why what a tool
+   * *returned* existed nowhere in the product.
+   *
+   * Not transcript text, and deliberately not a `delta`: it does not extend the
+   * answer, it completes something already in it. Core patches the entry in
+   * place; see `withToolResult` in packages/core/src/domain.ts for why that one
+   * rewrite is allowed in a record that is otherwise append-only.
+   */
+  | {
+      readonly kind: 'tool-result'
+      readonly id: string
+      readonly result: string
+      readonly detail?: string
+      readonly status: Exclude<ToolStatus, 'pending'>
+    }
   /**
    * A hook that did not run, said out loud. Transcript, like a tool call.
    *
@@ -921,6 +996,33 @@ export function encodeTurnEvent(event: TurnEvent): string {
 }
 
 /**
+ * A tool call read back off the wire, or nothing.
+ *
+ * Field by field for the reason {@link parseTurnEvent} gives, and it matters
+ * more here than anywhere else on this boundary: this is the one value crossing
+ * into Core that ends up written to the Session mirror *verbatim* rather than
+ * as text somebody composed. A field nobody agreed to would be on disk.
+ *
+ * `id` and `name` are required and may not be empty — a call that cannot be
+ * named cannot be rendered, and one with no id can never be settled.
+ */
+function parseToolCall(value: unknown): ToolCall | null {
+  if (value === null || typeof value !== 'object') return null
+  const { id, name: toolName, argument, result, detail, status } = value as Record<string, unknown>
+  if (typeof id !== 'string' || id.length === 0) return null
+  if (typeof toolName !== 'string' || toolName.length === 0) return null
+  if (status !== 'pending' && status !== 'success' && status !== 'error') return null
+  return {
+    id,
+    name: toolName,
+    ...(typeof argument === 'string' ? { argument } : {}),
+    ...(typeof result === 'string' ? { result } : {}),
+    ...(typeof detail === 'string' ? { detail } : {}),
+    status,
+  }
+}
+
+/**
  * Read an event back, or refuse it.
  *
  * Rebuilt rather than passed through, like every other answer that crosses into
@@ -928,19 +1030,47 @@ export function encodeTurnEvent(event: TurnEvent): string {
  * where it would reach the Session mirror.
  */
 export function parseTurnEvent(value: unknown): TurnEvent | null {
-  const { kind, turnId, text, summary, tokensUsed, failure, report, commands, tasks } = (value ??
-    {}) as Record<string, unknown>
+  const { kind, turnId, text, summary, tokensUsed, failure, report, commands, tasks, call, id, result, detail, status } =
+    (value ?? {}) as Record<string, unknown>
   if (typeof turnId !== 'string' || turnId.length === 0) return null
 
   switch (kind) {
     case 'delta':
-    case 'tool':
     case 'hook':
     case 'task-line':
     // Why an unprompted Turn started. Text like any other, and rebuilt like
     // any other — Core renders it and does not compose it.
     case 'cause':
       return typeof text === 'string' ? { kind, turnId, text } : null
+    case 'tool': {
+      // Both halves required. The line is what the mirror keeps and what the
+      // unprompted path collects; the call is what the window renders. An event
+      // carrying one and not the other is malformed rather than half-usable.
+      const parsed = parseToolCall(call)
+      return parsed !== null && typeof text === 'string'
+        ? { kind, turnId, text, call: parsed }
+        : null
+    }
+    case 'tool-result':
+      /*
+        `pending` is deliberately not accepted. This event exists to *settle* a
+        call, and one that settled it back into running would leave a tool that
+        can never be finished by any later event — the id has already been
+        answered, and nothing sends a second result for it.
+      */
+      return typeof id === 'string' &&
+        id.length > 0 &&
+        typeof result === 'string' &&
+        (status === 'success' || status === 'error')
+        ? {
+            kind,
+            turnId,
+            id,
+            result,
+            ...(typeof detail === 'string' ? { detail } : {}),
+            status,
+          }
+        : null
     case 'done':
       return typeof text === 'string' && typeof tokensUsed === 'number' && Number.isFinite(tokensUsed)
         ? { kind, turnId, text, tokensUsed }
@@ -1071,15 +1201,92 @@ export function hookFailureLine(
  * only thing it is for.
  */
 export function toolCallLine(name: string, input: unknown): string {
+  const argument = toolArgument(input)
+  return argument === undefined ? `⚙ ${name}\n` : `⚙ ${name}(${argument})\n`
+}
+
+/**
+ * What a tool was pointed at, in one bounded string.
+ *
+ * Split out of {@link toolCallLine} so the line the mirror keeps and the
+ * structured call the window renders name the same thing. Two lists of keys
+ * would drift, and the drift is invisible: the transcript would say
+ * `Bash(git status)` while the rendered call said `Bash`, and both would look
+ * right on their own.
+ *
+ * `undefined` rather than `''` when nothing matched, because a tool called with
+ * nothing worth quoting renders as its bare name — not as a name with empty
+ * brackets after it.
+ */
+export function toolArgument(input: unknown): string | undefined {
   const fields = (input ?? {}) as Record<string, unknown>
   for (const key of ['file_path', 'path', 'command', 'pattern', 'url', 'query', 'description']) {
     const value = fields[key]
     if (typeof value !== 'string' || value.length === 0) continue
-    const argument =
-      value.length > TOOL_ARGUMENT_LIMIT ? `${value.slice(0, TOOL_ARGUMENT_LIMIT)}…` : value
-    return `⚙ ${name}(${argument})\n`
+    return value.length > TOOL_ARGUMENT_LIMIT ? `${value.slice(0, TOOL_ARGUMENT_LIMIT)}…` : value
   }
-  return `⚙ ${name}\n`
+  return undefined
+}
+
+/**
+ * How much of a tool's answer the transcript keeps.
+ *
+ * A `Read` of a large file comes back as the whole file. Kept in full, one tool
+ * call would be larger than every conversation varnick has ever mirrored put
+ * together, and the mirror's whole virtue is that `cat` and `jq` read it — the
+ * same argument that keeps pasted images out of it as a count.
+ *
+ * Generous rather than tight, because the truncation is what a developer sees
+ * when they expand the call, and a limit that cut off the interesting part
+ * would send them back to reading the SDK's own transcripts off disk.
+ */
+const TOOL_DETAIL_LIMIT = 4_000
+
+/** The one-line summary shown beside a settled call, before it is expanded. */
+const TOOL_RESULT_LIMIT = 120
+
+/**
+ * What a tool said back, split into the line and the rest.
+ *
+ * The line is the first thing in it that is not blank, which is what makes a
+ * result readable at a glance for the tools whose answer is one line anyway —
+ * `Bash` with no output, a `Write` confirming a path. `detail` is present only
+ * when there is more than the line, so a call with a one-line answer renders as
+ * a fact rather than as a disclosure with nothing behind it.
+ */
+export function toolResultText(raw: string): { result: string; detail?: string } {
+  const text = raw.replace(/\r\n/g, '\n')
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return { result: '(no output)' }
+  const first = trimmed.split('\n').find((line) => line.trim() !== '') ?? ''
+  const line = first.trim()
+  const result = line.length > TOOL_RESULT_LIMIT ? `${line.slice(0, TOOL_RESULT_LIMIT)}…` : line
+  // Nothing behind the disclosure when the line already is the answer.
+  if (trimmed === line) return { result }
+  const detail =
+    trimmed.length > TOOL_DETAIL_LIMIT ? `${trimmed.slice(0, TOOL_DETAIL_LIMIT)}…` : trimmed
+  return { result, detail }
+}
+
+/**
+ * The text of a `tool_result` block, whatever shape the runtime sent it in.
+ *
+ * `content` is a string for most tools and an array of blocks for the ones that
+ * answer with more than text — an image, a document. The blocks that are not
+ * text contribute nothing here on purpose: the transcript records what a tool
+ * returned as something a developer can read, and a base64 image in a mirror is
+ * the thing `attachments` exists to avoid.
+ */
+export function toolResultContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((block) => {
+      const one = (block ?? {}) as Record<string, unknown>
+      return typeof one.text === 'string' ? one.text : ''
+    })
+    .filter((text) => text.length > 0)
+    .join('\n')
 }
 
 /** The SDK's own name for what went wrong, mapped onto ours. */
@@ -1251,6 +1458,17 @@ function elapsedLabel(ms: number): string {
 export function beginTurn(turnId: string): TurnRun {
   let transcript = ''
   let finished = false
+  /**
+   * Whether this Turn has said anything at all yet.
+   *
+   * Separate from `transcript` being non-empty, and the difference is the whole
+   * of why it exists. `done` falls back to the runtime's own `result` field for
+   * a Turn that streamed nothing — a cached or instant answer. Now that a tool
+   * call empties the accumulation, a Turn whose last act was a tool call also
+   * reaches `done` with an empty `transcript`, and the fallback would post the
+   * entire answer a second time underneath the pieces already shown.
+   */
+  let produced = false
 
   /*
     Every subagent this Turn has started, by the runtime's id.
@@ -1362,18 +1580,32 @@ export function beginTurn(turnId: string): TurnRun {
   function emit(updates: readonly TurnUpdate[]): TurnEvent[] {
     const events: TurnEvent[] = []
     for (const update of updates) {
-      // A failed hook joins the transcript for the reason a tool call does: it
+      // A failed hook joins the transcript for the reason answer text does: it
       // has to survive into the message an interrupt keeps and into the mirror,
       // or it is a warning that exists only for whoever was watching.
       if (
         update.kind === 'delta' ||
-        update.kind === 'tool' ||
         update.kind === 'hook' ||
         // And a subagent starting or ending, for the same reason again: the
         // live panel is empty by the time anyone reads the answer back.
         update.kind === 'task-line'
       ) {
         transcript += update.text
+        produced = true
+      }
+      /*
+        A tool call ends the segment of answer before it.
+
+        It used to *join* the accumulation, which is what made a Turn one
+        message. Now the words before the call and the words after it are
+        different entries with the call between them, so the accumulation has to
+        stop here — and `done` carries only what came after the last tool rather
+        than the whole Turn. Core resets its own `partial` on the same event, so
+        the two sides cut the answer in the same place.
+      */
+      if (update.kind === 'tool') {
+        transcript = ''
+        produced = true
       }
       if (update.kind === 'done' || update.kind === 'failed') finished = true
       events.push({ ...update, turnId })
@@ -1423,9 +1655,74 @@ export function beginTurn(turnId: string): TurnRun {
           if (!Array.isArray(content)) return []
           const updates: TurnUpdate[] = []
           for (const block of content) {
-            const { type, name, input } = (block ?? {}) as Record<string, unknown>
+            const { type, name, input, id } = (block ?? {}) as Record<string, unknown>
             if (type !== 'tool_use' || typeof name !== 'string') continue
-            updates.push({ kind: 'tool', text: toolCallLine(name, input) })
+            /*
+              A call with no id is not recorded.
+
+              Every call in the SDK's own schema has one, so this is not a shape
+              the runtime produces — but a call the transcript holds and no
+              result can ever be matched to is a tool that renders as running
+              for the rest of the conversation, and there is no later event that
+              could fix it. Dropping it loses one line; keeping it leaves a lie
+              on screen that outlives the Turn.
+            */
+            if (typeof id !== 'string' || id.length === 0) continue
+            const argument = toolArgument(input)
+            updates.push({
+              kind: 'tool',
+              text: toolCallLine(name, input),
+              call: {
+                id,
+                name,
+                ...(argument !== undefined ? { argument } : {}),
+                status: 'pending',
+              },
+            })
+          }
+          return emit(updates)
+        }
+
+        /*
+          What the tools said back.
+
+          The half of the stream this module used to drop on the floor. It read
+          `assistant` messages for the calls they announced and ignored the
+          `user` messages carrying the results, so what a tool *returned* existed
+          nowhere in varnick — not in the window, not in the mirror, not in a
+          log. A developer who wanted to know what a `Bash` call actually
+          printed had to go and read the SDK's own transcripts.
+
+          Matched to the call by `tool_use_id` and never by arrival order: a
+          Session runs tools concurrently, so the n-th result is not the n-th
+          call. `agent.ts` pairs the same way in the containment probe and its
+          comment records what happens when this is got wrong.
+
+          A `user` message is also where an unprompted Turn's cause is read
+          from — see `unpromptedCauseOf`. The two readings do not collide: that
+          one looks at text blocks, this one at `tool_result` blocks, and a
+          message carrying both is answered as both.
+        */
+        case 'user': {
+          const content = (sdk.message as { content?: unknown } | undefined)?.content
+          if (!Array.isArray(content)) return []
+          const updates: TurnUpdate[] = []
+          for (const block of content) {
+            const one = (block ?? {}) as Record<string, unknown>
+            if (one.type !== 'tool_result') continue
+            const id = one.tool_use_id
+            if (typeof id !== 'string' || id.length === 0) continue
+            const { result, detail } = toolResultText(toolResultContent(one.content))
+            updates.push({
+              kind: 'tool-result',
+              id,
+              result,
+              ...(detail !== undefined ? { detail } : {}),
+              // The runtime's own verdict. A tool that failed and a tool that
+              // returned an error message are the same fact to a reader, and
+              // this is the only place that knows which one happened.
+              status: one.is_error === true ? 'error' : 'success',
+            })
           }
           return emit(updates)
         }
@@ -1476,10 +1773,21 @@ export function beginTurn(turnId: string): TurnRun {
           if (sdk.subtype !== 'success' || sdk.is_error === true) {
             return emit([{ kind: 'failed', failure: failureOfResultSubtype(sdk.subtype) }])
           }
-          // The accumulated transcript, not `result`: it is what was watched,
-          // tool calls included. `result` is the fallback for a Turn that
-          // streamed nothing — a cached or instant answer.
-          const answer = transcript.length > 0 ? transcript : String(sdk.result ?? '')
+          /*
+            The accumulated transcript, not `result`: it is what was watched.
+
+            Since a tool call ends a segment, this is the *last* segment rather
+            than the whole Turn — everything before the final tool call is
+            already in the transcript as its own entries.
+
+            `result` is still the fallback for a Turn that streamed nothing at
+            all, which is what a cached or instant answer looks like. It is
+            gated on `produced` and not on the accumulation being empty: a Turn
+            that ended on a tool call has an empty accumulation and has said
+            plenty, and falling back there would post the entire answer again
+            below the pieces already on screen.
+          */
+          const answer = transcript.length > 0 ? transcript : produced ? '' : String(sdk.result ?? '')
           return emit([{ kind: 'done', text: answer, tokensUsed: contextTokens(sdk.usage) }])
         }
 

@@ -174,10 +174,74 @@ export interface SurfaceDescriptor {
 
 export type MessageRole = 'user' | 'agent'
 
+/**
+ * How a tool call ended, as far as the transcript can tell.
+ *
+ * `pending` is the state a call is in between the runtime announcing it and the
+ * result coming back, and it is a real state rather than a placeholder: a tool
+ * that takes four minutes spends four minutes here, and the whole reason the
+ * call is written to the transcript when it starts — instead of when it
+ * finishes — is that a Turn which has gone quiet mid-tool must not look like a
+ * Turn that has hung.
+ */
+export type ToolStatus = 'pending' | 'success' | 'error'
+
+/**
+ * One tool the agent called, as a fact rather than as a line of text.
+ *
+ * ## Why it is structured
+ *
+ * It used to be a string. The Harness composed `⚙ Read(/some/path)` and
+ * appended it to the answer, so by the time anything in Core saw a tool call it
+ * was prose in the middle of a Markdown document — indistinguishable from the
+ * agent writing about a tool call, and impossible to render as anything else.
+ * The result was never carried at all: the Turn read the `assistant` messages
+ * for their `tool_use` blocks and dropped the `user` messages that answered
+ * them, so what a tool *returned* existed nowhere in the product.
+ *
+ * ## Paired by id, never by order
+ *
+ * {@link id} is the runtime's own `tool_use_id`, and it is what a result is
+ * matched against. A Session may run several tools concurrently, so the
+ * n-th result is not the n-th call — the containment probe in the Harness
+ * learned this and pairs the same way for the same reason.
+ *
+ * ## What is kept
+ *
+ * {@link result} is one line, and {@link detail} is the rest of what came back.
+ * The split is the disclosure the renderer offers, and it is also what keeps
+ * the mirror readable: a tool that returns a megabyte of file contents would
+ * otherwise put a megabyte into a transcript whose virtue is that `cat` and
+ * `jq` read it. Both are absent while the call is `pending`, because there is
+ * nothing yet to say and `''` would render as a tool that answered with
+ * silence.
+ */
+export interface ToolCall {
+  readonly id: string
+  readonly name: string
+  /** What it was aimed at — a path, a command, a pattern. */
+  readonly argument?: string
+  readonly result?: string
+  readonly detail?: string
+  readonly status: ToolStatus
+}
+
 export interface Message {
   readonly id: string
   readonly role: MessageRole
   readonly text: string
+  /**
+   * The tool this entry *is*, when it is a tool call rather than something said.
+   *
+   * A transcript entry carrying this is not prose and is not rendered as prose.
+   * It sits beside {@link text} rather than replacing it, and that is what makes
+   * the change compatible in both directions: {@link text} still holds the
+   * one-line form the Harness has always composed, so a mirror written by this
+   * version still reads as a conversation under `cat`, and a mirror written by
+   * an older one — where every tool call is text and nothing carries this field
+   * — still loads and still renders, exactly as it did.
+   */
+  readonly tool?: ToolCall
   /**
    * How many pictures went with this message.
    *
@@ -202,6 +266,54 @@ export interface Message {
    * above it is its cause.
    */
   readonly cause?: string
+}
+
+/** What came back from a tool, and how it went. */
+export interface ToolSettled {
+  readonly id: string
+  readonly result: string
+  readonly detail?: string
+  readonly status: Exclude<ToolStatus, 'pending'>
+}
+
+/**
+ * The transcript with one tool call's answer filled in.
+ *
+ * The only place in the product where a transcript entry is *changed* rather
+ * than appended, and it is worth saying why that is allowed here. Everywhere
+ * else the transcript is a record of things that were said, and a record that
+ * rewrites itself is not a record. A tool call is the exception because it is
+ * one fact that arrives in two pieces: the runtime announces the call, and the
+ * result comes back some time later — sometimes minutes later, sometimes after
+ * the Turn that started it has already ended. Writing them as two entries would
+ * put the answer to a tool a long way below the tool, with everything the agent
+ * said in between, and matching them up again would be the reader's problem.
+ *
+ * Matched on {@link ToolCall.id} — the runtime's own `tool_use_id` — because
+ * tools run concurrently and the n-th result is not the n-th call.
+ *
+ * A result for a call that is not in the transcript leaves it untouched. That
+ * is not a defensive nicety: a Compaction can replace the whole transcript
+ * while a tool is still running, and the result that arrives afterwards belongs
+ * to a call that has been summarised away.
+ */
+export function withToolResult(
+  messages: readonly Message[],
+  settled: ToolSettled,
+): Message[] {
+  return messages.map((message) =>
+    message.tool !== undefined && message.tool.id === settled.id
+      ? {
+          ...message,
+          tool: {
+            ...message.tool,
+            result: settled.result,
+            ...(settled.detail !== undefined ? { detail: settled.detail } : {}),
+            status: settled.status,
+          },
+        }
+      : message,
+  )
 }
 
 /**

@@ -7,6 +7,7 @@ import { ClaudeHeader } from './brainless/claude/claude-header.tsx'
 import { ClaudeMessage } from './brainless/claude/claude-message.tsx'
 import { Markdown } from './markdown.tsx'
 import { ClaudeThinking } from './brainless/claude/claude-thinking.tsx'
+import { ClaudeToolCall } from './brainless/claude/claude-tool-call.tsx'
 import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
@@ -594,7 +595,37 @@ export function ChatSurface({
                 actually said.
               */}
               {(s?.context.messages ?? []).map((m) =>
-                m.role === 'user' ? (
+                /*
+                  A tool call is a fact, and it is rendered as one.
+
+                  It used to arrive as the line `⚙ Read(/x)` inside the answer's
+                  Markdown, which meant the transcript could not tell a tool the
+                  agent *called* from a tool the agent *wrote about* — and what
+                  a tool returned was nowhere at all, because the Turn dropped
+                  the half of the stream carrying it.
+
+                  `ClaudeToolCall` is brainless's own, vendored like the message
+                  and header components around it, and it keeps Claude Code's
+                  ⏺ / ⎿ grammar with a real disclosure: expandable by keyboard,
+                  announced to screen readers. It is given the detail as
+                  children only when there is detail, so a call whose whole
+                  answer is one line renders as a fact rather than as a
+                  disclosure that opens onto nothing.
+                */
+                m.tool ? (
+                  <ClaudeToolCall
+                    key={m.id}
+                    tool={m.tool.name}
+                    arg={m.tool.argument}
+                    // A call that has not answered yet says so. This is the
+                    // four-minute case: the tool is working, and the alternative
+                    // to saying that is a window that looks hung.
+                    result={m.tool.result ?? 'running…'}
+                    status={m.tool.status}
+                  >
+                    {m.tool.detail}
+                  </ClaudeToolCall>
+                ) : m.role === 'user' ? (
                   <ClaudeMessage key={m.id} role="user">
                     {m.text}
                     {/* The record has to say a picture went, or a message

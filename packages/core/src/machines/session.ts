@@ -1,6 +1,6 @@
 import { setup, assign, emit, fromPromise, raise } from 'xstate'
-import type { Message } from '../domain.ts'
-import { compactedTranscript, isCommandDraft } from '../domain.ts'
+import type { Message, ToolCall, ToolSettled } from '../domain.ts'
+import { compactedTranscript, isCommandDraft, withToolResult } from '../domain.ts'
 import type { PastedImage, RunningTask } from '@varnick/harness/turn'
 import type { Effort, ModelId } from '../domain.ts'
 
@@ -125,6 +125,38 @@ export type SessionEvent =
    * the machine declines is a panel that stops matching the runtime.
    */
   | { type: 'TASKS_REPORTED'; tasks: readonly RunningTask[] }
+  /**
+   * The agent called a tool.
+   *
+   * A report, accepted wherever the machine is, for the reason
+   * `TASKS_REPORTED` is: it describes something that has already happened. It
+   * is not accepted only during a Turn because a tool call can arrive on an
+   * unprompted Turn, when this machine is `idle` and nothing is being waited
+   * for.
+   *
+   * **It closes the message above it.** Whatever has streamed so far becomes an
+   * entry of its own, then the call becomes the next entry, and the answer
+   * carries on underneath. That is what turns one Turn into the sequence a
+   * reader expects — said, did, said — instead of one block of text with tool
+   * lines buried in it.
+   *
+   * `text` is the one-line form the transcript has always held. It is kept
+   * beside the structured call rather than derived from it, so the mirror still
+   * reads as a conversation to `cat` and a transcript written by this build
+   * still means something to a build that predates it.
+   */
+  | { type: 'TOOL_CALL'; text: string; call: ToolCall }
+  /**
+   * A tool answered.
+   *
+   * The one event that changes an entry already in the transcript instead of
+   * adding one — see `withToolResult`, which is where the argument for that
+   * lives. Accepted anywhere for a sharper reason than the others: a result
+   * routinely arrives *after* the Turn that called the tool has ended, and a
+   * machine that only accepted it while answering would leave the last tool of
+   * every Turn showing as still running.
+   */
+  | { type: 'TOOL_RESULT'; settled: ToolSettled }
   /**
    * The agent answered something the developer did not send.
    *
@@ -355,6 +387,60 @@ export const sessionMachine = setup({
     */
     TASKS_REPORTED: { actions: assign({ tasks: ({ event }) => event.tasks }) },
     /*
+      A tool call ends the answer above it and becomes an entry of its own.
+
+      Two appends in one assignment, and the order is the point: the streamed
+      text is flushed first so it sits *above* the call, which is where it
+      happened. Getting this the other way round would put every word the agent
+      said before reaching for a tool underneath the tool it reached for.
+
+      The flush is guarded on there being something to flush. An agent that
+      calls a tool as the first thing it does — which is most turns that do any
+      work — has an empty `partial`, and an empty entry above the call is a
+      blank message in the transcript.
+
+      No save here, and none on the result either. The transcript is mirrored at
+      Turn boundaries, and this is not one: the agent is mid-answer and about to
+      say more. Saving on each of the fifty tool calls a long Turn makes would
+      be fifty writes to buy back the last few seconds of a crash that already
+      loses the answer in flight.
+    */
+    TOOL_CALL: {
+      actions: assign({
+        messages: ({ context, event }) => {
+          const flushed =
+            context.partial.trim().length > 0
+              ? [
+                  ...context.messages,
+                  {
+                    id: `m${context.messages.length + 1}`,
+                    role: 'agent' as const,
+                    text: context.partial,
+                  },
+                ]
+              : context.messages
+          return [
+            ...flushed,
+            {
+              id: `m${flushed.length + 1}`,
+              role: 'agent' as const,
+              text: event.text,
+              tool: event.call,
+            },
+          ]
+        },
+        // The next segment starts empty. The Harness resets its own
+        // accumulation on the same event, so `done` carries the tail of the
+        // answer and the two sides cut it in the same place.
+        partial: '',
+      }),
+    },
+    TOOL_RESULT: {
+      actions: assign({
+        messages: ({ context, event }) => withToolResult(context.messages, event.settled),
+      }),
+    },
+    /*
       And an answer nobody asked for joins the transcript, under what caused it.
 
       A Turn boundary, unlike the tasks above: the transcript has changed and
@@ -494,7 +580,18 @@ export const sessionMachine = setup({
             src: 'runTurn',
             input: ({ context }) => ({
               sessionId: context.sessionId,
-              prompt: context.messages[context.messages.length - 1]?.text ?? '',
+              /*
+                The last thing the *developer* said, not the last entry.
+
+                It used to be `messages.at(-1)`, which was the same thing: a
+                Turn appended nothing to the transcript until it ended, so on
+                entry the developer's message was always last. Tool calls are
+                entries now and are appended while the Turn runs — so after a
+                failed Turn that called a tool, `RETRY_TURN` re-enters here with
+                `⚙ Read(src/a.ts)` sitting at the end, and the retry would send
+                that to the agent as the prompt.
+              */
+              prompt: [...context.messages].reverse().find((m) => m.role === 'user')?.text ?? '',
               model: context.model,
               effort: context.effort,
               /*
@@ -509,14 +606,27 @@ export const sessionMachine = setup({
               target: 'idle',
               actions: [
                 assign({
-                  messages: ({ context, event }) => [
-                    ...context.messages,
-                    {
-                      id: `m${context.messages.length + 1}`,
-                      role: 'agent' as const,
-                      text: event.output.text,
-                    },
-                  ],
+                  /*
+                    The last segment of the answer, and only if there is one.
+
+                    The guard is new and is not defensive: a Turn whose final
+                    act was a tool call ends with nothing after it, and this
+                    used to append unconditionally. It would put an empty agent
+                    message under every such Turn — and then write it to the
+                    mirror, where it reads as the agent having answered with
+                    silence.
+                  */
+                  messages: ({ context, event }) =>
+                    event.output.text.trim().length > 0
+                      ? [
+                          ...context.messages,
+                          {
+                            id: `m${context.messages.length + 1}`,
+                            role: 'agent' as const,
+                            text: event.output.text,
+                          },
+                        ]
+                      : context.messages,
                   partial: '',
                   tokensUsed: ({ event }) => event.output.tokensUsed,
                 }),

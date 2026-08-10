@@ -25,6 +25,8 @@ import type {
   ModelId,
   PendingWorktree,
   SandboxPolicy,
+  ToolCall,
+  ToolSettled,
 } from '../domain.ts'
 import type { SessionInput } from '../machines/session.ts'
 
@@ -84,6 +86,27 @@ export interface TurnObserver {
    * message an interrupt keeps.
    */
   delta(text: string): void
+  /**
+   * The agent called a tool.
+   *
+   * Sent to the Session as `TOOL_CALL`. Not a delta, and that is the change: a
+   * tool call used to arrive here as text and be appended to the answer, which
+   * made it prose in a Markdown document and made what the tool *returned*
+   * unrepresentable. It ends the segment of answer above it and becomes an
+   * entry of its own.
+   *
+   * `text` is the one-line form, carried alongside for the mirror and for the
+   * unprompted path, which collects an answer as text before anything sees it.
+   */
+  toolCalled(text: string, call: ToolCall): void
+  /**
+   * A tool answered, some time later.
+   *
+   * Sent to the Session as `TOOL_RESULT`, and matched to its call by id rather
+   * than by order — tools run concurrently, so the n-th result is not the n-th
+   * call.
+   */
+  toolSettled(settled: ToolSettled): void
   /**
    * The API refused the credential during a Turn.
    *
@@ -168,6 +191,8 @@ export interface TurnObserver {
 /** An observer that drops everything. What a run with no owner gets. */
 const silentObserver: TurnObserver = {
   delta: () => {},
+  toolCalled: () => {},
+  toolSettled: () => {},
   credentialRejected: () => {},
   runtimeReported: () => {},
   commandsReported: () => {},
@@ -329,6 +354,19 @@ export function liveActors(
             cause = event.text
             break
           case 'delta':
+          /*
+            A tool call is collected as *text* here and not as a call, which is
+            the one place the two paths deliberately differ.
+
+            An unprompted answer is assembled whole and posted in one piece —
+            there is no `partial` for it to interrupt, no streaming entry to
+            close, and by the time anything renders it the tools have long
+            finished. Splitting it into entries would mean holding a transcript
+            fragment in this loop and reassembling it against results that may
+            never arrive, to show a disclosure on a call nobody watched happen.
+            The one-line form is what that reader needs, and it is why `text`
+            is carried on the update at all.
+          */
           case 'tool':
           case 'hook':
           case 'task-line':
@@ -336,15 +374,31 @@ export function liveActors(
             break
           case 'done':
             /*
-              `event.text` is the run's own accumulation, tool calls included,
-              so it is preferred over what was watched arriving here — the same
-              rule a prompted Turn follows.
+              What was watched arriving here, and `event.text` only when nothing
+              was.
+
+              **This preference is the opposite way round from what it was, and
+              the old one silently became wrong.** `event.text` used to be the
+              run's own accumulation of the whole answer, tool calls included,
+              so preferring it was preferring the more complete of two copies.
+              A tool call now *ends* that accumulation, so `event.text` is only
+              the tail after the last one — and an unprompted answer that used a
+              tool mid-way was posted as its final paragraph, with everything
+              before it dropped. It was not even uniformly wrong: an answer
+              ending *on* a tool call arrives with `event.text` empty, so the
+              old `||` fell through to the full text and that case looked fine.
+
+              `text` here is this loop's own accumulation and does not reset —
+              it holds every delta, every tool line and every hook line of the
+              answer. So it is the complete copy now, and `event.text` is the
+              fallback for the one case it cannot cover: a run that streamed
+              nothing at all, where `done` carries the runtime's `result`.
 
               Reset afterwards, because the next unprompted answer is a
               different answer: leaving the cause standing would put the last
               one's divider over it.
             */
-            observer.unpromptedAnswer(event.text || text, cause)
+            observer.unpromptedAnswer(text || event.text, cause)
             text = ''
             cause = UNPROMPTED_CAUSE_UNKNOWN
             break
@@ -432,11 +486,7 @@ export function liveActors(
         if (event.turnId !== turnId) continue
 
         switch (event.kind) {
-          // A tool call is transcript, not decoration: it goes to the same
-          // place the answer does, so it survives into the message an interrupt
-          // keeps and into the mirror.
           case 'delta':
-          case 'tool':
           // A hook that could not run is the same kind of fact as a tool call:
           // something happened beside the answer, and the transcript is where
           // it is auditable. Not a failure — the Turn answered.
@@ -446,6 +496,29 @@ export function liveActors(
           // so the durable half has to be in the transcript.
           case 'task-line':
             observer.delta(event.text)
+            break
+          /*
+            A tool call is transcript, like the answer around it — but it is a
+            fact rather than a sentence, so it does not go through `delta`.
+
+            It closes the streamed message above it and becomes an entry of its
+            own, which is what lets the window render it as the call it is and
+            show what came back. Sent while the tool is still running: a tool
+            that takes four minutes is four minutes in which the only honest
+            thing to show is that it is running.
+          */
+          case 'tool':
+            observer.toolCalled(event.text, event.call)
+            break
+          // And what it said back, whenever that turns out to be — matched to
+          // the call by id, never by the order results arrive in.
+          case 'tool-result':
+            observer.toolSettled({
+              id: event.id,
+              result: event.result,
+              ...(event.detail !== undefined ? { detail: event.detail } : {}),
+              status: event.status,
+            })
             break
           // Which subagents are running *now*. Ephemeral, and the only update
           // here that does not outlive its Turn.

@@ -84,6 +84,8 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
   */
   const signals = useRef<TurnObserver & MintObserver>({
     delta: () => {},
+    toolCalled: () => {},
+    toolSettled: () => {},
     credentialRejected: () => {},
     runtimeReported: () => {},
     commandsReported: () => {},
@@ -96,6 +98,8 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
   const observer = useMemo<TurnObserver>(
     () => ({
       delta: (text) => signals.current.delta(text),
+      toolCalled: (text, call) => signals.current.toolCalled(text, call),
+      toolSettled: (settled) => signals.current.toolSettled(settled),
       credentialRejected: (detail) => signals.current.credentialRejected(detail),
       runtimeReported: (report) => signals.current.runtimeReported(report),
       commandsReported: (commands) => signals.current.commandsReported(commands),
@@ -195,6 +199,14 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
     signals.current = {
       delta: (text) => {
         actorRef.getSnapshot().context.session?.send({ type: 'STREAM_DELTA', text })
+      },
+      // A tool call and its result are the Session's, like a delta: they are
+      // the conversation rather than facts about the agent process.
+      toolCalled: (text, call) => {
+        actorRef.getSnapshot().context.session?.send({ type: 'TOOL_CALL', text, call })
+      },
+      toolSettled: (settled) => {
+        actorRef.getSnapshot().context.session?.send({ type: 'TOOL_RESULT', settled })
       },
       credentialRejected: (detail) => send({ type: 'CREDENTIAL_REJECTED', detail }),
       // The third thing a Turn says that is not its answer, and the Harness's

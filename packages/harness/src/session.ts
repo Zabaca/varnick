@@ -17,6 +17,17 @@
 import { createHash } from 'node:crypto'
 import fsp from 'node:fs/promises'
 
+/** A tool call as the mirror stores it. Structurally what Core calls a
+ *  `ToolCall`, declared here for the reason {@link StoredMessage} is. */
+export interface StoredToolCall {
+  readonly id: string
+  readonly name: string
+  readonly argument?: string
+  readonly result?: string
+  readonly detail?: string
+  readonly status: 'pending' | 'success' | 'error'
+}
+
 /** A message as the mirror stores it. Structurally what Core calls a `Message`,
  *  declared here because the Harness must not import Core. */
 export interface StoredMessage {
@@ -25,6 +36,17 @@ export interface StoredMessage {
   readonly text: string
   /** How many pictures went with it. Absent for the messages that carry none. */
   readonly attachments?: number
+  /**
+   * The tool this entry is, when it is a tool call rather than something said.
+   *
+   * The one field on a stored message that can change after it is written: a
+   * call is mirrored as soon as the runtime announces it, and its result
+   * arrives later. That is what {@link sameMessage} is for — the line stops
+   * comparing equal, so the store rewrites the file instead of appending, and a
+   * developer reading the mirror sees the tool with its answer rather than a
+   * tool that is permanently still running.
+   */
+  readonly tool?: StoredToolCall
 }
 
 /**
@@ -127,7 +149,23 @@ export function restoredTranscript(
 ): RestoredTranscript {
   return {
     messages,
-    redacted: messages.some((message) => message.text.includes(REDACTED)),
+    /*
+      Every field the mirror redacts, not only the message text.
+
+      `redactSecrets` is run over a tool call's argument, result and detail as
+      well as the text beside it, so a transcript whose *only* redaction was
+      inside a tool result restored with no banner — the developer was told the
+      record was complete while reading one that was not. The banner has to ask
+      the same question the redaction answers, and over the same fields.
+    */
+    redacted: messages.some(
+      (message) =>
+        message.text.includes(REDACTED) ||
+        (message.tool !== undefined &&
+          [message.tool.argument, message.tool.result, message.tool.detail].some(
+            (field) => field !== undefined && field.includes(REDACTED),
+          )),
+    ),
   }
 }
 
@@ -205,6 +243,31 @@ export function redactSecrets(text: string, secrets: Iterable<string>): string {
 }
 
 /**
+ * The same redaction, over every part of a tool call that carries free text.
+ *
+ * `name` and `status` are the runtime's own vocabulary and are left alone. The
+ * other three are whatever the tool was pointed at and whatever it said back,
+ * which is to say: text from outside, held to the same rule as the message text
+ * beside it.
+ */
+export function redactTool(tool: StoredToolCall, secrets: Iterable<string>): StoredToolCall {
+  const values = [...secrets]
+  const redacted = (field: string | undefined): string | undefined =>
+    field === undefined ? undefined : redactSecrets(field, values)
+  const argument = redacted(tool.argument)
+  const result = redacted(tool.result)
+  const detail = redacted(tool.detail)
+  return {
+    id: tool.id,
+    name: tool.name,
+    ...(argument !== undefined ? { argument } : {}),
+    ...(result !== undefined ? { result } : {}),
+    ...(detail !== undefined ? { detail } : {}),
+    status: tool.status,
+  }
+}
+
+/**
  * A Session id has to be safe as a filename.
  *
  * Rejecting rather than sanitising: two ids that sanitise to the same name
@@ -231,8 +294,28 @@ function sameMessage(a: StoredMessage, b: StoredMessage): boolean {
     a.id === b.id &&
     a.role === b.role &&
     a.text === b.text &&
-    (a.attachments ?? 0) === (b.attachments ?? 0)
+    (a.attachments ?? 0) === (b.attachments ?? 0) &&
+    // Compared as bytes rather than field by field. Every field of a tool call
+    // except its id can change after the line is written, and the point of the
+    // comparison is only ever "would this line be written differently now".
+    toolFields(a.tool) === toolFields(b.tool)
   )
+}
+
+/** A tool call in fixed field order, or `''` for a message that is not one. */
+function toolFields(tool: StoredToolCall | undefined): string {
+  if (tool === undefined) return ''
+  return JSON.stringify({
+    id: tool.id,
+    name: tool.name,
+    // Absent rather than empty throughout, for the reason `attachments` is:
+    // what a build did not know about should not appear as a field saying it
+    // knew nothing.
+    ...(tool.argument !== undefined ? { argument: tool.argument } : {}),
+    ...(tool.result !== undefined ? { result: tool.result } : {}),
+    ...(tool.detail !== undefined ? { detail: tool.detail } : {}),
+    status: tool.status,
+  })
 }
 
 function serialise(message: StoredMessage): string {
@@ -245,24 +328,72 @@ function serialise(message: StoredMessage): string {
     // byte-identical to the ones written before pictures existed and a mirror
     // written by an older build still compares equal.
     ...(message.attachments ? { attachments: message.attachments } : {}),
+    // The same rule once more, and it is what keeps a conversation held by a
+    // build that predates structured tool calls byte-identical when this one
+    // saves it again.
+    ...(message.tool ? { tool: JSON.parse(toolFields(message.tool)) as StoredToolCall } : {}),
   })
+}
+
+/**
+ * A tool call read back off something that is not this store's own file.
+ *
+ * Exported because the mirror is read through two doors and only one of them is
+ * `parseLine`. The other is the bridge, which rebuilds every message field by
+ * field on the way into Core — and rebuilt it as `{id, role, text}`, so a
+ * transcript that had been written correctly came back with every tool call
+ * flattened to the one-line form and rendered as prose. One parser, used by
+ * both, is what stops the two doors disagreeing about what a stored tool call
+ * is.
+ */
+export function parseStoredTool(value: unknown): StoredToolCall | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { id, name, argument, result, detail, status } = value as Record<string, unknown>
+  if (typeof id !== 'string' || id.length === 0) return null
+  if (typeof name !== 'string' || name.length === 0) return null
+  if (status !== 'pending' && status !== 'success' && status !== 'error') return null
+  const optional = (field: unknown): string | undefined =>
+    typeof field === 'string' ? field : undefined
+  return {
+    id,
+    name,
+    ...(optional(argument) !== undefined ? { argument: optional(argument) as string } : {}),
+    ...(optional(result) !== undefined ? { result: optional(result) as string } : {}),
+    ...(optional(detail) !== undefined ? { detail: optional(detail) as string } : {}),
+    status,
+  }
 }
 
 function parseLine(line: string): StoredMessage | null {
   try {
     const value: unknown = JSON.parse(line)
     if (typeof value !== 'object' || value === null) return null
-    const { id, role, text, attachments } = value as Record<string, unknown>
+    const { id, role, text, attachments, tool } = value as Record<string, unknown>
     if (typeof id !== 'string' || typeof text !== 'string') return null
     if (role !== 'user' && role !== 'agent') return null
+    /*
+      A tool call or nothing, and a malformed one is a malformed line.
+
+      Not "drop the field and keep the message": a line claiming to be a tool
+      call is one, and reading it back as an ordinary message would put the
+      one-line form into the transcript as prose — which is the thing this whole
+      field exists to stop happening.
+    */
+    let parsedTool: StoredToolCall | undefined
+    if (tool !== undefined) {
+      const one = parseStoredTool(tool)
+      if (one === null) return null
+      parsedTool = one
+    }
+    const withTool = parsedTool !== undefined ? { tool: parsedTool } : {}
     // A count or nothing. A line written by a build that predates pictures has
     // no field here, and that is a message with no attachments rather than a
     // malformed one.
-    if (attachments === undefined) return { id, role, text }
+    if (attachments === undefined) return { id, role, text, ...withTool }
     if (typeof attachments !== 'number' || !Number.isInteger(attachments) || attachments < 1) {
       return null
     }
-    return { id, role, text, attachments }
+    return { id, role, text, attachments, ...withTool }
   } catch {
     return null
   }
@@ -372,6 +503,28 @@ export function createSessionStore(options: SessionStoreOptions): SessionStore {
         id: m.id,
         role: m.role,
         text: redactSecrets(m.text, secrets),
+        /*
+          Carried through rather than dropped.
+
+          This map used to rebuild a message as `{id, role, text}` and nothing
+          else, which meant `attachments` reached the type and the serialiser
+          and never reached the file: every mirrored message said no pictures
+          went with it. Found while adding the field below, because the field
+          below would have been lost the same way and for the same reason.
+        */
+        ...(m.attachments ? { attachments: m.attachments } : {}),
+        /*
+          Redacted like the text, and that is the whole reason this is not a
+          spread of `m`.
+
+          A tool result is the most likely place in a transcript for a secret to
+          appear — `Bash(env)`, a config file read back, a curl with a token in
+          the response — and it arrives from the runtime rather than from
+          anything the developer typed. The mirror is the copy that survives on
+          disk for anyone to `cat`, so a value that must never be written there
+          must be taken out here, on the same pass and against the same list.
+        */
+        ...(m.tool ? { tool: redactTool(m.tool, secrets) } : {}),
       }))
 
       await fs.makeDir(root)

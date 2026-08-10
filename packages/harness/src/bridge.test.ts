@@ -233,6 +233,60 @@ describe('the answer is rebuilt, never passed through', () => {
     expect(JSON.stringify(answer)).not.toContain(LOOKS_LIKE_A_KEY)
   })
 
+  test('a restored transcript keeps the tool calls in it', async () => {
+    /*
+      The read path used to rebuild a message as `{id, role, text}` and drop
+      everything else — the same defect the store's own `persist` had on the way
+      out, one layer along, and it survived that one being fixed. The
+      consequence was not a missing detail: a relaunch brought every tool call
+      back flattened to the one-line form, rendered as Markdown prose, which is
+      the exact state the structured call exists to get out of.
+    */
+    const answer = await callHarness(
+      { kind: 'read-session', sessionId: 's' },
+      answers({
+        messages: [
+          { id: 'm1', role: 'user', text: 'what is wrong here?', attachments: 2 },
+          {
+            id: 'm2',
+            role: 'agent',
+            text: '⚙ Read(src/a.ts)\n',
+            tool: {
+              id: 'tu_1',
+              name: 'Read',
+              argument: 'src/a.ts',
+              result: 'export const a = 1',
+              status: 'success',
+            },
+          },
+        ],
+      }),
+    )
+    expect(answer.messages[1]?.tool).toEqual({
+      id: 'tu_1',
+      name: 'Read',
+      argument: 'src/a.ts',
+      result: 'export const a = 1',
+      status: 'success',
+    })
+    // Lost in the same line, for the same reason, and fixed in the same place.
+    expect(answer.messages[0]?.attachments).toBe(2)
+  })
+
+  test('a transcript whose tool call is malformed is malformed', async () => {
+    // Consistent with every other field on this boundary: a line that says it
+    // is a tool call and is not is a bad line, not a message to keep the text
+    // of.
+    await expect(
+      callHarness(
+        { kind: 'read-session', sessionId: 's' },
+        answers({
+          messages: [{ id: 'm1', role: 'agent', text: 'x', tool: { id: 'tu_1', name: 'Read' } }],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(HarnessUnavailable)
+  })
+
   test('an empty transcript is an answer, not a malformed one', async () => {
     expect(
       await callHarness({ kind: 'read-session', sessionId: 's' }, answers({ messages: [] })),
