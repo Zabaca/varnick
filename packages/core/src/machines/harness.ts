@@ -166,10 +166,16 @@ export interface HarnessContext {
    * The Worktrees holding Core changes nobody has merged, as git last described
    * them.
    *
-   * Empty in `review.empty` — which is a state and not this field being short —
-   * and emptied when a listing fails, because a list left standing over a git
-   * that would not answer is the surface presenting a stale answer as current.
-   * The same rule `credentialKind` follows on a failed read.
+   * Empty in `review.empty` — which is a state and not this field being short.
+   *
+   * **It survives a listing that failed, and that is a change.** It used to be
+   * cleared, on the rule `credentialKind` follows on a failed read. Since the
+   * end of every Turn re-lists, most failures are now failures to *refresh*,
+   * and a git that would not answer this time has said nothing about what it
+   * listed a minute ago. Whether these entries are current is what
+   * `review.listFailed` says; whether there are any is this field, and holding
+   * both is what lets the surface tell "these stood, and nobody could check"
+   * from "nobody can tell".
    *
    * **Summaries, and no hunks.** See `PendingWorktree`: the decision is that a
    * list which read every diff of every branch to draw a row would spend the
@@ -353,6 +359,26 @@ const startTransition = [
   { target: 'startRefused', actions: 'recordRefusal' },
 ] as const
 
+/**
+ * Opening a row, declared once and used by both states that can have rows.
+ *
+ * Hoisted for the reason `startTransition` above it is: two copies of a
+ * transition are two things to keep the same, and the drift is invisible —
+ * each state goes on working and the one that fell behind simply stops
+ * offering something.
+ *
+ * There are two such states now. `review.listed` is the obvious one. The other
+ * is `review.listFailed` *holding a list a refresh could not replace*: those
+ * rows are on screen, so they are openable, and the guard is what makes that
+ * safe rather than a second rule — `openable` requires the path to be one this
+ * machine is already holding, and a first listing that failed holds none.
+ *
+ * Internal: reading a branch is not a state of the listing, and moving the
+ * region would say the list had stopped being what it is because somebody
+ * looked at one of its rows.
+ */
+const openWorktreeTransition = { guard: 'openable', actions: 'openWorktreeDiff' } as const
+
 export const harnessMachine = setup({
   types: {
     context: {} as HarnessContext,
@@ -475,6 +501,31 @@ export const harnessMachine = setup({
     recordRefusal: assign({
       refusal: ({ context }) =>
         refusalFor({ credential: context.credentialState, sandbox: context.sandboxState }),
+    }),
+    /*
+      Spawn the child that reads one Worktree's changes.
+
+      The entry is taken from this machine's own list rather than from the
+      event: the guard has already established it is there, and reading it back
+      out of git's answer is what keeps the branch and the count above the hunks
+      the same facts the row showed.
+
+      The `event.type` check is the type system asking a question the guard has
+      already answered. It returns the ref unchanged rather than throwing,
+      because a named action is reachable from anywhere a name can be written
+      and an action that can only be used in one place should say so quietly.
+    */
+    openWorktreeDiff: assign({
+      worktreeDiff: ({ context, event, spawn }) => {
+        if (event.type !== 'OPEN_WORKTREE') return context.worktreeDiff
+        const worktree = context.worktrees.find((entry) => entry.path === event.path)
+        if (worktree === undefined) return context.worktreeDiff
+        return spawn('worktreeDiff', {
+          id: 'worktree-diff',
+          syncSnapshot: true,
+          input: { worktree },
+        })
+      },
     }),
   },
   delays: {
@@ -873,13 +924,53 @@ export const harnessMachine = setup({
           // The Session is spawned once and outlives every agent restart. That
           // is what makes "the transcript survives" true rather than aspirational.
           entry: assign({
-            session: ({ context, spawn }) =>
-              context.session ??
-              spawn('session', {
+            session: ({ context, spawn, self }) => {
+              if (context.session !== null) return context.session
+              const session = spawn('session', {
                 id: 'session',
                 syncSnapshot: true,
                 input: context.sessionInput,
-              }),
+              })
+              /*
+                The end of a Turn, turned into a reason to ask git again.
+
+                **This is the whole of the cross-machine wiring, and both halves
+                of it are deliberately ignorant.** The Session emits
+                `TURN_ENDED` — a fact about itself, addressed to nobody, naming
+                no worktree and no event of this machine's (see
+                `SessionEmitted`). This machine hears that a Turn ended and
+                decides, on its own, that the answer to "what is waiting to be
+                merged" may have changed. Neither reads the other's states,
+                context or actors, and either would go on working with the other
+                deleted.
+
+                It is here, at the spawn, rather than in whoever owns the
+                Harness, for a reason that is practical rather than tasteful:
+                every rendering of this system hands its own actors to the
+                Session through `.provide()` — hooks.ts, frozen.ts, drive.ts —
+                and a join written at any of those call sites is a join the
+                other two silently do not have. The ref is the one thing they
+                all share. It also puts the trigger where `drive.ts` can reach
+                it, which is the difference between behaviour that is proved and
+                behaviour that is only wired (ADR-0013).
+
+                Not I/O, and so not the thing ADR-0001 keeps out of machines:
+                `.on` is parent-to-child plumbing, the same category as the
+                `spawn` on the line above it. Nothing here reads a clock, a
+                filesystem or a network.
+
+                `LIST_WORKTREES` and no new event, because there is nothing new
+                to say: this is the existing ask, from a second asker. The
+                `review` region refuses it while a listing is already in flight,
+                which is the behaviour that was already wanted and is now also
+                what keeps a Turn ending mid-listing from restarting one.
+
+                The subscription is attached once, with the Session, and both
+                outlive every agent restart — see the `??` this replaced.
+              */
+              session.on('TURN_ENDED', () => self.send({ type: 'LIST_WORKTREES' }))
+              return session
+            },
             agentError: null,
           }),
           // A report describes a process. Whichever way this state is left the
@@ -919,6 +1010,21 @@ export const harnessMachine = setup({
       *nothing the agent finished waits unnoticed*, which a state meaning "not
       asked yet" would quietly defeat. So there is no `unlisted`: the region is
       `listing` from the moment the machine exists.
+
+      ## And it lists again at the end of every Turn
+
+      Listing once on entry was the same omission one step along. The pending
+      list is a fact about a filesystem that changes while varnick runs, and the
+      thing changing it is the agent in the window beside it — so a developer who
+      has just watched an agent say "committed" was then asked to press *look
+      again* before the entry appeared. The end of a Turn is exactly when the
+      answer may have changed, it is a signal varnick already has, and it costs
+      no poll, no watcher and no timer.
+
+      The Session announces it and this machine sends itself the `LIST_WORKTREES`
+      it already had; the wiring is at the spawn in `agent.running`, and the
+      reason it is there rather than anywhere else is written out beside it.
+      *look again* stays, because an agent is not the only thing that can commit.
 
       ## Summaries here, hunks in the diff view
 
@@ -973,56 +1079,91 @@ export const harnessMachine = setup({
                 actions: assign({ worktrees: ({ event }) => event.output.worktrees }),
               },
             ],
+            /*
+              A listing that failed keeps whatever list it already had.
+
+              It used to clear it, on the rule a failed credential read follows
+              with the kind it can no longer vouch for — and that rule is right
+              for the listing a launch makes, where there is nothing to clear
+              anyway. It is wrong for the refresh that now happens at the end of
+              every Turn: a git that would not answer *this time* has said
+              nothing about the branches it listed a minute ago, and throwing
+              them away replaces a good list with an error message.
+
+              **The two cases need no flag to tell them apart.** A first listing
+              is entered with `worktrees` empty and leaves it empty; a refresh
+              over a good list is the only way this can carry entries at all. So
+              `listFailed` with rows means "these stood, and nobody could
+              check", and `listFailed` with none means "nobody can tell" — the
+              two sentences the surface already had to write, now decided by the
+              same field they are about rather than by a second one.
+
+              The reason for the old rule survives in where it moved to: a
+              stale answer must not be presented as the current one, which is
+              now the surface's job to *say* rather than the machine's to
+              prevent by forgetting. See components/worktree-review.tsx.
+            */
             onError: {
               target: 'listFailed',
               actions: assign({
                 worktreeError: ({ event }) =>
                   event.error instanceof Error ? event.error.message : String(event.error),
-                // And forget the previous list. A listing left standing over a
-                // git that would not answer is the surface presenting a stale
-                // answer as the current one — the same rule a failed credential
-                // read follows with the kind it can no longer vouch for.
-                worktrees: [],
               }),
             },
           },
+          /*
+            A row on screen can be opened, including while the listing that
+            would replace it is still running.
+
+            The rows already survive a refresh — that is what keeping
+            `worktrees` on the way through this state is for. Refusing
+            `OPEN_WORKTREE` here made them survive as *pictures*: the surface
+            draws each row's control from `snapshot.can(...)`, so every
+            automatic re-listing blanked the open buttons for as long as the
+            actor ran, and the end of every Turn starts one. The rows held
+            still and the controls flickered underneath them, once per Turn,
+            for as long as varnick was open.
+
+            That is the same motion this region was reshaped to remove — the
+            band no longer appears and vanishes per Turn — one level down, and
+            it is the argument `listFailed` already makes a line below: a list
+            you can see and cannot open is half-discarded.
+
+            `LIST_WORKTREES` is deliberately still refused. Two askers share it
+            and neither may restart an actor that is already answering; a
+            control that disappears while the thing it asks for is happening is
+            honest in a way a dead open button is not.
+          */
+          on: { OPEN_WORKTREE: openWorktreeTransition },
         },
-        // Three resting states, each with the same way out. None is terminal:
-        // the filesystem changes while varnick runs — an agent finishes a
-        // branch, a developer merges one — so any of them can be asked again.
+        /*
+          Three resting states, each with the same way out. None is terminal:
+          the filesystem changes while varnick runs — an agent finishes a
+          branch, a developer merges one — so any of them can be asked again.
+
+          `LIST_WORKTREES` is what a developer sends with *look again*, and it
+          is also what this machine sends itself when the Session announces that
+          a Turn ended (see `agent.running`). One event, two askers, and the
+          same refusal while a listing is in flight: a Turn ending during a
+          listing cannot restart the actor answering it.
+        */
         listed: {
           on: {
             LIST_WORKTREES: 'listing',
-            /*
-              The one state with rows in it, and therefore the only one where
-              opening means anything.
-
-              An internal transition: reading a branch is not a state of the
-              listing, and moving the region would say the list had stopped
-              being listed because somebody looked at one of its rows.
-            */
-            OPEN_WORKTREE: {
-              guard: 'openable',
-              actions: assign({
-                worktreeDiff: ({ context, event, spawn }) => {
-                  // From the machine's own list rather than from the event: the
-                  // guard has already established it is there, and taking the
-                  // entry from git's answer is what keeps the branch and the
-                  // count above the hunks the same facts the row showed.
-                  const worktree = context.worktrees.find((entry) => entry.path === event.path)
-                  if (worktree === undefined) return context.worktreeDiff
-                  return spawn('worktreeDiff', {
-                    id: 'worktree-diff',
-                    syncSnapshot: true,
-                    input: { worktree },
-                  })
-                },
-              }),
-            },
+            OPEN_WORKTREE: openWorktreeTransition,
           },
         },
         empty: { on: { LIST_WORKTREES: 'listing' } },
-        listFailed: { on: { LIST_WORKTREES: 'listing' } },
+        // Rows here are the ones a refresh could not replace, so they can be
+        // opened exactly as they could a moment ago — the guard refuses a path
+        // this machine is not holding, which is every path after a first
+        // listing fails.
+        listFailed: {
+          on: {
+            LIST_WORKTREES: 'listing',
+            OPEN_WORKTREE: openWorktreeTransition,
+          },
+        },
       },
     },
   },

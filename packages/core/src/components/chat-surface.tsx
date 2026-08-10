@@ -255,6 +255,30 @@ export function ChatSurface({
         if (model) session?.send({ type: 'SET_MODEL', model: model.id })
       },
     },
+    /*
+      *look again*, for the moments the band that carries it is not on screen.
+
+      The rule for this list is that varnick's own commands are for what the
+      agent has no version of, and that an affordance already visible beside the
+      thing it acts on does not get a second copy here — which is why `/retry`,
+      `/interrupt` and `/restart` were removed. This one is the case that rule
+      leaves out: `review.empty` renders nothing, deliberately and for most of
+      the run, so the control has nowhere to live in exactly the state a
+      developer who has just committed from a terminal is looking at.
+
+      The end of a Turn covers the agent's own commits and does not cover
+      theirs, so the explicit re-ask has to stay reachable. Gated by `can()`
+      like everything else: it disappears while a listing is in flight rather
+      than queueing a second one.
+    */
+    {
+      name: 'pending',
+      description: 'Ask git again what is waiting to be merged',
+      argumentHint: '',
+      source: 'varnick' as const,
+      available: snapshot.can({ type: 'LIST_WORKTREES' }),
+      run: () => send({ type: 'LIST_WORKTREES' }),
+    },
   ].filter((c) => c.available)
 
   /*
@@ -428,6 +452,24 @@ export function ChatSurface({
         not in the document.
       */}
       <SeededStrip mode={mode} />
+
+      {/*
+        What is waiting to be merged, above everything it is about.
+
+        It was in the right-hand column under the runtime panel, which scrolls,
+        so the most consequential thing on the screen — code that will decide
+        what the agent may do, waiting for a human — was reachable only by
+        scrolling past a description of the agent. Here it is outside the
+        transcript's scroller and above it, so it cannot be scrolled away from,
+        and it is full width because branch names and paths must not wrap (The
+        Wide Measure Rule).
+
+        It renders nothing at all when there is nothing waiting, which is what
+        makes a permanent slot affordable: see ReviewPanel, where that decision
+        and the reason a listing in flight is also silent are written down.
+      */}
+      <ReviewPanel snapshot={snapshot} send={send} />
+
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
@@ -846,15 +888,17 @@ export function ChatSurface({
         >
           <RuntimePanel report={ctx.runtime} agentState={agentState} />
           {/*
-            What is waiting to be merged, under what is running.
+            The pending list was here, under the runtime panel, and it has moved
+            above the conversation.
 
-            Core's own, like the runtime panel above it, and above the Surfaces
-            rather than below them: a clone with no Surfaces is every clone on
-            its first launch, and *nothing the agent finished should wait
-            unnoticed* is a claim that cannot be made from behind whatever
-            somebody built.
+            The argument for putting it here was that Core's own panels belong
+            together and a clone with no Surfaces would still have something in
+            this column. Both are still true and neither survived contact with
+            the column scrolling: *nothing the agent finished should wait
+            unnoticed* is not a claim you can make from below the fold. The
+            runtime panel stays, because what the agent is can wait to be
+            scrolled to.
           */}
-          <ReviewPanel snapshot={snapshot} send={send} />
           {ctx.surfaces.map((ref) => (
             <SurfacePanel
               key={ref.id}

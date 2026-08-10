@@ -1,4 +1,4 @@
-import { setup, assign, fromPromise, raise } from 'xstate'
+import { setup, assign, emit, fromPromise, raise } from 'xstate'
 import type { Message } from '../domain.ts'
 import { compactedTranscript, isCommandDraft } from '../domain.ts'
 import type { PastedImage, RunningTask } from '@varnick/harness/turn'
@@ -130,6 +130,28 @@ export type SessionEvent =
   | { type: 'COMPACTED'; summary: string; tokensUsed: number | null }
 
 /**
+ * What this machine says out loud, to whoever is listening.
+ *
+ * One fact: **a Turn ended.** Not an instruction, not an address, and not an
+ * event any state here accepts — it leaves the Session and does not come back.
+ *
+ * It exists because a Turn boundary is the moment things outside this
+ * conversation may have changed, and the Session is the only thing that knows
+ * when one happens. What is *done* about that is deliberately not decided here:
+ * this machine knows nothing about worktrees, git, or the Harness that spawned
+ * it, and a `sendParent` naming somebody else's event would be exactly the
+ * knowledge it must not have — as well as an exception in every rendering that
+ * creates a Session with no parent, which is most of `drive.ts` and every card
+ * on the states page.
+ *
+ * Emitted rather than returned for the same reason `STREAM_DELTA` arrives as an
+ * event: an actor resolves once, to whoever invoked it, and this is addressed to
+ * nobody. See `announceTurnEnd`, and machines/harness.ts for the one listener
+ * there is today.
+ */
+export type SessionEmitted = { type: 'TURN_ENDED' }
+
+/**
  * Real-service contracts:
  *   runTurn        input  { sessionId, prompt }
  *                  output { text: string }
@@ -143,6 +165,7 @@ export const sessionMachine = setup({
     context: {} as SessionContext,
     events: {} as SessionEvent,
     input: {} as SessionInput,
+    emitted: {} as SessionEmitted,
   },
   actors: {
     runTurn: fromPromise<
@@ -170,6 +193,29 @@ export const sessionMachine = setup({
      * either region reaching into the other.
      */
     saveTranscript: raise({ type: 'SAVE' }),
+    /**
+     * The same boundary, said outward.
+     *
+     * `saveTranscript` above crosses from `turn` into `persistence` without
+     * either region reaching into the other; this crosses out of the Session
+     * without it reaching into anything at all. Same moment, same discipline,
+     * one step further out — see {@link SessionEmitted}.
+     *
+     * **Beside `saveTranscript` at three of its four call sites, and not at the
+     * fourth.** An answer, a failure and an interrupt are each a Turn *ending*:
+     * the agent has stopped working, and whatever it did — including a commit in
+     * a worktree — is done. `COMPACTED` is not one. It arrives while the agent is
+     * still working, on a context it has just rewritten, so it changes the
+     * transcript without ending anything; announcing a Turn's end there would
+     * report a boundary that had not been reached.
+     *
+     * A failed Turn and an interrupted one announce for the same reason a
+     * successful one does, and it is worth saying because the reflex is to
+     * announce only the happy path: an agent that committed and *then* failed,
+     * or that had committed by the time somebody pressed Escape, has changed the
+     * world exactly as much as one that finished.
+     */
+    announceTurnEnd: emit({ type: 'TURN_ENDED' as const }),
   },
   guards: {
     // Enter always sends, menu or not. Completing a command is Tab's job, and
@@ -434,19 +480,23 @@ export const sessionMachine = setup({
                   tokensUsed: ({ event }) => event.output.tokensUsed,
                 }),
                 'saveTranscript',
+                'announceTurnEnd',
               ],
             },
             onError: {
               target: 'failed',
               // A failed Turn is still a boundary: the user's message is in the
               // transcript whether or not an answer ever arrived, and losing it
-              // to the failure is the case the mirror exists for.
+              // to the failure is the case the mirror exists for. It is a
+              // boundary in the other direction too — the agent may have done
+              // everything it was asked and fallen over on the last word.
               actions: [
                 assign({
                   turnError: ({ event }) =>
                     event.error instanceof Error ? event.error.message : String(event.error),
                 }),
                 'saveTranscript',
+                'announceTurnEnd',
               ],
             },
           },
@@ -496,6 +546,7 @@ export const sessionMachine = setup({
                   partial: '',
                 }),
                 'saveTranscript',
+                'announceTurnEnd',
               ],
             },
           },

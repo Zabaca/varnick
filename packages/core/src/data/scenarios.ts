@@ -567,19 +567,26 @@ export const SCENARIOS: readonly Scenario[] = [
   // The `review` region: which Worktrees hold Core changes nobody has merged,
   // taken from git host-side and never from the agent (ADR-0014).
   //
-  // These four cards carry the states before anything draws them. The list
-  // itself is ticket 50's — this ticket is the data — so what a card shows
-  // today is the window with the region parked, and the state line above it.
-  // They are here rather than added with the rendering because the coverage
-  // banner is a gate: a state that ships without a card is a state nobody has
-  // looked at, and that is precisely the state that ships broken.
+  // These cards carry the states before anything draws them. The list itself is
+  // ticket 50's — this ticket is the data — so what a card shows today is the
+  // window with the region parked, and the state line above it. They are here
+  // rather than added with the rendering because the coverage banner is a gate:
+  // a state that ships without a card is a state nobody has looked at, and that
+  // is precisely the state that ships broken.
+  //
+  // Two of them are cards of *nothing being drawn*, and that is what they are
+  // for. The band renders when it has something to show, so `review.empty` — the
+  // state the surface is in almost all the time — costs no vertical space at
+  // all, and neither does the listing a launch or a Turn ending starts behind
+  // it. The thing to judge on those two cards is the chat: it should look like a
+  // window with no panel in it, not like a window with a gap.
   {
     id: 'worktrees-listing',
     group: 'Pending Core changes',
     title: 'Asking git what is pending',
     blurb:
-      'The region every launch starts in. Nobody asked for it — there is no state meaning "not listed yet", because listing costs three read-only git commands and nothing about it is a decision a developer makes.',
-    question: 'Is a listing in flight quiet enough to launch into?',
+      'The region every launch starts in, and the region every Turn ends in. Nobody asked for it — there is no state meaning "not listed yet" — and with no rows behind it, nothing is drawn: a band that appeared and vanished on every Turn would be motion the machines did not make.',
+    question: 'Is a listing in flight quiet enough to launch into, and to end every Turn in?',
     covers: ['review.listing'],
     input: { ...up, sessionInput: { sessionId: 'states-worktrees-listing', messages: seedMessages } },
   },
@@ -588,7 +595,7 @@ export const SCENARIOS: readonly Scenario[] = [
     group: 'Pending Core changes',
     title: 'Two worktrees waiting',
     blurb:
-      'Two branches hold commits the live tree does not, and one of them edits the Fence — the generator, the host, or the baseline. That flag is the field the diff view turns into colour, so a widening cannot sit unremarked in four hundred lines.',
+      'Two branches hold commits the live tree does not, and one of them edits the Fence — the generator, the host, or the baseline. That flag is the field the diff view turns into colour, so a widening cannot sit unremarked in four hundred lines. Above the conversation, because it is the most consequential thing on the screen and the column beside the chat scrolls.',
     question: 'Can you tell at a glance which of these changes the boundary?',
     covers: ['review.listed'],
     input: {
@@ -603,8 +610,8 @@ export const SCENARIOS: readonly Scenario[] = [
     group: 'Pending Core changes',
     title: 'Nothing waiting',
     blurb:
-      'git answered and there is nothing to merge. A real state rather than a list of length zero: this says everything the agent finished has landed, which is a different sentence from the card below it.',
-    question: 'Does this read as up to date rather than as a list that failed to load?',
+      'git answered and there is nothing to merge. A real state rather than a list of length zero — and it says so by not being there: a panel earning a permanent slot for the state it is in almost all the time is how it ended up below the fold. *look again* is in the command menu while the band is away.',
+    question: 'Does the window read as up to date, rather than as missing a panel?',
     covers: ['review.empty'],
     input: {
       ...up,
@@ -617,7 +624,7 @@ export const SCENARIOS: readonly Scenario[] = [
     group: 'Pending Core changes',
     title: 'The listing failed',
     blurb:
-      'git could not be run, or would not answer. Nothing is known about what is pending — which is why this is not the card above with an empty list: one says nothing is waiting, and this one says nobody can currently tell.',
+      'git could not be run, or would not answer, on the first listing of the run — so there is nothing standing behind it. Nothing is known about what is pending, which is why this is not the card above with an empty list: one says nothing is waiting, and this one says nobody can currently tell.',
     question: 'Is "we do not know" distinguishable from "there is nothing"?',
     covers: ['review.listFailed'],
     input: {
@@ -625,6 +632,22 @@ export const SCENARIOS: readonly Scenario[] = [
       sessionInput: { sessionId: 'states-worktrees-list-failed', messages: seedMessages },
       enterReview: 'listFailed',
       worktreeError: 'fatal: not a git repository',
+    },
+  },
+  {
+    id: 'worktrees-refresh-failed',
+    group: 'Pending Core changes',
+    title: 'The refresh failed, the list stood',
+    blurb:
+      'The same state as the card above and the opposite sentence, because a list survived it. Every Turn now re-lists, so most failures are failures to refresh — and a git that would not answer this time has said nothing about the branches it listed a minute ago. The rows stay, and stay openable, under a warning that nobody could check them.',
+    question: 'Is it clear these are the last answer rather than the current one?',
+    covers: ['review.listFailed'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktrees-refresh-failed', messages: seedMessages },
+      enterReview: 'listFailed',
+      worktrees: statesWorktrees,
+      worktreeError: 'fatal: unable to read .git/HEAD',
     },
   },
 

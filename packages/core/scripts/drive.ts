@@ -2275,9 +2275,24 @@ export default function Billing() {
   }
 
   {
-    // A failed re-listing leaves no stale list standing. The same rule the
-    // credential kind follows: a fact about something nobody can currently see
-    // is a fact the surface would present as current.
+    /*
+      A refresh that failed does not throw away a list that was good.
+
+      This assertion used to say the opposite, and the rule it enforced was
+      right for the world it was written in: the region listed once, so a
+      failure was a *first* failure and there was nothing to keep. Now that the
+      end of every Turn re-lists, most failures are failures to refresh — and a
+      git that would not answer this time has said nothing about the branches it
+      listed a minute ago. Dropping them replaces a working answer with an error
+      message, which is how a developer loses sight of a branch that is
+      genuinely waiting to be merged.
+
+      What the old rule was protecting — that a stale answer is not presented as
+      the current one — is unchanged, and is now the surface's to say rather
+      than the machine's to prevent by forgetting: `review.listFailed` holding
+      rows renders them under a line admitting nobody could check them. See
+      components/worktree-review.tsx.
+    */
     let listings = 0
     const actor = createActor(
       harnessMachine.provide({
@@ -2295,7 +2310,89 @@ export default function Billing() {
     await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
     actor.send({ type: 'LIST_WORKTREES' })
     await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listFailed', soon)
-    check('a failed re-listing keeps no list it can no longer vouch for', actor.getSnapshot().context.worktrees.length === 0)
+    check(
+      'a failed refresh keeps the list it could not replace',
+      JSON.stringify(actor.getSnapshot().context.worktrees) === JSON.stringify([oneEntry]),
+    )
+    check(
+      'and says why nobody could check it',
+      actor.getSnapshot().context.worktreeError === 'fatal: not a git repository',
+    )
+    // The rows are still rows. A list you can see and cannot open is a list
+    // half-thrown-away, and the guard is what makes this safe rather than a
+    // second rule: it refuses a path this machine is not holding.
+    check(
+      'and a surviving row can still be opened',
+      actor.getSnapshot().can({ type: 'OPEN_WORKTREE', path: oneEntry.path }),
+    )
+    actor.stop()
+  }
+
+  {
+    /*
+      A *first* listing that failed keeps nothing, and nothing can be opened
+      from it.
+
+      The two cases need no flag to tell them apart: a launch enters `listing`
+      with an empty list and leaves it empty, so entries in `listFailed` can only
+      have come from a listing that once worked. That is what makes "these
+      stood, and nobody could check" and "nobody can tell" two sentences the
+      surface can write from one state.
+    */
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          listWorktrees: rejects<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>('fatal: no git'),
+        },
+      }),
+      { input: { policy: seedPolicy } },
+    ).start()
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listFailed', soon)
+    check('a first listing that failed holds no list', actor.getSnapshot().context.worktrees.length === 0)
+    check(
+      'and there is nothing on it to open',
+      !actor.getSnapshot().can({ type: 'OPEN_WORKTREE', path: oneEntry.path }),
+    )
+    actor.stop()
+  }
+
+  {
+    /*
+      A row you can see is a row you can open, including while the refresh that
+      would replace it is still running.
+
+      The rows already survived a re-listing; refusing `OPEN_WORKTREE` while it
+      ran made them survive as pictures. The surface draws each row's control
+      from `can()`, and the end of every Turn starts a listing, so the open
+      buttons blanked once per Turn for as long as varnick was open — the same
+      motion the band was reshaped to remove, one level down.
+
+      `LIST_WORKTREES` stays refused here, and the next assertion is the pair to
+      this one: two askers share that event and neither may restart an actor
+      that is already answering.
+    */
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: { listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>() },
+      }),
+      { input: { policy: seedPolicy, enterReview: 'listed', worktrees: [oneEntry] } },
+    ).start()
+    actor.send({ type: 'LIST_WORKTREES' })
+    check('a refresh in flight is a listing', regionOf(actor.getSnapshot().value, 'review') === 'listing')
+    check(
+      'and a row on screen can still be opened while it runs',
+      actor.getSnapshot().can({ type: 'OPEN_WORKTREE', path: oneEntry.path }),
+    )
+    check(
+      'while a second ask is still refused',
+      !actor.getSnapshot().can({ type: 'LIST_WORKTREES' }),
+    )
+    // The guard is what makes the first of those safe rather than a second
+    // rule: it refuses a path this machine is not holding.
+    check(
+      'and a path nobody listed is refused',
+      !actor.getSnapshot().can({ type: 'OPEN_WORKTREE', path: '/nowhere' }),
+    )
     actor.stop()
   }
 
@@ -2386,6 +2483,271 @@ export default function Billing() {
 
     if (realInternals === undefined) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__
     else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = realInternals
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The end of a Turn is when the pending list may have changed
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The one cross-machine trigger in the product, asserted from both ends and
+    then through the middle.
+
+    `review` is a region on the Harness; a Turn belongs to the Session. The
+    requirement was that this work without either machine learning the other's
+    internals, so the shape is: the Session **emits** `TURN_ENDED`, which is a
+    fact about itself addressed to nobody, and the Harness — which already owns
+    the ref, because it spawned it — hears that and sends itself the
+    `LIST_WORKTREES` it has always had.
+
+    Three things follow, and each is asserted below rather than argued:
+
+      1. A Session with no parent at all announces, and does not throw. That is
+         what rules out `sendParent`, which would make every standalone Session
+         in this script and every card on the states page an exception.
+      2. The announcement is made at every way a Turn can *end* — answered,
+         failed, interrupted — and not when the agent merely rewrites the
+         transcript mid-Turn by compacting.
+      3. End to end, a commit that appears between two listings reaches the
+         window with nobody pressing anything.
+  */
+  const listener = () => {
+    const heard: string[] = []
+    return { heard, on: (type: string) => heard.push(type) }
+  }
+
+  {
+    // A Session created cold, with no parent and nothing listening but this.
+    const seen = listener()
+    const actor = createActor(
+      sessionMachine.provide({
+        actors: { runTurn: resolves<TurnOutput, TurnInput>({ text: 'committed', tokensUsed: 3 }) },
+      }),
+      { input: { sessionId: 'turn-end-1' } },
+    ).start()
+    actor.on('TURN_ENDED', (event) => seen.on(event.type))
+
+    actor.send({ type: 'EDIT_DRAFT', text: 'go and commit' })
+    actor.send({ type: 'SEND' })
+    check(
+      'an answered Turn announces that it ended',
+      await reaches(waitFor(actor, () => seen.heard.length > 0, soon)),
+    )
+    check('a Session with no parent announces without one', seen.heard.join('|') === 'TURN_ENDED')
+    actor.stop()
+  }
+
+  {
+    // A Turn that failed is a Turn that ended. The agent may have done
+    // everything it was asked and fallen over on the last word.
+    const seen = listener()
+    const actor = createActor(
+      sessionMachine.provide({
+        actors: { runTurn: rejects<TurnOutput, TurnInput>('the model refused') },
+      }),
+      { input: { sessionId: 'turn-end-2' } },
+    ).start()
+    actor.on('TURN_ENDED', (event) => seen.on(event.type))
+    actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+    actor.send({ type: 'SEND' })
+    check(
+      'a failed Turn announces that it ended',
+      await reaches(waitFor(actor, () => seen.heard.length > 0, soon)),
+    )
+    actor.stop()
+  }
+
+  {
+    // And so is an interrupted one — by the time somebody pressed Escape the
+    // agent may already have committed.
+    const seen = listener()
+    const actor = createActor(
+      sessionMachine.provide({ actors: { runTurn: turnNever() }, delays: { interruptGrace: 1 } }),
+      { input: { sessionId: 'turn-end-3' } },
+    ).start()
+    actor.on('TURN_ENDED', (event) => seen.on(event.type))
+    actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+    actor.send({ type: 'SEND' })
+    actor.send({ type: 'INTERRUPT' })
+    check(
+      'an interrupted Turn announces that it ended',
+      await reaches(waitFor(actor, () => seen.heard.length > 0, soon)),
+    )
+    actor.stop()
+  }
+
+  {
+    /*
+      A compaction is not the end of a Turn.
+
+      It arrives while the agent is still working, on a context it has just
+      rewritten, so it changes the transcript without ending anything — which is
+      why it takes `saveTranscript` and not `announceTurnEnd`. Announcing here
+      would report a boundary that had not been reached, and would re-list in
+      the middle of the answer rather than after it.
+    */
+    const seen = listener()
+    const actor = createActor(
+      sessionMachine.provide({ actors: { runTurn: turnNever() } }),
+      { input: { sessionId: 'turn-end-4' } },
+    ).start()
+    actor.on('TURN_ENDED', (event) => seen.on(event.type))
+    actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+    actor.send({ type: 'SEND' })
+    actor.send({ type: 'COMPACTED', summary: 'so far: nothing', tokensUsed: 10 })
+    check('a compaction mid-Turn announces no ending', seen.heard.length === 0)
+    check(
+      'and the Turn it happened during is still in flight',
+      regionOf(actor.getSnapshot().value, 'turn') === 'answering.streaming' ||
+        regionOf(actor.getSnapshot().value, 'turn') === 'answering.sending',
+    )
+    actor.stop()
+  }
+
+  /**
+   * A Harness with an agent running and a Session in it, listing whatever the
+   * counter says this time round.
+   *
+   * The point of the shape is that nothing outside the machines is wired here:
+   * the only join is the one in `agent.running`, which is Core rather than the
+   * page, the hook or this script.
+   */
+  const running = async (
+    answer: (nth: number) => Promise<readonly PendingWorktree[]>,
+    turn = resolves<TurnOutput, TurnInput>({ text: 'committed it', tokensUsed: 1 }),
+  ) => {
+    let listings = 0
+    const actor = createActor(
+      harnessMachine.provide({
+        actors: {
+          readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'api-key' }),
+          checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
+          spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 1 }),
+          listWorktrees: fromPromise<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
+            async () => ({ worktrees: await answer(listings++) }),
+          ),
+          session: sessionMachine.provide({ actors: { runTurn: turn } }),
+        },
+      }),
+      { input: { policy: seedPolicy, sessionInput: { sessionId: 'end-of-turn' } } },
+    ).start()
+    actor.send({ type: 'READ_CREDENTIAL' })
+    await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present', soon)
+    actor.send({ type: 'CHECK_SANDBOX' })
+    await waitFor(actor, (s) => regionOf(s.value, 'sandbox') === 'available', soon)
+    actor.send({ type: 'START' })
+    await waitFor(actor, (s) => s.context.session !== null, soon)
+    return { actor, listings: () => listings }
+  }
+
+  {
+    /*
+      The ticket, as one assertion: the agent commits during a Turn and the
+      entry appears without anybody clicking.
+
+      The first listing finds nothing — a launch while the agent's worktree has
+      no commits, which is exactly how this was found by using it. The Turn runs,
+      the Session announces its end, and the second listing finds the branch.
+      Nothing in this block sends `LIST_WORKTREES`.
+    */
+    const entry: PendingWorktree = {
+      path: '/Users/dev/code/varnick/.claude/worktrees/55',
+      branch: 'ticket/55-end-of-turn',
+      commits: 1,
+      changed: ['packages/core/src/machines/harness.ts'],
+      touchesFence: false,
+    }
+    const { actor } = await running(async (nth) => (nth === 0 ? [] : [entry]))
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'empty', soon)
+    check('a launch that finds nothing rests in empty', regionOf(actor.getSnapshot().value, 'review') === 'empty')
+
+    const session = actor.getSnapshot().context.session!
+    session.send({ type: 'EDIT_DRAFT', text: 'change Core and commit it' })
+    session.send({ type: 'SEND' })
+
+    check(
+      'a Turn ending lists again with nobody asking',
+      await reaches(waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)),
+    )
+    check(
+      'and the branch the agent just committed is on the list',
+      JSON.stringify(actor.getSnapshot().context.worktrees) === JSON.stringify([entry]),
+    )
+    actor.stop()
+  }
+
+  {
+    /*
+      A refresh is not a close.
+
+      `CLOSE_WORKTREE` is the parent's, and the existing rule that a re-listing
+      does not shut what somebody is reading now has a second way to be broken:
+      the listing that arrives on its own, while a developer is halfway down a
+      diff. The child is untouched — same ref, same state — because nothing on
+      the re-listing path goes near it.
+    */
+    const entry: PendingWorktree = {
+      path: '/Users/dev/code/varnick/.claude/worktrees/55',
+      branch: 'ticket/55-end-of-turn',
+      commits: 2,
+      changed: ['src-tauri/src/bridge.rs'],
+      touchesFence: true,
+    }
+    const { actor, listings } = await running(async () => [entry])
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
+    actor.send({ type: 'OPEN_WORKTREE', path: entry.path })
+    const open = actor.getSnapshot().context.worktreeDiff
+    check('a diff is open before the Turn ends', open !== null)
+
+    const session = actor.getSnapshot().context.session!
+    session.send({ type: 'EDIT_DRAFT', text: 'carry on' })
+    session.send({ type: 'SEND' })
+    check(
+      'the Turn ending asks git again',
+      await reaches(waitFor(actor, () => listings() > 1, soon)),
+    )
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
+
+    check('the refresh a Turn caused leaves the open diff open', actor.getSnapshot().context.worktreeDiff !== null)
+    check('and it is the same diff, not a replacement', actor.getSnapshot().context.worktreeDiff === open)
+    check('closing it is still the parent’s', actor.getSnapshot().can({ type: 'CLOSE_WORKTREE' }))
+    actor.stop()
+  }
+
+  {
+    /*
+      A Turn that ends while a listing is in flight does not restart it.
+
+      The region refuses `LIST_WORKTREES` in `listing`, which was already the
+      rule for the button and is now also what keeps the automatic ask from
+      cancelling the one already running. It is a dropped event rather than a
+      queued one, and that is the accepted cost: the alternative is a listing
+      that can be restarted for ever by a fast enough conversation.
+    */
+    const { actor, listings } = await running((nth) =>
+      nth === 0 ? Promise.resolve([]) : new Promise<readonly PendingWorktree[]>(() => {}),
+    )
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'empty', soon)
+
+    const session = actor.getSnapshot().context.session!
+    session.send({ type: 'EDIT_DRAFT', text: 'one' })
+    session.send({ type: 'SEND' })
+    await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listing', soon)
+    check('the first Turn to end starts a listing', listings() === 2)
+
+    // A second Turn ends while that refresh is still out. The listing already
+    // running is the one that answers; nothing is queued behind it.
+    session.send({ type: 'EDIT_DRAFT', text: 'two' })
+    session.send({ type: 'SEND' })
+    await waitFor(session, (s) => regionOf(s.value, 'turn') === 'idle', soon)
+    check('a Turn ending during a listing does not restart it', listings() === 2)
+    check(
+      'and the listing it could not restart is still the one in flight',
+      regionOf(actor.getSnapshot().value, 'review') === 'listing',
+    )
+    actor.stop()
   }
 }
 
