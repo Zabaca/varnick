@@ -71,6 +71,38 @@ attached, because the two need different things at merge time:
 The diff and the Fence-hunk rendering (ticket 50) need no change — both already
 work off two refs, not off a directory.
 
+## The filter is deletion, because no content predicate survives a squash
+
+`rev-list --count main..<ref>` alone is not enough, and this repository already
+proves it. Measured on the clone: **sixteen `ticket/NN-*` branches** are ahead of
+`main` — between 1 and 46 commits each — and every one of them was landed months
+of commits ago. `/ship` reaped their worktrees and left their branches. A naive
+list would open with sixteen rows claiming pending work, above the one row that
+is real.
+
+Three candidate predicates, all of which fail on those sixteen:
+
+- `merge-base --is-ancestor` — fails by construction after a squash. Ticket 56
+  already records this.
+- `git diff main <branch>` empty — 56's content check, and it is right *there*,
+  in the window just after a merge when `main` has not moved. Run it later and
+  the diff is dominated by everything `main` gained since; the three sampled
+  branches show 330-odd changed lines each, none of it theirs.
+- `git cherry main <branch>` — marks patch-equivalent commits `-`. A squash is
+  one commit that equals none of the originals, so `ticket/02-credential` reports
+  `+` for work that is unambiguously in `main`.
+
+So the answer is not a better query. **The branch being deleted at merge is what
+makes the list correct**, and 56's cleanup already deletes it — that step stops
+being hygiene and becomes the invariant this ticket depends on. Any branch ahead
+of `main` that still exists is pending, because merging is the only thing that
+removes one.
+
+That inverts the order of work: 56 must delete branches before 59 can list them
+honestly, which is a second reason 59 sits behind it rather than beside it. And
+the sixteen existing branches are debris predating the rule — they need reaping
+once, by hand, with the developer's say-so, before the list is switched on.
+
 ## Watch for
 
 - **Do not push the agent into a Worktree for everything to make this go away.**
@@ -80,9 +112,9 @@ work off two refs, not off a directory.
 - A branch with zero commits ahead of `main` is not pending and must not be a
   row. Same filter as the worktree path, for the same reason.
 - `main` itself is never a row.
-- Squash means the ancestry check still lies here exactly as it does in 56 —
-  compare content (`git diff main <branch>` empty), not `merge-base
-  --is-ancestor`.
+- **The sixteen `ticket/NN-*` branches must be gone before this ships**, or the
+  list's first impression is sixteen lies. Reaping them is a separate, developer-
+  approved step and not something this ticket's code should do at runtime.
 - Nothing composed by the agent. Git's answer, host-side, same as the list and
   the diff.
 
