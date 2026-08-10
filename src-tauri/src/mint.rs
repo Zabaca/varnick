@@ -261,12 +261,26 @@ fn looks_like_a_token(candidate: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// The run of credential characters starting at `text`, and nothing after it.
+///
+/// The value is the longest thing here that *could* be a token, which is a much
+/// narrower claim than "everything up to the next sentence" and is the whole
+/// reason this replaced that. It stops at the first byte a credential cannot
+/// contain — a newline, a space, a box-drawing rule, a colour that survived the
+/// strip — rather than trying to name what that byte will be.
+fn token_run(text: &str) -> &str {
+    let end = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(text.len());
+    &text[..end]
+}
+
 /// Everything up to the first blank line.
 ///
-/// The renderer wraps a long value across lines, so a single newline inside the
-/// value has to be joined over. A *blank* line is the render moving on to the
-/// next thing it has to say, and it is what stops the join running into prose
-/// that happens to be made of token characters.
+/// A blank line is the render moving on to the next thing it has to say. It used
+/// to bound the value itself; it now bounds the *gap* between the value and the
+/// sentence after it, which is the only place a judgement about what belongs to
+/// the credential is still made. See [`minted_token_of`].
 fn until_blank_line(text: &str) -> &str {
     let bytes = text.as_bytes();
     for (index, byte) in bytes.iter().enumerate() {
@@ -291,36 +305,104 @@ fn until_blank_line(text: &str) -> &str {
 /// most of a mint. `Some(Err(_))` means the prefix appeared and what followed it
 /// could not be read as a token — the loud failure this path is built around.
 ///
-/// Two cuts and then a deletion, and each of the three is a guard against a
-/// different way of storing the wrong bytes:
+/// ## Why this reads a run rather than a span
 ///
-///   * up to the sentence that follows the value, so the sentence is not part
-///     of it. No sentence means no token, not "take what there is".
-///   * up to the first blank line, so a render that carries on talking cannot
-///     have its words joined onto the end of a credential.
-///   * whitespace deleted rather than trimmed, because the renderer wraps a
-///     long value mid-string. A parse that stopped at the first newline would
-///     take the first line of a credential and store it as the whole one, and
-///     the symptom is authentication failing days later.
+/// It used to take *everything* between the prefix and the sentence after it,
+/// delete the whitespace, and require what was left to be credential characters.
+/// That parse is only correct if nothing else can appear in between, and it was
+/// recorded against a `claude setup-token` that printed four plain lines. The
+/// command is now a full-screen terminal UI — splash art, dotted rules, frames
+/// that repaint — and [`Rendered`] is a *stripper*, not a terminal emulator: it
+/// removes the escape sequences and keeps every frame's text, concatenated. So
+/// the bytes between the token and the sentence stopped being a blank line and
+/// started being whatever the UI drew there, the whole span failed the character
+/// check, and every mint on such a version ended in `unreadable-token` with a
+/// perfectly good credential on screen. Measured on Claude Code 2.1.226.
+///
+/// Reading forward from the prefix instead makes the parse depend on the token's
+/// own shape rather than on its surroundings, so a render that changes around it
+/// changes nothing here.
+///
+/// ## What still guards against a truncated credential
+///
+/// The terminator, which is the reason it is still required. Half a token is the
+/// one failure worse than none — it authenticates nothing and does it days later
+/// — and a run that stops early because the rest has not arrived yet looks
+/// exactly like a complete one. The sentence after the value cannot be on screen
+/// until the value finished printing, so requiring it is what makes the run
+/// trustworthy. It is searched for *after* the run rather than in the whole
+/// text, so a terminator from an earlier repaint cannot vouch for a token that
+/// is still arriving.
+///
+/// The wrapping this used to join over is handled by [`PTY_COLUMNS`] instead,
+/// which is wide enough that the renderer has nothing to wrap. Joining across
+/// newlines is not merely unnecessary now but wrong: a UI that repaints emits
+/// the token more than once, and a parse that deleted the newline between two
+/// copies would store both as one credential.
 pub fn minted_token_of(rendered: &Rendered) -> Option<Result<Secret, &'static str>> {
     let text = rendered.plain();
     let start = text.find(TOKEN_PREFIX)?;
     let rest = &text[start..];
 
-    // No terminator yet. Still arriving, or it never will — the caller decides
-    // which by whether the command has ended. See {@link store_minted_token}.
-    let end = TOKEN_TERMINATORS
-        .iter()
-        .filter_map(|marker| rest.find(marker))
-        .min()?;
+    let candidate = token_run(rest);
 
-    let span = until_blank_line(&rest[..end]);
-    let candidate: String = span.chars().filter(|c| !c.is_whitespace()).collect();
-    if looks_like_a_token(&candidate) {
-        Some(Ok(Secret::new(candidate)))
-    } else {
-        Some(Err("unreadable-token"))
+    // No terminator after the value. Still arriving, or it never will — the
+    // caller decides which by whether the command has ended, in
+    // [`store_minted_token`].
+    let tail = &rest[candidate.len()..];
+    let end = match TOKEN_TERMINATORS
+        .iter()
+        .filter_map(|marker| tail.find(marker))
+        .min()
+    {
+        Some(end) => end,
+        None => return None,
+    };
+
+    if !looks_like_a_token(candidate) {
+        return Some(Err("unreadable-token"));
     }
+
+    /*
+      What sits between the value and the sentence after it, which is the one
+      question a run cannot answer for itself.
+
+      A run stops at the first character a credential cannot contain, and a
+      newline is one — so a value the renderer split across two lines yields a
+      run holding the first half, which is a perfectly well-formed token and the
+      wrong one. That is the failure the old whitespace-deleting parse existed to
+      prevent, and dropping it without putting anything in its place would trade
+      a loud break for a silent truncation.
+
+      So the gap is checked rather than joined. Only two things may be in it:
+
+        * nothing but whitespace — the ordinary render, value then sentence.
+        * whitespace and further copies of the same run — a terminal UI that
+          repainted the frame. Stripping escape sequences rather than emulating
+          them leaves every frame's text concatenated ([`Rendered`]), so this is
+          what a redraw looks like from here, and it is not evidence of anything
+          being wrong.
+
+      Anything else is a value this code cannot read with confidence, and it says
+      so. Refusing is the whole point: the alternative on this path is a
+      credential stored short, which authenticates nothing and does it days
+      later, far from the cause.
+
+      Bounded at the first blank line, because past one the render has moved on
+      and is talking about the token rather than printing it. Prose there is not
+      evidence of a wrap, and a check that read it as one would refuse every
+      render that says anything between the value and the sentence.
+    */
+    let gap = until_blank_line(&tail[..end]);
+    let leftovers: String = gap
+        .split_whitespace()
+        .filter(|piece| *piece != candidate)
+        .collect();
+    if !leftovers.is_empty() {
+        return Some(Err("unreadable-token"));
+    }
+
+    Some(Ok(Secret::new(candidate.to_string())))
 }
 
 /// What a finished mint amounts to, and the one place a token is stored.
@@ -474,6 +556,41 @@ impl Minting {
         });
 
         Ok(())
+    }
+
+    /// Give up on the running mint, so another one can start.
+    ///
+    /// The way out that [`Minting::start`]'s refusal implies and nothing
+    /// provided. A mint holds the latch until its child exits or [`MINT_LIMIT`]
+    /// elapses, and both of those are events a developer who closed the browser
+    /// tab cannot cause: the child is waiting on a sign-in that will never
+    /// arrive, and the watchdog is ten minutes away. Until this existed, the
+    /// only way to start a second mint was to find the process and kill it from
+    /// a terminal — which the screen offering "wait for it to give up" had no
+    /// way to say, and which is not something a developer should have to know.
+    ///
+    /// Killing the group is what releases the latch: the reader thread's
+    /// `child.wait()` returns, it stores whatever it captured (nothing, on this
+    /// path, because a token that was never printed cannot parse) and clears
+    /// `group` itself. Taking `group` here as well would leave that thread with
+    /// nothing to kill and no way to tell an abandoned mint from a finished one,
+    /// so this deliberately does not.
+    ///
+    /// Answering `false` when nothing is running is not a failure. Two clicks
+    /// on the same control, or a cancel that races the flow finishing on its
+    /// own, are both ordinary; there is nothing for a surface to report.
+    pub fn cancel(&self) -> bool {
+        let Ok(state) = self.inner.state.lock() else {
+            return false;
+        };
+        let Some(pid) = state.group else {
+            return false;
+        };
+        // The lock is held across the kill on purpose: dropping it first would
+        // let a `start` in another thread past its `group.is_some()` check and
+        // into a second spawn, while this one is still tearing the first down.
+        kill_group(Some(pid));
+        true
     }
 
     /// The next thing the running mint had to say, or nothing yet.
@@ -721,6 +838,46 @@ mod tests {
         ))
     }
 
+    /// The shape Claude Code 2.1.226 produces, which is a full-screen UI.
+    ///
+    /// The render [`recorded`] holds is four plain lines. The command is now an
+    /// Ink application: a splash frame with pixel art and dotted rules, drawn
+    /// and then repainted, with the token in a later frame. [`Rendered`] strips
+    /// escape sequences rather than emulating them, so what the parse sees is
+    /// every frame's text run together — dotted rules, block characters and all.
+    ///
+    /// Recorded from a real run's *shape*, never its bytes: the token is
+    /// invented, as everywhere else in this module. The label changed too
+    /// ("Your OAuth token (valid for 1 year):" for "Your token:"), which is why
+    /// nothing here is keyed off it.
+    fn recorded_full_screen() -> Rendered {
+        let token = fake_token();
+        Rendered::of(&format!(
+            concat!(
+                "\u{1b}[?25l\u{1b}[2J\u{1b}[H",
+                "\u{1b}[1mWelcome to Claude Code\u{1b}[22m \u{1b}[2mv2.1.226\u{1b}[22m\r\n",
+                "····································\r\n",
+                "\u{1b}[48;5;209m  \u{1b}[49m\u{1b}[38;5;250m▄▄\u{1b}[39m   \u{1b}[2m*\u{1b}[22m\r\n",
+                "····································\r\n",
+                // The repaint. A frame is drawn, the cursor goes home, and the
+                // frame is drawn again — the second one carrying the token.
+                "\u{1b}[2J\u{1b}[H",
+                "\u{1b}[1mWelcome to Claude Code\u{1b}[22m \u{1b}[2mv2.1.226\u{1b}[22m\r\n",
+                "····································\r\n",
+                "\u{1b}[32m✓\u{1b}[39m Long-lived authentication token created successfully!\r\n",
+                "\r\n",
+                "Your OAuth token (valid for 1 year):\r\n",
+                "{token}\r\n",
+                "\r\n",
+                "\u{1b}[2mStore this token securely. You won't be able to see it again.\u{1b}[22m\r\n",
+                "\r\n",
+                "\u{1b}[2mUse this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>\u{1b}[22m\r\n",
+                "\u{1b}[?25h",
+            ),
+            token = token,
+        ))
+    }
+
     /// The same run, with the token wrapped mid-string by the renderer.
     ///
     /// This is the case that made a naive parse dangerous: the value is split
@@ -808,18 +965,78 @@ mod tests {
     }
 
     #[test]
-    fn a_token_the_renderer_wrapped_is_stored_whole() {
+    fn a_token_the_renderer_wrapped_is_refused_rather_than_stored_short() {
         /*
-          The failure this ticket exists to prevent, and the one that is silent:
-          a value stored short authenticates nothing, and fails days later with
-          an error that points at the credential rather than at the parse. The
-          wrapped shape has to produce byte-for-byte the same script as the
-          unwrapped one.
+          This used to be joined back together, and it is now refused. The
+          change is deliberate and it is the harder half of moving to a run.
+
+          Joining a value across a newline and telling a repainted frame from a
+          wrapped one are the same problem with opposite answers: the first must
+          be glued together and the second must not, and the bytes look alike.
+          A parse that joins turns a repaint into a credential of twice the
+          length; a parse that does not turns a wrap into one of half. Only the
+          second can be made loud, so that is the one this takes.
+
+          What makes the trade sound is that the wrap should not happen at all:
+          `PTY_COLUMNS` is 512 and a token is about a hundred characters, so the
+          renderer has nothing to wrap. This is the fallback for a render that
+          wraps anyway, and a fallback that refuses is the correct end of that
+          road — a credential stored short is the silent failure this whole path
+          is built to avoid, and no version of this code can be sure enough to
+          store one.
         */
         let security = Recorder::ok();
-        store_minted_token(&security, &recorded_wrapped()).expect("a wrapped token is a token");
+        assert_eq!(
+            store_minted_token(&security, &recorded_wrapped()),
+            Err("unreadable-token")
+        );
+        assert!(security.calls().is_empty());
+    }
+
+    #[test]
+    fn the_full_screen_render_is_parsed_the_same_as_the_plain_one() {
+        /*
+          The regression this rewrite is for. Claude Code 2.1.226 draws its
+          sign-in as a full-screen UI and repaints it, and because `Rendered`
+          strips escape sequences rather than emulating them, the parse sees
+          every frame at once. The old parse took *everything* between the token
+          and the sentence after it, so the second frame's dotted rules and block
+          characters landed inside the candidate and failed the character check —
+          turning a perfectly good credential on screen into `unreadable-token`,
+          deterministically, on every mint.
+
+          The token is the same one the plain shape carries, so this asserts the
+          two renders produce byte-for-byte the same keychain script. Reading
+          forward from the prefix is what makes that true: it depends on the
+          token's own shape and not on anything drawn around it.
+        */
+        let security = Recorder::ok();
+        store_minted_token(&security, &recorded_full_screen())
+            .expect("the full-screen shape holds a token");
         let (_, stdin) = security.calls().remove(0);
         assert_eq!(stdin, hex_script_for(&fake_token()));
+    }
+
+    #[test]
+    fn a_frame_that_repainted_the_token_stores_it_once() {
+        /*
+          The other half of dropping the whitespace join, asserted on its own
+          because it is the case that would silently store a credential of
+          double the length rather than refuse.
+
+          Two copies of the same value, separated by the newline a repaint puts
+          between them. The gap between the run and the sentence is allowed to
+          hold further copies of that same run precisely so this reads as one
+          token — and the stored value is the token, not the token twice.
+        */
+        let token = fake_token();
+        let repainted = Rendered::of(&format!(
+            "Your OAuth token (valid for 1 year):\r\n{token}\r\n{token}\r\n\r\nStore this token securely.\r\n",
+        ));
+        let security = Recorder::ok();
+        store_minted_token(&security, &repainted).expect("a repainted token is one token");
+        let (_, stdin) = security.calls().remove(0);
+        assert_eq!(stdin, hex_script_for(&token));
     }
 
     #[test]

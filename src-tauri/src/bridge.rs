@@ -160,7 +160,7 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // the View menu's Restart runs, because anything still alive when the
         // image is replaced is orphaned by it. See lib.rs.
         "read-credential" | "store-credential" | "mint-subscription-token"
-        | "next-mint-event" | "spawn-agent" | "stop-agent" | "await-agent-exit"
+        | "next-mint-event" | "cancel-mint" | "spawn-agent" | "stop-agent" | "await-agent-exit"
         | "run-turn" | "next-turn-event" | "next-unprompted-event" | "interrupt-turn"
         | "restart-varnick" => Some(Route::Host),
         // `read-commands` is the runtime's because it is a file read, and the
@@ -719,6 +719,18 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
                 Ok(serde_json::json!({ "ok": true }))
             }
             "next-mint-event" => Ok(serde_json::json!({ "event": mint.next_event() })),
+            /*
+              Giving up on one, which is the only way a person can.
+
+              Answered here rather than forwarded for the same reason the other
+              two are: the mint runs in this process, so the thing being
+              cancelled is a child of this process and nothing else can reach it.
+
+              It cannot fail. `cancelled` says whether there was a mint to stop,
+              which is a fact rather than an error — a second click, or a cancel
+              that raced the flow finishing, are both ordinary.
+            */
+            "cancel-mint" => Ok(serde_json::json!({ "cancelled": mint.cancel() })),
             // Two steps, in this order, with no third: ask the runtime how to
             // run the agent under the Sandbox it established, then run that with
             // the credential added. A runtime that refuses the first step ends

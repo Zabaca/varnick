@@ -1,8 +1,19 @@
-import { setup, assign, fromPromise, raise, stopChild, type ActorRefFrom } from 'xstate'
+import {
+  setup,
+  assign,
+  fromPromise,
+  raise,
+  spawnChild,
+  stopChild,
+  type ActorRefFrom,
+} from 'xstate'
 // A type and nothing else. `turn` is one of the three Harness subpaths that
 // reach no Node built-in, which is what makes it importable from Core at all —
 // see the lint rule in eslint.config.js.
 import type { RuntimeReport, SlashCommand } from '@varnick/harness/turn'
+// One of the four subpaths Core may import for real rather than for types — it
+// reaches no Node built-in. See the lint rule in eslint.config.js.
+import { credentialShapeProblem } from '@varnick/harness/credentials'
 import { canStartAgent, mergeSummary, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
   CredentialKind,
@@ -345,6 +356,7 @@ export type HarnessEvent =
    * a different command in. See src-tauri/src/mint.rs.
    */
   | { type: 'MINT_CREDENTIAL' }
+  | { type: 'CANCEL_MINT' }
   /**
    * The flow published a URL to sign in at.
    *
@@ -565,6 +577,18 @@ export const harnessMachine = setup({
       that happens well before this one does.
     */
     mintSubscriptionToken: fromPromise<void, Record<string, never>>(async () => {}),
+    /*
+      Real-service contract for cancelMint:
+        input  {} — there is one mint at a time, so there is nothing to name.
+        output nothing.
+        error  none. It does not reject, and a surface has nothing to render
+               from it: what a developer sees after cancelling comes from the
+               mint it stopped, which fails through `mintSubscriptionToken`.
+
+      Spawned by an event rather than invoked by a state — see `CANCEL_MINT` in
+      the `minting` state for why leaving the state would be the bug.
+    */
+    cancelMint: fromPromise<void, Record<string, never>>(async () => {}),
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => ({
       pid: 0,
     })),
@@ -700,16 +724,24 @@ export const harnessMachine = setup({
     canStart: ({ context }) =>
       canStartAgent({ credential: context.credentialState, sandbox: context.sandboxState }),
     /*
-      Something was actually pasted.
+      Something was pasted, and it could be the credential it claims to be.
 
       The same shape as the Session's send guard, and for the same reason: the
       control comes from `can()`, so an empty field has to make the machine say
       no rather than make the surface remember to. A store of nothing would
       otherwise be a round trip to the host to be told what the field already
       knew, and it would create a keychain item that reads back as empty.
+
+      It checks the shape as well as the emptiness, because those two are the
+      same mistake at different sizes. A value with the wrong prefix is stored,
+      the agent starts, the first turn gets a 401, and the surface says the
+      credential was rejected — which is true and useless, because the thing
+      that was wrong was visible at the moment it was pasted. The judgement
+      itself is `credentialShapeProblem`, authored beside the keychain accounts
+      it describes so the check and the constant cannot drift apart.
     */
     credentialPasted: ({ event }) =>
-      event.type === 'STORE_CREDENTIAL' && event.value.trim().length > 0,
+      event.type === 'STORE_CREDENTIAL' && credentialShapeProblem(event.kind, event.value) === null,
     /*
       Nothing is waiting to be merged.
 
@@ -1000,12 +1032,14 @@ export const harnessMachine = setup({
           entry: assign({ credentialState: 'absent' as const }),
           on: {
             READ_CREDENTIAL: 'reading',
-            // The way out of `absent` that is not a terminal. Only here: a paste
-            // over a credential that is present would replace a working one by
-            // accident, and one during a read would race the read it invalidates.
+            // The way out that is not a terminal. Here and in `rejected`, and
+            // nowhere else: a paste over a credential that is *present* would
+            // replace a working one by accident, and one during a read would
+            // race the read it invalidates. The `rejected` state below says why
+            // it is on this side of that line rather than with `present`.
             STORE_CREDENTIAL: { target: 'storing', guard: 'credentialPasted' },
             // The other way out, and the one that needs nothing pasted. Offered
-            // in the same state as the paste and for the same reason: a mint
+            // in the same states as the paste and for the same reason: a mint
             // over a credential that is present would replace a working one,
             // and this one takes minutes and opens a browser while it does it.
             MINT_CREDENTIAL: 'minting',
@@ -1056,6 +1090,23 @@ export const harnessMachine = setup({
           exit: assign({ mintUrl: null }),
           on: {
             MINT_URL: { actions: assign({ mintUrl: ({ event }) => event.url }) },
+            /*
+              Giving up, which is a thing a person does and had no way to say.
+
+              Not a transition. The mint is a process on the host, and a state
+              that walked away from it would leave that process holding the
+              latch that refuses the next one — which is the trap this closes,
+              rebuilt one level up. So the event runs the actor that kills it
+              and *stays here*, and the state is left the way every other mint
+              leaves it: the flow it cancelled fails, `mintSubscriptionToken`
+              rejects, and `onError` carries it to `absent` with a reason.
+
+              The consequence worth naming: the sentence a developer reads after
+              cancelling is a mint-failure sentence, because that is what it is.
+            */
+            CANCEL_MINT: {
+              actions: spawnChild('cancelMint', { input: {} as Record<string, never> }),
+            },
           },
           invoke: {
             src: 'mintSubscriptionToken',
@@ -1162,9 +1213,38 @@ export const harnessMachine = setup({
             READ_CREDENTIAL: 'reading',
           },
         },
+        /*
+          The credential varnick holds, which Anthropic will not accept.
+
+          It offers everything `absent` offers, and that is the whole point of
+          the state. It used to accept `READ_CREDENTIAL` alone, and the recovery
+          the surface drew for it — "try again" — re-read the same keychain item
+          and landed back here, every time, for ever. The setup screen was no
+          help either: it renders on `can(STORE_CREDENTIAL)`, so it was hidden in
+          the one state where pasting a different credential is the only thing
+          that can possibly work.
+
+          The rule the old shape came from is still right — a paste or a mint
+          must not silently replace a *working* credential — but `rejected` is
+          the state where there is no working credential to protect. Grouping it
+          with `present` protected nothing and cost the only way out; the only
+          escape was deleting the keychain item from a terminal, which the
+          screen never mentioned because it is not something a surface can say.
+
+          `READ_CREDENTIAL` stays, and is still worth offering: the item can be
+          fixed underneath varnick — with `security`, or by another window's
+          mint — and re-reading is how that is noticed.
+        */
         rejected: {
           entry: assign({ credentialState: 'rejected' as const }),
-          on: { READ_CREDENTIAL: 'reading' },
+          on: {
+            READ_CREDENTIAL: 'reading',
+            STORE_CREDENTIAL: { target: 'storing', guard: 'credentialPasted' },
+            MINT_CREDENTIAL: 'minting',
+            CHOOSE_CREDENTIAL_KIND: {
+              actions: assign({ storingKind: ({ event }) => event.kind }),
+            },
+          },
         },
       },
     },

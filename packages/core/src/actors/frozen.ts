@@ -78,6 +78,7 @@ export function frozenHarness(
       readCredential: never<CredentialReading, Record<string, never>>(),
       storeCredential: never<void, { kind: CredentialKind; value: string }>(),
       mintSubscriptionToken: never<void, Record<string, never>>(),
+      cancelMint: never<void, Record<string, never>>(),
       spawnAgent: never<{ pid: number }, { policy: SandboxPolicy }>(),
       // Frozen like the rest, which is what lets a card sit in `review.listing`
       // — the state every card whose scenario names no other one is in, because

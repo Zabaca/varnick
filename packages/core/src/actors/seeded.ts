@@ -108,6 +108,11 @@ export function seededActors() {
       await wait(500)
     }),
 
+    // Seeded as an immediate success. There is no host process to kill here, and
+    // a cancel is one of the few calls whose seeded and live behaviour genuinely
+    // agree: neither reports anything.
+    cancelMint: fromPromise<void, Record<string, never>>(async () => {}),
+
     spawnAgent: fromPromise<{ pid: number }, { policy: SandboxPolicy }>(async () => {
       await wait(300)
       return { pid: 4242 }

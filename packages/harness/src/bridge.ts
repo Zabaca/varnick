@@ -157,6 +157,22 @@ export interface NextMintEventRequest {
   readonly kind: 'next-mint-event'
 }
 
+/**
+ * Give up on the running mint.
+ *
+ * The counterpart to {@link MintSubscriptionTokenRequest}'s refusal to start a
+ * second one. A mint waits on a person signing in to a website, so the case
+ * this exists for is the ordinary one: they closed the tab, or signed in as the
+ * wrong account, and want to start again. Without it the only ways out are the
+ * flow completing and a ten-minute watchdog.
+ *
+ * It cannot fail, and `cancelled: false` is not a failure — it means there was
+ * no mint to stop, which is what a second click looks like.
+ */
+export interface CancelMintRequest {
+  readonly kind: 'cancel-mint'
+}
+
 /** Write a transcript to the host-side Session mirror. */
 export interface PersistSessionRequest {
   readonly kind: 'persist-session'
@@ -438,6 +454,7 @@ export type HarnessRequest =
   | StoreCredentialRequest
   | MintSubscriptionTokenRequest
   | NextMintEventRequest
+  | CancelMintRequest
   | PersistSessionRequest
   | ReadSessionRequest
   | SpawnAgentRequest
@@ -471,6 +488,9 @@ export interface HarnessAnswers {
   'mint-subscription-token': { readonly ok: true }
   // What the mint said, or that it has said nothing yet. Never the token.
   'next-mint-event': { readonly event: MintEvent | null }
+  // Whether there was a mint to stop. Not an outcome to act on — a cancel with
+  // nothing running is what a second click looks like.
+  'cancel-mint': { readonly cancelled: boolean }
   'persist-session': { readonly ok: true }
   'read-session': RestoredTranscript
   'spawn-agent': { readonly pid: number }
@@ -998,6 +1018,12 @@ export async function callHarness<R extends HarnessRequest>(
       return turnEventAnswer(answer) as HarnessAnswers[R['kind']]
     case 'next-mint-event':
       return mintEventAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'cancel-mint':
+      // Rebuilt like every other answer, and narrowed to the one boolean: a
+      // host that volunteered anything else has nowhere to put it.
+      return {
+        cancelled: (answer as { cancelled?: unknown } | null | undefined)?.cancelled === true,
+      } as HarnessAnswers[R['kind']]
     case 'list-worktrees':
       return worktreesAnswer(answer) as HarnessAnswers[R['kind']]
     case 'read-worktree-diff':

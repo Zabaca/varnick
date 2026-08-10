@@ -678,7 +678,9 @@ export const PRIVATE_LINK_PATHS = ['/etc', '/tmp', '/var'] as const
  *
  * ```
  * /usr                  the shims and the shared libraries
- * /bin                  the shell srt wraps every command with
+ * /bin                  {@link WRAPPING_SHELL}, which srt wraps every command
+ *                       with — named there rather than left to a PATH lookup,
+ *                       for a reason worth reading before touching this entry
  * /System               the dyld cache and the TLS root certificates
  * /Library              the developer tools and the system frameworks
  * /dev                  the standard streams
@@ -702,6 +704,35 @@ export const PRIVATE_LINK_PATHS = ['/etc', '/tmp', '/var'] as const
  * vary between machines are computed, and only the parts that do not are
  * written down.
  */
+/**
+ * The shell srt wraps every command with, named rather than looked up.
+ *
+ * srt resolves its wrapping shell with `whichSync('bash')` and hands the
+ * absolute path it gets to `sandbox-exec`. That is a **PATH lookup**, so which
+ * bash it finds is a property of the developer's environment rather than of the
+ * machine: on a Mac with Homebrew's bash installed, `/opt/homebrew/bin/bash`
+ * shadows `/bin/bash` and is what srt passes.
+ *
+ * Nothing reads `/opt` back out of the denied root — see
+ * {@link MEASURED_SYSTEM_READ_PATHS}, where `/bin` is on the list precisely
+ * because it is the shell's home. So the kernel refused `file-read-metadata` on
+ * it, `execvp` failed, and the agent died before it ran with `exit 71` and one
+ * line of `sandbox-exec` output. Measured on Claude Code 2.1.226 with
+ * Homebrew bash 5 on the PATH.
+ *
+ * Naming the shell fixes that without widening anything: `/bin/bash` is already
+ * readable, is on every macOS install, and `Bun.which` — which is what srt's
+ * `whichSync` calls under Bun — hands an absolute path straight back. The
+ * alternative was to add whatever tree the lookup happened to land in to the
+ * read allowlist, which grants a confined agent read over all of Homebrew to
+ * work around a shell being ambiguous.
+ *
+ * This is deliberately *not* the developer's `$SHELL`. The wrapper is an
+ * implementation detail of confinement rather than a place their dotfiles
+ * should run, and srt's own default is bash for the same reason.
+ */
+export const WRAPPING_SHELL = '/bin/bash'
+
 export const MEASURED_SYSTEM_READ_PATHS = [
   '/usr',
   '/bin',
@@ -2026,7 +2057,7 @@ export async function establishSandbox(
     cloneRoot,
     report,
     wrap: async (command: string) => {
-      const { argv, env } = await SandboxManager.wrapWithSandboxArgv(command)
+      const { argv, env } = await SandboxManager.wrapWithSandboxArgv(command, WRAPPING_SHELL)
       // The overlay, never the whole environment. srt answers with the calling
       // process's own `process.env` plus whatever the platform adds, and this
       // process inherits the host's environment — which may hold an exported

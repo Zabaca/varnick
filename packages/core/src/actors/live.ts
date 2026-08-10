@@ -2,6 +2,7 @@ import { fromPromise } from 'xstate'
 import { AGENT_STILL_RUNNING, callHarness } from '@varnick/harness/bridge'
 import {
   CREDENTIAL_REJECTED_DETAIL,
+  cancelMint as cancelMintOnHost,
   mintSubscriptionToken as mintSubscriptionTokenOnHost,
   readCredential as readCredentialFromHost,
   storeCredential as storeCredentialOnHost,
@@ -305,6 +306,18 @@ export function liveActors(
     mintSubscriptionToken: fromPromise<void, Record<string, never>>(() =>
       mintSubscriptionTokenOnHost(mint),
     ),
+
+    /*
+      Real. Kills the mint's process group on the host, which is what lets the
+      next one start.
+
+      Spawned by the `CANCEL_MINT` event rather than invoked by a state, so it
+      is fire-and-forget by construction: what a developer sees afterwards comes
+      from the mint it cancelled failing, not from this. It never rejects — see
+      `cancelMint` in packages/harness/src/credentials.ts for why a cancel that
+      could fail would be a worse thing to hand a surface than one that cannot.
+    */
+    cancelMint: fromPromise<void, Record<string, never>>(() => cancelMintOnHost()),
 
     /*
       Real. The host asks the Harness runtime how to run the agent under the

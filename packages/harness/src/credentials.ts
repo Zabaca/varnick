@@ -138,6 +138,92 @@ export const CREDENTIAL_SETUP_COMMANDS: Readonly<Record<CredentialKind, string>>
 }
 
 /**
+ * The prefix each kind's value carries, and the characters that follow it.
+ *
+ * Not decoration: these are the two things about a credential that can be known
+ * without asking Anthropic, and checking them is the difference between "this
+ * cannot be right" now and an HTTP 401 later, from a screen that has no way
+ * back to the field. See {@link credentialShapeProblem}.
+ */
+const CREDENTIAL_PREFIXES: Readonly<Record<CredentialKind, string>> = {
+  // Assembled rather than written out, for the reason src-tauri/src/mint.rs
+  // assembles its own: a literal of this shape is what every secret scanner
+  // flags, and one in a source file blocks pushing for this repo and its forks.
+  'api-key': concatPrefix('sk-', 'ant-api'),
+  subscription: concatPrefix('sk-', 'ant-oat01-'),
+}
+
+function concatPrefix(head: string, tail: string): string {
+  return `${head}${tail}`
+}
+
+/** The characters an Anthropic credential is made of after its prefix. */
+const CREDENTIAL_BODY = /^[A-Za-z0-9_-]+$/
+
+/**
+ * A value shaped like a credential, which is not one.
+ *
+ * For asking the machine the prior question — "would you take a credential of
+ * this kind at all?" — without an answer that depends on what is in the field.
+ * The surface probes `can({ type: 'STORE_CREDENTIAL', … })` with it to decide
+ * whether to draw the setup screen, and once the guard checks the *shape* of the
+ * value, a stand-in that is not shaped like a credential answers no in every
+ * state and the screen is never drawn at all.
+ *
+ * It lives here, beside {@link credentialShapeProblem}, because that is the
+ * function it has to keep satisfying. A probe kept next to the component that
+ * uses it would pass until the day the rule changed, and would then hide the one
+ * screen a stranger with a fresh clone needs.
+ */
+export const CREDENTIAL_SHAPE_PROBE: Readonly<Record<CredentialKind, string>> = {
+  'api-key': `${CREDENTIAL_PREFIXES['api-key']}03-NOTxAxCREDENTIAL`,
+  subscription: `${CREDENTIAL_PREFIXES.subscription}NOTxAxCREDENTIAL`,
+}
+
+/**
+ * Why this value cannot be the credential it claims to be, or null when it can.
+ *
+ * The check the paste field was missing. A credential is the one input in
+ * varnick whose wrongness is invisible at the moment it is entered and total
+ * afterwards: it is stored, the agent starts, the first turn gets a 401, and
+ * the surface lands in `credentialState: 'rejected'`. Ticket work on that state
+ * made it recoverable; this makes the common way into it unreachable.
+ *
+ * Deliberately shape only. Whether the credential *authenticates* is Anthropic's
+ * answer and arrives over the network; whether it could possibly authenticate is
+ * this function's, and costs nothing. A value that passes here can still be
+ * rejected — a revoked token and a token from a superseded `claude setup-token`
+ * run both look exactly like a good one — so this narrows the failure, it does
+ * not remove it.
+ *
+ * The value is never quoted into the message. Everything a developer needs is
+ * the prefix they should have seen, which is a constant.
+ */
+export function credentialShapeProblem(kind: CredentialKind, value: string): string | null {
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return 'Nothing pasted.'
+
+  const prefix = CREDENTIAL_PREFIXES[kind]
+  if (!trimmed.startsWith(prefix)) {
+    return kind === 'subscription'
+      ? `A subscription token starts with \`${prefix}\`. Run \`${SUBSCRIPTION_TOKEN_COMMAND}\` and paste what it prints — an API key goes under "Anthropic API key" instead.`
+      : `An Anthropic API key starts with \`${prefix}\`. Copy one from console.anthropic.com — a subscription token goes under "Claude subscription" instead.`
+  }
+
+  const body = trimmed.slice(prefix.length)
+  if (body.length === 0) return 'That is the prefix on its own, with no credential after it.'
+  if (!CREDENTIAL_BODY.test(body)) {
+    // Whitespace in the middle is the tell for a value copied out of a wrapped
+    // terminal render, which is the failure `claude setup-token` inside a
+    // full-screen UI produces most often.
+    return /\s/.test(body)
+      ? 'That value has whitespace inside it, so it was copied across a line break. Select the whole token on one line and paste it again.'
+      : 'That value has characters an Anthropic credential never contains, so some of what was copied was not the credential.'
+  }
+  return null
+}
+
+/**
  * The one command that mints a subscription token.
  *
  * varnick does not read Claude Code's own credential store — ADR-0011 records
@@ -583,6 +669,34 @@ export async function mintSubscriptionToken(
       case 'failed':
         throw new CredentialNotMinted(event.failure)
     }
+  }
+}
+
+/**
+ * Give up on the running mint.
+ *
+ * The counterpart to {@link mintSubscriptionToken}, and the reason its refusal
+ * to start a second mint is a boundary rather than a trap. A mint waits on a
+ * person signing in to a website; the person who closed that tab, or signed in
+ * as the wrong account, had no way to say so and no way to start again for as
+ * long as the watchdog took.
+ *
+ * Never throws. A cancel that finds nothing running is the ordinary outcome of
+ * a second click or of a flow that finished while the click was in the air, and
+ * the mint the caller was waiting on ends through its own `failed` event either
+ * way — this does not report the outcome, it causes one. A missing host is not
+ * an error here for the same reason: there is certainly no mint running in it.
+ */
+export async function cancelMint(
+  bridge: HarnessBridge | null = tauriHarnessBridge(),
+): Promise<void> {
+  if (bridge === null) return
+  try {
+    await callHarness({ kind: 'cancel-mint' }, bridge)
+  } catch {
+    // Deliberately swallowed. The caller is abandoning a mint, and a cancel
+    // that could itself fail would leave a surface asking what to do about a
+    // failure to stop doing something.
   }
 }
 

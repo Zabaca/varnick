@@ -37,6 +37,7 @@ import {
   MODELS,
 } from '../domain.ts'
 import { IMAGE_MEDIA_TYPES, imageMarker, type PastedImage } from '@varnick/harness/turn'
+import { CREDENTIAL_SHAPE_PROBE, credentialShapeProblem } from '@varnick/harness/credentials'
 import type { harnessMachine, HarnessEvent } from '../machines/harness.ts'
 import type { SessionEvent } from '../machines/session.ts'
 
@@ -420,7 +421,7 @@ export function ChatSurface({
           <div className="space-y-3" style={{ maxWidth: 'var(--prose)' }}>
             <CredentialSetup snapshot={snapshot} send={send} />
 
-            <CredentialWaiting snapshot={snapshot} />
+            <CredentialWaiting snapshot={snapshot} send={send} />
 
             {problem && (
               <div style={{ color: 'var(--bad)' }}>
@@ -564,7 +565,7 @@ export function ChatSurface({
               */}
               <CredentialSetup snapshot={snapshot} send={send} />
 
-              <CredentialWaiting snapshot={snapshot} />
+              <CredentialWaiting snapshot={snapshot} send={send} />
 
               {problem && (
                 <div style={{ color: 'var(--bad)' }}>
@@ -1423,7 +1424,13 @@ const CREDENTIAL_CHOICES = [
  * an authorization page would be a worse failure than the one this is the
  * fallback for.
  */
-function CredentialWaiting({ snapshot }: { snapshot: HarnessSnapshot }) {
+function CredentialWaiting({
+  snapshot,
+  send,
+}: {
+  snapshot: HarnessSnapshot
+  send: (event: HarnessEvent) => void
+}) {
   const ctx = snapshot.context
   const state = toPath((snapshot.value as Record<string, unknown>).credential)
 
@@ -1464,6 +1471,20 @@ function CredentialWaiting({ snapshot }: { snapshot: HarnessSnapshot }) {
           </code>
         </div>
       )}
+
+      {/*
+        The way out, which a sign-in needs more than most operations do: the
+        thing being waited on is a person in a browser, and a person who closed
+        that tab or signed in as the wrong account has changed their mind rather
+        than hit an error.
+
+        Without it the mint held its own start-refusal against the next attempt
+        until the flow ended or a ten-minute watchdog fired, and the only way to
+        shorten that was to find the process and kill it from a terminal.
+      */}
+      <button onClick={() => send({ type: 'CANCEL_MINT' })} style={{ color: 'var(--accent)' }}>
+        cancel and start again
+      </button>
     </section>
   )
 }
@@ -1508,12 +1529,30 @@ function CredentialSetup({
     about *this* paste and the question the screen asks is the prior one. The
     stand-in is a constant, is never sent, and is not a credential.
   */
-  const accepts = snapshot.can({ type: 'STORE_CREDENTIAL', kind, value: 'x' })
+  const accepts = snapshot.can({
+    type: 'STORE_CREDENTIAL',
+    kind,
+    value: CREDENTIAL_SHAPE_PROBE[kind],
+  })
   if (!accepts) return null
 
   // And would it take this one? Empty field, no button — from the machine's
   // guard rather than from a `disabled` this component decided on.
   const submittable = snapshot.can({ type: 'STORE_CREDENTIAL', kind, value: pasted })
+
+  /*
+    Why this one will not do, once there is something to say it about.
+
+    The guard already refuses it, so this changes nothing about what the machine
+    accepts — it changes what the developer is told. A disabled button beside a
+    field that looks full is the shape of this failure that sent one credential
+    into the keychain, an agent into a 401, and the surface into a state that had
+    no way back to this field.
+
+    Silent while the field is empty: "nothing pasted" is not news about an input
+    nobody has typed in.
+  */
+  const problem = pasted.trim().length === 0 ? null : credentialShapeProblem(kind, pasted)
 
   /*
     Deliberately not an `onRecover`, which every other recovery on this surface
@@ -1618,6 +1657,13 @@ function CredentialSetup({
           </button>
         )}
       </div>
+
+      {problem && (
+        <p style={{ color: 'var(--bad)' }}>
+          <span aria-hidden>✗ </span>
+          {problem}
+        </p>
+      )}
 
       {/*
         Whatever went wrong last time, beside the field that fixes it. A failed
