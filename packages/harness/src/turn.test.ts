@@ -12,6 +12,11 @@ import {
   toolCallLine,
   hookFailureLine,
   turnFailureMessage,
+  isUnpromptedTurn,
+  unpromptedCauseOf,
+  beginsAnAnswer,
+  UNPROMPTED_TURN_PREFIX,
+  UNPROMPTED_CAUSE_UNKNOWN,
   type TurnEvent,
 } from './turn.ts'
 
@@ -863,5 +868,106 @@ describe('a task set crossing into Core', () => {
       tasks: [{ id: 'k1', description: '', subagentType: '', tokens: -5, toolUses: NaN, elapsedMs: 1.7 }],
     }) as unknown as { tasks: { tokens: number; toolUses: number; elapsedMs: number }[] }
     expect(parsed.tasks[0]).toMatchObject({ tokens: 0, toolUses: 0, elapsedMs: 1 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// An answer nobody asked for
+// ---------------------------------------------------------------------------
+
+/*
+  Two complete answers were produced, recorded by the SDK, and never reached the
+  window: a subagent finished, the notification arrived as a prompt varnick
+  never sent, and the agent answered it twice. The developer then asked why it
+  had not reported, and it correctly said it had.
+
+  These cover the harness half — telling an unprompted Turn from a prompted one,
+  and reading why it started off the stream rather than guessing.
+*/
+
+describe('telling the two kinds of Turn apart', () => {
+  test('a Turn varnick started is not unprompted', () => {
+    expect(isUnpromptedTurn('t7')).toBe(false)
+  })
+
+  test('one the world started is', () => {
+    expect(isUnpromptedTurn(`${UNPROMPTED_TURN_PREFIX}1`)).toBe(true)
+  })
+})
+
+describe('why the agent started talking', () => {
+  const userMessage = (text: string) => ({ type: 'user', message: { content: text } })
+
+  test('a subagent finishing says so', () => {
+    expect(unpromptedCauseOf(userMessage('<task-notification>done</task-notification>'))).toBe(
+      'a subagent finished',
+    )
+  })
+
+  test('a runtime reminder says so', () => {
+    expect(unpromptedCauseOf(userMessage('<system-reminder>x</system-reminder>'))).toBe(
+      'a reminder from the runtime',
+    )
+  })
+
+  test('a prompt it cannot name still produces a usable divider', () => {
+    // Better than nothing: the window must never show an answer with no
+    // visible cause, because that reads as the agent talking to itself.
+    expect(unpromptedCauseOf(userMessage('go on then'))).toBe(UNPROMPTED_CAUSE_UNKNOWN)
+  })
+
+  test('block content is read as well as plain text', () => {
+    expect(
+      unpromptedCauseOf({
+        type: 'user',
+        message: { content: [{ type: 'text', text: '<task-notification>x' }] },
+      }),
+    ).toBe('a subagent finished')
+  })
+
+  test('the agent’s own output explains nothing and is left alone', () => {
+    // `null` leaves whatever was read last standing, which is what makes the
+    // cause survive the several messages between a notification and the first
+    // token of the answer to it.
+    expect(unpromptedCauseOf({ type: 'assistant', message: { content: [] } })).toBeNull()
+    expect(unpromptedCauseOf(textDelta('hi'))).toBeNull()
+  })
+})
+
+describe('what may open an unprompted Turn', () => {
+  test('streamed text does', () => {
+    expect(beginsAnAnswer(textDelta('hi'))).toBe(true)
+  })
+
+  test('an assembled assistant message does', () => {
+    expect(beginsAnAnswer({ type: 'assistant', message: { content: [] } })).toBe(true)
+  })
+
+  test('a result on its own does not', () => {
+    // A result with no answer before it is the tail of something already gone.
+    // Opening a run for it would post an empty message.
+    expect(beginsAnAnswer(success('x'))).toBe(false)
+  })
+
+  test('nor does a hook, a task, or the runtime’s bookkeeping', () => {
+    expect(beginsAnAnswer({ type: 'system', subtype: 'hook_response' })).toBe(false)
+    expect(beginsAnAnswer(started('k1', 'x'))).toBe(false)
+    expect(beginsAnAnswer({ type: 'system', subtype: 'init' })).toBe(false)
+  })
+
+  test('nor does thinking, which is not an answer', () => {
+    expect(
+      beginsAnAnswer({
+        type: 'stream_event',
+        event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'x' } },
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('a cause crossing into Core', () => {
+  test('it survives the wire like any other text', () => {
+    const event: TurnEvent = { kind: 'cause', turnId: 'u1', text: 'a subagent finished' }
+    expect(parseTurnEvent(JSON.parse(encodeTurnEvent(event)))).toEqual(event)
   })
 })

@@ -77,7 +77,11 @@ import {
 import { describeSecretsForAgent } from './secrets.ts'
 import {
   beginTurn,
+  beginsAnAnswer,
   encodeTurnEvent,
+  unpromptedCauseOf,
+  UNPROMPTED_TURN_PREFIX,
+  UNPROMPTED_CAUSE_UNKNOWN,
   normaliseCommands,
   parseControlRequest,
   runtimeReportFrom,
@@ -1634,6 +1638,26 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   /** The Turn currently running, and the only state these two loops share. */
   let running: TurnRun | null = null
 
+  /*
+    An answer the developer did not ask for, and how many there have been.
+
+    Separate from `running` rather than a special value of it, because the two
+    can be told apart from outside: a `u`-stamped Turn is one the world started,
+    and Core renders it under what caused it rather than under a prompt nobody
+    typed. See {@link UNPROMPTED_TURN_PREFIX}.
+  */
+  let unprompted: TurnRun | null = null
+  let unpromptedTurns = 0
+  /*
+    What most recently arrived that the agent might be answering.
+
+    Held rather than derived at the moment an answer starts, because by then the
+    thing that caused it is several messages back on the stream — the
+    notification lands, the agent thinks, and only then does the first token
+    appear.
+  */
+  let lastCause = UNPROMPTED_CAUSE_UNKNOWN
+
   /**
    * What the runtime said it was, the last time it said anything.
    *
@@ -1930,7 +1954,40 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       }
 
       const run = running
-      if (run === null || run.finished) continue
+      if (run === null || run.finished) {
+        /*
+          No Turn of varnick's — and the agent may still be answering.
+
+          This `continue` used to be unconditional, and it is where two complete
+          answers were thrown away: a subagent finished, the notification
+          reached the Session as a prompt varnick never sent, the agent answered
+          it twice, and every message of both was dropped here. The developer
+          then asked why it had not reported, and it correctly said it had.
+
+          So an answer nobody asked for gets a run of its own, stamped `u1`,
+          `u2`, … so Core can tell it from a Turn it started. Begun lazily,
+          because most of what arrives while idle is not an answer and a run
+          opened for every stray message would emit an empty one.
+        */
+        if (unprompted === null) {
+          const cause = unpromptedCauseOf(message)
+          if (cause !== null) lastCause = cause
+          if (!beginsAnAnswer(message)) continue
+          unpromptedTurns += 1
+          unprompted = beginTurn(`${UNPROMPTED_TURN_PREFIX}${unpromptedTurns}`)
+          // Said first, so Core knows what it is looking at before any of it
+          // arrives. The window must never show an answer with no visible
+          // cause — that reads as the agent talking to itself.
+          emit([{ kind: 'cause', turnId: unprompted.turnId, text: lastCause }])
+        }
+        emit(unprompted.accept(message))
+        if (unprompted.finished) unprompted = null
+        continue
+      }
+      // A Turn of varnick's takes over: anything still open belongs to a
+      // conversation this prompt is now part of, and two runs accumulating the
+      // same stream would post the answer twice.
+      unprompted = null
       emit(run.accept(message))
       if (run.finished && running === run) running = null
     }

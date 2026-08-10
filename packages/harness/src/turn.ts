@@ -753,6 +753,16 @@ export type TurnUpdate =
    */
   | { readonly kind: 'task-line'; readonly text: string }
   /**
+   * Why the agent started talking without being asked.
+   *
+   * The first update of an unprompted Turn, and the reason the window can show
+   * one at all: an answer that appears in the scrollback with no visible cause
+   * reads as the agent talking to itself. Core renders it as the divider above
+   * the message — *"── a subagent finished ──"* — and does not compose it, for
+   * the reason it composes nothing else that arrives from outside.
+   */
+  | { readonly kind: 'cause'; readonly text: string }
+  /**
    * The conversation was reset — the agent forgot everything.
    *
    * The CLI announces this after its own `/clear`, after a plan-mode exit, and
@@ -854,6 +864,9 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
     case 'tool':
     case 'hook':
     case 'task-line':
+    // Why an unprompted Turn started. Text like any other, and rebuilt like
+    // any other — Core renders it and does not compose it.
+    case 'cause':
       return typeof text === 'string' ? { kind, turnId, text } : null
     case 'done':
       return typeof text === 'string' && typeof tokensUsed === 'number' && Number.isFinite(tokensUsed)
@@ -1054,6 +1067,84 @@ export interface TurnRun {
   accept(message: unknown): TurnEvent[]
   /** True once a `done` or `failed` has been emitted. Nothing follows one. */
   readonly finished: boolean
+}
+
+/**
+ * How a Turn nobody asked for is stamped.
+ *
+ * A prompted Turn's id comes from Core and is `t`-numbered; this is the other
+ * kind, and the prefix is the whole of how they are told apart. It matters at
+ * exactly one place — the window renders one under a message the developer sent
+ * and the other under what caused it — so the distinction is carried on the id
+ * rather than as a flag on every update.
+ */
+export const UNPROMPTED_TURN_PREFIX = 'u'
+
+/** Is this a Turn the world started rather than one varnick did? */
+export function isUnpromptedTurn(turnId: string): boolean {
+  return turnId.startsWith(UNPROMPTED_TURN_PREFIX)
+}
+
+/** What the window says when nothing on the stream explained itself. */
+export const UNPROMPTED_CAUSE_UNKNOWN = 'the agent spoke on its own'
+
+/**
+ * What caused an answer nobody asked for, in three words.
+ *
+ * **Read off the stream rather than guessed.** The thing that prompts an
+ * unprompted answer arrives as an ordinary `user` message — a task
+ * notification, a background command's output — and it is the only description
+ * of the cause that exists. Core does not invent one: a marker saying
+ * *"subagent finished"* over an answer that had a different cause would be a
+ * transcript that lies in a new way.
+ *
+ * `null` when this message is not a prompt at all, which leaves whatever was
+ * read last standing. Most of what crosses the stream is the agent's own
+ * output and says nothing about why it started.
+ *
+ * The strings are deliberately short: this is a divider above a message, not a
+ * report, and the message underneath is where the detail is.
+ */
+export function unpromptedCauseOf(message: unknown): string | null {
+  const sdk = (message ?? {}) as Record<string, unknown>
+  if (sdk.type !== 'user') return null
+  const content = (sdk.message as { content?: unknown } | undefined)?.content
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((b): b is Record<string, unknown> => b !== null && typeof b === 'object')
+            .map((b) => (typeof b.text === 'string' ? b.text : ''))
+            .join(' ')
+        : ''
+  if (text.length === 0) return null
+  if (text.includes('<task-notification>')) return 'a subagent finished'
+  if (text.includes('<system-reminder>')) return 'a reminder from the runtime'
+  if (text.includes('background') && text.includes('command')) return 'a background command finished'
+  return UNPROMPTED_CAUSE_UNKNOWN
+}
+
+/**
+ * Is this the first message of an answer?
+ *
+ * The gate on opening an unprompted run at all. Most of what arrives while no
+ * Turn is running is not an answer — hook responses, task progress, the
+ * runtime's own bookkeeping — and a run opened for one of those would emit an
+ * empty answer into the transcript.
+ *
+ * Streamed text or an assembled assistant message, and nothing else. A `result`
+ * is deliberately not here: a result with no answer before it is the tail of
+ * something already dropped, and answering it would post an empty message.
+ */
+export function beginsAnAnswer(message: unknown): boolean {
+  const sdk = (message ?? {}) as Record<string, unknown>
+  if (sdk.type === 'assistant') return true
+  if (sdk.type !== 'stream_event') return false
+  const event = sdk.event as Record<string, unknown> | undefined
+  if (event?.type !== 'content_block_delta') return false
+  const delta = event.delta as Record<string, unknown> | undefined
+  return delta?.type === 'text_delta' && typeof delta.text === 'string'
 }
 
 /** The four `system` subtypes that describe a subagent rather than the Turn. */

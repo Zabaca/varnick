@@ -695,16 +695,53 @@ describe('a turn rides the session that is already open', () => {
     expect(written.at(-1)).toMatchObject({ kind: 'done', turnId: 't1', text: 'Hello' })
   })
 
-  test('messages arriving with no turn running are not attributed to one', async () => {
-    // The session emits its own init and status messages. A delta with no turn
-    // to belong to must not become the first word of the next one.
-    //
-    // The init message is now read rather than dropped — see the runtime report
-    // below — and it still produces no event here, because there is no turn to
-    // stamp one with. That is the whole reason it is held and replayed.
+  test('an answer with no turn running gets one of its own, not the next turn’s', async () => {
+    /*
+      This asserted `written` was empty, and that emptiness was a defect rather
+      than a property: **two complete answers were produced and thrown away
+      here.** A subagent finished, the notification reached the Session as a
+      prompt varnick never sent, the agent answered it twice, and every message
+      of both was dropped for having no Turn to belong to. The developer asked
+      why it had not reported; it correctly said it had.
+
+      The concern the old assertion was written for is real and is kept: a
+      stray delta must not become the first word of the next Turn. It no longer
+      needs to be discarded to be kept — it gets a `u`-stamped Turn of its own,
+      which is a different Turn from `t1`.
+
+      The init message still produces nothing, and that is unchanged: there is
+      no Turn to stamp a report with, which is the whole reason it is held and
+      replayed.
+    */
+    const { written } = await serve(async ({ control, messages }) => {
+      messages.push({ type: 'system', subtype: 'init' })
+      messages.push({ type: 'user', message: { content: '<task-notification>done' } })
+      messages.push(textDelta('unasked'))
+      messages.push(result('unasked'))
+      await settle()
+      control.push(runTurnLine('t1', 'hello'))
+      await settle()
+      messages.push(result('asked'))
+      await settle()
+    })
+
+    const unprompted = written.filter((e) => e.turnId.startsWith('u'))
+    expect(unprompted.map((e) => e.kind)).toEqual(['cause', 'delta', 'done'])
+    expect(unprompted[0]).toMatchObject({ kind: 'cause', text: 'a subagent finished' })
+    expect(unprompted.at(-1)).toMatchObject({ kind: 'done', text: 'unasked' })
+
+    // And the prompted Turn is untouched by it — the original concern.
+    const prompted = written.filter((e) => e.turnId === 't1')
+    expect(prompted.at(-1)).toMatchObject({ kind: 'done', text: 'asked' })
+  })
+
+  test('an unprompted answer does not open for the runtime’s own bookkeeping', async () => {
+    // Most of what crosses the stream while idle is not an answer. A run opened
+    // for one of those would post an empty message into the transcript.
     const { written } = await serve(async ({ messages }) => {
       messages.push({ type: 'system', subtype: 'init' })
-      messages.push(textDelta('stray'))
+      messages.push({ type: 'system', subtype: 'hook_response', outcome: 'success' })
+      messages.push(result('nothing to see'))
       await settle()
     })
     expect(written).toEqual([])
