@@ -626,6 +626,35 @@ describe('the wire between the agent host and the host', () => {
     ).toBeNull()
   })
 
+  test('a merge report is the sentence and nothing beside it', () => {
+    /*
+      Rebuilt to `kind` and `briefing`, like every other request here. The
+      sentence is composed where the merge happened — see `mergeBriefing` in
+      ./merge.ts — and a field arriving beside it is a field that was never
+      read, which is what stops this channel growing a second way to put text in
+      front of a confined agent.
+    */
+    expect(
+      parseControlRequest(
+        JSON.stringify({
+          kind: 'report-merge',
+          briefing: 'varnick merged ticket/49 into the live tree.',
+          alsoRun: 'rm -rf /',
+        }),
+      ),
+    ).toEqual({ kind: 'report-merge', briefing: 'varnick merged ticket/49 into the live tree.' })
+  })
+
+  test('an empty briefing is refused, because the delivery is what clears it', () => {
+    // Unlike the empty secret list above, which is a real answer. A briefing is
+    // said once and drained, so an empty one would spend the single chance to
+    // say a branch landed on a blank paragraph.
+    expect(parseControlRequest(JSON.stringify({ kind: 'report-merge', briefing: '' }))).toBeNull()
+    expect(parseControlRequest(JSON.stringify({ kind: 'report-merge', briefing: '  ' }))).toBeNull()
+    expect(parseControlRequest(JSON.stringify({ kind: 'report-merge' }))).toBeNull()
+    expect(parseControlRequest(JSON.stringify({ kind: 'report-merge', briefing: 7 }))).toBeNull()
+  })
+
   test('a turn still has to name its turn', () => {
     // The id fields are per kind rather than one shared field, so widening the
     // channel for a read did not stop a Turn needing the id an interrupt uses.

@@ -85,6 +85,18 @@ const NO_AGENT_TO_TELL: &str =
     "There is no agent running, so there is nothing to tell which secrets exist. \
      The names are sent again before the next Turn.";
 
+/// The same absence, about a merge, and the difference is that this one is lost.
+///
+/// The secret names are re-sent before every Turn, so an agent that was not
+/// running when they were written is told the moment one starts. A merge
+/// happened once: there is no later moment that re-derives it, and an agent
+/// started afterwards begins with no memory of the branch anyway. So this
+/// sentence exists to be *read by a developer* in a refusal, not to promise a
+/// retry that does not happen.
+const NO_AGENT_TO_TELL_ABOUT_A_MERGE: &str =
+    "There is no agent running, so nothing was told that the branch landed. \
+     The merge itself is unaffected.";
+
 
 /// The wrapping, as the runtime answered it.
 ///
@@ -716,6 +728,57 @@ impl AgentProcess {
             // Nothing the write said is forwarded, for the same reason as
             // everywhere else here: this process holds the credential, and an
             // OS error can quote the environment.
+            .map_err(|_| Failure::of("runtime-lost"))
+    }
+
+    /// Tell the agent that one of its branches landed.
+    ///
+    /// The agent wrote the branch and is the only party in the conversation that
+    /// does not otherwise find out — so without this it goes on offering to
+    /// preview a Worktree that has been deleted, and reasons about a fix it
+    /// believes is running when the window has not restarted.
+    ///
+    /// **This process composes nothing.** The sentence arrives whole on the
+    /// runtime's answer to `merge-worktree`, written by the code that performed
+    /// the merge; the only thing that happens here is that it is copied onto the
+    /// pipe. That is the same division `describe_secrets` has, and it is the
+    /// division that matters most on this channel: the host holds the credential
+    /// and performs spawns, so a sentence composed *here* is the string most
+    /// likely to carry a path or an environment into a confined process.
+    ///
+    /// **Best effort**, exactly like `describe_secrets`. The merge has already
+    /// happened by the time this is called, and a merge that landed must not be
+    /// reported to the developer as failed because there was no agent to tell.
+    ///
+    /// Two strings, both composed by the runtime and neither written here.
+    /// `while_running` is the half that stops being true the moment varnick
+    /// restarts, and the agent host keeps a briefing across one — see
+    /// `RESTART_STILL_OWED` in packages/harness/src/merge.ts.
+    pub fn report_merge(&self, briefing: &str, while_running: Option<&str>) -> Result<(), Failure> {
+        let Some(line) = control_line_for(&serde_json::json!({
+            "kind": "report-merge",
+            "briefing": briefing,
+            "whileRunning": while_running,
+        })) else {
+            return Err(Failure::of("malformed"));
+        };
+
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .map_err(|_| Failure::of("runtime-lost"))?;
+
+        let Some(stdin) = state.stdin.as_mut() else {
+            return Err(Failure::refused(NO_AGENT_TO_TELL_ABOUT_A_MERGE));
+        };
+
+        stdin
+            .write_all(line.as_bytes())
+            .and_then(|()| stdin.flush())
+            // Nothing the write said is forwarded, for the reason it is not
+            // anywhere else here: this process holds the credential, and an OS
+            // error can quote the environment.
             .map_err(|_| Failure::of("runtime-lost"))
     }
 

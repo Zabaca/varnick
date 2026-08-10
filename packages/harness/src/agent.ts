@@ -599,6 +599,69 @@ export function commandsCachePath(cloneRoot: string): string {
   return join(claudeConfigDir(cloneRoot), 'last-commands.json')
 }
 
+/**
+ * Briefings that have not reached the agent yet.
+ *
+ * ## Why a Briefing has to be on disk
+ *
+ * A Briefing is delivered by a `UserPromptSubmit` hook, which runs when the
+ * developer next speaks — and **the thing varnick tells them to do next is
+ * restart**. The band that appears after a merge says a restart is owed and
+ * offers the button, so the ordinary sequence is merge, then restart, with no
+ * Turn in between. A restart kills the agent host, and an in-process queue goes
+ * with it: the agent is never told, in exactly the flow the product recommends.
+ *
+ * The same hole swallows it when the agent host dies on its own, which it does.
+ *
+ * So it is written where {@link claudeConfigDir} already keeps the session
+ * pointer and the command cache: inside the clone, writable within the Sandbox,
+ * gitignored, one machine's state.
+ *
+ * **Kept until delivered, not until the process ends.** The file is cleared by
+ * the hook that hands the text over, so a Briefing survives any number of
+ * restarts and crashes and is still said once.
+ */
+export function pendingBriefingsPath(cloneRoot: string): string {
+  return join(claudeConfigDir(cloneRoot), 'pending-briefings.json')
+}
+
+/**
+ * A Briefing, as it is kept.
+ *
+ * Two strings, because one of them expires. `whileRunning` says a restart is
+ * still owed, which stops being true the moment one happens — and this file
+ * exists precisely to carry a Briefing across that. It is delivered only by the
+ * process that received it, and dropped by any process that finds it left
+ * behind. See `RESTART_STILL_OWED` in ./merge.ts for why the split is here
+ * rather than a sentence edited on the way out.
+ */
+export interface PendingBriefing {
+  readonly briefing: string
+  readonly whileRunning?: string
+}
+
+/** Read the briefings a previous process did not manage to deliver. */
+export function readPendingBriefings(
+  cloneRoot: string,
+  read: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): readonly PendingBriefing[] {
+  try {
+    const parsed = JSON.parse(read(pendingBriefingsPath(cloneRoot))) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.flatMap((entry) => {
+      const briefing = (entry as { briefing?: unknown } | null)?.briefing
+      // Nothing is reconstructed from a partial record. A Briefing is a sentence
+      // or it is not there — half of one, delivered, spends the one chance to
+      // say a branch landed.
+      return typeof briefing === 'string' && briefing.trim().length > 0 ? [{ briefing }] : []
+    })
+  } catch {
+    // No file, or one this build does not understand. Either way there is
+    // nothing owed, which is what a first run looks like too.
+    return []
+  }
+}
+
 /** Where the CLI keeps conversations, whatever it calls this clone's folder. */
 function sdkProjectsDir(cloneRoot: string): string {
   return join(claudeConfigDir(cloneRoot), 'projects')
@@ -1641,6 +1704,21 @@ export interface ServeTurnsInput {
    */
   readonly secretsDescribed?: (names: readonly string[]) => void
   /**
+   * Where the news that one of the agent's branches landed comes in.
+   *
+   * Accumulating rather than replacing, which is the opposite of
+   * {@link secretsDescribed} beside it and for a reason: a secret list is a
+   * *state* and only the latest is true, while each of these is an **event**
+   * that happened once. Two branches merged between two Turns are two things
+   * the agent has to be told, and the second replacing the first would lose a
+   * merge silently.
+   *
+   * Optional like the rest. A run with no reporter simply never tells the
+   * agent, which is where varnick was before this existed: the agent went on
+   * offering to preview a Worktree that had been deleted.
+   */
+  readonly mergesReported?: (briefing: string, whileRunning?: string) => void
+  /**
    * Where a request for a Preview goes out, and how its answer comes back.
    *
    * Handed a function rather than being one, the same shape
@@ -1981,6 +2059,14 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       input.secretsDescribed?.(request.names)
       return
     }
+    if (request.kind === 'report-merge') {
+      // Handed over unchanged, like the names above and for the sharper version
+      // of the same reason: the sentence was composed where the merge happened,
+      // and this loop rewording it would be a confined process editing a report
+      // about the tree it is not allowed to write.
+      input.mergesReported?.(request.briefing, request.whileRunning)
+      return
+    }
     if (request.kind === 'preview-answer') {
       // Answered once and forgotten. A second answer to the same request — a
       // host that wrote twice, or a line replayed — has nothing to resolve, and
@@ -2203,6 +2289,38 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
     announce an emptiness this process has no evidence for.
   */
   let secretNames: readonly string[] | null = null
+
+  /*
+    Branches of the agent's that landed and which it has not been told about.
+
+    A queue rather than a value, and it is **drained** on delivery rather than
+    kept. Each entry is an event that happened once, so re-announcing it every
+    Turn would have the agent reading that its branch merged for the rest of the
+    session — and the last thing that briefing says is that a restart is still
+    owed, which stops being true the moment one happens. A stale copy of that
+    sentence is a worse lie than silence.
+
+    Nothing here composes one. The text arrives whole from the host, which got
+    it from the process that performed the merge; see `mergeBriefing`.
+  */
+  /*
+    Loaded first, so a Briefing a previous process could not deliver is said in
+    this one. What is loaded carries no `whileRunning`: a restart has plainly
+    happened, so the clause saying one is still owed is no longer true — see
+    {@link readPendingBriefings}.
+  */
+  const mergeBriefings: PendingBriefing[] = [...readPendingBriefings(cloneRoot)]
+
+  /** Write what is still owed, so a restart or a crash does not swallow it. */
+  const rememberBriefings = () => {
+    try {
+      writeFileSync(pendingBriefingsPath(cloneRoot), `${JSON.stringify(mergeBriefings)}\n`)
+    } catch {
+      // Best effort, like the session pointer beside it. A Briefing that could
+      // not be written is one this process still holds and will still deliver
+      // if it lives long enough; refusing to merge over it would be worse.
+    }
+  }
 
   /*
     Where a request for a Preview goes once the loop below is running.
@@ -2456,12 +2574,46 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
             hooks: [
               async (hook) => {
                 if (hook.hook_event_name !== 'UserPromptSubmit') return {}
-                const names = secretNames
-                if (names === null) return {}
+                /*
+                  Two kinds of thing ride this hook now, and they are combined
+                  here rather than given a hook each: the SDK re-runs
+                  `UserPromptSubmit` once per Turn, so a second registration
+                  would be a second pass over the same moment for no gain.
+
+                  They behave oppositely and the difference is deliberate. The
+                  secret names are **state** — the whole list, every Turn,
+                  because it changes and only the latest is true. A merge
+                  briefing is an **event**: said once and drained, because
+                  repeating it would have the agent reading that its branch just
+                  landed for the rest of the session, and the sentence ends with
+                  a restart being owed — which stops being true as soon as one
+                  happens.
+                */
+                const parts: string[] = []
+                if (secretNames !== null) parts.push(describeSecretsForAgent(secretNames))
+                if (mergeBriefings.length > 0) {
+                  /*
+                    Both halves for a Briefing this process received; the
+                    durable half alone for one it found left behind, because
+                    "varnick has not restarted" is false in a process that
+                    started after the restart.
+                  */
+                  for (const held of mergeBriefings.splice(0)) {
+                    parts.push(
+                      held.whileRunning === undefined
+                        ? held.briefing
+                        : `${held.briefing} ${held.whileRunning}`,
+                    )
+                  }
+                  // Delivered, so no longer owed. Cleared here rather than on
+                  // exit: this is the moment it stopped being true.
+                  rememberBriefings()
+                }
+                if (parts.length === 0) return {}
                 return {
                   hookSpecificOutput: {
                     hookEventName: 'UserPromptSubmit',
-                    additionalContext: describeSecretsForAgent(names),
+                    additionalContext: parts.join('\n\n'),
                   },
                 }
               },
@@ -2543,6 +2695,14 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
     // on the next Turn rather than lingering as a name nothing can resolve.
     secretsDescribed: (names) => {
       secretNames = names
+    },
+    // Appended, never replaced: each is a thing that happened once, and two
+    // merges between two Turns are two things the agent has to be told.
+    mergesReported: (briefing, whileRunning) => {
+      mergeBriefings.push(whileRunning === undefined ? { briefing } : { briefing, whileRunning })
+      // On disk before the next thing happens, because the next thing varnick
+      // recommends is a restart.
+      rememberBriefings()
     },
     resumed: resuming !== null,
     sessionStarted: (sessionId) => rememberSession(cloneRoot, sessionId),

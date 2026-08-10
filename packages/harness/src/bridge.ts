@@ -71,7 +71,8 @@
 
 import { parseMintEvent, type MintEvent } from './mint.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
-import type { PendingWorktree } from './worktrees.ts'
+import type { Mergeability, PendingWorktree } from './worktrees.ts'
+import type { CwdHolder, MergeReport } from './merge.ts'
 import {
   normaliseCommands,
   parseTurnEvent,
@@ -258,6 +259,46 @@ export interface ReadWorktreeDiffRequest {
   readonly path: string
 }
 
+/**
+ * Land one pending Worktree on the live tree.
+ *
+ * **The one call on this bridge that writes the developer's clone**, and it is
+ * on the bridge at all because the merge is the gate ADR-0014 rests on: a Core
+ * change becomes running code when a human merges it, and the human is looking
+ * at the diff in the window when they decide. The agent cannot ask for this —
+ * nothing the agent says reaches the renderer's event stream, and the control
+ * that sends it is in `packages/core/**`, which `denyWrite` refuses it.
+ *
+ * `path` is the same selector the diff's is: compared against what
+ * `git worktree list` reported, never handed to git as an argument.
+ *
+ * Answered by the Harness runtime, for the reason the listing is — it is the
+ * process with git in reach — and it carries no credential.
+ */
+export interface MergeWorktreeRequest {
+  readonly kind: 'merge-worktree'
+  /** The absolute path of a pending worktree, as the listing reported it. */
+  readonly path: string
+}
+
+/**
+ * Replace this process with a new one, having torn down what it holds.
+ *
+ * Asked for at exactly one moment: a merge has landed, so the window is now
+ * running the code from *before* the change it just accepted. It is the same
+ * action as **Restart varnick** on the View menu and it goes through the same
+ * teardown — the point of putting it on the bridge is that the moment a restart
+ * is owed is a moment varnick knows about and the developer would otherwise
+ * have to remember.
+ *
+ * **This call does not answer.** The process is replaced while it is in flight,
+ * so the only outcome the caller can observe is a restart that *failed* to
+ * happen. See `worktreeMerge.restarting` in the Harness machine.
+ */
+export interface RestartVarnickRequest {
+  readonly kind: 'restart-varnick'
+}
+
 export interface AwaitAgentExitRequest {
   readonly kind: 'await-agent-exit'
 }
@@ -382,6 +423,8 @@ export type HarnessRequest =
   | ReadCommandsRequest
   | ListWorktreesRequest
   | ReadWorktreeDiffRequest
+  | MergeWorktreeRequest
+  | RestartVarnickRequest
 
 /** What each call answers with, on success. */
 export interface HarnessAnswers {
@@ -415,12 +458,26 @@ export interface HarnessAnswers {
   // Summaries, never hunks. The diff of one worktree is fetched when a
   // developer opens it; a list that carried every hunk of every branch would
   // read the whole of a large branch before it could draw a row.
-  'list-worktrees': { readonly worktrees: readonly PendingWorktree[] }
+  'list-worktrees': {
+    readonly worktrees: readonly PendingWorktree[]
+    // A fact about the tree they would be merged into, answered in the same
+    // call because it is a fact about the same moment. It decides whether a
+    // merge control appears; the merge asks again on facts that are current.
+    readonly liveTreeDirty: boolean
+  }
   // The hunks of one of them, as git printed them. A string rather than a
   // parsed shape: what crosses is what git said, and Core parses it for the
   // view — so nothing between git and the screen can drop a hunk while still
   // answering the call.
   'read-worktree-diff': { readonly diff: string }
+  // What landed, and what is left over. A merge that went in and a cleanup that
+  // could not finish is a success with something to say, not a failure — see
+  // `MergeReport` in ./merge.ts.
+  'merge-worktree': MergeReport
+  // A constant, and one the caller will almost never see: the process is
+  // replaced while the call is in flight. What it is *for* is the case where
+  // that does not happen.
+  'restart-varnick': { readonly ok: true }
 }
 
 /**
@@ -673,13 +730,23 @@ function mintEventAnswer(answer: unknown): { event: MintEvent | null } {
  * ticket fetches a diff for one worktree on demand, so a body arriving here
  * would be a list rendering something it promised not to read.
  */
-function worktreesAnswer(answer: unknown): { worktrees: readonly PendingWorktree[] } {
-  const payload = answer as { worktrees?: unknown } | null | undefined
+function worktreesAnswer(answer: unknown): {
+  worktrees: readonly PendingWorktree[]
+  liveTreeDirty: boolean
+} {
+  const payload = answer as { worktrees?: unknown; liveTreeDirty?: unknown } | null | undefined
   if (!Array.isArray(payload?.worktrees)) throw new HarnessUnavailable('malformed')
+  // Not defaulted to `false`, which is the tempting one and the wrong one: it
+  // decides whether a merge control appears, so a host this build cannot read
+  // would put one over a tree nobody looked at.
+  if (typeof payload.liveTreeDirty !== 'boolean') throw new HarnessUnavailable('malformed')
 
   const worktrees: PendingWorktree[] = []
   for (const entry of payload.worktrees) {
-    const { path, branch, commits, changed, touchesFence } = (entry ?? {}) as Record<string, unknown>
+    const { path, branch, commits, changed, touchesFence, merge } = (entry ?? {}) as Record<
+      string,
+      unknown
+    >
     if (typeof path !== 'string' || path.length === 0) throw new HarnessUnavailable('malformed')
     // `null` is a detached HEAD, which is a worktree with no branch rather than
     // a worktree whose branch went missing.
@@ -691,10 +758,53 @@ function worktreesAnswer(answer: unknown): { worktrees: readonly PendingWorktree
     if (!Array.isArray(changed) || changed.some((name) => typeof name !== 'string')) {
       throw new HarnessUnavailable('malformed')
     }
-    worktrees.push({ path, branch, commits, changed: [...(changed as string[])], touchesFence })
+    worktrees.push({
+      path,
+      branch,
+      commits,
+      changed: [...(changed as string[])],
+      touchesFence,
+      merge: mergeabilityOf(merge),
+    })
   }
 
-  return { worktrees }
+  return { worktrees, liveTreeDirty: payload.liveTreeDirty }
+}
+
+/**
+ * Read one entry's merge answer back.
+ *
+ * Strict like everything around it, and **there is deliberately no default**.
+ * The tempting one is `clean` — most branches are — and it is the single worst
+ * value this function could invent: it would put a merge control on a row over
+ * an answer nobody gave. `unknown` as a default is safer and still wrong, for
+ * the reason the listing itself is strict: a shape this build cannot read is a
+ * host and a window that disagree about what they are exchanging, and that is a
+ * failure rather than a row with a hedge on it.
+ *
+ * A conflicted answer must name at least one file. The names are the whole of
+ * what makes that state actionable — the surface prints them and tells the
+ * developer to ask the agent to merge `main` down — so an empty list is a shape
+ * the renderer could not honour.
+ */
+function mergeabilityOf(merge: unknown): Mergeability {
+  const kind = (merge as { kind?: unknown } | null | undefined)?.kind
+  if (kind === 'fast-forward' || kind === 'clean') return { kind }
+
+  if (kind === 'conflicts') {
+    const files = (merge as { files?: unknown }).files
+    if (!Array.isArray(files) || files.length === 0) throw new HarnessUnavailable('malformed')
+    if (files.some((name) => typeof name !== 'string')) throw new HarnessUnavailable('malformed')
+    return { kind, files: [...(files as string[])] }
+  }
+
+  if (kind === 'unknown') {
+    const reason = (merge as { reason?: unknown }).reason
+    if (typeof reason !== 'string') throw new HarnessUnavailable('malformed')
+    return { kind, reason }
+  }
+
+  throw new HarnessUnavailable('malformed')
 }
 
 /**
@@ -711,6 +821,46 @@ function diffAnswer(answer: unknown): { diff: string } {
   const payload = answer as { diff?: unknown } | null | undefined
   if (typeof payload?.diff !== 'string') throw new HarnessUnavailable('malformed')
   return { diff: payload.diff }
+}
+
+/**
+ * Read what a merge did back.
+ *
+ * Strict, and this is the answer where being strict matters most on the whole
+ * bridge: it describes something that has *already happened* to the developer's
+ * clone. Every other validator here protects a rendering; this one protects a
+ * developer's understanding of a tree that has changed underneath them.
+ *
+ * Which is exactly why there are no defaults and no optional fields. A missing
+ * `worktreeRemoved` read as `false` would leave a row in the review band for a
+ * directory that is gone; read as `true` it would drop one for a directory that
+ * is still there. Both are the surface saying something confident about a
+ * filesystem it did not look at, so an unreadable report is a failure and the
+ * window says the merge could not be described rather than describing it wrong.
+ */
+function mergeAnswer(answer: unknown): MergeReport {
+  const payload = (answer ?? {}) as Record<string, unknown>
+  const { branch, commit, squashed, worktreeRemoved, branchDeleted, heldBy, leftOver } = payload
+
+  if (typeof branch !== 'string' || branch.length === 0) throw new HarnessUnavailable('malformed')
+  if (typeof commit !== 'string' || commit.length === 0) throw new HarnessUnavailable('malformed')
+  if (typeof squashed !== 'number' || !Number.isFinite(squashed)) {
+    throw new HarnessUnavailable('malformed')
+  }
+  if (typeof worktreeRemoved !== 'boolean') throw new HarnessUnavailable('malformed')
+  if (typeof branchDeleted !== 'boolean') throw new HarnessUnavailable('malformed')
+  if (leftOver !== null && typeof leftOver !== 'string') throw new HarnessUnavailable('malformed')
+  if (!Array.isArray(heldBy)) throw new HarnessUnavailable('malformed')
+
+  const holders: CwdHolder[] = []
+  for (const holder of heldBy) {
+    const { pid, command } = (holder ?? {}) as Record<string, unknown>
+    if (typeof pid !== 'number' || !Number.isFinite(pid)) throw new HarnessUnavailable('malformed')
+    if (typeof command !== 'string') throw new HarnessUnavailable('malformed')
+    holders.push({ pid, command })
+  }
+
+  return { branch, commit, squashed, worktreeRemoved, branchDeleted, heldBy: holders, leftOver }
 }
 
 /**
@@ -756,6 +906,9 @@ export async function callHarness<R extends HarnessRequest>(
       return worktreesAnswer(answer) as HarnessAnswers[R['kind']]
     case 'read-worktree-diff':
       return diffAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'merge-worktree':
+      return mergeAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'restart-varnick':
     case 'check-sandbox':
     case 'store-credential':
     case 'mint-subscription-token':

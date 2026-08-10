@@ -128,3 +128,20 @@ once, by hand, with the developer's say-so, before the list is switched on.
 Found by merging the agent's caveman-plugin removal by hand: it was committed,
 correct and complete, and the review surface it was built for showed no sign of
 it.
+
+## What ticket 56 changed under this
+
+56 landed the merge and the cleanup, and both are written against a *worktree*:
+`MERGE_WORKTREE` carries `entry.path`, and the cleanup runs `git worktree remove`
+on it. A row with no worktree — which is the whole of this ticket — has no path
+to carry and nothing to remove.
+
+The fifth criterion above already anticipated the cleanup half. The selector is
+the part that is new: the event, the guard and `findPendingWorktree` all assume a
+row is addressed by a directory, and a branch row is addressed by a ref. Ticket
+64's cleanup work touches the same seam and should be read alongside this.
+
+Worth doing in this ticket rather than deferring: a row that cannot be addressed
+is a row whose merge control silently does nothing, and that is the failure mode
+this surface has already had once.
+

@@ -4,7 +4,7 @@
 
 **Blocked by:** 55 — a merge control on a panel that does not refresh itself would show a stale answer about a branch that has moved.
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 **Realizes:** `worktreeMerge.merging`, `worktreeMerge.merged`, `worktreeMerge.mergeFailed`.
 
@@ -186,18 +186,100 @@ inviting the developer to hand-resolve someone else's branch.
 - Nothing here may be composed by the agent. Same rule as the list and the
   diff: git's answer, host-side.
 
-- [ ] Each entry says fast-forward, clean, or conflicted
-- [ ] A conflicted entry names the files and offers no merge
-- [ ] A conflicted entry says to ask the agent to merge `main` down
-- [ ] A clean entry can be merged from the window, by the host
-- [ ] A merge is refused when the live tree is dirty, with a reason
-- [ ] After a merge, varnick says a restart is needed and offers it
-- [ ] `worktreeMerge.mergeFailed` carries git's reason and offers a retry
+- [x] Each entry says fast-forward, clean, or conflicted
+- [x] A conflicted entry names the files and offers no merge
+- [x] A conflicted entry says to ask the agent to merge `main` down
+- [x] A clean entry can be merged from the window, by the host
+- [x] A merge is refused when the live tree is dirty, with a reason
+- [x] After a merge, varnick says a restart is needed and offers it
+- [x] `worktreeMerge.mergeFailed` carries git's reason and offers a retry
 - [ ] The agent acknowledges leaving the Worktree before the directory is removed
-- [ ] A worktree whose lock pid is dead is still not removed on that basis alone
-- [ ] A worktree with no lock is still not removed while a process has it as its cwd
-- [ ] An agent host that exits is reported in the window rather than leaving a
+- [x] A worktree whose lock pid is dead is still not removed on that basis alone
+- [x] A worktree with no lock is still not removed while a process has it as its cwd
+- [x] An agent host that exits is reported in the window rather than leaving a
       live runtime accepting messages nothing will answer
-- [ ] Every new state path is named in `CONTEXT.md` and has a card
+- [x] Every new state path is named in `CONTEXT.md` and has a card
+
+## What was built, and the one box left open
+
+**The acknowledgement is not built, and what replaced it is stronger in one
+direction and weaker in another.** The sequence this ticket asked for — tell the
+agent to leave, confirm it has, then remove — was overtaken by the measurement
+two sections up: the lock is not the signal, and *whether any process has the
+directory as its cwd* is. That check is in, and it makes the dangerous half
+impossible: a Worktree somebody is standing in is never removed, so the agent's
+cwd is never pulled out from under it.
+
+What is not in is the part that makes the directory actually go away in that
+case. Today the merge lands, the worktree stays, and the report names the
+processes holding it — a success with something left over, which the window says
+and the agent is told. Reaping it still needs a human, or a second attempt after
+they have stopped whatever was in there.
+
+Doing it properly needs two things this ticket did not scope: a message *to* the
+agent asking it to leave and a way to know that it has (the briefing channel
+built here is one-way and deliberately carries reports rather than
+instructions), and a "reap this merged worktree" action separate from the merge,
+because by then the branch has landed and there is nothing left to merge. Both
+are worth a ticket of their own rather than a corner of this one.
+
+**They are ticket 64**, together with the second thing this ticket asked for and
+did not build: *"stop anything running out of it"*. A Preview launched from the
+Worktree holds it as a cwd, so a merge of a previewed Worktree always ends in the
+left-over path. That omission was not written down here when it happened, which
+is the part worth noticing — the section above named the acknowledgement gap and
+was silent about this one, and a reader would have taken the silence for
+completeness.
+
+## Reviewed, and what the review found
+
+Two rounds of two-axis review after the branch was written. Six findings, all
+fixed on the branch; the two that matter are recorded here because both are the
+same shape and it is a shape that will recur.
+
+**A check that passed for the case somebody tried by hand.** The cleanup was
+gated on `diff --quiet HEAD <ref>`, which is empty only for a *fast-forward* — a
+`clean` merge is by definition one the live tree holds commits ahead of, so
+afterwards HEAD carries both sides, the branch carries one, and the diff is never
+empty. Every clean merge reported itself as not having landed and **nothing was
+ever cleaned up.** The comment above it stated the opposite as a measurement, and
+it was one: of a fast-forward, promoted to a rule. The fake git answered that
+diff `ok()` and only ever drove the fast-forward path, so nothing failed.
+
+**A crate that never compiled.** `packages/core/**` inside a Rust block comment
+opens a nested comment — Rust nests them — and the closing marker shut that one
+instead of the outer. It reported `unterminated block comment` about a comment
+that is plainly terminated.
+
+And one the review got wrong, worth recording so it is not re-raised: the claim
+that the cwd probe cannot see an agent between Turns. It can, and this ticket's
+own second measurement says so — `lsof +D` catching a live `claude` whose cwd was
+the directory is the finding the probe was chosen from.
+
+The rest: the review list listed any linked worktree rather than only Worktrees,
+which was free while it was read-only and expensive beside a merge control; the
+Briefing was queued in memory and the restart this feature recommends would
+swallow it; `leftOver` promised a reap nothing performs; `merged` and
+`mergeFailed` did not re-list; the merge guard accepted any open diff rather than
+this Worktree's; and the failure band carried no retry.
+
+ADR-0017 records why a host-performed merge is not a hole in ADR-0014's gate.
+
+**Box 11 was met from the other end than expected.** The exit *is* reported —
+`await-agent-exit` and `agent.crashed` already did that, and the banner offers a
+restart. What was missing was the second half of the sentence: the window went
+on accepting messages, and each one was appended to the transcript and written
+to the mirror with no process that had ever received it. `agentCanAnswer` is the
+rule now, in `domain.ts` where `drive.ts` can reach it.
+
+One thing found while building, worth carrying: `git merge-tree --write-tree`
+**writes** — it puts the tree it computed into the object store as an
+unreferenced object. No ref moves, no index is taken and no working tree
+changes, so the merge a row describes still has not happened; but
+`worktrees.ts` no longer claims that nothing it runs writes, and the claim it
+makes instead is the narrower true one.
+
+The Rust half is **unverified**: `cargo` is denied by the Sandbox, so the route
+table, the `restart-varnick` arm and `report_merge` have not been compiled.
 
 Asked for while looking at the first real pending Worktree: *"could we introduce a merge button here? it should also check if it's cleanly mergeable and show that there is a conflict when there is, like github would."*

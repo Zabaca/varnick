@@ -8,6 +8,7 @@ import type {
   CredentialKind,
   CredentialReading,
   Effort,
+  MergeReport,
   Message,
   ModelId,
   PendingWorktree,
@@ -81,7 +82,28 @@ export function frozenHarness(
       // Frozen like the rest, which is what lets a card sit in `review.listing`
       // — the state every card whose scenario names no other one is in, because
       // the region starts in flight rather than at rest.
-      listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(),
+      listWorktrees: never<
+        { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean },
+        Record<string, never>
+      >(),
+      /*
+        And the two that would otherwise finish while a card was being read.
+
+        `mergeWorktree` and `restartVarnick` have do-nothing defaults on the
+        machine, and a default that *resolves* is the one thing a frozen card
+        cannot have: the `merging` card would land on `merged` before anybody
+        looked at it, and the `restarting` card would go the same way one step
+        along. Both cards exist precisely to be looked at in the state they
+        name.
+
+        Frozen also means nothing here can merge. That is worth saying out loud
+        for this pair rather than left to the general rule, because the live
+        implementation of the first one writes the developer's clone — a states
+        page that fell through to it would rewrite a tree because somebody
+        opened a card.
+      */
+      mergeWorktree: never<MergeReport, { path: string }>(),
+      restartVarnick: never<void, Record<string, never>>(),
       worktreeDiff: worktreeDiffMachine.provide({
         actors: {
           readWorktreeDiff: fromPromise<{ diff: string }, { path: string }>(() => {

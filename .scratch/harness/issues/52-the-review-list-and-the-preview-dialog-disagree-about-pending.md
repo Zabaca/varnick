@@ -44,3 +44,23 @@ The Preview's base is the honest one and the list should adopt it: a Worktree wi
 - [ ] `review.empty`'s copy claims what it now measures
 
 Found by driving the loop rather than by a test: an agent wrote four Fence files and the surface built to show that showed nothing.
+
+## What ticket 56 changed under this
+
+56 landed a merge control on every row, so a row is no longer only something to
+read. That makes one of this ticket's rows a live problem rather than a display
+question:
+
+**A worktree pending on uncommitted work has no commits, and a merge needs
+commits.** `mergeabilityOf` answers from a ref, so such a row would say
+`fast-forward` or `clean` and offer a merge — while `findPendingWorktree` refuses
+anything with zero commits ahead, so the click lands in `worktreeMerge.mergeFailed`
+every time. A button that is always going to fail is worse than no button.
+
+So this ticket now owns a decision it did not before: **what a merge control means
+on a row that is pending because the working tree is dirty.** The honest answer is
+probably that it has none — there is nothing to merge until the agent commits —
+and that the row says so, in the same place the mergeability note goes. Whatever
+is chosen, `mergeSummary` is the one rule both the badge and the guard read, so it
+is the place to say it once.
+

@@ -12,7 +12,11 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createActor, fromPromise, waitFor } from 'xstate'
-import { harnessMachine, HARNESS_STATE_PATHS } from '../src/machines/harness.ts'
+import {
+  harnessMachine,
+  HARNESS_STATE_PATHS,
+  type HarnessInput,
+} from '../src/machines/harness.ts'
 import { sessionMachine, SESSION_STATE_PATHS, type SessionEvent } from '../src/machines/session.ts'
 import {
   surfaceMachine,
@@ -26,6 +30,7 @@ import {
 import { parseDiff } from '../src/diff.ts'
 import {
   regionOf,
+  agentCanAnswer,
   canStartAgent,
   compactedTranscript,
   invokedCommand,
@@ -34,6 +39,7 @@ import {
   taskMeter,
   matchCommands,
   mergeCommands,
+  mergeSummary,
   signatureFor,
   completionFor,
 } from '../src/domain.ts'
@@ -67,6 +73,7 @@ import { ACTOR_NAMES, UNIMPLEMENTED, seededDetail } from '../src/actors/index.ts
 import type {
   CredentialReading,
   Effort,
+  MergeReport,
   Message,
   ModelId,
   PendingWorktree,
@@ -1974,8 +1981,10 @@ export default function Billing() {
     readSession: unreached,
     readCommands: unreached,
     listWorktrees: unreached,
+    liveTreeDirty: unreached,
     readFenceDiff: unreached,
     readWorktreeDiff: unreached,
+    mergeWorktree: unreached,
     readSecretNames: async () => {
       await secrets.reload()
       return secrets.names()
@@ -2234,6 +2243,17 @@ export default function Billing() {
 // Harness — which Worktrees hold Core changes nobody has merged
 // ---------------------------------------------------------------------------
 
+/**
+ * What a listing answers with: the rows, and whether the tree they would be
+ * merged into has uncommitted work in it.
+ *
+ * A named alias because a dozen assertions below stand up a `listWorktrees` and
+ * every one of them has to spell the answer out. The dirty flag rides along with
+ * the rows rather than being asked for separately, because it is a fact about
+ * the same moment and git is already being run.
+ */
+type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
+
 {
   /*
     The region exists so that nothing the agent finished waits unnoticed, and
@@ -2248,8 +2268,8 @@ export default function Billing() {
     is that Core never says what the answer should be about: see the input
     assertion below.
   */
-  const seen = (worktrees: readonly PendingWorktree[]) =>
-    resolves<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>({ worktrees })
+  const seen = (worktrees: readonly PendingWorktree[], liveTreeDirty = false) =>
+    resolves<Listing, Record<string, never>>({ worktrees, liveTreeDirty })
 
   const oneEntry: PendingWorktree = {
     path: '/Users/dev/code/varnick/.claude/worktrees/49',
@@ -2257,6 +2277,7 @@ export default function Billing() {
     commits: 3,
     changed: ['packages/core/src/machines/harness.ts'],
     touchesFence: false,
+    merge: { kind: 'fast-forward' },
   }
 
   {
@@ -2265,7 +2286,7 @@ export default function Billing() {
     // a credential, a check or a start is asked for, and a listing is neither
     // expensive nor a choice.
     const actor = createActor(
-      harnessMachine.provide({ actors: { listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>() } }),
+      harnessMachine.provide({ actors: { listWorktrees: never<Listing, Record<string, never>>() } }),
       { input: { policy: seedPolicy } },
     ).start()
     check('a fresh Harness is already asking which worktrees are pending', regionOf(actor.getSnapshot().value, 'review') === 'listing')
@@ -2284,10 +2305,10 @@ export default function Billing() {
     const actor = createActor(
       harnessMachine.provide({
         actors: {
-          listWorktrees: fromPromise<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
+          listWorktrees: fromPromise<Listing, Record<string, never>>(
             async ({ input }) => {
               inputs.push(input)
-              return { worktrees: [] }
+              return { worktrees: [], liveTreeDirty: false }
             },
           ),
         },
@@ -2334,7 +2355,7 @@ export default function Billing() {
     const actor = createActor(
       harnessMachine.provide({
         actors: {
-          listWorktrees: rejects<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
+          listWorktrees: rejects<Listing, Record<string, never>>(
             'fatal: not a git repository',
           ),
         },
@@ -2370,9 +2391,9 @@ export default function Billing() {
     const actor = createActor(
       harnessMachine.provide({
         actors: {
-          listWorktrees: fromPromise<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
+          listWorktrees: fromPromise<Listing, Record<string, never>>(
             async () => {
-              if (listings++ === 0) return { worktrees: [oneEntry] }
+              if (listings++ === 0) return { worktrees: [oneEntry], liveTreeDirty: false }
               throw new Error('fatal: not a git repository')
             },
           ),
@@ -2415,7 +2436,7 @@ export default function Billing() {
     const actor = createActor(
       harnessMachine.provide({
         actors: {
-          listWorktrees: rejects<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>('fatal: no git'),
+          listWorktrees: rejects<Listing, Record<string, never>>('fatal: no git'),
         },
       }),
       { input: { policy: seedPolicy } },
@@ -2446,7 +2467,7 @@ export default function Billing() {
     */
     const actor = createActor(
       harnessMachine.provide({
-        actors: { listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>() },
+        actors: { listWorktrees: never<Listing, Record<string, never>>() },
       }),
       { input: { policy: seedPolicy, enterReview: 'listed', worktrees: [oneEntry] } },
     ).start()
@@ -2470,12 +2491,389 @@ export default function Billing() {
   }
 
   {
+    /*
+      What a row says about merging, and what it therefore offers.
+
+      A pure function rather than a branch in the component, for the reason
+      ADR-0001 gives and ADR-0013 enforces: `worktree-review.tsx` cannot be
+      imported outside Vite, so a decision written inside it is a decision this
+      file cannot reach. `mergeSummary` is the one rule, and the badge, the note
+      under the list and the machine's merge guard all read it.
+    */
+    check(
+      'a branch that already contains the live tree says fast-forward',
+      mergeSummary({ kind: 'fast-forward' }).says === 'fast-forward',
+    )
+    check(
+      'a diverged branch with no clash says it merges cleanly',
+      mergeSummary({ kind: 'clean' }).says === 'merges cleanly',
+    )
+    check(
+      'and both of those are offered to the developer',
+      mergeSummary({ kind: 'fast-forward' }).offered && mergeSummary({ kind: 'clean' }).offered,
+    )
+
+    const clash = mergeSummary({
+      kind: 'conflicts',
+      files: ['packages/core/src/domain.ts', 'src-tauri/src/bridge.rs'],
+    })
+    check('a conflicted entry says so, and counts the files', clash.says === 'conflicts in 2 files')
+    check(
+      'a conflicted entry names them',
+      clash.files.join() === 'packages/core/src/domain.ts,src-tauri/src/bridge.rs' &&
+        (clash.advice ?? '').includes('src-tauri/src/bridge.rs'),
+    )
+    // The instruction the surface teaches, rather than a resolver it does not
+    // have. `.claude/skills/change-core/SKILL.md` says whose job this is.
+    check(
+      'a conflicted entry says to ask the agent to merge main down',
+      (clash.advice ?? '').includes('merge main down'),
+    )
+    check('and offers no merge', !clash.offered)
+
+    const cannotTell = mergeSummary({ kind: 'unknown', reason: 'fatal: bad object' })
+    check(
+      'a probe that did not run offers no merge either',
+      !cannotTell.offered && (cannotTell.advice ?? '').includes('fatal: bad object'),
+    )
+    // Colour means one thing on this surface, so the two ordinary answers spend
+    // none of it and the two that are not ordinary do.
+    check(
+      'and only the two unusual answers are marked',
+      mergeSummary({ kind: 'fast-forward' }).tone === 'quiet' &&
+        mergeSummary({ kind: 'clean' }).tone === 'quiet' &&
+        clash.tone === 'warn' &&
+        cannotTell.tone === 'warn',
+    )
+  }
+
+  {
+    /*
+      Whether there is anything to send a message to.
+
+      Measured behind this ticket: an agent host exited on a terminal error
+      while the Tauri host and the Harness runtime stayed up, so the runtime
+      went on writing the Session mirror — and a message typed afterwards was
+      appended to the transcript, saved, and answered by nobody. The transcript
+      is what a developer trusts most on that screen, and a message in it no
+      process ever received is the one entry it must not hold.
+
+      A predicate rather than a guard, because the two facts belong to two
+      machines and neither may learn the other's: whether an agent process
+      exists is the Harness's, and the draft is the Session's. The surface holds
+      both snapshots, which is the same arrangement `canStartAgent` has.
+    */
+    check('an agent that is running can be sent to', agentCanAnswer('running'))
+    for (const state of ['down', 'starting', 'startRefused', 'crashed']) {
+      check(`and one that is ${state} cannot`, !agentCanAnswer(state))
+    }
+    // `starting` is on that list deliberately. It is a process being spawned
+    // and cannot be written to yet, and the honest thing to do with a message
+    // typed into that second is to keep the draft rather than record it
+    // against a process that does not exist.
+  }
+
+  // -------------------------------------------------------------------------
+  // Harness — landing one of them
+  // -------------------------------------------------------------------------
+
+  {
+    /*
+      What the merge control is allowed to appear over.
+
+      Four conditions, and the one worth stating first is not about git: **a
+      merge is only accepted while a diff is open.** Ticket 50 marks Fence hunks
+      so nobody lands one without having looked, and a merge that could be sent
+      from a summary row would make that marking optional. The guard is what
+      makes the control's position a rule rather than a habit of the view.
+
+      The rest are the affordance half of checks the host makes again on facts
+      that are current — see packages/harness/src/merge.ts. Neither side is the
+      other's excuse: this stops varnick offering something it knows would be
+      refused, and that stops a merge happening on a tree that moved in between.
+    */
+    const clean: PendingWorktree = { ...oneEntry, merge: { kind: 'clean' } }
+    const stuck: PendingWorktree = {
+      ...oneEntry,
+      path: '/Users/dev/code/varnick/.claude/worktrees/53',
+      branch: 'ticket/53',
+      merge: { kind: 'conflicts', files: ['packages/harness/src/sandbox.ts'] },
+    }
+    /*
+      A second row with nothing wrong with it.
+
+      `stuck` cannot stand in for this: it is refused for conflicting, so a guard
+      that ignored which diff is open would still refuse it and the assertion
+      would pass while proving nothing.
+    */
+    const other: PendingWorktree = {
+      ...oneEntry,
+      path: '/Users/dev/code/varnick/.claude/worktrees/57',
+      branch: 'ticket/57',
+      merge: { kind: 'clean' },
+    }
+
+    const opened = (input: Partial<HarnessInput> = {}) => {
+      const actor = createActor(
+        harnessMachine.provide({
+          actors: {
+            listWorktrees: never<Listing, Record<string, never>>(),
+            mergeWorktree: never<MergeReport, { path: string }>(),
+          },
+        }),
+        {
+          input: {
+            policy: seedPolicy,
+            enterReview: 'listed',
+            worktrees: [clean, stuck, other],
+            ...input,
+          },
+        },
+      ).start()
+      return actor
+    }
+
+    {
+      const actor = opened()
+      check(
+        'nothing has been merged from a window that has just opened',
+        regionOf(actor.getSnapshot().value, 'worktreeMerge') === 'unmerged',
+      )
+      check(
+        'a row on the list cannot be merged from the list',
+        !actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: clean.path }),
+      )
+
+      actor.send({ type: 'OPEN_WORKTREE', path: clean.path })
+      check(
+        'and can be merged once its diff is open',
+        actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: clean.path }),
+      )
+      check(
+        'while the branch that conflicts still cannot',
+        !actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: stuck.path }),
+      )
+      check(
+        'and neither can a path nobody listed',
+        !actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: '/nowhere' }),
+      )
+
+      /*
+        The open diff has to be *this* Worktree's, not merely some Worktree's.
+
+        The guard used to read `worktreeDiff !== null`, which says only that a
+        diff is open — so a `MERGE_WORKTREE` naming a different mergeable row
+        passed a check whose whole purpose is that the hunks on screen are the
+        hunks about to land. It is the rule ADR-0014 rests on, and `stuck` could
+        not catch it: that row is refused for conflicting, which is a second
+        reason. This needs a row that is mergeable and simply not the one open.
+      */
+      check(
+        'a mergeable row that is not the open one is still refused',
+        !actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: other.path }),
+      )
+      actor.send({ type: 'CLOSE_WORKTREE' })
+      check(
+        'and closing the diff takes the merge with it',
+        !actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: clean.path }),
+      )
+      actor.send({ type: 'OPEN_WORKTREE', path: clean.path })
+
+      actor.send({ type: 'MERGE_WORKTREE', path: clean.path })
+      check(
+        'merging is a state, not a thing that happens between two frames',
+        regionOf(actor.getSnapshot().value, 'worktreeMerge') === 'merging',
+      )
+      check(
+        'and it says which branch, because the row it came from is about to go',
+        actor.getSnapshot().context.merging === clean.path,
+      )
+      actor.stop()
+    }
+
+    {
+      // The one refusal that is about neither the branch nor this window. It is
+      // said before the click rather than after, because a developer can clear
+      // it in ten seconds if they are told what it is.
+      const actor = opened({ liveTreeDirty: true })
+      actor.send({ type: 'OPEN_WORKTREE', path: clean.path })
+      check(
+        'a merge is refused while the live tree has uncommitted work in it',
+        !actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: clean.path }),
+      )
+      actor.stop()
+    }
+
+    {
+      /*
+        What a merge that landed leaves behind.
+
+        The report outlives everything it is about — the branch is deleted, the
+        worktree removed, the row gone from the next listing — so this is the
+        only trace, and the restart it says is owed is the whole reason the
+        region rests in a state that says something rather than going quiet.
+      */
+      const report: MergeReport = {
+        branch: 'ticket/49',
+        commit: 'a1b2c3d',
+        squashed: 3,
+        worktreeRemoved: true,
+        branchDeleted: true,
+        heldBy: [],
+        leftOver: null,
+      }
+      const actor = createActor(
+        harnessMachine.provide({
+          actors: {
+            listWorktrees: never<Listing, Record<string, never>>(),
+            mergeWorktree: resolves<MergeReport, { path: string }>(report),
+            restartVarnick: never<void, Record<string, never>>(),
+          },
+        }),
+        { input: { policy: seedPolicy, enterReview: 'listed', worktrees: [clean] } },
+      ).start()
+
+      actor.send({ type: 'OPEN_WORKTREE', path: clean.path })
+      actor.send({ type: 'MERGE_WORKTREE', path: clean.path })
+      check(
+        'a merge that landed rests somewhere that can say so',
+        await reaches(
+          waitFor(actor, (s) => regionOf(s.value, 'worktreeMerge') === 'merged', soon),
+        ),
+      )
+      check(
+        'and holds what it did, because nothing else does now',
+        actor.getSnapshot().context.mergeReport?.commit === 'a1b2c3d',
+      )
+      check(
+        'a restart is offered from there',
+        actor.getSnapshot().can({ type: 'RESTART_VARNICK' }),
+      )
+
+      /*
+        And the list is asked again, because this machine just changed what the
+        list describes.
+
+        The failure without it is not a stale picture that corrects itself: after
+        a squash the branch ref still holds commits the live tree does not, so
+        `mergeabilityOf` goes on calling the merged row `clean` and the row goes
+        on offering a merge whose `git commit` would find nothing to commit.
+        `liveTreeDirty` is stale in the same breath, and that is what the
+        dirty-tree refusal is read from.
+
+        Asserted on the region rather than on the actor, because the listing
+        actor here is `never` — reaching `listing` at all is the whole claim, and
+        an actor that answered would only prove the fake.
+      */
+      check(
+        'and the list is asked again, because what it describes has just changed',
+        regionOf(actor.getSnapshot().value, 'review') === 'listing',
+      )
+
+      actor.send({ type: 'RESTART_VARNICK' })
+      check(
+        'and asking for one is a state, because it can fail to happen',
+        regionOf(actor.getSnapshot().value, 'worktreeMerge') === 'restarting',
+      )
+      actor.stop()
+    }
+
+    {
+      // A cleanup that could not finish is a **success with something to say**.
+      // The commit is on the live branch either way, and reporting it as a
+      // failure would invite a second merge of a branch that has already gone.
+      const held: MergeReport = {
+        branch: 'ticket/49',
+        commit: 'a1b2c3d',
+        squashed: 3,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        heldBy: [{ pid: 52236, command: 'varnick' }],
+        leftOver: 'the worktree is still there because varnick (pid 52236) is standing in it',
+      }
+      const actor = createActor(
+        harnessMachine.provide({
+          actors: {
+            listWorktrees: never<Listing, Record<string, never>>(),
+            mergeWorktree: resolves<MergeReport, { path: string }>(held),
+          },
+        }),
+        { input: { policy: seedPolicy, enterReview: 'listed', worktrees: [clean] } },
+      ).start()
+
+      actor.send({ type: 'OPEN_WORKTREE', path: clean.path })
+      actor.send({ type: 'MERGE_WORKTREE', path: clean.path })
+      check(
+        'a merge whose cleanup could not finish is still a merge that landed',
+        await reaches(
+          waitFor(actor, (s) => regionOf(s.value, 'worktreeMerge') === 'merged', soon),
+        ),
+      )
+      check(
+        'and names what is holding the directory rather than counting it',
+        (actor.getSnapshot().context.mergeReport?.leftOver ?? '').includes('pid 52236'),
+      )
+      actor.stop()
+    }
+
+    {
+      // A refusal carries git's own reason and offers the merge again — the
+      // same shape `worktreeDiff.failed` has, because the state has a handler
+      // rather than because a control was hidden anywhere else.
+      const actor = createActor(
+        harnessMachine.provide({
+          actors: {
+            listWorktrees: never<Listing, Record<string, never>>(),
+            mergeWorktree: rejects<MergeReport, { path: string }>(
+              'The live tree has uncommitted work in DESIGN.md.',
+            ),
+          },
+        }),
+        { input: { policy: seedPolicy, enterReview: 'listed', worktrees: [clean] } },
+      ).start()
+
+      actor.send({ type: 'OPEN_WORKTREE', path: clean.path })
+      actor.send({ type: 'MERGE_WORKTREE', path: clean.path })
+      check(
+        'a merge that was refused says so rather than looking like one that landed',
+        await reaches(
+          waitFor(actor, (s) => regionOf(s.value, 'worktreeMerge') === 'mergeFailed', soon),
+        ),
+      )
+      check(
+        'carrying the reason git gave',
+        (actor.getSnapshot().context.mergeError ?? '').includes('DESIGN.md'),
+      )
+      check(
+        'and nothing was reported as having landed',
+        actor.getSnapshot().context.mergeReport === null,
+      )
+      check(
+        'the same merge can be asked for again once the reason is fixed',
+        actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: clean.path }),
+      )
+      /*
+        And this failure in particular is why the re-list matters. The commonest
+        reason a merge is refused is a dirty live tree, and `liveTreeDirty` is
+        read off the listing — so without asking again, a developer who commits
+        their work and retries is retried against a fact measured before they
+        fixed it.
+      */
+      check(
+        'a refusal asks the list again, because the reason for it may already be gone',
+        regionOf(actor.getSnapshot().value, 'review') === 'listing',
+      )
+      actor.stop()
+    }
+  }
+
+  {
     // Every resting state can be asked again. A listing is a fact about a
     // filesystem that changes while varnick runs — an agent finishes a branch,
     // a developer merges one — so none of the three is terminal.
     for (const enterReview of ['listed', 'empty', 'listFailed'] as const) {
       const actor = createActor(
-        harnessMachine.provide({ actors: { listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>() } }),
+        harnessMachine.provide({ actors: { listWorktrees: never<Listing, Record<string, never>>() } }),
         { input: { policy: seedPolicy, enterReview, worktrees: [oneEntry] } },
       ).start()
       check(`a card parked in review.${enterReview} is in review.${enterReview}`, regionOf(actor.getSnapshot().value, 'review') === enterReview)
@@ -2498,7 +2896,7 @@ export default function Billing() {
     const actor = createActor(
       harnessMachine.provide({
         actors: {
-          listWorktrees: rejects<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>('fatal: no git'),
+          listWorktrees: rejects<Listing, Record<string, never>>('fatal: no git'),
           readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'subscription' }),
           checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
         },
@@ -2537,6 +2935,7 @@ export default function Billing() {
         asked.push(payload.request.kind)
         if (payload.request.kind !== 'list-worktrees') throw { failure: 'malformed' }
         return {
+          liveTreeDirty: false,
           worktrees: [{ ...oneEntry, diff: '@@ -1 +1 @@ VOLUNTEERED' }],
         }
       },
@@ -2698,8 +3097,8 @@ export default function Billing() {
           readCredential: resolves<CredentialReading, Record<string, never>>({ source: 'keychain', kind: 'api-key' }),
           checkSandbox: resolves<{ ok: true }, { policy: SandboxPolicy }>({ ok: true }),
           spawnAgent: resolves<{ pid: number }, { policy: SandboxPolicy }>({ pid: 1 }),
-          listWorktrees: fromPromise<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(
-            async () => ({ worktrees: await answer(listings++) }),
+          listWorktrees: fromPromise<Listing, Record<string, never>>(
+            async () => ({ worktrees: await answer(listings++), liveTreeDirty: false }),
           ),
           session: sessionMachine.provide({ actors: { runTurn: turn } }),
         },
@@ -2731,6 +3130,7 @@ export default function Billing() {
       commits: 1,
       changed: ['packages/core/src/machines/harness.ts'],
       touchesFence: false,
+      merge: { kind: 'fast-forward' },
     }
     const { actor } = await running(async (nth) => (nth === 0 ? [] : [entry]))
     await waitFor(actor, (s) => regionOf(s.value, 'review') === 'empty', soon)
@@ -2767,6 +3167,7 @@ export default function Billing() {
       commits: 2,
       changed: ['src-tauri/src/bridge.rs'],
       touchesFence: true,
+      merge: { kind: 'clean' },
     }
     const { actor, listings } = await running(async () => [entry])
     await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
@@ -3079,6 +3480,7 @@ export default function Billing() {
     commits: 4,
     changed: ['src-tauri/src/bridge.rs'],
     touchesFence: true,
+    merge: { kind: 'clean' },
   }
   const plain: PendingWorktree = {
     path: '/Users/dev/code/varnick/.claude/worktrees/50',
@@ -3086,6 +3488,7 @@ export default function Billing() {
     commits: 2,
     changed: ['packages/core/src/pages/DesignedPage.tsx'],
     touchesFence: false,
+    merge: { kind: 'conflicts', files: ['packages/core/src/pages/DesignedPage.tsx'] },
   }
 
   const HUNKS =
@@ -3095,7 +3498,7 @@ export default function Billing() {
     createActor(
       harnessMachine.provide({
         actors: {
-          listWorktrees: never<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>(),
+          listWorktrees: never<Listing, Record<string, never>>(),
           worktreeDiff: worktreeDiffMachine.provide({
             actors: { readWorktreeDiff: readWorktreeDiff as never },
           }),
@@ -3261,8 +3664,9 @@ export default function Billing() {
     const actor = createActor(
       harnessMachine.provide({
         actors: {
-          listWorktrees: resolves<{ worktrees: readonly PendingWorktree[] }, Record<string, never>>({
+          listWorktrees: resolves<Listing, Record<string, never>>({
             worktrees: [fence, plain],
+            liveTreeDirty: false,
           }),
           readCredential: resolves<CredentialReading, Record<string, never>>({
             source: 'keychain',

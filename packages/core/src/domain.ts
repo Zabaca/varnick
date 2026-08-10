@@ -96,6 +96,73 @@ export interface PendingWorktree {
    * fell behind stops raising a dialog for a file the others still colour.
    */
   readonly touchesFence: boolean
+  /**
+   * Whether it will land, and what stands in the way when it will not.
+   *
+   * A **fact carried on the entry**, the way `touchesFence` is, and for the same
+   * reason: it is git's answer at the moment the listing was made, not something
+   * with a lifetime of its own. It goes stale as soon as either side moves,
+   * which is what the end-of-Turn refresh is for.
+   *
+   * The surface reads it to decide what to offer. A `fast-forward` or a `clean`
+   * entry can be merged from the window; a `conflicts` entry names its files and
+   * offers nothing, because resolving somebody else's branch is not this
+   * application's job — the agent merges `main` down into the worktree, where it
+   * may write and where it has the context.
+   */
+  readonly merge: Mergeability
+}
+
+/**
+ * Whether a branch will land, and what stands in the way when it will not.
+ *
+ * Spelled out here rather than imported from the Harness, like
+ * {@link PendingWorktree} that carries it: Core owns the shape it renders.
+ * `packages/harness/src/worktrees.ts` has the same union and the argument for
+ * each of its four members; the short version is that `unknown` exists because
+ * `merge-tree` distinguishes *conflicted* from *broken* by exit code, and
+ * collapsing the second into either of the first two would put a merge control
+ * over an answer nobody gave.
+ */
+export type Mergeability =
+  | { readonly kind: 'fast-forward' }
+  | { readonly kind: 'clean' }
+  | { readonly kind: 'conflicts'; readonly files: readonly string[] }
+  | { readonly kind: 'unknown'; readonly reason: string }
+
+/** One process standing in a Worktree that was about to be removed. */
+export interface CwdHolder {
+  readonly pid: number
+  readonly command: string
+}
+
+/**
+ * What a merge did, once it has been done.
+ *
+ * Spelled out here rather than imported from the Harness, like everything else
+ * Core renders. `packages/harness/src/merge.ts` has the same shape and the
+ * argument for each field; the one worth repeating is `leftOver`, because it is
+ * the reason this is a report rather than a boolean.
+ *
+ * **A merge that landed and a cleanup that could not finish is a success**, not
+ * a failure. The commit is on the live branch either way, so reporting it as a
+ * failure would invite a second merge of a branch that has already gone in. What
+ * is owed instead is a sentence about the directory still on disk, which is what
+ * `leftOver` is.
+ */
+export interface MergeReport {
+  /** The branch that landed, or the commit it was on when it had no branch. */
+  readonly branch: string
+  /** The squash commit on the live branch, abbreviated as git abbreviates it. */
+  readonly commit: string
+  /** How many of the branch's commits went into that one. */
+  readonly squashed: number
+  readonly worktreeRemoved: boolean
+  readonly branchDeleted: boolean
+  /** Who is standing in the Worktree, when that is why it is still there. */
+  readonly heldBy: readonly CwdHolder[]
+  /** What is left to do by hand, printed verbatim, or `null` when nothing is. */
+  readonly leftOver: string | null
 }
 
 /** A Surface as discovered on disk, before anything tries to load it. */
@@ -230,6 +297,107 @@ export function canStartAgent(input: {
   configuration where no figure existed, and the region it gated could only ever
   sit in `unread`. See ADR-0011 and ticket 31.
 */
+
+/**
+ * Whether there is an agent to answer a message.
+ *
+ * **The rule that stops a message being recorded with nothing alive to answer
+ * it.** Measured: an agent host exited on a terminal error while the Tauri host
+ * and the Harness runtime stayed up, so the runtime went on writing the Session
+ * mirror — and a message typed afterwards was appended to the transcript, saved,
+ * and answered by nobody. The transcript is the thing a developer trusts most on
+ * this screen, and a message in it that no process ever received is the one
+ * entry it must not contain.
+ *
+ * A predicate here rather than a guard on the Session, because the two facts
+ * belong to two machines and neither may learn the other's internals: whether
+ * there is an agent process is the Harness's, and the draft is the Session's.
+ * The surface holds both snapshots and is the only place they meet — which is
+ * the same arrangement `canStartAgent` has, and the reason both live here where
+ * `drive.ts` can reach them (ADR-0001, ADR-0013).
+ *
+ * **Only `running`.** `starting` is a process that is being spawned and cannot
+ * be written to yet, and the honest thing to do with a message typed into that
+ * second is to keep the draft and let the developer press send again — not to
+ * record it against a process that does not exist. Nothing is lost either way:
+ * refusing leaves the text in the composer.
+ */
+export function agentCanAnswer(agentState: string): boolean {
+  return agentState === 'running'
+}
+
+/**
+ * What a pending row says about merging, and whether it offers to.
+ *
+ * One function, three readers: the guard that decides whether the machine will
+ * accept `MERGE_WORKTREE`, the badge on the row, and the note under the list
+ * that tells a developer what to do about a branch that will not go in. The
+ * same arrangement as {@link canStartAgent} and for the same reason — the
+ * affordance and the rule must not be two pieces of code that agree today.
+ *
+ * It is here rather than in components/worktree-review.tsx because that file
+ * cannot be imported outside Vite, so a branch written inside it is a branch
+ * `drive.ts` cannot reach (ADR-0001, ADR-0013). The words are part of the
+ * decision and not a decoration on it: "conflicts" without the files is not
+ * actionable, and the sentence naming whose job the fix is *is* the product
+ * requirement — see `.claude/skills/change-core/SKILL.md`.
+ */
+export interface MergeSummary {
+  /** What the row says, in three or four words. */
+  readonly says: string
+  /**
+   * Whether the window will merge it.
+   *
+   * `fast-forward` and `clean` do. `conflicts` deliberately does not, and
+   * neither does `unknown`: a control over an answer nobody gave is worse than
+   * no control, because it reads as varnick having checked.
+   */
+  readonly offered: boolean
+  /**
+   * Whether this is the ordinary case or the build admitting something.
+   *
+   * `warn` on the two that are not ordinary, `quiet` on the two that are —
+   * most branches merge, and a colour spent on the normal case stops meaning
+   * anything on the screen where colour means Fence.
+   */
+  readonly tone: 'quiet' | 'warn'
+  /** The conflicted paths, empty for every other answer. */
+  readonly files: readonly string[]
+  /** What to do about it, or `null` when there is nothing to do. */
+  readonly advice: string | null
+}
+
+export function mergeSummary(merge: Mergeability): MergeSummary {
+  switch (merge.kind) {
+    case 'fast-forward':
+      return { says: 'fast-forward', offered: true, tone: 'quiet', files: [], advice: null }
+    case 'clean':
+      return { says: 'merges cleanly', offered: true, tone: 'quiet', files: [], advice: null }
+    case 'conflicts':
+      return {
+        says: `conflicts in ${merge.files.length} file${merge.files.length === 1 ? '' : 's'}`,
+        offered: false,
+        tone: 'warn',
+        files: merge.files,
+        /*
+          The instruction, not an apology. varnick builds no conflict resolver
+          and this sentence is why: the agent may write inside the worktree, it
+          wrote the branch, and it is the only party that knows what it meant.
+          A developer hand-resolving somebody else's branch inside a review tool
+          is guessing at reasoning they do not have.
+        */
+        advice: `Ask the agent to merge main down into that worktree and hand back a fast-forward — it can write there, and it knows what it meant. Conflicts in ${merge.files.join(', ')}.`,
+      }
+    case 'unknown':
+      return {
+        says: 'mergeability unknown',
+        offered: false,
+        tone: 'warn',
+        files: [],
+        advice: `git could not say whether this merges: ${merge.reason}`,
+      }
+  }
+}
 
 export function refusalFor(input: {
   credential: string

@@ -153,11 +153,16 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // into the keychain without ever being anywhere else. Forwarding either
         // half of it would put the pty — and therefore the token — in the Node
         // runtime. See mint.rs.
+        //
+        // `restart-varnick` is here for a reason unlike any of the others: it is
+        // not a question at all. It replaces *this* process, so it can only be
+        // answered by the process being replaced — and it runs the same teardown
+        // the View menu's Restart runs, because anything still alive when the
+        // image is replaced is orphaned by it. See lib.rs.
         "read-credential" | "store-credential" | "mint-subscription-token"
         | "next-mint-event" | "spawn-agent" | "stop-agent" | "await-agent-exit"
-        | "run-turn" | "next-turn-event" | "next-unprompted-event" | "interrupt-turn" => {
-            Some(Route::Host)
-        }
+        | "run-turn" | "next-turn-event" | "next-unprompted-event" | "interrupt-turn"
+        | "restart-varnick" => Some(Route::Host),
         // `read-commands` is the runtime's because it is a file read, and the
         // runtime is the process with a filesystem. It answers what the *agent*
         // last reported — written by the agent host, read back for a window
@@ -177,8 +182,17 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // ref that reaches argv is the one git printed. This host forwards it —
         // it holds no listing to check a path against, and a validation written
         // twice is a validation that drifts.
+        //
+        // `merge-worktree` is the runtime's for those same reasons — it is git,
+        // in the clone, with a filesystem — and it is the one call on this whole
+        // bridge that *writes* that clone. That is not a widening: the merge is
+        // the gate ADR-0014 rests on, and what reaches the runtime here is a
+        // human having clicked a control in a surface the agent cannot write
+        // (ADR-0002). Nothing the agent says can produce this call. The path is
+        // a selector, checked against git's own listing where git runs, exactly
+        // as the diff's is.
         "check-sandbox" | "persist-session" | "read-session" | "read-commands"
-        | "list-worktrees" | "read-worktree-diff" => Some(Route::Runtime),
+        | "list-worktrees" | "read-worktree-diff" | "merge-worktree" => Some(Route::Runtime),
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
         // capability the renderer has.
@@ -761,10 +775,70 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
             "next-unprompted-event" => {
                 Ok(serde_json::json!({ "event": agent.next_unprompted_event() }))
             }
+            /*
+              Everything, from the top — the same act as **Restart varnick** on
+              the View menu, asked for from the window instead of the menu bar.
+
+              It is on the bridge because the moment a restart is *owed* is a
+              moment varnick knows about and a developer would otherwise have to
+              remember: a merge has just landed, so the window is running the
+              code from before the change it accepted. A menu item is the right
+              place for "something is stuck"; it is the wrong place for
+              "something specific just happened".
+
+              The teardown runs first, and that ordering is the whole of it:
+              `restart` replaces this process image, and the agent and the
+              runtime are children of *this* process — anything still alive at
+              that moment is orphaned by it, which is exactly the process tree
+              ADR-0003 exists to prevent.
+
+              The `Ok` below is not reached in the ordinary case. `restart`
+              replaces the image and does not return, so the only way the
+              renderer ever sees an answer to this call is a restart that did
+              not happen — which is why there is an answer at all rather than a
+              silence for the window to hang on.
+            */
+            "restart-varnick" => {
+                crate::shut_down(app);
+                app.restart();
+                #[allow(unreachable_code)]
+                Ok(serde_json::json!({ "ok": true }))
+            }
             // Unreachable while `route_of` and this match agree, and a closed
             // default rather than a forward if they ever stop agreeing.
             _ => Err(Failure::of("malformed")),
         },
+        /*
+          Forwarded, with one thing done on the way back.
+
+          A merge is the runtime's — git, a filesystem, no credential — but the
+          agent that wrote the branch lives in *this* process, on a pipe the
+          runtime cannot reach. So the reply is read for the sentence the merge
+          composed for it, and that sentence is copied onto the control channel.
+          Nothing is written here: the words were composed where the merge
+          happened, which is the same division `describe-secrets` has.
+
+          Best effort, and the ordering says why. The merge has already happened
+          by the time this runs, so a failure to tell the agent must not turn a
+          merge that landed into a call that failed — the developer would be
+          told nothing happened to a tree that has changed.
+
+          The briefing does not go on to the renderer. `mergeAnswer` in
+          packages/harness/src/bridge.ts rebuilds the report field by field and
+          this is not one of them, which is the ordinary rule working in
+          varnick's favour: the window has no use for a brief addressed to the
+          agent.
+        */
+        Some(Route::Runtime) if kind == "merge-worktree" => {
+            let reply = runtime.call(&request)?;
+            if let Some(briefing) = reply.get("briefing").and_then(Value::as_str) {
+                // Relayed, never composed. Both strings were written in
+                // TypeScript where the merge happened; this picks neither.
+                let while_running = reply.get("whileRunning").and_then(Value::as_str);
+                let _ = agent.report_merge(briefing, while_running);
+            }
+            Ok(reply)
+        }
         Some(Route::Runtime) => runtime.call(&request),
         None => Err(Failure::of("malformed")),
     }
@@ -902,6 +976,45 @@ mod tests {
         // Answering it here would put a git subprocess in the process holding
         // the credential, for a question that needs neither.
         assert_ne!(route_of("read-worktree-diff"), Some(Route::Host));
+    }
+
+    #[test]
+    fn the_one_call_that_writes_the_clone_goes_where_git_is() {
+        /*
+          The merge, and it is the only request on this bridge that changes the
+          developer's tree.
+
+          It is the runtime's for the reasons the two reads above are — git, a
+          filesystem, no credential — and putting it there rather than here also
+          keeps the selector rule in one place: the path is compared against
+          git's own listing where git runs, so a merge cannot be pointed at a
+          tree by anything that composed a name.
+
+          What makes it *safe* is not the route. It is that nothing the agent
+          says can produce this call: the control that sends it lives under
+          `packages/core`, which `denyWrite` refuses the agent in the live tree,
+          and the agent has no way to send an event to the renderer at all. The
+          merge is still the gate ADR-0014 rests on — a human clicks it, with the
+          diff on screen.
+
+          The path is written without its glob on purpose. Rust nests block
+          comments, so a `core` followed by the two characters a glob starts with
+          opens one inside this and the closing marker below shuts that instead
+          — which is exactly what happened here, and it took the whole crate
+          out. It compiled nowhere and said `unterminated block comment` about a
+          comment that is plainly terminated.
+        */
+        assert_eq!(route_of("merge-worktree"), Some(Route::Runtime));
+        assert_ne!(route_of("merge-worktree"), Some(Route::Host));
+    }
+
+    #[test]
+    fn a_restart_can_only_be_answered_by_the_process_being_restarted() {
+        // Not a question, and not forwardable: it replaces *this* image. The
+        // runtime and the agent are this process's children, so the teardown
+        // has to run here — anything alive when the image goes is orphaned by
+        // it, which is the tree ADR-0003 exists to prevent.
+        assert_eq!(route_of("restart-varnick"), Some(Route::Host));
     }
 
     #[test]

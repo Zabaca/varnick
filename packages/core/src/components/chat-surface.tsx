@@ -11,8 +11,9 @@ import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
 import { RunningTasks } from './running-tasks.tsx'
-import { ReviewPanel, WorktreeDiffView } from './worktree-review.tsx'
+import { MergeReportBand, ReviewPanel, WorktreeDiffView } from './worktree-review.tsx'
 import {
+  agentCanAnswer,
   commandLabel,
   commandArgument,
   commandQuery,
@@ -338,6 +339,18 @@ export function ChatSurface({
       session?.send({ type: 'EDIT_DRAFT', text: '' })
       return
     }
+    /*
+      And nothing is sent when there is nothing to send it to.
+
+      The draft stays in the composer, which is what makes this a refusal rather
+      than a loss: press send again once the agent is up. What it prevents is the
+      case measured behind ticket 56 — an agent host that exited while the Tauri
+      host and the Harness runtime stayed alive, so a message typed afterwards
+      was appended to the transcript and written to the mirror with no process
+      that had ever received it. `agentCanAnswer` is the rule; the line under the
+      composer is what says so.
+    */
+    if (!agentCanAnswer(agentState)) return
     if (sessionCan({ type: 'SEND' })) session?.send({ type: 'SEND' })
   }
 
@@ -430,6 +443,14 @@ export function ChatSurface({
       <div className="flex h-full flex-col" style={{ background: 'var(--ground)' }}>
         {/* The admission stays. A seeded run invents this diff too. */}
         <SeededStrip mode={mode} />
+        {/*
+          And so does the merge report, which is the one band that has to be on
+          both screens. A merge is started from *this* view, and the branch it
+          was about is gone by the time it lands — so a report only the chat
+          could show would appear behind a diff of a worktree that no longer
+          exists, with nothing on screen to say what happened.
+        */}
+        <MergeReportBand snapshot={snapshot} send={send} />
         <WorktreeDiffView diff={ctx.worktreeDiff} snapshot={snapshot} send={send} />
       </div>
     )
@@ -468,6 +489,16 @@ export function ChatSurface({
         makes a permanent slot affordable: see ReviewPanel, where that decision
         and the reason a listing in flight is also silent are written down.
       */}
+      {/*
+        And what the last merge did, above that.
+
+        Above rather than below, because the two say different kinds of thing:
+        the list is work waiting, and this is something that already happened to
+        the tree the window is running from. Both are silent when they have
+        nothing to say, so in the ordinary case neither band exists.
+      */}
+      <MergeReportBand snapshot={snapshot} send={send} />
+
       <ReviewPanel snapshot={snapshot} send={send} />
 
       <div className="flex min-h-0 flex-1">
@@ -761,8 +792,19 @@ export function ChatSurface({
 
             <ClaudePrompt
               value={draft}
+              /*
+                Three things the field can be for, and the third is the one
+                worth having: with no agent running, the placeholder says so
+                where a developer is already looking. Typing still works and the
+                draft is kept — what does not happen is a message going into the
+                transcript with nothing alive to answer it.
+              */
               placeholder={
-                working ? 'working — esc to interrupt' : 'What should the agent build?  /  for commands'
+                !agentCanAnswer(agentState)
+                  ? 'no agent is running — nothing would answer this'
+                  : working
+                    ? 'working — esc to interrupt'
+                    : 'What should the agent build?  /  for commands'
               }
               /*
                 Both status lines off, and the status moved below.

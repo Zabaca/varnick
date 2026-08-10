@@ -4,6 +4,7 @@ import type {
   CredentialKind,
   CredentialReading,
   Effort,
+  MergeReport,
   Message,
   ModelId,
   PendingWorktree,
@@ -156,11 +157,15 @@ export function seededActors() {
       "design mode" mean "whatever this machine happens to have checked out".
     */
     listWorktrees: fromPromise<
-      { worktrees: readonly PendingWorktree[] },
+      { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean },
       Record<string, never>
     >(async () => {
       await wait(200)
       return {
+        // Clean, so a seeded run designs the screen with the merge control on
+        // it. The refusal a dirty tree produces is reachable from the states
+        // page, which is where a card parks it.
+        liveTreeDirty: false,
         worktrees: [
           {
             path: '/Users/you/varnick/.claude/worktrees/ticket-48',
@@ -168,6 +173,7 @@ export function seededActors() {
             commits: 4,
             changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
             touchesFence: true,
+            merge: { kind: 'fast-forward' },
           },
           {
             path: '/Users/you/varnick/.claude/worktrees/ticket-50',
@@ -175,6 +181,25 @@ export function seededActors() {
             commits: 2,
             changed: ['packages/core/src/pages/DesignedPage.tsx'],
             touchesFence: false,
+            merge: { kind: 'clean' },
+          },
+          /*
+            A third, and it is here because of what the first two cannot show.
+            Two rows that both merge design the easy half of this band: the
+            case worth looking at is the one with no control on it, where the
+            copy has to name the files and say whose job the fix is. A seed
+            without it is a design for the screen nobody needs help with.
+          */
+          {
+            path: '/Users/you/varnick/.claude/worktrees/ticket-53',
+            branch: 'ticket/53-heredoc',
+            commits: 1,
+            changed: ['sandbox-policy.baseline.json', 'packages/harness/src/sandbox.ts'],
+            touchesFence: true,
+            merge: {
+              kind: 'conflicts',
+              files: ['sandbox-policy.baseline.json', 'packages/harness/src/sandbox.ts'],
+            },
           },
         ],
       }
@@ -198,6 +223,47 @@ export function seededActors() {
       await wait(300)
       return { diff: seedWorktreeDiff }
     }),
+
+    /*
+      A merge that lands, made up like everything else here — **and nothing is
+      merged.**
+
+      This is the one seed where that has to be said out loud. Every other actor
+      on this list stands in for a service that would have answered a question;
+      this one stands in for a service that would have rewritten the developer's
+      clone, so a seeded run that shelled out would turn "design mode" into
+      "design mode, and your tree is different now".
+
+      It reports a clean landing with nothing left over, which is the case the
+      surface has least to say about. That is deliberate: the interesting
+      renderings — a directory somebody is standing in, a merge that was refused
+      — are parked on the states page, where a card can be pointed straight at
+      one rather than reached by clicking through a happy path.
+    */
+    mergeWorktree: fromPromise<MergeReport, { path: string }>(async ({ input }) => {
+      await wait(600)
+      return {
+        branch: input.path.split('/').pop() ?? 'a branch',
+        commit: 'a1b2c3d',
+        squashed: 3,
+        worktreeRemoved: true,
+        branchDeleted: true,
+        heldBy: [],
+        leftOver: null,
+      }
+    }),
+
+    /*
+      A restart that does not happen.
+
+      Never resolving is the honest seed: a real one replaces the process, so
+      there is no answer to imitate, and a seed that resolved would send the
+      region back to `merged` saying the restart had failed. `#/states` is where
+      that outcome is reached, by a card that parks it.
+    */
+    restartVarnick: fromPromise<void, Record<string, never>>(
+      () => new Promise<void>(() => {}),
+    ),
 
     // No `loadSurface`. Importing a file is not a service call, so there is
     // nothing here to stand in for one — see actors/index.ts.

@@ -21,6 +21,7 @@ interface Recorded {
   worktreeListings: number
   fenceDiffs: string[]
   diffReads: string[]
+  merges: string[]
 }
 
 function capabilities(
@@ -34,6 +35,7 @@ function capabilities(
     worktreeListings: 0,
     fenceDiffs: [],
     diffReads: [],
+    merges: [],
   }
   return {
     recorded,
@@ -62,6 +64,7 @@ function capabilities(
       recorded.worktreeListings += 1
       return []
     },
+    liveTreeDirty: async () => false,
     readFenceDiff: async (worktree) => {
       recorded.fenceDiffs.push(worktree)
       return ''
@@ -69,6 +72,26 @@ function capabilities(
     readWorktreeDiff: async (path) => {
       recorded.diffReads.push(path)
       return ''
+    },
+    /*
+      The default merges nothing and records that it was asked.
+
+      A capability that actually merged would be a unit test writing this
+      repository's own history, which is the reason nothing in this file runs
+      git — packages/harness/src/merge.test.ts is where the sequence itself is
+      asserted, against ports.
+    */
+    mergeWorktree: async (path) => {
+      recorded.merges.push(path)
+      return {
+        branch: 'ticket/49',
+        commit: 'abc1234',
+        squashed: 3,
+        worktreeRemoved: true,
+        branchDeleted: true,
+        heldBy: [],
+        leftOver: null,
+      }
     },
     ...overrides,
   }
@@ -415,6 +438,7 @@ describe('list-worktrees answers with what git said', () => {
     commits: 3,
     changed: ['src-tauri/src/bridge.rs'],
     touchesFence: true,
+    merge: { kind: 'clean' as const },
   }
 
   test('the entries come back', async () => {
@@ -422,7 +446,7 @@ describe('list-worktrees answers with what git said', () => {
       call(1, { kind: 'list-worktrees' }),
       capabilities({ listWorktrees: async () => [pending] }),
     )
-    expect(answer.ok).toEqual({ worktrees: [pending] })
+    expect(answer.ok).toEqual({ worktrees: [pending], liveTreeDirty: false })
   })
 
   test('nothing pending is an answer rather than a refusal', async () => {
@@ -430,7 +454,7 @@ describe('list-worktrees answers with what git said', () => {
     // problems. This is the first one, and it must not arrive as the second.
     const caps = capabilities()
     const answer = await reply(call(1, { kind: 'list-worktrees' }), caps)
-    expect(answer.ok).toEqual({ worktrees: [] })
+    expect(answer.ok).toEqual({ worktrees: [], liveTreeDirty: false })
     expect(caps.recorded.worktreeListings).toBe(1)
   })
 

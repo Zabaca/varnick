@@ -20,6 +20,7 @@ import type {
   CredentialKind,
   CredentialReading,
   Effort,
+  MergeReport,
   Message,
   ModelId,
   PendingWorktree,
@@ -545,7 +546,7 @@ export function liveActors(
       thing from knowing that nothing is.
     */
     listWorktrees: fromPromise<
-      { worktrees: readonly PendingWorktree[] },
+      { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean },
       Record<string, never>
     >(() => callHarness({ kind: 'list-worktrees' })),
 
@@ -568,6 +569,39 @@ export function liveActors(
     readWorktreeDiff: fromPromise<{ diff: string }, { path: string }>(({ input }) =>
       callHarness({ kind: 'read-worktree-diff', path: input.path }),
     ),
+
+    /*
+      Real, and the one actor on this whole list that **writes the developer's
+      clone**.
+
+      Everything else here reads a service or reports on a repository; this
+      changes one. That is the gate ADR-0014 rests on rather than a hole in it:
+      the call happens because a human clicked a control in `packages/core/**`,
+      which the agent cannot write, with the branch's diff on the screen beside
+      it. Nothing the agent says can produce this event.
+
+      It carries which Worktree and nothing else — no ref, no message, no
+      command — and the host resolves that path against git's own listing before
+      anything is written. The refusals that matter are all on that side, on
+      facts that are current: a dirty live tree, a branch that no longer merges,
+      a directory somebody is standing in. See packages/harness/src/merge.ts.
+    */
+    mergeWorktree: fromPromise<MergeReport, { path: string }>(({ input }) =>
+      callHarness({ kind: 'merge-worktree', path: input.path }),
+    ),
+
+    /*
+      Real, and the only actor here that is not expected to answer.
+
+      The host tears down what it holds and replaces its own image, so in the
+      ordinary case this promise is still pending when the process it was made
+      in stops existing. What it is *for* is the other case: a restart that did
+      not happen leaves a developer believing they are running code they merged
+      and are not, which is the failure this whole region exists to prevent.
+    */
+    restartVarnick: fromPromise<void, Record<string, never>>(async () => {
+      await callHarness({ kind: 'restart-varnick' })
+    }),
 
     // `loadSurface` is deliberately absent from both this list and the seeded
     // one. It has no seeded half in either mode — see actors/index.ts.

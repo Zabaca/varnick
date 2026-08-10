@@ -134,13 +134,19 @@ const up = {
 } satisfies HarnessInput
 
 /**
- * Two branches waiting, one of which edits the Fence.
+ * Three branches waiting: one that edits the Fence, one that does not, and one
+ * that will not go in.
  *
  * Literal scenario data, like the mint card's URL: made up, and visibly so —
  * nothing on this page runs git. One list rather than one per card, because the
- * four cards below it are one screen at four moments: a listing, and the same
- * listing with one of its rows opened three ways. A second copy is how the row
- * a card opens comes to name a worktree the card does not show.
+ * cards below it are one screen at several moments: a listing, and the same
+ * listing with one of its rows opened. A second copy is how the row a card
+ * opens comes to name a worktree the card does not show.
+ *
+ * The third entry earns its place by being the one with no merge control on it.
+ * A list where everything lands designs the half of this band that needs no
+ * design; the row that conflicts is the one whose copy has to name the files
+ * and say whose job the fix is.
  */
 const statesWorktrees: readonly PendingWorktree[] = [
   {
@@ -149,6 +155,7 @@ const statesWorktrees: readonly PendingWorktree[] = [
     commits: 4,
     changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
     touchesFence: true,
+    merge: { kind: 'fast-forward' },
   },
   {
     path: '/Users/you/varnick/.claude/worktrees/ticket-50',
@@ -156,11 +163,26 @@ const statesWorktrees: readonly PendingWorktree[] = [
     commits: 2,
     changed: ['packages/core/src/pages/DesignedPage.tsx'],
     touchesFence: false,
+    merge: { kind: 'clean' },
+  },
+  {
+    path: '/Users/you/varnick/.claude/worktrees/ticket-53',
+    branch: 'ticket/53-heredoc',
+    commits: 1,
+    changed: ['sandbox-policy.baseline.json', 'packages/harness/src/sandbox.ts'],
+    touchesFence: true,
+    merge: {
+      kind: 'conflicts',
+      files: ['sandbox-policy.baseline.json', 'packages/harness/src/sandbox.ts'],
+    },
   },
 ]
 
 /** The one a diff card opens: the branch that edits the Fence. */
 const openedWorktree = statesWorktrees[0]!.path
+
+/** And the one a card opens to show a screen with no merge control on it. */
+const conflictedWorktree = statesWorktrees[2]!.path
 
 export const SCENARIOS: readonly Scenario[] = [
   // -- Start-up ------------------------------------------------------------
@@ -704,6 +726,147 @@ export const SCENARIOS: readonly Scenario[] = [
     },
     opensWorktree: openedWorktree,
     diffOutcome: 'fails',
+  },
+
+  /*
+    Landing one, which is the point of the four cards above.
+
+    The first is not a merge at all: it is the branch that conflicts, opened, to
+    check that the screen with *no* control on it says what to do instead. Every
+    other card here is a moment after the click, and the two worth arguing about
+    are `merged` — which has to make "you are running old code" impossible to
+    read past — and the merge that landed with a directory still on disk, which
+    is the outcome the shape of this feature makes most likely and the one a
+    boolean would have flattened into "it worked".
+  */
+  {
+    id: 'worktree-merge-refused',
+    group: 'Pending Core changes',
+    title: 'A branch that will not go in',
+    blurb:
+      'The conflicted branch, opened. There is no merge control and there is no disabled one either — what is here instead is the files it clashes in and the sentence that says whose job the fix is. varnick builds no conflict resolver: the agent merges `main` down into its own worktree, where it may write and where it knows what it meant.',
+    question: 'Does this teach the loop, rather than inviting you to resolve someone else’s branch?',
+    covers: ['worktreeMerge.unmerged'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-merge-refused', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+    },
+    opensWorktree: conflictedWorktree,
+    diffOutcome: 'loads',
+  },
+  {
+    id: 'worktree-merging',
+    group: 'Pending Core changes',
+    title: 'Merging',
+    blurb:
+      'The squash, the commit, the check that it carried, and the cleanup — one wait, because from the developer’s side they are one act. Nothing has been deleted yet at any moment this card represents: every refusal happens before anything is written.',
+    question: 'Is it clear that this is one operation rather than a button that has stuck?',
+    covers: ['worktreeMerge.merging'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-merging', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+      enterWorktreeMerge: 'merging',
+      merging: openedWorktree,
+    },
+  },
+  {
+    id: 'worktree-merged',
+    group: 'Pending Core changes',
+    title: 'It landed, and you are running old code',
+    blurb:
+      'One commit on the live branch, the worktree gone, the branch gone. The sentence that matters is the second one: until a restart, this window is running the build from before the change it just accepted — and an agent reasoning about a fix it believes is live is worse off than one that knows it is not.',
+    question: 'Could you read this and still think the change is running?',
+    covers: ['worktreeMerge.merged'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-merged', messages: seedMessages },
+      enterReview: 'empty',
+      enterWorktreeMerge: 'merged',
+      mergeReport: {
+        branch: 'ticket/48-launch-preview',
+        commit: 'a1b2c3d',
+        squashed: 4,
+        worktreeRemoved: true,
+        branchDeleted: true,
+        heldBy: [],
+        leftOver: null,
+      },
+    },
+  },
+  {
+    id: 'worktree-merged-held',
+    group: 'Pending Core changes',
+    title: 'It landed; something is standing in the directory',
+    blurb:
+      'The commit is on the live branch and the worktree is still there, because a process has it as its working directory — a Preview, or the agent that wrote the branch. Removing it anyway is not recoverable: the SDK treats a missing cwd as a terminal error before the agent can report it, ask, or step back. So the processes are named and the choice is the developer’s.',
+    question: 'Does this read as a success with something left over, rather than as a failure?',
+    covers: ['worktreeMerge.merged'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-merged-held', messages: seedMessages },
+      enterReview: 'empty',
+      enterWorktreeMerge: 'merged',
+      mergeReport: {
+        branch: 'ticket/48-launch-preview',
+        commit: 'a1b2c3d',
+        squashed: 4,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        heldBy: [{ pid: 52236, command: 'varnick' }],
+        leftOver:
+          'ticket/48-launch-preview landed as a1b2c3d. The worktree at /Users/you/varnick/.claude/worktrees/ticket-48 is still there because varnick (pid 52236) is standing in it — nothing will clear it up on its own, so stop it and run: git worktree remove /Users/you/varnick/.claude/worktrees/ticket-48 && git branch -D ticket/48-launch-preview',
+      },
+    },
+  },
+  {
+    id: 'worktree-merge-failed',
+    group: 'Pending Core changes',
+    title: 'The merge was refused',
+    blurb:
+      'The live tree had uncommitted work in it, so nothing was merged — a merge over it is how a change nobody knew about is lost. The reason names the paths, because "the tree is dirty" is not something a developer can act on and a list of files is.',
+    question: 'Is it obvious that the tree is exactly as it was?',
+    covers: ['worktreeMerge.mergeFailed'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-merge-failed', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+      enterWorktreeMerge: 'mergeFailed',
+      // The diff this merge was asked from, so the card carries the retry the
+      // ticket asks this state for. Without it the band draws its reason and no
+      // way to act on it, which is the defect rather than the state.
+      worktreeOpen: statesWorktrees[0]?.path ?? null,
+      mergeError:
+        'The live tree has uncommitted work in packages/core/src/App.tsx, DESIGN.md. A merge over it is how a change nobody knew about is lost, so varnick will not do one. Commit or set that work aside first.',
+    },
+  },
+  {
+    id: 'worktree-restarting',
+    group: 'Pending Core changes',
+    title: 'Restarting into the merged code',
+    blurb:
+      'The last frame this window is expected to draw: the host tears down the agent and the runtime and replaces its own image. If this card is ever reached in a real run and stays, the restart did not happen — which is the only outcome this side can observe, and the reason it is a state at all.',
+    question: 'Is this the last thing on screen, rather than a spinner that outlives its cause?',
+    covers: ['worktreeMerge.restarting'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-restarting', messages: seedMessages },
+      enterReview: 'empty',
+      enterWorktreeMerge: 'restarting',
+      mergeReport: {
+        branch: 'ticket/48-launch-preview',
+        commit: 'a1b2c3d',
+        squashed: 4,
+        worktreeRemoved: true,
+        branchDeleted: true,
+        heldBy: [],
+        leftOver: null,
+      },
+    },
   },
 ]
 

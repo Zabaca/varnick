@@ -2,7 +2,8 @@ import { useMemo } from 'react'
 import type { ActorRefFrom } from 'xstate'
 import { toPath } from '../hooks.ts'
 import { parseDiff, type DiffFile, type DiffHunk, type DiffLineKind } from '../diff.ts'
-import type { PendingWorktree } from '../domain.ts'
+import { mergeSummary } from '../domain.ts'
+import type { Mergeability, PendingWorktree } from '../domain.ts'
 import type { worktreeDiffMachine } from '../machines/worktree-diff.ts'
 import type { HarnessEvent } from '../machines/harness.ts'
 import type { HarnessSnapshot } from './chat-surface.tsx'
@@ -169,6 +170,8 @@ export function ReviewPanel({
         </ul>
       )}
 
+      <ConflictNote entries={entries} />
+
       {/*
         Two failures with two sentences, told apart by whether anything survived.
 
@@ -254,12 +257,92 @@ function WorktreeRow({
         {entry.commits} commit{entry.commits === 1 ? '' : 's'} · {entry.changed.length} file
         {entry.changed.length === 1 ? '' : 's'}
       </span>
+      <MergeBadge merge={entry.merge} />
       {canOpen && (
         <button className="ml-auto shrink-0" onClick={onOpen} style={{ color: 'var(--accent)' }}>
           open
         </button>
       )}
     </li>
+  )
+}
+
+/**
+ * Whether the row will go in, in three or four words.
+ *
+ * ## Said on the row, decided in the diff
+ *
+ * The answer belongs here and the control does not, and the two halves of that
+ * are separate decisions. A developer scanning the band is choosing what to
+ * read, and "this one conflicts" changes that choice — so withholding it until
+ * they have opened the branch makes them open branches to find out they cannot
+ * merge them. The **control** stays with the diff, because a merge button on a
+ * summary row is a way to land a Fence hunk without having looked at one, which
+ * is exactly the thing ticket 50's marking exists to prevent.
+ *
+ * ## And in grey, except when it is not
+ *
+ * `fast-forward` and `clean` are `fg-faint`, beside the counts, because they are
+ * ordinary — most branches merge, and a colour spent on the normal case is a
+ * colour that stops meaning anything. `conflicts` and `unknown` are `warn`: the
+ * build admitting something about itself, which is what "this will not go in as
+ * it stands" and "nobody could work out whether it would" both are. Neither is
+ * `bad` — nothing has failed, and a branch that conflicts is a branch mid-flight
+ * rather than a branch that broke.
+ *
+ * The conflicted files are named one level down, in the panel under the list,
+ * rather than on the row: a row is one line by design, and a branch that
+ * conflicts in nine files would take the band apart.
+ */
+function MergeBadge({ merge }: { merge: Mergeability }) {
+  const summary = mergeSummary(merge)
+  const warn = summary.tone === 'warn'
+  return (
+    <span
+      className="shrink-0"
+      style={{ color: warn ? 'var(--warn)' : 'var(--fg-faint)' }}
+      title={merge.kind === 'unknown' ? merge.reason : undefined}
+    >
+      {warn && <span aria-hidden>⚠ </span>}
+      {summary.says}
+    </span>
+  )
+}
+
+/**
+ * What to do about the branches that will not go in.
+ *
+ * Under the list rather than on the rows, and said once for all of them. Two
+ * things have to be here and only one of them is the file names: the other is
+ * **whose job this is**, which is the part a developer reading a conflict will
+ * otherwise get wrong by reflex.
+ *
+ * `.claude/skills/change-core/SKILL.md` already answers it. The agent merges
+ * `main` *down* into its worktree — it may write there, and it wrote the branch,
+ * so it is the party with the context — and hands back a fast-forward. varnick
+ * deliberately builds no conflict resolver: a developer hand-resolving somebody
+ * else's branch inside a review tool is guessing at reasoning they do not have,
+ * and doing it in a window whose whole job is to show them what changed.
+ *
+ * So this is instruction, not apology. It names the branch, names the files, and
+ * says the sentence to send.
+ */
+function ConflictNote({ entries }: { entries: readonly PendingWorktree[] }) {
+  const stuck = entries
+    .map((entry) => ({ entry, summary: mergeSummary(entry.merge) }))
+    .filter(({ summary }) => summary.advice !== null)
+  if (stuck.length === 0) return null
+
+  return (
+    <div className="mt-1 space-y-0.5 text-[12px]" style={{ maxWidth: 'var(--prose)' }}>
+      {stuck.map(({ entry, summary }) => (
+        <p key={entry.path} style={{ color: 'var(--warn)' }}>
+          <span aria-hidden>⚠ </span>
+          <span style={{ color: 'var(--fg)' }}>{entry.branch ?? 'detached HEAD'}</span>{' '}
+          {summary.advice}
+        </p>
+      ))}
+    </div>
   )
 }
 
@@ -320,6 +403,8 @@ export function WorktreeDiffView({
           {worktree.path}
         </div>
 
+        <MergeControl worktree={worktree} snapshot={snapshot} send={send} />
+
         {/*
           Said once, at the top, so the marking below is a marking rather than a
           decoration nobody was told the meaning of. Only when there is one:
@@ -366,6 +451,294 @@ export function WorktreeDiffView({
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Landing the branch, from the screen showing what is in it.
+ *
+ * ## Here, and deliberately not on the row
+ *
+ * Ticket 50 marks Fence hunks at three distances so that nobody merges one
+ * without having seen it. A merge button on a summary row would make that
+ * marking optional — you would land a Fence change having looked at a line
+ * saying "⚠ fence", which is a warning rather than the thing it warns about.
+ * The control is in the header of the diff, so the hunks are the page it is on.
+ *
+ * The machine agrees rather than being trusted to: `mergeable` refuses
+ * `MERGE_WORKTREE` unless a diff is open, so this is not a convention the view
+ * is keeping on its own.
+ *
+ * ## Four things it can say, and only one of them is a button
+ *
+ * A merge that is offered is one control and no prose. Everything else is a
+ * sentence saying why there is no control, because a disabled button explains
+ * nothing and an absent one explains nothing either:
+ *
+ *   * the branch conflicts, or nobody could tell — `mergeSummary`'s advice,
+ *     which names the files and says to ask the agent to merge `main` down;
+ *   * the live tree is dirty — the one refusal that is about neither the branch
+ *     nor this window, and the one a developer can clear in ten seconds if they
+ *     are told;
+ *   * a merge is already running, here or on another branch.
+ *
+ * The dirty-tree sentence is `warn` rather than `bad` for the reason the whole
+ * of this file uses `warn`: nothing has failed. It is the build declining to
+ * write over work it cannot see.
+ */
+function MergeControl({
+  worktree,
+  snapshot,
+  send,
+}: {
+  worktree: PendingWorktree
+  snapshot: HarnessSnapshot
+  send: (event: HarnessEvent) => void
+}) {
+  const summary = mergeSummary(worktree.merge)
+  const merging = toPath((snapshot.value as Record<string, unknown>).worktreeMerge) === 'merging'
+  const canMerge = snapshot.can({ type: 'MERGE_WORKTREE', path: worktree.path })
+
+  if (merging) {
+    return (
+      <p className="mt-1.5 text-[12px]" style={{ color: 'var(--fg-faint)' }}>
+        Merging {snapshot.context.merging === worktree.path ? 'this branch' : 'another branch'}…
+      </p>
+    )
+  }
+
+  if (canMerge) {
+    return (
+      <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 text-[12px]">
+        <button
+          onClick={() => send({ type: 'MERGE_WORKTREE', path: worktree.path })}
+          style={{ color: 'var(--accent)' }}
+        >
+          merge into the live tree
+        </button>
+        {/*
+          What merging will do, said before it is done rather than after. The
+          squash is not an implementation detail from where the developer is
+          standing: it is the difference between the live branch gaining one
+          commit and gaining this branch's whole working record.
+        */}
+        <span style={{ color: 'var(--fg-faint)' }}>
+          squashed into one commit — {summary.says}, and the worktree is removed
+          afterwards
+        </span>
+      </div>
+    )
+  }
+
+  if (snapshot.context.liveTreeDirty) {
+    return (
+      <p className="mt-1.5 text-[12px]" style={{ color: 'var(--warn)', maxWidth: 'var(--prose)' }}>
+        <span aria-hidden>⚠ </span>
+        The live tree has uncommitted work in it, so varnick will not merge onto it — a merge over
+        it is how a change nobody knew about is lost. Commit or set that work aside, then look
+        again.
+      </p>
+    )
+  }
+
+  if (summary.advice !== null) {
+    return (
+      <p className="mt-1.5 text-[12px]" style={{ color: 'var(--warn)', maxWidth: 'var(--prose)' }}>
+        <span aria-hidden>⚠ </span>
+        {summary.advice}
+      </p>
+    )
+  }
+
+  /*
+    A mergeable row while the region is elsewhere — `merged`, `mergeFailed`,
+    `restarting`. `canMerge` is false because the guard is region-scoped, and
+    there is nothing wrong with the branch, so none of the warnings above apply
+    and every one of them would be a lie.
+
+    It still says something. A row that offers a merge, then silently offers
+    nothing the moment another branch is merged, reads as the row having gone
+    wrong — which is the same complaint this component's own header makes about
+    a disabled button that explains nothing. What is true is short: the control
+    is busy elsewhere, and it comes back.
+  */
+  if (worktree.merge.kind === 'fast-forward' || worktree.merge.kind === 'clean') {
+    return (
+      <p className="mt-1.5 text-[12px]" style={{ color: 'var(--fg-faint)' }}>
+        {summary.says} — mergeable, once the last merge has been put away.
+      </p>
+    )
+  }
+
+  return null
+}
+
+/**
+ * What the last merge did, across the top of the window.
+ *
+ * ## Why it is a band and not a line in the transcript
+ *
+ * The only thing a developer must not miss here is that **this window is now
+ * running the code from before the change it just accepted**, and a note in a
+ * scrolling conversation is a note that scrolls. It sits where the review band
+ * sits, for the reason the review band sits there (ticket 55): the consequential
+ * thing goes above the fold.
+ *
+ * It is also the one surface in varnick that outlives its subject. The branch is
+ * gone, the worktree is gone, the row it came from will not be in the next
+ * listing — this is the only trace, and dismissing it is the developer saying
+ * they have read it rather than the fact ceasing to be true.
+ *
+ * ## `leftOver` is printed verbatim
+ *
+ * The host composes that sentence because the host is what knows: which pid is
+ * standing in the directory, what git said when it would not delete a ref,
+ * whether the squash carried. Nothing is reworded here — a surface that
+ * paraphrased would be inventing detail about a filesystem it cannot see.
+ */
+export function MergeReportBand({
+  snapshot,
+  send,
+}: {
+  snapshot: HarnessSnapshot
+  send: (event: HarnessEvent) => void
+}) {
+  const state = toPath((snapshot.value as Record<string, unknown>).worktreeMerge)
+  const { mergeReport, mergeError } = snapshot.context
+
+  if (state === 'merging') {
+    return (
+      <Band>
+        <p style={{ color: 'var(--fg-faint)' }}>Merging, and clearing up after it…</p>
+      </Band>
+    )
+  }
+
+  if (state === 'restarting') {
+    return (
+      <Band>
+        <p style={{ color: 'var(--fg-faint)' }}>Restarting varnick…</p>
+      </Band>
+    )
+  }
+
+  if (state === 'mergeFailed') {
+    return (
+      <Band>
+        <div className="flex flex-wrap items-baseline gap-x-3" style={{ color: 'var(--bad)' }}>
+          <span style={{ maxWidth: 'var(--prose)' }}>
+            <span aria-hidden>✗ </span>
+            {mergeError ?? 'The merge did not happen.'}
+          </span>
+          {/*
+            Nothing was written, and saying so is the point. A failed merge is
+            the one failure in this feature where the developer's next question
+            is "what state is my tree in", and every refusal happens before
+            anything is written — see packages/harness/src/merge.ts.
+          */}
+          <span style={{ color: 'var(--fg-faint)' }}>Nothing was merged.</span>
+          {/*
+            The retry, where the failure is.
+
+            Ticket 56 asks that this state "carries git's reason and offers a
+            retry", and the retry existed only on the row's own control, behind
+            the diff — so the band said what went wrong and the way to act on it
+            was somewhere else. Worse where it matters most: the commonest
+            failure is a dirty live tree, which the developer fixes in a terminal
+            and comes straight back to this band.
+
+            Drawn from `can()` like every other control here, so it is absent
+            rather than inert when the merge is not on offer — the branch may
+            have stopped being mergeable while the reason was being read.
+          */}
+          {snapshot.context.worktreeOpen !== null &&
+            snapshot.can({ type: 'MERGE_WORKTREE', path: snapshot.context.worktreeOpen }) && (
+              <button
+                onClick={() =>
+                  send({ type: 'MERGE_WORKTREE', path: snapshot.context.worktreeOpen as string })
+                }
+                style={{ color: 'var(--accent)' }}
+              >
+                try again
+              </button>
+            )}
+          {snapshot.can({ type: 'DISMISS_MERGE' }) && (
+            <button onClick={() => send({ type: 'DISMISS_MERGE' })} style={{ color: 'var(--accent)' }}>
+              dismiss
+            </button>
+          )}
+        </div>
+      </Band>
+    )
+  }
+
+  if (state !== 'merged' || mergeReport === null) return null
+
+  return (
+    <Band>
+      <div className="text-[12px]" style={{ maxWidth: 'var(--prose)' }}>
+        <p style={{ color: 'var(--fg)' }}>
+          <span style={{ color: 'var(--fg)' }}>{mergeReport.branch}</span> landed as{' '}
+          <span data-numeric>{mergeReport.commit}</span>
+          {mergeReport.squashed > 1 && (
+            <>
+              , squashing <span data-numeric>{mergeReport.squashed}</span> commits into one
+            </>
+          )}
+          .
+        </p>
+        {/*
+          The sentence this whole region exists for. Until the restart, the
+          window is running the code from before the change it just accepted,
+          and an agent reasoning about a fix it believes is live is worse off
+          than one that knows it is not.
+        */}
+        <p style={{ color: 'var(--warn)' }}>
+          <span aria-hidden>⚠ </span>
+          varnick is still running the code from before this change. A restart is what makes it
+          live.
+        </p>
+        {mergeReport.leftOver !== null && (
+          <p style={{ color: 'var(--warn)' }}>
+            <span aria-hidden>⚠ </span>
+            {mergeReport.leftOver}
+          </p>
+        )}
+        {mergeError !== null && (
+          <p style={{ color: 'var(--bad)' }}>
+            <span aria-hidden>✗ </span>
+            {mergeError}
+          </p>
+        )}
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-3">
+          {snapshot.can({ type: 'RESTART_VARNICK' }) && (
+            <button
+              onClick={() => send({ type: 'RESTART_VARNICK' })}
+              style={{ color: 'var(--accent)' }}
+            >
+              restart varnick
+            </button>
+          )}
+          {snapshot.can({ type: 'DISMISS_MERGE' }) && (
+            <button onClick={() => send({ type: 'DISMISS_MERGE' })} style={{ color: 'var(--fg-faint)' }}>
+              not now
+            </button>
+          )}
+        </div>
+      </div>
+    </Band>
+  )
+}
+
+/** The same full-width slot the review list uses, so the two stack. */
+function Band({ children }: { children: React.ReactNode }) {
+  return (
+    <section
+      className="shrink-0 px-6 py-2 text-[12px]"
+      style={{ borderBottom: '1px solid var(--rule)', background: 'var(--ground-raised)' }}
+    >
+      {children}
+    </section>
   )
 }
 

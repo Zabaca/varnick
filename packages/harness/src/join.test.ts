@@ -50,8 +50,18 @@ const capabilities = (over: Partial<HarnessCapabilities> = {}): HarnessCapabilit
   readCommands: async () => [],
   readSecretNames: async () => [],
   listWorktrees: async () => [],
+  liveTreeDirty: async () => false,
   readFenceDiff: async () => '',
   readWorktreeDiff: async () => '',
+  mergeWorktree: async () => ({
+    branch: 'ticket/49',
+    commit: 'abc1234',
+    squashed: 1,
+    worktreeRemoved: true,
+    branchDeleted: true,
+    heldBy: [],
+    leftOver: null,
+  }),
   ...over,
 })
 

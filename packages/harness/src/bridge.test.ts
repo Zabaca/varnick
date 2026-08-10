@@ -303,6 +303,7 @@ describe('the answer is rebuilt, never passed through', () => {
     const answer = await callHarness(
       { kind: 'list-worktrees' },
       answers({
+        liveTreeDirty: false,
         worktrees: [
           {
             path: '/Users/dev/code/varnick/.claude/worktrees/49',
@@ -310,6 +311,7 @@ describe('the answer is rebuilt, never passed through', () => {
             commits: 3,
             changed: ['src-tauri/src/bridge.rs'],
             touchesFence: true,
+            merge: { kind: 'conflicts', files: ['src-tauri/src/bridge.rs'], extra: 'ignored' },
             // What a host that has been rewritten might volunteer. The diff is
             // ticket 50's, fetched for one worktree; a body arriving here would
             // be rendered by a list that promised not to read one.
@@ -320,6 +322,7 @@ describe('the answer is rebuilt, never passed through', () => {
       }),
     )
     expect(answer).toEqual({
+      liveTreeDirty: false,
       worktrees: [
         {
           path: '/Users/dev/code/varnick/.claude/worktrees/49',
@@ -327,17 +330,75 @@ describe('the answer is rebuilt, never passed through', () => {
           commits: 3,
           changed: ['src-tauri/src/bridge.rs'],
           touchesFence: true,
+          // Rebuilt a level down as well: the tag and the file names, and not
+          // the field somebody added beside them.
+          merge: { kind: 'conflicts', files: ['src-tauri/src/bridge.rs'] },
         },
       ],
     })
     expect(JSON.stringify(answer)).not.toContain(LOOKS_LIKE_A_KEY)
   })
 
+  test('a merge answer this build cannot read is malformed, and never a default', async () => {
+    /*
+      The tempting default is `clean`, and it is the worst value this could
+      invent: the surface puts a merge control on a row that says it, so a shape
+      the bridge could not read would become a button offering to land a branch
+      nobody established anything about. `unknown` would be safer and still
+      wrong — a host and a window disagreeing about what they exchange is a
+      failure, not a hedge.
+
+      A conflicted answer with no files is on this list for a second reason:
+      the names are the whole of what makes that state actionable, and the copy
+      that reads them has nothing to say without one.
+    */
+    const entry = (merge: unknown) => ({
+      liveTreeDirty: false,
+      worktrees: [{ path: '/w', branch: null, commits: 1, changed: [], touchesFence: false, merge }],
+    })
+    const unreadable = [
+      entry(undefined),
+      entry({ kind: 'probably' }),
+      entry({ kind: 'conflicts' }),
+      entry({ kind: 'conflicts', files: [] }),
+      entry({ kind: 'conflicts', files: [7] }),
+      entry({ kind: 'unknown' }),
+      entry('clean'),
+    ]
+    for (const payload of unreadable) {
+      expect((await failureOf({ kind: 'list-worktrees' }, answers(payload))).failure).toBe(
+        'malformed',
+      )
+    }
+  })
+
+  test('the three answers a developer acts on all cross', async () => {
+    // Not one test per kind: what is being asserted is that the union survives
+    // the rebuild intact, and three assertions of the same shape say that once.
+    for (const merge of [
+      { kind: 'fast-forward' },
+      { kind: 'clean' },
+      { kind: 'unknown', reason: 'fatal: bad object' },
+    ]) {
+      const answer = await callHarness(
+        { kind: 'list-worktrees' },
+        answers({
+          liveTreeDirty: false,
+          worktrees: [
+            { path: '/w', branch: null, commits: 1, changed: [], touchesFence: false, merge },
+          ],
+        }),
+      )
+      expect(answer.worktrees[0]?.merge).toEqual(merge as never)
+    }
+  })
+
   test('nothing pending is an answer, not a malformed one', async () => {
     // `review.empty` is reached from this, and it is a real state. A listing
     // that found nothing must never arrive as a failure.
-    expect(await callHarness({ kind: 'list-worktrees' }, answers({ worktrees: [] }))).toEqual({
+    expect(await callHarness({ kind: 'list-worktrees' }, answers({ worktrees: [], liveTreeDirty: false }))).toEqual({
       worktrees: [],
+      liveTreeDirty: false,
     })
   })
 
@@ -345,7 +406,8 @@ describe('the answer is rebuilt, never passed through', () => {
     const answer = await callHarness(
       { kind: 'list-worktrees' },
       answers({
-        worktrees: [{ path: '/w/one', branch: null, commits: 1, changed: [], touchesFence: false }],
+        liveTreeDirty: false,
+        worktrees: [{ path: '/w/one', branch: null, commits: 1, changed: [], touchesFence: false, merge: { kind: 'clean' } }],
       }),
     )
     expect(answer.worktrees[0]?.branch).toBeNull()
@@ -361,11 +423,11 @@ describe('the answer is rebuilt, never passed through', () => {
     const unreadable = [
       answers({}),
       answers({ worktrees: 'none' }),
-      answers({ worktrees: [{ path: 7, branch: null, commits: 1, changed: [], touchesFence: false }] }),
-      answers({ worktrees: [{ path: '/w', branch: null, commits: 'three', changed: [], touchesFence: false }] }),
-      answers({ worktrees: [{ path: '/w', branch: null, commits: 1, changed: 'one', touchesFence: false }] }),
-      answers({ worktrees: [{ path: '/w', branch: null, commits: 1, changed: [7], touchesFence: false }] }),
-      answers({ worktrees: [{ path: '/w', branch: null, commits: 1, changed: [] }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: 7, branch: null, commits: 1, changed: [], touchesFence: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 'three', changed: [], touchesFence: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: 'one', touchesFence: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: [7], touchesFence: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: [] }] }),
       answers(undefined),
     ]
     for (const bridge of unreadable) {

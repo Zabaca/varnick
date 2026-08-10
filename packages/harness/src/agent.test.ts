@@ -22,6 +22,8 @@ import {
   agentTempDir,
   agentTempPrefix,
   claudeConfigDir,
+  pendingBriefingsPath,
+  readPendingBriefings,
   hookProbePluginDir,
   hookProbeRecord,
   inheritedConfigVariables,
@@ -38,6 +40,7 @@ import {
   type AgentSessionPort,
 } from './agent.ts'
 import { previewToolResult, type PreviewOutcome } from './preview.ts'
+import { RESTART_STILL_OWED } from './merge.ts'
 import {
   parseTurnEvent,
   turnFailureMessage,
@@ -1600,6 +1603,76 @@ describe('somewhere to put a temporary file', () => {
       variable into the clone must not read as a reason to take that away.
     */
     expect(agentTempDir(CLONE)).not.toContain('/tmp/claude-')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A `node` that is bun, so a plugin's hooks can run
+// ---------------------------------------------------------------------------
+
+describe('a Briefing outlives the restart it recommends', () => {
+  /*
+    The hole this closes. A Briefing reaches the agent through a
+    `UserPromptSubmit` hook, which runs when the developer next speaks — and the
+    thing varnick recommends immediately after a merge is a *restart*: the band
+    says one is owed and offers the button. So the ordinary sequence is merge,
+    restart, no Turn in between, and an in-process queue dies with the process.
+    The agent is never told, in exactly the flow the product recommends.
+
+    Kept on disk, and cleared by the delivery rather than by an exit, so a
+    Briefing survives any number of restarts and crashes and is still said once.
+  */
+
+  const held = (entries: unknown) => (path: string) => {
+    if (path !== pendingBriefingsPath(CLONE)) throw new Error(`unexpected read of ${path}`)
+    return JSON.stringify(entries)
+  }
+
+  test('it is kept beside the session pointer, inside the clone', () => {
+    // Writable within the Sandbox and gitignored, like everything in there.
+    expect(pendingBriefingsPath(CLONE)).toBe(`${CLONE}/.varnick/claude/pending-briefings.json`)
+  })
+
+  test('what a previous process could not deliver is read back', () => {
+    const kept = readPendingBriefings(CLONE, held([{ briefing: 'ticket/49 landed as a1b2c3d.' }]))
+    expect(kept).toEqual([{ briefing: 'ticket/49 landed as a1b2c3d.' }])
+  })
+
+  test('the restart clause is dropped, because a restart plainly happened', () => {
+    /*
+      The reason the two halves are separate strings at all. Anything found on
+      disk was written by a process that is no longer running, so "varnick has
+      not restarted, so it is still running the code from before this change" is
+      false — and it is the one sentence in a Briefing that must never be read
+      after it stops being true.
+    */
+    const kept = readPendingBriefings(
+      CLONE,
+      held([{ briefing: 'ticket/49 landed as a1b2c3d.', whileRunning: RESTART_STILL_OWED }]),
+    )
+    expect(kept[0]?.briefing).toBe('ticket/49 landed as a1b2c3d.')
+    expect(kept[0]?.whileRunning).toBeUndefined()
+  })
+
+  test('a half-written record is not reconstructed', () => {
+    // A Briefing is a sentence or it is not there. Half of one, delivered,
+    // spends the one chance to say a branch landed.
+    expect(readPendingBriefings(CLONE, held([{ whileRunning: 'x' }, { briefing: '   ' }]))).toEqual(
+      [],
+    )
+  })
+
+  test('no file is nothing owed, which is what a first run looks like too', () => {
+    expect(
+      readPendingBriefings(CLONE, () => {
+        throw new Error('ENOENT')
+      }),
+    ).toEqual([])
+  })
+
+  test('a file this build cannot read is not a reason to fail a launch', () => {
+    expect(readPendingBriefings(CLONE, () => 'not json')).toEqual([])
+    expect(readPendingBriefings(CLONE, () => '{"briefing":"a"}')).toEqual([])
   })
 })
 

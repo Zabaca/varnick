@@ -65,8 +65,17 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { agentCommand, commandsCachePath } from './agent.ts'
 import {
+  liveTreeIsDirty,
+  mergeBriefing,
+  RESTART_STILL_OWED,
+  mergeWorktree,
+  type CwdHolder,
+  type MergeReport,
+} from './merge.ts'
+import {
   listPendingWorktrees,
   readPendingWorktreeDiff,
+  type GitAttemptResult,
   type PendingWorktree,
 } from './worktrees.ts'
 import { readLines } from './framing.ts'
@@ -159,6 +168,20 @@ export interface HarnessCapabilities {
    */
   listWorktrees(): Promise<readonly PendingWorktree[]>
   /**
+   * Whether the tree those Worktrees would be merged *into* has uncommitted
+   * work in it.
+   *
+   * Answered beside the listing rather than inside it, because it is a fact
+   * about a different tree — the live one — and folding it into an entry would
+   * put the same boolean on every row. It rides on the same call because it is
+   * a fact about the same moment and git is already being run.
+   *
+   * It decides whether a merge control appears. The merge itself asks again, on
+   * facts that are current; see `liveTreeIsDirty` in ./merge.ts, which is the
+   * one definition both use.
+   */
+  liveTreeDirty(): Promise<boolean>
+  /**
    * The **Fence** part of what a Worktree changes, as hunks.
    *
    * What the native dialog in front of a Preview shows, and the whole of what
@@ -192,6 +215,22 @@ export interface HarnessCapabilities {
    * pending worktree **throws** rather than reading something else.
    */
   readWorktreeDiff(path: string): Promise<string>
+  /**
+   * Land one pending Worktree on the live tree, and clear up after it.
+   *
+   * **The only capability on this whole surface that writes the developer's
+   * clone**, and it is here rather than in the Rust host for the reason the
+   * listing is: this is the process with git in reach. It is not a widening of
+   * what the agent may do — the agent cannot reach this module, and the call
+   * arrives from the renderer because a human clicked a control in a surface
+   * `denyWrite` refuses the agent (ADR-0002, ADR-0014). The merge is still the
+   * gate; what has gone is the context switch, not the decision.
+   *
+   * `path` is a selector against git's own listing, like the diff's. It refuses
+   * a dirty live tree, a branch that will not go in, and a directory somebody is
+   * standing in. See ./merge.ts, which sequences all of it.
+   */
+  mergeWorktree(path: string): Promise<MergeReport>
 }
 
 export interface HostCapabilitiesInput {
@@ -332,14 +371,95 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
       return secrets.names()
     },
 
-    listWorktrees: async () => listPendingWorktrees({ git: gitIn(cloneRoot), cloneRoot }),
+    listWorktrees: async () =>
+      listPendingWorktrees({
+        git: gitIn(cloneRoot),
+        attempt: gitAttemptIn(cloneRoot),
+        cloneRoot,
+      }),
+
+    liveTreeDirty: async () => liveTreeIsDirty(gitIn(cloneRoot)),
     readFenceDiff: async (worktree) => fenceDiffOf(worktree, cloneRoot),
 
     // The clone is this process's, as it is for the listing; the path names
     // which of the worktrees git reported in it. Nothing chooses the tree.
     readWorktreeDiff: async (path) =>
       readPendingWorktreeDiff({ git: gitIn(cloneRoot), cloneRoot, path }),
+
+    mergeWorktree: async (path) =>
+      mergeWorktree({
+        git: gitIn(cloneRoot),
+        attempt: gitAttemptIn(cloneRoot),
+        holders: cwdHoldersOf,
+        cloneRoot,
+        path,
+      }),
   }
+}
+
+/**
+ * Which processes have a directory, or anything under it, as their cwd.
+ *
+ * `lsof -a -d cwd +D <path>`: `-d cwd` restricts the answer to working
+ * directories rather than every open file, `+D` walks the tree so an agent
+ * standing in a subdirectory is found, and `-F pcn` asks for the field-per-line
+ * form so nothing has to be recovered from a column layout.
+ *
+ * **`lsof` exits non-zero routinely** — one unreadable path anywhere under the
+ * directory is enough — so the exit code is not consulted at all. What matters
+ * is whether it printed processes. A run that could not happen *does* throw,
+ * and {@link mergeWorktree} treats that as "leave the directory alone": the
+ * sentence this function's empty answer authorises is the deletion of a
+ * directory, and a probe that did not run must never produce it.
+ *
+ * **This probe's own `lsof` is filtered out, by pid rather than by name.**
+ *
+ * It should never need to be. `execFile` inherits *this* process's working
+ * directory — the clone root — and a Worktree is below that, not above it, so
+ * `+D <worktree>` does not reach the probe itself. The filter is there for the
+ * arrangement where that stops being true, which is one refactor away: a runtime
+ * started in a Worktree, or a probe spawned with `cwd` set.
+ *
+ * It is a pid rather than a name because of what the wrong answer costs. Dropping
+ * every process called `lsof` would also drop a developer's own — run in that
+ * directory to find out what is holding it — and "nobody is in there" is the
+ * sentence that authorises deleting a directory. There is exactly one process
+ * this may ignore, so it is identified rather than described.
+ */
+async function cwdHoldersOf(path: string): Promise<readonly CwdHolder[]> {
+  // Captured, not guessed. `-1` is no pid at all, so a spawn that never got one
+  // filters nothing — and a probe that could not spawn rejects below anyway.
+  let probe = -1
+  const printed = await new Promise<string>((resolve, reject) => {
+    const child = execFile(
+      'lsof',
+      ['-a', '-d', 'cwd', '-F', 'pcn', '+D', path],
+      { timeout: GIT_WAIT_MS, maxBuffer: 8 * 1024 * 1024 },
+      (error, stdout) => {
+        const code = (error as NodeJS.ErrnoException & { code?: unknown } | null)?.code
+        // A number is an exit status, which `lsof` uses to mean "something under
+        // there could not be read" as often as it means anything. Anything else
+        // — no binary, a timeout, a signal — is the probe not having run.
+        if (error === null || typeof code === 'number') resolve(stdout)
+        else reject(new Error(error.message))
+      },
+    )
+    probe = child.pid ?? -1
+  })
+
+  const holders: CwdHolder[] = []
+  let pid: number | null = null
+  for (const line of printed.split('\n')) {
+    if (line.startsWith('p')) {
+      const parsed = Number.parseInt(line.slice(1), 10)
+      pid = Number.isFinite(parsed) ? parsed : null
+    } else if (line.startsWith('c') && pid !== null) {
+      const command = line.slice(1)
+      if (pid !== probe) holders.push({ pid, command })
+      pid = null
+    }
+  }
+  return holders
 }
 
 /**
@@ -376,6 +496,30 @@ const GIT_WAIT_MS = 20_000
  */
 function gitIn(cloneRoot: string) {
   return (args: readonly string[]): Promise<string> =>
+    gitAttemptIn(cloneRoot)(args).then((result) => {
+      if (result.code === 0) return result.stdout
+      const said = result.stderr.trim()
+      throw new Error(said.length > 0 ? said : `git ${args[0]} exited ${result.code}.`)
+    })
+}
+
+/**
+ * The same git, answering with its exit code instead of rejecting on it.
+ *
+ * One command needs this and it is `merge-tree`, whose exit status is the fact
+ * being asked for rather than a report about whether it ran — see `GitAttempt`
+ * in ./worktrees.ts. {@link gitIn} is now written in terms of this rather than
+ * beside it, so there is one place that decides how git is invoked in this
+ * process and the two cannot drift on a timeout, a buffer size or a lock.
+ *
+ * **A process that could not be started at all still rejects.** `execFile`
+ * reports a missing binary and a timeout through the same `error` argument as a
+ * non-zero exit, and collapsing those into `{ code: 1 }` would make a git that
+ * never ran indistinguishable from a merge that conflicts. So the exit code is
+ * taken only when there is one, and everything else throws with what it said.
+ */
+function gitAttemptIn(cloneRoot: string) {
+  return (args: readonly string[]): Promise<GitAttemptResult> =>
     new Promise((resolve, reject) => {
       execFile(
         'git',
@@ -389,12 +533,19 @@ function gitIn(cloneRoot: string) {
           env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
         },
         (error, stdout, stderr) => {
-          if (error) {
-            const said = stderr.trim()
-            reject(new Error(said.length > 0 ? said : error.message))
+          if (error === null) {
+            resolve({ code: 0, stdout, stderr })
             return
           }
-          resolve(stdout)
+          const code = (error as NodeJS.ErrnoException & { code?: unknown }).code
+          if (typeof code === 'number') {
+            resolve({ code, stdout, stderr })
+            return
+          }
+          // No exit code: the binary is missing, the wait ran out, the process
+          // was signalled. None of those is git's answer to anything.
+          const said = stderr.trim()
+          reject(new Error(said.length > 0 ? said : error.message))
         },
       )
     })
@@ -597,13 +748,73 @@ async function answer(
       */
       const worktrees = await capabilities.listWorktrees()
       return {
+        // Asked in the same answer as the rows, because it is a fact about the
+        // same moment: it decides whether any of them can be offered a merge.
+        liveTreeDirty: await capabilities.liveTreeDirty(),
         worktrees: worktrees.map((entry) => ({
           path: entry.path,
           branch: entry.branch,
           commits: entry.commits,
           changed: [...entry.changed],
           touchesFence: entry.touchesFence,
+          // Rebuilt a level down as well, for the reason the entry is: the
+          // conflicted case carries a list, and a list forwarded by reference
+          // is a list something else can still be holding.
+          merge:
+            entry.merge.kind === 'conflicts'
+              ? { kind: entry.merge.kind, files: [...entry.merge.files] }
+              : entry.merge.kind === 'unknown'
+                ? { kind: entry.merge.kind, reason: entry.merge.reason }
+                : { kind: entry.merge.kind },
         })),
+      }
+    }
+
+    case 'merge-worktree': {
+      const { path } = request as Record<string, unknown>
+      /*
+        Refused rather than defaulted, and harder than the diff's version of the
+        same refusal. Picking a worktree when none was named would be the host
+        choosing which branch to write into the developer's tree.
+      */
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error('A merge is of one Worktree, and this request named none.')
+      }
+      // Rebuilt field by field like every other answer here. `heldBy` is a list
+      // and is copied for the reason the changed paths are: a list forwarded by
+      // reference is a list something else can still be holding.
+      const report = await capabilities.mergeWorktree(path)
+      return {
+        branch: report.branch,
+        commit: report.commit,
+        squashed: report.squashed,
+        worktreeRemoved: report.worktreeRemoved,
+        branchDeleted: report.branchDeleted,
+        heldBy: report.heldBy.map((holder) => ({ pid: holder.pid, command: holder.command })),
+        leftOver: report.leftOver,
+        /*
+          What to tell the agent, composed here and read by nobody on the way
+          past.
+
+          It rides the answer rather than being pushed from here because this
+          process cannot reach the agent: the control channel belongs to the
+          Rust host, which is the process that spawned it. So the host takes
+          this string off the reply and writes it onto that pipe, composing
+          nothing — the same division `describe-secrets` has, where the sentence
+          is written in TypeScript and Rust only carries it.
+
+          Core drops it. `mergeAnswer` in ./bridge.ts rebuilds the report field
+          by field and this is not one of them, which is the ordinary rule here
+          working in varnick's favour: the window has no use for a brief
+          addressed to the agent.
+        */
+        briefing: mergeBriefing(report),
+        /*
+          And the half that stops being true. See {@link RESTART_STILL_OWED}: a
+          Briefing has to survive the restart the band is about to recommend,
+          and this sentence must not.
+        */
+        whileRunning: RESTART_STILL_OWED,
       }
     }
 

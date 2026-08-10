@@ -25,9 +25,10 @@ use tauri::Manager;
 /// measured on a developer's machine, the oldest five and a half hours old,
 /// several still holding live Claude Code processes.
 ///
-/// Idempotent, because it is called from two places that can both happen: the
-/// run callback below, and the signal watcher.
-fn shut_down(app: &tauri::AppHandle) {
+/// Idempotent, because it is called from three places that can all happen: the
+/// run callback below, the signal watcher, and the `restart-varnick` request a
+/// landed merge sends from the window (bridge.rs).
+pub(crate) fn shut_down(app: &tauri::AppHandle) {
     // The agent first. It is the tree that matters — a sandboxed Claude Code
     // process with a credential in its environment — and `stop` is a SIGKILL to
     // its whole process group, which is the only thing that ends it: the group

@@ -1,12 +1,13 @@
-import { setup, assign, fromPromise, stopChild, type ActorRefFrom } from 'xstate'
+import { setup, assign, fromPromise, raise, stopChild, type ActorRefFrom } from 'xstate'
 // A type and nothing else. `turn` is one of the three Harness subpaths that
 // reach no Node built-in, which is what makes it importable from Core at all —
 // see the lint rule in eslint.config.js.
 import type { RuntimeReport, SlashCommand } from '@varnick/harness/turn'
-import { canStartAgent, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
+import { canStartAgent, mergeSummary, refusalFor, regionOf, LIVE_SESSION_ID } from '../domain.ts'
 import type {
   CredentialKind,
   CredentialReading,
+  MergeReport,
   PendingWorktree,
   SandboxPolicy,
   StartRefusal,
@@ -47,12 +48,23 @@ export const HARNESS_STATE_PATHS = [
   'review.listed',
   'review.empty',
   'review.listFailed',
+  'worktreeMerge.unmerged',
+  'worktreeMerge.merging',
+  'worktreeMerge.merged',
+  'worktreeMerge.mergeFailed',
+  'worktreeMerge.restarting',
 ] as const
 export type HarnessStatePath = (typeof HARNESS_STATE_PATHS)[number]
 
 export type CredentialState = 'absent' | 'minting' | 'storing' | 'reading' | 'present' | 'rejected'
 export type SandboxState = 'unchecked' | 'checking' | 'available' | 'unavailable'
 export type ReviewState = 'listing' | 'listed' | 'empty' | 'listFailed'
+export type WorktreeMergeState =
+  | 'unmerged'
+  | 'merging'
+  | 'merged'
+  | 'mergeFailed'
+  | 'restarting'
 
 export interface HarnessContext {
   policy: SandboxPolicy
@@ -199,10 +211,51 @@ export interface HarnessContext {
    * runs, and refreshing it must not shut what somebody is reading.
    */
   worktreeDiff: ActorRefFrom<typeof worktreeDiffMachine> | null
+  /**
+   * Which Worktree the open diff is of.
+   *
+   * Beside the actor rather than read back out of it. The child holds the same
+   * fact in its input, and a guard reaching through `getSnapshot()` would make
+   * this machine depend on the child's shape to answer a question about its own.
+   *
+   * It exists because `worktreeDiff !== null` is the wrong check for a merge:
+   * that says *some* diff is open, and what the merge guard has to mean is that
+   * the hunks on screen are the hunks about to land. See `mergeable`.
+   */
+  worktreeOpen: string | null
+  /**
+   * Whether the live tree has uncommitted work in it, as git last said.
+   *
+   * A fact about the *tree being merged into*, so it sits beside `worktrees`
+   * rather than on any of them, and it arrives with the listing because that is
+   * the moment git is already being run.
+   *
+   * It exists so the surface can say *why* there is no merge control, rather
+   * than offering one that fails. The host checks again at the moment of
+   * merging — a tree can be dirtied between a listing and a click — and neither
+   * check is the other's excuse: this one is the affordance, and that one is the
+   * rule.
+   */
+  liveTreeDirty: boolean
+  /**
+   * What the last merge did, for as long as this window has not restarted.
+   *
+   * Held rather than shown and forgotten, because the sentence it carries
+   * outlives the row it came from: the branch is gone, the worktree is gone, and
+   * the thing the developer still has to do — restart, or stop a process that is
+   * standing in a directory — is the only trace left. Cleared when another merge
+   * starts, so a second attempt never shows the first one's result.
+   */
+  mergeReport: MergeReport | null
+  /** Why the last merge failed, for as long as one has. */
+  mergeError: string | null
+  /** Which Worktree is being merged, while one is. */
+  merging: string | null
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
   readonly enterReview: string | null
+  readonly enterWorktreeMerge: string | null
 }
 
 export interface HarnessInput {
@@ -214,9 +267,17 @@ export interface HarnessInput {
   enterSandbox?: string | null
   enterAgent?: string | null
   enterReview?: string | null
+  enterWorktreeMerge?: string | null
   /** Seeded only by the states page, which parks a card over a listing. */
   worktrees?: readonly PendingWorktree[]
   worktreeError?: string | null
+  liveTreeDirty?: boolean
+  /** Seeded only by the states page, which parks a card over a merge. */
+  mergeReport?: MergeReport | null
+  /** Which Worktree's diff is open. See the context field of the same name. */
+  worktreeOpen?: string | null
+  mergeError?: string | null
+  merging?: string | null
   sessionInput?: SessionInput
   /** Seeded only by the states page, which parks a machine with a report in it. */
   runtime?: RuntimeReport | null
@@ -327,6 +388,40 @@ export type HarnessEvent =
    * refused in exactly those moments.
    */
   | { type: 'CLOSE_WORKTREE' }
+  /**
+   * Land one of the Worktrees on the list.
+   *
+   * `path` is the same selector `OPEN_WORKTREE` carries and is checked the same
+   * way — against the entries this machine is already holding — with one more
+   * condition on top: the entry has to be one `mergeSummary` says is offered.
+   * That is the affordance and not the rule. The host resolves the path against
+   * git's own listing again, refuses a dirty tree again, and asks git again
+   * whether it merges, because everything Core knows is as old as the last
+   * listing.
+   *
+   * **Accepted only where a diff is open**, which is what keeps a merge from
+   * being something you can do to a row you have not read. See the guard.
+   */
+  | { type: 'MERGE_WORKTREE'; path: string }
+  /**
+   * Replace the running varnick with one built from the code that just landed.
+   *
+   * Offered by `worktreeMerge.merged` and nowhere else. Until it happens the
+   * window is running the code from *before* the change it accepted, and an
+   * agent reasoning about a fix it believes is live is worse off than one that
+   * knows it is not.
+   */
+  | { type: 'RESTART_VARNICK' }
+  /**
+   * Put the merge report away without restarting.
+   *
+   * The way out of `merged` that is not a restart, and it exists because the
+   * report is a band across the window: a developer who has read "you are
+   * running old code" and decided to keep going needs the screen back. It does
+   * not make the restart un-owed, which is why the fact survives in
+   * `mergeReport` rather than being what the state means.
+   */
+  | { type: 'DISMISS_MERGE' }
 
 /**
  * Real-service contracts:
@@ -453,9 +548,51 @@ export const harnessMachine = setup({
       packages/harness/src/worktrees.ts.
     */
     listWorktrees: fromPromise<
-      { worktrees: readonly PendingWorktree[] },
+      { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean },
       Record<string, never>
-    >(async () => ({ worktrees: [] })),
+    >(async () => ({ worktrees: [], liveTreeDirty: false })),
+    /*
+      Real-service contract for mergeWorktree:
+        input  { path } — which of the entries this machine is holding. A
+               selector, like the diff's, and checked twice: here against the
+               list in context, and host-side against git's own listing.
+        output a report — what landed, and what is left over. A merge that went
+               in and a cleanup that could not finish is a **success with
+               something to say**: the commit is on the live branch either way,
+               and calling it a failure would invite a second merge of a branch
+               that has already gone.
+        error  thrown Error — the live tree was dirty, the branch will not go
+               in, git refused, or the squash did not carry. Every one of them
+               happens before anything is deleted; see
+               packages/harness/src/merge.ts for the ordering, which is the
+               design rather than an implementation detail.
+
+      The one actor in this machine whose real implementation *writes* the
+      developer's clone. That is not a widening: it is the gate ADR-0014 rests
+      on, performed by the host because a human clicked in a surface the agent
+      cannot write.
+    */
+    mergeWorktree: fromPromise<MergeReport, { path: string }>(async ({ input }) => ({
+      branch: input.path,
+      commit: '',
+      squashed: 0,
+      worktreeRemoved: false,
+      branchDeleted: false,
+      heldBy: [],
+      leftOver: null,
+    })),
+    /*
+      Real-service contract for restartVarnick:
+        input  {} — there is nothing to decide.
+        output nothing, and in the ordinary case it never resolves at all: the
+               process is replaced while the call is in flight.
+        error  thrown Error — the restart did not happen. That is the only
+               outcome this side can observe, and it is the reason the actor
+               exists rather than a fire-and-forget action: a restart that
+               silently did not happen would leave a developer believing they
+               were running the code they had just merged.
+    */
+    restartVarnick: fromPromise<void, Record<string, never>>(async () => {}),
     /*
       Collects what the agent says without being asked, for as long as it runs.
 
@@ -510,6 +647,48 @@ export const harnessMachine = setup({
       context.worktreeDiff === null &&
       context.worktrees.some((entry) => entry.path === event.path),
     somethingOpen: ({ context }) => context.worktreeDiff !== null,
+    /*
+      Four questions in one guard, because they answer one control.
+
+      The **merge button appears when the machine would accept merging**, and
+      each of the four is a reason it must not:
+
+        * the path is one this machine is holding — the same rule `openable`
+          applies, for the same reason;
+        * git said it will go in. A conflicted branch is not a merge to offer
+          badly, and `unknown` is not a merge to offer at all;
+        * the live tree is clean. A merge over uncommitted work is how a
+          developer loses something varnick never knew about, and the honest
+          place to say so is *before* the click;
+        * a diff is open. This is the one condition that is not about whether
+          the merge would work, and it is the important one. Ticket 50 marks
+          Fence hunks so nobody lands one without having looked; a merge control
+          on a summary row would be a way to land one having looked at a row.
+          The control lives with the hunks, so the guard does too.
+
+      None of these is the host's check. The host resolves the path against
+      git's listing, refuses a dirty tree and asks about the merge again — all
+      at the moment of merging, on facts that are current. This is what stops
+      the surface offering something varnick knows it would refuse.
+    */
+    mergeable: ({ context, event }) => {
+      if (event.type !== 'MERGE_WORKTREE') return false
+      /*
+        The open diff, and **the open diff of this Worktree**.
+
+        A merge is the one act in this window that writes the developer's tree,
+        and the rule ADR-0014 rests on is that a human read the change before it
+        landed. `worktreeDiff !== null` alone says only that *some* diff is open,
+        so a `MERGE_WORKTREE` naming a different path would pass a check that
+        exists to mean the hunks on screen are the hunks about to land. The
+        surface says "the machine agrees rather than being trusted to"; this is
+        what makes that true rather than nearly true.
+      */
+      if (context.worktreeOpen === null || context.worktreeOpen !== event.path) return false
+      if (context.liveTreeDirty) return false
+      const entry = context.worktrees.find((worktree) => worktree.path === event.path)
+      return entry !== undefined && mergeSummary(entry.merge).offered
+    },
   },
   actions: {
     recordRefusal: assign({
@@ -539,6 +718,20 @@ export const harnessMachine = setup({
           syncSnapshot: true,
           input: { worktree },
         })
+      },
+      /*
+        Which one, beside the actor rather than inside it.
+
+        The child holds the same fact in its own input, and reading it back out
+        through `getSnapshot()` in a guard would make this machine depend on the
+        child's shape for a question about its own. One assign, next to the
+        spawn it belongs to, so the two can never disagree.
+      */
+      worktreeOpen: ({ context, event }) => {
+        if (event.type !== 'OPEN_WORKTREE') return context.worktreeOpen
+        return context.worktrees.some((entry) => entry.path === event.path)
+          ? event.path
+          : context.worktreeOpen
       },
     }),
   },
@@ -570,10 +763,27 @@ export const harnessMachine = setup({
     worktrees: input.worktrees ?? [],
     worktreeError: input.worktreeError ?? null,
     worktreeDiff: null,
+    /*
+      An input, so the states page can park this region where a retry is on
+      offer. The actor itself is not spawned there — a card renders a state, not
+      a running diff — and this is the fact the merge guard reads, so without it
+      `worktreeMerge.mergeFailed` draws a card with no retry on it and the
+      coverage banner still says the state is covered.
+    */
+    worktreeOpen: input.worktreeOpen ?? null,
+    // False rather than unknown, and that is the safe direction here: it decides
+    // whether a *control* is offered, and the host refuses again on facts that
+    // are current. A default of `true` would hide the merge until the first
+    // listing landed, which is a control that appears a second after the rows do.
+    liveTreeDirty: input.liveTreeDirty ?? false,
+    mergeReport: input.mergeReport ?? null,
+    mergeError: input.mergeError ?? null,
+    merging: input.merging ?? null,
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
     enterReview: input.enterReview ?? null,
+    enterWorktreeMerge: input.enterWorktreeMerge ?? null,
   }),
   on: {
     // Surfaces are discovered, never registered — adding one must not require
@@ -638,7 +848,10 @@ export const harnessMachine = setup({
     */
     CLOSE_WORKTREE: {
       guard: 'somethingOpen',
-      actions: [stopChild(({ context }) => context.worktreeDiff!), assign({ worktreeDiff: null })],
+      actions: [
+        stopChild(({ context }) => context.worktreeDiff!),
+        assign({ worktreeDiff: null, worktreeOpen: null }),
+      ],
     },
   },
   states: {
@@ -1110,11 +1323,20 @@ export const harnessMachine = setup({
               {
                 target: 'empty',
                 guard: 'nothingPending',
-                actions: assign({ worktrees: [] }),
+                // The dirty flag is taken on both paths and not only where
+                // there are rows: it decides a control, and a listing that
+                // found nothing has still just looked at the live tree.
+                actions: assign({
+                  worktrees: [],
+                  liveTreeDirty: ({ event }) => event.output.liveTreeDirty,
+                }),
               },
               {
                 target: 'listed',
-                actions: assign({ worktrees: ({ event }) => event.output.worktrees }),
+                actions: assign({
+                  worktrees: ({ event }) => event.output.worktrees,
+                  liveTreeDirty: ({ event }) => event.output.liveTreeDirty,
+                }),
               },
             ],
             /*
@@ -1200,6 +1422,235 @@ export const harnessMachine = setup({
           on: {
             LIST_WORKTREES: 'listing',
             OPEN_WORKTREE: openWorktreeTransition,
+          },
+        },
+      },
+    },
+
+    /*
+      Landing one of them.
+
+      ## A fifth region, and not a child of the row it is about
+
+      Every other thing with a lifetime on this machine is a child actor — a
+      Surface, a Worktree diff — and the rule they follow is that a child is
+      right when the thing has something to wait on, can fail, and is *about*
+      one subject that outlives neither. A merge fails the last of those in the
+      one way that matters: **its subject is destroyed by its own success.** The
+      branch is deleted, the worktree is removed, and the row it started from is
+      gone from the next listing — so a child keyed to that row would be torn
+      down at exactly the moment its message matters most.
+
+      And its message is not about a branch at all. What is left when a merge
+      lands is a fact about *this varnick*: it is running the code from before
+      the change it just accepted. That is a fact of the same kind as "the
+      sandbox is unavailable" and "the agent crashed", which is why it is a
+      region beside them rather than a child under one of them.
+
+      Independent of the other four in both directions, which is the test
+      ADR-0007 sets: a merge says nothing about the credential, the sandbox or
+      the agent, and an agent that crashed says nothing about whether a merge
+      landed.
+
+      ## It rests first, unlike `review`
+
+      `review` starts in flight because nothing decides to list. This one is the
+      opposite and for the same reason stated the other way: **everything about
+      a merge is decided by a person**. Nobody's tree is written because varnick
+      launched.
+
+      ## The whole of the safety is host-side, and that is deliberate
+
+      Nothing in this region checks a filesystem, and the guard it does have is
+      an affordance rather than a rule — see `mergeable`. Core cannot know
+      whether the live tree is clean *now*, whether the branch still merges, or
+      whether something is standing in the worktree, and a machine that acted as
+      if it could would be the review surface making claims about a tree it
+      cannot see. Every one of those is asked again, at the moment of merging,
+      in packages/harness/src/merge.ts.
+    */
+    worktreeMerge: {
+      initial: 'routing',
+      states: {
+        routing: {
+          always: [
+            {
+              target: 'merging',
+              guard: ({ context }) => context.enterWorktreeMerge === 'merging',
+            },
+            { target: 'merged', guard: ({ context }) => context.enterWorktreeMerge === 'merged' },
+            {
+              target: 'mergeFailed',
+              guard: ({ context }) => context.enterWorktreeMerge === 'mergeFailed',
+            },
+            {
+              target: 'restarting',
+              guard: ({ context }) => context.enterWorktreeMerge === 'restarting',
+            },
+            { target: 'unmerged' },
+          ],
+        },
+        /*
+          Nothing has been merged from this window, or the last one was put away.
+
+          Named for the tree rather than for this region doing nothing, which is
+          the convention `agent.down` follows: `idle` would say varnick is
+          waiting, and it is not waiting for anything — there is simply no merge
+          in progress and none to report.
+        */
+        unmerged: {
+          on: { MERGE_WORKTREE: { target: 'merging', guard: 'mergeable' } },
+        },
+        merging: {
+          /*
+            Cleared on the way in, so a second attempt never shows the first
+            one's reason or the first one's report beside a merge that is still
+            running. `merging` records which Worktree, because the branch name
+            is the only thing there is to say for the whole of the wait and the
+            row it came from may be the one about to disappear.
+          */
+          entry: assign({
+            mergeError: null,
+            mergeReport: null,
+            merging: ({ event }) => (event.type === 'MERGE_WORKTREE' ? event.path : null),
+          }),
+          invoke: {
+            src: 'mergeWorktree',
+            input: ({ context }) => ({ path: context.merging ?? '' }),
+            /*
+              One success target and no branch on what came back.
+
+              A cleanup that could not finish is not a second outcome here: the
+              commit is on the live branch, so the merge happened, and a state
+              meaning "merged but the directory is still there" would be a state
+              whose only difference from this one is a sentence. The sentence is
+              in the report — see `leftOver`, which the surface prints verbatim.
+            */
+            onDone: {
+              target: 'merged',
+              actions: assign({
+                mergeReport: ({ event }) => event.output,
+                merging: null,
+              }),
+            },
+            onError: {
+              target: 'mergeFailed',
+              actions: assign({
+                mergeError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+                merging: null,
+              }),
+            },
+          },
+        },
+        /*
+          It landed, and this window is now running the code from before it.
+
+          A resting state that says something, which is the point of it. The
+          alternative — going straight back to `unmerged` and showing a toast —
+          would make "a restart is owed" a thing that scrolled past, and the
+          whole reason this region exists is that the moment after a merge is
+          the moment varnick knows something the developer will otherwise
+          forget.
+        */
+        merged: {
+          /*
+            And the list is asked again, because the thing it describes has just
+            changed and this machine is the one that changed it.
+
+            Without this the row that was merged stays on screen offering a
+            merge — and it is not a stale picture that corrects itself, because
+            after a squash the branch ref still holds commits the live tree does
+            not, so `mergeabilityOf` goes on calling it `clean`. A second click
+            would reach `git commit` with nothing to commit. `liveTreeDirty` is
+            stale in the same breath, which is what the dirty-tree refusal is
+            read from.
+
+            The same event a Turn ending sends, for the same reason and by the
+            same route — `raise` rather than a second actor, so the listing
+            region's own refusal while one is in flight still applies. That
+            refusal is why this is safe to raise unconditionally: a listing
+            already running is not restarted, it is left to finish.
+          */
+          entry: raise({ type: 'LIST_WORKTREES' }),
+          on: {
+            RESTART_VARNICK: 'restarting',
+            // The way out that is not a restart. It puts the band away and
+            // leaves the fact in `mergeReport`, so nothing pretends the restart
+            // stopped being owed because somebody closed a panel.
+            DISMISS_MERGE: 'unmerged',
+            // A second merge without a restart in between is allowed, because
+            // there is nothing wrong with it: the developer has read the report
+            // and chosen to land another branch on the same old build.
+            MERGE_WORKTREE: { target: 'merging', guard: 'mergeable' },
+          },
+        },
+        /*
+          It did not land, and nothing was written.
+
+          Carries git's own reason and offers the merge again, which is the same
+          shape `worktreeDiff.failed` has: the retry exists because this state
+          has a handler, not because a control was hidden anywhere else. A
+          failure here is nearly always something the developer can fix in a
+          terminal and then re-ask — a dirty tree, a branch that needs `main`
+          merged down — so the way back is the same event that got here.
+        */
+        mergeFailed: {
+          /*
+            Asked again here too, and it is worth being exact about what that
+            does and does not buy.
+
+            It fires on *entry*, so it re-measures at the moment of the failure
+            rather than at the moment of the retry — a developer who then goes
+            and commits their work is still clicking against a listing taken
+            before they did. What it fixes is narrower and real: the failure may
+            have been about a fact that had already changed when the merge was
+            attempted, and this is the region admitting the listing it refused
+            from was stale.
+
+            The rest is the retry's own problem, and the retry solves it by being
+            drawn from `can()` — a merge the machine will not accept is a button
+            that is not there. Closing that gap properly means re-listing on the
+            retry itself, which is a `LIST_WORKTREES` a developer can already
+            send with *look again*.
+          */
+          entry: raise({ type: 'LIST_WORKTREES' }),
+          on: {
+            MERGE_WORKTREE: { target: 'merging', guard: 'mergeable' },
+            DISMISS_MERGE: 'unmerged',
+          },
+        },
+        /*
+          The restart, while it is happening.
+
+          A state rather than a fire-and-forget action, and the reason is the
+          case where nothing happens. In the ordinary case this process is
+          replaced mid-call and no state is ever left; the actor resolving or
+          rejecting means the restart *did not occur*, and a developer who
+          pressed it and carried on believing they were running the merged code
+          is exactly who this feature exists for.
+        */
+        restarting: {
+          invoke: {
+            src: 'restartVarnick',
+            input: () => ({}) as Record<string, never>,
+            // Both paths go back to `merged`, because both mean the same thing:
+            // the process is still here, the report still stands, and the
+            // restart is still owed. A resolve is no better news than an error.
+            onDone: {
+              target: 'merged',
+              actions: assign({
+                mergeError:
+                  'varnick asked the host to restart and is still running, so the merged code is not live yet. Restart varnick from the View menu.',
+              }),
+            },
+            onError: {
+              target: 'merged',
+              actions: assign({
+                mergeError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+              }),
+            },
           },
         },
       },

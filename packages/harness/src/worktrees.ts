@@ -41,17 +41,72 @@
  *
  * `git` arrives as a port. This module parses and decides; ./runtime.ts owns the
  * one implementation that actually spawns anything, and every test supplies its
- * own. That is what keeps the assertions about *which questions are asked* — no
- * subcommand but `worktree`, `rev-list` and `diff`, none of which writes.
+ * own. That is what keeps the assertions about *which questions are asked* —
+ * `worktree`, `rev-list`, `diff` and `merge-tree`, and no other subcommand.
+ *
+ * Four of those five invocations read and nothing more. The fifth is
+ * `merge-tree --write-tree`, which writes: it puts the tree it computed into the
+ * object store, as a loose object nothing references. That is worth naming
+ * rather than glossing, because the claim above it used to be "none of which
+ * writes". What it does *not* touch is the part that would matter — no ref
+ * moves, no index is taken, no file in any working tree changes — so the merge
+ * this asks about still has not happened, which is the whole property the
+ * question depends on. The objects it leaves behind are ordinary garbage and go
+ * the way every unreferenced object goes.
  */
 
 import { touchesFence } from './fence.ts'
+// The same rule the provisioner uses to decide whether a directory is a
+// Worktree at all. One definition, because a list that reviewed trees the
+// provisioner would not provision would be two different meanings of the word.
+import { isWorktreeOf } from './provision.ts'
+
+/**
+ * Whether a branch will land, and what stands in the way when it will not.
+ *
+ * **A fact carried on the entry, not a state of anything.** It is decided by
+ * asking git the same way the count and the changed paths are, at the moment the
+ * listing is made, and it goes stale the instant either side moves — which is
+ * why the listing refreshes at the end of every Turn rather than why this is
+ * modelled as something with a lifetime.
+ *
+ * Three of these four are the answers the ticket asked for, and they are
+ * distinguished because they mean different things to whoever is reading:
+ *
+ *   * `fast-forward` — the branch already contains the live tree, so merging
+ *     decides nothing. This is the shape `.claude/skills/change-core/SKILL.md`
+ *     tells the agent to hand over, and the one a developer can take without
+ *     thinking about it.
+ *   * `clean` — no conflict, but the live tree has moved since the branch left
+ *     it. It will merge; a commit will be composed that exists on neither side.
+ *   * `conflicts` — with the file names, which are the part that makes it
+ *     actionable. Nothing offers to merge one of these, and nothing here
+ *     resolves it: the agent merges `main` *down* into its worktree, where it
+ *     may write and where it has the context.
+ *
+ * The fourth is `unknown`, which the ticket did not ask for and which is here
+ * for the reason every other "cannot tell" in this codebase is a state of its
+ * own. `merge-tree` answers *conflict* with exit 1 and *broken* with something
+ * else — a corrupt object, a ref that vanished between two commands — and the
+ * two must not collapse. Reporting a probe that failed as `clean` invites a
+ * merge nobody checked; reporting it as `conflicts` names no files and tells the
+ * agent to fix something that may not be wrong. So it says nobody could tell,
+ * carries git's reason, and offers no merge — and it is deliberately not a
+ * failure of the whole listing, because one unreadable branch must not take the
+ * other rows off the screen.
+ */
+export type Mergeability =
+  | { readonly kind: 'fast-forward' }
+  | { readonly kind: 'clean' }
+  | { readonly kind: 'conflicts'; readonly files: readonly string[] }
+  | { readonly kind: 'unknown'; readonly reason: string }
 
 /**
  * One worktree with unmerged commits in it.
  *
  * Serialisable and nothing more: this crosses the bridge into the webview, so
- * every field is a string, a number, a boolean or an array of strings.
+ * every field is a string, a number, a boolean, an array of strings, or the
+ * tagged object above — which is the same rule one level down.
  */
 export interface PendingWorktree {
   /** Absolute, as git reports it. */
@@ -70,6 +125,8 @@ export interface PendingWorktree {
   readonly changed: readonly string[]
   /** Whether any changed path is Fence — see ./fence.ts. */
   readonly touchesFence: boolean
+  /** Whether it will land, and what stands in the way — see {@link Mergeability}. */
+  readonly merge: Mergeability
 }
 
 /**
@@ -81,6 +138,30 @@ export interface PendingWorktree {
  * into the second by answering with an empty string.
  */
 export type GitRunner = (args: readonly string[]) => Promise<string>
+
+/** What a git invocation did, when the exit code is part of the answer. */
+export interface GitAttemptResult {
+  readonly code: number
+  readonly stdout: string
+  readonly stderr: string
+}
+
+/**
+ * A git invocation whose **exit code is an answer rather than a failure**.
+ *
+ * A second port beside {@link GitRunner} rather than an option on it, because
+ * the two ask genuinely different questions. Every command the runner makes has
+ * one correct outcome and any other is a git that would not answer, so
+ * rejecting is right. `merge-tree` is the one command here whose non-zero exit
+ * *is* the thing being asked: 0 means the branches merge, 1 means they conflict,
+ * and a runner that rejected on 1 would turn the interesting answer into an
+ * error and lose the file names with it.
+ *
+ * Resolving with a non-zero code is therefore not a swallowed failure. What
+ * distinguishes "conflict" from "broken" is which non-zero code it is, and that
+ * distinction is made by the caller — see {@link Mergeability}'s `unknown`.
+ */
+export type GitAttempt = (args: readonly string[]) => Promise<GitAttemptResult>
 
 /** One block of `git worktree list --porcelain`, before anything is decided. */
 export interface WorktreeEntry {
@@ -125,6 +206,16 @@ export function parseWorktreeList(porcelain: string): WorktreeEntry[] {
 
 export interface ListPendingInput {
   readonly git: GitRunner
+  /**
+   * The same git, for the one question whose exit code is the answer.
+   *
+   * Required rather than optional, and that is deliberate: an optional probe is
+   * a listing that quietly stops saying whether anything merges the moment a
+   * caller forgets to pass one, and every row would then read `unknown` with
+   * nothing wrong. A caller that has a `git` has this one too — ./runtime.ts
+   * builds both out of the same `execFile`.
+   */
+  readonly attempt: GitAttempt
   /** The clone this varnick is running from — see the exclusions below. */
   readonly cloneRoot: string
 }
@@ -166,6 +257,7 @@ export async function listPendingWorktrees(input: ListPendingInput): Promise<Pen
       commits,
       changed,
       touchesFence: touchesFence(changed),
+      merge: await mergeabilityOf(input.git, input.attempt, ref),
     })
   }
 
@@ -225,10 +317,40 @@ export async function readPendingWorktreeDiff(input: ReadDiffInput): Promise<str
 }
 
 /** One worktree the review path will consider, with the ref git named for it. */
-interface Reviewable {
+export interface Reviewable {
   readonly entry: WorktreeEntry
   readonly ref: string
 }
+
+/**
+ * The one pending Worktree at this path, or `null`.
+ *
+ * The **selector rule**, written once and used by everything that takes a path
+ * from outside: the listing, the diff, and ./merge.ts. A caller says which of
+ * git's own entries it means; it does not say what git is asked. Nothing a
+ * caller supplied ever reaches argv — the ref returned here is the one git
+ * printed for the entry that matched.
+ *
+ * Extracted when the merge arrived, because the merge is the call where getting
+ * this wrong stops being a read of the wrong tree and becomes a write to one.
+ * A third copy of the comparison would have been three chances to disagree
+ * about a trailing slash.
+ */
+export async function findPendingWorktree(input: {
+  readonly git: GitRunner
+  readonly cloneRoot: string
+  readonly path: string
+}): Promise<Reviewable | null> {
+  const entries = parseWorktreeList(await input.git(['worktree', 'list', '--porcelain']))
+  const wanted = withoutTrailingSlash(input.path)
+
+  for (const found of reviewable(entries, input.cloneRoot)) {
+    if (withoutTrailingSlash(found.entry.path) !== wanted) continue
+    return (await commitsAhead(input.git, found.ref)) === null ? null : found
+  }
+  return null
+}
+
 
 /**
  * The worktrees a review is about, before anything has asked how far ahead they
@@ -249,6 +371,22 @@ function reviewable(entries: readonly WorktreeEntry[], cloneRoot: string): Revie
   for (const [index, entry] of entries.entries()) {
     if (index === 0 || entry.bare) continue
     if (withoutTrailingSlash(entry.path) === root) continue
+    /*
+      **A Worktree, not merely a worktree.** `CONTEXT.md` defines the term as one
+      under `.claude/worktrees/`, and that is what this surface is about: trees
+      the agent made, holding work the agent authored, which a human reviews and
+      lands.
+
+      A developer's own linked worktree — a spike, a long-lived release branch,
+      anything they made themselves with `git worktree add` somewhere else — is
+      not that, and it used to cost nothing to include one: this list was
+      read-only, so the worst case was a row nobody wanted. It stopped being
+      free when a merge control appeared beside every row. Squashing somebody's
+      branch, removing their directory and `branch -D`-ing their ref is not a
+      surprising row, it is losing their work — and the button would sit under a
+      panel headed with a term that says it will not.
+    */
+    if (!isWorktreeOf(cloneRoot, entry.path)) continue
     const ref = entry.branch ?? entry.head
     if (ref === null) continue
     found.push({ entry, ref })
@@ -270,9 +408,112 @@ async function commitsAhead(git: GitRunner, ref: string): Promise<number | null>
   return Number.isFinite(commits) && commits > 0 ? commits : null
 }
 
+/**
+ * Whether merging this ref into the live tree would go cleanly.
+ *
+ * Two questions, and the first one is free. **Fast-forward is asked first**
+ * because it is the common case here and because it settles the second question
+ * without asking it: a branch that already contains the live tree cannot
+ * conflict with it, so there is nothing for `merge-tree` to compute. It is
+ * `rev-list --count <ref>..HEAD`, which is "commits the live tree has that the
+ * branch does not" — zero means the branch is a superset, which is exactly what
+ * makes the merge a ref moving.
+ *
+ * Only when the two have genuinely diverged is the merge computed, and it is
+ * computed rather than performed: `merge-tree` produces the result in the object
+ * store and touches no ref, no index and no working tree. See the module header
+ * for what that does write.
+ *
+ * `--name-only` is what makes the conflicted section parseable without knowing
+ * git's `ls-files -u` format, and `--no-messages` is not passed because the
+ * informational block is what the blank line separates the file names *from* —
+ * see {@link conflictedFiles}.
+ *
+ * **A count that would not parse is not a zero here**, the way it is in
+ * {@link commitsAhead}, and the difference is which way the mistake falls. There
+ * a bad count leaves a worktree off a list; here it would claim a merge decides
+ * nothing. So an unreadable count falls through to the probe, which answers the
+ * question properly or says it could not.
+ */
+export async function mergeabilityOf(
+  git: GitRunner,
+  attempt: GitAttempt,
+  ref: string,
+): Promise<Mergeability> {
+  let behind: number
+  try {
+    behind = Number.parseInt(await git(['rev-list', '--count', `${ref}..HEAD`]), 10)
+  } catch (error) {
+    return { kind: 'unknown', reason: reasonOf(error) }
+  }
+  if (behind === 0) return { kind: 'fast-forward' }
+
+  let probe: GitAttemptResult
+  try {
+    probe = await attempt(['merge-tree', '--write-tree', '--name-only', 'HEAD', ref])
+  } catch (error) {
+    return { kind: 'unknown', reason: reasonOf(error) }
+  }
+
+  if (probe.code === 0) return { kind: 'clean' }
+  /*
+    Exit 1 is git saying the merge conflicts, and it is the only non-zero code
+    that means anything but trouble. Anything else — 128 for a bad object, 129
+    for a `merge-tree` that does not take these flags, a signal — is a probe that
+    did not run, and saying so is the whole reason `unknown` exists.
+
+    A conflicted merge with no file names in it is `unknown` for the same
+    reason. The names are what makes the answer actionable, and an exit code
+    with nothing behind it is a claim this cannot support.
+  */
+  if (probe.code !== 1) {
+    const said = probe.stderr.trim()
+    return {
+      kind: 'unknown',
+      reason: said.length > 0 ? said : `git merge-tree exited ${probe.code} and said nothing.`,
+    }
+  }
+
+  const files = conflictedFiles(probe.stdout)
+  if (files.length === 0) {
+    return {
+      kind: 'unknown',
+      reason: 'git reported a conflict and named no file it was in.',
+    }
+  }
+  return { kind: 'conflicts', files }
+}
+
+/**
+ * The paths `merge-tree --write-tree --name-only` could not merge.
+ *
+ * The output is the tree it wrote, then the conflicted names one per line, then
+ * a blank line, then messages about each conflict in prose. So: take everything
+ * before the first blank line, drop the first line — which is the tree object,
+ * not a path — and what is left is the answer.
+ *
+ * A clean merge prints the tree and nothing else, which falls out of the same
+ * two rules as an empty list rather than needing a case of its own. This is
+ * only ever called after exit 1, so an empty answer here is git contradicting
+ * itself; {@link mergeabilityOf} treats that as not knowing rather than as no
+ * conflict.
+ */
+function conflictedFiles(stdout: string): string[] {
+  const [section = ''] = stdout.split('\n\n')
+  return section
+    .split('\n')
+    .slice(1)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 const HEADS = 'refs/heads/'
 
-function shortBranch(ref: string | null): string | null {
+export function shortBranch(ref: string | null): string | null {
   if (ref === null) return null
   return ref.startsWith(HEADS) ? ref.slice(HEADS.length) : ref
 }

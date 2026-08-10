@@ -47,6 +47,8 @@ export const ACTOR_NAMES = [
   'persistSession',
   'listWorktrees',
   'readWorktreeDiff',
+  'mergeWorktree',
+  'restartVarnick',
   'pumpUnprompted',
   'loadSurface',
 ] as const

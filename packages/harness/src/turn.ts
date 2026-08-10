@@ -82,6 +82,7 @@ export type ControlRequest =
   | { readonly kind: 'interrupt'; readonly turnId: string }
   | DescribeSecretsRequest
   | PreviewAnswerRequest
+  | ReportMergeRequest
 
 /**
  * Tell the confined process which secrets exist, by name.
@@ -150,6 +151,61 @@ export interface PreviewAnswerRequest {
   readonly requestId: string
   /** One of `PREVIEW_OUTCOMES` in ./preview.ts. */
   readonly outcome: PreviewOutcome
+}
+
+/**
+ * One of the agent's branches landed.
+ *
+ * **A report, not an instruction**, and it belongs on the same footing as the
+ * compaction report and `COMMANDS_REPORTED`: something the world did, which the
+ * thing hearing it accepts wherever it is rather than declining. The agent wrote
+ * the branch and is the only party in the conversation that does not otherwise
+ * find out — so without this it goes on offering to preview a Worktree that no
+ * longer exists, and reasoning about a fix it believes is running.
+ *
+ * ## Why the sentence is carried rather than the facts
+ *
+ * The obvious shape is the report itself — branch, commit, two booleans — and it
+ * is rejected for the reason `preview-answer` carries a *tag* rather than prose:
+ * whichever side composes the sentence is the side that decides what it says,
+ * and this one has to be composed where the merge happened. Two of the things it
+ * must convey are absences (the worktree is gone, the branch is gone), and an
+ * absence is not something a field conveys. `mergeBriefing` in ./merge.ts writes
+ * it; the Rust host relays it and writes nothing.
+ *
+ * ## And why it arrives on the next Turn rather than at the moment it happens
+ *
+ * The same route the secret names take: a `UserPromptSubmit` hook's
+ * `additionalContext`, which is re-run per Turn. That is not a compromise here —
+ * the fact only matters when the agent next acts on it, and delivering it as a
+ * prompt would make the agent *answer* a message the developer never sent.
+ */
+export interface ReportMergeRequest {
+  readonly kind: 'report-merge'
+  /**
+   * What to tell it, composed host-side and delivered unchanged.
+   *
+   * Non-empty, checked. An empty briefing would put a blank paragraph into the
+   * agent's context for a merge it would then know nothing about — worse than
+   * not being told, because the delivery is what clears it.
+   */
+  readonly briefing: string
+  /**
+   * The part that is true only while *this* process is the one that heard it.
+   *
+   * A Briefing outlives the process that composed it — the ordinary sequence is
+   * merge, then restart, and a restart kills the agent host before the next Turn
+   * drains anything — so it is kept and delivered in the session afterwards. By
+   * then "varnick has not restarted" is false, which is why it arrives as its
+   * own string rather than as a clause inside the one above.
+   *
+   * Both are composed host-side. The confined process picks which apply, from a
+   * fact about *itself* — did I receive this, or find it left behind — and never
+   * by editing a sentence it did not write.
+   *
+   * Optional, so a host that does not send one still delivers the Briefing.
+   */
+  readonly whileRunning?: string
 }
 
 /**
@@ -273,8 +329,8 @@ export function parseControlRequest(line: string): ControlRequest | null {
     return null
   }
 
-  const { kind, turnId, prompt, model, effort, names, images, requestId, outcome } = (value ??
-    {}) as Record<string, unknown>
+  const { kind, turnId, prompt, model, effort, names, images, requestId, outcome, briefing, whileRunning } =
+    (value ?? {}) as Record<string, unknown>
 
   /*
     Rebuilt to `kind` and `names`, which is what makes "no value can arrive
@@ -304,6 +360,23 @@ export function parseControlRequest(line: string): ControlRequest | null {
     if (typeof requestId !== 'string' || requestId.length === 0) return null
     if (!isPreviewOutcome(outcome)) return null
     return { kind, requestId, outcome }
+  }
+
+  /*
+    The Briefing is required and an empty one is refused. The delivery clears it,
+    so an empty string would spend the one chance to say a branch landed on a
+    blank paragraph — which is worse than never having sent it.
+
+    `whileRunning` is optional and quietly dropped when it is not a usable
+    string, because it is the *lesser* half: a Briefing delivered without it is
+    still true, and refusing the whole request over it would lose the part that
+    matters to keep the part that expires.
+  */
+  if (kind === 'report-merge') {
+    if (typeof briefing !== 'string' || briefing.trim().length === 0) return null
+    const clause =
+      typeof whileRunning === 'string' && whileRunning.trim().length > 0 ? whileRunning : undefined
+    return clause === undefined ? { kind, briefing } : { kind, briefing, whileRunning: clause }
   }
 
   if (typeof turnId !== 'string' || turnId.length === 0) return null
