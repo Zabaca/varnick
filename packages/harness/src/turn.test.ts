@@ -632,3 +632,236 @@ describe('the wire between the agent host and the host', () => {
     ).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Subagents, while they run and after they are gone
+// ---------------------------------------------------------------------------
+
+/*
+  A Turn that spawned subagents looked exactly like a Turn that had hung. Four
+  of them ran for ten minutes behind one `⚙ Agent(…)` line and a spinner, and
+  the only way to answer "is it still working?" was reading the SDK's own
+  transcripts off disk.
+
+  Nothing was missing from the SDK. All four of these subtypes were arriving and
+  falling through the `system` case, which answered `hook_response` and returned
+  nothing for the rest.
+*/
+
+const started = (id: string, description: string, subagentType?: string) => ({
+  type: 'system',
+  subtype: 'task_started',
+  task_id: id,
+  description,
+  ...(subagentType === undefined ? {} : { subagent_type: subagentType }),
+})
+
+const progress = (id: string, total_tokens: number, tool_uses: number, duration_ms: number) => ({
+  type: 'system',
+  subtype: 'task_progress',
+  task_id: id,
+  usage: { total_tokens, tool_uses, duration_ms },
+})
+
+const updated = (id: string, patch: Record<string, unknown>) => ({
+  type: 'system',
+  subtype: 'task_updated',
+  task_id: id,
+  patch,
+})
+
+/** Just the live sets, in order — what the panel would have shown. */
+const setsFrom = (events: readonly TurnEvent[]) =>
+  events.filter((e) => e.kind === 'tasks').map((e) => (e as { tasks: readonly unknown[] }).tasks)
+
+/** Just the durable lines. */
+const linesFrom = (events: readonly TurnEvent[]) =>
+  events.filter((e) => e.kind === 'task-line').map((e) => (e as { text: string }).text)
+
+describe('what is running right now', () => {
+  test('a subagent that starts is listed', () => {
+    const events = play([started('k1', 'review the diff', 'code-reviewer')])
+    expect(setsFrom(events).at(-1)).toEqual([
+      {
+        id: 'k1',
+        description: 'review the diff',
+        subagentType: 'code-reviewer',
+        tokens: 0,
+        toolUses: 0,
+        elapsedMs: 0,
+      },
+    ])
+  })
+
+  test('progress patches the entry rather than replacing the set', () => {
+    // The reason the fold is host-side: Core would need this same map to apply
+    // a patch, and two copies of a merge rule is one too many.
+    const events = play([started('k1', 'review', 'code-reviewer'), progress('k1', 34_000, 9, 72_000)])
+    expect(setsFrom(events).at(-1)).toEqual([
+      {
+        id: 'k1',
+        description: 'review',
+        subagentType: 'code-reviewer',
+        tokens: 34_000,
+        toolUses: 9,
+        elapsedMs: 72_000,
+      },
+    ])
+  })
+
+  test('two subagents stay in the order they started', () => {
+    const events = play([started('k1', 'first'), started('k2', 'second')])
+    expect(setsFrom(events).at(-1)?.map((t) => (t as { id: string }).id)).toEqual(['k1', 'k2'])
+  })
+
+  test('one that finishes leaves the set', () => {
+    // The set is what is *running*. A finished subagent left in it would sit
+    // there for the rest of the Turn claiming to be working.
+    const events = play([started('k1', 'review'), updated('k1', { status: 'completed' })])
+    expect(setsFrom(events).at(-1)).toEqual([])
+  })
+
+  test('an empty set is a real answer, not a malformed one', () => {
+    // It is what "the last subagent finished" looks like.
+    const events = play([started('k1', 'x'), updated('k1', { status: 'completed' })])
+    expect(events.some((e) => e.kind === 'tasks')).toBe(true)
+  })
+
+  test('a paused subagent is still running and stays listed', () => {
+    const events = play([started('k1', 'x'), updated('k1', { status: 'paused' })])
+    expect(setsFrom(events).at(-1)).toHaveLength(1)
+  })
+
+  test('background_tasks_changed replaces the set and keeps the figures it does not carry', () => {
+    // Replace semantics are the SDK's own word. Blanking the meters on every
+    // arrival would make them flicker each time any task started or stopped.
+    const events = play([
+      started('k1', 'review', 'code-reviewer'),
+      progress('k1', 1_000, 2, 5_000),
+      {
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 'k1', description: 'review', task_type: 'code-reviewer' }],
+      },
+    ])
+    expect(setsFrom(events).at(-1)).toEqual([
+      {
+        id: 'k1',
+        description: 'review',
+        subagentType: 'code-reviewer',
+        tokens: 1_000,
+        toolUses: 2,
+        elapsedMs: 5_000,
+      },
+    ])
+  })
+
+  test('an entry with no id is dropped rather than defaulted', () => {
+    // An id is what a later patch is matched against, so an entry without one
+    // could never be updated or removed.
+    const events = play([{ type: 'system', subtype: 'task_started', description: 'nameless' }])
+    expect(setsFrom(events)).toEqual([])
+  })
+})
+
+describe('what survives the Turn', () => {
+  test('a line when it starts and a line when it ends', () => {
+    const events = play([
+      started('k1', 'review the diff', 'code-reviewer'),
+      progress('k1', 34_000, 9, 72_000),
+      updated('k1', { status: 'completed' }),
+    ])
+    expect(linesFrom(events)).toEqual([
+      '\n⚙ code-reviewer · review the diff started\n',
+      '\n⚙ code-reviewer · review the diff finished in 1m12s · 34000 tokens · 9 tools\n',
+    ])
+  })
+
+  test('progress writes no line at all', () => {
+    // It arrives every few seconds per task. A transcript is not a meter.
+    const events = play([started('k1', 'x'), progress('k1', 1, 1, 1), progress('k1', 2, 2, 2)])
+    expect(linesFrom(events)).toHaveLength(1)
+  })
+
+  test('a failure says so and quotes the reason', () => {
+    // "It finished" and "it failed after four minutes" are different facts and
+    // only one of them is good news.
+    const events = play([started('k1', 'x'), updated('k1', { status: 'failed', error: 'ran out' })])
+    expect(linesFrom(events).at(-1)).toContain('failed')
+    expect(linesFrom(events).at(-1)).toContain('ran out')
+  })
+
+  test('a killed subagent is not reported as finished', () => {
+    const events = play([started('k1', 'x'), updated('k1', { status: 'killed' })])
+    expect(linesFrom(events).at(-1)).toContain('was stopped')
+  })
+
+  test('the lines are in the answer, so they reach the mirror', () => {
+    // The live panel is empty by the time anyone reads the answer back. This is
+    // the half that outlives it — same rule as a tool call and a failed hook.
+    const events = play([
+      started('k1', 'review', 'code-reviewer'),
+      updated('k1', { status: 'completed' }),
+      success('done'),
+    ])
+    const answer = events.find((e) => e.kind === 'done') as { text: string }
+    expect(answer.text).toContain('code-reviewer · review started')
+    expect(answer.text).toContain('finished in')
+  })
+
+  test('a subagent with no type still reads as something', () => {
+    const events = play([started('k1', 'do the thing')])
+    expect(linesFrom(events).at(-1)).toBe('\n⚙ agent · do the thing started\n')
+  })
+})
+
+describe('a task set crossing into Core', () => {
+  test('it survives the wire', () => {
+    const event: TurnEvent = {
+      kind: 'tasks',
+      turnId: 't1',
+      tasks: [
+        { id: 'k1', description: 'review', subagentType: 'code-reviewer', tokens: 9, toolUses: 2, elapsedMs: 30 },
+      ],
+    }
+    expect(parseTurnEvent(JSON.parse(encodeTurnEvent(event)))).toEqual(event)
+  })
+
+  test('an empty set crosses, because that is how a panel empties', () => {
+    expect(parseTurnEvent({ kind: 'tasks', turnId: 't1', tasks: [] })).toEqual({
+      kind: 'tasks',
+      turnId: 't1',
+      tasks: [],
+    })
+  })
+
+  test('a field nobody agreed to does not ride in', () => {
+    const parsed = parseTurnEvent({
+      kind: 'tasks',
+      turnId: 't1',
+      tasks: [{ id: 'k1', description: 'x', subagentType: '', tokens: 0, toolUses: 0, elapsedMs: 0, secret: 'no' }],
+    })
+    expect(parsed).toEqual({
+      kind: 'tasks',
+      turnId: 't1',
+      tasks: [{ id: 'k1', description: 'x', subagentType: '', tokens: 0, toolUses: 0, elapsedMs: 0 }],
+    })
+  })
+
+  test('a task line crosses like any other transcript line', () => {
+    expect(parseTurnEvent({ kind: 'task-line', turnId: 't1', text: '⚙ started' })).toEqual({
+      kind: 'task-line',
+      turnId: 't1',
+      text: '⚙ started',
+    })
+  })
+
+  test('a negative or absurd figure becomes zero rather than crossing', () => {
+    const parsed = parseTurnEvent({
+      kind: 'tasks',
+      turnId: 't1',
+      tasks: [{ id: 'k1', description: '', subagentType: '', tokens: -5, toolUses: NaN, elapsedMs: 1.7 }],
+    }) as unknown as { tasks: { tokens: number; toolUses: number; elapsedMs: number }[] }
+    expect(parsed.tasks[0]).toMatchObject({ tokens: 0, toolUses: 0, elapsedMs: 1 })
+  })
+})

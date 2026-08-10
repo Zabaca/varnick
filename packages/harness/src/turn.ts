@@ -443,6 +443,49 @@ export interface SlashCommand {
 }
 
 /**
+ * One subagent or background task the runtime is running right now.
+ *
+ * ## Why this exists
+ *
+ * A Turn that spawns subagents looked identical to a Turn that was hung. A
+ * `/code-review` ran four of them over ten minutes and the window showed one
+ * `⚙ Agent(…)` line and then a spinner; answering *"is it still working?"* meant
+ * reading the SDK's own transcripts off disk, from outside the app.
+ *
+ * **Nothing was missing from the SDK.** It sends `task_started`,
+ * `task_progress`, `task_updated` and `background_tasks_changed`, and every one
+ * of them fell through {@link beginTurn}'s `system` case, which answered
+ * `hook_response` and returned nothing for the rest.
+ *
+ * ## Mirrored, not imported
+ *
+ * Same reason as {@link SlashCommand}: this type is bundled into the webview and
+ * the SDK is a host-side module that reads a credential when it loads.
+ *
+ * `description` and `subagentType` are written by whoever wrote the prompt or
+ * the agent definition, so they are third-party text crossing into Core, and
+ * are capped like every other name here.
+ */
+export interface RunningTask {
+  /** The runtime's own id. What a later patch is matched against. */
+  readonly id: string
+  /** What it was asked to do, as the runtime describes it. */
+  readonly description: string
+  /** `code-reviewer`, `Explore`, … Empty when the runtime did not say. */
+  readonly subagentType: string
+  /**
+   * Tokens, tool calls and elapsed milliseconds, as last reported.
+   *
+   * Zero rather than absent before the first progress message: a task that has
+   * just started has genuinely done nothing, and a meter rendering a dash until
+   * the first report would flicker on every task that ever runs.
+   */
+  readonly tokens: number
+  readonly toolUses: number
+  readonly elapsedMs: number
+}
+
+/**
  * How long a single name may be.
  *
  * A cwd is the longest honest field here and a deep clone path is well under
@@ -538,6 +581,42 @@ export function normaliseCommands(list: unknown): readonly SlashCommand[] {
       description: name(one['description']),
       argumentHint: name(one['argumentHint']),
       ...(Array.isArray(one['aliases']) ? { aliases: names(one['aliases']) } : {}),
+    }))
+}
+
+/**
+ * How many subagents may be listed at once.
+ *
+ * Far below anything a real run produces — the largest measured was four — and
+ * here for the reason every other cap on this wire is: what crosses into Core
+ * does not arrive at whatever size it was sent at. A panel of two hundred rows
+ * would also be a panel nobody can read.
+ */
+const TASK_LIMIT = 32
+
+/**
+ * A live task set, read back off the wire.
+ *
+ * Rebuilt field by field like {@link normaliseCommands}, and an entry with no
+ * id is dropped rather than defaulted: an id is what a later patch is matched
+ * against, so an entry without one could never be updated or removed and would
+ * sit in the panel until the Turn ended.
+ */
+export function normaliseTasks(list: unknown): readonly RunningTask[] {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter(
+      (one): one is Record<string, unknown> =>
+        one !== null && typeof one === 'object' && typeof one['id'] === 'string' && one['id'] !== '',
+    )
+    .slice(0, TASK_LIMIT)
+    .map((one) => ({
+      id: name(one['id']),
+      description: name(one['description']),
+      subagentType: name(one['subagentType']),
+      tokens: count(one['tokens']),
+      toolUses: count(one['toolUses']),
+      elapsedMs: count(one['elapsedMs']),
     }))
 }
 
@@ -648,6 +727,32 @@ export type TurnUpdate =
    */
   | { readonly kind: 'commands'; readonly commands: readonly SlashCommand[] }
   /**
+   * Every subagent and background task running right now.
+   *
+   * **A replacement, never an addition**, like `commands` and for a related
+   * reason: the SDK's `background_tasks_changed` says to swap the set, and a
+   * merge would leave a finished subagent on screen forever. The progress and
+   * patch messages are folded into the set here rather than in Core, so what
+   * crosses is always the whole truth as of that moment.
+   *
+   * Ephemeral on purpose. This is the live panel and it is gone when the Turn
+   * ends; what survives is {@link TurnUpdate} `task-line`, which is transcript.
+   */
+  | { readonly kind: 'tasks'; readonly tasks: readonly RunningTask[] }
+  /**
+   * A subagent started, or finished. Transcript, like a tool call.
+   *
+   * The durable half of the same fact the live panel shows. A developer who
+   * looks away for ten minutes needs to be able to see afterwards that four
+   * subagents ran and how long they took — the panel cannot tell them, because
+   * by then it is empty.
+   *
+   * **Start and terminal status only.** A line per progress tick would be the
+   * noise the `hook_response` filter exists to prevent: `task_progress` arrives
+   * every few seconds per task, and a transcript is not a meter.
+   */
+  | { readonly kind: 'task-line'; readonly text: string }
+  /**
    * The conversation was reset — the agent forgot everything.
    *
    * The CLI announces this after its own `/clear`, after a plan-mode exit, and
@@ -740,7 +845,7 @@ export function encodeTurnEvent(event: TurnEvent): string {
  * where it would reach the Session mirror.
  */
 export function parseTurnEvent(value: unknown): TurnEvent | null {
-  const { kind, turnId, text, summary, tokensUsed, failure, report, commands } = (value ??
+  const { kind, turnId, text, summary, tokensUsed, failure, report, commands, tasks } = (value ??
     {}) as Record<string, unknown>
   if (typeof turnId !== 'string' || turnId.length === 0) return null
 
@@ -748,6 +853,7 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
     case 'delta':
     case 'tool':
     case 'hook':
+    case 'task-line':
       return typeof text === 'string' ? { kind, turnId, text } : null
     case 'done':
       return typeof text === 'string' && typeof tokensUsed === 'number' && Number.isFinite(tokensUsed)
@@ -793,6 +899,13 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
       return Array.isArray(commands)
         ? { kind, turnId, commands: normaliseCommands(commands) }
         : null
+    case 'tasks':
+      /*
+        Empty is a real answer here too, and it is the most important one: it is
+        what "the last subagent finished" looks like, and refusing it would
+        leave the panel showing work that has stopped.
+      */
+      return Array.isArray(tasks) ? { kind, turnId, tasks: normaliseTasks(tasks) } : null
     default:
       return null
   }
@@ -943,9 +1056,144 @@ export interface TurnRun {
   readonly finished: boolean
 }
 
+/** The four `system` subtypes that describe a subagent rather than the Turn. */
+function isTaskSubtype(subtype: unknown): boolean {
+  return (
+    subtype === 'task_started' ||
+    subtype === 'task_progress' ||
+    subtype === 'task_updated' ||
+    subtype === 'background_tasks_changed'
+  )
+}
+
+/** A whole number from the runtime, or zero. Never `NaN`, never negative. */
+function count(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+/** `code-reviewer · reviewing the diff` — how a task reads on one line. */
+function taskLabel(task: RunningTask): string {
+  const kind = task.subagentType.length > 0 ? task.subagentType : 'agent'
+  return task.description.length > 0 ? `${kind} · ${task.description}` : kind
+}
+
+/** How long it ran, in the coarsest unit that is still true. */
+function elapsedLabel(ms: number): string {
+  if (ms < 1_000) return `${ms}ms`
+  const seconds = Math.round(ms / 1_000)
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`
+}
+
 export function beginTurn(turnId: string): TurnRun {
   let transcript = ''
   let finished = false
+
+  /*
+    Every subagent this Turn has started, by the runtime's id.
+
+    Insertion-ordered, which a Map gives for free and which matters: the panel
+    lists them in the order they started, so a second subagent appearing does
+    not reshuffle the first.
+
+    A task that reaches a terminal status is removed — the set is what is
+    *running*. Its last figures go out on the transcript line instead, which is
+    the half that is supposed to outlive it.
+  */
+  const tasks = new Map<string, RunningTask>()
+
+  /** What one task message means: the new set, and possibly one line. */
+  function acceptTask(sdk: Record<string, unknown>): TurnUpdate[] {
+    const updates: TurnUpdate[] = []
+
+    if (sdk.subtype === 'background_tasks_changed') {
+      /*
+        Replace semantics, said in so many words by the SDK. Existing entries
+        keep their measured figures — this message carries none, and dropping
+        them would blank every meter each time any task started or ended.
+      */
+      const listed = Array.isArray(sdk.tasks) ? sdk.tasks : []
+      const replacement = new Map<string, RunningTask>()
+      for (const one of listed) {
+        const entry = (one ?? {}) as Record<string, unknown>
+        const id = name(entry.task_id)
+        if (id.length === 0) continue
+        const known = tasks.get(id)
+        replacement.set(id, {
+          id,
+          description: name(entry.description) || (known?.description ?? ''),
+          subagentType: name(entry.task_type) || (known?.subagentType ?? ''),
+          tokens: known?.tokens ?? 0,
+          toolUses: known?.toolUses ?? 0,
+          elapsedMs: known?.elapsedMs ?? 0,
+        })
+      }
+      tasks.clear()
+      for (const [id, entry] of replacement) tasks.set(id, entry)
+      return [{ kind: 'tasks', tasks: [...tasks.values()] }]
+    }
+
+    const id = name(sdk.task_id)
+    if (id.length === 0) return []
+
+    if (sdk.subtype === 'task_updated') {
+      const patch = (sdk.patch ?? {}) as Record<string, unknown>
+      const known = tasks.get(id)
+      const status = patch.status
+      const ended =
+        status === 'completed' || status === 'failed' || status === 'killed'
+      if (!ended) {
+        // Still running, and possibly renamed. `paused` and `pending` stay in
+        // the set: they are states of a task that has not gone away.
+        if (known !== undefined && typeof patch.description === 'string') {
+          tasks.set(id, { ...known, description: name(patch.description) })
+        }
+        return [{ kind: 'tasks', tasks: [...tasks.values()] }]
+      }
+      tasks.delete(id)
+      if (known === undefined) return [{ kind: 'tasks', tasks: [...tasks.values()] }]
+      /*
+        The durable half. `failed` and `killed` say so and quote the reason the
+        runtime gave, because "it finished" and "it was killed after four
+        minutes" are different facts and only one of them is good news.
+      */
+      const reason = name(patch.error)
+      const verb =
+        status === 'completed' ? 'finished' : status === 'failed' ? 'failed' : 'was stopped'
+      const measured =
+        known.tokens > 0 || known.toolUses > 0
+          ? ` · ${known.tokens} tokens · ${known.toolUses} tools`
+          : ''
+      const because = status !== 'completed' && reason.length > 0 ? ` — ${reason}` : ''
+      updates.push({
+        kind: 'task-line',
+        text: `\n⚙ ${taskLabel(known)} ${verb} in ${elapsedLabel(known.elapsedMs)}${measured}${because}\n`,
+      })
+      updates.push({ kind: 'tasks', tasks: [...tasks.values()] })
+      return updates
+    }
+
+    // `task_started` and `task_progress` carry the same descriptive fields; the
+    // second adds the figures. Treated together so a progress message for a
+    // task nobody announced still produces an entry rather than nothing.
+    const known = tasks.get(id)
+    const usage = (sdk.usage ?? {}) as Record<string, unknown>
+    const entry: RunningTask = {
+      id,
+      description: name(sdk.description) || (known?.description ?? ''),
+      subagentType: name(sdk.subagent_type) || (known?.subagentType ?? ''),
+      tokens: count(usage.total_tokens) || (known?.tokens ?? 0),
+      toolUses: count(usage.tool_uses) || (known?.toolUses ?? 0),
+      elapsedMs: count(usage.duration_ms) || (known?.elapsedMs ?? 0),
+    }
+    tasks.set(id, entry)
+    // The line is written once, when it first appears — not on every progress
+    // message, which arrives every few seconds for the whole of a long task.
+    if (known === undefined) {
+      updates.push({ kind: 'task-line', text: `\n⚙ ${taskLabel(entry)} started\n` })
+    }
+    updates.push({ kind: 'tasks', tasks: [...tasks.values()] })
+    return updates
+  }
 
   function emit(updates: readonly TurnUpdate[]): TurnEvent[] {
     const events: TurnEvent[] = []
@@ -953,7 +1201,14 @@ export function beginTurn(turnId: string): TurnRun {
       // A failed hook joins the transcript for the reason a tool call does: it
       // has to survive into the message an interrupt keeps and into the mirror,
       // or it is a warning that exists only for whoever was watching.
-      if (update.kind === 'delta' || update.kind === 'tool' || update.kind === 'hook') {
+      if (
+        update.kind === 'delta' ||
+        update.kind === 'tool' ||
+        update.kind === 'hook' ||
+        // And a subagent starting or ending, for the same reason again: the
+        // live panel is empty by the time anyone reads the answer back.
+        update.kind === 'task-line'
+      ) {
         transcript += update.text
       }
       if (update.kind === 'done' || update.kind === 'failed') finished = true
@@ -1024,6 +1279,16 @@ export function beginTurn(turnId: string): TurnRun {
           how a surface teaches people to ignore it.
         */
         case 'system': {
+          /*
+            A subagent started, reported progress, changed status, or the whole
+            live set was replaced. Four subtypes, one answer: the current set,
+            plus a transcript line at the two moments worth keeping.
+
+            Folded here rather than in Core because `task_progress` *patches* an
+            entry — Core would have to hold the same map to apply it, and two
+            copies of a merge rule is one too many.
+          */
+          if (isTaskSubtype(sdk.subtype)) return emit(acceptTask(sdk as Record<string, unknown>))
           if (sdk.subtype !== 'hook_response') return []
           const hook = sdk as Record<string, unknown>
           if (hook.outcome !== 'error') return []

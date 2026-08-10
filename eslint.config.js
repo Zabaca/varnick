@@ -200,6 +200,14 @@ export default [
       'src-tauri/**',
       'packages/userspace/**',
       '.claude/worktrees/**',
+      /*
+        varnick's own machine-local state: the agent's config directory, the
+        `node` shim, and the bun cache a Worktree is provisioned from. All
+        gitignored, none of it authored here — and the cache is third-party
+        source that ships its own `eslint.config.js`, which this one would try
+        to load and fail on.
+      */
+      '.varnick/**',
     ],
   },
   restrict(['packages/core/**/*.ts', 'packages/core/**/*.tsx'], NO_USERSPACE),

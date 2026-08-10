@@ -12,6 +12,7 @@ import {
   turnFailureMessage,
   type PastedImage,
   type RuntimeReport,
+  type RunningTask,
   type SlashCommand,
 } from '@varnick/harness/turn'
 import type {
@@ -134,6 +135,19 @@ export interface TurnObserver {
    * The transcript follows either way.
    */
   conversationCompacted(summary: string, tokensUsed: number | null): void
+  /**
+   * Which subagents are running right now.
+   *
+   * Sent to the Session as `TASKS_REPORTED`. Addressed to the Session rather
+   * than the Harness — unlike the report and the command list — because this
+   * one **does not** outlive its Turn: it describes work the Turn started, and
+   * when the Turn ends there is nothing left running to describe.
+   *
+   * A replacement each time, never a merge. What arrives is the whole set as of
+   * that moment, already folded host-side; the empty array is the ordinary way
+   * a panel empties.
+   */
+  tasksReported(tasks: readonly RunningTask[]): void
 }
 
 /** An observer that drops everything. What a run with no owner gets. */
@@ -144,6 +158,7 @@ const silentObserver: TurnObserver = {
   commandsReported: () => {},
   conversationReset: () => {},
   conversationCompacted: () => {},
+  tasksReported: () => {},
 }
 
 /**
@@ -337,7 +352,16 @@ export function liveActors(
           // something happened beside the answer, and the transcript is where
           // it is auditable. Not a failure — the Turn answered.
           case 'hook':
+          // A subagent starting or finishing, for the same reason once more:
+          // the live panel is empty by the time anyone reads the answer back,
+          // so the durable half has to be in the transcript.
+          case 'task-line':
             observer.delta(event.text)
+            break
+          // Which subagents are running *now*. Ephemeral, and the only update
+          // here that does not outlive its Turn.
+          case 'tasks':
+            observer.tasksReported(event.tasks)
             break
           // Not part of the answer, and deliberately not `break`ing into one:
           // the Turn it is stamped with is only how it got here.

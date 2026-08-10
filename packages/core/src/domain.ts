@@ -507,6 +507,38 @@ export function formatContext(used: number, total: number): string {
   return `${short(used)}/${short(total)} (${pct}%)`
 }
 
+/**
+ * `1m12s · 34k · 9 tools` — how far along one subagent is.
+ *
+ * Pure and here rather than in the component, so the states page and `drive.ts`
+ * can assert the shape without rendering anything.
+ *
+ * **A field that has not been reported is left out rather than shown as zero.**
+ * A subagent that has just started has genuinely used no tools, and `0 tools`
+ * beside a spinner reads as a task that is stuck; an absent field reads as one
+ * that has not said yet, which is the truth. Elapsed is always shown, because a
+ * task that started has been running for some length of time even if nobody has
+ * measured it — that one is honestly zero.
+ */
+export function taskMeter(task: {
+  readonly tokens: number
+  readonly toolUses: number
+  readonly elapsedMs: number
+}): string {
+  const seconds = Math.round(task.elapsedMs / 1_000)
+  const elapsed =
+    seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`
+  const tokens =
+    task.tokens >= 1_000
+      ? `${+(task.tokens / 1_000).toFixed(task.tokens % 1_000 === 0 ? 0 : 1)}k`
+      : String(task.tokens)
+  return [
+    elapsed,
+    ...(task.tokens > 0 ? [tokens] : []),
+    ...(task.toolUses > 0 ? [`${task.toolUses} ${task.toolUses === 1 ? 'tool' : 'tools'}`] : []),
+  ].join(' · ')
+}
+
 /** The query a command draft is filtering by — everything typed so far. */
 export function commandQuery(draft: string): string {
   return draft.startsWith('/') ? draft : ''

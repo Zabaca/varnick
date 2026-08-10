@@ -89,6 +89,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
     commandsReported: () => {},
     conversationReset: () => {},
     conversationCompacted: () => {},
+    tasksReported: () => {},
     authorizing: () => {},
   })
   const observer = useMemo<TurnObserver>(
@@ -100,6 +101,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
       conversationReset: () => signals.current.conversationReset(),
       conversationCompacted: (summary, tokensUsed) =>
         signals.current.conversationCompacted(summary, tokensUsed),
+      tasksReported: (tasks) => signals.current.tasksReported(tasks),
     }),
     [],
   )
@@ -215,6 +217,14 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
       */
       conversationCompacted: (summary, tokensUsed) => {
         actorRef.getSnapshot().context.session?.send({ type: 'COMPACTED', summary, tokensUsed })
+      },
+      /*
+        And which subagents are running. Addressed to the Session rather than
+        the Harness, unlike the report beside it: this describes work the Turn
+        started and has nothing to say once the Turn is over.
+      */
+      tasksReported: (tasks) => {
+        actorRef.getSnapshot().context.session?.send({ type: 'TASKS_REPORTED', tasks })
       },
       // And where the mint's one signal lands. `credential.minting` is the only
       // state that accepts it, so a URL from an attempt that has already ended

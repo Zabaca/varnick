@@ -1,7 +1,7 @@
 import { setup, assign, fromPromise, raise } from 'xstate'
 import type { Message } from '../domain.ts'
 import { compactedTranscript, isCommandDraft } from '../domain.ts'
-import type { PastedImage } from '@varnick/harness/turn'
+import type { PastedImage, RunningTask } from '@varnick/harness/turn'
 import type { Effort, ModelId } from '../domain.ts'
 
 /**
@@ -62,6 +62,15 @@ export interface SessionContext {
    * was pasted into.
    */
   pending: readonly PastedImage[]
+  /**
+   * Subagents running right now, as the runtime last reported them.
+   *
+   * The one piece of Turn state that is deliberately *not* kept: it is emptied
+   * when the Turn ends, because a panel of subagents that finished ten minutes
+   * ago is a panel describing nothing. What survives is the transcript line
+   * each one wrote when it started and finished.
+   */
+  tasks: readonly RunningTask[]
   readonly enterTurn: string | null
   readonly enterPersistence: string | null
 }
@@ -76,6 +85,7 @@ export interface SessionInput {
   menuOpen?: boolean
   menuIndex?: number
   commandNames?: readonly string[]
+  tasks?: readonly RunningTask[]
   model?: ModelId
   effort?: Effort
   tokensUsed?: number
@@ -107,6 +117,14 @@ export type SessionEvent =
   | { type: 'ATTACH_IMAGES'; images: readonly PastedImage[] }
   /** Take one back off the draft before it is sent. */
   | { type: 'DETACH_IMAGE'; index: number }
+  /**
+   * Which subagents are running, as of now. A replacement, never a merge.
+   *
+   * Accepted wherever the machine is, like `COMPACTED` and `CLEAR`: it reports
+   * something the world did rather than asking for a transition, and a report
+   * the machine declines is a panel that stops matching the runtime.
+   */
+  | { type: 'TASKS_REPORTED'; tasks: readonly RunningTask[] }
   /** The agent summarised the conversation. A report, like `CLEAR`. `null`
    *  tokens means the Session would not say what it now holds. */
   | { type: 'COMPACTED'; summary: string; tokensUsed: number | null }
@@ -189,6 +207,7 @@ export const sessionMachine = setup({
     effort: input.effort ?? 'xhigh',
     tokensUsed: input.tokensUsed ?? 0,
     pending: input.pending ?? [],
+    tasks: input.tasks ?? [],
     enterTurn: input.enterTurn ?? null,
     enterPersistence: input.enterPersistence ?? null,
   }),
@@ -267,6 +286,15 @@ export const sessionMachine = setup({
       ],
     },
     SET_COMMANDS: { actions: assign({ commandNames: ({ event }) => event.names }) },
+    /*
+      Accepted wherever the machine is, and it does not save the transcript.
+
+      A subagent starting is not a Turn boundary — the transcript has not
+      stopped changing, and writing the mirror on every progress report would
+      put a file write on a message that arrives every few seconds per task.
+      What *is* transcript arrives separately, as a delta.
+    */
+    TASKS_REPORTED: { actions: assign({ tasks: ({ event }) => event.tasks }) },
     /*
       Attaching is legal wherever typing is, and for the same reason: the
       composer is not gated on the Turn. What is gated is `SEND`, which is
@@ -360,7 +388,15 @@ export const sessionMachine = setup({
             with the input the machine still holds, so a retried Turn carries the
             same screenshots the first attempt did.
           */
-          exit: assign({ pending: [] }),
+          /*
+            And the live subagent list goes with it, for a related reason: it
+            describes work this Turn started, and every way out of here means
+            there is nothing left running to describe. Left standing, an
+            interrupted Turn would leave subagents on screen forever — the panel
+            has no other way to learn they stopped, because the message that
+            would have said so belongs to a Turn nobody is listening to.
+          */
+          exit: assign({ pending: [], tasks: [] }),
           // Deliberately no entry that appends the prompt. `RETRY_TURN` re-enters
           // this state, and by then the draft has been consumed and cleared — an
           // entry action would append an empty user message and retry with an

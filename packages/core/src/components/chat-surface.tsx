@@ -10,6 +10,7 @@ import { ClaudeThinking } from './brainless/claude/claude-thinking.tsx'
 import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
+import { RunningTasks } from './running-tasks.tsx'
 import { ReviewPanel, WorktreeDiffView } from './worktree-review.tsx'
 import {
   commandLabel,
@@ -552,6 +553,17 @@ export function ChatSurface({
               )}
 
               {working && <ClaudeThinking running showTokens={false} />}
+
+              {/* What the working line cannot say: that four subagents are
+                  running and how far along each is. A Turn that spawns them
+                  looked exactly like a Turn that was hung, and the only way to
+                  tell was reading the SDK's transcripts off disk.
+
+                  A sibling of ClaudeThinking rather than a prop on it: that is a
+                  brainless component and this is varnick's fact. Rendered
+                  whenever the list is non-empty rather than gated on `working`,
+                  so a backgrounded task does not vanish between Turns. */}
+              {(s?.context.tasks.length ?? 0) > 0 && <RunningTasks tasks={s!.context.tasks} />}
 
               {turn === 'failed' && s?.context.turnError && (
                 <div className="flex flex-wrap items-baseline gap-x-3" style={{ color: 'var(--bad)' }}>

@@ -31,6 +31,7 @@ import {
   invokedCommand,
   isCommandDraft,
   formatContext,
+  taskMeter,
   matchCommands,
   mergeCommands,
   signatureFor,
@@ -1425,6 +1426,85 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
   check('and rounds the percentage', formatContext(500_000, 1_000_000) === '500k/1M (50%)')
   check('a small window still reads correctly', formatContext(20_000, 200_000) === '20k/200k (10%)')
   check('an empty session reads zero', formatContext(0, 1_000_000) === '0/1M (0%)')
+}
+
+{
+  /*
+    How far along one subagent is.
+
+    A field nobody has reported is left out rather than shown as zero: `0 tools`
+    beside a spinner reads as a task that is stuck, and an absent field reads as
+    one that has not said yet — which is the truth. Elapsed is the exception and
+    is always shown, because a task that started has been running for some
+    length of time even when that length is honestly zero.
+  */
+  check(
+    'a measured subagent reads as elapsed, tokens and tools',
+    taskMeter({ tokens: 34_000, toolUses: 9, elapsedMs: 72_000 }) === '1m12s · 34k · 9 tools',
+  )
+  check(
+    'one that has only just started reads as elapsed alone',
+    taskMeter({ tokens: 0, toolUses: 0, elapsedMs: 0 }) === '0s',
+  )
+  check(
+    'a single tool is not pluralised',
+    taskMeter({ tokens: 500, toolUses: 1, elapsedMs: 4_000 }) === '4s · 500 · 1 tool',
+  )
+  check(
+    'the seconds in a minute are padded, so the meters line up',
+    taskMeter({ tokens: 0, toolUses: 0, elapsedMs: 65_000 }) === '1m05s',
+  )
+}
+
+{
+  /*
+    Which subagents are running, and when the panel empties.
+
+    The defect this measures: a Turn that spawned subagents was indistinguishable
+    from a Turn that had hung, and the only way to tell was reading the SDK's own
+    transcripts off disk.
+  */
+  const task = {
+    id: 'k1',
+    description: 'review the diff',
+    subagentType: 'code-reviewer',
+    tokens: 34_000,
+    toolUses: 9,
+    elapsedMs: 72_000,
+  }
+  const actor = createActor(
+    sessionMachine.provide({
+      actors: {
+        runTurn: fromPromise<TurnOutput, TurnInput>(
+          () => new Promise<TurnOutput>(() => {}),
+        ),
+      },
+    }),
+    { input: { sessionId: 'tasks-1' } },
+  ).start()
+
+  check('a session with nothing running lists no subagents', actor.getSnapshot().context.tasks.length === 0)
+
+  actor.send({ type: 'EDIT_DRAFT', text: 'go' })
+  actor.send({ type: 'SEND' })
+  actor.send({ type: 'TASKS_REPORTED', tasks: [task] })
+  check('a reported subagent is listed', actor.getSnapshot().context.tasks.length === 1)
+
+  // A replacement, never a merge — the runtime sends the whole set each time.
+  actor.send({ type: 'TASKS_REPORTED', tasks: [] })
+  check('an empty report empties the panel rather than being ignored', actor.getSnapshot().context.tasks.length === 0)
+
+  /*
+    And the panel does not outlive its Turn. An interrupted Turn is the case
+    that matters: the message that would have said the subagents stopped belongs
+    to a Turn nobody is listening to any more, so without this they would sit on
+    screen forever.
+  */
+  actor.send({ type: 'TASKS_REPORTED', tasks: [task] })
+  actor.send({ type: 'INTERRUPT' })
+  await waitFor(actor, (s) => regionOf(s.value, 'turn') === 'idle')
+  check('an interrupted Turn takes its subagents with it', actor.getSnapshot().context.tasks.length === 0)
+  actor.stop()
 }
 
 // ---------------------------------------------------------------------------
@@ -3762,6 +3842,7 @@ async function turnPath(
     conversationCompacted: (summary: string, tokensUsed: number | null) => {
       heard.push({ summary, tokensUsed })
     },
+    tasksReported: () => {},
   }
 
   const turn = liveActors(observer).runTurn
