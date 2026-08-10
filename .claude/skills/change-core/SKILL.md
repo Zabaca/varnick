@@ -71,11 +71,35 @@ before you call the tool, and do not treat a decline as an error to retry.
 First preview of a worktree compiles Tauri and takes minutes. Say so, rather
 than leaving them watching a window that has not appeared.
 
-### 4. Stop at the merge
+### 4. Merge **down**, then hand over a fast-forward
 
-**You cannot merge, and you should not try.** Landing the change means writing
-`packages/core/**` in the live tree, and the kernel refuses it. That refusal is
-the gate this whole arrangement is built around, not a bug to work around.
+There are two merges and only one of them is yours.
+
+**Yours: `git merge main` inside the worktree.** Do this before handing
+anything over, and do it again if `main` has moved since. It writes only paths
+under the worktree, which the deny list does not name, so you can resolve any
+conflict yourself — and you should, because you wrote this branch and nobody
+else knows what you meant by it.
+
+Two things this is not just convenience for:
+
+- **A Preview of a stale base proves nothing.** Once you have merged `main`
+  down, the Preview runs the code that will actually land. Before that, it runs
+  a version that has never existed anywhere except your branch.
+- **Conflicts belong to whoever has the context.** The developer resolving your
+  conflict is guessing at your reasoning; you are not.
+
+So: merge `main` down, resolve, re-run the tests, and preview *again* if the
+merge changed anything that matters.
+
+**Theirs: the merge into the live tree.** Landing the change means writing
+`packages/core/**` there and the kernel refuses it — that refusal is the gate
+this whole arrangement is built around, not a bug to work around. If you have
+merged down first, their side is a fast-forward: a ref moves, files are checked
+out, nothing is decided.
+
+Hand over the branch name, say what you changed and what to look at, and say
+whether it is a fast-forward. Then stop.
 
 Hand over the branch name and say what the developer should look at. They merge,
 they restart, the change is live.
