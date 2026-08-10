@@ -62,6 +62,12 @@ import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
 import { readLines } from './framing.ts'
 import { watchForOrphaning } from './orphan.ts'
 import {
+  BUN_CACHE_ENV_VAR,
+  bunCacheDir,
+  provisionCommandFor,
+  provisionFailureMessage,
+} from './provision.ts'
+import {
   encodePreviewRequest,
   previewToolResult,
   LAUNCH_PREVIEW_DESCRIPTION,
@@ -645,6 +651,19 @@ export function agentEnvironment(
   }
 
   environment[CLAUDE_CONFIG_DIR_ENV_VAR] = claudeConfigDir(input.cloneRoot)
+
+  /*
+    And bun's cache, for the same reason and with the same answer: the default
+    is `~/.bun/install/cache` and the Sandbox denies `$HOME`, so an install run
+    by the agent — the one that gives a new Worktree its dependencies — would
+    fail on a path rather than on anything about the install. See
+    {@link BUN_CACHE_RELATIVE_PATH}.
+
+    Set in both modes, like the config directory above. Under `inherit` the
+    developer's own cache is still unreachable, so honouring their value would
+    hand the agent a path it cannot read and call that inheritance.
+  */
+  environment[BUN_CACHE_ENV_VAR] = bunCacheDir(input.cloneRoot)
 
   // The real toolchain ahead of the shim, so `git` is git. See
   // {@link developerToolsBin} for what the shim does and why allowing its
@@ -2189,6 +2208,55 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
                     additionalContext: describeSecretsForAgent(names),
                   },
                 }
+              },
+            ],
+          },
+        ],
+        /*
+          Entering a Worktree gives it its dependencies.
+
+          `EnterWorktree` is Claude Code's own and ADR-0014 keeps it that way,
+          so varnick does not create the directory and cannot provision it at
+          creation. This is the next honest moment: the session has just moved
+          into it and has not yet run anything that would need `node_modules`.
+
+          `WorktreeCreate` is the more precise seam and was rejected — its
+          output *is* the worktree path, so a hook there replaces creation
+          rather than following it, and varnick would have to reimplement branch
+          naming, base-ref resolution and locking to keep behaviour identical.
+          Getting any of that subtly wrong breaks `EnterWorktree` outright,
+          which is a poor trade for a step that is idempotent anyway.
+
+          Idempotent, and it must be: re-entering a Worktree is ordinary, and
+          {@link provisionCommandFor} answers `null` for one already provisioned
+          and for anywhere that is not a Worktree at all — including the live
+          tree, where an install nobody asked for would run over the developer's
+          own `node_modules`.
+        */
+        CwdChanged: [
+          {
+            hooks: [
+              async (hook) => {
+                if (hook.hook_event_name !== 'CwdChanged') return {}
+                const plan = provisionCommandFor(cloneRoot, hook.new_cwd, existsSync)
+                if (plan === null) return {}
+                /*
+                  Awaited rather than left running. The next thing the agent
+                  does in a fresh Worktree is read or test something, and an
+                  install racing that would fail in a way that looks like a
+                  broken change rather than a directory that was not ready.
+                */
+                const install = Bun.spawn([plan.command, ...plan.args], {
+                  cwd: plan.cwd,
+                  env: process.env,
+                  stdout: 'pipe',
+                  stderr: 'pipe',
+                })
+                const status = await install.exited
+                if (status === 0) return {}
+                const detail = await new Response(install.stderr).text()
+                // Reported, never fatal: see {@link provisionFailureMessage}.
+                return { systemMessage: provisionFailureMessage(plan.cwd, detail) }
               },
             ],
           },
