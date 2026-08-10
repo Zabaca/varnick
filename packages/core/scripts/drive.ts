@@ -47,6 +47,7 @@ import {
   devUrlFor,
   hotUpdateVerdict,
   portToBind,
+  sharedTargetDir,
 } from '../dev-server.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
@@ -4911,6 +4912,72 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check(
     'and neither does a sibling clone with a longer name',
     hotUpdateVerdict(`${clone}-two/packages/core/x.ts`, clone) === 'hot-swap',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The build cache — a Preview that does not compile 348 crates first
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The first Preview of a Worktree compiled 348 crates while the developer
+    waited, because a tree git just created has its own empty
+    `src-tauri/target`. Minutes, every time, and paid *after* the Fence dialog
+    was approved.
+
+    ADR-0014 argues a Preview exists so that reviewing a change means using it
+    rather than reading a diff. A four-minute wall in front of that is the
+    feature going unused: the developer reads the diff instead, which is what
+    the Preview was built to improve on.
+
+    A pure function over a path for the same reason `hotUpdateVerdict` is one —
+    the alternative is a build you have to sit through to find out.
+  */
+  const clone = '/Users/someone/varnick'
+  const worktree = `${clone}/.claude/worktrees/agent-1`
+
+  check(
+    'a Worktree builds into the clone that owns it',
+    sharedTargetDir(worktree) === `${clone}/src-tauri/target`,
+  )
+
+  // The path everybody uses must pay nothing and change nothing.
+  check('the live tree is left exactly as it was', sharedTargetDir(clone) === null)
+
+  /*
+    A developer who set the variable has already answered this question, and
+    silently overriding them would be the same class of surprise as varnick
+    picking a port they did not ask for.
+  */
+  check(
+    'an explicit CARGO_TARGET_DIR wins',
+    sharedTargetDir(worktree, '/elsewhere/target') === null,
+  )
+  check(
+    'and an empty one does not count as having answered',
+    sharedTargetDir(worktree, '') === `${clone}/src-tauri/target`,
+  )
+
+  /*
+    A worktree is one directory under the base, never deeper. A path that merely
+    contains the segment is not one, and guessing would point a build somewhere
+    nobody asked for.
+  */
+  check(
+    'a directory nested below a Worktree is not itself one',
+    sharedTargetDir(`${worktree}/packages/core`) === null,
+  )
+  check(
+    'and a directory that only looks like the base is not the base',
+    sharedTargetDir(`${clone}/.claude/worktrees-old/agent-1`) === null,
+  )
+
+  // Trailing separators arrive from `fileURLToPath` and must not change the
+  // answer — `dev.ts` strips one, and this is why that is not the only defence.
+  check(
+    'a trailing separator decides the same thing',
+    sharedTargetDir(`${worktree}/`) === `${clone}/src-tauri/target`,
   )
 }
 

@@ -23,12 +23,14 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import {
+  CARGO_TARGET_ENV_VAR,
   DEV_PORT_ENV_VAR,
   DEV_URL_ENV_VAR,
   INSTALL_MARKER,
   bootstrapCommand,
   chosenDevPort,
   devLaunch,
+  sharedTargetDir,
 } from '../dev-server.ts'
 
 const argv = process.argv.slice(2)
@@ -80,9 +82,30 @@ if (bootstrap !== null) {
   }
 }
 
+/*
+  And where cargo builds, for a Worktree.
+
+  Same class of decision as the `bun install` above and made in the same place:
+  a tree git just created has an empty `src-tauri/target`, and the first Preview
+  of one compiled 348 crates while the developer waited — after approving the
+  Fence dialog, which is the worst possible moment for a four-minute wall.
+
+  `sharedTargetDir` is where the reasoning lives, including why sharing a build
+  directory with the live tree is not a boundary question. It answers null for
+  the live tree and for a developer who set the variable themselves.
+*/
+const target = sharedTargetDir(cloneRoot, process.env[CARGO_TARGET_ENV_VAR])
+if (target !== null) {
+  console.log(`building into ${target} — a fresh worktree has no target directory`)
+}
+
 const child = Bun.spawn(['bun', ...launch.args, ...passThrough], {
   cwd: cloneRoot,
-  env: { ...process.env, ...launch.env },
+  env: {
+    ...process.env,
+    ...launch.env,
+    ...(target === null ? {} : { [CARGO_TARGET_ENV_VAR]: target }),
+  },
   stdio: ['inherit', 'inherit', 'inherit'],
 })
 

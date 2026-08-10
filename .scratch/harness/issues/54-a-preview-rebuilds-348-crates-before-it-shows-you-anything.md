@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — 348 crates became one, measured. See the foot.
 
 **Realizes:** no state path.
 
@@ -31,9 +31,62 @@ This was measured today by hand, outside the product: four worktree agents were 
 - A Worktree that *does* change `src-tauri` still pays a rebuild, and should. That is the case the dialog raised for.
 - `packages/core/scripts/dev.ts` is where the launch is composed, so it is where this belongs — next to the `bun install` bootstrap, which is the same class of decision and was already made there.
 
-- [ ] A Preview of a Worktree that changes no Rust opens without a Tauri build
-- [ ] A Preview of a Worktree that changes `src-tauri` still rebuilds
-- [ ] Two Previews building at once do not corrupt the shared target
-- [ ] The comment says why sharing a build directory is not a boundary question
+- [x] A Preview of a Worktree that changes no Rust opens without a Tauri build
+- [x] A Preview of a Worktree that changes `src-tauri` still rebuilds
+- [x] Two Previews building at once do not corrupt the shared target
+- [x] The comment says why sharing a build directory is not a boundary question
 
 Found by driving the loop: the first real Preview compiled 348 crates while the developer waited.
+
+## Measured
+
+A fresh worktree, no Rust changed, building into the owning clone's target:
+
+```
+   Compiling varnick v0.0.0 (…/.claude/worktrees/target-share-probe/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.02s
+```
+
+**One crate, seven seconds.** All 348 dependencies were reused — `tao`, `wry`,
+`objc2-app-kit` and the rest never entered the build. Only `varnick` itself
+recompiles, because its source path differs, and that is the part that has to.
+
+**A Worktree that changes `src-tauri` still rebuilds**, which is the same
+measurement read the other way: touching `src/lib.rs` produced a recompile.
+Nothing here suppresses a build; cargo's fingerprinting decides, and this only
+says where the artifacts already are.
+
+**Two builds at once serialise rather than corrupt** — run concurrently against
+the shared directory, the second said so out loud and both finished green:
+
+```
+B:     Blocking waiting for file lock on build directory
+A:    Finished `dev` profile … in 2.02s
+B:    Finished `dev` profile … in 3.88s
+```
+
+That is accepted rather than worked around. Waiting for a build that is already
+running beats running it twice, which is what per-worktree directories would do.
+
+## Where it lives
+
+`sharedTargetDir` in `packages/core/dev-server.ts` — a pure function over a path,
+asserted in `drive.ts`, for the same reason `hotUpdateVerdict` is: the
+alternative is a build you have to sit through to find out. `scripts/dev.ts` is
+the spawn, beside the `bun install` bootstrap, which is the same class of
+decision and was already made there.
+
+Two answers are `null`, and both matter: **the live tree**, which must pay and
+change nothing, and **a developer who set `CARGO_TARGET_DIR` themselves**, who
+has already answered this question. Overriding them would be the same class of
+surprise as varnick picking a port they did not ask for.
+
+## Why sharing is not a boundary question
+
+Stated in the code because the reflex to check is the right one in general.
+`target/` is a build artifact, not source: nothing in it is reviewed, nothing in
+it is merged, it is gitignored, and it is reproducible from the sources on either
+side. The Fence exists so that code the agent wrote cannot become code the host
+runs without a human reading it — and a Preview already runs the agent's unmerged
+code, deliberately, which is what a Preview *is*. Sharing the cache changes
+nothing about what is read or what is run.

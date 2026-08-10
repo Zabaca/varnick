@@ -178,6 +178,100 @@ export function bootstrapCommand(installed: boolean): readonly string[] | null {
 }
 
 // ---------------------------------------------------------------------------
+// The build cache
+// ---------------------------------------------------------------------------
+
+/** What cargo reads to decide where its build artifacts go. */
+export const CARGO_TARGET_ENV_VAR = 'CARGO_TARGET_DIR'
+
+/**
+ * Where a Worktree lives, relative to the clone that owns it.
+ *
+ * Duplicated from `packages/harness/src/provision.ts` rather than imported, the
+ * same way the Turn stamp is duplicated across the language boundary: this
+ * module is loaded by the Vite config and by the launcher, and neither should
+ * pull the harness in to learn one path segment.
+ */
+const WORKTREE_BASE = '.claude/worktrees'
+
+/**
+ * The clone a Worktree belongs to, or null when this is not a Worktree.
+ *
+ * A string operation on purpose. This runs before anything is installed, in a
+ * launcher whose whole virtue is that it does almost nothing.
+ */
+function cloneOwning(cloneRoot: string): string | null {
+  const root = resolve(cloneRoot)
+  const marker = `/${WORKTREE_BASE}/`
+  const at = root.lastIndexOf(marker)
+  if (at === -1) return null
+  const owner = root.slice(0, at)
+  // A worktree is one directory under the base, never deeper. Anything else is
+  // a path that happens to contain the segment, and guessing at it would point
+  // a build somewhere nobody asked for.
+  return root.slice(at + marker.length).includes('/') ? null : owner
+}
+
+/**
+ * The `CARGO_TARGET_DIR` a varnick started from `cloneRoot` should build into,
+ * or null to leave cargo alone.
+ *
+ * ## What this is for
+ *
+ * **The first Preview of a Worktree compiled 348 crates while the developer
+ * waited** — `tao`, `wry`, `objc2-app-kit`, the lot — because a tree git just
+ * created has its own empty `src-tauri/target`. Minutes, every time, for every
+ * new Worktree, and paid *after* the Fence dialog was approved: read the hunks,
+ * decide, then stare at nothing.
+ *
+ * ADR-0014 argues a Preview exists so that reviewing a change means using it
+ * rather than reading a diff. A four-minute wall in front of that is not a slow
+ * feature, it is the feature going unused — the developer reads the diff
+ * instead, which is the outcome the Preview was built to improve on.
+ *
+ * Pointed at the owning clone's target directory, every Worktree shares one
+ * build cache, and a Worktree that changed no Rust — most of them, since most
+ * Core changes are TypeScript — links against what is already there.
+ *
+ * ## Why sharing this directory is not a boundary question
+ *
+ * It looks like one. A path shared between a Worktree and the live tree is
+ * exactly the shape ADR-0014's `denyWrite` is about, and the reflex is right in
+ * general.
+ *
+ * It does not apply here, for a reason worth stating rather than assuming:
+ * **`target/` is a build artifact, not source.** Nothing in it is reviewed,
+ * nothing in it is merged, it is gitignored, and it is reproducible from the
+ * sources on either side. The Fence exists so that code the agent wrote cannot
+ * become code the host runs without a human reading it — and a Preview already
+ * runs the agent's unmerged code, deliberately, which is the whole point of a
+ * Preview. Sharing the cache changes nothing about what is read or what is run.
+ *
+ * ## Concurrency
+ *
+ * Cargo takes a lock on the target directory, so two Previews building at once
+ * **serialise** rather than corrupt: the second prints `Blocking waiting for
+ * file lock on build directory` and proceeds when the first is done. That is
+ * accepted — waiting for a build that is already running beats running it
+ * twice, which is what separate directories would do.
+ *
+ * ## What it does not do
+ *
+ * A Worktree that *does* change `src-tauri` still pays a rebuild, and should:
+ * cargo's fingerprinting decides that, not this. Nothing here suppresses a
+ * build; it only says where the artifacts already are.
+ *
+ * Null for the live tree, which must behave exactly as it did — and null is
+ * also what an explicit `CARGO_TARGET_DIR` gets, since a developer who set one
+ * has already answered this question.
+ */
+export function sharedTargetDir(cloneRoot: string, existing?: string | undefined): string | null {
+  if (existing !== undefined && existing !== '') return null
+  const owner = cloneOwning(cloneRoot)
+  return owner === null ? null : `${owner}/src-tauri/target`
+}
+
+// ---------------------------------------------------------------------------
 // The reload
 // ---------------------------------------------------------------------------
 
