@@ -72,6 +72,16 @@ const conflicted = (...files: string[]): GitAttemptResult => ({
 })
 
 const TREE = '4444444444444444444444444444444444444444'
+/**
+ * What `rev-parse HEAD^{tree}` says, when it is not {@link TREE}.
+ *
+ * Deliberately a different object: `contentLanded` asks whether merging again
+ * would reproduce the live tree exactly, so a fixture where the two are equal is
+ * a fixture asserting *landed*, and one where they differ asserts *still
+ * pending*. Two constants rather than one string typed twice, because the whole
+ * answer turns on which of them a test used.
+ */
+const LIVE_TREE = '5555555555555555555555555555555555555555'
 
 describe('reading the listing git prints', () => {
   test('a worktree is its path, its HEAD and its branch', () => {
@@ -131,6 +141,7 @@ describe('which worktrees are pending', () => {
         changed: ['packages/core/src/machines/harness.ts', 'packages/core/src/domain.ts'],
         touchesFence: false,
         merge: { kind: 'fast-forward' },
+        landed: false,
       },
     ])
   })
@@ -395,6 +406,11 @@ describe('what an entry carries, and what it deliberately does not', () => {
       invocations per row, both of which produce a tag and at most a handful of
       names. What it emphatically is not is the merge itself — see
       `mergeabilityOf`.
+
+      `landed` joined it in ticket 69 on the same terms, and it is the field
+      that decides which control the row offers. Without it a Worktree whose
+      work is already in the live tree sits here for ever: `commits` is
+      ancestry, a squash is nobody's ancestor, and the count never falls.
     */
     const { git, attempt } = fakeGit({
       'worktree list --porcelain': listing(main, linked('49')),
@@ -408,6 +424,7 @@ describe('what an entry carries, and what it deliberately does not', () => {
       'branch',
       'changed',
       'commits',
+      'landed',
       'merge',
       'path',
       'touchesFence',
@@ -646,5 +663,93 @@ describe('the diff of one pending worktree', () => {
     })
 
     expect(await readPendingWorktreeDiff({ git, cloneRoot: CLONE, path: opened('48') })).toBe('')
+  })
+})
+
+/*
+  Whether the row is still work, or a directory waiting to be cleared away.
+
+  The bug this answers: varnick merges by squashing, `commits` is ancestry, and
+  a squash is nobody's ancestor — so before this the count never fell and a
+  landed Worktree sat on the review band for the rest of the repository's life.
+*/
+describe('whether an entry has already landed', () => {
+  const diverged = (name: string) => ({
+    'worktree list --porcelain': listing(main, linked(name)),
+    [`rev-list --count HEAD..refs/heads/ticket/${name}`]: '2\n',
+    // Not zero: the live tree holds the squash commit the branch has never
+    // seen, which is what every merged Worktree looks like afterwards.
+    [`rev-list --count refs/heads/ticket/${name}..HEAD`]: '1\n',
+    [`diff --name-only -z HEAD...refs/heads/ticket/${name}`]: 'README.md\0',
+  })
+  /*
+    Two `merge-tree` invocations, asked with different flags and read for
+    different things. `--name-only` is `mergeabilityOf` asking whether a merge
+    would conflict; the bare one is `contentLanded` asking whether it would be a
+    no-op. Both produce {@link TREE} here, so which answer comes out is decided
+    entirely by what `rev-parse HEAD^{tree}` says.
+  */
+  const probes = (name: string) => ({
+    [`merge-tree --write-tree --name-only HEAD refs/heads/ticket/${name}`]: merged(),
+    [`merge-tree --write-tree HEAD refs/heads/ticket/${name}`]: merged(),
+  })
+
+  test('a branch whose merge would reproduce the live tree exactly has landed', async () => {
+    const { git, attempt } = fakeGit(
+      { ...diverged('49'), 'rev-parse HEAD^{tree}': `${TREE}\n` },
+      probes('49'),
+    )
+    const [entry] = await listPendingWorktrees({ git, attempt, cloneRoot: CLONE })
+    expect(entry?.landed).toBe(true)
+    // And it still says what it would do if merged, because the row is drawn
+    // from both: the surface decides which control to offer, not the harness.
+    expect(entry?.merge).toEqual({ kind: 'clean' })
+  })
+
+  test('a branch whose merge would change something has not', async () => {
+    const { git, attempt } = fakeGit(
+      { ...diverged('49'), 'rev-parse HEAD^{tree}': `${LIVE_TREE}\n` },
+      probes('49'),
+    )
+    const [entry] = await listPendingWorktrees({ git, attempt, cloneRoot: CLONE })
+    expect(entry?.landed).toBe(false)
+  })
+
+  test('a fast-forward is never landed, and is never asked', async () => {
+    /*
+      Free, and the reason it is free is the reason it is also correct: a
+      fast-forward means the live tree holds nothing the branch does not, while
+      `commits` says the branch holds something the live tree does not — so the
+      trees differ. Asking anyway would cost one merge computation per row per
+      Turn, in the case that is every row until something lands.
+    */
+    const { git, attempt, asked } = fakeGit({
+      'worktree list --porcelain': listing(main, linked('49')),
+      'rev-list --count HEAD..refs/heads/ticket/49': '2\n',
+      'rev-list --count refs/heads/ticket/49..HEAD': '0\n',
+      'diff --name-only -z HEAD...refs/heads/ticket/49': 'README.md\0',
+    })
+    const [entry] = await listPendingWorktrees({ git, attempt, cloneRoot: CLONE })
+    expect(entry?.landed).toBe(false)
+    expect(asked.some((args) => args[0] === 'rev-parse')).toBe(false)
+  })
+
+  test('a merge-tree that would not run is not read as landed', async () => {
+    // False on anything unclear. This field decides whether a surface offers to
+    // delete a checkout, so the only safe direction to be wrong in is "still
+    // has work in it".
+    const { git, attempt } = fakeGit(
+      { ...diverged('49'), 'rev-parse HEAD^{tree}': `${TREE}\n` },
+      {
+        [`merge-tree --write-tree --name-only HEAD refs/heads/ticket/49`]: merged(),
+        [`merge-tree --write-tree HEAD refs/heads/ticket/49`]: {
+          code: 128,
+          stdout: '',
+          stderr: 'not a valid object name',
+        },
+      },
+    )
+    const [entry] = await listPendingWorktrees({ git, attempt, cloneRoot: CLONE })
+    expect(entry?.landed).toBe(false)
   })
 })

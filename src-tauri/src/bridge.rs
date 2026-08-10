@@ -191,8 +191,18 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // (ADR-0002). Nothing the agent says can produce this call. The path is
         // a selector, checked against git's own listing where git runs, exactly
         // as the diff's is.
+        //
+        // `reap-worktree` is the same call one moment later. It removes a
+        // directory and force-deletes a branch, and it is here for exactly the
+        // reasons above: it runs where git runs, the path is a selector against
+        // git's own listing, and the control that sends it lives in a surface
+        // `denyWrite` refuses the agent. What makes the deletion safe is asked
+        // in TypeScript, not here — the branch's content has to already be in
+        // the live tree.
         "check-sandbox" | "persist-session" | "read-session" | "read-commands"
-        | "list-worktrees" | "read-worktree-diff" | "merge-worktree" => Some(Route::Runtime),
+        | "list-worktrees" | "read-worktree-diff" | "merge-worktree" | "reap-worktree" => {
+            Some(Route::Runtime)
+        }
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
         // only when *this* process asks: it is a step inside a spawn, not a
         // capability the renderer has.
@@ -1006,6 +1016,11 @@ mod tests {
         */
         assert_eq!(route_of("merge-worktree"), Some(Route::Runtime));
         assert_ne!(route_of("merge-worktree"), Some(Route::Host));
+        // The reap is the same call one moment later, and it removes a
+        // directory. It answers where git runs, like everything else that
+        // touches the clone.
+        assert_eq!(route_of("reap-worktree"), Some(Route::Runtime));
+        assert_ne!(route_of("reap-worktree"), Some(Route::Host));
     }
 
     #[test]

@@ -111,6 +111,20 @@ export interface PendingWorktree {
    * may write and where it has the context.
    */
   readonly merge: Mergeability
+  /**
+   * Whether this work is **already in the live tree**.
+   *
+   * The field that decides which control the row offers: a landed Worktree is
+   * not waiting to be merged, it is a directory waiting to be cleared away, and
+   * merging it again would squash a branch with nothing left in it.
+   *
+   * It has to be carried rather than derived from `commits`, and that is the
+   * whole of ticket 69. varnick merges by squashing, `commits` is ancestry, and
+   * a squash commit is nobody's ancestor — so the count never falls and a merged
+   * Worktree sat on this list through every refresh and every restart. The
+   * Harness asks the real question instead: would merging again change anything.
+   */
+  readonly landed: boolean
 }
 
 /**
@@ -160,6 +174,32 @@ export interface MergeReport {
   readonly worktreeRemoved: boolean
   readonly branchDeleted: boolean
   /** Who is standing in the Worktree, when that is why it is still there. */
+  readonly heldBy: readonly CwdHolder[]
+  /** What is left to do by hand, printed verbatim, or `null` when nothing is. */
+  readonly leftOver: string | null
+}
+
+/**
+ * What a reap did, once it has been asked for.
+ *
+ * Spelled out here rather than imported from the Harness, like everything else
+ * Core renders. Separate from {@link MergeReport} rather than a shared subset,
+ * because the fields that look common carry different news: a merge's
+ * `worktreeRemoved: false` is a footnote on a success, and a reap's is the
+ * entire outcome.
+ *
+ * **Nothing removed is a report, not a failure.** The usual reason is the agent
+ * host standing in the directory, which inside a Turn it always is, and what is
+ * owed then is a sentence naming the process — see `leftOver`.
+ */
+export interface ReapReport {
+  /** Which Worktree, so a report cannot be drawn against the wrong row. */
+  readonly path: string
+  /** The branch that was deleted, or would have been. */
+  readonly branch: string
+  readonly worktreeRemoved: boolean
+  readonly branchDeleted: boolean
+  /** Who is standing in it, when that is why it is still there. */
   readonly heldBy: readonly CwdHolder[]
   /** What is left to do by hand, printed verbatim, or `null` when nothing is. */
   readonly leftOver: string | null

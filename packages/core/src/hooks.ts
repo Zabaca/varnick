@@ -142,6 +142,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
           spawnAgent: seeds.spawnAgent,
           listWorktrees: seeds.listWorktrees,
           mergeWorktree: seeds.mergeWorktree,
+          reapWorktree: seeds.reapWorktree,
           restartVarnick: seeds.restartVarnick,
           pumpUnprompted: seeds.pumpUnprompted,
           surface: surfaceMachine.provide({ actors: { loadSurface } }),

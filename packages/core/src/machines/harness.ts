@@ -8,6 +8,7 @@ import type {
   CredentialKind,
   CredentialReading,
   MergeReport,
+  ReapReport,
   PendingWorktree,
   SandboxPolicy,
   StartRefusal,
@@ -53,6 +54,10 @@ export const HARNESS_STATE_PATHS = [
   'worktreeMerge.merged',
   'worktreeMerge.mergeFailed',
   'worktreeMerge.restarting',
+  'worktreeReap.idle',
+  'worktreeReap.reaping',
+  'worktreeReap.reaped',
+  'worktreeReap.reapFailed',
 ] as const
 export type HarnessStatePath = (typeof HARNESS_STATE_PATHS)[number]
 
@@ -251,11 +256,26 @@ export interface HarnessContext {
   mergeError: string | null
   /** Which Worktree is being merged, while one is. */
   merging: string | null
+  /**
+   * What the last reap did, or `null`.
+   *
+   * Separate from {@link HarnessContext.mergeReport} because the two describe
+   * different acts at different moments and a developer may be looking at both:
+   * a merge lands and reports that the directory could not be removed, and the
+   * reap that finally removes it happens a Turn later. One field would make the
+   * second answer overwrite the first.
+   */
+  reapReport: ReapReport | null
+  /** Why the last reap failed, for as long as one has. */
+  reapError: string | null
+  /** Which Worktree is being cleared away, while one is. */
+  reaping: string | null
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
   readonly enterReview: string | null
   readonly enterWorktreeMerge: string | null
+  readonly enterWorktreeReap: string | null
 }
 
 export interface HarnessInput {
@@ -268,6 +288,7 @@ export interface HarnessInput {
   enterAgent?: string | null
   enterReview?: string | null
   enterWorktreeMerge?: string | null
+  enterWorktreeReap?: string | null
   /** Seeded only by the states page, which parks a card over a listing. */
   worktrees?: readonly PendingWorktree[]
   worktreeError?: string | null
@@ -278,6 +299,10 @@ export interface HarnessInput {
   worktreeOpen?: string | null
   mergeError?: string | null
   merging?: string | null
+  /** Seeded only by the states page, which parks a card over a reap. */
+  reapReport?: ReapReport | null
+  reapError?: string | null
+  reaping?: string | null
   sessionInput?: SessionInput
   /** Seeded only by the states page, which parks a machine with a report in it. */
   runtime?: RuntimeReport | null
@@ -403,6 +428,21 @@ export type HarnessEvent =
    * being something you can do to a row you have not read. See the guard.
    */
   | { type: 'MERGE_WORKTREE'; path: string }
+  /**
+   * Clear away a Worktree whose work is already in the live tree.
+   *
+   * **Accepted only for a row the listing calls `landed`** — a directory whose
+   * commits the live tree already holds. That is the whole of the safety
+   * argument: what this removes is a duplicate checkout, and the branch it
+   * force-deletes points at content that is not going anywhere.
+   *
+   * Unlike `MERGE_WORKTREE` it does not need an open diff. A merge is a human
+   * agreeing to a change; this is a human agreeing to tidy up after one they
+   * already agreed to.
+   */
+  | { type: 'REAP_WORKTREE'; path: string }
+  /** Put the reap's report away. The row itself is gone, or was never removed. */
+  | { type: 'DISMISS_REAP' }
   /**
    * Replace the running varnick with one built from the code that just landed.
    *
@@ -599,6 +639,27 @@ export const harnessMachine = setup({
       )
     }),
     /*
+      Real-service contract for reapWorktree:
+        input  { path } — one Worktree, by the path the listing reported.
+        output ReapReport — what was removed, or why nothing was. A reap that
+               removed nothing because something is standing in the directory
+               is a *report*, not an error: the sentence is the answer.
+        error  thrown Error — the reap could not be attempted at all. The one
+               that matters is a branch whose work is not in the live tree,
+               which the host refuses however the row was drawn.
+    */
+    /*
+      Refuses, for the reason the merge's default does. A reap that quietly did
+      nothing and reported success would leave a row claiming a directory is
+      gone while a full checkout sits on disk — and the developer would find out
+      by running out of space rather than by being told.
+    */
+    reapWorktree: fromPromise<ReapReport, { path: string }>(async () => {
+      throw new Error(
+        'No reap implementation was provided to this Harness, so no Worktree was removed. This is a wiring mistake in varnick rather than anything about the branch: see `reapWorktree` in packages/core/src/actors/live.ts and the `.provide()` in hooks.ts.',
+      )
+    }),
+    /*
       Real-service contract for restartVarnick:
         input  {} — there is nothing to decide.
         output nothing, and in the ordinary case it never resolves at all: the
@@ -714,7 +775,43 @@ export const harnessMachine = setup({
       if (context.worktreeOpen === null || context.worktreeOpen !== event.path) return false
       if (context.liveTreeDirty) return false
       const entry = context.worktrees.find((worktree) => worktree.path === event.path)
-      return entry !== undefined && mergeSummary(entry.merge).offered
+      if (entry === undefined) return false
+      /*
+        **And not one that has already gone in.** `merge` still says `clean` for
+        these, and it is not lying: after a squash the branch is nobody's
+        ancestor, so git goes on reporting a merge that would go through — and
+        produce nothing. A second press reaches `git commit` with an empty
+        index, the merge fails, and the developer is told something went wrong
+        about a branch that is already in their tree.
+
+        Measured rather than reasoned about: three agent branches merged from
+        this window, all four rows stayed, and every one of them was offering a
+        merge whose only possible outcome was that failure.
+      */
+      if (entry.landed) return false
+      return mergeSummary(entry.merge).offered
+    },
+    /*
+      Whether this Worktree may be cleared away.
+
+      **No open diff is required, and that is the difference from `mergeable`.**
+      A merge needs a human to have read the change, because it is the gate
+      ADR-0014 rests on. A reap changes nothing about what is in the tree — the
+      work is already in it, which is the precondition — so what it removes is a
+      duplicate checkout and a ref pointing at commits the live tree holds. Ask
+      for a diff to be read first and the control becomes two clicks to delete
+      something whose content the developer has, by construction, already
+      landed.
+
+      What it does require is `landed`, taken from this machine's own listing
+      rather than from the event. The host asks the same question again at the
+      moment of reaping, on facts that are current; this is what stops the
+      surface offering something varnick knows it would refuse.
+    */
+    reapable: ({ context, event }) => {
+      if (event.type !== 'REAP_WORKTREE') return false
+      const entry = context.worktrees.find((worktree) => worktree.path === event.path)
+      return entry !== undefined && entry.landed
     },
   },
   actions: {
@@ -806,11 +903,15 @@ export const harnessMachine = setup({
     mergeReport: input.mergeReport ?? null,
     mergeError: input.mergeError ?? null,
     merging: input.merging ?? null,
+    reapReport: input.reapReport ?? null,
+    reapError: input.reapError ?? null,
+    reaping: input.reaping ?? null,
     enterCredential: input.enterCredential ?? null,
     enterSandbox: input.enterSandbox ?? null,
     enterAgent: input.enterAgent ?? null,
     enterReview: input.enterReview ?? null,
     enterWorktreeMerge: input.enterWorktreeMerge ?? null,
+    enterWorktreeReap: input.enterWorktreeReap ?? null,
   }),
   on: {
     // Surfaces are discovered, never registered — adding one must not require
@@ -1678,6 +1779,128 @@ export const harnessMachine = setup({
                   event.error instanceof Error ? event.error.message : String(event.error),
               }),
             },
+          },
+        },
+      },
+    },
+
+    /*
+      Clearing away a Worktree whose work has already landed.
+
+      **Its own region rather than a state inside `worktreeMerge`**, because the
+      two are about different moments and a developer is often looking at both.
+      A merge lands and reports that it could not remove the directory — the
+      agent host is standing in it, which inside a Turn it always is — and the
+      reap that finally removes it happens after that Turn ends. Fold this into
+      the merge region and entering `reaping` would throw away the `merged`
+      state whose report is the reason the developer is reaping at all.
+
+      It is also the region with no gate on it. `worktreeMerge` carries
+      ADR-0014: a Core change becomes running code when a human merges it, and
+      the guard insists they were looking at the diff. Nothing here changes what
+      the tree contains — `landed` is the precondition — so what is being
+      approved is a deletion of a second copy, not of work.
+    */
+    worktreeReap: {
+      initial: 'routing',
+      states: {
+        routing: {
+          always: [
+            { target: 'reaping', guard: ({ context }) => context.enterWorktreeReap === 'reaping' },
+            { target: 'reaped', guard: ({ context }) => context.enterWorktreeReap === 'reaped' },
+            {
+              target: 'reapFailed',
+              guard: ({ context }) => context.enterWorktreeReap === 'reapFailed',
+            },
+            { target: 'idle' },
+          ],
+        },
+        /*
+          Nothing is being cleared away, and nothing has been since the last
+          report was put down.
+
+          `idle` rather than `unreaped`, which is the opposite of the name
+          `worktreeMerge.unmerged` earned. There the word is about the *tree* —
+          a branch is unmerged whether or not this window is doing anything.
+          Here there is no such fact: a Worktree is not "unreaped", it either
+          exists or it does not, and the list is where that shows.
+        */
+        idle: {
+          on: { REAP_WORKTREE: { target: 'reaping', guard: 'reapable' } },
+        },
+        reaping: {
+          // Cleared on the way in, so a second reap never shows the first one's
+          // reason beside a removal that is still running.
+          entry: assign({
+            reapError: null,
+            reapReport: null,
+            reaping: ({ event }) => (event.type === 'REAP_WORKTREE' ? event.path : null),
+          }),
+          invoke: {
+            src: 'reapWorktree',
+            input: ({ context }) => ({ path: context.reaping ?? '' }),
+            /*
+              One success target, like the merge's, and here the reason is
+              sharper. The interesting outcome is *nothing was removed* — the
+              agent host is usually standing in the directory — and that is a
+              report rather than a failure: varnick asked, git and the probe
+              answered, and the answer is a sentence naming who is holding it.
+              A state for it would differ from this one only in which words are
+              on screen, and the words are in `leftOver`.
+            */
+            onDone: {
+              target: 'reaped',
+              actions: assign({ reapReport: ({ event }) => event.output, reaping: null }),
+            },
+            onError: {
+              target: 'reapFailed',
+              actions: assign({
+                reapError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+                reaping: null,
+              }),
+            },
+          },
+        },
+        /*
+          It ran, and said what it did.
+
+          The list is asked again on the way in for the reason the merge asks:
+          this machine has just changed the thing the list describes. Whether
+          the row disappears depends on what actually happened — a directory
+          that was removed leaves git's listing, one that is still held does
+          not — so the answer comes from re-reading rather than from assuming
+          the press worked.
+        */
+        reaped: {
+          entry: raise({ type: 'LIST_WORKTREES' }),
+          on: {
+            DISMISS_REAP: 'idle',
+            /*
+              Another row, without putting this report down first. Reaping is
+              the one thing in this window a developer plausibly does several
+              times in a row — three subagent worktrees is an ordinary
+              afternoon — and making them dismiss between each would be a
+              modal dialog written as a state machine.
+            */
+            REAP_WORKTREE: { target: 'reaping', guard: 'reapable' },
+          },
+        },
+        /*
+          It could not be attempted, and nothing was removed.
+
+          The reason worth reaching here is the refusal: a branch whose work is
+          not in the live tree, which the host checks again however the row was
+          drawn. Offering the reap again from this state is right for the same
+          reason `mergeFailed` offers the merge — the retry exists because the
+          state has a handler, and a reap the machine will not accept is a
+          control that is not drawn.
+        */
+        reapFailed: {
+          entry: raise({ type: 'LIST_WORKTREES' }),
+          on: {
+            REAP_WORKTREE: { target: 'reaping', guard: 'reapable' },
+            DISMISS_REAP: 'idle',
           },
         },
       },

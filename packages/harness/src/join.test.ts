@@ -62,6 +62,14 @@ const capabilities = (over: Partial<HarnessCapabilities> = {}): HarnessCapabilit
     heldBy: [],
     leftOver: null,
   }),
+  reapWorktree: async (path) => ({
+    path,
+    branch: 'ticket/49',
+    worktreeRemoved: true,
+    branchDeleted: true,
+    heldBy: [],
+    leftOver: null,
+  }),
   ...over,
 })
 

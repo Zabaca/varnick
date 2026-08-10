@@ -127,6 +127,20 @@ export interface PendingWorktree {
   readonly touchesFence: boolean
   /** Whether it will land, and what stands in the way — see {@link Mergeability}. */
   readonly merge: Mergeability
+  /**
+   * Whether this work is **already in the live tree** — see {@link contentLanded}.
+   *
+   * A row that is landed is not waiting to be merged; it is a directory waiting
+   * to be cleared away, and merging it again would squash a branch with nothing
+   * left in it. It stays on the list rather than being filtered out of it,
+   * because dropping the row would leave a full checkout on disk that nothing in
+   * the product ever mentions again.
+   *
+   * `commits` is still whatever ancestry says, and for a landed Worktree that
+   * number is a fact about git's graph rather than about work outstanding. The
+   * surface says *landed*; it does not say *six commits*.
+   */
+  readonly landed: boolean
 }
 
 /**
@@ -251,13 +265,43 @@ export async function listPendingWorktrees(input: ListPendingInput): Promise<Pen
       await input.git(['diff', '--name-only', '-z', `HEAD...${ref}`]),
     )
 
+    const merge = await mergeabilityOf(input.git, input.attempt, ref)
+
     pending.push({
       path: entry.path,
       branch: shortBranch(entry.branch),
       commits,
       changed,
       touchesFence: touchesFence(changed),
-      merge: await mergeabilityOf(input.git, input.attempt, ref),
+      merge,
+      /*
+        **A fast-forward is never landed, and asking would cost a merge a row.**
+        Fast-forward means `rev-list --count <ref>..HEAD` is zero — the live tree
+        holds nothing the branch does not — while `commits` says the branch
+        holds something the live tree does not. So the two trees differ and the
+        answer is free.
+
+        That is not a micro-optimisation, it is the common case: an agent
+        branches from the live tree, the live tree does not move, and every row
+        in the band is a fast-forward until something lands. `mergeabilityOf`
+        already refuses to compute a merge for these, and a listing that probed
+        anyway would pay for one merge per row per Turn to learn what a count
+        already said.
+
+        And it costs nothing where it matters. A Worktree that has *been*
+        merged is by construction not a fast-forward — the squash commit is on
+        the live tree and not on the branch, so `behind` is at least one — which
+        is exactly the row this field exists to identify.
+
+        What it gives up is a branch whose commits net out to no change at all:
+        ancestry says ahead, content says landed, and this reports it as
+        mergeable. Merging one is a fast-forward that changes nothing, so the
+        surface is wrong about a row that is harmless either way.
+      */
+      landed:
+        merge.kind === 'fast-forward'
+          ? false
+          : await contentLanded(input.git, input.attempt, ref),
     })
   }
 
@@ -406,6 +450,84 @@ function reviewable(entries: readonly WorktreeEntry[], cloneRoot: string): Revie
 async function commitsAhead(git: GitRunner, ref: string): Promise<number | null> {
   const commits = Number.parseInt(await git(['rev-list', '--count', `HEAD..${ref}`]), 10)
   return Number.isFinite(commits) && commits > 0 ? commits : null
+}
+
+/**
+ * Whether the branch's contents are already in the live tree.
+ *
+ * ## Two checks that look right and are not
+ *
+ * **`merge-base --is-ancestor`** answers *no* for every branch varnick merges: a
+ * squash commit is new, so git has no record that the content landed. That one
+ * is obvious once stated, and it is nevertheless what {@link commitsAhead} asks
+ * — which is why a landed Worktree used to sit on the review list forever.
+ *
+ * **`diff <live HEAD> <branch>`** is the one that had to be measured, because it
+ * is right for exactly the case anybody tries by hand and wrong for the case
+ * that ships. A `fast-forward` branch already contains everything the live tree
+ * has, so after the squash the two trees are identical and the diff is empty. A
+ * `clean` branch is *by definition* one the live tree holds commits ahead of —
+ * that is what {@link mergeabilityOf} measures — so afterwards HEAD carries both
+ * sides and the branch carries only its own, and the diff is **never** empty.
+ * Every clean merge would report itself as not having landed, and nothing would
+ * ever be cleaned up.
+ *
+ * Measured both ways in a scratch repository rather than reasoned about, because
+ * the previous answer here was a correct observation of a fast-forward promoted
+ * to a rule:
+ *
+ *     main ahead by one, feature behind it, squash, then:
+ *       git diff --quiet HEAD feature      exit 1   ("still differ")
+ *       merge-tree --write-tree HEAD feature == HEAD^{tree}   (landed)
+ *     and with the squash's own file dropped before committing:
+ *       merge-tree --write-tree HEAD feature != HEAD^{tree}   (correctly refuses)
+ *
+ * ## What is asked instead
+ *
+ * *Would merging this branch again change anything?* `merge-tree --write-tree`
+ * answers it: the tree a merge would produce, without touching the index or the
+ * working tree. Equal to HEAD's tree means the branch has nothing left to give,
+ * which is the question both the cleanup and the listing actually depend on, and
+ * is true regardless of how far the live tree has moved on its own side.
+ *
+ * The same command {@link mergeabilityOf} already trusts, read the other way
+ * round — it asks whether a merge *would* conflict, this asks whether one would
+ * be a no-op.
+ *
+ * **False on anything unclear.** A conflict (exit 1), a git that would not run
+ * it, an unparseable answer: all of them mean the caller does not proceed. This
+ * gates a `worktree remove` and a `branch -D`, so the only safe direction to be
+ * wrong in is "leave it alone".
+ *
+ * Lives here rather than beside the merge that first needed it because the
+ * listing needs the same answer, and ./merge.ts already imports this module —
+ * the other direction would be a cycle.
+ */
+export async function contentLanded(
+  git: GitRunner,
+  attempt: GitAttempt,
+  ref: string,
+): Promise<boolean> {
+  let merged: GitAttemptResult
+  try {
+    merged = await attempt(['merge-tree', '--write-tree', 'HEAD', ref])
+  } catch {
+    return false
+  }
+  // Exit 1 is a conflict, which here means the branch still holds something the
+  // live tree does not. Anything else non-zero is a probe that did not run.
+  if (merged.code !== 0) return false
+
+  const produced = merged.stdout.trim().split('\n')[0]?.trim() ?? ''
+  if (produced.length === 0) return false
+
+  let head: string
+  try {
+    head = (await git(['rev-parse', 'HEAD^{tree}'])).trim()
+  } catch {
+    return false
+  }
+  return head.length > 0 && produced === head
 }
 
 /**

@@ -12,7 +12,12 @@ import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
 import { RunningTasks } from './running-tasks.tsx'
-import { MergeReportBand, ReviewPanel, WorktreeDiffView } from './worktree-review.tsx'
+import {
+  MergeReportBand,
+  ReapReportBand,
+  ReviewPanel,
+  WorktreeDiffView,
+} from './worktree-review.tsx'
 import {
   agentCanAnswer,
   commandLabel,
@@ -468,6 +473,7 @@ export function ChatSurface({
           exists, with nothing on screen to say what happened.
         */}
         <MergeReportBand snapshot={snapshot} send={send} />
+        <ReapReportBand snapshot={snapshot} send={send} />
         <WorktreeDiffView diff={ctx.worktreeDiff} snapshot={snapshot} send={send} />
       </div>
     )
@@ -515,6 +521,7 @@ export function ChatSurface({
         nothing to say, so in the ordinary case neither band exists.
       */}
       <MergeReportBand snapshot={snapshot} send={send} />
+      <ReapReportBand snapshot={snapshot} send={send} />
 
       <ReviewPanel snapshot={snapshot} send={send} />
 

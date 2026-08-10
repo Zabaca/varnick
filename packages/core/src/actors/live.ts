@@ -21,6 +21,7 @@ import type {
   CredentialReading,
   Effort,
   MergeReport,
+  ReapReport,
   Message,
   ModelId,
   PendingWorktree,
@@ -661,6 +662,24 @@ export function liveActors(
     */
     mergeWorktree: fromPromise<MergeReport, { path: string }>(({ input }) =>
       callHarness({ kind: 'merge-worktree', path: input.path }),
+    ),
+
+    /*
+      Real, and the one that removes something.
+
+      It is on this list rather than folded into the merge because it happens at
+      a different moment, and the moment is the point: a merge is asked from
+      inside a Turn, so the agent host is standing in the directory when the cwd
+      probe runs and the cleanup is refused every time. The host exits when the
+      Turn ends. This is varnick asking again.
+
+      Like the merge it carries a path and nothing else, and every refusal that
+      matters is on the host side on current facts — most of all the one that
+      makes the deletion safe at all: the branch's content has to already be in
+      the live tree. See packages/harness/src/merge.ts.
+    */
+    reapWorktree: fromPromise<ReapReport, { path: string }>(({ input }) =>
+      callHarness({ kind: 'reap-worktree', path: input.path }),
     ),
 
     /*

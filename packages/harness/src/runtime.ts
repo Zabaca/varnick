@@ -69,8 +69,10 @@ import {
   mergeBriefing,
   RESTART_STILL_OWED,
   mergeWorktree,
+  reapWorktree,
   type CwdHolder,
   type MergeReport,
+  type ReapReport,
 } from './merge.ts'
 import {
   listPendingWorktrees,
@@ -231,6 +233,19 @@ export interface HarnessCapabilities {
    * standing in. See ./merge.ts, which sequences all of it.
    */
   mergeWorktree(path: string): Promise<MergeReport>
+
+  /**
+   * Remove a Worktree whose work is already in the live tree.
+   *
+   * The cleanup half of {@link mergeWorktree}, on its own. A merge is asked from
+   * inside a Turn, so the agent host is standing in the directory when the cwd
+   * probe runs and the cleanup is refused every time; the host exits when the
+   * Turn ends, and until this existed nothing asked again.
+   *
+   * Refuses a branch whose content has not landed, and a directory anything is
+   * standing in. Nothing is killed and nothing is forced — see ./merge.ts.
+   */
+  reapWorktree(path: string): Promise<ReapReport>
 }
 
 export interface HostCapabilitiesInput {
@@ -388,6 +403,17 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
 
     mergeWorktree: async (path) =>
       mergeWorktree({
+        git: gitIn(cloneRoot),
+        attempt: gitAttemptIn(cloneRoot),
+        holders: cwdHoldersOf,
+        cloneRoot,
+        path,
+      }),
+
+    // The same four ports the merge is given, because it is the same cleanup
+    // reached at a different moment.
+    reapWorktree: async (path) =>
+      reapWorktree({
         git: gitIn(cloneRoot),
         attempt: gitAttemptIn(cloneRoot),
         holders: cwdHoldersOf,
@@ -757,6 +783,7 @@ async function answer(
           commits: entry.commits,
           changed: [...entry.changed],
           touchesFence: entry.touchesFence,
+          landed: entry.landed,
           // Rebuilt a level down as well, for the reason the entry is: the
           // conflicted case carries a list, and a list forwarded by reference
           // is a list something else can still be holding.
@@ -815,6 +842,33 @@ async function answer(
           and this sentence must not.
         */
         whileRunning: RESTART_STILL_OWED,
+      }
+    }
+
+    case 'reap-worktree': {
+      const { path } = request as Record<string, unknown>
+      // Refused rather than defaulted, for the reason the merge's is: choosing
+      // a worktree when none was named would be the host deciding which
+      // directory to delete.
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error('A reap is of one Worktree, and this request named none.')
+      }
+      const report = await capabilities.reapWorktree(path)
+      /*
+        No briefing rides this one. The merge tells the agent because the agent
+        is the author of what landed and is the one party that does not
+        otherwise find out; a directory being cleared away afterwards is
+        housekeeping the agent has no stake in — and by the time this succeeds
+        the agent host it would have been addressed to has usually exited, which
+        is *why* it succeeded.
+      */
+      return {
+        path: report.path,
+        branch: report.branch,
+        worktreeRemoved: report.worktreeRemoved,
+        branchDeleted: report.branchDeleted,
+        heldBy: report.heldBy.map((holder) => ({ pid: holder.pid, command: holder.command })),
+        leftOver: report.leftOver,
       }
     }
 

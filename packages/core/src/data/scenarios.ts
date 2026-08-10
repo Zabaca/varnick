@@ -157,6 +157,12 @@ const up = {
  * A list where everything lands designs the half of this band that needs no
  * design; the row that conflicts is the one whose copy has to name the files
  * and say whose job the fix is.
+ *
+ * The fourth earns its place the same way one ticket later: it is the only row
+ * whose work is already in the live tree, so it is the only row offering a
+ * *reap* rather than a merge. It still says `clean`, which is the fact ticket 69
+ * is about rather than a mistake in the fixture — after a squash the branch is
+ * nobody's ancestor, so git goes on offering a merge that would produce nothing.
  */
 const statesWorktrees: readonly PendingWorktree[] = [
   {
@@ -166,6 +172,7 @@ const statesWorktrees: readonly PendingWorktree[] = [
     changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
     touchesFence: true,
     merge: { kind: 'fast-forward' },
+    landed: false,
   },
   {
     path: '/Users/you/varnick/.claude/worktrees/ticket-50',
@@ -174,6 +181,7 @@ const statesWorktrees: readonly PendingWorktree[] = [
     changed: ['packages/core/src/pages/DesignedPage.tsx'],
     touchesFence: false,
     merge: { kind: 'clean' },
+    landed: false,
   },
   {
     path: '/Users/you/varnick/.claude/worktrees/ticket-53',
@@ -185,6 +193,16 @@ const statesWorktrees: readonly PendingWorktree[] = [
       kind: 'conflicts',
       files: ['sandbox-policy.baseline.json', 'packages/harness/src/sandbox.ts'],
     },
+    landed: false,
+  },
+  {
+    path: '/Users/you/varnick/.claude/worktrees/ticket-56',
+    branch: 'ticket/56-merge-from-the-window',
+    commits: 3,
+    changed: ['packages/harness/src/merge.ts', 'packages/core/src/machines/harness.ts'],
+    touchesFence: true,
+    merge: { kind: 'clean' },
+    landed: true,
   },
 ]
 
@@ -193,6 +211,9 @@ const openedWorktree = statesWorktrees[0]!.path
 
 /** And the one a card opens to show a screen with no merge control on it. */
 const conflictedWorktree = statesWorktrees[2]!.path
+
+/** The one whose work is already in the live tree, so the only one to reap. */
+const landedWorktree = statesWorktrees[3]!.path
 
 export const SCENARIOS: readonly Scenario[] = [
   // -- Start-up ------------------------------------------------------------
@@ -987,7 +1008,7 @@ export const SCENARIOS: readonly Scenario[] = [
         branchDeleted: false,
         heldBy: [{ pid: 52236, command: 'varnick' }],
         leftOver:
-          'ticket/48-launch-preview landed as a1b2c3d. The worktree at /Users/you/varnick/.claude/worktrees/ticket-48 is still there because varnick (pid 52236) is standing in it — nothing will clear it up on its own, so stop it and run: git worktree remove /Users/you/varnick/.claude/worktrees/ticket-48 && git branch -D ticket/48-launch-preview',
+          'ticket/48-launch-preview landed as a1b2c3d. The worktree at /Users/you/varnick/.claude/worktrees/ticket-48 is still there because varnick (pid 52236) is standing in it — the agent’s host exits when its Turn ends, so clear it away from the row then.',
       },
     },
   },
@@ -1035,6 +1056,89 @@ export const SCENARIOS: readonly Scenario[] = [
         heldBy: [],
         leftOver: null,
       },
+    },
+  },
+  /*
+    Clearing away what has already landed.
+
+    Four cards, and the one that matters is the third. A reap that removes the
+    directory is the easy rendering; a reap refused because the agent host is
+    standing in it is the one a developer will actually meet, because a merge
+    asked from inside a Turn is refused its own cleanup every time.
+  */
+  {
+    id: 'worktree-landed',
+    group: 'Pending Core changes',
+    title: 'Already in, and still on disk',
+    blurb:
+      'The row that used to sit here for ever. Its commits are in the live tree — varnick squashed them, so git has no record of it and goes on offering a merge that would produce nothing. What is offered instead is the only thing left to do: remove a duplicate checkout.',
+    question: 'Is it clear that nothing is waiting to be decided on this row?',
+    covers: ['worktreeReap.idle'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-landed', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+    },
+  },
+  {
+    id: 'worktree-reaping',
+    group: 'Pending Core changes',
+    title: 'Clearing it away',
+    blurb:
+      'The probe, the removal and the branch delete — one wait, because from the developer’s side they are one act. Nothing has been removed at any moment this card represents: the content check and the cwd probe both happen before anything goes.',
+    question: 'Does the row make clear which directory is going?',
+    covers: ['worktreeReap.reaping'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-reaping', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+      enterWorktreeReap: 'reaping',
+      reaping: landedWorktree,
+    },
+  },
+  {
+    id: 'worktree-reaped-held',
+    group: 'Pending Core changes',
+    title: 'Nothing was removed, and here is who has it',
+    blurb:
+      'The outcome this feature exists around. A process has the directory as its working directory — almost always the agent’s own host, which inside a Turn it always is — so nothing was removed. Deleting it anyway is worse than it looks: the process would not die, it would go on reporting a directory that no longer exists while every relative file operation failed for a reason naming the file.',
+    question: 'Does this read as “come back in a minute” rather than as a failure?',
+    covers: ['worktreeReap.reaped'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-reaped-held', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+      enterWorktreeReap: 'reaped',
+      reapReport: {
+        path: '/Users/you/varnick/.claude/worktrees/ticket-56',
+        branch: 'ticket/56-merge-from-the-window',
+        worktreeRemoved: false,
+        branchDeleted: false,
+        heldBy: [{ pid: 15516, command: 'claude' }],
+        leftOver:
+          'claude (pid 15516) is standing in /Users/you/varnick/.claude/worktrees/ticket-56, so nothing was removed. The agent’s host exits when its Turn ends — try again then, or stop it yourself.',
+      },
+    },
+  },
+  {
+    id: 'worktree-reap-refused',
+    group: 'Pending Core changes',
+    title: 'That branch still has work in it',
+    blurb:
+      'The refusal that makes the whole control safe. The row said landed — a listing is as old as the last Turn — and the content says otherwise, so the content wins and nothing is removed. This is the one mistake in the feature that would cost somebody their work.',
+    question: 'Is it obvious that nothing was deleted?',
+    covers: ['worktreeReap.reapFailed'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-worktree-reap-refused', messages: seedMessages },
+      worktrees: statesWorktrees,
+      enterReview: 'listed',
+      enterWorktreeReap: 'reapFailed',
+      reapError:
+        'ticket/56-merge-from-the-window still holds work the live tree does not have, so removing it would be the only copy going. Merge it first, or check what is in it: git diff HEAD refs/heads/ticket/56-merge-from-the-window',
     },
   },
 ]

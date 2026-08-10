@@ -115,6 +115,8 @@ export function ReviewPanel({
   const state = toPath((snapshot.value as Record<string, unknown>).review)
   const failed = state === 'listFailed'
   const entries = ctx.worktrees
+  const landed = entries.filter((entry) => entry.landed).length
+  const waiting = entries.length - landed
 
   // Nothing waiting and nothing wrong: no band, no border, no height. See the
   // note above — this is the state the surface is in most of the time.
@@ -127,10 +129,23 @@ export function ReviewPanel({
     >
       <div className="flex items-baseline gap-3 text-[12px]">
         <h2 style={{ color: 'var(--fg)' }}>Pending Core changes</h2>
-        {entries.length > 0 && (
+        {/*
+          Two counts, because the band holds two different kinds of row and
+          calling all of them "waiting for a human" was wrong in the way that
+          matters: a landed Worktree is not waiting to be *decided*, it is
+          waiting to be tidied. A developer reading "4 branches waiting" and
+          finding that three of them are already in their tree learns to
+          distrust the number.
+        */}
+        {waiting > 0 && (
           <span style={{ color: 'var(--fg-faint)' }}>
-            <span data-numeric>{entries.length}</span> branch{entries.length === 1 ? '' : 'es'}{' '}
-            waiting for a human
+            <span data-numeric>{waiting}</span> branch{waiting === 1 ? '' : 'es'} waiting for a
+            human
+          </span>
+        )}
+        {landed > 0 && (
+          <span style={{ color: 'var(--fg-faint)' }}>
+            <span data-numeric>{landed}</span> already in, still on disk
           </span>
         )}
         {/*
@@ -165,6 +180,9 @@ export function ReviewPanel({
               entry={entry}
               canOpen={snapshot.can({ type: 'OPEN_WORKTREE', path: entry.path })}
               onOpen={() => send({ type: 'OPEN_WORKTREE', path: entry.path })}
+              canReap={snapshot.can({ type: 'REAP_WORKTREE', path: entry.path })}
+              onReap={() => send({ type: 'REAP_WORKTREE', path: entry.path })}
+              reaping={snapshot.context.reaping === entry.path}
             />
           ))}
         </ul>
@@ -234,10 +252,16 @@ function WorktreeRow({
   entry,
   canOpen,
   onOpen,
+  canReap,
+  onReap,
+  reaping,
 }: {
   entry: PendingWorktree
   canOpen: boolean
   onOpen: () => void
+  canReap: boolean
+  onReap: () => void
+  reaping: boolean
 }) {
   return (
     <li className="flex items-baseline gap-3">
@@ -257,12 +281,47 @@ function WorktreeRow({
         {entry.commits} commit{entry.commits === 1 ? '' : 's'} · {entry.changed.length} file
         {entry.changed.length === 1 ? '' : 's'}
       </span>
-      <MergeBadge merge={entry.merge} />
-      {canOpen && (
-        <button className="ml-auto shrink-0" onClick={onOpen} style={{ color: 'var(--accent)' }}>
-          open
-        </button>
+      {/*
+        A landed row does not say how it would merge, and the reason is that
+        git's answer is *true and useless*: after a squash the branch is nobody's
+        ancestor, so `merge-tree` goes on reporting a clean merge that would
+        produce nothing. Printing `merges cleanly` beside a row whose work is
+        already in the tree is how a developer clicks merge and gets a `git
+        commit` with nothing to commit.
+      */}
+      {entry.landed ? (
+        <span className="shrink-0" style={{ color: 'var(--fg-faint)' }}>
+          already in
+        </span>
+      ) : (
+        <MergeBadge merge={entry.merge} />
       )}
+      <span className="ml-auto flex shrink-0 items-baseline gap-3">
+        {canOpen && (
+          <button onClick={onOpen} style={{ color: 'var(--accent)' }}>
+            open
+          </button>
+        )}
+        {/*
+          Present rather than disabled, like every other control in this band:
+          the machine refuses `REAP_WORKTREE` for a row that has not landed, so
+          there is no state in which this is drawn and inert.
+
+          "clear away" rather than "delete" or "reap". What goes is a duplicate
+          checkout whose commits the live tree holds — the word should not
+          suggest the developer is about to lose something, because they are
+          not, and it should not suggest housekeeping is free either.
+        */}
+        {reaping ? (
+          <span style={{ color: 'var(--fg-faint)' }}>clearing…</span>
+        ) : (
+          canReap && (
+            <button onClick={onReap} style={{ color: 'var(--accent)' }}>
+              clear away
+            </button>
+          )
+        )}
+      </span>
     </li>
   )
 }
@@ -725,6 +784,105 @@ export function MergeReportBand({
             </button>
           )}
         </div>
+      </div>
+    </Band>
+  )
+}
+
+/**
+ * What the last reap did, when it did not simply work.
+ *
+ * **Its own band rather than lines inside the merge's**, for the reason the
+ * region is its own region: a developer is often looking at both. A merge lands
+ * and reports that the directory could not be removed; the reap that finally
+ * removes it happens after the Turn ends, and the merge's sentence — *restart,
+ * you are running old code* — is still true while it does.
+ *
+ * ## The success is quiet, and the refusal is not
+ *
+ * A reap that removed the directory says one line and offers dismissal. Nothing
+ * is owed: the row is gone from the next listing, and a band congratulating a
+ * developer on a deletion they asked for is a band in the way.
+ *
+ * A reap that removed *nothing* is the interesting one, and it is not a failure.
+ * The usual cause is the agent's own host standing in the directory, which
+ * inside a Turn it always is — so the answer is a sentence naming the process
+ * and an invitation to come back, which is what `leftOver` carries. Printed
+ * verbatim, like the merge's, because the host is what knows which pid.
+ */
+export function ReapReportBand({
+  snapshot,
+  send,
+}: {
+  snapshot: HarnessSnapshot
+  send: (event: HarnessEvent) => void
+}) {
+  const state = toPath((snapshot.value as Record<string, unknown>).worktreeReap)
+  const { reapReport, reapError } = snapshot.context
+
+  if (state === 'reaping') {
+    return (
+      <Band>
+        <p style={{ color: 'var(--fg-faint)' }}>Clearing the worktree away…</p>
+      </Band>
+    )
+  }
+
+  if (state === 'reapFailed') {
+    return (
+      <Band>
+        <div className="flex flex-wrap items-baseline gap-x-3" style={{ color: 'var(--bad)' }}>
+          <span style={{ maxWidth: 'var(--prose)' }}>
+            <span aria-hidden>✗ </span>
+            {reapError ?? 'Nothing was removed.'}
+          </span>
+          {/*
+            Said separately from the reason, exactly as the merge's failure says
+            it. The developer's next question after a refusal is what state
+            their disk is in, and every check here happens before anything is
+            removed — see `reapWorktree` in packages/harness/src/merge.ts.
+          */}
+          <span style={{ color: 'var(--fg-faint)' }}>Nothing was removed.</span>
+          {snapshot.can({ type: 'DISMISS_REAP' }) && (
+            <button onClick={() => send({ type: 'DISMISS_REAP' })} style={{ color: 'var(--accent)' }}>
+              dismiss
+            </button>
+          )}
+        </div>
+      </Band>
+    )
+  }
+
+  if (state !== 'reaped' || reapReport === null) return null
+
+  return (
+    <Band>
+      <div className="text-[12px]" style={{ maxWidth: 'var(--prose)' }}>
+        {reapReport.worktreeRemoved ? (
+          <p style={{ color: 'var(--fg-faint)' }}>
+            <span style={{ color: 'var(--fg)' }}>{reapReport.branch}</span>
+            {reapReport.branchDeleted
+              ? ' and its worktree are gone.'
+              : ' — the worktree is gone.'}
+          </p>
+        ) : (
+          <p style={{ color: 'var(--warn)' }}>
+            <span aria-hidden>⚠ </span>
+            Nothing was removed.
+          </p>
+        )}
+        {reapReport.leftOver !== null && (
+          <p style={{ color: reapReport.worktreeRemoved ? 'var(--warn)' : 'var(--fg-faint)' }}>
+            {reapReport.leftOver}
+          </p>
+        )}
+        {snapshot.can({ type: 'DISMISS_REAP' }) && (
+          <div className="mt-1">
+            <button onClick={() => send({ type: 'DISMISS_REAP' })} style={{ color: 'var(--fg-faint)' }}>
+              dismiss
+            </button>
+          </div>
+        )}
       </div>
     </Band>
   )

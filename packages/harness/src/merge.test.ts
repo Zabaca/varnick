@@ -5,6 +5,7 @@ import {
   mergeBriefing,
   RESTART_STILL_OWED,
   mergeWorktree,
+  reapWorktree,
   type CwdHolder,
   type CwdProbe,
 } from './merge.ts'
@@ -32,7 +33,7 @@ const REF = 'refs/heads/ticket/49'
  * The tree object the live branch is at once the squash has landed.
  *
  * A merge of the branch that produces this same tree is a merge that would
- * change nothing, which is how `squashCarried` knows the content went in.
+ * change nothing, which is how `contentLanded` knows the content went in.
  */
 const LANDED_TREE = '3333333333333333333333333333333333333333'
 
@@ -52,7 +53,7 @@ const READS: Record<string, string> = {
   'rev-parse --short HEAD': 'a1b2c3d\n',
   // The tree the live branch is at, and the tree a re-merge would produce. Equal
   // here, which is what "the squash carried everything" means — see
-  // `squashCarried`. A test that wants the other answer overrides the write.
+  // `contentLanded`. A test that wants the other answer overrides the write.
   'rev-parse HEAD^{tree}': `${LANDED_TREE}\n`,
 }
 
@@ -621,5 +622,140 @@ describe('whether the live tree is dirty, asked twice by two callers', () => {
     await expect(
       mergeWorktree({ git, attempt, holders: empty, cloneRoot: CLONE, path: WORKTREE }),
     ).rejects.toThrow(/widen.ts/)
+  })
+})
+
+/*
+  The reap: the cleanup half, reached without a merge.
+
+  Every test here is about something *not* being removed. The one path that
+  deletes is the least interesting — `worktree remove` and `branch -D` are two
+  commands — and the value of this feature is entirely in which situations it
+  declines to run them in.
+*/
+describe('clearing away a Worktree that has already landed', () => {
+  const reap = (
+    over: Partial<Parameters<typeof reapWorktree>[0]> = {},
+    reads: Record<string, string> = READS,
+    writes: Record<string, GitAttemptResult> = WRITES,
+  ) => {
+    const { git, attempt, asked } = fakeGit(reads, writes)
+    return {
+      asked,
+      run: () =>
+        reapWorktree({ git, attempt, holders: empty, cloneRoot: CLONE, path: WORKTREE, ...over }),
+    }
+  }
+
+  test('the directory goes and the branch goes', async () => {
+    const { run, asked } = reap()
+    expect(await run()).toEqual({
+      path: WORKTREE,
+      branch: 'ticket/49',
+      worktreeRemoved: true,
+      branchDeleted: true,
+      heldBy: [],
+      leftOver: null,
+    })
+    expect(asked).toContain(`worktree remove ${WORKTREE}`)
+    expect(asked).toContain('branch -D ticket/49')
+  })
+
+  test('nothing is squashed, committed or merged on the way', async () => {
+    // The whole point of a separate entry: this runs after the merge already
+    // happened, and a reap that merged again would squash a branch whose
+    // `git commit` finds nothing to commit.
+    const { run, asked } = reap()
+    await run()
+    expect(asked.some((key) => key.startsWith('merge --squash'))).toBe(false)
+    expect(asked).not.toContain('commit')
+  })
+
+  test('a branch still holding work is refused, and nothing is removed', async () => {
+    /*
+      The one mistake in this feature that costs somebody their work. The row
+      said landed — the listing is as old as the last Turn — and the content
+      says otherwise, so the content wins.
+    */
+    const { run, asked } = reap({}, READS, {
+      ...WRITES,
+      [`merge-tree --write-tree HEAD ${REF}`]: ok('9999999999999999999999999999999999999999\n'),
+    })
+    await expect(run()).rejects.toThrow(/still holds work/)
+    expect(asked.some((key) => key.startsWith('worktree remove'))).toBe(false)
+    expect(asked.some((key) => key.startsWith('branch -D'))).toBe(false)
+  })
+
+  test('a merge-tree that would not run is refused too, never read as landed', async () => {
+    // False on anything unclear: this gates a `branch -D`, so the only safe
+    // direction to be wrong in is "leave it alone".
+    const { run } = reap({}, READS, {
+      ...WRITES,
+      [`merge-tree --write-tree HEAD ${REF}`]: failed(128, 'not a valid object name'),
+    })
+    await expect(run()).rejects.toThrow(/still holds work/)
+  })
+
+  test('something standing in it is named, and nothing is removed', async () => {
+    const { run, asked } = reap({ holders: holding({ pid: 15516, command: 'claude' }) })
+    const report = await run()
+
+    expect(report.worktreeRemoved).toBe(false)
+    expect(report.branchDeleted).toBe(false)
+    expect(report.heldBy).toEqual([{ pid: 15516, command: 'claude' }])
+    expect(report.leftOver).toContain('claude (pid 15516)')
+    expect(asked.some((key) => key.startsWith('worktree remove'))).toBe(false)
+  })
+
+  test('the sentence tells a developer to come back rather than to run two commands', async () => {
+    /*
+      The agent host is the usual holder and it exits when its Turn ends, so
+      waiting is a real instruction here. The merge's own version of this
+      sentence could not say that, because until this existed nothing ever
+      asked again.
+    */
+    const { run } = reap({ holders: holding({ pid: 15516, command: 'claude' }) })
+    const report = await run()
+    expect(report.leftOver).toContain('Turn ends')
+    expect(report.leftOver).not.toContain('git worktree remove')
+  })
+
+  test('a probe that threw is not read as permission', async () => {
+    const { run, asked } = reap({
+      holders: async () => {
+        throw new Error('lsof is not on the PATH')
+      },
+    })
+    const report = await run()
+    expect(report.worktreeRemoved).toBe(false)
+    expect(report.leftOver).toContain('lsof is not on the PATH')
+    expect(asked.some((key) => key.startsWith('worktree remove'))).toBe(false)
+  })
+
+  test('a path git never listed is refused before anything is asked of it', async () => {
+    const { run } = reap({ path: `${CLONE}/../elsewhere` })
+    await expect(run()).rejects.toThrow(/not a Worktree the review list is showing/)
+  })
+
+  test('a directory that would not go leaves the branch alone', async () => {
+    // Half a cleanup is worse than none: a deleted branch whose checkout is
+    // still on disk is work with no ref pointing at it.
+    const { run, asked } = reap({}, READS, {
+      ...WRITES,
+      [`worktree remove ${WORKTREE}`]: failed(1, 'contains modified or untracked files'),
+    })
+    const report = await run()
+    expect(report.worktreeRemoved).toBe(false)
+    expect(report.branchDeleted).toBe(false)
+    expect(report.leftOver).toContain('modified or untracked')
+    expect(asked.some((key) => key.startsWith('branch -D'))).toBe(false)
+  })
+
+  test('a branch that would not delete still reports the directory gone', async () => {
+    const { run } = reap({}, READS, { ...WRITES, 'branch -D ticket/49': failed(1, 'not found') })
+    const report = await run()
+    expect(report.worktreeRemoved).toBe(true)
+    expect(report.branchDeleted).toBe(false)
+    expect(report.leftOver).toContain('ticket/49')
   })
 })

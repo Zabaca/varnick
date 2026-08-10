@@ -76,6 +76,7 @@ import type {
   CredentialReading,
   Effort,
   MergeReport,
+  ReapReport,
   Message,
   ModelId,
   PendingWorktree,
@@ -2096,6 +2097,7 @@ export default function Billing() {
     readFenceDiff: unreached,
     readWorktreeDiff: unreached,
     mergeWorktree: unreached,
+    reapWorktree: unreached,
     readSecretNames: async () => {
       await secrets.reload()
       return secrets.names()
@@ -2389,6 +2391,7 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
     changed: ['packages/core/src/machines/harness.ts'],
     touchesFence: false,
     merge: { kind: 'fast-forward' },
+    landed: false,
   }
 
   {
@@ -2709,6 +2712,7 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
       path: '/Users/dev/code/varnick/.claude/worktrees/53',
       branch: 'ticket/53',
       merge: { kind: 'conflicts', files: ['packages/harness/src/sandbox.ts'] },
+      landed: false,
     }
     /*
       A second row with nothing wrong with it.
@@ -2722,6 +2726,7 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
       path: '/Users/dev/code/varnick/.claude/worktrees/57',
       branch: 'ticket/57',
       merge: { kind: 'clean' },
+      landed: false,
     }
 
     const opened = (input: Partial<HarnessInput> = {}) => {
@@ -2973,6 +2978,234 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
       check(
         'a refusal asks the list again, because the reason for it may already be gone',
         regionOf(actor.getSnapshot().value, 'review') === 'listing',
+      )
+      actor.stop()
+    }
+  }
+
+  /*
+    Clearing away a Worktree whose work has already landed — ticket 69.
+
+    The bug underneath all of this: varnick merges by squashing, `commits` is
+    ancestry, and a squash is nobody's ancestor. So a merged Worktree kept every
+    fact that put it on the list, kept offering a merge that would reach
+    `git commit` with an empty index, and would have sat there for the rest of
+    the repository's life. `landed` is the Harness answering the real question,
+    and these are the two consequences of it in Core.
+  */
+  {
+    const landed: PendingWorktree = {
+      ...oneEntry,
+      path: '/Users/dev/code/varnick/.claude/worktrees/56',
+      branch: 'ticket/56',
+      // Still `clean`, and that is the point rather than an oversight in the
+      // fixture: git goes on saying the merge would go through.
+      merge: { kind: 'clean' },
+      landed: true,
+    }
+    const pending: PendingWorktree = { ...oneEntry, merge: { kind: 'clean' }, landed: false }
+
+    const open = (over: Partial<HarnessInput> = {}) =>
+      createActor(
+        harnessMachine.provide({
+          actors: {
+            listWorktrees: never<Listing, Record<string, never>>(),
+            mergeWorktree: never<MergeReport, { path: string }>(),
+            reapWorktree: never<ReapReport, { path: string }>(),
+          },
+        }),
+        {
+          input: {
+            policy: seedPolicy,
+            enterReview: 'listed',
+            worktrees: [pending, landed],
+            ...over,
+          },
+        },
+      ).start()
+
+    {
+      const actor = open()
+      check(
+        'nothing is being cleared away in a window that has just opened',
+        regionOf(actor.getSnapshot().value, 'worktreeReap') === 'idle',
+      )
+      check(
+        'a Worktree whose work is already in the live tree can be cleared away',
+        actor.getSnapshot().can({ type: 'REAP_WORKTREE', path: landed.path }),
+      )
+      /*
+        The refusal that is the whole safety argument. `pending` merges cleanly
+        and is otherwise identical, so a guard that had forgotten to look at
+        `landed` would accept it — and the reap it reached would `worktree
+        remove` and `branch -D` a checkout holding the only copy of that work.
+      */
+      check(
+        'one that still holds work cannot',
+        !actor.getSnapshot().can({ type: 'REAP_WORKTREE', path: pending.path }),
+      )
+      check(
+        'and neither can a path nobody listed',
+        !actor.getSnapshot().can({ type: 'REAP_WORKTREE', path: '/nowhere' }),
+      )
+      /*
+        No diff needs to be open, and that is the deliberate difference from
+        `MERGE_WORKTREE`. A merge is a human agreeing to a change, so ADR-0014
+        insists they were looking at it. A reap removes a second copy of work
+        the tree already holds; asking them to read a diff first would make
+        tidying up two clicks and teach them to click through the first.
+      */
+      check(
+        'a reap needs no diff open, unlike a merge',
+        actor.getSnapshot().context.worktreeOpen === null &&
+          actor.getSnapshot().can({ type: 'REAP_WORKTREE', path: landed.path }),
+      )
+      actor.stop()
+    }
+
+    {
+      /*
+        The second click that would have failed.
+
+        Measured in the window: three branches merged, four rows stayed, and
+        every one of them still offered a merge. `mergeSummary` said `clean`
+        because git said `clean`, and the merge it offered could only ever end
+        at `git commit` with nothing to commit — reported to the developer as
+        something having gone wrong with a branch that is already in their tree.
+      */
+      const actor = open()
+      actor.send({ type: 'OPEN_WORKTREE', path: landed.path })
+      check(
+        'a landed Worktree is not offered a merge, however cleanly git says it would go',
+        !actor.getSnapshot().can({ type: 'MERGE_WORKTREE', path: landed.path }),
+      )
+      actor.stop()
+    }
+
+    {
+      const actor = open()
+      actor.send({ type: 'REAP_WORKTREE', path: landed.path })
+      check(
+        'clearing away is a state, not something that happens between two frames',
+        regionOf(actor.getSnapshot().value, 'worktreeReap') === 'reaping',
+      )
+      check(
+        'and it records which Worktree, because the row it came from is about to go',
+        actor.getSnapshot().context.reaping === landed.path,
+      )
+      /*
+        The two regions are independent, and this is what that buys. A merge
+        report is on screen saying a restart is owed; the reap that clears up
+        after it happens a Turn later, and must not take that sentence away.
+      */
+      check(
+        'and the merge region is untouched by it',
+        regionOf(actor.getSnapshot().value, 'worktreeMerge') === 'unmerged',
+      )
+      actor.stop()
+    }
+
+    {
+      // A reap asked while a merge report stands leaves the report standing.
+      const actor = open({
+        enterWorktreeMerge: 'merged',
+        mergeReport: {
+          branch: 'ticket/49',
+          commit: 'a1b2c3d',
+          squashed: 2,
+          worktreeRemoved: false,
+          branchDeleted: false,
+          heldBy: [{ pid: 15516, command: 'claude' }],
+          leftOver: 'claude (pid 15516) is standing in it.',
+        },
+      })
+      actor.send({ type: 'REAP_WORKTREE', path: landed.path })
+      check(
+        'reaping does not put away the merge report that sent you to it',
+        regionOf(actor.getSnapshot().value, 'worktreeMerge') === 'merged' &&
+          actor.getSnapshot().context.mergeReport !== null,
+      )
+      actor.stop()
+    }
+
+    {
+      /*
+        A reap that removed nothing is a report, not a failure.
+
+        The usual outcome, because the agent host is standing in the directory
+        whenever a merge is asked from inside a Turn. If this landed in
+        `reapFailed` the band would draw it in `bad` and say the reap did not
+        happen — when what happened is that varnick asked, git and the probe
+        answered, and the answer is a sentence naming a process.
+      */
+      const held: ReapReport = {
+        path: landed.path,
+        branch: 'ticket/56',
+        worktreeRemoved: false,
+        branchDeleted: false,
+        heldBy: [{ pid: 15516, command: 'claude' }],
+        leftOver: 'claude (pid 15516) is standing in it. Try again when the Turn ends.',
+      }
+      const actor = createActor(
+        harnessMachine.provide({
+          actors: {
+            listWorktrees: never<Listing, Record<string, never>>(),
+            reapWorktree: fromPromise<ReapReport, { path: string }>(async () => held),
+          },
+        }),
+        {
+          input: { policy: seedPolicy, enterReview: 'listed', worktrees: [pending, landed] },
+        },
+      ).start()
+      actor.send({ type: 'REAP_WORKTREE', path: landed.path })
+      check(
+        'a reap that removed nothing reports rather than failing',
+        await reaches(waitFor(actor, (s) => regionOf(s.value, 'worktreeReap') === 'reaped', soon)),
+      )
+      check(
+        'and it says who is standing in the directory',
+        (actor.getSnapshot().context.reapReport?.heldBy ?? []).some(
+          (holder) => holder.pid === 15516,
+        ),
+      )
+      check(
+        'a reap asks the list again, because it has just changed what the list describes',
+        regionOf(actor.getSnapshot().value, 'review') === 'listing',
+      )
+      actor.stop()
+    }
+
+    {
+      // And a reap that could not be attempted is a failure, carrying its
+      // reason. The one that matters is the host refusing a branch whose work
+      // is not in the live tree, however the row was drawn.
+      const actor = createActor(
+        harnessMachine.provide({
+          actors: {
+            listWorktrees: never<Listing, Record<string, never>>(),
+            reapWorktree: fromPromise<ReapReport, { path: string }>(async () => {
+              throw new Error('ticket/56 still holds work the live tree does not have')
+            }),
+          },
+        }),
+        {
+          input: { policy: seedPolicy, enterReview: 'listed', worktrees: [pending, landed] },
+        },
+      ).start()
+      actor.send({ type: 'REAP_WORKTREE', path: landed.path })
+      check(
+        'a reap that was refused is a failure with a reason',
+        await reaches(
+          waitFor(actor, (s) => regionOf(s.value, 'worktreeReap') === 'reapFailed', soon),
+        ),
+      )
+      check(
+        'carrying what the host said',
+        (actor.getSnapshot().context.reapError ?? '').includes('still holds work'),
+      )
+      check(
+        'and nothing was reported as having been removed',
+        actor.getSnapshot().context.reapReport === null,
       )
       actor.stop()
     }
@@ -3242,6 +3475,7 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
       changed: ['packages/core/src/machines/harness.ts'],
       touchesFence: false,
       merge: { kind: 'fast-forward' },
+      landed: false,
     }
     const { actor } = await running(async (nth) => (nth === 0 ? [] : [entry]))
     await waitFor(actor, (s) => regionOf(s.value, 'review') === 'empty', soon)
@@ -3279,6 +3513,7 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
       changed: ['src-tauri/src/bridge.rs'],
       touchesFence: true,
       merge: { kind: 'clean' },
+      landed: false,
     }
     const { actor, listings } = await running(async () => [entry])
     await waitFor(actor, (s) => regionOf(s.value, 'review') === 'listed', soon)
@@ -3592,6 +3827,7 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
     changed: ['src-tauri/src/bridge.rs'],
     touchesFence: true,
     merge: { kind: 'clean' },
+    landed: false,
   }
   const plain: PendingWorktree = {
     path: '/Users/dev/code/varnick/.claude/worktrees/50',
@@ -3600,6 +3836,7 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
     changed: ['packages/core/src/pages/DesignedPage.tsx'],
     touchesFence: false,
     merge: { kind: 'conflicts', files: ['packages/core/src/pages/DesignedPage.tsx'] },
+    landed: false,
   }
 
   const HUNKS =
@@ -4959,11 +5196,49 @@ async function turnPath(
   }
 
   const wiring = readFileSync(new URL('../src/hooks.ts', import.meta.url), 'utf-8')
-  for (const name of ACTOR_NAMES) {
+
+  /*
+    Asked of the machine rather than of a list somebody maintains.
+
+    `ACTOR_NAMES` was the list, and it had the defect this check exists to
+    catch — one step out. A new actor declared on the machine and left out of
+    `hooks.ts` is exactly the bug that shipped a merge button which called a
+    default returning `{ branch: input.path, commit: '' }` and drew "landed as ."
+    on screen. That gap was closed by looping over `ACTOR_NAMES`, and then the
+    *next* actor was added to the machine, wired, and never added to the list —
+    so the loop passed while proving nothing about it.
+
+    The machine knows its own actors. Reading them from it makes the check
+    self-maintaining: declare an actor and forget the `.provide()`, and this
+    fails at build time whatever anybody remembered to write down.
+  */
+  const declared = Object.keys(
+    (harnessMachine as unknown as { implementations?: { actors?: Record<string, unknown> } })
+      .implementations?.actors ?? {},
+  )
+  check('the harness machine declares its actors where they can be read back', declared.length > 5)
+
+  /*
+    Child machines are provided as machines, not as promise actors, so their own
+    actors are wired inside their `.provide()` rather than beside these. They
+    are checked by name below like everything else — the regex finds
+    `session:`, `surface:` and `worktreeDiff:` in the same wiring block.
+  */
+  for (const name of declared) {
     // `name:` or the shorthand `{ name }` — `loadSurface` is passed the second
     // way, and a check that only knew the first would fail on wiring that is
     // there, which is the opposite mistake and just as unhelpful.
     check(`the live window provides ${name}`, new RegExp(`\\b${name}\\s*[:,}]`).test(wiring))
+  }
+
+  // And the hand-kept list is still the one the seeded marker reads, so it must
+  // not fall behind the machine either.
+  for (const name of declared) {
+    if (name === 'session' || name === 'surface' || name === 'worktreeDiff') continue
+    check(
+      `${name} is named in ACTOR_NAMES, which the seeded marker reads`,
+      (ACTOR_NAMES as readonly string[]).includes(name),
+    )
   }
 
   /*

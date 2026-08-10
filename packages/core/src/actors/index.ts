@@ -48,6 +48,7 @@ export const ACTOR_NAMES = [
   'listWorktrees',
   'readWorktreeDiff',
   'mergeWorktree',
+  'reapWorktree',
   'restartVarnick',
   'pumpUnprompted',
   'loadSurface',

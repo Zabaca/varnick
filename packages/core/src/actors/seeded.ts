@@ -5,6 +5,7 @@ import type {
   CredentialReading,
   Effort,
   MergeReport,
+  ReapReport,
   Message,
   ModelId,
   PendingWorktree,
@@ -174,6 +175,7 @@ export function seededActors() {
             changed: ['src-tauri/src/lib.rs', 'packages/harness/src/agent.ts'],
             touchesFence: true,
             merge: { kind: 'fast-forward' },
+            landed: false,
           },
           {
             path: '/Users/you/varnick/.claude/worktrees/ticket-50',
@@ -182,6 +184,7 @@ export function seededActors() {
             changed: ['packages/core/src/pages/DesignedPage.tsx'],
             touchesFence: false,
             merge: { kind: 'clean' },
+            landed: false,
           },
           /*
             A third, and it is here because of what the first two cannot show.
@@ -200,6 +203,28 @@ export function seededActors() {
               kind: 'conflicts',
               files: ['sandbox-policy.baseline.json', 'packages/harness/src/sandbox.ts'],
             },
+            landed: false,
+          },
+          /*
+            A fourth, and it is the row the other three cannot draw: one whose
+            work is already in the live tree. It exists in the seed because it
+            is the only row with a *reap* on it, and a band designed without one
+            is a band designed as though merging were the only thing a developer
+            ever does to a Worktree.
+
+            `merge` still says `clean`, which is not a contradiction — it is the
+            fact this whole ticket is about. After a squash the branch is
+            nobody's ancestor, so git goes on saying the merge would go in, and
+            it would go in producing nothing.
+          */
+          {
+            path: '/Users/you/varnick/.claude/worktrees/ticket-56',
+            branch: 'ticket/56-merge-from-the-window',
+            commits: 3,
+            changed: ['packages/harness/src/merge.ts', 'packages/core/src/machines/harness.ts'],
+            touchesFence: true,
+            merge: { kind: 'clean' },
+            landed: true,
           },
         ],
       }
@@ -246,6 +271,31 @@ export function seededActors() {
         branch: input.path.split('/').pop() ?? 'a branch',
         commit: 'a1b2c3d',
         squashed: 3,
+        worktreeRemoved: true,
+        branchDeleted: true,
+        heldBy: [],
+        leftOver: null,
+      }
+    }),
+
+    /*
+      A reap that clears the directory away.
+
+      Made up like the merge above it, and for exactly the same reason: a real
+      one removes a directory and force-deletes a branch, so a seeded run that
+      shelled out would turn design mode into a mode that deletes things.
+
+      It reports a clean removal, which is the case the surface has least to say
+      about. The interesting one — the agent host standing in the directory, so
+      nothing was removed and the sentence names the process — is parked on the
+      states page, because that is the outcome a developer will actually meet
+      and it needs to be reachable without waiting for a Turn to end.
+    */
+    reapWorktree: fromPromise<ReapReport, { path: string }>(async ({ input }) => {
+      await wait(400)
+      return {
+        path: input.path,
+        branch: input.path.split('/').pop() ?? 'a branch',
         worktreeRemoved: true,
         branchDeleted: true,
         heldBy: [],

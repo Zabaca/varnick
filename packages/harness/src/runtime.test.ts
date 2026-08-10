@@ -29,6 +29,7 @@ interface Recorded {
   fenceDiffs: string[]
   diffReads: string[]
   merges: string[]
+  reaps: string[]
 }
 
 function capabilities(
@@ -43,6 +44,7 @@ function capabilities(
     fenceDiffs: [],
     diffReads: [],
     merges: [],
+    reaps: [],
   }
   return {
     recorded,
@@ -94,6 +96,20 @@ function capabilities(
         branch: 'ticket/49',
         commit: 'abc1234',
         squashed: 3,
+        worktreeRemoved: true,
+        branchDeleted: true,
+        heldBy: [],
+        leftOver: null,
+      }
+    },
+    // Records like the merge does, and for the same reason: the property under
+    // the runtime's tests is which path crossed, not what git would have done
+    // with it.
+    reapWorktree: async (path) => {
+      recorded.reaps.push(path)
+      return {
+        path,
+        branch: 'ticket/49',
         worktreeRemoved: true,
         branchDeleted: true,
         heldBy: [],
@@ -446,6 +462,7 @@ describe('list-worktrees answers with what git said', () => {
     changed: ['src-tauri/src/bridge.rs'],
     touchesFence: true,
     merge: { kind: 'clean' as const },
+    landed: false,
   }
 
   test('the entries come back', async () => {

@@ -365,6 +365,7 @@ describe('the answer is rebuilt, never passed through', () => {
             commits: 3,
             changed: ['src-tauri/src/bridge.rs'],
             touchesFence: true,
+            landed: false,
             merge: { kind: 'conflicts', files: ['src-tauri/src/bridge.rs'], extra: 'ignored' },
             // What a host that has been rewritten might volunteer. The diff is
             // ticket 50's, fetched for one worktree; a body arriving here would
@@ -384,6 +385,7 @@ describe('the answer is rebuilt, never passed through', () => {
           commits: 3,
           changed: ['src-tauri/src/bridge.rs'],
           touchesFence: true,
+          landed: false,
           // Rebuilt a level down as well: the tag and the file names, and not
           // the field somebody added beside them.
           merge: { kind: 'conflicts', files: ['src-tauri/src/bridge.rs'] },
@@ -408,7 +410,7 @@ describe('the answer is rebuilt, never passed through', () => {
     */
     const entry = (merge: unknown) => ({
       liveTreeDirty: false,
-      worktrees: [{ path: '/w', branch: null, commits: 1, changed: [], touchesFence: false, merge }],
+      worktrees: [{ path: '/w', branch: null, commits: 1, changed: [], touchesFence: false, landed: false, merge }],
     })
     const unreadable = [
       entry(undefined),
@@ -439,7 +441,7 @@ describe('the answer is rebuilt, never passed through', () => {
         answers({
           liveTreeDirty: false,
           worktrees: [
-            { path: '/w', branch: null, commits: 1, changed: [], touchesFence: false, merge },
+            { path: '/w', branch: null, commits: 1, changed: [], touchesFence: false, landed: false, merge },
           ],
         }),
       )
@@ -461,7 +463,7 @@ describe('the answer is rebuilt, never passed through', () => {
       { kind: 'list-worktrees' },
       answers({
         liveTreeDirty: false,
-        worktrees: [{ path: '/w/one', branch: null, commits: 1, changed: [], touchesFence: false, merge: { kind: 'clean' } }],
+        worktrees: [{ path: '/w/one', branch: null, commits: 1, changed: [], touchesFence: false, landed: false, merge: { kind: 'clean' } }],
       }),
     )
     expect(answer.worktrees[0]?.branch).toBeNull()
@@ -477,10 +479,10 @@ describe('the answer is rebuilt, never passed through', () => {
     const unreadable = [
       answers({}),
       answers({ worktrees: 'none' }),
-      answers({ liveTreeDirty: false, worktrees: [{ path: 7, branch: null, commits: 1, changed: [], touchesFence: false, merge: { kind: 'clean' } }] }),
-      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 'three', changed: [], touchesFence: false, merge: { kind: 'clean' } }] }),
-      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: 'one', touchesFence: false, merge: { kind: 'clean' } }] }),
-      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: [7], touchesFence: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: 7, branch: null, commits: 1, changed: [], touchesFence: false, landed: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 'three', changed: [], touchesFence: false, landed: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: 'one', touchesFence: false, landed: false, merge: { kind: 'clean' } }] }),
+      answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: [7], touchesFence: false, landed: false, merge: { kind: 'clean' } }] }),
       answers({ liveTreeDirty: false, worktrees: [{ path: '/w', branch: null, commits: 1, changed: [] }] }),
       answers(undefined),
     ]

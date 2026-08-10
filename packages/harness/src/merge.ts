@@ -29,9 +29,11 @@
  * content landed, because the commit is new — so the "did this really go in"
  * check cannot be `merge-base --is-ancestor`, which is the obvious one and which
  * answers *no* for every branch this ever merges. What is asked instead is
- * whether merging again would change anything — see {@link squashCarried}, which
- * also records why the *second* obvious answer, `diff <live HEAD> <branch>`, is
- * right for a fast-forward and wrong for every clean merge.
+ * whether merging again would change anything — see `contentLanded` in
+ * ./worktrees.ts, which also records why the *second* obvious answer,
+ * `diff <live HEAD> <branch>`, is right for a fast-forward and wrong for every
+ * clean merge. It lives one module over because the listing needs the same
+ * answer to know a row is done.
  *
  * ## What decides whether the directory may be removed
  *
@@ -63,6 +65,7 @@
  */
 
 import {
+  contentLanded,
   findPendingWorktree,
   mergeabilityOf,
   shortBranch,
@@ -192,7 +195,7 @@ export async function mergeWorktree(input: MergeWorktreeInput): Promise<MergeRep
   /*
     Did it actually land? Nothing below this line deletes anything unless it did.
   */
-  if (!(await squashCarried(git, attempt, ref))) {
+  if (!(await contentLanded(git, attempt, ref))) {
     return {
       branch,
       commit,
@@ -207,73 +210,139 @@ export async function mergeWorktree(input: MergeWorktreeInput): Promise<MergeRep
   return cleanUp({ ...input, entry, ref, branch, commit, squashed: subjects.length })
 }
 
+export interface ReapWorktreeInput {
+  readonly git: GitRunner
+  readonly attempt: GitAttempt
+  readonly holders: CwdProbe
+  /** The clone this varnick is running from — see {@link MergeWorktreeInput}. */
+  readonly cloneRoot: string
+  /** Which Worktree, by the absolute path the listing reported. A selector. */
+  readonly path: string
+}
+
+/** What a reap did, or why it did nothing. */
+export interface ReapReport {
+  readonly path: string
+  /** Short branch name, or the commit when the worktree had no branch. */
+  readonly branch: string
+  readonly worktreeRemoved: boolean
+  readonly branchDeleted: boolean
+  /** Who is standing in it, when that is why it is still there. Named, not counted. */
+  readonly heldBy: readonly CwdHolder[]
+  /** What is left to do by hand, or `null` when nothing is. Printed verbatim. */
+  readonly leftOver: string | null
+}
+
 /**
- * Whether the branch's contents are now in the live tree.
+ * Clear away a Worktree whose work is already in the live tree.
  *
- * ## Two checks that look right and are not
+ * The cleanup half of {@link mergeWorktree}, reachable on its own — because the
+ * merge is asked from inside a Turn, and inside a Turn the agent host is alive
+ * **by definition**. The cwd probe is therefore guaranteed to refuse a merge its
+ * own cleanup, the host exits when the Turn ends, and until this existed nothing
+ * ever asked again. The row stayed, the directory stayed, and the developer was
+ * left with two commands to run by hand.
  *
- * **`merge-base --is-ancestor`** answers *no* for every branch this ever merges:
- * a squash commit is new, so git has no record that the content landed. That one
- * is obvious once stated.
+ * Ordered like the merge, and for the same reason — every refusal happens before
+ * anything is removed:
  *
- * **`diff <live HEAD> <branch>`** is the one that had to be measured, because it
- * is right for exactly the case anybody tries by hand and wrong for the case
- * that ships. A `fast-forward` branch already contains everything the live tree
- * has, so after the squash the two trees are identical and the diff is empty. A
- * `clean` branch is *by definition* one the live tree holds commits ahead of —
- * that is what `mergeabilityOf` measures — so afterwards HEAD carries both
- * sides and the branch carries only its own, and the diff is **never** empty.
- * Every clean merge would report itself as not having landed, and nothing would
- * ever be cleaned up.
+ *  1. the path is one git itself listed as pending;
+ *  2. **the content has actually landed** — asked here rather than trusted from
+ *     the row, because the row is as old as the last listing;
+ *  3. nobody is standing in the directory;
+ *  4. remove it, and delete the branch.
  *
- * Measured both ways in a scratch repository rather than reasoned about, because
- * the previous answer here was a correct observation of a fast-forward promoted
- * to a rule:
+ * **Step 2 is the whole safety argument.** This ends in `worktree remove` and
+ * `branch -D`, which is a force-delete; what makes the capital letter safe is
+ * having proved the commits are not the only copy. A reap offered on a branch
+ * still holding work is the one mistake here that costs somebody their work, so
+ * it is proved rather than inherited from whatever the surface last drew.
  *
- *     main ahead by one, feature behind it, squash, then:
- *       git diff --quiet HEAD feature      exit 1   ("still differ")
- *       merge-tree --write-tree HEAD feature == HEAD^{tree}   (landed)
- *     and with the squash's own file dropped before committing:
- *       merge-tree --write-tree HEAD feature != HEAD^{tree}   (correctly refuses)
- *
- * ## What is asked instead
- *
- * *Would merging this branch again change anything?* `merge-tree --write-tree`
- * answers it: the tree a merge would produce, without touching the index or the
- * working tree. Equal to HEAD's tree means the branch has nothing left to give,
- * which is the question the cleanup actually depends on and is true regardless
- * of how far the live tree has moved on its own side.
- *
- * The same command `mergeabilityOf` already trusts, read the other way round —
- * it asks whether a merge *would* conflict, this asks whether one would be a
- * no-op.
- *
- * **False on anything unclear.** A conflict (exit 1), a git that would not run
- * it, an unparseable answer: all of them mean the cleanup does not proceed. This
- * gates a `worktree remove` and a `branch -D`, so the only safe direction to be
- * wrong in is "leave it alone".
+ * **Nothing is forced and nothing is killed.** Deleting a directory that is a
+ * live process's working directory is permitted by the operating system and is
+ * not survivable in the way it looks: the process keeps a vnode reference, so it
+ * does not die and it does not notice — `process.cwd()` goes on naming a
+ * directory that is gone while every relative file operation fails with an
+ * ENOENT naming the *file*. Measured, not assumed. So a held directory is left
+ * alone and its holders are named.
  */
-async function squashCarried(git: GitRunner, attempt: GitAttempt, ref: string): Promise<boolean> {
-  let merged: GitAttemptResult
-  try {
-    merged = await attempt(['merge-tree', '--write-tree', 'HEAD', ref])
-  } catch {
-    return false
-  }
-  // Exit 1 is a conflict, which here means the branch still holds something the
-  // live tree does not. Anything else non-zero is a probe that did not run.
-  if (merged.code !== 0) return false
+export async function reapWorktree(input: ReapWorktreeInput): Promise<ReapReport> {
+  const { git, attempt, holders, cloneRoot, path } = input
 
-  const produced = merged.stdout.trim().split('\n')[0]?.trim() ?? ''
-  if (produced.length === 0) return false
-
-  let head: string
-  try {
-    head = (await git(['rev-parse', 'HEAD^{tree}'])).trim()
-  } catch {
-    return false
+  const found = await findPendingWorktree({ git, cloneRoot, path })
+  if (found === null) {
+    throw new Error(
+      `${path} is not a Worktree the review list is showing, so varnick will not remove it.`,
+    )
   }
-  return head.length > 0 && produced === head
+
+  const { entry, ref } = found
+  const branch = shortBranch(entry.branch) ?? ref
+
+  if (!(await contentLanded(git, attempt, ref))) {
+    throw new Error(
+      `${branch} still holds work the live tree does not have, so removing it would be the only copy going. Merge it first, or check what is in it: git diff HEAD ${ref}`,
+    )
+  }
+
+  let standing: readonly CwdHolder[]
+  try {
+    standing = await holders(entry.path)
+  } catch (error) {
+    return {
+      path: entry.path,
+      branch,
+      worktreeRemoved: false,
+      branchDeleted: false,
+      heldBy: [],
+      leftOver: `varnick could not work out whether anything is still running in ${entry.path}, so it left the worktree alone rather than deleting a directory something may be standing in: ${reasonOf(error)}`,
+    }
+  }
+
+  if (standing.length > 0) {
+    return {
+      path: entry.path,
+      branch,
+      worktreeRemoved: false,
+      branchDeleted: false,
+      heldBy: standing,
+      /*
+        The agent host is the usual answer, and it exits at the end of the Turn
+        — so unlike the merge's version of this sentence, waiting is a real
+        instruction here rather than a wait for a collection that never comes.
+        Asking again is one press.
+      */
+      leftOver: `${describe(standing)} ${standing.length === 1 ? 'is' : 'are'} standing in ${entry.path}, so nothing was removed. The agent's host exits when its Turn ends — try again then, or stop ${standing.length === 1 ? 'it' : 'them'} yourself.`,
+    }
+  }
+
+  const removed = await removeWorktree(attempt, entry.path)
+  if (removed !== null) {
+    return {
+      path: entry.path,
+      branch,
+      worktreeRemoved: false,
+      branchDeleted: false,
+      heldBy: [],
+      leftOver: `git would not remove the worktree at ${entry.path}: ${removed}`,
+    }
+  }
+
+  // `-D` for the same reason the merge uses it: after a squash no branch this
+  // ever removes is an ancestor, and the content check above is what makes the
+  // capital letter a fact rather than a claim.
+  const deleted = await attempt(['branch', '-D', branch])
+  return {
+    path: entry.path,
+    branch,
+    worktreeRemoved: true,
+    branchDeleted: deleted.code === 0,
+    heldBy: [],
+    leftOver:
+      deleted.code === 0
+        ? null
+        : `The worktree at ${entry.path} is gone, but the branch ref ${branch} is still there: ${said(deleted.stderr, deleted.stdout) ?? `branch -D exited ${deleted.code}`}`,
+  }
 }
 
 /**
@@ -511,15 +580,19 @@ async function cleanUp(input: {
         processes and leaves the choice to the developer.
       */
       /*
-        And it says the removal by hand, because **nothing reaps.** An earlier
-        wording ended "leave it and it will be reaped next time", which named a
-        sweep that does not exist — and the row is not self-clearing either: the
-        branch ref still holds commits the live tree does not, so the listing
-        goes on offering a merge whose `git commit` would find nothing to
-        commit. Telling a developer to wait for a collection that never comes is
-        worse than telling them nothing.
+        This used to end with the two commands to run by hand, because **nothing
+        reaped.** An earlier wording before that ended "leave it and it will be
+        reaped next time", which named a sweep that did not exist — and telling
+        a developer to wait for a collection that never comes is worse than
+        telling them nothing.
+
+        {@link reapWorktree} is that collection, so the sentence points at it.
+        The row does not clear itself: `commitsAhead` is ancestry and a squash
+        is not an ancestor, so the listing goes on showing the worktree — but it
+        shows it as *landed* now, offering a reap rather than a merge whose
+        `git commit` would find nothing to commit.
       */
-      leftOver: `${branch} landed as ${commit}. The worktree at ${entry.path} is still there because ${describe(standing)} ${standing.length === 1 ? 'is' : 'are'} standing in it — nothing will clear it up on its own, so stop ${standing.length === 1 ? 'it' : 'them'} and run: git worktree remove ${entry.path} && git branch -D ${branch}`,
+      leftOver: `${branch} landed as ${commit}. The worktree at ${entry.path} is still there because ${describe(standing)} ${standing.length === 1 ? 'is' : 'are'} standing in it — the agent's host exits when its Turn ends, so clear it away from the row then.`,
     }
   }
 

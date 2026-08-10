@@ -76,7 +76,7 @@ import { parseMintEvent, type MintEvent } from './mint.ts'
 import { parseStoredTool } from './stored.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
 import type { Mergeability, PendingWorktree } from './worktrees.ts'
-import type { CwdHolder, MergeReport } from './merge.ts'
+import type { CwdHolder, MergeReport, ReapReport } from './merge.ts'
 import {
   normaliseCommands,
   parseTurnEvent,
@@ -286,6 +286,29 @@ export interface MergeWorktreeRequest {
 }
 
 /**
+ * Clear away a Worktree whose work is already in the live tree.
+ *
+ * A second call rather than a flag on the merge, because it happens at a
+ * different *time* and that is the whole reason it exists. A merge is asked from
+ * inside a Turn, so the agent host is alive when the cwd probe runs and the
+ * cleanup is guaranteed to be refused; the host exits when the Turn ends, and
+ * until this existed nothing ever asked again.
+ *
+ * On the bridge for the same reason the merge is — the control that sends it
+ * lives in `packages/core/**`, which `denyWrite` refuses the agent, so nothing
+ * the agent says can reach it. It removes a directory and force-deletes a
+ * branch, which makes that the point rather than a detail.
+ *
+ * `path` is the same selector: compared against what `git worktree list`
+ * reported, never handed to git as an argument.
+ */
+export interface ReapWorktreeRequest {
+  readonly kind: 'reap-worktree'
+  /** The absolute path of a listed worktree, as the listing reported it. */
+  readonly path: string
+}
+
+/**
  * Replace this process with a new one, having torn down what it holds.
  *
  * Asked for at exactly one moment: a merge has landed, so the window is now
@@ -428,6 +451,7 @@ export type HarnessRequest =
   | ListWorktreesRequest
   | ReadWorktreeDiffRequest
   | MergeWorktreeRequest
+  | ReapWorktreeRequest
   | RestartVarnickRequest
 
 /** What each call answers with, on success. */
@@ -478,6 +502,11 @@ export interface HarnessAnswers {
   // could not finish is a success with something to say, not a failure — see
   // `MergeReport` in ./merge.ts.
   'merge-worktree': MergeReport
+  // What was removed, or why nothing was — see `ReapReport` in ./merge.ts. A
+  // reap that removed nothing is an answer rather than a failure: the usual
+  // reason is the agent host still standing in the directory, and that is a
+  // sentence to print rather than an error to raise.
+  'reap-worktree': ReapReport
   // A constant, and one the caller will almost never see: the process is
   // replaced while the call is in flight. What it is *for* is the case where
   // that does not happen.
@@ -772,7 +801,7 @@ function worktreesAnswer(answer: unknown): {
 
   const worktrees: PendingWorktree[] = []
   for (const entry of payload.worktrees) {
-    const { path, branch, commits, changed, touchesFence, merge } = (entry ?? {}) as Record<
+    const { path, branch, commits, changed, touchesFence, merge, landed } = (entry ?? {}) as Record<
       string,
       unknown
     >
@@ -784,6 +813,13 @@ function worktreesAnswer(answer: unknown): {
       throw new HarnessUnavailable('malformed')
     }
     if (typeof touchesFence !== 'boolean') throw new HarnessUnavailable('malformed')
+    /*
+      Not defaulted, for the same reason `liveTreeDirty` is not. It decides
+      which control the row offers, and a host this build cannot read would put
+      a merge over a branch that has already gone in — whose squash would find
+      nothing to commit — or a reap over one still holding work.
+    */
+    if (typeof landed !== 'boolean') throw new HarnessUnavailable('malformed')
     if (!Array.isArray(changed) || changed.some((name) => typeof name !== 'string')) {
       throw new HarnessUnavailable('malformed')
     }
@@ -794,6 +830,7 @@ function worktreesAnswer(answer: unknown): {
       changed: [...(changed as string[])],
       touchesFence,
       merge: mergeabilityOf(merge),
+      landed,
     })
   }
 
@@ -893,6 +930,36 @@ function mergeAnswer(answer: unknown): MergeReport {
 }
 
 /**
+ * A reap's report, rebuilt field by field like every other answer.
+ *
+ * `path` is checked as strictly as the rest even though the caller supplied it,
+ * because it is the field the surface uses to decide *which row* the report is
+ * about — and a report attached to the wrong row would say a directory is gone
+ * while it is still there.
+ */
+function reapAnswer(answer: unknown): ReapReport {
+  const payload = (answer ?? {}) as Record<string, unknown>
+  const { path, branch, worktreeRemoved, branchDeleted, heldBy, leftOver } = payload
+
+  if (typeof path !== 'string' || path.length === 0) throw new HarnessUnavailable('malformed')
+  if (typeof branch !== 'string' || branch.length === 0) throw new HarnessUnavailable('malformed')
+  if (typeof worktreeRemoved !== 'boolean') throw new HarnessUnavailable('malformed')
+  if (typeof branchDeleted !== 'boolean') throw new HarnessUnavailable('malformed')
+  if (leftOver !== null && typeof leftOver !== 'string') throw new HarnessUnavailable('malformed')
+  if (!Array.isArray(heldBy)) throw new HarnessUnavailable('malformed')
+
+  const holders: CwdHolder[] = []
+  for (const holder of heldBy) {
+    const { pid, command } = (holder ?? {}) as Record<string, unknown>
+    if (typeof pid !== 'number' || !Number.isFinite(pid)) throw new HarnessUnavailable('malformed')
+    if (typeof command !== 'string') throw new HarnessUnavailable('malformed')
+    holders.push({ pid, command })
+  }
+
+  return { path, branch, worktreeRemoved, branchDeleted, heldBy: holders, leftOver }
+}
+
+/**
  * Ask the host to do one thing.
  *
  * Every path out is either the declared answer or a thrown
@@ -937,6 +1004,8 @@ export async function callHarness<R extends HarnessRequest>(
       return diffAnswer(answer) as HarnessAnswers[R['kind']]
     case 'merge-worktree':
       return mergeAnswer(answer) as HarnessAnswers[R['kind']]
+    case 'reap-worktree':
+      return reapAnswer(answer) as HarnessAnswers[R['kind']]
     case 'restart-varnick':
     case 'check-sandbox':
     case 'store-credential':
