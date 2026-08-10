@@ -86,6 +86,35 @@ So the sequence is: stop any Preview, **tell the agent to leave the worktree**,
 confirm it has, then remove. The notification below is not only courtesy — it is
 load-bearing, and it has to arrive before the directory goes rather than after.
 
+#### It is fatal, not confusing — measured the second time
+
+The paragraph above understated this, and the correction is the reason to trust
+the sequence rather than treat it as tidiness. Doing the same thing again, on a
+worktree whose lock named a dead pid, **killed the agent outright**:
+
+```
+error: Claude Code returned an error result:
+  Path ".../.claude/worktrees/plugin-hooks-can-run" does not exist
+    at readMessages (…/@anthropic-ai/claude-agent-sdk/sdk.mjs)
+```
+
+The host exited. `target/debug/varnick` and the Node runtime stayed up and the
+runtime went on writing the Session mirror, so a message typed afterwards was
+recorded with nothing alive to answer it. From the window there was no agent and
+no error — the same silence ticket 58 was about, one layer out.
+
+Two things follow that the earlier measurement could not show:
+
+- **A dead lock pid does not mean the session is finished with the worktree.**
+  The lock is held by the `claude` process; the *host* outlives it and resumes.
+  Reaping on "lock pid is dead" is the check that caused this, and it is not
+  sufficient on its own.
+- **Removing the directory is not recoverable by the agent.** It cannot report
+  the problem, ask, or step back to the clone root — the SDK treats the missing
+  cwd as a terminal error before any of that. So "tell the agent to leave, then
+  confirm" is not politeness, it is the only ordering that works, and the
+  confirmation has to be a real acknowledgement rather than a message sent.
+
 ## The agent is told, because it is the author
 
 When a merge lands, **send the agent a system message saying so.** It wrote the
@@ -152,6 +181,10 @@ inviting the developer to hand-resolve someone else's branch.
 - [ ] A merge is refused when the live tree is dirty, with a reason
 - [ ] After a merge, varnick says a restart is needed and offers it
 - [ ] `worktreeMerge.mergeFailed` carries git's reason and offers a retry
+- [ ] The agent acknowledges leaving the Worktree before the directory is removed
+- [ ] A worktree whose lock pid is dead is still not removed on that basis alone
+- [ ] An agent host that exits is reported in the window rather than leaving a
+      live runtime accepting messages nothing will answer
 - [ ] Every new state path is named in `CONTEXT.md` and has a card
 
 Asked for while looking at the first real pending Worktree: *"could we introduce a merge button here? it should also check if it's cleanly mergeable and show that there is a conflict when there is, like github would."*
