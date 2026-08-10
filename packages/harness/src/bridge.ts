@@ -70,7 +70,10 @@
  */
 
 import { parseMintEvent, type MintEvent } from './mint.ts'
-import { parseStoredTool } from './session.ts'
+// The leaf, not the store. ./session.ts reaches `node:crypto`, and this module
+// is one of the three Core is allowed to import — see ./stored.ts for what a
+// value import from here cost.
+import { parseStoredTool } from './stored.ts'
 import type { RestoredTranscript, StoredMessage } from './session.ts'
 import type { Mergeability, PendingWorktree } from './worktrees.ts'
 import type { CwdHolder, MergeReport } from './merge.ts'

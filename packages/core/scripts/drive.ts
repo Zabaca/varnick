@@ -4741,6 +4741,54 @@ async function turnPath(
     reaches Userspace through `import.meta.glob`, and dragging that into a
     headless driver is the thing ADR-0013 keeps out of here.
   */
+  /*
+    And nothing Core imports may drag a Node built-in in behind it.
+
+    **This is a property of an import graph, not of a first line, and that is
+    why the lint rule did not catch it.** `bridge.ts` is one of the three Harness
+    entries Core may import, because it reaches no Node built-in. It imported one
+    value out of `session.ts`, `session.ts` imports `node:crypto`, Vite
+    externalises that for the browser — and the window rendered **blank**. No
+    chat, no error on screen, a white rectangle and a message in a terminal
+    nobody was reading. The failure is nowhere near the cause.
+
+    So the closure is walked here: from each entry Core is allowed, follow every
+    relative import and refuse a `node:` specifier anywhere in it. Type-only
+    imports are erased by the compiler and are fine; a value import is not.
+  */
+  const harnessSrc = new URL('../../harness/src/', import.meta.url)
+  const nodeImports = (entry: string): string[] => {
+    const seen = new Set<string>()
+    const found: string[] = []
+    const walk = (name: string) => {
+      if (seen.has(name)) return
+      seen.add(name)
+      let source: string
+      try {
+        source = readFileSync(new URL(name, harnessSrc), 'utf-8')
+      } catch {
+        return
+      }
+      // `import type` is erased, so it cannot pull anything into the bundle.
+      for (const line of source.split('\n')) {
+        const spec = /^\s*(?:import|export)\s+(?!type\b)[^'"]*from\s+'([^']+)'/.exec(line)?.[1]
+        if (spec === undefined) continue
+        if (spec.startsWith('node:')) found.push(`${name} → ${spec}`)
+        else if (spec.startsWith('./')) walk(spec.slice(2))
+      }
+    }
+    walk(entry)
+    return found
+  }
+
+  for (const entry of ['bridge.ts', 'turn.ts', 'credentials.ts', 'fence.ts']) {
+    const pulled = nodeImports(entry)
+    check(
+      `${entry} reaches no Node built-in, so Core can import it${pulled.length > 0 ? ` — ${pulled.join(', ')}` : ''}`,
+      pulled.length === 0,
+    )
+  }
+
   const wiring = readFileSync(new URL('../src/hooks.ts', import.meta.url), 'utf-8')
   for (const name of ACTOR_NAMES) {
     // `name:` or the shorthand `{ name }` — `loadSurface` is passed the second

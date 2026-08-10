@@ -19,14 +19,14 @@ import fsp from 'node:fs/promises'
 
 /** A tool call as the mirror stores it. Structurally what Core calls a
  *  `ToolCall`, declared here for the reason {@link StoredMessage} is. */
-export interface StoredToolCall {
-  readonly id: string
-  readonly name: string
-  readonly argument?: string
-  readonly result?: string
-  readonly detail?: string
-  readonly status: 'pending' | 'success' | 'error'
-}
+/*
+  Both moved to ./stored.ts and re-exported here, so every existing caller is
+  unchanged. They describe the shape of a line rather than the store that holds
+  it, and ./bridge.ts needs them on the far side of the wire — where a module
+  that reaches `node:crypto` cannot follow. See ./stored.ts.
+*/
+export { parseStoredTool, type StoredToolCall } from './stored.ts'
+import { parseStoredTool, type StoredToolCall } from './stored.ts'
 
 /** A message as the mirror stores it. Structurally what Core calls a `Message`,
  *  declared here because the Harness must not import Core. */
@@ -346,23 +346,6 @@ function serialise(message: StoredMessage): string {
  * both, is what stops the two doors disagreeing about what a stored tool call
  * is.
  */
-export function parseStoredTool(value: unknown): StoredToolCall | null {
-  if (typeof value !== 'object' || value === null) return null
-  const { id, name, argument, result, detail, status } = value as Record<string, unknown>
-  if (typeof id !== 'string' || id.length === 0) return null
-  if (typeof name !== 'string' || name.length === 0) return null
-  if (status !== 'pending' && status !== 'success' && status !== 'error') return null
-  const optional = (field: unknown): string | undefined =>
-    typeof field === 'string' ? field : undefined
-  return {
-    id,
-    name,
-    ...(optional(argument) !== undefined ? { argument: optional(argument) as string } : {}),
-    ...(optional(result) !== undefined ? { result: optional(result) as string } : {}),
-    ...(optional(detail) !== undefined ? { detail: optional(detail) as string } : {}),
-    status,
-  }
-}
 
 function parseLine(line: string): StoredMessage | null {
   try {
