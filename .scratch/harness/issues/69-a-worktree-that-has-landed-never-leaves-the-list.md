@@ -7,7 +7,7 @@ a control beside it clears the directory away.
 about a merge that clears up after itself; this is about the row that is left
 when it could not.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Realizes:** at least one new state on the review region — a reap that is
 running, and a reap that was refused because something is standing in the
@@ -114,13 +114,29 @@ So the refusal stays, and what is added is a way to come back to it.
 - Ticket 64 is the same territory approached from the merge side. Whoever takes
   either should read both; the reap wants to be one mechanism.
 
-- [ ] A Worktree whose content is in the live tree is listed as landed, not as
-      mergeable
-- [ ] A control on that row removes the directory and deletes the branch
-- [ ] A reap is refused, by name, when anything is standing in the directory
-- [ ] A reap is refused when the content has not landed, whatever the row says
-- [ ] The row leaves the list once the directory is gone
-- [ ] Nothing is killed and nothing is forced
+- [x] A Worktree whose content is in the live tree is listed as landed, not as
+      mergeable — `landed` on the entry, and `mergeable` refuses one
+- [x] A control on that row removes the directory and deletes the branch
+- [x] A reap is refused, by name, when anything is standing in the directory
+- [x] A reap is refused when the content has not landed, whatever the row says
+- [x] The row leaves the list once the directory is gone — `reaped` re-lists
+- [x] Nothing is killed and nothing is forced
+
+Shipped in `e126423`. `worktreeReap` is a sixth region rather than states inside
+`worktreeMerge`, because a developer is usually looking at both: the merge's
+*you are running old code* is still true while the reap that clears up after it
+happens a Turn later.
+
+**Not verified in the running window.** varnick has not restarted onto this
+build, so every claim above is from the test suite and `drive.ts` rather than
+from a press. The four rows that prompted it are still on screen under the old
+code.
+
+One thing found on the way and fixed here rather than ticketed: the actor-wiring
+check looped over a hand-kept `ACTOR_NAMES`, so a new actor could be declared,
+wired and invisible to it — the same shape as the merge button that called a
+default. It reads the machine's declared actors now, and caught this ticket's
+own omission on its first run.
 
 Found merging three agent branches from the window: the merge landed, the row
 stayed, and pressing it again would have squashed a branch with nothing in it.
