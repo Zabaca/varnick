@@ -9,6 +9,8 @@ import {
   CREDENTIAL_ENV_VAR_NAMES,
   DEVELOPER_TOOLS_CANDIDATES,
   INHERIT_CLAUDE_CONFIG_ENV_VAR,
+  TEMP_DIR_ENV_VAR,
+  TEMP_PREFIX_ENV_VAR,
   agentCommand,
   agentConfigurationOptions,
   agentPermissionOptions,
@@ -16,6 +18,8 @@ import {
   agentEnvironment,
   agentPlugins,
   agentSdkEntry,
+  agentTempDir,
+  agentTempPrefix,
   claudeConfigDir,
   inheritedConfigVariables,
   inheritsClaudeConfig,
@@ -1520,6 +1524,79 @@ describe('the real git, ahead of the shim', () => {
 
   test('neither location present is null rather than a guess', () => {
     expect(developerToolsBin(() => false)).toBe(null)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A temporary directory the kernel does not refuse
+// ---------------------------------------------------------------------------
+
+describe('somewhere to put a temporary file', () => {
+  /*
+    Ticket 53. `srt` bakes `TMPDIR=/tmp/claude` into the wrapped command and that
+    path is in neither list, so every process inside the Sandbox inherits a
+    temporary directory it cannot write. Measured by asking a wrapped shell:
+
+      echo $TMPDIR      /tmp/claude   (denied)
+      echo $TMPPREFIX   /tmp/zsh      (denied — zsh's default)
+
+    The symptom is a heredoc, because that is the first thing needing a temporary
+    file, and it is shell-specific — bash and sh write theirs to a pipe and both
+    passed under the same policy at the same moment zsh failed:
+
+      zsh:1: can't create temp file for here document: operation not permitted
+
+    Fixed in the environment rather than in the policy. `/tmp/claude` is a fixed
+    name directly under a world-writable directory shared with every user on the
+    machine; the clone is writable already.
+  */
+
+  test('it is inside the clone, beside the other machine-local state', () => {
+    expect(agentTempDir(CLONE)).toBe(`${CLONE}/.varnick/tmp`)
+  })
+
+  test('the agent is handed it', () => {
+    const env = agentEnvironment({}, { cloneRoot: CLONE, inherit: false })
+    expect(env[TEMP_DIR_ENV_VAR]).toBe(`${CLONE}/.varnick/tmp`)
+  })
+
+  test('the value srt left behind is replaced, not honoured', () => {
+    // The case that matters: this arrives *set*, and set to a denied path. A
+    // fix that only filled in a missing variable would do nothing at all.
+    const env = agentEnvironment(
+      { [TEMP_DIR_ENV_VAR]: '/tmp/claude' },
+      { cloneRoot: CLONE, inherit: false },
+    )
+    expect(env[TEMP_DIR_ENV_VAR]).toBe(`${CLONE}/.varnick/tmp`)
+  })
+
+  test('inheriting the developer’s environment does not restore a denied one', () => {
+    const env = agentEnvironment(
+      { [TEMP_DIR_ENV_VAR]: '/tmp/claude' },
+      { cloneRoot: CLONE, inherit: true },
+    )
+    expect(env[TEMP_DIR_ENV_VAR]).toBe(`${CLONE}/.varnick/tmp`)
+  })
+
+  test('zsh’s here-document prefix is set too, because zsh does not derive it', () => {
+    // `TMPPREFIX` defaults to the literal `/tmp/zsh` and is consulted before
+    // `TMPDIR`. Setting only the first leaves the heredoc exactly as broken.
+    const env = agentEnvironment({}, { cloneRoot: CLONE, inherit: false })
+    expect(env[TEMP_PREFIX_ENV_VAR]).toBe(`${CLONE}/.varnick/tmp/zsh`)
+  })
+
+  test('the prefix is inside the directory, so one mkdir covers both', () => {
+    expect(agentTempPrefix(CLONE).startsWith(`${agentTempDir(CLONE)}/`)).toBe(true)
+  })
+
+  test('Claude Code’s own scratch is a different path and stays granted', () => {
+    /*
+      Two temporary directories, two reasons. `/tmp/claude-<uid>` is where Claude
+      Code puts the directory every Bash command needs; it does not honour
+      `TMPDIR` for that, which is why ticket 27 had to grant it. Pointing this
+      variable into the clone must not read as a reason to take that away.
+    */
+    expect(agentTempDir(CLONE)).not.toContain('/tmp/claude-')
   })
 })
 

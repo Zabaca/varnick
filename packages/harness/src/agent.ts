@@ -374,6 +374,76 @@ export function agentBinDir(cloneRoot: string): string {
   return join(cloneRoot, AGENT_BIN_RELATIVE_PATH)
 }
 
+/** Where a temporary file written inside the Sandbox goes. */
+export const TEMP_DIR_ENV_VAR = 'TMPDIR'
+
+/**
+ * Where zsh writes the temporary file a heredoc needs.
+ *
+ * A second variable rather than a consequence of the first, because zsh does not
+ * derive it: `TMPPREFIX` defaults to the literal `/tmp/zsh` and is consulted
+ * before `TMPDIR` for here-documents. Setting only `TMPDIR` leaves the heredoc
+ * exactly as broken as it was.
+ */
+export const TEMP_PREFIX_ENV_VAR = 'TMPPREFIX'
+
+/**
+ * The agent's temporary directory, relative to the clone.
+ *
+ * ## The finding this exists for
+ *
+ * **`srt` sets `TMPDIR=/tmp/claude`, and that path is in neither list.** It is
+ * baked into the wrapped command — `env TMPDIR=/tmp/claude … sandbox-exec …` —
+ * so every process inside the Sandbox inherits a temporary directory it is not
+ * allowed to write. Measured by asking a wrapped shell what it had:
+ *
+ *     echo $TMPDIR       /tmp/claude          (denied)
+ *     echo $TMPPREFIX    /tmp/zsh             (denied, zsh's default)
+ *
+ * That is ticket 53. The symptom a developer sees is a heredoc, because a
+ * heredoc is the first thing that needs a temporary file:
+ *
+ *     zsh:1: can't create temp file for here document: operation not permitted
+ *
+ * and it is shell-specific, which is why it reads as random. `bash` and `sh`
+ * write their here-documents to a pipe and never touch the filesystem — both
+ * measured passing under the same policy, at the same moment zsh failed. Claude
+ * Code's Bash tool runs the developer's login shell, which on macOS is zsh.
+ *
+ * **It is set here rather than granted in the policy.** `/tmp/claude` is a fixed
+ * name directly under a world-writable directory and shared with every user on
+ * the machine; granting it would be a wider boundary bought to fix a variable.
+ * The clone is already writable, so pointing the variable at the clone costs
+ * nothing and moves nothing. This is what ticket 53 asked for first and what its
+ * third criterion holds to: `allowWrite` is unchanged.
+ *
+ * **Not the same path as Claude Code's own scratch, which is separately
+ * granted.** `/tmp/claude-<uid>` is where Claude Code puts the directory every
+ * Bash command needs, it does not honour `TMPDIR` for that, and it is in
+ * `allowWrite` for the reason ticket 27 recorded. Two temporary directories,
+ * two reasons, and neither replaces the other.
+ *
+ * Gitignored, per clone, and never committed, like everything else in
+ * `.varnick`: it is one machine's scratch.
+ */
+export const AGENT_TEMP_RELATIVE_PATH = '.varnick/tmp'
+
+/** The agent's temporary directory in a given clone. */
+export function agentTempDir(cloneRoot: string): string {
+  return join(cloneRoot, AGENT_TEMP_RELATIVE_PATH)
+}
+
+/**
+ * zsh's here-document prefix in a given clone.
+ *
+ * A *file* prefix, not a directory: zsh appends its own suffix, so this names
+ * `…/tmp/zsh` and the files beside it are `zsh<pid>`. It sits inside
+ * {@link agentTempDir} so one `mkdir` covers both.
+ */
+export function agentTempPrefix(cloneRoot: string): string {
+  return join(agentTempDir(cloneRoot), 'zsh')
+}
+
 /**
  * A `node` that is bun, so that a plugin's hooks can run.
  *
@@ -704,6 +774,23 @@ export function agentEnvironment(
     hand the agent a path it cannot read and call that inheritance.
   */
   environment[BUN_CACHE_ENV_VAR] = bunCacheDir(input.cloneRoot)
+
+  /*
+    And the temporary directory, which arrives wrong rather than missing.
+
+    `srt` bakes `TMPDIR=/tmp/claude` into the wrapped command, and that path is
+    in neither `allowRead` nor `allowWrite` — so the agent inherits a temporary
+    directory the kernel refuses. Overwritten here for the same reason the two
+    above are: the value that reaches the agent is varnick's, not whatever the
+    layer below happened to leave.
+
+    Both variables, because zsh consults `TMPPREFIX` for a here-document and
+    defaults it to `/tmp/zsh` rather than deriving it. See
+    {@link AGENT_TEMP_RELATIVE_PATH} for the measurement, and for why this is an
+    environment fix rather than a wider `allowWrite`.
+  */
+  environment[TEMP_DIR_ENV_VAR] = agentTempDir(input.cloneRoot)
+  environment[TEMP_PREFIX_ENV_VAR] = agentTempPrefix(input.cloneRoot)
 
   // The real toolchain ahead of the shim, so `git` is git. See
   // {@link developerToolsBin} for what the shim does and why allowing its
@@ -2148,6 +2235,12 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
   // CLAUDE_CONFIG_RELATIVE_PATH for why nowhere under $HOME is.
   const { mkdirSync, chmodSync } = await import('node:fs')
   mkdirSync(claudeConfigDir(cloneRoot), { recursive: true })
+
+  // And the temporary directory the environment points at, for the same reason
+  // in a sharper form: a `TMPDIR` naming a directory that does not exist is not
+  // an improvement on one naming a directory the kernel refuses. See
+  // AGENT_TEMP_RELATIVE_PATH.
+  mkdirSync(agentTempDir(cloneRoot), { recursive: true })
 
   /*
     Written every launch, for the reason {@link writeNodeShim} gives: a plugin

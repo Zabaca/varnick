@@ -451,6 +451,15 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
         `/tmp/claude-<uid>`, so there was no way to satisfy this by pointing the
         agent at the temp directory already allowed.
 
+        **That finding is about this directory and does not generalise.** Every
+        *other* process inside the Sandbox honours `TMPDIR` perfectly well, and
+        the one it arrives with is `/tmp/claude` — a fourth path, baked into the
+        wrapped command by `srt` itself and in neither list. Ticket 53: the agent
+        could not write a heredoc, because a temporary directory it is refused is
+        worse than none. That one is fixed in `agentEnvironment`, not here, and
+        probe 9c is where the two are told apart. Nothing on this list moved for
+        it.
+
         Deliberately not `/tmp`. That is world-writable and shared with every
         process on the machine; this is one per-user subdirectory of it, which is
         the same *kind* of access the `temp` entry beside it already grants —

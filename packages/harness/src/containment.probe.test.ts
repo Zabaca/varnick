@@ -16,6 +16,7 @@ import {
   CREDENTIAL_ENV_VAR_NAMES,
   SELFTEST_MARKER,
   agentCommand,
+  agentTempDir,
   nestedProbeProfile,
 } from './agent.ts'
 import {
@@ -1156,6 +1157,120 @@ test.skipIf(blocked !== null)(
       expect(existsSync(`/private/tmp/varnick-probe-${process.pid}`)).toBe(false)
     } finally {
       rmSync(mine, { recursive: true, force: true })
+      await releaseSandbox()
+    }
+  },
+  120_000,
+)
+
+// ---------------------------------------------------------------------------
+// 9c. A heredoc, which is a temporary file wearing a shell's clothes
+// ---------------------------------------------------------------------------
+
+test.skipIf(blocked !== null)(
+  'a heredoc works inside the Sandbox, and the policy is not what made it work',
+  async () => {
+    /*
+      Ticket 53, as a measurement rather than a bug report.
+
+      The agent tried to commit with `git commit -F - <<'MSG'` and could not,
+      and invented a workaround mid-task. The cause is not the policy: `srt`
+      bakes `TMPDIR=/tmp/claude` into the wrapped command, and that path is in
+      neither list, so everything inside the Sandbox inherits a temporary
+      directory the kernel refuses. zsh compounds it — it consults `TMPPREFIX`
+      for a here-document and defaults it to the literal `/tmp/zsh`.
+
+      **It is shell-specific, which is why it reads as random.** bash and sh
+      write a here-document to a pipe and never touch the filesystem; both are
+      asserted here at the same moment zsh fails, because "heredocs are broken"
+      and "zsh's heredocs are broken" lead to different fixes and only the second
+      is true. Claude Code's Bash tool runs the developer's login shell, which on
+      macOS is zsh.
+
+      The fix is `agentEnvironment`, so what is proved is that the *environment*
+      closes it. `allowWrite` is untouched — see AGENT_TEMP_RELATIVE_PATH for why
+      granting `/tmp/claude` would be the wrong trade.
+
+      **Every variable here is set inside the wrapper, never around it.** srt's
+      `TMPDIR` is part of the wrapped command — `env TMPDIR=/tmp/claude …
+      sandbox-exec …` — so an overlay on the spawn would be overwritten and a
+      probe built that way would measure nothing. The agent's own value is
+      applied from inside for the same reason: `agentEnvironment` is the
+      environment of a process spawned within the Sandbox, and this mirrors that
+      layering rather than approximating it.
+    */
+    /*
+      ANSI-C quoting, because a heredoc is the one thing that cannot be written
+      on one line. `JSON.stringify` would hand the inner shell a literal
+      backslash-n and no here-document at all — which still fails under zsh, for
+      the wrong reason, and passes under bash while printing nothing. That is a
+      probe that agrees with this ticket by accident.
+    */
+    const shellQuoted = (script: string) =>
+      `$'${script.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n')}'`
+
+    const heredoc = shellQuoted("cat <<'MSG'\nhello\nMSG")
+    const temp = agentTempDir(repoRoot)
+    const varnickEnv = `env TMPDIR=${JSON.stringify(temp)} TMPPREFIX=${JSON.stringify(join(temp, 'zsh'))}`
+
+    try {
+      const run = runner(await freshSandbox(repoRoot))
+
+      // What the agent had before this ticket: srt's value, zsh's default. No
+      // overlay at all — this is simply what is there.
+      const inherited = await run(`/bin/zsh -c ${heredoc}`)
+
+      // And what those two are, quoted rather than assumed.
+      const sawTmpdir = await run(`/bin/zsh -c 'echo $TMPDIR'`)
+      const sawPrefix = await run(`/bin/zsh -c 'echo $TMPPREFIX'`)
+
+      // The shell that never needed a file, under that same environment.
+      const bash = await run(`/bin/bash -c ${heredoc}`)
+
+      mkdirSync(temp, { recursive: true })
+      const fixed = await run(`${varnickEnv} /bin/zsh -c ${heredoc}`)
+
+      // And the boundary this did not move.
+      const world = await run(`touch ${JSON.stringify(`/private/tmp/varnick-heredoc-${process.pid}`)}`)
+
+      report('probe 9c — a heredoc needs somewhere to put a file', [
+        ['$TMPDIR as srt leaves it', outcome(sawTmpdir)],
+        ['$TMPPREFIX, zsh’s default', outcome(sawPrefix)],
+        ['zsh heredoc, as inherited', outcome(inherited)],
+        ['bash heredoc, same environment', outcome(bash)],
+        ['zsh heredoc, varnick’s values', outcome(fixed)],
+        ['write /private/tmp directly', outcome(world)],
+      ])
+
+      /*
+        The cause, named rather than inferred. This is the line that makes the
+        ticket's conclusion checkable by someone who does not believe it: the
+        temporary directory the agent is handed is one the policy refuses, and
+        it did not come from varnick.
+      */
+      expect(sawTmpdir.stdout.trim()).toBe('/tmp/claude')
+      expect(sawPrefix.stdout.trim()).toBe('/tmp/zsh')
+
+      // The defect, still reproducible on demand: this is what the agent hit.
+      expect(inherited.code).not.toBe(0)
+      expect(inherited.stderr).toContain('here document')
+
+      // Not a heredoc problem — a zsh problem. Same policy, same moment.
+      expect(bash.code).toBe(0)
+      expect(bash.stdout.trim()).toBe('hello')
+
+      // The fix, which is two variables and no policy change.
+      expect(fixed.code).toBe(0)
+      expect(fixed.stdout.trim()).toBe('hello')
+
+      // What was not bought along the way. `/tmp` stays refused, which is the
+      // whole reason this went into the environment instead.
+      expect(world.code).not.toBe(0)
+      expect(existsSync(`/private/tmp/varnick-heredoc-${process.pid}`)).toBe(false)
+    } finally {
+      // The directory is left where it is. It is gitignored, the agent creates
+      // it at every launch anyway, and removing it here would delete it out
+      // from under a varnick running beside this suite.
       await releaseSandbox()
     }
   },
