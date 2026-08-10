@@ -5546,12 +5546,34 @@ type StoreInput = { kind: 'api-key' | 'subscription'; value: string }
 /** A value shaped like a real token, so "it is nowhere" is worth asserting. */
 const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
 
+/**
+ * One of those per kind, because the guard now tells them apart.
+ *
+ * `PASTED` is an API key, and it used to stand in for both kinds because the
+ * guard asked only whether anything had been typed. `credentialPasted` checks
+ * the prefix now, so a subscription paste has to look like a subscription
+ * token — the same rule a developer meets, applied to the fixture.
+ */
+const PASTED_OF: Record<'api-key' | 'subscription', string> = {
+  'api-key': PASTED,
+  subscription: ['sk-', 'ant-oat01-NEVER-LET-THIS-OUT'].join(''),
+}
+
 {
-  // Only `absent` takes one. A paste is how a developer gets *out* of having no
-  // credential; offering it over one that is present would be a way to replace
-  // a working credential by accident, and offering it mid-read would race the
-  // read it is about to invalidate.
-  const storing = { type: 'STORE_CREDENTIAL' as const, kind: 'api-key' as const, value: 'a-key' }
+  /*
+    `absent` and `rejected` take one; `reading` and `present` do not.
+
+    A paste is how a developer gets *out* of having no usable credential.
+    Offering it over one that is **present** would replace a working credential
+    by accident, and offering it mid-**read** would race the read it is about to
+    invalidate — so those two still refuse.
+
+    `rejected` used to be grouped with them and is not any more. There is no
+    working credential there to protect, and it was the one state whose only
+    offered recovery — re-reading the same keychain item — could not change the
+    outcome. See the `rejected` state in machines/harness.ts.
+  */
+  const storing = { type: 'STORE_CREDENTIAL' as const, kind: 'api-key' as const, value: PASTED }
 
   const fresh = createActor(harnessMachine, { input: { policy: seedPolicy } }).start()
   check('a fresh clone accepts a pasted credential', fresh.getSnapshot().can(storing))
@@ -5559,9 +5581,19 @@ const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
     'and refuses an empty one, so the control is off rather than the store failing',
     !fresh.getSnapshot().can({ ...storing, value: '   ' }),
   )
+  /*
+    And refuses one that cannot be the kind it is filed under. Both values start
+    `sk-ant-`, and the two tabs sit next to each other, so this is the mistake
+    the check is really for — an API key stored in the item the host reads a
+    subscription token out of authenticates nothing, and says so a 401 later.
+  */
+  check(
+    'and refuses a credential of the wrong kind, where it is typed rather than at the API',
+    !fresh.getSnapshot().can({ ...storing, kind: 'subscription' }),
+  )
   fresh.stop()
 
-  for (const enterCredential of ['reading', 'present', 'rejected'] as const) {
+  for (const enterCredential of ['reading', 'present'] as const) {
     const actor = createActor(harnessMachine, {
       input: { policy: seedPolicy, enterCredential, credentialKind: 'api-key' },
     }).start()
@@ -5574,6 +5606,18 @@ const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
     check(
       `credential.${enterCredential} offers no kind to choose`,
       !actor.getSnapshot().can({ type: 'CHOOSE_CREDENTIAL_KIND', kind: 'api-key' }),
+    )
+    actor.stop()
+  }
+
+  {
+    const actor = createActor(harnessMachine, {
+      input: { policy: seedPolicy, enterCredential: 'rejected', credentialKind: 'api-key' },
+    }).start()
+    check('credential.rejected accepts a paste, which is the way out of it', actor.getSnapshot().can(storing))
+    check(
+      'credential.rejected offers a kind, so the paste has something to be filed as',
+      actor.getSnapshot().can({ type: 'CHOOSE_CREDENTIAL_KIND', kind: 'subscription' }),
     )
     actor.stop()
   }
@@ -5638,7 +5682,11 @@ const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
     ).start()
 
     actor.send({ type: 'CHOOSE_CREDENTIAL_KIND', kind })
-    actor.send({ type: 'STORE_CREDENTIAL', kind, value: PASTED })
+    // Of the kind being stored. One constant for both used to do, because the
+    // guard asked only whether anything had been typed — and the `waitFor`
+    // below is unbounded, so the half of this loop with the wrong-kind value
+    // waited for a state the machine was right to refuse to enter.
+    actor.send({ type: 'STORE_CREDENTIAL', kind, value: PASTED_OF[kind] })
     check(`a pasted ${kind} enters storing`, regionOf(actor.getSnapshot().value, 'credential') === 'storing')
     check(
       `and storing says it is writing the ${kind} item, which is not a secret`,
@@ -5648,7 +5696,7 @@ const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
     await waitFor(actor, (s) => regionOf(s.value, 'credential') === 'present')
     check(`a stored ${kind} is read back rather than assumed`, written !== null)
     check(`the host is handed the kind the developer chose (${kind})`, written!.kind === kind)
-    check(`and the value, once (${kind})`, written!.value === PASTED)
+    check(`and the value, once (${kind})`, written!.value === PASTED_OF[kind])
     check(
       `the kind that lands in context is the one the read resolved (${kind})`,
       actor.getSnapshot().context.credentialKind === kind,
@@ -5701,7 +5749,7 @@ const PASTED = ['sk-', 'ant-api03-NEVER-LET-THIS-OUT'].join('')
       typeof v === 'object' && v !== null && 'send' in (v as object) ? undefined : v,
     ).includes(PASTED),
   )
-  check('a failed store can be tried again', actor.getSnapshot().can({ type: 'STORE_CREDENTIAL', kind: 'api-key', value: 'again' }))
+  check('a failed store can be tried again', actor.getSnapshot().can({ type: 'STORE_CREDENTIAL', kind: 'api-key', value: PASTED }))
   actor.stop()
 }
 
@@ -5779,7 +5827,7 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   )
   fresh.stop()
 
-  for (const enterCredential of ['reading', 'present', 'rejected'] as const) {
+  for (const enterCredential of ['reading', 'present'] as const) {
     const actor = createActor(harnessMachine, {
       input: { policy: seedPolicy, enterCredential, credentialKind: 'subscription' },
     }).start()
@@ -5787,6 +5835,17 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
       `credential.${enterCredential} refuses a mint`,
       !actor.getSnapshot().can({ type: 'MINT_CREDENTIAL' }),
     )
+    actor.stop()
+  }
+
+  {
+    // And `rejected` offers one, for the same reason it offers a paste: it is a
+    // state with no working credential to protect, and a mint is the shorter of
+    // the two ways out for a developer with a subscription.
+    const actor = createActor(harnessMachine, {
+      input: { policy: seedPolicy, enterCredential: 'rejected', credentialKind: 'subscription' },
+    }).start()
+    check('credential.rejected can be told to get a new token', actor.getSnapshot().can({ type: 'MINT_CREDENTIAL' }))
     actor.stop()
   }
 }
@@ -5906,7 +5965,7 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check('a failed mint can be tried again', actor.getSnapshot().can({ type: 'MINT_CREDENTIAL' }))
   check(
     'and the paste is still there beside it',
-    actor.getSnapshot().can({ type: 'STORE_CREDENTIAL', kind: 'subscription', value: 'a-token' }),
+    actor.getSnapshot().can({ type: 'STORE_CREDENTIAL', kind: 'subscription', value: PASTED_OF.subscription }),
   )
   actor.stop()
 }

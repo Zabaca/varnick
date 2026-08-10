@@ -139,6 +139,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
           readCredential: seeds.readCredential,
           storeCredential: seeds.storeCredential,
           mintSubscriptionToken: seeds.mintSubscriptionToken,
+          cancelMint: seeds.cancelMint,
           spawnAgent: seeds.spawnAgent,
           listWorktrees: seeds.listWorktrees,
           mergeWorktree: seeds.mergeWorktree,
