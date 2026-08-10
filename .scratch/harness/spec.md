@@ -325,3 +325,162 @@ What makes a good test here is what already makes one in this repo: assert the r
 **A claim carried in as reasoning, not measurement.** Nested Seatbelt profiles are believed to intersect, which is why a Preview launched from inside the Sandbox would be safe-but-useless and why `enableWeakerNestedSandbox: false` means what it says. Ticket 47 turns it into a probe.
 
 *Measured (ticket 47, probe 11).* The conclusion holds and both reasons above were wrong. Nothing intersects, because nothing is established: the kernel refuses `sandbox_apply` inside any profile at all, so a nested profile granting nothing is refused exactly as a wider one is. And `enableWeakerNestedSandbox` is passed only in srt's `case 'linux'` branch — bubblewrap's `/proc` under an unshared PID namespace, in Docker — so it never governed this on macOS. A Preview launched from inside the Sandbox is still safe-but-useless, for a stronger reason than the one written here. See [ADR-0014](../../docs/adr/0014-core-is-authored-in-a-worktree.md).
+
+---
+
+# The window a developer actually sits in — amendment
+
+Three findings from using varnick for a day's work, none of them about
+containment and all of them about the window. They are grouped into one
+amendment because they share a cause: the chrome around the conversation was
+built to be *correct* and has never been asked to be *lived in*.
+
+## Problem Statement
+
+**The runtime panel cannot be got out of the way.** It occupies a permanent 320px
+column and is read perhaps twice a session — once on a fresh clone, and again
+when something is wrong. The rest of the time it is a description of the agent
+sitting where the agent's output should be. On a laptop the conversation is
+narrower than its own prose measure because of a panel nobody is reading.
+
+**The composer moves by character or by line and nothing in between.** ⌥→ and ⌥←
+move by word, because the platform does that for every text field. The Emacs
+bindings a terminal-shaped developer reaches for — ⌥f and ⌥b — do not: they
+insert `ƒ` and `∫` into the draft. The developer who typed them notices only
+after sending, because the glyphs are small and the field is dark. Every other
+Emacs motion in this composer works, which is what makes the two that do not
+worth fixing: the muscle memory is already half-rewarded.
+
+**The runtime panel says `credential none` while the agent is authenticated and
+answering.** The row exists to prove that injection worked — that the host read a
+credential and the confined process found it — and it is the one row on the panel
+that says the opposite of the truth. `apiKeySource` is the SDK's word for which
+store an *API key* came from, so a Session running on a subscription token gets
+`none` and always will. The developer reading it has no way to tell that from the
+failure it looks exactly like.
+
+## Solution
+
+**The runtime panel collapses, and the column goes with it.** A `runtime` toggle
+lives in the composer's status line, beside the model and effort chips, where it
+is visible whether or not the panel is. Hiding the panel removes it from the
+right-hand column entirely; if there are also no Surfaces, the column is not
+rendered and the conversation takes the full width. The toggle is in the Session
+machine, not in a `useState`, so the states page can park in both readings and
+`drive.ts` can prove the event is never refused.
+
+**⌥f and ⌥b move by word, and ⇧⌥f / ⇧⌥b extend the selection.** The boundary
+search is a pure function over `(text, caret)` in `domain.ts`; the component does
+nothing but read the keystroke, call it, and set the field's selection. Keyed off
+`event.code` rather than `event.key`, because ⌥f on a US layout arrives as `ƒ`
+and the physical key is what the binding is about.
+
+**The credential row reports what varnick injected, measured inside the confined
+process.** The agent host can see its own environment, so it says which credential
+variable is present — a name, never a value, exactly as `apiKeySource` already is
+— and the panel renders that. When neither variable is present *and* the SDK says
+`none`, the row is a warning rather than a fact, because that combination is the
+real failure this row was built to catch and it has never once been able to show
+it.
+
+## User Stories
+
+1. As a developer on a laptop, I want to hide the runtime panel, so that the conversation gets the width it was designed for.
+2. As a developer who hid it, I want the toggle to stay visible, so that bringing the panel back does not require remembering a menu item or a keystroke.
+3. As a developer with no Surfaces loaded, I want the right-hand column to disappear along with the panel, so that hiding it actually returns the space rather than leaving an empty gutter.
+4. As a developer with Surfaces loaded, I want them to stay where they are when I hide the runtime panel, so that hiding one Core panel does not take Userspace's output with it.
+5. As a developer reading the states page, I want a card showing the panel hidden, so that the collapsed reading is covered rather than only reachable by clicking in the live app.
+6. As a developer whose agent is mid-Turn, I want hiding the panel to be accepted anyway, so that the chrome is not hostage to what the agent is doing.
+7. As a developer typing a long prompt, I want ⌥f to move the caret forward one word, so that the motion I use everywhere else works here.
+8. As the same developer, I want ⌥b to move back one word, so that the pair is symmetric and neither half is a special case.
+9. As a developer correcting a phrase, I want ⇧⌥f and ⇧⌥b to extend the selection by word, so that selecting a phrase does not mean reaching for the mouse.
+10. As a developer, I want ⌥f at the end of the draft to do nothing rather than wrap, so that a motion at a boundary is a no-op and not a surprise.
+11. As a developer, I want ⌥f and ⌥b never to insert `ƒ` or `∫`, so that a motion cannot silently become an edit.
+12. As a developer with the slash menu open, I want ⌥f and ⌥b to still move the caret, so that the menu does not swallow motions it has no use for.
+13. As a developer whose draft spans several lines, I want word motion to cross the newline, so that the last word of a line and the first of the next are one motion apart.
+14. As a developer running on a subscription token, I want the credential row to name the variable my token arrived in, so that I can see injection worked.
+15. As a developer running on an API key, I want the same row to name that variable, so that the row means one thing under both credential kinds.
+16. As a developer whose credential did not reach the agent, I want the row to say so as a warning, so that the one genuine failure is distinguishable from the two healthy cases.
+17. As a developer, I want the row to remain a name and never a value, so that reading the panel over someone's shoulder cannot leak a credential.
+18. As a developer resuming a Session, I want the row to be as true after a resume as on a fresh start, so that the panel does not degrade into a first-launch-only fact.
+19. As a reviewer, I want the states page to hold a card for the failed-injection reading, so that the warning is looked at during design rather than only when it fires.
+
+## Implementation Decisions
+
+**The panel toggle is Session state, not view state.** A `TOGGLE_RUNTIME` event on
+the Session machine's root, alongside `TOOL_CALL` and `TOOL_RESULT`, and a
+`runtimeHidden: boolean` on its context defaulting to `false`. Root-level for the
+reason those two are: it is a fact about the window, and no Turn state has
+standing to decline it. `SessionInput` accepts it so a scenario can seed either
+reading.
+
+**Not persisted.** A reload starts with the panel shown. Persisting it means
+either the machine reading `localStorage` — which breaks ADR-0001 — or the host
+carrying a preference store, which is a feature rather than a fix. Named here so
+the next person does not have to rediscover that it was a decision.
+
+**The column's own emptiness is the component's decision, not the machine's.** The
+`<aside>` renders when there is anything to put in it: an unhidden runtime panel,
+or at least one Surface. That keeps ADR-0004 intact — a Surface never depends on
+Core's panel being visible — and it is why story 3 and story 4 are separate.
+
+**Word boundaries are a pure function in `domain.ts`.** `wordBoundaryForward(text,
+caret)` and `wordBoundaryBackward(text, caret)` return the new caret index.
+Emacs semantics: skip any run of non-word characters in the direction of travel,
+then skip the run of word characters that follows. A word character is
+`\p{L}`, `\p{N}` or `_`, matched with the Unicode flag, so a prompt containing
+accented text or CJK moves the way the language reads rather than the way ASCII
+does. `domain.ts` because it has zero imports by design and `drive.ts` already
+imports it — the highest seam available, and no new one.
+
+**The component does no boundary arithmetic.** The composer's `onKeyDown` matches
+`event.altKey && event.code === 'KeyF' | 'KeyB'`, calls the function, and assigns
+`selectionStart`/`selectionEnd` on the field. `event.code` rather than
+`event.key` because ⌥f produces `ƒ`; `preventDefault` unconditionally on a match,
+which is what stops the glyph. Placed above the slash-menu branch so story 12
+holds.
+
+**`RuntimeReport` gains `credentialSource`.** The name of the credential
+environment variable the agent host observes in its own environment, or the empty
+string when neither is set. Computed in `agent.ts` from `CREDENTIAL_ENV_VAR_NAMES`
+and handed to `runtimeReportFrom` as an argument, the way `resumed` already is —
+the SDK does not know what varnick injected, and a field read off the init message
+would be inventing an answer. It travels the same wire and is rebuilt field by
+field on the way back, like every other member.
+
+**The row's three readings.** `credentialSource` is a name → render it.
+`credentialSource` is empty and `apiKeySource` names something → render that,
+because the runtime found a credential by a route varnick did not take. Both
+empty or `apiKeySource` is `none` with no source → render a warning, in the same
+colour the `memory` row uses for the fresh-agent case, saying the agent is
+running without a credential varnick can account for.
+
+**No new machine states.** All three changes are an event, a pure function and a
+report field. The states page gains cards; `SESSION_STATE_PATHS` does not change.
+
+## Testing Decisions
+
+Existing seams only. No new seam is proposed.
+
+- **`drive.ts`** owns the toggle and the word boundaries. `TOGGLE_RUNTIME` is asserted accepted from a Turn in flight, and asserted to flip and flip back — a toggle that only turns on is the failure this catches. The boundary functions are asserted directly against a table of drafts, including the two ends, a multi-line draft, a run of punctuation, and a non-ASCII word.
+- **`bun test packages`** owns the report field: `runtimeReportFrom` under each credential variable and under neither, and the round trip through `parseRuntimeReport`, which is where a field nobody agreed to would be dropped. `turn.test.ts` already pins `apiKeySource` in three places and is the prior art.
+- **The states page** owns the readings: a card with the panel hidden, and a card whose report has no credential source, so the warning is a thing that was looked at.
+
+What makes a good test here is unchanged: assert the refusal and the boundary, not only the success. ⌥f at the end of a draft returning the same index is the assertion that stops the wrap bug nobody would think to look for.
+
+## Out of Scope
+
+- Persisting the panel's visibility across a reload. Decided against above, with the reason.
+- A View-menu item or a keyboard accelerator for the panel. The status-line toggle is the whole affordance; a second one in Rust is Core surface for no new capability.
+- The rest of the Emacs motion set — ⌃a, ⌃e, ⌃k, ⌥d. Only the two the developer reached for are in scope; the others are a separate decision about how far this composer imitates a terminal.
+- Making `apiKeySource` itself correct. It is the SDK's field and its meaning is the SDK's to define; varnick reports beside it rather than over it.
+- Any change to how a credential is read, stored or injected. This amendment only changes what is *said* about one.
+
+## Further Notes
+
+**The credential row is the one that matters.** The other two are comfort. This
+one is a panel built to prove injection worked, printing the word `none` on every
+subscription-token Session since it shipped — which is most of them. It is worth
+noting that nothing failed: the agent answered, the Turns ran, and the only thing
+wrong was the sentence describing them. That is the exact failure mode the panel
+was ported from forge to catch, reproduced inside the panel itself.
