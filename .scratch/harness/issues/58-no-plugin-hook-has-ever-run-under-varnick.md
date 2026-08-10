@@ -26,6 +26,24 @@ inherits** — varnick runs on bun.
 The evidence is not inference. That hook writes a flag file on every start, and
 there has never been one under the clone's `CLAUDE_CONFIG_DIR`.
 
+## The clone no longer contains a plugin that declares one
+
+The caveman plugin was deleted in `9fa649c`, and the only plugin left in
+`.claude/plugins/` is `mattpocock-skills`, whose `plugin.json` declares
+`skills` and nothing else. **So there is currently no hook in the clone for this
+ticket to make run.**
+
+The finding is unchanged — the environment is still built without `node` and
+without `CLAUDE_PLUGIN_ROOT`, so any hook that arrives will still fail
+silently — but the evidence that made it visible is gone, and the first
+acceptance criterion below now has nothing to test against.
+
+Whoever takes this writes the fixture: a minimal plugin under
+`.claude/plugins/` declaring a `SessionStart` hook that writes a flag file, and
+a test asserting the file appears. That is a better artifact than the deleted
+one anyway, because it is varnick's own and cannot be removed by a decision
+about somebody else's plugin.
+
 ## Why it matters in both directions
 
 **The capability is missing.** A developer who installs a plugin into the clone
@@ -64,7 +82,8 @@ declared capability real, or admits it is not.
 - Do not solve this by inheriting the developer's environment. `agentEnvironment`
   builds the environment outright on purpose, and that is ADR-0010's isolation.
 
-- [ ] A `SessionStart` hook declared by a plugin in the clone runs
+- [ ] A fixture plugin in the clone declares a `SessionStart` hook
+- [ ] That hook runs, and the flag file it writes is asserted
 - [ ] The measurement says which of `PATH` and `CLAUDE_PLUGIN_ROOT` was missing
 - [ ] A hook that cannot spawn is reported rather than silent
 - [ ] The environment is still built outright, not inherited
