@@ -51,6 +51,28 @@ change, it is merged, and until the restart **the agent is reasoning about a fix
 it believes is live and is not**. An agent that knows it is running old code is
 better off than one that does not, which is why ticket 56 sends it a report.
 
+## The agent should be told too, not only the window
+
+The Runtime Report renders what the agent is — model, tools, skills, permission
+mode — **for the developer**. The agent itself gets the Claude Code preset's
+working directory and nothing else: not the commit it is running, not whether
+that commit is behind the checkout, not whether it is inside a Worktree.
+
+It guesses, and the guesses are wrong. In one session it decided its own voice
+came from global config or a CLI flag (it came from `voice.ts`, in the commit it
+was running); that it was parked in an orphaned worktree (it was in the live
+tree); and that a `.scratch/` documentation commit had moved it out (a restart
+had). Each answer was available and each was inferred instead.
+
+So whatever this ticket computes should reach the agent as well — the same way
+ticket 56's merge report does. An agent that knows it is running `b98d86f` while
+the checkout is at `c1d2e3f` can say so instead of theorising, and an agent that
+knows it is not in a Worktree does not offer to preview one.
+
+Cheap, because the fact is being computed anyway. The alternative is a confident
+answer built out of nothing, which is the failure mode the whole Runtime Report
+was written to end.
+
 ## Watch for
 
 - **Read the launch commit once, at launch.** Deriving it later from a file's
