@@ -572,15 +572,32 @@ export const harnessMachine = setup({
       on, performed by the host because a human clicked in a surface the agent
       cannot write.
     */
-    mergeWorktree: fromPromise<MergeReport, { path: string }>(async ({ input }) => ({
-      branch: input.path,
-      commit: '',
-      squashed: 0,
-      worktreeRemoved: false,
-      branchDeleted: false,
-      heldBy: [],
-      leftOver: null,
-    })),
+    /*
+      **Refuses rather than answers, and it is the only actor here that does.**
+
+      Every other default is a do-nothing that resolves, which is right for them:
+      a machine with no agent, no listing and no diff is a machine in a state the
+      states page renders honestly. This one is different because its answer is a
+      *claim about the developer's repository*, and a default that resolves makes
+      that claim falsely.
+
+      It did. This default returned `{ branch: input.path, commit: '' }` — a
+      plausible-looking report — and `hooks.ts` never provided the real actor. So
+      the live window ran the stub: the band said a branch had "landed as .",
+      nothing was written, no request ever reached the runtime, and there was
+      nothing anywhere to read. It took a trace added to the runtime and an hour
+      to find, because **a missing wire looked exactly like a working feature.**
+
+      Refusing makes the same mistake loud: `worktreeMerge.mergeFailed` with a
+      sentence naming the cause. Nothing legitimate reaches this — the states
+      page and drive.ts both `.provide()` their own, which is the arrangement
+      that made the gap invisible in the first place.
+    */
+    mergeWorktree: fromPromise<MergeReport, { path: string }>(async () => {
+      throw new Error(
+        'No merge implementation was provided to this Harness, so nothing was merged. This is a wiring mistake in varnick rather than anything about the branch: see `mergeWorktree` in packages/core/src/actors/live.ts and the `.provide()` in hooks.ts.',
+      )
+    }),
     /*
       Real-service contract for restartVarnick:
         input  {} — there is nothing to decide.
@@ -592,7 +609,17 @@ export const harnessMachine = setup({
                silently did not happen would leave a developer believing they
                were running the code they had just merged.
     */
-    restartVarnick: fromPromise<void, Record<string, never>>(async () => {}),
+    /*
+      Refuses too, and for the same reason one step along: a restart that
+      silently did not happen leaves a developer believing they are running code
+      they merged. A default that resolves *is* that failure, and it shipped
+      beside the merge stub above.
+    */
+    restartVarnick: fromPromise<void, Record<string, never>>(async () => {
+      throw new Error(
+        'No restart implementation was provided to this Harness, so varnick is still running the code it was running before. This is a wiring mistake in varnick — see `restartVarnick` in packages/core/src/actors/live.ts.',
+      )
+    }),
     /*
       Collects what the agent says without being asked, for as long as it runs.
 

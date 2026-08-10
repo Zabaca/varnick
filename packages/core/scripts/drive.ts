@@ -4581,6 +4581,35 @@ async function turnPath(
   check('no actor is listed as unimplemented, so the seeded marker claims nothing', UNIMPLEMENTED.length === 0)
 
   /*
+    And every one of them is actually handed to a machine.
+
+    **This list said "every name above is wired" and two of them were not.**
+    `mergeWorktree` and `restartVarnick` were written in live.ts, exported, and
+    never named in hooks.ts's `.provide()` — so the live window ran the machine's
+    own defaults. The merge default returned a plausible report built from the
+    input path, which is why the band said a branch had "landed as ." while
+    nothing was written, no request reached the runtime, and there was nothing
+    anywhere to read.
+
+    Both defaults now refuse instead of answering, so the same mistake is loud.
+    This assertion is the half that stops it being made: an actor named here and
+    not provided there is a wire nobody would notice was missing, because a
+    machine with a default is a machine that runs.
+
+    Read out of the source rather than by constructing the machine, for the
+    reason the other static checks in this file are: hooks.ts is React and
+    reaches Userspace through `import.meta.glob`, and dragging that into a
+    headless driver is the thing ADR-0013 keeps out of here.
+  */
+  const wiring = readFileSync(new URL('../src/hooks.ts', import.meta.url), 'utf-8')
+  for (const name of ACTOR_NAMES) {
+    // `name:` or the shorthand `{ name }` — `loadSurface` is passed the second
+    // way, and a check that only knew the first would fail on wiring that is
+    // there, which is the opposite mistake and just as unhelpful.
+    check(`the live window provides ${name}`, new RegExp(`\\b${name}\\s*[:,}]`).test(wiring))
+  }
+
+  /*
     And what the marker then says, which stopped being true when the list
     emptied. It named an empty list — "These actors have no live implementation
     yet:" over nothing — and told the developer to append `?actors=live`, which
