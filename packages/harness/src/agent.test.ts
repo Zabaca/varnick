@@ -22,6 +22,7 @@ import {
   failureOfThrown,
   lastSessionPath,
   rememberSession,
+  writeNodeShim,
   interleave,
   resumableSession,
   sandboxEnvOverlay,
@@ -1482,6 +1483,86 @@ describe('the real git, ahead of the shim', () => {
 
   test('neither location present is null rather than a guess', () => {
     expect(developerToolsBin(() => false)).toBe(null)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A `node` that is bun, so a plugin's hooks can run
+// ---------------------------------------------------------------------------
+
+describe('a node that is bun', () => {
+  /*
+    Plugin hooks had never run, and the reason was a name. A plugin declares its
+    hook as a command and that command is conventionally `node <script>`;
+    `agentEnvironment` builds the environment outright and varnick runs on bun,
+    so nothing on PATH answered to `node` and the spawn failed silently.
+
+    Measured before it was fixed: bun runs a real plugin hook correctly, so what
+    was missing was the name rather than the runtime.
+  */
+
+  const shimFs = () => {
+    const made: string[] = []
+    const written = new Map<string, string>()
+    const modes = new Map<string, number>()
+    return {
+      made,
+      written,
+      modes,
+      mkdir: (path: string) => void made.push(path),
+      write: (path: string, contents: string) => void written.set(path, contents),
+      chmod: (path: string, mode: number) => void modes.set(path, mode),
+    }
+  }
+
+  test('it writes an executable node beside the configuration directory', () => {
+    const fs = shimFs()
+    const bin = writeNodeShim(CLONE, '/opt/bun/bin/bun', fs)
+
+    expect(bin).toBe(`${CLONE}/.varnick/bin`)
+    expect(fs.made).toEqual([`${CLONE}/.varnick/bin`])
+    // Executable, or the spawn fails exactly as it did before.
+    expect(fs.modes.get(`${CLONE}/.varnick/bin/node`)).toBe(0o755)
+  })
+
+  test('the interpreter is absolute and exec-ed, not searched for', () => {
+    // A bare `bun` would make the hook depend on a PATH search inside the
+    // Sandbox, which is the failure agentSdkEntry records for a bare specifier.
+    // `exec` so the hook's process is bun rather than a wrapper holding it.
+    const fs = shimFs()
+    writeNodeShim(CLONE, '/opt/bun/bin/bun', fs)
+
+    expect(fs.written.get(`${CLONE}/.varnick/bin/node`)).toBe(
+      '#!/bin/sh\nexec "/opt/bun/bin/bun" "$@"\n',
+    )
+  })
+
+  test('an interpreter path with a space in it survives the shell', () => {
+    const fs = shimFs()
+    writeNodeShim(CLONE, '/Applications/My Tools/bun', fs)
+
+    expect(fs.written.get(`${CLONE}/.varnick/bin/node`)).toContain('"/Applications/My Tools/bun"')
+  })
+
+  test('it goes on PATH behind the real toolchain', () => {
+    // Only `node` lives here and no toolchain supplies that, so the order is
+    // about keeping the rule rather than about a collision that exists today.
+    const env = agentEnvironment(
+      { PATH: '/usr/bin' },
+      { cloneRoot: CLONE, inherit: false, toolsBin: '/toolchain/usr/bin', agentBin: `${CLONE}/.varnick/bin` },
+    )
+    expect(env.PATH).toBe(`/toolchain/usr/bin:${CLONE}/.varnick/bin:/usr/bin`)
+  })
+
+  test('a launch that could not write one keeps the PATH it had', () => {
+    // A clone whose `.varnick` cannot be written is a clone whose hooks will
+    // not run, which is where varnick already was. It is not a reason to refuse
+    // to start.
+    const env = agentEnvironment(
+      { PATH: '/usr/bin' },
+      { cloneRoot: CLONE, inherit: false, agentBin: null },
+    )
+    expect(env.PATH).toBe('/usr/bin')
   })
 })
 

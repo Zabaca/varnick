@@ -590,6 +590,20 @@ export type TurnUpdate =
   | { readonly kind: 'delta'; readonly text: string }
   /** A tool call, as it happens. Also a `STREAM_DELTA` — it is transcript. */
   | { readonly kind: 'tool'; readonly text: string }
+  /**
+   * A hook that did not run, said out loud. Transcript, like a tool call.
+   *
+   * The property that let ticket 58's bug survive was silence: a plugin
+   * declared a hook, the hook could not spawn, and nothing anywhere said so —
+   * not the transcript, not the runtime report, not a log. A capability was
+   * missing and the only evidence was a file that never appeared.
+   *
+   * It is transcript rather than a Turn failure because **a hook that fails
+   * must not fail the Turn**. The agent answered; something beside it did not
+   * run. Those are different facts and collapsing them would turn a missing
+   * `node` into a refused conversation.
+   */
+  | { readonly kind: 'hook'; readonly text: string }
   /** The Turn finished. The `runTurn` actor's output, exactly. */
   | { readonly kind: 'done'; readonly text: string; readonly tokensUsed: number }
   /** The Turn did not finish. The `runTurn` actor throws this. */
@@ -733,6 +747,7 @@ export function parseTurnEvent(value: unknown): TurnEvent | null {
   switch (kind) {
     case 'delta':
     case 'tool':
+    case 'hook':
       return typeof text === 'string' ? { kind, turnId, text } : null
     case 'done':
       return typeof text === 'string' && typeof tokensUsed === 'number' && Number.isFinite(tokensUsed)
@@ -807,6 +822,46 @@ export function contextTokens(usage: unknown): number {
 
 /** The longest an argument may be before it stops being a summary. */
 const TOOL_ARGUMENT_LIMIT = 80
+
+/** How much of a hook's stderr is worth a transcript line. */
+const HOOK_STDERR_LIMIT = 160
+
+/**
+ * A hook that failed, as one line of transcript.
+ *
+ * **The one place in this module that quotes something it did not author**, and
+ * the exception is deliberate rather than an oversight. Everywhere else here the
+ * prose is written locally and selected by a tag, because the text being
+ * described is an API response and an authentication failure is the response
+ * most likely to carry a credential back.
+ *
+ * A hook's stderr is not that. It is the output of a local process the developer
+ * put in their own clone, running inside the Sandbox — where `$HOME` is denied,
+ * so the Secrets Store it might otherwise have read is unreachable. And it is
+ * the whole of the value: `node: command not found` *is* the answer, and a
+ * hand-written sentence saying "a hook failed" would send the reader to a log
+ * that does not exist.
+ *
+ * Bounded rather than trusted, like every other thing that arrives from outside
+ * in this file. First line only, because a stack trace is not a transcript line.
+ */
+export function hookFailureLine(
+  name: unknown,
+  event: unknown,
+  exitCode: unknown,
+  stderr: unknown,
+): string {
+  const hook = typeof name === 'string' && name.length > 0 ? name : 'a hook'
+  const when = typeof event === 'string' && event.length > 0 ? ` (${event})` : ''
+  const code = typeof exitCode === 'number' && Number.isFinite(exitCode) ? ` exit ${exitCode}` : ''
+  const first = typeof stderr === 'string' ? (stderr.split('\n').find((line) => line.trim() !== '') ?? '') : ''
+  const trimmed = first.trim()
+  const detail =
+    trimmed === ''
+      ? ''
+      : `: ${trimmed.length > HOOK_STDERR_LIMIT ? `${trimmed.slice(0, HOOK_STDERR_LIMIT)}…` : trimmed}`
+  return `⚠ hook ${hook}${when} did not run${code}${detail}\n`
+}
 
 /**
  * A tool call, as one line of transcript.
@@ -895,7 +950,12 @@ export function beginTurn(turnId: string): TurnRun {
   function emit(updates: readonly TurnUpdate[]): TurnEvent[] {
     const events: TurnEvent[] = []
     for (const update of updates) {
-      if (update.kind === 'delta' || update.kind === 'tool') transcript += update.text
+      // A failed hook joins the transcript for the reason a tool call does: it
+      // has to survive into the message an interrupt keeps and into the mirror,
+      // or it is a warning that exists only for whoever was watching.
+      if (update.kind === 'delta' || update.kind === 'tool' || update.kind === 'hook') {
+        transcript += update.text
+      }
       if (update.kind === 'done' || update.kind === 'failed') finished = true
       events.push({ ...update, turnId })
     }
@@ -949,6 +1009,35 @@ export function beginTurn(turnId: string): TurnRun {
             updates.push({ kind: 'tool', text: toolCallLine(name, input) })
           }
           return emit(updates)
+        }
+
+        /*
+          A hook finished, and it is only interesting when it did not work.
+
+          The SDK reports every hook this way — `outcome` is `success`, `error`
+          or `cancelled` — so the filter is here rather than in Core: a
+          transcript carrying a line per successful hook would be noise on every
+          Turn, and the fact worth surfacing is the one nobody could see.
+
+          `cancelled` is left alone. That is varnick or the developer stopping
+          something on purpose, and reporting a deliberate stop as a fault is
+          how a surface teaches people to ignore it.
+        */
+        case 'system': {
+          if (sdk.subtype !== 'hook_response') return []
+          const hook = sdk as Record<string, unknown>
+          if (hook.outcome !== 'error') return []
+          return emit([
+            {
+              kind: 'hook',
+              text: hookFailureLine(
+                hook.hook_name,
+                hook.hook_event,
+                hook.exit_code,
+                hook.stderr,
+              ),
+            },
+          ])
         }
 
         case 'result': {

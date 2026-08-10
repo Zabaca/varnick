@@ -351,6 +351,89 @@ export function claudeConfigDir(cloneRoot: string): string {
 }
 
 /**
+ * Where varnick puts executables the agent's environment needs and the machine
+ * does not have.
+ *
+ * Beside the configuration directory and gitignored for the same reason: it is
+ * one machine's state, written at launch and never committed.
+ */
+export const AGENT_BIN_RELATIVE_PATH = '.varnick/bin'
+
+/** varnick's own `bin` in a given clone. */
+export function agentBinDir(cloneRoot: string): string {
+  return join(cloneRoot, AGENT_BIN_RELATIVE_PATH)
+}
+
+/**
+ * A `node` that is bun, so that a plugin's hooks can run.
+ *
+ * ## The finding this exists for
+ *
+ * Plugin hooks had never run. ADR-0010's amendment made the clone's own
+ * configuration the agent's — *"its hooks, its skills, its MCP servers"* — and
+ * priced the decision on hooks at length, but the hooks half was never
+ * happening: a plugin declares its hook as a command, that command is
+ * conventionally `node <script>`, and `node` is not on the agent's `PATH`.
+ * `agentEnvironment` builds the environment outright rather than inheriting it,
+ * and varnick runs on bun. A hook that cannot spawn fails silently, so a
+ * developer got a plugin's skills and MCP servers and silently did not get its
+ * hooks.
+ *
+ * ## Why a shim rather than Node
+ *
+ * Measured rather than assumed: bun runs a real plugin hook correctly. The
+ * `caveman` plugin's `SessionStart` hook is CommonJS over `fs`, `path`, `os`
+ * and a synchronous stdin read; under bun it produced its full output and wrote
+ * every file it claims to. Installing a second runtime to run scripts the one
+ * we already have can run would be a dependency bought for a naming
+ * convention.
+ *
+ * The command string belongs to the plugin and is third-party, so it cannot be
+ * rewritten. What can be arranged is that the name it uses resolves.
+ *
+ * **The honest limit.** Bun's Node compatibility is high and not total, so a
+ * hook reaching an API bun does not implement will fail — and that is an
+ * argument for reporting hook failures rather than against the shim, because
+ * today such a hook fails silently either way.
+ *
+ * ## Why the interpreter is baked in rather than looked up
+ *
+ * `exec bun` would make the hook depend on a `PATH` search inside the Sandbox,
+ * which is the same class of failure {@link agentSdkEntry} records for a bare
+ * module specifier. The absolute path is known — it is the interpreter this
+ * process is already running under — so it is written into the file.
+ *
+ * ## What this does not grant
+ *
+ * The shim is inside the clone and the clone is agent-writable, so the agent
+ * can replace it. That grants nothing: the agent can already run bun directly,
+ * and everything a hook does happens inside the Sandbox. It is written on every
+ * launch rather than created once, so a broken one repairs itself.
+ */
+export function writeNodeShim(
+  cloneRoot: string,
+  interpreter: string,
+  fs: {
+    mkdir: (path: string) => void
+    write: (path: string, contents: string) => void
+    chmod: (path: string, mode: number) => void
+  },
+): string {
+  const bin = agentBinDir(cloneRoot)
+  fs.mkdir(bin)
+  const shim = join(bin, 'node')
+  /*
+    `exec` rather than a call, so the hook's process *is* bun: a wrapper left in
+    the middle would take the signals and report the exit status secondhand.
+    The interpreter is quoted because a clone path may contain a space, and this
+    file is handed to a shell.
+  */
+  fs.write(shim, `#!/bin/sh\nexec ${JSON.stringify(interpreter)} "$@"\n`)
+  fs.chmod(shim, 0o755)
+  return bin
+}
+
+/**
  * Which conversation the agent was in last, so the next one can continue it.
  *
  * **The gap this closes.** A Session is persisted twice, and until now only one
@@ -511,6 +594,11 @@ export interface AgentEnvironmentInput {
    * is none — see {@link developerToolsBin}.
    */
   readonly toolsBin?: string | null
+  /**
+   * varnick's own `bin`, prepended to `PATH` behind {@link toolsBin}. Null when
+   * it was not written — see {@link writeNodeShim} for what is in it.
+   */
+  readonly agentBin?: string | null
 }
 
 
@@ -562,6 +650,17 @@ export function agentEnvironment(
   // {@link developerToolsBin} for what the shim does and why allowing its
   // target is not the fix. Prepended rather than appended: /usr/bin is already
   // on PATH and would otherwise win.
+  /*
+    varnick's own bin next, so the shim is reachable — and behind the real
+    toolchain, which must keep winning for every name it supplies. The only
+    thing in here is a name nothing else on PATH answers to, so the order is
+    about the rule rather than about a collision that exists today.
+  */
+  if (input.agentBin) {
+    const path = environment.PATH
+    environment.PATH = path ? `${input.agentBin}:${path}` : input.agentBin
+  }
+
   if (input.toolsBin) {
     const path = environment.PATH
     environment.PATH = path ? `${input.toolsBin}:${path}` : input.toolsBin
@@ -1917,8 +2016,28 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
   // directory it cannot create is a start that fails with an error about
   // something else. Inside the clone, which is writable — see
   // CLAUDE_CONFIG_RELATIVE_PATH for why nowhere under $HOME is.
-  const { mkdirSync } = await import('node:fs')
+  const { mkdirSync, chmodSync } = await import('node:fs')
   mkdirSync(claudeConfigDir(cloneRoot), { recursive: true })
+
+  /*
+    Written every launch, for the reason {@link writeNodeShim} gives: a plugin
+    hook's command names `node`, and without this nothing answers to it.
+
+    Failure here must not be fatal. A clone whose `.varnick` cannot be written
+    is a clone whose hooks will not run, which is the state varnick has been in
+    all along — it is not a reason to refuse to start, and a start that fails
+    over a shim would be a worse bug than the one this fixes.
+  */
+  let agentBin: string | null = null
+  try {
+    agentBin = writeNodeShim(cloneRoot, process.execPath, {
+      mkdir: (path) => mkdirSync(path, { recursive: true }),
+      write: (path, contents) => writeFileSync(path, contents),
+      chmod: (path, mode) => chmodSync(path, mode),
+    })
+  } catch {
+    agentBin = null
+  }
 
   // Streaming input, held open. Prompts are pushed onto it as Turns arrive and
   // it never returns, which is what keeps the Claude Code process up. A
@@ -2002,6 +2121,7 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
         cloneRoot,
         inherit,
         toolsBin: developerToolsBin(existsSync),
+        agentBin,
       }),
       hooks: {
         PostCompact: [

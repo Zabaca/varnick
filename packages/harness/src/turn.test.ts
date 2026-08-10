@@ -10,6 +10,7 @@ import {
   parseTurnEvent,
   runtimeReportFrom,
   toolCallLine,
+  hookFailureLine,
   turnFailureMessage,
   type TurnEvent,
 } from './turn.ts'
@@ -152,6 +153,82 @@ describe('tool calls are the audit trail', () => {
     expect(done?.kind).toBe('done')
     expect(done?.kind === 'done' && done.text).toContain('src/a.ts')
     expect(done?.kind === 'done' && done.text).toContain('I read it.')
+  })
+})
+
+describe('a hook that did not run says so', () => {
+  /*
+    Ticket 58's actual defect was silence. A plugin declared a `SessionStart`
+    hook, `node` was not on the agent's PATH, the spawn failed, and nothing
+    anywhere said so — not the transcript, not the runtime report, not a log.
+    The only evidence was a file that never appeared.
+  */
+
+  const hookResponse = (over: Record<string, unknown> = {}) => ({
+    type: 'system',
+    subtype: 'hook_response',
+    hook_name: 'caveman-activate',
+    hook_event: 'SessionStart',
+    outcome: 'error',
+    exit_code: 127,
+    stderr: 'env: node: No such file or directory',
+    ...over,
+  })
+
+  test('a failed hook reaches the transcript', () => {
+    const events = play([hookResponse(), success('answered anyway')])
+    expect(events[0]?.kind).toBe('hook')
+    const text = (events[0] as { text: string }).text
+    expect(text).toContain('caveman-activate')
+    expect(text).toContain('SessionStart')
+    expect(text).toContain('127')
+    expect(text).toContain('node: No such file or directory')
+  })
+
+  test('it does not fail the Turn', () => {
+    // The agent answered; something beside it did not run. Collapsing the two
+    // would turn a missing `node` into a refused conversation.
+    const events = play([hookResponse(), success('answered anyway')])
+    expect(events.some((event) => event.kind === 'failed')).toBe(false)
+    expect(events.at(-1)?.kind).toBe('done')
+  })
+
+  test('it survives into the answer, like a tool call', () => {
+    // Or it is a warning that existed only for whoever happened to be watching.
+    const events = play([hookResponse(), success('answered anyway')])
+    const done = events.at(-1) as { text: string }
+    expect(done.text).toContain('did not run')
+  })
+
+  test('a hook that worked is not reported', () => {
+    // Every hook reports this way. A line per success would be noise on every
+    // Turn, and the fact worth surfacing is the one nobody could see.
+    const events = play([hookResponse({ outcome: 'success', exit_code: 0, stderr: '' }), success('ok')])
+    expect(events.some((event) => event.kind === 'hook')).toBe(false)
+  })
+
+  test('a cancelled hook is not a fault', () => {
+    // Reporting a deliberate stop as a failure teaches people to ignore the
+    // warning.
+    const events = play([hookResponse({ outcome: 'cancelled' }), success('ok')])
+    expect(events.some((event) => event.kind === 'hook')).toBe(false)
+  })
+
+  test('the line is bounded, so one hook cannot flood the transcript', () => {
+    const line = hookFailureLine('h', 'SessionStart', 1, 'x'.repeat(5000))
+    expect(line.length).toBeLessThan(260)
+  })
+
+  test('only the first line of stderr is quoted, not a stack trace', () => {
+    const line = hookFailureLine('h', 'SessionStart', 1, 'the real reason\n  at frame one\n  at frame two')
+    expect(line).toContain('the real reason')
+    expect(line).not.toContain('at frame one')
+  })
+
+  test('a hook that said nothing is still named', () => {
+    const line = hookFailureLine('h', 'SessionStart', undefined, '')
+    expect(line).toContain('h')
+    expect(line).toContain('did not run')
   })
 })
 

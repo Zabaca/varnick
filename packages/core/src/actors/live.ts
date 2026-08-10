@@ -333,6 +333,10 @@ export function liveActors(
           // keeps and into the mirror.
           case 'delta':
           case 'tool':
+          // A hook that could not run is the same kind of fact as a tool call:
+          // something happened beside the answer, and the transcript is where
+          // it is auditable. Not a failure — the Turn answered.
+          case 'hook':
             observer.delta(event.text)
             break
           // Not part of the answer, and deliberately not `break`ing into one:
