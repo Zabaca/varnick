@@ -629,6 +629,59 @@ export function agentConfigurationOptions(inherit: boolean): {
 }
 
 /**
+ * The SDK's permission layer, turned off — because the kernel is the boundary.
+ *
+ * `CONTEXT.md` has said so since the Sandbox was defined: *"**Avoid**:
+ * permissions (the SDK's prompt layer, which this replaces)"*. **It was never
+ * actually turned off.** `permissionMode` appeared exactly once in this
+ * repository, in the containment probe below, and the chat agent's `query()`
+ * set neither it nor `canUseTool` — so the SDK applied its documented default,
+ * `'default'`, which *"prompts for dangerous operations"*.
+ *
+ * There is no prompt surface in varnick and no callback was registered, so
+ * every prompted tool use was refused. Read, Grep and a read-only Bash pass
+ * that check, which is why it looked like a working agent for months: it could
+ * investigate anything and write nothing.
+ *
+ * Found by an agent trying to write into a Worktree — a path `denyWrite` does
+ * not name — being refused anyway, and correctly reporting that the Worktree
+ * was not the reason. Two walls stood where the design describes one, and the
+ * kernel one had been getting the credit.
+ *
+ * ## Why bypass rather than a narrower mode
+ *
+ * `'dontAsk'` denies anything not pre-approved, which needs an allowlist of
+ * tools and paths — a second boundary, in a second language, maintained beside
+ * `sandbox-policy.json` and free to disagree with it. Two boundaries that can
+ * disagree is how the *first* one stopped being believed.
+ *
+ * `'acceptEdits'` covers Edit and not Bash, which is a strange half-fence: an
+ * agent that may not run `Write` but may run `bash -c 'cat > file'` is confined
+ * by nothing except its own choice of tool.
+ *
+ * So: one boundary, kernel-enforced, measured by eleven containment probes,
+ * with nothing above it pretending to hold. That is ADR-0003's whole argument
+ * and this is the line that finally honours it.
+ *
+ * ## What this genuinely costs
+ *
+ * Everything the agent may do is now decided by `sandbox-policy.json` and
+ * nothing else. A mistake in that file is no longer caught by a second layer,
+ * because there is no second layer — which is exactly why the policy is denied
+ * to the agent, why the baseline records what varnick generated, and why the
+ * probes run the real operations rather than reading the file back.
+ *
+ * `allowDangerouslySkipPermissions` is the SDK's own name and it is not
+ * softened here. A reader should feel what this line does.
+ */
+export function agentPermissionOptions(): {
+  permissionMode: 'bypassPermissions'
+  allowDangerouslySkipPermissions: true
+} {
+  return { permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true }
+}
+
+/**
  * Plugins the clone carries, as the SDK's own local-plugin config.
  *
  * Discovered from the filesystem rather than registered, the same rule Surfaces
@@ -1912,10 +1965,11 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
         in the SDK's own words). Omitting it left an agent with no idea where it
         was standing, in a product whose whole subject is a clone.
 
-        Not the same question as `settingSources`, which stays `[]`. That is
-        ADR-0010's isolation and it is why `CLAUDE.md` is not loaded as a memory
-        file: memory files come with the project source, and so do hooks, which
-        the agent can write. This is a prompt varnick asks the CLI for — nothing
+        Not the same question as `settingSources`. That one was `[]` when this
+        was written and is `['project', 'local']` now — ticket 38 reversed it,
+        so `CLAUDE.md` *is* loaded as a memory file and the clone's own hooks
+        and skills are the agent's. What has not changed is why the two are
+        separate questions: this is a prompt varnick asks the CLI for, nothing
         agent-authored runs because of it, and the boundary does not move.
 
         `excludeDynamicSections` is deliberately left off: stripping the working
@@ -1931,6 +1985,15 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
       // whole process tree. Set rather than omitted, because "off" belongs in
       // the code that would be blamed for exit 71.
       sandbox: { enabled: false },
+      /*
+        And the SDK's *permission* layer off with it, for the same reason and
+        with a much larger consequence — see {@link agentPermissionOptions},
+        which is where the argument lives. Beside `sandbox` on purpose: they are
+        two halves of one sentence, "the kernel is the boundary and nothing
+        above it pretends to hold", and separating them is how one of them came
+        to be missing for months without anybody noticing.
+      */
+      ...agentPermissionOptions(),
       // ADR-0010. Isolated by default; `VARNICK_INHERIT_CLAUDE_CONFIG=1` is the
       // flag out. `env` replaces the subprocess environment outright, which is
       // why agentEnvironment returns the whole of it rather than an overlay.

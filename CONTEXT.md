@@ -40,6 +40,7 @@ _Avoid_: harness (taken), capabilities, manifest, profile (the Profile is what w
 
 **Sandbox**:
 The kernel-level restrictions the agent's process tree runs under, applied with `@anthropic-ai/sandbox-runtime` around the whole tree rather than per command. See [ADR-0003](./docs/adr/0003-containment-wraps-the-process-tree.md).
+**Replaces** the SDK's permission layer rather than sitting under it: `permissionMode: 'bypassPermissions'` with `allowDangerouslySkipPermissions: true`, so everything the agent may do is decided by `sandbox-policy.json` and nothing else. That was the design from the first line of this entry and **it was not implemented until it was measured** — `permissionMode` appeared once in the repository, in a containment probe, and the chat agent got the SDK's `'default'`, which prompts. varnick has no prompt surface, so every Write was refused while Read and Grep passed, and the product looked like a working agent that could investigate anything and change nothing. Found by an agent being refused in a **Worktree**, a path `denyWrite` does not name.
 _Avoid_: seatbelt (one backend, not the concept), permissions (the SDK's prompt layer, which this replaces)
 
 **Profile**:

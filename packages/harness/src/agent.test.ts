@@ -11,6 +11,7 @@ import {
   INHERIT_CLAUDE_CONFIG_ENV_VAR,
   agentCommand,
   agentConfigurationOptions,
+  agentPermissionOptions,
   agentEntryPath,
   agentEnvironment,
   agentPlugins,
@@ -279,6 +280,37 @@ describe('the agent does not inherit the developer\'s Claude Code configuration'
     // is not "skills off" — it is no opinion. The runtime panel reports the
     // list, and an empty one should mean the agent found none.
     expect(agentConfigurationOptions(false).skills).toBe('all')
+  })
+
+  test('the SDK asks nobody for permission, because the kernel already answered', () => {
+    /*
+      `CONTEXT.md` has said since the Sandbox was defined that this layer is
+      *replaced* — and it was never turned off. `permissionMode` appeared once
+      in the whole repository, in the containment probe, so the chat agent got
+      the SDK's documented default: `'default'`, which prompts for dangerous
+      operations. varnick has no prompt surface and registers no `canUseTool`,
+      so every prompted tool use was refused, for months, while Read and Grep
+      passed the same check and made it look like a working agent.
+
+      Asserted as a pair. `bypassPermissions` without
+      `allowDangerouslySkipPermissions` is refused by the SDK, so a half-applied
+      fix is a silent return to the same wall.
+    */
+    expect(agentPermissionOptions()).toEqual({
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
+    })
+  })
+
+  test('nothing narrower is chosen, and the reason is one boundary rather than two', () => {
+    // `dontAsk` denies what is not pre-approved, which needs an allowlist of
+    // tools and paths kept beside sandbox-policy.json and free to disagree with
+    // it — and two boundaries that can disagree is how the first one stops
+    // being believed. `acceptEdits` covers Edit and not Bash, which confines an
+    // agent only to its choice of tool.
+    expect(agentPermissionOptions().permissionMode).not.toBe('dontAsk')
+    expect(agentPermissionOptions().permissionMode).not.toBe('acceptEdits')
+    expect(agentPermissionOptions().permissionMode).not.toBe('default')
   })
 
   test('a plugin is a directory in the clone that says it is one', () => {
