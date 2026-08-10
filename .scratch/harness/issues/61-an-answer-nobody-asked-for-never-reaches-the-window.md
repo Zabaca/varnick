@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent — the losing half is fixed; immediacy remains
 
 **Realizes:** no new state path, unless the answer turns out to need one.
 
@@ -106,13 +106,34 @@ Two constraints worth stating before anyone designs it:
 - Check whether the *runtime report* and hook failures (ticket 58) reach the
   window, since they arrive by a similar path.
 
-- [ ] An agent answer triggered by a subagent completion appears in the window
-- [ ] It is written to the Session mirror
-- [ ] It survives a restart and resume like any other message
-- [ ] The transcript does not attribute the trigger to the developer
-- [ ] The window says what prompted an unprompted answer
+- [x] An agent answer triggered by a subagent completion appears in the window
+- [x] It is written to the Session mirror
+- [x] It survives a restart and resume like any other message
+- [x] The transcript does not attribute the trigger to the developer
+- [x] The window says what prompted an unprompted answer
+- [ ] **It appears when it happens, rather than at the start of the next Turn**
 - [ ] A prompt-free Turn can be interrupted
-- [ ] Every new state path is named in `CONTEXT.md` and has a card
+
+## What remains, and why it was split
+
+The answer is no longer lost — that was the defect and it is fixed. What is not
+fixed is *when* it appears.
+
+Nothing in Core polls while idle: `next-turn-event` is called only from inside
+`runTurn`, which exists only while a Turn does. So an unprompted answer queues
+host-side and is drained by the **next Turn**, which collects it and appends it
+whole. In practice that means it appears the moment the developer next says
+anything — which is when they are looking, and is why this was worth shipping
+before the rest.
+
+Making it immediate means a second consumer of that queue, and the two would
+race at exactly the idle-to-answering boundary this feature lives on. The clean
+answer is one pump for the life of the agent, with `runTurn` reduced to posting
+the prompt and forwarding the interrupt — a real refactor of the `turn` region,
+and the reason it is a separate piece of work rather than a line in this one.
+
+No new state path was needed for the shipped half, which is why there is no card:
+an unprompted answer is an event that appends a message, like `COMPACTED`.
 
 Found by comparing the SDK's own transcript against the Session mirror after the
 developer asked why the agent had not reported a completion it had, in fact,

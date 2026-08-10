@@ -125,6 +125,19 @@ export type SessionEvent =
    * the machine declines is a panel that stops matching the runtime.
    */
   | { type: 'TASKS_REPORTED'; tasks: readonly RunningTask[] }
+  /**
+   * The agent answered something the developer did not send.
+   *
+   * A report, like `COMPACTED` and `CLEAR`, and accepted wherever the machine
+   * is for the same reason: it describes something that already happened, and a
+   * report the machine declines is an answer nobody ever sees. **This is the
+   * event two complete answers were lost for want of.**
+   *
+   * No user message is appended for it. The transcript must not attribute a
+   * task notification to the developer — that would be a second lie in place of
+   * the silence it replaces — so the cause rides on the answer instead.
+   */
+  | { type: 'UNPROMPTED_ANSWER'; text: string; cause: string }
   /** The agent summarised the conversation. A report, like `CLEAR`. `null`
    *  tokens means the Session would not say what it now holds. */
   | { type: 'COMPACTED'; summary: string; tokensUsed: number | null }
@@ -341,6 +354,34 @@ export const sessionMachine = setup({
       What *is* transcript arrives separately, as a delta.
     */
     TASKS_REPORTED: { actions: assign({ tasks: ({ event }) => event.tasks }) },
+    /*
+      And an answer nobody asked for joins the transcript, under what caused it.
+
+      A Turn boundary, unlike the tasks above: the transcript has changed and
+      has stopped changing, which is exactly what `saveTranscript` is for. An
+      answer that reached the window and not the mirror would be lost again on
+      the next restart, one layer further along than where it was lost before.
+
+      Guarded on having something to say. An empty answer is a run that produced
+      no text, and an empty message in the transcript is worse than none.
+    */
+    UNPROMPTED_ANSWER: {
+      guard: ({ event }) => event.text.trim().length > 0,
+      actions: [
+        assign({
+          messages: ({ context, event }) => [
+            ...context.messages,
+            {
+              id: `m${context.messages.length + 1}`,
+              role: 'agent' as const,
+              text: event.text,
+              cause: event.cause,
+            },
+          ],
+        }),
+        'saveTranscript',
+      ],
+    },
     /*
       Attaching is legal wherever typing is, and for the same reason: the
       composer is not gated on the Turn. What is gated is `SEND`, which is

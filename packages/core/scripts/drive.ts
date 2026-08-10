@@ -1458,6 +1458,50 @@ const textsOf = (messages: readonly Message[]) => messages.map((m) => m.text).jo
 
 {
   /*
+    An answer nobody asked for reaches the transcript.
+
+    The defect: two complete answers were produced, recorded by the SDK, and
+    never reached the mirror or the window -- both triggered by a subagent
+    finishing rather than by anything typed. The developer then asked why the
+    agent had not reported, and it correctly said it had.
+  */
+  const actor = createActor(sessionMachine, { input: { sessionId: 'unprompted-1' } }).start()
+
+  actor.send({
+    type: 'UNPROMPTED_ANSWER',
+    text: 'The subagent finished. Four commits, fast-forward.',
+    cause: 'a subagent finished',
+  })
+  const after = actor.getSnapshot().context
+  check('an unprompted answer joins the transcript', after.messages.length === 1)
+  check('it is the agent speaking, not the developer', after.messages[0]!.role === 'agent')
+  check('and it carries what caused it', after.messages[0]!.cause === 'a subagent finished')
+
+  /*
+    No user message is fabricated for it. Attributing a task notification to the
+    developer would be a second lie in place of the silence it replaces.
+  */
+  check(
+    'no prompt is invented to explain it',
+    after.messages.every((m) => m.role !== 'user'),
+  )
+
+  // An empty answer is a run that produced no text. A blank message in the
+  // transcript is worse than none.
+  actor.send({ type: 'UNPROMPTED_ANSWER', text: '   ', cause: 'a subagent finished' })
+  check('an empty one is refused', actor.getSnapshot().context.messages.length === 1)
+
+  // Accepted wherever the machine is, like COMPACTED and CLEAR: a report the
+  // machine declines is an answer nobody ever sees.
+  check(
+    'it is accepted while a Turn is idle',
+    actor.getSnapshot().can({ type: 'UNPROMPTED_ANSWER', text: 'x', cause: 'y' }),
+  )
+  actor.stop()
+}
+
+{
+  /*
     Which subagents are running, and when the panel empties.
 
     The defect this measures: a Turn that spawned subagents was indistinguishable
@@ -4205,6 +4249,7 @@ async function turnPath(
       heard.push({ summary, tokensUsed })
     },
     tasksReported: () => {},
+    unpromptedAnswer: () => {},
   }
 
   const turn = liveActors(observer).runTurn

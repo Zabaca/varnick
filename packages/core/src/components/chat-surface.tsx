@@ -578,9 +578,29 @@ export function ChatSurface({
                     ) : null}
                   </ClaudeMessage>
                 ) : (
-                  <ClaudeMessage key={m.id} role="assistant">
-                    <Markdown text={m.text} />
-                  </ClaudeMessage>
+                  <div key={m.id}>
+                    {/* Why the agent started talking, when nobody asked it to.
+
+                        Without this the answer appears in the scrollback with
+                        no visible cause, which reads as the agent talking to
+                        itself — and a developer who cannot tell why it started
+                        cannot tell whether to trust it. The text is the
+                        runtime's own, read off the message stream host-side;
+                        Core renders it and does not compose it. */}
+                    {m.cause && (
+                      <div
+                        className="mb-1 flex items-center gap-2 text-[11.5px]"
+                        style={{ color: 'var(--fg-faint)' }}
+                      >
+                        <span aria-hidden className="h-px w-4" style={{ background: 'var(--fg-faint)' }} />
+                        <span>{m.cause}</span>
+                        <span aria-hidden className="h-px min-w-0 flex-1" style={{ background: 'var(--fg-faint)' }} />
+                      </div>
+                    )}
+                    <ClaudeMessage role="assistant">
+                      <Markdown text={m.text} />
+                    </ClaudeMessage>
+                  </div>
                 ),
               )}
 

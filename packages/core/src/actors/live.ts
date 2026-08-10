@@ -11,6 +11,8 @@ import {
   isCredentialRejection,
   turnFailureMessage,
   type PastedImage,
+  isUnpromptedTurn,
+  UNPROMPTED_CAUSE_UNKNOWN,
   type RuntimeReport,
   type RunningTask,
   type SlashCommand,
@@ -148,6 +150,19 @@ export interface TurnObserver {
    * a panel empties.
    */
   tasksReported(tasks: readonly RunningTask[]): void
+  /**
+   * The agent said something nobody asked it for.
+   *
+   * Sent to the Session as `UNPROMPTED_ANSWER`, which appends it to the
+   * transcript under what caused it and saves. A whole message rather than a
+   * stream: it belongs to no Turn, and two answers accumulating into one
+   * `partial` would produce a message that is neither.
+   *
+   * The cause is read off the message stream host-side and passed through
+   * unchanged. Core does not compose one — a divider naming the wrong cause
+   * would be a transcript that lies in a second way.
+   */
+  unpromptedAnswer(text: string, cause: string): void
 }
 
 /** An observer that drops everything. What a run with no owner gets. */
@@ -159,6 +174,7 @@ const silentObserver: TurnObserver = {
   conversationReset: () => {},
   conversationCompacted: () => {},
   tasksReported: () => {},
+  unpromptedAnswer: () => {},
 }
 
 /**
@@ -308,6 +324,15 @@ export function liveActors(
       // from an abandoned Turn can be told from this one's first word.
       const turnId = nextTurnId()
 
+      /*
+        An unprompted answer, collected while this Turn drains the wire. Local
+        to the actor because it belongs to no Turn — including this one — and
+        putting it in the machine's context would make it a thing the Session
+        has to forget.
+      */
+      let unpromptedText = ''
+      let unpromptedCause: string = UNPROMPTED_CAUSE_UNKNOWN
+
       await callHarness({
         kind: 'run-turn',
         turnId,
@@ -337,10 +362,45 @@ export function liveActors(
         // nobody is listening to.
         if (signal.aborted) throw new Error('The turn was interrupted.')
 
-        // Nothing said yet, or something said by a Turn that is not this one.
-        // Both are ordinary: a Turn that is thinking is a working Turn, and an
+        if (event === null) continue
+
+        /*
+          An answer nobody asked for, waiting on the wire.
+
+          The agent answers things the developer did not type — a subagent
+          finishing, a background command's output — and those answers used to
+          be discarded host-side. They are not any more, and this is where they
+          are collected: they queue until something drains the wire, and the
+          only thing that ever does is a Turn.
+
+          So they arrive at the *start of the next Turn* rather than as they
+          happen. That is late and it is not lost, which is the whole of the
+          defect this fixes — and it is a separate ticket to make it immediate,
+          because immediate means Core polling while idle, which is a second
+          consumer of this queue and a race at the boundary if it is added
+          carelessly.
+
+          Accumulated whole rather than streamed into `partial`: two answers
+          interleaving into one buffer would produce a message that is neither.
+        */
+        if (isUnpromptedTurn(event.turnId)) {
+          if (event.kind === 'cause') unpromptedCause = event.text
+          if (event.kind === 'delta' || event.kind === 'tool' || event.kind === 'hook') {
+            unpromptedText += event.text
+          }
+          if (event.kind === 'done') {
+            // `event.text` is the run's own accumulation — tool calls included —
+            // so it is preferred over what was watched arriving here.
+            observer.unpromptedAnswer(event.text || unpromptedText, unpromptedCause)
+            unpromptedText = ''
+            unpromptedCause = UNPROMPTED_CAUSE_UNKNOWN
+          }
+          continue
+        }
+
+        // Something said by a Turn that is not this one. Ordinary: an
         // interrupted Turn's last words are still on the wire behind it.
-        if (event === null || event.turnId !== turnId) continue
+        if (event.turnId !== turnId) continue
 
         switch (event.kind) {
           // A tool call is transcript, not decoration: it goes to the same

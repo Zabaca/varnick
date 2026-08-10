@@ -121,6 +121,20 @@ export interface Message {
    * that. Absent rather than `0` for the overwhelming majority that carry none.
    */
   readonly attachments?: number
+  /**
+   * Why the agent said this, when nobody asked it to.
+   *
+   * Present only on an answer the developer did not prompt — a subagent
+   * finishing, a background command's output. It renders as the divider above
+   * the message, because **an answer with no visible cause reads as the agent
+   * talking to itself**, and a developer who cannot tell why it started
+   * talking cannot tell whether to trust it.
+   *
+   * Read off the message stream host-side and carried through unchanged.
+   * Absent for every prompted message, which is almost all of them: the prompt
+   * above it is its cause.
+   */
+  readonly cause?: string
 }
 
 /**

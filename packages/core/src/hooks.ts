@@ -90,6 +90,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
     conversationReset: () => {},
     conversationCompacted: () => {},
     tasksReported: () => {},
+    unpromptedAnswer: () => {},
     authorizing: () => {},
   })
   const observer = useMemo<TurnObserver>(
@@ -102,6 +103,7 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
       conversationCompacted: (summary, tokensUsed) =>
         signals.current.conversationCompacted(summary, tokensUsed),
       tasksReported: (tasks) => signals.current.tasksReported(tasks),
+      unpromptedAnswer: (text, cause) => signals.current.unpromptedAnswer(text, cause),
     }),
     [],
   )
@@ -225,6 +227,11 @@ export function useHarness(requestedMode?: ActorMode, sessionInput?: SessionInpu
       */
       tasksReported: (tasks) => {
         actorRef.getSnapshot().context.session?.send({ type: 'TASKS_REPORTED', tasks })
+      },
+      // And an answer the developer did not ask for, which used to be dropped
+      // before it got this far.
+      unpromptedAnswer: (text, cause) => {
+        actorRef.getSnapshot().context.session?.send({ type: 'UNPROMPTED_ANSWER', text, cause })
       },
       // And where the mint's one signal lands. `credential.minting` is the only
       // state that accepts it, so a URL from an attempt that has already ended
