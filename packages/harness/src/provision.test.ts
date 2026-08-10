@@ -139,3 +139,31 @@ describe('a failed install is reported, never fatal', () => {
     )
   })
 })
+
+describe('the two ways into a Worktree', () => {
+  /*
+    A session can *walk* into a Worktree, which announces itself as a cwd
+    change — and it can **resume already inside one**, which announces nothing
+    at all. `EnterWorktree` is session state and survives a restart, so after
+    every crash the agent comes back standing in a directory it never entered.
+
+    The first pass watched only for the change, so the case that happens after
+    every restart was the case that was missed, and the agent went back to
+    linking node_modules by hand. Both paths run the same decision.
+  */
+
+  test('the decision does not depend on how the directory was reached', () => {
+    // There is one rule and it is a question about the path, not about the
+    // event that carried it — which is what lets two callers share it.
+    const nothingExists = () => false
+    const walked = provisionCommandFor(CLONE, WORKTREE, nothingExists)
+    const resumed = provisionCommandFor(CLONE, WORKTREE, nothingExists)
+    expect(walked).toEqual(resumed)
+  })
+
+  test('a resumed session in the live tree still provisions nothing', () => {
+    // The `init` report's cwd is the clone root for every ordinary session, so
+    // this is the common case rather than an edge one: it must not install.
+    expect(provisionCommandFor(CLONE, CLONE, () => false)).toBeNull()
+  })
+})

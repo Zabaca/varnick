@@ -440,6 +440,42 @@ export function writeNodeShim(
 }
 
 /**
+ * Give a Worktree its dependencies, if it is one and it has none.
+ *
+ * Returns the sentence to put in front of the agent when it could not, and
+ * `null` when there was nothing to do or it worked. Reported, never thrown —
+ * see {@link provisionFailureMessage} for why a Worktree without dependencies
+ * must not be a Worktree the agent refuses to enter.
+ *
+ * **Two callers, because there are two ways to end up in one**, and the second
+ * was missed on the first pass: `CwdChanged` covers a session that *walks* into
+ * a Worktree, and the `init` report covers one that **resumes already inside**
+ * it. A resumed session never changes directory — `EnterWorktree` is session
+ * state and survives a restart — so the hook alone left exactly the case that
+ * happens after every crash, and the agent went back to linking `node_modules`
+ * by hand.
+ */
+async function provisionWorktreeAt(cloneRoot: string, path: string): Promise<string | null> {
+  const plan = provisionCommandFor(cloneRoot, path, existsSync)
+  if (plan === null) return null
+  /*
+    Awaited rather than left running. The next thing the agent does in a fresh
+    Worktree is read or test something, and an install racing that would fail in
+    a way that looks like a broken change rather than a directory that was not
+    ready yet.
+  */
+  const install = Bun.spawn([plan.command, ...plan.args], {
+    cwd: plan.cwd,
+    env: process.env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const status = await install.exited
+  if (status === 0) return null
+  return provisionFailureMessage(plan.cwd, await new Response(install.stderr).text())
+}
+
+/**
  * Which conversation the agent was in last, so the next one can continue it.
  *
  * **The gap this closes.** A Session is persisted twice, and until now only one
@@ -1496,6 +1532,15 @@ export interface ServeTurnsInput {
    */
   readonly sessionStarted?: (sessionId: string) => void
   /**
+   * Where the Session is standing, as its own `init` message reports it.
+   *
+   * Separate from {@link sessionStarted} because it answers a different
+   * question and has a different consumer: the pointer is about continuity,
+   * this is about whether the directory the agent resumed into is ready to be
+   * worked in. See `provisionWorktreeAt`.
+   */
+  readonly sessionCwd?: (cwd: string) => void
+  /**
    * The commands the runtime reported, as soon as it reports them.
    *
    * Handed over so the host can keep them for the next launch. The list can
@@ -1818,6 +1863,15 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
         // pointer was recorded only at the end would lose its continuity to
         // exactly the crash the mirror already survives.
         if (runtime.sessionId.length > 0) input.sessionStarted?.(runtime.sessionId)
+        /*
+          And where it resumed to, which is the only announcement a session
+          already standing in a Worktree ever makes. `EnterWorktree` is session
+          state and survives a restart, so the cwd is right without anything
+          having *changed* it — and the hook that watches for a change never
+          fires. Reported here rather than acted on: this loop knows nothing
+          about clone roots, and `runAgentHost` does.
+        */
+        if (runtime.cwd.length > 0) input.sessionCwd?.(runtime.cwd)
         // A Turn already in flight gets it now; anything else waits for `start`.
         // Both paths run through the same replay, so there is one description of
         // when a report reaches Core rather than two that can disagree.
@@ -2238,25 +2292,9 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
             hooks: [
               async (hook) => {
                 if (hook.hook_event_name !== 'CwdChanged') return {}
-                const plan = provisionCommandFor(cloneRoot, hook.new_cwd, existsSync)
-                if (plan === null) return {}
-                /*
-                  Awaited rather than left running. The next thing the agent
-                  does in a fresh Worktree is read or test something, and an
-                  install racing that would fail in a way that looks like a
-                  broken change rather than a directory that was not ready.
-                */
-                const install = Bun.spawn([plan.command, ...plan.args], {
-                  cwd: plan.cwd,
-                  env: process.env,
-                  stdout: 'pipe',
-                  stderr: 'pipe',
-                })
-                const status = await install.exited
-                if (status === 0) return {}
-                const detail = await new Response(install.stderr).text()
+                const failure = await provisionWorktreeAt(cloneRoot, hook.new_cwd)
                 // Reported, never fatal: see {@link provisionFailureMessage}.
-                return { systemMessage: provisionFailureMessage(plan.cwd, detail) }
+                return failure === null ? {} : { systemMessage: failure }
               },
             ],
           },
@@ -2306,6 +2344,17 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
     },
     resumed: resuming !== null,
     sessionStarted: (sessionId) => rememberSession(cloneRoot, sessionId),
+    /*
+      A session that resumed into a Worktree gets its dependencies here, because
+      it never announced a change of directory to get them any other way.
+
+      Not awaited: the first Turn cannot start before the developer sends one,
+      and blocking the message loop on an install would stall every other thing
+      `init` carries — the runtime report and the command list among them.
+    */
+    sessionCwd: (cwd) => {
+      void provisionWorktreeAt(cloneRoot, cwd)
+    },
     commandsListed: (listed) => {
       // Best-effort, like the session pointer: a cache that could not be
       // written costs the next launch a menu, and failing this launch to say so
