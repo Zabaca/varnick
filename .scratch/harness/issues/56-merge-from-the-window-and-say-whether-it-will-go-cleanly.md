@@ -4,7 +4,7 @@
 
 **Blocked by:** 55 — a merge control on a panel that does not refresh itself would show a stale answer about a branch that has moved.
 
-**Status:** ready-for-human
+**Status:** done — merged as `a315d18`. The unbuilt half is ticket 64.
 
 **Realizes:** `worktreeMerge.merging`, `worktreeMerge.merged`, `worktreeMerge.mergeFailed`.
 
