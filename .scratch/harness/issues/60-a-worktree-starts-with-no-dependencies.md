@@ -47,35 +47,66 @@ decides what a new Worktree gets, and it should hand over both.
 Treat them as one job with two halves rather than two unrelated chores, because
 the wrong version of each fix is the same wrong idea: copy everything.
 
-## The shape of the answer
+## The answer, measured: `bun install`, not links
 
-Whatever creates the Worktree provisions its dependencies. Two candidates,
-and the measurement decides:
+A spike ran all four candidates against the real suite. Numbers first, because
+they settle it:
 
-- **Link, as the agent did** — the root and each package's `node_modules`
-  pointed at the live tree's. Instant, no disk, and correct as long as the
-  dependency set is the same. It is: `package.json` is on the deny list, so the
-  agent cannot change what is installed from inside a Worktree.
-- **Install** — `bun install` in the Worktree. Honest but slow, duplicates the
-  store, and **may not be possible at all**: the Sandbox's egress allowlist
-  decides whether a registry is reachable, and that has never been tested from
-  inside a Worktree. Measure before assuming; do not widen the allowlist to make
-  it work.
+| approach | tests loaded | result |
+| --- | --- | --- |
+| bare Worktree | 442 / 620 | 9 fail, 7 errors — cannot resolve `@anthropic-ai/*` |
+| link root `node_modules` only | 442 / 620 | identical — no help at all |
+| link root + all four packages | 620 / 620 | 618 pass, **1 fail** |
+| `bun install --frozen-lockfile` | 620 / 620 | **619 pass, 0 fail** |
 
-The link approach is the one to try first, and its limitation is worth writing
-down rather than discovering later: a Worktree whose branch changes
-`package.json` gets the live tree's dependencies, not its own. That branch
-cannot come from the agent, but it can come from a human, and the failure should
-say so rather than producing a confusing type error.
+`bun install --frozen-lockfile` took **155 ms** for 462 packages and cost
+**12 MB** of real disk. The apparent size is 478 MB; APFS `clonefile` makes it
+copy-on-write, and the figure is a free-space delta measured before and after,
+not an estimate. It is faster to run than the seventeen symlinks an agent makes
+by hand, and it needs no network with a warm cache.
+
+**So the intuition that linking is the cheap option was wrong twice over.** It
+is not cheaper, and it does not work.
+
+### Why linking fails, and it is the interesting part
+
+The single failure under linking is `containment.probe.test.ts:300` — *"a file
+outside the boundary is unreachable by Bash, Read, Grep and Glob alike"*. It
+fails because the resolved module path is
+`/Users/…/varnick/node_modules/.bun/zod@4.4.3/…`, in the **live tree**.
+
+Linking places a Worktree's dependencies outside that Worktree's own Sandbox
+boundary. Host-side `bun test` does not care, because it is unconfined. Anything
+running *inside* the Sandbox rooted at the Worktree — **every Preview** — cannot
+read them. Linking fixes the test command and breaks the thing
+[ADR-0014](../../../docs/adr/0014-core-is-authored-in-a-worktree.md) exists for,
+and it breaks it in a way no test run from the live tree would ever reveal.
+
+Linking the root alone, worth stating separately, does nothing whatsoever: bun's
+isolated layout resolves workspace dependencies from each package's own
+`node_modules`, so the four package directories are the load-bearing ones.
+
+### Where it runs
+
+**Host-side, in whatever creates the Worktree.** The agent could not do this
+itself even if asked: bun's cache is `~/.bun/install/cache`, and the Sandbox
+denies `$HOME`. That is not an obstacle to route around — provisioning happens
+before the agent arrives, outside the Sandbox, which is where it belongs.
+
+A cold cache would need the network, and the host has it. Nothing in the egress
+allowlist needs widening, because nothing about this runs confined.
 
 ## Watch for
 
 - **Do not commit the links.** `.gitignore` already covers `node_modules`; a
   provisioning step that stages anything has gone wrong.
-- **Removing the Worktree must not follow a link out into the live tree.** `git
-  worktree remove` and any cleanup in ticket 56 delete a directory that now
-  contains symlinks to the real dependency store. Verify this explicitly — the
-  failure mode is deleting the live tree's `node_modules`, which is silent until
+- **`git worktree remove` refuses a Worktree with an installed `node_modules`**
+  unless forced — it is untracked content. The spike used `--force` and the live
+  tree's 239 `.bun` entries were intact afterwards, checked. Ticket 56's cleanup
+  needs the same flag and the same check.
+- The symlink hazard the earlier draft warned about is gone with the approach,
+  but keep it in mind if anyone reintroduces links: deleting a Worktree that
+  links out would take the live tree's `node_modules` with it, silently, until
   the next build.
 - The Preview path (`launch_preview`) needs the same provisioning and gets it
   from the same place. A Preview that cannot resolve `react` is a Worktree that
@@ -86,11 +117,12 @@ say so rather than producing a confusing type error.
 
 - [ ] A newly created Worktree can run `bun test` without manual setup
 - [ ] It can run `typecheck` and `drive.ts` too
-- [ ] The root and every package's `node_modules` are provisioned, not just the root
+- [ ] The full suite passes in a fresh Worktree, containment probes included
 - [ ] Nothing provisioned is ever staged or committed
 - [ ] Removing a Worktree leaves the live tree's `node_modules` intact
 - [ ] A Preview launched from a Worktree starts without manual setup
-- [ ] Whether `bun install` works inside the Sandbox is measured and recorded, without widening the egress allowlist
+- [ ] Provisioning failure is reported, not silent — a Worktree with no
+      dependencies should say so rather than producing resolution errors later
 
 Found watching a subagent spend its opening tool calls on `ln -s` instead of on
 ticket 55.
