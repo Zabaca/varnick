@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { answerHarnessLine, hostCapabilities, type HarnessCapabilities } from './runtime.ts'
+import {
+  answerHarnessLine,
+  hostCapabilities,
+  traceLine,
+  UNTRACED_KINDS,
+  worthTracing,
+  type HarnessCapabilities,
+} from './runtime.ts'
 import { openSecretsStore, SECRETS_INDEX_ACCOUNT } from './secrets.ts'
 import type { StoredMessage } from './session.ts'
 
@@ -665,5 +672,98 @@ describe('a bad line does not take the runtime down', () => {
     const answer = await reply(JSON.stringify({ request: { kind: 'check-sandbox' } }))
     expect(answer.id).toBeNull()
     expect(answer.error).toBeTypeOf('string')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The trace, which exists because a merge that wrote nothing left nothing to read
+// ---------------------------------------------------------------------------
+
+describe('every act the runtime performs is traceable', () => {
+  /*
+    The defect this comes from. A merge writes the developer's repository, and it
+    did so with no observable trace anywhere: no line in the runtime, none in the
+    host, and none in git's reflog until a commit succeeds. When a merge did not
+    happen there was nothing at all to read — and nothing to tell "Core never
+    sent it" apart from "the runtime refused it", which is a debugging session
+    that has to guess.
+  */
+
+  const traced = async (line: string, caps: HarnessCapabilities = capabilities()) => {
+    const lines: string[] = []
+    await answerHarnessLine(line, caps, (written) => lines.push(written), () => 0)
+    return lines
+  }
+
+  test('an act that succeeds says so, with its kind', async () => {
+    const [line] = await traced(call(1, { kind: 'check-sandbox' }))
+    expect(line).toContain('check-sandbox')
+    expect(line).toContain('ok')
+  })
+
+  test('an act that fails carries what it said', async () => {
+    const [line] = await traced(
+      call(1, { kind: 'merge-worktree', path: '/w/x' }),
+      capabilities({
+        mergeWorktree: async () => {
+          throw new Error('The live tree has uncommitted work in DESIGN.md.')
+        },
+      }),
+    )
+    expect(line).toContain('merge-worktree')
+    expect(line).toContain('failed')
+    expect(line).toContain('DESIGN.md')
+  })
+
+  test('a line that is not a call is traced too, because that is the confusing case', async () => {
+    expect((await traced('not json at all'))[0]).toContain('refused')
+    expect((await traced(JSON.stringify({ request: { kind: 'check-sandbox' } })))[0]).toContain(
+      'no id',
+    )
+  })
+
+  test('a wait that succeeds writes nothing, or an idle varnick would fill the log', async () => {
+    // Each of these is re-asked for the life of the process. See UNTRACED_KINDS.
+    for (const kind of UNTRACED_KINDS) expect(worthTracing(kind)).toBe(false)
+    expect(worthTracing('merge-worktree')).toBe(true)
+  })
+
+  test('a wait that FAILS is still traced', async () => {
+    // The filter is about noise, not about hiding failures — a poll that fails
+    // is precisely the thing nobody would otherwise see.
+    const [line] = await traced(
+      call(1, { kind: 'read-session', sessionId: 's' }),
+      capabilities({
+        readSession: async () => {
+          throw new Error('the mirror would not open')
+        },
+      }),
+    )
+    expect(line).toContain('failed')
+  })
+
+  test('nothing from the request body ever reaches the line', async () => {
+    /*
+      The rule this whole thing lives under. These calls carry a pasted
+      credential, a minted token, a developer's prompt and their pasted images.
+      A trace that logged requests would put every one of those into a file the
+      developer's terminal is writing — which is the thing the product is
+      arranged to prevent.
+
+      Only `kind` is read, and it is a closed vocabulary this codebase writes.
+    */
+    const secret = 'sk-ant-notarealkey-0123456789'
+    const lines = await traced(
+      call(1, { kind: 'store-credential', value: secret, secret, prompt: secret }),
+    )
+    for (const line of lines) expect(line).not.toContain(secret)
+  })
+
+  test('a kind that is not a string cannot smuggle one in either', () => {
+    // The trace must never fail, so a request that is not one still produces a
+    // line — and what it prints is a literal, not whatever arrived.
+    expect(traceLine('<no kind>', 'refused', 0)).toContain('<no kind>')
+    // Bounded, because a kind is untrusted by the time it reaches here.
+    expect(traceLine('k'.repeat(500), 'ok', 1).length).toBeLessThan(200)
   })
 })

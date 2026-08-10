@@ -873,9 +873,90 @@ async function answer(
  * of that framing — reading calls back out of a stream of chunks — is
  * {@link readLines}, shared with the agent host's control channel.
  */
+/**
+ * The kinds that are a *wait* rather than an act.
+ *
+ * Each of these is re-asked for the life of the process — the host bounds every
+ * one and answers "still nothing" when it expires — so tracing their successes
+ * would write a line every fifteen seconds for ever and bury the calls somebody
+ * is actually looking for.
+ *
+ * Their *failures* are still traced. A poll that fails is not noise; it is the
+ * thing nobody would otherwise see.
+ */
+export const UNTRACED_KINDS = [
+  'next-turn-event',
+  'next-unprompted-event',
+  'next-mint-event',
+  'await-agent-exit',
+] as const
+
+/** Whether a successful call of this kind is worth a line. */
+export function worthTracing(kind: string): boolean {
+  return !(UNTRACED_KINDS as readonly string[]).includes(kind)
+}
+
+/**
+ * The kind a call names, as a string safe to print.
+ *
+ * Read defensively and bounded, because this is untrusted input by the time it
+ * reaches here — a line that is not a request at all still produces a trace, and
+ * a trace is the one thing that must not fail.
+ */
+function kindOf(request: unknown): string {
+  const kind = (request as { kind?: unknown } | null | undefined)?.kind
+  return typeof kind === 'string' && kind.length > 0 ? kind.slice(0, 40) : '<no kind>'
+}
+
+/**
+ * One line of trace for one call.
+ *
+ * ## The rule this exists under
+ *
+ * **The kind, never the payload.** These calls carry a pasted credential
+ * (`store-credential`), a minted token, a developer's prompt and their pasted
+ * images. A trace that logged requests would put every one of those in a file
+ * the developer's terminal is writing, which is precisely what the whole product
+ * is arranged to prevent — the credential never enters a transcript, a log line,
+ * an error message or the Session mirror.
+ *
+ * So the only thing taken from the request is `kind`, which is a closed
+ * vocabulary this codebase writes. The failure detail is a message this codebase
+ * also composed, and the one place that could echo something foreign — git's own
+ * stderr — is already quoted into those messages deliberately.
+ *
+ * ## Why it is always on
+ *
+ * The merge writes the developer's repository, and it did so with **no
+ * observable trace anywhere**: no line in the runtime, none in the host, none in
+ * git's reflog until a commit succeeds. When it did not happen, there was
+ * nothing to read and nothing to distinguish "Core never sent it" from "the
+ * runtime refused it" — which is a debugging session that has to guess.
+ *
+ * One line per act is cheap. The waits are filtered out above, so an idle
+ * varnick writes nothing at all.
+ */
+export function traceLine(
+  kind: string,
+  outcome: 'ok' | 'failed' | 'refused',
+  ms: number,
+  detail?: string,
+): string {
+  // Bounded here as well as in `kindOf`, because this is the function that
+  // formats and a caller is not a reason to trust an argument. A kind is a
+  // closed vocabulary in every path that exists today; the cap is what keeps
+  // that from being a thing to remember.
+  const named = kind.slice(0, 40)
+  const took = Number.isFinite(ms) && ms >= 0 ? `${Math.round(ms)}ms` : '?'
+  const said = detail === undefined ? '' : ` — ${detail.split('\n')[0]?.slice(0, 200) ?? ''}`
+  return `varnick runtime: ${named} ${outcome} in ${took}${said}\n`
+}
+
 export async function answerHarnessLine(
   line: string,
   capabilities: HarnessCapabilities,
+  trace: (line: string) => void = () => {},
+  now: () => number = () => Date.now(),
 ): Promise<string> {
   let id: number | null = null
   let request: unknown
@@ -883,13 +964,18 @@ export async function answerHarnessLine(
   try {
     const call = JSON.parse(line) as { id?: unknown; request?: unknown }
     if (typeof call?.id !== 'number') {
+      trace(traceLine('<no id>', 'refused', 0, 'the call carried no id'))
       return `${JSON.stringify({ id: null, error: 'A call to the Harness runtime carried no id, so its answer could not be addressed.' })}\n`
     }
     id = call.id
     request = call.request
   } catch {
+    trace(traceLine('<not json>', 'refused', 0, 'the line was not a JSON call'))
     return `${JSON.stringify({ id: null, error: 'A line reached the Harness runtime that was not a JSON call.' })}\n`
   }
+
+  const kind = kindOf(request)
+  const started = now()
 
   try {
     // Most answers are an empty object: the bridge rebuilds every answer, so
@@ -899,9 +985,16 @@ export async function answerHarnessLine(
     // for a spawn it does not perform; and `read-secret-names`, which is the
     // one question about the Secrets Store this process answers and answers
     // with names. A credential read never comes here.
-    return `${JSON.stringify({ id, ok: await answer(request, capabilities) })}\n`
+    const reply = `${JSON.stringify({ id, ok: await answer(request, capabilities) })}\n`
+    if (worthTracing(kind)) trace(traceLine(kind, 'ok', now() - started))
+    return reply
   } catch (error) {
-    return `${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`
+    const said = error instanceof Error ? error.message : String(error)
+    // Failures are always traced, including the long waits: a poll that *fails*
+    // is not the noise the filter exists to suppress, it is the thing nobody
+    // would otherwise see.
+    trace(traceLine(kind, 'failed', now() - started, said))
+    return `${JSON.stringify({ id, error: said })}\n`
   }
 }
 
@@ -923,8 +1016,15 @@ export async function serveHarness(
   input: AsyncIterable<Uint8Array | string>,
   write: (reply: string) => void,
   capabilities: HarnessCapabilities,
+  /*
+    Where a trace goes. Injected rather than reached for, because stdout is the
+    wire — anything written there that is not a reply desynchronises the pipe —
+    and because a test that traced to the real stderr would print through the
+    suite. ./serve.ts is the one caller that passes stderr.
+  */
+  trace: (line: string) => void = () => {},
 ): Promise<void> {
   await readLines(input, async (line) => {
-    write(await answerHarnessLine(line, capabilities))
+    write(await answerHarnessLine(line, capabilities, trace))
   })
 }

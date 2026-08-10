@@ -57,4 +57,16 @@ watchForOrphaning({
   exit: () => process.exit(0),
 })
 
-await serveHarness(process.stdin, (reply) => process.stdout.write(reply), hostCapabilities({ cloneRoot }))
+/*
+  stderr, for the reason the header gives: stdout is the wire. The host inherits
+  this, so a developer running `bun run dev:app` sees every act the runtime
+  performs, in order, with what it said when one failed.
+
+  Added after a merge that wrote nothing left nothing to read — see `traceLine`.
+*/
+await serveHarness(
+  process.stdin,
+  (reply) => process.stdout.write(reply),
+  hostCapabilities({ cloneRoot }),
+  (line) => process.stderr.write(line),
+)
