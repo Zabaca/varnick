@@ -129,6 +129,20 @@ A directory per id rather than one `dist`, because three things have to be possi
 The live tree's window is served from one of these, and a **Preview** is served by the dev server. That is the whole of the rule, and the reason for it is that work now lands in the live tree while nobody is watching: a watcher there would reload the window the developer left open, at whatever hour the merge happened. Live Surface hot-reloading is what that costs in the main window, and it is a recorded consequence rather than an oversight — see [ADR-0020](./docs/adr/0020-the-main-window-serves-a-built-artifact.md).
 _Avoid_: bundle, dist, release (a release *produces* one; the artifact is the directory), build (fine as a verb, ambiguous as a noun)
 
+**Pre-release**:
+A night's work, offered. A version, a changelog entry, an announcement, an **Artifact** in the store and a tag — cut by `bun run release <feature-slug>` while nobody is watching, and **not served**. Writing an Artifact and choosing to serve it are two acts and a cut performs only the first, so the window the developer left open goes on running what it was running.
+_Avoid_: draft, candidate, nightly (the first two suggest something unfinished — a Pre-release is a complete build nobody has accepted; the third suggests a schedule, and this is bounded by a queue rather than by a clock)
+
+**Pending**:
+The state of the one Pre-release nobody has accepted. Exactly one exists: cutting a second **supersedes** the first, on the same version if nothing has raised the level, so there is never a choice between two builds that each only get older. Held in two places that cannot disagree because one is written from the other — the `## v0.0.1 — pending` heading in `CHANGELOG.md`, which is the accumulator, and `.varnick/pending-release.json`, which is what a band in the window reads.
+_Avoid_: unreleased, staged, queued
+
+**Promotion**:
+Accepting a Pre-release: the changelog heading's `pending` becomes a date, `served` moves to its Artifact, the pending record goes, and varnick restarts onto it with the **Session** resumed from the mirror. The developer's, always — a run with nobody watching cuts but never promotes, which is what keeps a night's work a thing to accept rather than a thing that happened.
+_Avoid_: publish, ship, deploy (nothing leaves the machine — there is no remote in the network allowlist)
+
+The version has one source, `package.json`, read when the renderer is built. A release edits that field and nothing else in Core, which is what keeps a release from being able to fail typecheck. See [ADR-0022](./docs/adr/0022-a-pre-release-is-cut-from-the-changelogs-pending-block.md) for how the number is inferred and why the changelog is the accumulator.
+
 ### Conversation
 
 **Session**:
