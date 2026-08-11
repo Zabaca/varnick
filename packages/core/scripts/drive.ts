@@ -72,6 +72,7 @@ import {
   worktreeOwner,
 } from '../dev-server.ts'
 import {
+  ARTIFACT_ENTRY,
   LOCAL_ARTIFACT_ID,
   artifactPath,
   artifactStore,
@@ -6990,6 +6991,110 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     )
   } finally {
     await server.close()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The other half of that, which is now the half the window runs
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The check above starts a dev server because a `define` reached `vite build`
+    and never reached `vite serve`, and its own comment says reading the built
+    artifact would not have caught that. True — and this ticket makes the
+    symmetric gap real, which is why this block is here rather than there.
+
+    The main window is served from a built artifact now. A dev server runs for a
+    Preview and for `bun run dev`, and neither is what the developer has open.
+    So a regression in the *build* half of the virtual module — a plugin that
+    stops applying to the bundler, a specifier left unresolved — would blank the
+    window a developer opens every morning, with every assertion above still
+    passing. The two halves need the same treatment or the one nobody tests is
+    the one that breaks.
+
+    Built into a temporary directory rather than over `packages/core/dist`,
+    because `dist` is an input to `bun run build` and a driver that overwrote it
+    would decide what the next artifact contains.
+  */
+  const { build } = await import('vite')
+  const out = mkdtempSync(join(tmpdir(), 'varnick-build-'))
+
+  try {
+    /*
+      Caught, so a build that cannot resolve the virtual module is a named
+      assertion rather than a rolldown stack trace. It fails either way — the
+      exit code is what gates — but this block exists for whoever reads the
+      failure at three in the morning, and "the frontend builds at all" is a
+      sentence they can act on where a dozen frames of `unwrapBindingResult`
+      are not.
+    */
+    let built = true
+    let reason = ''
+    try {
+      await build({
+        configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+        root: fileURLToPath(new URL('..', import.meta.url)),
+        logLevel: 'silent',
+        build: { outDir: out, emptyOutDir: true },
+      })
+    } catch (error) {
+      built = false
+      reason = error instanceof Error ? error.message.split('\n')[0] ?? '' : String(error)
+    }
+
+    check(`the frontend builds at all${built ? '' : ` — ${reason}`}`, built)
+
+    // Everything below reads what the build emitted, so it runs only when there
+    // is something to read. The failure above is already recorded, and letting
+    // this throw instead would put the stack trace back.
+    if (built) {
+      const entry = join(out, ARTIFACT_ENTRY)
+      check('a build emits the file an artifact is served from', existsSync(entry))
+
+        const emitted = readdirSync(join(out, 'assets'))
+        .filter((name) => name.endsWith('.js'))
+        .map((name) => readFileSync(join(out, 'assets', name), 'utf-8'))
+        .join('\n')
+
+      const declared = versionFromManifest(
+        readFileSync(new URL('../../../package.json', import.meta.url).pathname, 'utf-8'),
+      )
+      /*
+        Matched as a *quoted literal* rather than as `JSON.stringify(declared)`,
+        which is what this check was first written as and what it failed on: the
+        bundler emits the module's export as a template literal, so the number
+        arrives in backticks. Which quote esbuild reaches for is its business and
+        not a thing to assert — what has to be true is that the number is a string
+        in the bundle rather than an identifier waiting to be one.
+
+        Delimited on both sides for the same reason it is not a bare `includes`:
+        a version is a run of digits and dots and would match half of a hash in an
+        asset filename.
+      */
+      const quoted = new RegExp(`["'\`]${declared.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'\`]`)
+      check(
+        'and carries the number the manifest declares, substituted at build time',
+        quoted.test(emitted),
+      )
+      check(
+        'with nothing left for a dev server to have answered',
+        !emitted.includes(VERSION_MODULE_ID),
+      )
+
+      /*
+        The same negative the dev-server check makes, against the bundle. A build
+        that emitted the bare identifier would be a window that throws on load —
+        and because `chat-surface.tsx` imports the version, it throws before the
+        chat renders rather than leaving a wrong number in the header.
+      */
+      check(
+        'and no identifier waiting for a substitution that already happened',
+        !emitted.includes('__VARNICK_VERSION__'),
+      )
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true })
   }
 }
 
