@@ -9,6 +9,7 @@
     "dev": "bun run --filter @varnick/core dev",
     "dev:app": "bun run packages/core/scripts/dev.ts",
     "build": "bun run packages/core/scripts/build.ts",
+    "release": "bun run packages/core/scripts/release.ts",
     "drive": "bun run --filter @varnick/core drive",
     "secret": "bun run packages/harness/src/secrets-cli.ts",
     "probe": "bun run packages/harness/src/probe-cli.ts",

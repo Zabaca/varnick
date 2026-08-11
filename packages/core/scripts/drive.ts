@@ -85,6 +85,35 @@ import {
 import { assetPath } from '../artifact-assets.ts'
 import { installArtifact } from '../artifact-store.ts'
 import {
+  CHANGELOG_HEADER,
+  INITIAL_VERSION,
+  PENDING_RECORD_RELATIVE_PATH,
+  type ReleaseNote,
+  type TicketSummary,
+  accumulate,
+  announcement,
+  artifactIdForVersion,
+  changelogEntries,
+  changelogWith,
+  coarserLevel,
+  levelBetween,
+  levelOfPaths,
+  levelOfRun,
+  lastPromotedVersion,
+  manifestWithVersion,
+  nextVersion,
+  parsePendingRecord,
+  parseTicket,
+  parseVersion,
+  pendingEntry,
+  pendingRecordText,
+  promotedNoteIds,
+  releasePlan,
+  tagDisposition,
+  tagForVersion,
+} from '../release.ts'
+import { cutPreRelease } from '../release-cut.ts'
+import {
   VERSION_MODULE_ID,
   VERSION_MODULE_RESOLVED,
   displayedVersion,
@@ -7120,6 +7149,677 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     }
   } finally {
     rmSync(out, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A pre-release — the number, the words, and what supersedes what
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    Everything a release decides, decided here, with no git repository, no build
+    and no clock. That placement is the ticket rather than a preference: the bump
+    rule and the announcement are the parts of this system most worth iterating
+    on overnight, so they are Core and not Fence — nothing in them decides what
+    the agent may do, and putting them behind a human merge would put the
+    fastest-moving decisions behind the slowest gate.
+
+    The division under test is: **diffs decide the number, tickets decide the
+    words.**
+  */
+
+  // --- the number ---------------------------------------------------------
+
+  check('the sequence starts where the manifest does', INITIAL_VERSION === '0.0.0')
+  check('a first cut is 0.0.1', nextVersion('0.0.0', 'fix') === '0.0.1')
+  check(
+    'and pre-1.0 a feature is the same bump as a fix, because the minor is where a break goes',
+    nextVersion('0.1.4', 'feature') === '0.1.5' && nextVersion('0.1.4', 'fix') === '0.1.5',
+  )
+  check('a break takes the minor while the major is zero', nextVersion('0.1.4', 'breaking') === '0.2.0')
+  check('and resets the patch with it', nextVersion('0.0.9', 'breaking') === '0.1.0')
+
+  /*
+    The ordinary rule past 1.0, exercised now rather than the first time somebody
+    crosses it. A branch that only runs after a milestone is a branch that has
+    never run.
+  */
+  check('past 1.0 a break takes the major', nextVersion('1.4.2', 'breaking') === '2.0.0')
+  check('a feature takes the minor', nextVersion('1.4.2', 'feature') === '1.5.0')
+  check('and a fix takes the patch', nextVersion('1.4.2', 'fix') === '1.4.3')
+
+  check('a version that is not one counts to nothing', nextVersion('nightly', 'fix') === null)
+  check('and neither does one wearing its v', nextVersion('v1.0.0', 'fix') === null)
+  check('nor a two-part one', parseVersion('1.2') === null && parseVersion('1.2.3.4') === null)
+
+  /*
+    How far the run has moved is read back out of the pending version rather than
+    stored beside it, so the heading in the changelog cannot disagree with a
+    field nobody looks at. `feature` is unreachable pre-1.0 and that is the
+    honest answer: both produce the same next version, so claiming to know which
+    one it was would be claiming to know something the number does not record.
+  */
+  check('a patch bump reads back as the level that produced it', levelBetween('0.1.4', '0.1.5') === 'fix')
+  check('and a minor one as breaking', levelBetween('0.1.4', '0.2.0') === 'breaking')
+  check('past 1.0 the three are distinguishable', levelBetween('1.4.2', '1.5.0') === 'feature')
+  check('a version that is not a bump of the base reads back as nothing', levelBetween('0.1.4', '0.9.9') === null)
+
+  check('a run is as breaking as its most breaking part', coarserLevel('fix', 'breaking') === 'breaking')
+  check('and no more than that', coarserLevel('fix', 'feature') === 'feature')
+
+  /*
+    The invariant across two modules, asserted here because neither can assert it
+    about itself: every version the bump rule can produce has to be a name the
+    artifact store will accept, or a release writes a directory the server
+    refuses to resolve. The same arrangement `fence.test.ts` uses for its three
+    lists.
+  */
+  let idsHold = true
+  for (const base of ['0.0.0', '0.9.9', '1.4.2', '19.0.0']) {
+    for (const level of ['fix', 'feature', 'breaking'] as const) {
+      const produced = nextVersion(base, level)
+      if (produced === null || !isArtifactId(artifactIdForVersion(produced))) idsHold = false
+    }
+  }
+  check('every version the bump rule can produce is a name the store will accept', idsHold)
+  check('and the tag it writes is the version with the v the manifest never stores', tagForVersion('0.0.1') === 'v0.0.1')
+
+  // --- the number, from the diff ------------------------------------------
+
+  /*
+    A source file that is gone is the signal, and it is the only unambiguous one
+    a diff carries. It errs toward breaking on purpose and in the cheap
+    direction: a wrong `breaking` costs a minor bump on a version nobody has
+    promoted, where a wrong `fix` ships a promise of stability to a developer who
+    was asleep.
+  */
+  check(
+    'a modified file on its own is a fix',
+    levelOfPaths([{ status: 'modified', path: 'packages/core/src/App.tsx' }]) === 'fix',
+  )
+  check(
+    'a new source file is a feature',
+    levelOfPaths([{ status: 'added', path: 'packages/core/release.ts' }]) === 'feature',
+  )
+  check(
+    'a source file that is gone is breaking',
+    levelOfPaths([{ status: 'removed', path: 'packages/core/src/components/fence-dialog.tsx' }]) === 'breaking',
+  )
+  check(
+    'and it wins over everything beside it, in either order',
+    levelOfPaths([
+      { status: 'added', path: 'packages/core/release.ts' },
+      { status: 'removed', path: 'src-tauri/src/preview.rs' },
+    ]) === 'breaking' &&
+      levelOfPaths([
+        { status: 'removed', path: 'src-tauri/src/preview.rs' },
+        { status: 'added', path: 'packages/core/release.ts' },
+      ]) === 'breaking',
+  )
+
+  /*
+    What a run says about itself is not what a run does. A retired ADR, a deleted
+    ticket and a rewritten changelog are how the night describes its own work —
+    reading them as removals would make every documented night a breaking one,
+    which is the fastest way to a version number nobody believes.
+  */
+  for (const described of [
+    'docs/adr/0005-two-profiles-live-userspace-cloned-core.md',
+    '.scratch/autonomous-runs/issues/06-cut-a-pre-release.md',
+    'CHANGELOG.md',
+    'CLAUDE.md',
+  ]) {
+    check(
+      `${described} is what the run says, not what it does`,
+      levelOfPaths([{ status: 'removed', path: described }]) === 'fix',
+    )
+  }
+  check(
+    'and a deleted assertion is a change to how the tree is proved, not to what it does',
+    levelOfPaths([
+      { status: 'removed', path: 'packages/harness/src/fence.test.ts' },
+      { status: 'removed', path: 'packages/harness/src/containment.probe.test.ts' },
+      { status: 'removed', path: 'packages/core/scripts/drive.ts' },
+    ]) === 'fix',
+  )
+  check('an empty diff is the smallest thing there is', levelOfPaths([]) === 'fix')
+
+  // --- the number, from the tickets ---------------------------------------
+
+  const landed = (over: Partial<TicketSummary> = {}): TicketSummary => ({
+    id: '05',
+    title: 'The main window is served from a built artifact',
+    summary: 'work landing in the live tree stops reloading the window the developer left open.',
+    acceptedConsequence: null,
+    ...over,
+  })
+
+  /*
+    The one thing a ticket says that moves the number, and the case that made it
+    necessary: ticket 05 took live Surface hot-reloading away from the main
+    window by *adding* a script, so every path in its diff reads as a feature and
+    the diff cannot see what was lost. The sentence saying so is one the ticket
+    writes anyway.
+  */
+  check(
+    'a ticket that records an accepted consequence is breaking however its diff reads',
+    levelOfRun(
+      [landed({ acceptedConsequence: 'live Surface hot-reloading stops working in the main window' })],
+      [{ status: 'added', path: 'packages/core/scripts/serve.ts' }],
+    ) === 'breaking',
+  )
+  check(
+    'and a ticket that records none leaves the diff to answer',
+    levelOfRun([landed()], [{ status: 'added', path: 'packages/core/scripts/serve.ts' }]) === 'feature',
+  )
+  check(
+    'a ticket can only raise the level, never lower it',
+    levelOfRun([landed()], [{ status: 'removed', path: 'packages/core/src/x.ts' }]) === 'breaking',
+  )
+
+  // --- reading a ticket ---------------------------------------------------
+
+  const ticketFile = `# 06 — Cut a pre-release from the command line
+
+**What to build:** one command turns a finished queue of tickets into something
+the developer can accept in the morning.
+
+**Blocked by:** 04, 05.
+
+**Status:** ready-for-agent
+
+- [x] One command produces a pre-release
+- [x] The bump is derived from the tickets and diffs
+`
+
+  const ticket = parseTicket(ticketFile)
+  check('a ticket is read by its heading', ticket?.id === '06')
+  check('and its title', ticket?.title === 'Cut a pre-release from the command line')
+  check(
+    'the summary is the What to build paragraph, collapsed to one line',
+    ticket?.summary ===
+      'one command turns a finished queue of tickets into something the developer can accept in the morning.',
+  )
+  check('with no accepted consequence unless one is written', ticket?.acceptedConsequence === null)
+  check(
+    'and one is read when it is',
+    parseTicket(ticketFile.replace('**Blocked by:**', '**Accepted consequence:** hot reloading goes.\n\n**Blocked by:**'))
+      ?.acceptedConsequence === 'hot reloading goes.',
+  )
+
+  /*
+    Which tickets landed is read from the boxes rather than from git, because the
+    boxes are what the run itself ticks as it goes: a parked ticket keeps its
+    branch and its worktree and never gets them ticked, so it stays out of the
+    changelog without anybody having to remember to leave it out.
+  */
+  check(
+    'a ticket with an unticked criterion has not landed',
+    parseTicket(ticketFile.replace('- [x] The bump', '- [ ] The bump')) === null,
+  )
+  check(
+    'a ticket with no criteria at all has not landed either',
+    parseTicket(ticketFile.replace(/^- \[x\].*$/gm, '')) === null,
+  )
+  check('and a file that is not a ticket is not one', parseTicket('# notes\n\nsome thoughts\n') === null)
+
+  // --- the changelog, which is the accumulator ----------------------------
+
+  const changelog = `# Changelog
+
+A sentence about the file.
+
+## v0.0.2 — pending
+
+- **05 — The main window is served from a built artifact** — work landing in the live tree stops reloading the window.
+
+## v0.0.1 — 2026-08-04
+
+- **01 — Deny the tracked hooks directory** — a hook written in the live tree is on no branch and in no diff.
+`
+
+  check('the pending entry is the one with no date', pendingEntry(changelog)?.version === '0.0.2')
+  check('and it is read back with its notes', pendingEntry(changelog)?.notes[0]?.id === '05')
+  check('the last promoted version is the newest one with a date', lastPromotedVersion(changelog) === '0.0.1')
+  check('a changelog with nothing promoted answers nothing', lastPromotedVersion(CHANGELOG_HEADER) === null)
+  check('and so does one that does not exist', lastPromotedVersion(undefined) === null)
+  check('what has already gone out is named', promotedNoteIds(changelog).join(',') === '01')
+
+  const note = (id: string, line: string): ReleaseNote => ({ id, title: `t${id}`, line, detail: line })
+
+  /*
+    Three rules, and each one is a night this has to survive: carried notes come
+    first and in order, a ticket cannot appear twice because last night's tickets
+    are still ticked, and a promoted ticket never comes back because the tickets
+    stay ticked for ever and only a promoted entry can say it has shipped.
+  */
+  check(
+    'this run is added to what was already pending, in the order the work happened',
+    accumulate([note('05', 'a')], [note('06', 'b')])
+      .map((one) => one.id)
+      .join(',') === '05,06',
+  )
+  check(
+    'a ticket read twice is one note, and the carried wording is the one that stands',
+    accumulate([note('05', 'as it was read last night')], [note('05', 'reworded')]).length === 1 &&
+      accumulate([note('05', 'as it was read last night')], [note('05', 'reworded')])[0]?.line ===
+        'as it was read last night',
+  )
+  check(
+    'and a ticket that has already gone out does not come back',
+    accumulate([], [note('01', 'a'), note('06', 'b')], ['01'])
+      .map((one) => one.id)
+      .join(',') === '06',
+  )
+
+  const written = changelogWith(changelog, '0.0.3', [note('05', 'a'), note('06', 'b')])
+  check('a new entry replaces the pending one rather than sitting above it', !written.includes('## v0.0.2'))
+  check('and it is the newest thing in the file', written.indexOf('## v0.0.3') < written.indexOf('## v0.0.1'))
+  check('the promoted entry is untouched', written.includes('## v0.0.1 — 2026-08-04'))
+  check('so is the header', written.startsWith('# Changelog\n\nA sentence about the file.\n'))
+  check('and the entry it wrote reads back as what was written', pendingEntry(written)?.notes.length === 2)
+  check(
+    'a changelog that does not exist yet is created with its header',
+    changelogWith(undefined, '0.0.1', [note('06', 'a')]).startsWith('# Changelog'),
+  )
+  check(
+    'exactly one entry is ever pending',
+    changelogEntries(written).filter((entry) => entry.promotedOn === null).length === 1,
+  )
+
+  // --- the announcement ---------------------------------------------------
+
+  /*
+    Prose, and never a list of commits — which is a property of the type rather
+    than a rule this function keeps. A note is made from a ticket and carries no
+    sha, no author and no subject line, so there is nothing for an announcement
+    to fall back to even if somebody wanted it to.
+  */
+  const said = announcement(
+    '0.0.2',
+    [
+      note('05', 'the main window is served from a built artifact, so nothing under it moves while you are away.'),
+      note('06', 'one command turns a finished queue of tickets into something to accept in the morning.'),
+    ],
+    '0.0.1',
+  )
+
+  check('it opens by naming the version', said.startsWith('varnick v0.0.2 is cut and waiting.'))
+  check('and counts the work in words rather than in commits', said.includes('Two tickets landed since v0.0.1.'))
+  check(
+    'a first release counts from the beginning instead',
+    announcement('0.0.1', [note('06', 'a.')], null).includes('One ticket landed since the first commit.'),
+  )
+  check(
+    'every ticket says its own piece, in its own words',
+    said.includes('the main window is served from a built artifact') &&
+      said.includes('one command turns a finished queue of tickets'),
+  )
+  check(
+    'nothing in it is a bullet',
+    said.split('\n').every((line) => !line.startsWith('- ') && !line.startsWith('* ')),
+  )
+  check(
+    'and it says what has not happened, because that is the whole shape of a pre-release',
+    said.includes('Nothing is served from it yet'),
+  )
+
+  // --- the manifest -------------------------------------------------------
+
+  const rootManifest = '{\n  "name": "varnick",\n  "version": "0.0.0",\n  "private": true\n}\n'
+  const bumped = manifestWithVersion(rootManifest, '0.1.0')
+
+  check('the version field is replaced', bumped !== null && JSON.parse(bumped).version === '0.1.0')
+  check(
+    'and nothing else in the file moves, because a release is read at breakfast',
+    bumped === '{\n  "name": "varnick",\n  "version": "0.1.0",\n  "private": true\n}\n',
+  )
+  check(
+    'a nested version is not the manifest’s',
+    manifestWithVersion('{\n  "name": "x",\n  "deps": {\n    "version": "9.9.9"\n  }\n}\n', '0.1.0') === null,
+  )
+  check('a manifest with no version to bump is a refusal', manifestWithVersion('{\n  "name": "x"\n}\n', '0.1.0') === null)
+  check('and so is a version that is not one', manifestWithVersion(rootManifest, 'nightly') === null)
+
+  // --- the tag ------------------------------------------------------------
+
+  check('a tag nobody has written is written', tagDisposition('v0.0.1', { exists: false, pendingTag: null }) === 'write')
+  check(
+    'the tag of the pre-release being superseded is moved',
+    tagDisposition('v0.0.1', { exists: true, pendingTag: 'v0.0.1' }) === 'move',
+  )
+  check(
+    'and a tag with nothing pending behind it is somebody else’s',
+    tagDisposition('v0.0.1', { exists: true, pendingTag: null }) === 'refuse' &&
+      tagDisposition('v0.0.1', { exists: true, pendingTag: 'v0.0.2' }) === 'refuse',
+  )
+
+  // --- the pending record -------------------------------------------------
+
+  const record = {
+    version: '0.0.2',
+    artifact: '0.0.2',
+    tag: 'v0.0.2',
+    cutAt: '2026-08-11T03:00:00.000Z',
+    announcement: said,
+    notes: [note('06', 'a.')],
+  }
+  check('a record is written and read back as itself', parsePendingRecord(pendingRecordText(record))?.version === '0.0.2')
+  check('with the announcement intact, because a band posts it', parsePendingRecord(pendingRecordText(record))?.announcement === said)
+  check('no record at all is nothing pending', parsePendingRecord(undefined) === null)
+  check('and so is one nobody can parse', parsePendingRecord('half a fi') === null)
+  check('a record missing what a band needs is nothing pending', parsePendingRecord('{"version":"0.0.2"}') === null)
+  check('and one whose version is not a version is too', parsePendingRecord(JSON.stringify({ ...record, version: 'nightly' })) === null)
+  check('the record lives beside the store and is never committed', PENDING_RECORD_RELATIVE_PATH.startsWith('.varnick/'))
+
+  // --- the whole plan -----------------------------------------------------
+
+  const ticketOf = (id: string, summary: string, consequence: string | null = null): TicketSummary => ({
+    id,
+    title: `t${id}`,
+    summary,
+    acceptedConsequence: consequence,
+  })
+
+  const first = releasePlan({
+    changelog: CHANGELOG_HEADER,
+    tickets: [ticketOf('06', 'one command cuts a pre-release.')],
+    changedPaths: [{ status: 'modified', path: 'packages/core/src/App.tsx' }],
+    manifest: rootManifest,
+    cutAt: '2026-08-11T03:00:00.000Z',
+  })
+
+  check('a first cut of a repository that has promoted nothing is 0.0.1', first.cut && first.record.version === '0.0.1')
+  check('its artifact is named for it', first.cut && first.record.artifact === '0.0.1')
+  check('its tag is too', first.cut && first.record.tag === 'v0.0.1')
+  check('and the manifest it hands back is bumped before the build ever runs', first.cut && JSON.parse(first.manifest).version === '0.0.1')
+
+  /*
+    The second night, which is where superseding is either right or is two
+    pre-releases the developer has to choose between. The version recomputes from
+    the last *promoted* release rather than from the manifest, so two quiet
+    nights land on the same number — the same artifact id, the same tag, and a
+    store that does not grow one directory for every night nobody looked.
+  */
+  const second = releasePlan({
+    changelog: first.cut ? first.changelog : '',
+    tickets: [ticketOf('06', 'one command cuts a pre-release.'), ticketOf('07', 'the previous build is kept.')],
+    changedPaths: [{ status: 'modified', path: 'packages/core/scripts/serve.ts' }],
+    manifest: first.cut ? first.manifest : rootManifest,
+    cutAt: '2026-08-12T03:00:00.000Z',
+  })
+
+  check('a second quiet night lands on the same version', second.cut && second.record.version === '0.0.1')
+  check(
+    'and carries both nights, because the changelog is the accumulator',
+    second.cut && second.record.notes.map((one) => one.id).join(',') === '06,07',
+  )
+  check(
+    'with one pending entry rather than two to choose between',
+    second.cut && changelogEntries(second.changelog).filter((entry) => entry.promotedOn === null).length === 1,
+  )
+  check(
+    'and an announcement covering the whole accumulation',
+    second.cut && second.record.announcement.includes('Two tickets landed since the first commit.'),
+  )
+
+  /*
+    A breaking night after two quiet ones raises the version, and a quiet night
+    after a breaking one does not lower it again — the level accumulates the same
+    way the notes do, read back out of the pending heading rather than stored in
+    a field that could disagree with it.
+  */
+  const third = releasePlan({
+    changelog: second.cut ? second.changelog : '',
+    tickets: [
+      ticketOf('06', 'one command cuts a pre-release.'),
+      ticketOf('07', 'the previous build is kept.'),
+      ticketOf('08', 'a band promotes it.', 'the dev server no longer serves the main window.'),
+    ],
+    changedPaths: [],
+    manifest: second.cut ? second.manifest : rootManifest,
+    cutAt: '2026-08-13T03:00:00.000Z',
+  })
+  check('a breaking night raises the pending version', third.cut && third.record.version === '0.1.0')
+
+  const fourth = releasePlan({
+    changelog: third.cut ? third.changelog : '',
+    tickets: [ticketOf('09', 'a skill drives the cut.')],
+    changedPaths: [],
+    manifest: third.cut ? third.manifest : rootManifest,
+    cutAt: '2026-08-14T03:00:00.000Z',
+  })
+  check('and a quiet night after it does not lower it again', fourth.cut && fourth.record.version === '0.1.0')
+
+  /*
+    Promotion is a one-line edit to the heading, and everything downstream has to
+    read it: the accumulation restarts, the base moves, and last night's notes do
+    not come back even though their tickets are still ticked for ever.
+  */
+  const promotedChangelog = (fourth.cut ? fourth.changelog : '').replace('— pending', '— 2026-08-15')
+  const afterPromotion = releasePlan({
+    changelog: promotedChangelog,
+    tickets: [ticketOf('06', 'one command cuts a pre-release.'), ticketOf('10', 'an ADR is written.')],
+    changedPaths: [],
+    manifest: fourth.cut ? fourth.manifest : rootManifest,
+    cutAt: '2026-08-16T03:00:00.000Z',
+  })
+  check('after a promotion the next cut counts from it', afterPromotion.cut && afterPromotion.record.version === '0.1.1')
+  check(
+    'and carries only what has not gone out, though every ticket is still ticked',
+    afterPromotion.cut && afterPromotion.record.notes.map((one) => one.id).join(',') === '10',
+  )
+
+  check(
+    'a night where nothing landed cuts nothing rather than tagging an empty entry',
+    !releasePlan({
+      changelog: promotedChangelog,
+      tickets: [],
+      changedPaths: [],
+      manifest: rootManifest,
+      cutAt: '2026-08-16T03:00:00.000Z',
+    }).cut,
+  )
+  check(
+    'and neither does one whose manifest has no version to bump',
+    !releasePlan({
+      changelog: CHANGELOG_HEADER,
+      tickets: [ticketOf('06', 'a.')],
+      changedPaths: [],
+      manifest: '{\n  "name": "varnick"\n}\n',
+      cutAt: '2026-08-16T03:00:00.000Z',
+    }).cut,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Cutting one for real — against a repository, with the build injected
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The half no pure function can hold: the order the writes happen in.
+
+    Two properties live entirely in that order and nowhere else. The manifest is
+    written **before** the build, because the version is substituted into the
+    renderer when the renderer is built — a build that ran first would ship an
+    artifact carrying the previous number under a tag carrying the new one, which
+    presents as a display bug and is an ordering one. And a build that fails
+    leaves **nothing** pending, which is only true because the manifest is the
+    single pre-build write and is put back.
+
+    The build is injected rather than called, so both halves can be driven
+    without compiling a frontend — the seam is `BuildFrontend`, and the real one
+    is four lines in `packages/core/scripts/release.ts`.
+  */
+  const clone = mkdtempSync(join(tmpdir(), 'varnick-release-'))
+
+  const run = (...args: string[]) => Bun.spawnSync(['git', ...args], { cwd: clone })
+  const read = (path: string) => readFileSync(join(clone, path), 'utf-8')
+  const tags = () => new TextDecoder().decode(run('tag').stdout).split('\n').filter((one) => one !== '')
+
+  try {
+    run('init', '-q')
+    // A temporary repository borrows nothing from the machine it is on: an
+    // identity so a commit can be made at all, and no hooks path, so whatever
+    // the developer has configured globally does not decide whether this passes.
+    run('config', 'user.email', 'drive@varnick.test')
+    run('config', 'user.name', 'drive')
+    run('config', 'commit.gpgsign', 'false')
+    mkdirSync(join(clone, 'no-hooks'), { recursive: true })
+    run('config', 'core.hooksPath', join(clone, 'no-hooks'))
+
+    const manifest = '{\n  "name": "varnick",\n  "version": "0.0.0",\n  "private": true\n}\n'
+    writeFileSync(join(clone, 'package.json'), manifest)
+    mkdirSync(join(clone, '.scratch/night/issues'), { recursive: true })
+    writeFileSync(
+      join(clone, '.scratch/night/issues/01-a-thing.md'),
+      '# 01 — A thing\n\n**What to build:** the window shows the version it is running.\n\n- [x] it does\n',
+    )
+    writeFileSync(
+      join(clone, '.scratch/night/issues/02-parked.md'),
+      '# 02 — A parked thing\n\n**What to build:** something nobody finished.\n\n- [ ] not yet\n',
+    )
+    run('add', '-A')
+    run('commit', '-q', '-m', 'the tree before the night')
+
+    /**
+     * A build that succeeds, and that **reads the manifest the way Vite does**.
+     *
+     * That is the point of it rather than a detail. The version is substituted
+     * into the renderer at build time, so "the manifest is bumped before the
+     * build" is a claim about ordering that only a build which looks can make
+     * fail — a stub that ignored the manifest would pass whichever order these
+     * two steps happened in, and the bug it is guarding against presents as a
+     * window showing last release's number under this release's tag.
+     */
+    const buildsInto = (marker: string) => async (root: string) => {
+      const dist = join(root, 'built')
+      mkdirSync(join(dist, 'assets'), { recursive: true })
+      const saw = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')).version
+      writeFileSync(join(dist, ARTIFACT_ENTRY), `<!doctype html>${marker}`)
+      writeFileSync(join(dist, 'assets', 'app.js'), `export const VARNICK_VERSION = "${saw}"`)
+      return { ok: true, distDirectory: dist }
+    }
+
+    const cut = await cutPreRelease({
+      cloneRoot: clone,
+      issuesDirectory: join(clone, '.scratch/night/issues'),
+      build: buildsInto('first'),
+      now: () => new Date('2026-08-11T03:00:00.000Z'),
+    })
+
+    check('a run with one landed ticket cuts a pre-release', cut.cut)
+    check('at the first version', cut.cut && cut.record.version === '0.0.1')
+    check('the manifest carries it, so the artifact was built with it', JSON.parse(read('package.json')).version === '0.0.1')
+    check('the changelog has an entry nobody has promoted', pendingEntry(read('CHANGELOG.md'))?.version === '0.0.1')
+
+    /*
+      The parked ticket is the one to look for. It is in the same directory, it
+      was worked on, and it never got its boxes ticked — which is exactly how a
+      run says "this one did not land", and exactly what must not reach a
+      developer as a line claiming it did.
+    */
+    check(
+      'and only the ticket that landed is in it, not the one that was parked',
+      pendingEntry(read('CHANGELOG.md'))?.notes.map((one) => one.id).join(',') === '01',
+    )
+
+    const artifactRoot = artifactPath(clone, '0.0.1') ?? ''
+    check('the artifact is in the store the host looks in', existsSync(join(artifactRoot, ARTIFACT_ENTRY)))
+    check('and it is the build that was just made', read(join('.varnick/builds/0.0.1', ARTIFACT_ENTRY)).includes('first'))
+
+    /*
+      The ordering bug that presents as a display bug. The version is baked into
+      the renderer when the renderer is built, so a cut that built first and
+      bumped afterwards would ship an artifact saying `v0.0.0` under a tag saying
+      `v0.0.1` — and every other check in this block would still pass, because
+      the manifest, the changelog, the record and the tag would all be right.
+    */
+    check(
+      'the build saw the new version, so the artifact is not carrying the previous one',
+      read('.varnick/builds/0.0.1/assets/app.js').includes('"0.0.1"'),
+    )
+
+    /*
+      The criterion the whole ticket turns on. A release writes an artifact; it
+      does not decide what the developer's open window is running. That decision
+      is a promotion and it is theirs.
+    */
+    check('nothing was switched to it — `served` is still whatever it was', !existsSync(servedMarkerPath(clone)))
+    check('the pre-release is recorded as the one thing pending', parsePendingRecord(read('.varnick/pending-release.json'))?.version === '0.0.1')
+    check('and it is tagged', tags().join(',') === 'v0.0.1')
+
+    // --- cutting a second one supersedes the first --------------------------
+
+    writeFileSync(
+      join(clone, '.scratch/night/issues/03-another.md'),
+      '# 03 — Another thing\n\n**What to build:** a pre-release can be promoted from the window.\n\n- [x] it can\n',
+    )
+    run('add', '-A')
+    run('commit', '-q', '-m', 'the second night')
+
+    const again = await cutPreRelease({
+      cloneRoot: clone,
+      issuesDirectory: join(clone, '.scratch/night/issues'),
+      build: buildsInto('second'),
+      now: () => new Date('2026-08-12T03:00:00.000Z'),
+    })
+
+    check('a second cut succeeds', again.cut)
+    check('on the same number, because nobody promoted the first', again.cut && again.record.version === '0.0.1')
+    check(
+      'carrying both nights',
+      pendingEntry(read('CHANGELOG.md'))?.notes.map((one) => one.id).join(',') === '01,03',
+    )
+    check(
+      'with exactly one pre-release pending rather than two to choose between',
+      changelogEntries(read('CHANGELOG.md')).filter((entry) => entry.promotedOn === null).length === 1,
+    )
+    check('one record, superseded in place', parsePendingRecord(read('.varnick/pending-release.json'))?.cutAt === '2026-08-12T03:00:00.000Z')
+    check('one tag, moved rather than added beside', tags().join(',') === 'v0.0.1')
+    check('and the artifact is the newer build', read(join('.varnick/builds/0.0.1', ARTIFACT_ENTRY)).includes('second'))
+
+    // --- a build that fails leaves nothing pending --------------------------
+
+    /*
+      The failure a version bump makes expensive: a number and a tag with no
+      artifact behind them, and a developer who wakes to a release they cannot
+      run. The manifest is the only thing written before the build, so putting it
+      back is the whole of the undo — and the changelog, the record and the tag
+      are all untouched because none of them had been reached.
+    */
+    writeFileSync(
+      join(clone, '.scratch/night/issues/04-breaks.md'),
+      '# 04 — Something that will not build\n\n**What to build:** a thing that does not compile.\n\n- [x] alas\n',
+    )
+    writeFileSync(join(clone, 'package.json'), '{\n  "name": "varnick",\n  "version": "0.0.9",\n  "private": true\n}\n')
+    run('add', '-A')
+    run('commit', '-q', '-m', 'the third night')
+
+    const before = {
+      manifest: read('package.json'),
+      changelog: read('CHANGELOG.md'),
+      record: read('.varnick/pending-release.json'),
+      tags: tags().join(','),
+    }
+
+    const failed = await cutPreRelease({
+      cloneRoot: clone,
+      issuesDirectory: join(clone, '.scratch/night/issues'),
+      build: async () => ({ ok: false, distDirectory: join(clone, 'built'), reason: 'vite exited 1' }),
+      now: () => new Date('2026-08-13T03:00:00.000Z'),
+    })
+
+    check('a failed build cuts nothing', !failed.cut)
+    check('and says so rather than leaving it to be discovered', !failed.cut && failed.reason.includes('the build failed'))
+    check('the manifest is back at the version it had', read('package.json') === before.manifest)
+    check('no changelog entry was written', read('CHANGELOG.md') === before.changelog)
+    check('nothing new is pending', read('.varnick/pending-release.json') === before.record)
+    check('and no tag was left behind', tags().join(',') === before.tags)
+  } finally {
+    rmSync(clone, { recursive: true, force: true })
   }
 }
 
