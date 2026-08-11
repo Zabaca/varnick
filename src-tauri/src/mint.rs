@@ -56,7 +56,8 @@
 // silently truncates one.
 
 use std::collections::VecDeque;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
@@ -417,12 +418,33 @@ pub fn minted_token_of(rendered: &Rendered) -> Option<Result<Secret, &'static st
 /// finish reading is the one outcome worse than not storing one.
 pub fn store_minted_token(
     security: &dyn Security,
+    keep: &dyn SetupKey,
     rendered: &Rendered,
 ) -> Result<(), &'static str> {
     match minted_token_of(rendered) {
         Some(Ok(secret)) => store_credential(security, Kind::Subscription, secret),
+        /*
+          The parse failed with a token on screen, which is the one failure where
+          giving up throws away something the developer just spent a sign-in on.
+
+          So it is left where they can fetch it, and the tag says which of the
+          two situations they are in. `unreadable-token` still means "nothing was
+          stored and there is nothing to fetch"; `unreadable-token-saved` means
+          the same about the keychain and adds that the file exists. A surface
+          that told someone to open a file varnick failed to write would be worse
+          than the dead end.
+
+          Both are `&'static str` chosen by a match arm, so this changes nothing
+          about the rule that no string the command printed is ever forwarded.
+        */
+        Some(Err("unreadable-token")) | None if rendered.plain().contains(TOKEN_PREFIX) => {
+            if keep.leave(rendered) {
+                Err("unreadable-token-saved")
+            } else {
+                Err("unreadable-token")
+            }
+        }
         Some(Err(problem)) => Err(problem),
-        None if rendered.plain().contains(TOKEN_PREFIX) => Err("unreadable-token"),
         None => Err("no-token"),
     }
 }
@@ -525,7 +547,7 @@ impl Minting {
             }
 
             let _ = child.wait();
-            let outcome = match store_minted_token(&SystemSecurity, &rendered) {
+            let outcome = match store_minted_token(&SystemSecurity, &SystemSetupKey, &rendered) {
                 Ok(()) => serde_json::json!({ "kind": "stored" }),
                 // A tag chosen by a match arm, never anything the command
                 // printed — which on this path is a credential.
@@ -636,6 +658,134 @@ fn mint_directory() -> PathBuf {
         .map(|since| since.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!("varnick-mint-{}-{stamp}", std::process::id()))
+}
+
+/// Where a token varnick could not parse is left for the developer to fetch.
+///
+/// ## Why a file at all
+///
+/// Because the alternative is a dead end that costs a whole sign-in. When the
+/// parse fails, the credential exists — it is on the pty, it is a minute old,
+/// and the developer has just authenticated to produce it. Discarding it means
+/// telling them to run `claude setup-token` again in a terminal, and each mint
+/// invalidates the one before, so the failed attempt is not merely wasted but
+/// actively in the way.
+///
+/// ## Why `$HOME` and not the clone
+///
+/// This holds a live credential, so the question is who can read it, and the
+/// Sandbox answers that precisely:
+///
+///   * **the clone is in `allowRead`.** A `.setup-key` beside the source is a
+///     file the confined agent can open. The setup screen's promise — "the
+///     agent it starts can never read it back" — would be false while this file
+///     existed, which is worse than the dead end it fixes.
+///   * **the OS temp directory is in `allowRead` *and* `allowWrite`**, so
+///     `mint_directory()`'s neighbourhood is no better.
+///   * **`$HOME` is in `denyRead`**, on its own line, and the clone is read back
+///     out of it by one entry that does not cover this path.
+///
+/// So the one place on this machine that is out of the agent's reach is the home
+/// directory, which is where it goes. `0700` on the directory and `0600` on the
+/// file, because "unreadable by the agent" and "unreadable by other accounts"
+/// are different questions and this file wants both answers.
+///
+/// It is deleted the moment a credential is successfully stored — see
+/// `forget_setup_key`, called from `store_credential`.
+pub fn setup_key_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".varnick").join("setup-key"))
+}
+
+/// Somewhere to leave a token varnick could not parse.
+///
+/// A trait for the same reason [`Security`] is one, and it is the same rule: no
+/// test in this repository may write the developer's home directory, and making
+/// that a property of the signature is stronger than making it a thing to
+/// remember. Written as a rule it was already broken once — the first version of
+/// this took no parameter, and the parse-failure tests wrote a `setup-key` into
+/// the home directory of whoever ran them.
+pub trait SetupKey {
+    /// Leave this render where the developer can fetch it. Answers whether it
+    /// worked, because a surface must never point at a file that is not there.
+    fn leave(&self, rendered: &Rendered) -> bool;
+}
+
+/// The real one. The only implementation that writes a file.
+pub struct SystemSetupKey;
+
+impl SetupKey for SystemSetupKey {
+    fn leave(&self, rendered: &Rendered) -> bool {
+        leave_setup_key(rendered)
+    }
+}
+
+/// Leave what the command printed where the developer can fetch it.
+///
+/// The best guess goes first, on its own line, because in the ordinary case it
+/// *is* the token and the developer should not have to read a terminal capture
+/// to find it. The whole render follows for the case where the guess is wrong,
+/// which is the case this file exists for — and it is the same text a
+/// maintainer needs to fix the parse, so one failure both unblocks the
+/// developer and produces the measurement.
+fn leave_setup_key(rendered: &Rendered) -> bool {
+    let Some(path) = setup_key_path() else {
+        return false;
+    };
+    let Some(directory) = path.parent() else {
+        return false;
+    };
+
+    if std::fs::create_dir_all(directory).is_err() {
+        return false;
+    }
+    let _ = std::fs::set_permissions(directory, PermissionsExt::from_mode(0o700));
+
+    let text = rendered.plain();
+    let guess = text
+        .find(TOKEN_PREFIX)
+        .map(|start| token_run(&text[start..]))
+        .unwrap_or("");
+
+    let body = format!(
+        "# varnick could not tell where the token ended, so it stored nothing.\n\
+         #\n\
+         # Copy the token below into varnick and this file is deleted. It holds a\n\
+         # live credential until then, and nothing else on this machine reads it.\n\
+         #\n\
+         # The agent varnick runs cannot open this file: it is under your home\n\
+         # directory, which the Sandbox denies.\n\
+         \n\
+         {guess}\n\
+         \n\
+         # ---- everything the command printed, in case the line above is wrong ----\n\
+         \n\
+         {text}\n"
+    );
+
+    // Created 0600 from the start rather than written and then chmodded, so
+    // there is no window in which it is readable by anyone who asks.
+    let opened = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path);
+
+    match opened {
+        Ok(mut file) => file.write_all(body.as_bytes()).is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Delete it. Called after any successful store, and never fails loudly.
+///
+/// "Any" is deliberate: a developer who gave up on the file and pasted a token
+/// from a terminal instead has still finished with it, and a spent credential
+/// left in a file is the thing this whole path is trying not to create.
+pub fn forget_setup_key() {
+    if let Some(path) = setup_key_path() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// The command, minus the terminal it runs on.
@@ -785,7 +935,7 @@ fn kill_group(_group: Option<i32>) {}
 mod tests {
     use super::{
         authorize_url_of, build_mint_command, minted_token_of, plain_text, store_minted_token,
-        Rendered, CONFIG_DIR_VAR, MINT_ARGV,
+        Rendered, SetupKey, CONFIG_DIR_VAR, MINT_ARGV,
     };
     use crate::credential::{Kind, Security, API_KEY_ENV_VAR, SUBSCRIPTION_ENV_VAR};
     use std::sync::Mutex;
@@ -931,6 +1081,38 @@ mod tests {
         }
     }
 
+    /// A place to leave a token that is not the developer's home directory.
+    ///
+    /// The same shape as [`Recorder`] and for the same reason: `store_minted_token`
+    /// has no default for either seam, so a test cannot reach a real keychain or
+    /// a real file by forgetting to supply one. `wrote` is what the surface-facing
+    /// tag is derived from, so both answers are worth being able to choose.
+    struct Kept {
+        wrote: bool,
+        renders: Mutex<usize>,
+    }
+
+    impl Kept {
+        fn working() -> Self {
+            Kept { wrote: true, renders: Mutex::new(0) }
+        }
+
+        fn failing() -> Self {
+            Kept { wrote: false, renders: Mutex::new(0) }
+        }
+
+        fn times(&self) -> usize {
+            *self.renders.lock().expect("no test poisons this")
+        }
+    }
+
+    impl SetupKey for Kept {
+        fn leave(&self, _rendered: &Rendered) -> bool {
+            *self.renders.lock().expect("no test poisons this") += 1;
+            self.wrote
+        }
+    }
+
     /// What the write half would be handed for a given value.
     ///
     /// The assertion the parse is checked through, and the reason no accessor on
@@ -952,7 +1134,7 @@ mod tests {
     #[test]
     fn the_token_reaches_the_keychain_exactly_as_it_was_printed() {
         let security = Recorder::ok();
-        store_minted_token(&security, &recorded()).expect("the recorded shape holds a token");
+        store_minted_token(&security, &Kept::working(), &recorded()).expect("the recorded shape holds a token");
 
         let calls = security.calls();
         assert_eq!(calls.len(), 1);
@@ -986,11 +1168,20 @@ mod tests {
           store one.
         */
         let security = Recorder::ok();
+        let kept = Kept::working();
         assert_eq!(
-            store_minted_token(&security, &recorded_wrapped()),
-            Err("unreadable-token")
+            store_minted_token(&security, &kept, &recorded_wrapped()),
+            Err("unreadable-token-saved")
         );
         assert!(security.calls().is_empty());
+        /*
+          Refused by the keychain and handed to the developer, which is not a
+          contradiction: the two halves answer different questions. varnick will
+          not *store* a value it cannot read with confidence, and it will not
+          *throw away* a credential the developer just signed in to produce. The
+          person who can tell which line is the token gets to look at it.
+        */
+        assert_eq!(kept.times(), 1);
     }
 
     #[test]
@@ -1011,7 +1202,7 @@ mod tests {
           token's own shape and not on anything drawn around it.
         */
         let security = Recorder::ok();
-        store_minted_token(&security, &recorded_full_screen())
+        store_minted_token(&security, &Kept::working(), &recorded_full_screen())
             .expect("the full-screen shape holds a token");
         let (_, stdin) = security.calls().remove(0);
         assert_eq!(stdin, hex_script_for(&fake_token()));
@@ -1034,7 +1225,7 @@ mod tests {
             "Your OAuth token (valid for 1 year):\r\n{token}\r\n{token}\r\n\r\nStore this token securely.\r\n",
         ));
         let security = Recorder::ok();
-        store_minted_token(&security, &repainted).expect("a repainted token is one token");
+        store_minted_token(&security, &Kept::working(), &repainted).expect("a repainted token is one token");
         let (_, stdin) = security.calls().remove(0);
         assert_eq!(stdin, hex_script_for(&token));
     }
@@ -1060,11 +1251,33 @@ mod tests {
         for rendered in [no_terminator, junk, bare_prefix] {
             let security = Recorder::ok();
             assert_eq!(
-                store_minted_token(&security, &rendered),
-                Err("unreadable-token")
+                store_minted_token(&security, &Kept::working(), &rendered),
+                Err("unreadable-token-saved")
             );
             assert!(security.calls().is_empty());
         }
+    }
+
+    #[test]
+    fn a_token_that_could_not_be_left_anywhere_says_so_rather_than_pointing_at_nothing() {
+        /*
+          The two tags are the difference between "there is a file to open" and
+          "there is not", and a surface that told a developer to open one varnick
+          failed to write would be worse than the dead end it replaced — they
+          would go looking, find nothing, and have no idea which half went wrong.
+
+          So the tag is derived from whether the write actually happened, not
+          from having attempted it. A read-only home directory is the ordinary
+          way to get here.
+        */
+        let security = Recorder::ok();
+        let kept = Kept::failing();
+        assert_eq!(
+            store_minted_token(&security, &kept, &recorded_wrapped()),
+            Err("unreadable-token")
+        );
+        assert_eq!(kept.times(), 1);
+        assert!(security.calls().is_empty());
     }
 
     #[test]
@@ -1077,7 +1290,7 @@ mod tests {
         let nothing = Rendered::of(
             "Opening browser to sign in\r\nBrowser didn't open? Use the url below to sign in\r\n",
         );
-        assert_eq!(store_minted_token(&security, &nothing), Err("no-token"));
+        assert_eq!(store_minted_token(&security, &Kept::working(), &nothing), Err("no-token"));
         assert!(security.calls().is_empty());
     }
 
@@ -1088,11 +1301,11 @@ mod tests {
         // reads is authored once, in packages/harness/src/credentials.ts.
         let refused = Recorder::answering(Ok(45));
         assert_eq!(
-            store_minted_token(&refused, &recorded()),
+            store_minted_token(&refused, &Kept::working(), &recorded()),
             Err("store-refused")
         );
         let missing = Recorder::answering(Err(()));
-        assert_eq!(store_minted_token(&missing, &recorded()), Err("no-keychain"));
+        assert_eq!(store_minted_token(&missing, &Kept::working(), &recorded()), Err("no-keychain"));
     }
 
     #[test]
@@ -1106,10 +1319,11 @@ mod tests {
         */
         let token = fake_token();
         let attempts = [
-            store_minted_token(&Recorder::answering(Ok(45)), &recorded()),
-            store_minted_token(&Recorder::answering(Err(())), &recorded()),
+            store_minted_token(&Recorder::answering(Ok(45)), &Kept::working(), &recorded()),
+            store_minted_token(&Recorder::answering(Err(())), &Kept::working(), &recorded()),
             store_minted_token(
                 &Recorder::ok(),
+                &Kept::working(),
                 &Rendered::of(&format!("Your token:\r\n{token}\r\n")),
             ),
         ];
@@ -1279,7 +1493,7 @@ mod tests {
             fake_token()
         ));
         let security = Recorder::ok();
-        store_minted_token(&security, &chatty).expect("the value itself is intact");
+        store_minted_token(&security, &Kept::working(), &chatty).expect("the value itself is intact");
         let (_, stdin) = security.calls().remove(0);
         assert_eq!(stdin, hex_script_for(&fake_token()));
     }

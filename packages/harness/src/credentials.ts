@@ -242,6 +242,21 @@ export function credentialShapeProblem(kind: CredentialKind, value: string): str
 export const SUBSCRIPTION_TOKEN_COMMAND = 'claude setup-token'
 
 /**
+ * Where a token varnick could not parse is left, as a developer would type it.
+ *
+ * The `~` spelling on purpose: this is read off a screen and typed into an
+ * editor or a terminal, and both understand it. The real path is decided by
+ * `setup_key_path` in src-tauri/src/mint.rs, which is also where the reasoning
+ * about *why* it is under `$HOME` lives — the short version is that it is the
+ * one directory on the machine the confined agent cannot read.
+ *
+ * A constant on this side rather than a string forwarded from the host, because
+ * every sentence this module produces is authored here and selected by a tag.
+ * A path that arrived over the bridge would be the first exception.
+ */
+export const SETUP_KEY_DISPLAY_PATH = '~/.varnick/setup-key'
+
+/**
  * What to do about an absence, in one sentence.
  *
  * Phrased to continue the surface's own lead-in ("Could not read a credential —
@@ -552,6 +567,20 @@ export function credentialMintGuidance(failure: CredentialMintFailure): string {
       return 'The sign-in finished without producing a token. That is what declining in the browser looks like, and also what an account with no Claude subscription looks like — an Anthropic API key is the other way in.'
     case 'unreadable-token':
       return `A token was produced and varnick could not read it back in one piece, so nothing was stored: half a credential authenticates nothing and would fail days from now, far from the cause. Run \`${SUBSCRIPTION_TOKEN_COMMAND}\` yourself and paste the result here.`
+    case 'unreadable-token-saved':
+      /*
+        The same failure, and the only one where the developer is a step from
+        finished rather than back at the start. They just authenticated; the
+        token exists; the parse is what fell over. Sending them to
+        `claude setup-token` would spend a second sign-in *and* invalidate the
+        token this one produced.
+
+        The path is written here rather than forwarded from the host, like every
+        other sentence in this module. It is `$HOME`-relative and decided by
+        `setup_key_path` in src-tauri/src/mint.rs, so the two are a pair — and no
+        string the mint produced reaches this message.
+      */
+      return `A token was produced and varnick could not tell where it ended, so it stored nothing rather than store half of one. It is not lost: open \`${SETUP_KEY_DISPLAY_PATH}\`, copy the token, and paste it below. varnick deletes that file as soon as a credential is stored, and the agent it runs cannot read it — it is under your home directory, which the Sandbox denies.`
     case 'store-refused':
       return `The token was minted and the keychain refused to store it, and nothing was changed. Open Keychain Access and allow varnick to write the "${CREDENTIAL_KEYCHAIN_SERVICE}" item, then try again.`
     case 'no-keychain':

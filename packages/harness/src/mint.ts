@@ -60,6 +60,16 @@ export const CREDENTIAL_MINT_FAILURES = [
    * as an authentication error days later with nothing pointing back at this.
    */
   'unreadable-token',
+  /**
+   * The same, and the token was left in a file for the developer to fetch.
+   *
+   * A separate tag rather than a field, because the two situations need
+   * different sentences and a surface must never point at a file varnick failed
+   * to write. See `leave_setup_key` in src-tauri/src/mint.rs for why the file is
+   * under `$HOME` — the one place on the machine the confined agent cannot read
+   * — and `store_credential` for when it is deleted.
+   */
+  'unreadable-token-saved',
   /** The keychain was asked to store it and said no. */
   'store-refused',
   /** There is no `security` on this machine — a platform with no keychain. */

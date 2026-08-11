@@ -3,6 +3,7 @@ import { HarnessUnavailable, type HarnessBridge, type HarnessRequest } from './b
 import {
   CREDENTIAL_MINT_FAILURES,
   CredentialNotMinted,
+  SETUP_KEY_DISPLAY_PATH,
   SUBSCRIPTION_TOKEN_COMMAND,
   credentialMintGuidance,
   mintSubscriptionToken,
@@ -221,7 +222,7 @@ describe('every way of failing produces a sentence Core authored', () => {
   })
 })
 
-describe('the ten failures are legible and distinct', () => {
+describe('every failure is legible and distinct', () => {
   test('each names a different thing', () => {
     const messages = CREDENTIAL_MINT_FAILURES.map(credentialMintGuidance)
     expect(new Set(messages).size).toBe(CREDENTIAL_MINT_FAILURES.length)
@@ -233,11 +234,18 @@ describe('the ten failures are legible and distinct', () => {
       route it replaced is still there. So most of these name the command, and
       the two that do not — no subscription, no keychain — name the other way in
       instead of pretending this one can be retried into working.
+
+      `unreadable-token-saved` is the shortest step of the lot and the only one
+      that is not a retry: the token exists and is on disk, so what it offers is
+      a file to open rather than a command to run again. Sending that developer
+      back to `claude setup-token` would spend a second sign-in and invalidate
+      the token the first one produced.
       */
     for (const failure of CREDENTIAL_MINT_FAILURES) {
       const message = credentialMintGuidance(failure)
       const offersSomething =
         message.includes(SUBSCRIPTION_TOKEN_COMMAND) ||
+        message.includes(SETUP_KEY_DISPLAY_PATH) ||
         message.includes('API key') ||
         message.includes('CLAUDE_CODE_OAUTH_TOKEN') ||
         message.includes('try again') ||
@@ -257,5 +265,39 @@ describe('the ten failures are legible and distinct', () => {
     // half-written item that does not exist.
     const message = credentialMintGuidance('unreadable-token')
     expect(message).toContain('nothing was stored')
+  })
+
+  test('the saved variant says the same about the keychain, and where the token went', () => {
+    /*
+      Both halves matter and they are easy to get wrong in opposite directions.
+      Without the first, a developer goes looking for a keychain item that was
+      never written. Without the second, the token sits in a file nobody knows
+      about — which is strictly worse than not writing it, because a live
+      credential in plaintext with no owner is how one gets forgotten.
+    */
+    const message = credentialMintGuidance('unreadable-token-saved')
+    expect(message).toContain('stored nothing')
+    expect(message).toContain(SETUP_KEY_DISPLAY_PATH)
+  })
+
+  test('the saved variant does not send the developer back to the command', () => {
+    /*
+      The distinction that makes this tag worth having. The token exists; the
+      parse is what failed. Naming `claude setup-token` here would cost a second
+      sign-in *and* invalidate the token this one produced, so the file would be
+      pointing at a credential the advice had just revoked.
+    */
+    expect(credentialMintGuidance('unreadable-token-saved')).not.toContain(
+      SUBSCRIPTION_TOKEN_COMMAND,
+    )
+  })
+
+  test('the two unreadable sentences are different, because the situations are', () => {
+    // One has a file to open and one does not. A surface that pointed at a file
+    // varnick failed to write would send someone looking for nothing.
+    expect(credentialMintGuidance('unreadable-token-saved')).not.toBe(
+      credentialMintGuidance('unreadable-token'),
+    )
+    expect(credentialMintGuidance('unreadable-token')).not.toContain(SETUP_KEY_DISPLAY_PATH)
   })
 })

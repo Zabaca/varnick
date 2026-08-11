@@ -429,7 +429,25 @@ pub fn store_credential(
 
     let script = store_script(kind.keychain_account(), trimmed);
     match security.run(&["-i"], &script) {
-        Ok(0) => Ok(()),
+        Ok(0) => {
+            /*
+              The keychain has it, so the scratch copy a failed parse left behind
+              is spent — see `leave_setup_key` in mint.rs.
+
+              Here rather than at the paste, and on *any* successful store rather
+              than only one whose value came out of that file, because the thing
+              being cleaned up is a live credential sitting in plaintext and the
+              developer's route to being finished with it is not knowable from
+              here. Someone who gave up on the file and pasted from a terminal
+              instead has still finished with it.
+
+              Deliberately not part of the answer. A store that worked is a store
+              that worked; a file that would not delete is not a reason to tell
+              them otherwise, and the next successful store tries again.
+            */
+            crate::mint::forget_setup_key();
+            Ok(())
+        }
         // The keychain answered and did not do it. Which code it chose is not
         // forwarded: the developer's next action is the same either way.
         Ok(_) => Err("store-refused"),
