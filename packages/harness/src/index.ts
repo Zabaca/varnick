@@ -87,6 +87,8 @@ export {
   PROTECTED_PATHS,
   ROOT_MANIFEST,
   isProtectedPath,
+  isReadablePath,
+  isRootManifest,
   unattendedLanding,
   type InstallLifecycle,
   type InstallLifecycleField,

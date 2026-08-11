@@ -24,6 +24,7 @@
 import { resolve } from 'node:path'
 import {
   INSTALL_LIFECYCLE_FIELDS,
+  isRootManifest,
   ROOT_MANIFEST,
   unattendedLanding,
   type InstallLifecycle,
@@ -137,18 +138,47 @@ function main(): void {
     requireGit(['rev-parse', '--verify', `${revision}^{commit}`], `No such revision: ${revision}.`)
   }
 
-  // `base...branch` is the diff against the merge base rather than against the
-  // tip of `base`, so work that landed on `base` since this branch forked is not
-  // reported as something this branch changed.
-  const changedPaths = requireGit(['diff', '--name-only', `${base}...${branch}`], 'The diff')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '')
+  /*
+    Three flags, and every one of them closed a hole that produced `land` for a
+    protected path. Measured against real git rather than reasoned about.
+
+    `base...branch` is the diff against the merge base rather than against the
+    tip of `base`, so work that landed on `base` since this branch forked is not
+    reported as something this branch changed.
+
+    `-z` because the default `core.quotePath=true` prints a non-ASCII path
+    *with its quotes*: `scripts/café.sh` arrives as `"scripts/caf\303\251.sh"`,
+    whose leading `"` matches no entry. `-z` emits raw bytes separated by NUL and
+    never quotes. It also removes the other reason to split on newlines, which is
+    that a newline is a legal character in a POSIX filename.
+
+    `--no-renames` because rename detection reports **only the destination**.
+    `sandbox-policy.baseline.json -> baseline.json` prints as `baseline.json`,
+    so a branch could delete the baseline or move `src-tauri/*` out of the
+    protected tree and land unattended. Without detection the same change is a
+    delete of the old path and an add of the new, so both sides are checked —
+    which also refuses a rename *into* a protected path, and should.
+  */
+  const changedPaths = requireGit(
+    ['diff', '-z', '--no-renames', '--name-only', `${base}...${branch}`],
+    'The diff',
+  )
+    // Splitting the format, not repairing the paths: `-z` terminates every entry
+    // with a NUL, so the last field is always empty. Nothing else is dropped and
+    // nothing is trimmed — a path with a stray space is refused by the predicate
+    // rather than quietly tidied into one that matches.
+    .split('\0')
+    .filter((path) => path !== '')
 
   // Read only when the answer can turn on it. `git show` on a revision with no
   // manifest is indistinguishable from a revision that does not exist, and the
   // rev-parse above is what already ruled the second one out.
-  const touchesManifest = changedPaths.includes(ROOT_MANIFEST)
+  //
+  // `isRootManifest` rather than `includes(ROOT_MANIFEST)`: the pure half owns
+  // what counts as the root manifest, and a string compare here disagreed with
+  // it on `./package.json` — reporting `manifest-not-read` for a manifest that
+  // reads perfectly well.
+  const touchesManifest = changedPaths.some(isRootManifest)
   const mergeBase = touchesManifest
     ? requireGit(['merge-base', base, branch], 'The merge base').trim()
     : ''

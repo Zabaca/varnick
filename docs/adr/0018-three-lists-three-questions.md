@@ -19,16 +19,22 @@ this in the live tree*.
 
 ```
 FENCE_PATHS      packages/harness/**   src-tauri/**   sandbox-policy.baseline.json
-PROTECTED_PATHS  …those, plus          sandbox-policy.json   scripts/**   .githooks/**
+PROTECTED_PATHS  …those, plus          sandbox-policy.json   scripts/**
+                 plus  .githooks/**    — NOT on denyWrite today; see below
                  plus, in package.json: preinstall | postinstall | prepare
 denyWrite        …those, plus          packages/core/**   vite.config.*   package.json
                                        .git/hooks/**   .git/config*
 ```
 
-The middle list is strictly larger than the first and strictly smaller than the
-third, and **that relationship is asserted in `fence.test.ts` rather than stated
-here**. A comment that describes a containment is a comment that goes on
-describing it after it stops being true.
+The middle list is strictly larger than the first, and **is intended to be**
+strictly smaller than the third. It is not, quite, today: `.githooks/**` is
+protected here and is a grant by omission in `sandbox.ts` — the one row marked
+above, closed by ticket 01 of this feature. Saying "is" rather than "is intended
+to be" was wrong in this document for one round of review, which is the reason
+the containment lives in `fence.test.ts` as an assertion with a named exception
+rather than in this paragraph. **A comment that describes a containment is a
+comment that goes on describing it after it stops being true**, and this one had
+already started to.
 
 ## Why not one list
 
@@ -105,6 +111,62 @@ Knowingly not covered, in the same spirit as the "Knowingly not here" note in
 more step removed, accepted deliberately, and asserted in the tests so the gap is
 visible rather than inferred from an absence.
 
+**And a second one found in review, wider than that.** The rule reads the *root*
+manifest, but a root `bun install` runs the lifecycle scripts of every workspace
+package — so `packages/core/package.json` gaining a `postinstall` lands
+unattended, and the spec's rule as written does not reach it. The code faithfully
+inherits a gap the spec has; widening it here unilaterally would be one ticket
+deciding a boundary question the spec settled differently, so it is recorded as a
+known limit rather than closed. Closing it properly means either adding every
+workspace manifest to the lifecycle rule or adding `*/package.json` to the
+protected list, and that is a decision to take deliberately.
+
+## The precondition was a comment, and a comment is not a check
+
+The first version of this documented a shape for `changedPaths` — repository
+relative, forward slashes, no `..` — and trusted the caller for it. Review found
+two strings that **real git prints by default** and that the predicate answered
+`land` for:
+
+- **A quoted path.** With the default `core.quotePath=true`,
+  `git diff --name-only` prints a non-ASCII path *with its quotes*:
+  `scripts/café.sh` arrives as `"scripts/caf\303\251.sh"`. The leading `"`
+  matches no entry, so a branch touching a file under `scripts/**` landed.
+- **A rename.** `--name-only` reports only the *destination* of a detected
+  rename, so `sandbox-policy.baseline.json -> baseline.json` prints as
+  `baseline.json` alone. A branch could **delete the baseline, or move
+  `src-tauri/*` out of the protected tree**, unattended.
+
+Both were measured in a throwaway repository rather than argued from the
+documentation. The CLI now passes `-z --no-renames`, which fixes both at the
+source: `-z` emits raw bytes and never quotes, and without rename detection the
+same change is reported as a delete of the old path and an add of the new, so
+both sides are checked — which refuses a rename *into* a protected path too, and
+should.
+
+**But the fix does not stop at the CLI.** `isProtectedPath` and
+`unattendedLanding` are exported for the run loop, so the CLI is not the only
+caller and will not be the last. The pure function now refuses any path it cannot
+confidently read — quoted, absolute, backslash-separated, containing a `.`, `..`
+or empty segment, surrounded by whitespace, containing a control character, or
+empty — rather than answering `false` about it. `isReadablePath` is exported for
+a caller that needs to tell "protected" from "unintelligible" apart.
+
+That makes `isProtectedPath` a gate rather than a membership test: **a path it
+cannot read answers `true`.** It is the same direction `manifest-not-read`
+already chose, and the same reasoning — for the artifact the feature's safety
+rests on, the only direction it may be wrong in is the refusing one. The list of
+refused shapes is closed rather than open, so the next shape nobody thought of
+arrives as a stopped run rather than as a merge.
+
+`isFencePath` is deliberately **not** given the same treatment. Its caller is the
+Preview dialog, where a wrong `true` is a dialog nobody needed and a wrong
+`false` still has a developer sitting in front of it; and `touchesFence([])` must
+stay `false`, because a worktree that changed nothing is not a widening. That
+said, the quoting hole is real there too — a quoted Fence path raises no dialog —
+and it is recorded here as an observed gap in the Preview path rather than fixed
+under a ticket that does not own it.
+
 ## Where it lives, and what may import it
 
 In `packages/harness/src/fence.ts`, which imports nothing at all. That constraint
@@ -121,6 +183,12 @@ function wrote and sets an exit code: `0` may land, `1` refused, `2` could not b
 answered. Two codes for failure rather than one, because "refused" parks a ticket
 for the developer and "not asked properly" is a bug in the caller, and they want
 opposite handling in a run loop.
+
+The one piece of logic it must not hold is what counts as a protected path or as
+the root manifest. It held the second briefly — `changedPaths.includes('package.json')` —
+and disagreed with the pure half on `./package.json`, reporting `manifest-not-read`
+for a manifest that reads perfectly well. It calls `isRootManifest` now. Anything
+the CLI decides for itself is a second implementation of this ADR.
 
 ## What was considered and rejected
 

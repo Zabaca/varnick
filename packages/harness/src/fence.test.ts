@@ -4,6 +4,8 @@ import {
   INSTALL_LIFECYCLE_FIELDS,
   isFencePath,
   isProtectedPath,
+  isReadablePath,
+  isRootManifest,
   PROTECTED_PATHS,
   ROOT_MANIFEST,
   touchesFence,
@@ -271,9 +273,196 @@ describe('what may not be landed without a human', () => {
     expect(isProtectedPath('SANDBOX-POLICY.JSON')).toBe(true)
   })
 
-  test('a leading ./ is the same path, and nothing is not protected', () => {
+  test('a leading ./ is the same path', () => {
     expect(isProtectedPath('./scripts/clean-clone.sh')).toBe(true)
-    expect(isProtectedPath('')).toBe(false)
+  })
+})
+
+/*
+  The shapes that answered `land` for a protected file.
+
+  Every case below was a real `mayLand: true`. Two of them are what git prints
+  by default — the review found them by running it — and the rest are shapes any
+  second caller could produce, which matters because `isProtectedPath` and
+  `unattendedLanding` are exported from index.ts for the run loop and the CLI is
+  not the only caller.
+
+  The rule the whole block encodes: a string this cannot confidently read is
+  refused, never skipped. That is the same direction `manifest-not-read` already
+  chose, for the same reason.
+*/
+
+describe('a path this cannot read is refused, not landed', () => {
+  /** Every one of these returned `land` for a protected file before the check. */
+  const UNREADABLE = [
+    // What real git prints for `scripts/café.sh` with the default
+    // `core.quotePath=true`. Measured, not imagined.
+    String.raw`"scripts/caf\303\251.sh"`,
+    // A backslash separator: one segment here, two on the disk being written to.
+    String.raw`scripts\setup.sh`,
+    String.raw`packages\harness\src\x.ts`,
+    // Absolute — the same file as `scripts/setup.sh`, matching nothing.
+    '/Users/x/varnick/scripts/setup.sh',
+    // A `..` segment naming a protected file from outside it.
+    'docs/../scripts/setup.sh',
+    'a/b/../../scripts/setup.sh',
+    // Empty and `.` segments.
+    './/scripts/setup.sh',
+    '././scripts/setup.sh',
+    'sandbox-policy.json/',
+    // Surrounding whitespace: a different string, the same file.
+    'sandbox-policy.json ',
+    ' sandbox-policy.json',
+    // Not a path at all. A caller producing this has a parsing bug, and a
+    // parsing bug is the thing most likely to have dropped a real path too.
+    '',
+  ]
+
+  test('none of them is readable', () => {
+    for (const path of UNREADABLE) {
+      expect(isReadablePath(path)).toBe(false)
+    }
+  })
+
+  test('every one of them refuses the change', () => {
+    for (const path of UNREADABLE) {
+      expect(unattendedLanding({ changedPaths: [path] })).toMatchObject({
+        mayLand: false,
+        refusal: 'unreadable-path',
+        subject: path,
+      })
+    }
+  })
+
+  test('the predicate answers "protected" for all of them', () => {
+    /*
+      The one thing about `isProtectedPath` that has to be read before it is
+      used. It is a gate, not a membership test with a tidy complement: the only
+      safe answer about a string nothing can parse is the refusing one, and a
+      caller that wants the distinction asks `isReadablePath`.
+    */
+    for (const path of UNREADABLE) {
+      expect(isProtectedPath(path)).toBe(true)
+    }
+  })
+
+  test('a control character is refused, because a report has to print the path', () => {
+    // Legal in a POSIX filename and not legal in a sentence a developer reads —
+    // a path that can rewrite a terminal line cannot be shown honestly, and
+    // being shown is the whole of the gate.
+    const sneaky = `README.md${String.fromCharCode(13)}scripts/setup.sh`
+    expect(isReadablePath(sneaky)).toBe(false)
+    expect(unattendedLanding({ changedPaths: [sneaky] })).toMatchObject({
+      refusal: 'unreadable-path',
+    })
+  })
+
+  test('the refusal prints the path quoted, so the reason cannot be rewritten by it', () => {
+    const verdict = unattendedLanding({ changedPaths: ['sandbox-policy.json '] })
+    expect(verdict).toMatchObject({
+      reason: expect.stringContaining(String.raw`"sandbox-policy.json "`),
+    })
+  })
+
+  test('ordinary paths are still readable', () => {
+    // The check has to be closed without being a nuisance: everything a normal
+    // diff produces goes through it.
+    for (const path of [
+      'packages/core/src/App.tsx',
+      './packages/core/src/App.tsx',
+      'README.md',
+      'docs/adr/0018-three-lists-three-questions.md',
+      'packages/userspace/surfaces/welcome/index.tsx',
+      'scripts/café.sh',
+      'a file with spaces.md',
+    ]) {
+      expect(isReadablePath(path)).toBe(true)
+    }
+  })
+
+  test('an unreadable path refuses even among paths that would all have landed', () => {
+    // The failure this exists for. One entry nothing can parse is one entry
+    // that could have been the protected one.
+    const verdict = unattendedLanding({
+      changedPaths: ['README.md', 'packages/core/src/App.tsx', String.raw`scripts\setup.sh`],
+    })
+    expect(verdict).toMatchObject({ mayLand: false, refusal: 'unreadable-path' })
+  })
+})
+
+describe('the shapes git really produces', () => {
+  /*
+    Both of these are what `git diff --name-only` prints on a default
+    installation, confirmed by running it in a throwaway repository rather than
+    inferred from the documentation. `landing-cli.ts` passes `-z --no-renames`
+    so neither reaches the predicate — and the predicate refuses them anyway,
+    because the CLI will not be the only caller.
+  */
+
+  test('a quoted non-ASCII path does not land', () => {
+    // `core.quotePath=true` is the default and prints the quotes as part of the
+    // name. The leading `"` defeated every entry.
+    expect(
+      unattendedLanding({ changedPaths: [String.raw`"scripts/caf\303\251.sh"`] }).mayLand,
+    ).toBe(false)
+  })
+
+  test('the unquoted form of the same path is protected on its merits', () => {
+    // What `-z` hands over, and what the entry is supposed to catch.
+    expect(isProtectedPath('scripts/café.sh')).toBe(true)
+  })
+
+  test('both sides of a rename out of a protected path are refused', () => {
+    /*
+      Rename detection reports only the destination, so
+      `sandbox-policy.baseline.json -> baseline.json` printed as `baseline.json`
+      and landed — deleting the baseline unattended. `--no-renames` reports the
+      delete and the add separately, which is what these two paths are.
+    */
+    expect(unattendedLanding({ changedPaths: ['sandbox-policy.baseline.json'] })).toMatchObject({
+      refusal: 'protected-path',
+    })
+    // And the destination alone is not protected, which is exactly why the
+    // source had to be reported.
+    expect(isProtectedPath('baseline.json')).toBe(false)
+  })
+
+  test('a rename into a protected path is refused too', () => {
+    // The other direction, and the reason both sides are checked rather than
+    // just the source: moving a file *into* `scripts/**` chooses what the
+    // developer's next install runs.
+    expect(unattendedLanding({ changedPaths: ['scripts/setup.sh'] })).toMatchObject({
+      refusal: 'protected-path',
+    })
+  })
+})
+
+describe('what counts as the root manifest', () => {
+  test('the pure half owns the question, and tolerates a leading ./', () => {
+    // The CLI asked `changedPaths.includes(ROOT_MANIFEST)` and disagreed with
+    // this on `./package.json`, reporting `manifest-not-read` for a manifest
+    // that reads perfectly well.
+    expect(isRootManifest(ROOT_MANIFEST)).toBe(true)
+    expect(isRootManifest('./package.json')).toBe(true)
+    expect(isRootManifest('Package.json')).toBe(true)
+  })
+
+  test('a nested manifest is not it, and neither is an unreadable one', () => {
+    expect(isRootManifest('packages/core/package.json')).toBe(false)
+    expect(isRootManifest('docs/../package.json')).toBe(false)
+  })
+
+  test('a ./-prefixed manifest is read rather than reported unread', () => {
+    expect(
+      unattendedLanding({
+        changedPaths: ['./package.json'],
+        rootManifestBefore: {},
+        rootManifestAfter: {},
+      }).mayLand,
+    ).toBe(true)
+    expect(unattendedLanding({ changedPaths: ['./package.json'] })).toMatchObject({
+      refusal: 'manifest-not-read',
+    })
   })
 })
 
@@ -463,9 +652,6 @@ describe('the verdict on a whole change', () => {
  */
 const PROTECTED_BUT_NOT_YET_DENIED: readonly string[] = [`${TRACKED_HOOKS_DIR}/**`]
 
-/** The same list, widened, so a plain `string` can be looked up in it. */
-const PROTECTED: readonly string[] = PROTECTED_PATHS
-
 describe('how the three lists relate', () => {
   test('everything the Fence covers may also not be landed', () => {
     /*
@@ -474,7 +660,7 @@ describe('how the three lists relate', () => {
       the dialog removed and no window open to show it.
     */
     for (const entry of FENCE_PATHS) {
-      expect(PROTECTED).toContain(entry)
+      expect(PROTECTED_PATHS as readonly string[]).toContain(entry)
       expect(isProtectedPath(entry.replace('/**', '/x'))).toBe(true)
     }
   })
@@ -520,7 +706,25 @@ describe('how the three lists relate', () => {
     // A typo here would silence a real entry, so the exception list is checked
     // against the list it excuses rather than trusted.
     for (const entry of PROTECTED_BUT_NOT_YET_DENIED) {
-      expect(PROTECTED).toContain(entry)
+      expect(PROTECTED_PATHS as readonly string[]).toContain(entry)
+    }
+  })
+
+  test('every accounted-for exception is still needed', () => {
+    /*
+      The half that makes the exception self-clearing rather than permanent.
+
+      Listing an entry here is a claim that the live tree really does still let
+      the agent write it. The moment ticket 01 adds `.githooks/**` to
+      `denyWrite`, this goes red and the only fix is to delete the entry above —
+      which is the point. An exception that outlives its reason is indis-
+      tinguishable from a rule, and it would sit here excusing a real gap on the
+      next entry somebody adds.
+    */
+    const denyWrite = denyWriteFor(CLONE)
+
+    for (const entry of PROTECTED_BUT_NOT_YET_DENIED) {
+      expect(denyWrite).not.toContain(`${CLONE}/${entry}`)
     }
   })
 
@@ -535,7 +739,7 @@ describe('how the three lists relate', () => {
 
     for (const entry of ['packages/core/**', 'vite.config.*', 'package.json']) {
       expect(denyWrite).toContain(`${CLONE}/${entry}`)
-      expect(PROTECTED).not.toContain(entry)
+      expect(PROTECTED_PATHS as readonly string[]).not.toContain(entry)
     }
   })
 })

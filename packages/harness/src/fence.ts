@@ -166,7 +166,11 @@ export type InstallLifecycleField = (typeof INSTALL_LIFECYCLE_FIELDS)[number]
 export type InstallLifecycle = Readonly<Partial<Record<InstallLifecycleField, string>>>
 
 /** Which rule refused, for a report that has to say more than "no". */
-export type LandingRefusal = 'protected-path' | 'install-lifecycle-script' | 'manifest-not-read'
+export type LandingRefusal =
+  | 'protected-path'
+  | 'install-lifecycle-script'
+  | 'manifest-not-read'
+  | 'unreadable-path'
 
 /**
  * Whether a change may land unattended, and if not, why not.
@@ -185,7 +189,16 @@ export type UnattendedLanding =
     }
 
 export interface UnattendedLandingInput {
-  /** Repository-relative, as `git diff --name-only` reports them. */
+  /**
+   * Repository-relative, in the shape {@link isReadablePath} accepts. A path
+   * that is not is refused rather than skipped — see below.
+   *
+   * The caller that produces these has work to do: `git diff --name-only`
+   * quotes non-ASCII paths and reports only the destination of a rename, and
+   * both of those arrive here as strings that match no entry. `landing-cli.ts`
+   * passes `-z --no-renames` for exactly that reason, and this list refuses the
+   * shapes anyway, because that caller is not the only one.
+   */
   readonly changedPaths: readonly string[]
   /** The root manifest's lifecycle fields at the base revision. */
   readonly rootManifestBefore?: InstallLifecycle | undefined
@@ -215,12 +228,28 @@ export interface UnattendedLandingInput {
  * something, and every caller that forgets gets a landing rather than an error.
  * A branch that does not touch the manifest needs neither argument.
  *
+ * **A path this cannot read.** Any changed path failing
+ * {@link isReadablePath} refuses, rather than being skipped or matched
+ * approximately. The precondition used to be a sentence in this comment, and a
+ * sentence is not a check: `"scripts/caf\303\251.sh"` — which is what real git
+ * prints for a non-ASCII path under the default `core.quotePath` — matched no
+ * entry and landed. So did `/Users/x/varnick/scripts/setup.sh`,
+ * `docs/../scripts/setup.sh` and `scripts\setup.sh`.
+ *
  * Deterministic: the changed paths are checked in the order given, so the same
  * input always names the same first offender, and a report is stable across
  * runs.
  */
 export function unattendedLanding(input: UnattendedLandingInput): UnattendedLanding {
   for (const path of input.changedPaths) {
+    if (!isReadablePath(path)) {
+      return {
+        mayLand: false,
+        refusal: 'unreadable-path',
+        subject: path,
+        reason: `${printable(path)} is not a repository-relative path this can read, so nothing here can say whether it is protected.`,
+      }
+    }
     const entry = matchedEntry(path, PROTECTED_PATHS)
     if (entry !== null) {
       return {
@@ -232,7 +261,7 @@ export function unattendedLanding(input: UnattendedLandingInput): UnattendedLand
     }
   }
 
-  if (!input.changedPaths.some((path) => normalise(path) === ROOT_MANIFEST)) {
+  if (!input.changedPaths.some(isRootManifest)) {
     return { mayLand: true }
   }
 
@@ -261,9 +290,84 @@ export function unattendedLanding(input: UnattendedLandingInput): UnattendedLand
   return { mayLand: true }
 }
 
-/** Whether one changed path is on the unattended-landing list. */
+/**
+ * Whether one changed path may not be landed without a human.
+ *
+ * **A path this cannot read answers `true`**, which is the one thing about this
+ * function that has to be read before it is used. It is not a membership test
+ * with a tidy complement: it is a gate, and the only safe answer about a string
+ * nothing can parse is the refusing one. A caller that wants to tell "protected"
+ * from "unintelligible" apart asks {@link isReadablePath}, or calls
+ * {@link unattendedLanding} and reads the refusal.
+ *
+ * This is where it parts company with {@link isFencePath}, deliberately. That
+ * one decides whether to raise a native dialog before a Preview, where a wrong
+ * `true` is a dialog nobody needed and a wrong `false` is still in front of a
+ * developer who is sitting there. This one decides whether a merge happens with
+ * nobody in the room.
+ */
 export function isProtectedPath(path: string): boolean {
+  if (!isReadablePath(path)) return true
   return matchedEntry(path, PROTECTED_PATHS) !== null
+}
+
+/** Whether a changed path is the root manifest, whose diff is read rather than refused. */
+export function isRootManifest(path: string): boolean {
+  return isReadablePath(path) && normalise(path) === ROOT_MANIFEST
+}
+
+/**
+ * Whether a string is a repository-relative path in the one shape the matcher
+ * above can be trusted about.
+ *
+ * Everything refused here is refused because it defeats {@link matchedEntry}
+ * silently rather than loudly — the match returns `false` and the caller reads
+ * that as "not protected":
+ *
+ * - **Quoting.** `"scripts/caf\303\251.sh"` is what `git diff --name-only`
+ *   prints for a non-ASCII path with the default `core.quotePath=true`. The
+ *   leading `"` defeats every entry.
+ * - **A backslash separator.** `scripts\setup.sh` is one segment here and two on
+ *   the filesystem the merge writes to.
+ * - **An absolute path.** `/Users/x/varnick/scripts/setup.sh` is the same file
+ *   as `scripts/setup.sh` and matches nothing.
+ * - **A `.` or `..` segment, or an empty one.** `docs/../scripts/setup.sh`,
+ *   `.//scripts/setup.sh` and `sandbox-policy.json/` all name protected things
+ *   while matching no entry. One leading `./` is the exception, tolerated
+ *   because a caller composing paths by hand produces it and
+ *   {@link normalise} already removes it.
+ * - **Surrounding whitespace.** `sandbox-policy.json ` is a different string and
+ *   the same file. Trimming it here would be repairing input, which is how a
+ *   shape nobody intended becomes a shape everything relies on; refusing says so.
+ * - **A control character.** Legal in a POSIX filename and not legal in a
+ *   sentence a report prints — a path that can rewrite a terminal line is a path
+ *   the developer cannot be shown honestly, and being shown is the whole gate.
+ * - **The empty string.** Not a path. A caller producing one has a parsing bug,
+ *   and a parsing bug is the thing most likely to have dropped a real path too.
+ *
+ * The list is closed on purpose: anything not recognised is refused, so the
+ * next shape nobody thought of arrives as a stopped run rather than a merge.
+ */
+export function isReadablePath(path: string): boolean {
+  if (path === '' || path !== path.trim()) return false
+  if (path.includes('\\') || path.includes('"')) return false
+  // No regex and no escape sequence: a control-character range written as a
+  // literal is a range that does not survive being copied, and this rule is
+  // one of the two the whole gate rests on.
+  for (const character of path) {
+    const code = character.codePointAt(0) ?? 0
+    if (code < 0x20 || code === 0x7f) return false
+  }
+
+  const body = path.startsWith('./') ? path.slice(2) : path
+  if (body.startsWith('/')) return false
+
+  return body.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..')
+}
+
+/** A refused path, rendered so a report can print it without being rewritten by it. */
+function printable(path: string): string {
+  return JSON.stringify(path)
 }
 
 function verb(was: string | undefined, now: string | undefined): string {
