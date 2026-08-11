@@ -127,6 +127,30 @@ export function artifactPath(cloneRoot: string, id: string): string | null {
 }
 
 /**
+ * Where an artifact is assembled before it becomes one.
+ *
+ * **An artifact appears whole or not at all.** Copying a build directly into
+ * its final place leaves a window — measured in seconds for a frontend, longer
+ * for anything bigger — in which the store holds half an artifact that `served`
+ * may already be pointing at. A launch during that window opens on a page whose
+ * script is not there yet, and the developer's way out of a window that will not
+ * open is the window.
+ *
+ * So a build is copied here, and then renamed into place: a rename within one
+ * directory is atomic, and the failure mode becomes a directory left behind
+ * rather than a broken artifact.
+ *
+ * The leading dot is doing work. {@link isArtifactId} refuses a name that starts
+ * with one, so an assembly directory can never be *served* however it is
+ * reached — `served` naming it resolves to nothing. That is a property of the
+ * name rather than a rule the writer has to keep.
+ */
+export function incomingArtifactPath(cloneRoot: string, id: string): string | null {
+  if (!isArtifactId(id)) return null
+  return resolve(artifactStore(cloneRoot), `.${id}.incoming`)
+}
+
+/**
  * The id a `served` file names, or `null` for nothing usable.
  *
  * Takes the file's whole contents rather than a line, because the caller's job

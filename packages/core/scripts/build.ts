@@ -20,13 +20,14 @@
  * the ground under the window they left open.
  */
 
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import {
   LOCAL_ARTIFACT_ID,
   artifactPath,
   artifactStore,
+  incomingArtifactPath,
   servedMarkerPath,
   servedMarkerText,
 } from '../artifacts.ts'
@@ -52,15 +53,33 @@ if (code !== 0) {
 
 const dist = join(buildRoot, 'packages/core/dist')
 const artifact = artifactPath(buildRoot, LOCAL_ARTIFACT_ID)
-if (artifact === null) throw new Error(`${LOCAL_ARTIFACT_ID} is not a usable artifact id`)
+const incoming = incomingArtifactPath(buildRoot, LOCAL_ARTIFACT_ID)
+if (artifact === null || incoming === null) {
+  throw new Error(`${LOCAL_ARTIFACT_ID} is not a usable artifact id`)
+}
 
-// Replaced rather than merged. A stale file from a previous build is a file
-// nothing in this one produced, and an artifact is meant to be exactly what a
-// build wrote.
-rmSync(artifact, { recursive: true, force: true })
 mkdirSync(artifactStore(buildRoot), { recursive: true })
-cpSync(dist, artifact, { recursive: true })
 
+/*
+  Assembled beside its final place and renamed into it, so an artifact appears
+  whole or not at all — see `incomingArtifactPath`. A copy straight into the
+  served directory leaves a window in which the store holds half a build that
+  `served` already points at, and a launch inside that window opens on a page
+  whose script is not there.
+
+  `dereference` so what lands is a tree of ordinary files. Vite's output has no
+  symlinks in it today; an artifact that did would put a path outside itself
+  behind a URL, which `assetPath` cannot see because it resolves lexically. The
+  cheap place to close that is here, where the tree is written, rather than in
+  the request path where it would cost a `realpath` per file.
+*/
+rmSync(incoming, { recursive: true, force: true })
+cpSync(dist, incoming, { recursive: true, dereference: true })
+rmSync(artifact, { recursive: true, force: true })
+renameSync(incoming, artifact)
+
+// Last, and only once the artifact is whole: this is the line that points a
+// window at it.
 writeFileSync(servedMarkerPath(buildRoot), servedMarkerText(LOCAL_ARTIFACT_ID))
 
 console.log(`artifact ${LOCAL_ARTIFACT_ID} written to ${artifact} and served`)

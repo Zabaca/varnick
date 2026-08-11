@@ -28,6 +28,12 @@ const cloneRoot = fileURLToPath(new URL('../..', import.meta.url))
  * The decision is not made here. It is {@link hotUpdateVerdict}, a pure
  * function over a path, so `bun run drive` can assert it with no dev server and
  * no browser; this hook is the one line that acts on it.
+ *
+ * **This runs where there is a dev server, which is no longer everywhere.** The
+ * live tree's window is served from a built artifact and watches nothing, so
+ * the two places this hook fires are a Preview and `bun run dev` in a browser.
+ * The verdict is unchanged; what changed is what asks it. See
+ * docs/adr/0020-the-main-window-serves-a-built-artifact.md.
  */
 const coreReloadsRatherThanSwaps = (): Plugin => ({
   name: 'varnick:core-reloads',

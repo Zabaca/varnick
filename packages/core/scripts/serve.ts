@@ -53,6 +53,21 @@ if (windowSource(buildRoot) === 'dev-server') {
     child is handed the same one string both ends of a launch are handed and
     nothing here recomputes it.
   */
+  /*
+    The exact command `beforeDevCommand` used to be, spawned rather than
+    reimplemented, so a Preview runs the dev server it always ran.
+
+    **This adds no layer to what the Tauri CLI has to take down.** That was
+    checked rather than assumed, because it is the plausible way an indirection
+    like this breaks something: a Vite left standing holds the port, and with
+    `strictPort` on, the next launch of that Preview refuses outright rather
+    than quietly moving. `bun run --filter` was *already* a wrapper around Vite,
+    and a SIGTERM to it already left Vite running — measured, at this commit,
+    against both arrangements, with the same result. So whatever the CLI does to
+    end this command it did to the previous one, and forwarding signals here
+    would reach `bun run` and not the Vite behind it. Nothing about the teardown
+    is improved and nothing is made worse; it is left as it was found.
+  */
   const vite = Bun.spawn(['bun', 'run', '--filter', '@varnick/core', 'dev'], {
     cwd: buildRoot,
     stdio: ['inherit', 'inherit', 'inherit'],

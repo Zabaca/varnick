@@ -68,6 +68,7 @@ import {
   artifactPath,
   artifactStore,
   assetPath,
+  incomingArtifactPath,
   isArtifactId,
   servedArtifactId,
   servedMarkerPath,
@@ -6319,6 +6320,27 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   }
   check('two hundred characters is somebody probing', !isArtifactId('a'.repeat(200)))
   check('a version is an ordinary id', isArtifactId('0.2.0-1') && isArtifactId('0.2.0+3f2a1c'))
+
+  /*
+    An artifact appears whole or not at all: a build is assembled beside its
+    final place and renamed into it, because a copy straight into the served
+    directory leaves a window in which the store holds half a build that
+    `served` already points at.
+
+    The leading dot is the part worth asserting. An assembly directory can never
+    be served however it is reached, because the name is one `isArtifactId`
+    refuses — a property of the name rather than a rule whoever writes the store
+    has to keep.
+  */
+  check(
+    'a build is assembled beside where it lands',
+    incomingArtifactPath(clone, 'local') === `${clone}/.varnick/builds/.local.incoming`,
+  )
+  check(
+    'and what it is assembled in can never itself be served',
+    !isArtifactId('.local.incoming') && servedArtifactId('.local.incoming\n') === null,
+  )
+  check('a name that is not an id has nowhere to be assembled', incomingArtifactPath(clone, '../x') === null)
 
   /*
     The marker is one line and a launch reads it before anything else happens.

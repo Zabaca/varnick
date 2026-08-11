@@ -76,7 +76,12 @@ a text editor.
 
 **`bun run build` writes the store.** Vite still writes `packages/core/dist`;
 that directory is then installed as the artifact `local` and `served` is pointed
-at it. A developer who typed `bun run build` asked for this tree, now — which is
+at it. **An artifact appears whole or not at all** — the build is assembled in
+`.<id>.incoming` and renamed into place, because a copy straight into the served
+directory leaves a window in which the store holds half a build that `served`
+already points at, and a launch inside that window opens on a page whose script
+is not there. The leading dot means an assembly directory can never itself be
+served: it is a name `isArtifactId` refuses. A developer who typed `bun run build` asked for this tree, now — which is
 the opposite of a pre-release, cut while somebody is asleep, and the reason the
 two are different code paths rather than one with a flag.
 
