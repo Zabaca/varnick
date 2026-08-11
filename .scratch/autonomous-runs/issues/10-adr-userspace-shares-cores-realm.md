@@ -27,9 +27,9 @@ itself to, which is exactly why it needs writing down.
 
 **Status:** ready-for-agent
 
-- [ ] An ADR records that Userspace has fault isolation and not privilege isolation, and distinguishes the two
-- [ ] It states what is reachable from a Surface today and what that does and does not expose
-- [ ] It names why a same-realm dynamic import cannot provide a trust boundary, so the next attempt is not another lint rule
-- [ ] It names what closing it would take — a separate origin or a worker, with the bridge mediated — without proposing that it be done now
-- [ ] It states the condition that would make closing it urgent: a bridge route that returns something worth having
-- [ ] ADR-0004 and the Core/Userspace entries in CONTEXT.md link to it, so the containment claim is not read as broader than it is
+- [x] An ADR records that Userspace has fault isolation and not privilege isolation, and distinguishes the two
+- [x] It states what is reachable from a Surface today and what that does and does not expose
+- [x] It names why a same-realm dynamic import cannot provide a trust boundary, so the next attempt is not another lint rule
+- [x] It names what closing it would take — a separate origin or a worker, with the bridge mediated — without proposing that it be done now
+- [x] It states the condition that would make closing it urgent: a bridge route that returns something worth having
+- [x] ADR-0004 and the Core/Userspace entries in CONTEXT.md link to it, so the containment claim is not read as broader than it is

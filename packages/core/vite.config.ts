@@ -1,8 +1,11 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { DEV_URL_ENV_VAR, hotUpdateVerdict, portToBind } from './dev-server.ts'
+import { VERSION_MODULE_ID, VERSION_MODULE_RESOLVED, versionModuleSource } from './version.ts'
 
 /*
   The clone this dev server is serving. Not `process.cwd()` — a Preview is a
@@ -10,6 +13,42 @@ import { DEV_URL_ENV_VAR, hotUpdateVerdict, portToBind } from './dev-server.ts'
   its own window reloads on.
 */
 const cloneRoot = fileURLToPath(new URL('../..', import.meta.url))
+
+/*
+  The one impure line of the version's resolution: read the manifest of the
+  clone being served or built, once, here, while there is still a filesystem.
+  Everything it decides is `version.ts`, so `bun run drive` can assert it — and
+  `drive.ts` also starts one of these servers and fetches from it, because that
+  is the half a pure function cannot cover.
+
+  At config load, which is the only place a read of this can be honest. `load`
+  looks like the better home for it and is not: Vite caches a virtual module in
+  the graph and nothing here invalidates it, so a read in there runs exactly
+  once anyway — measured, by counting — and reading per-`load` would only mean
+  claiming a freshness the module graph does not provide. One read is also what
+  the change wants. Each Preview and each `bun run dev` is a fresh process, so
+  "the version at launch" is the version for the life of that window, and a
+  release that bumps the manifest produces a new build rather than mutating one
+  that is already running.
+
+  Failing here rather than later is the second half of that. `versionModuleSource`
+  throws rather than defaulting, and at config load a throw stops `vite build`
+  and `vite serve` alike — before a server binds a port, rather than at the
+  first request for one module. A clone with no root manifest, or one whose
+  manifest has no version, does not start.
+
+  Deliberately not `define`. See the header of `version.ts`: under Vite 8 a user
+  `define` never reaches a dev server's client environment, so that version of
+  this served the renderer a bare identifier and the window came up blank.
+*/
+const versionSource = versionModuleSource(readFileSync(join(cloneRoot, 'package.json'), 'utf-8'))
+
+/** The version the window shows, as the one module the renderer imports for it. */
+const versionModule = (): Plugin => ({
+  name: 'varnick:version',
+  resolveId: (id) => (id === VERSION_MODULE_ID ? VERSION_MODULE_RESOLVED : undefined),
+  load: (id) => (id === VERSION_MODULE_RESOLVED ? versionSource : undefined),
+})
 
 /**
  * Core is excluded from hot-swap: a change under `packages/core/**` reloads the
@@ -46,7 +85,7 @@ const coreReloadsRatherThanSwaps = (): Plugin => ({
 // discovered and loaded with dynamic import() so a broken one cannot take
 // the chat down with it.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), coreReloadsRatherThanSwaps()],
+  plugins: [react(), tailwindcss(), coreReloadsRatherThanSwaps(), versionModule()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

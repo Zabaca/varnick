@@ -7,16 +7,20 @@ varnick is a desktop harness for a coding agent: a sandbox, credential injection
 ### The two spaces
 
 **Core**:
-The harness and the chat — the code that confines the agent, injects its credentials, resolves its secrets, and holds the conversation. The agent cannot write to it; see [ADR-0002](./docs/adr/0002-core-userspace-boundary.md).
+The harness and the chat — the code that confines the agent, injects its credentials, resolves its secrets, and holds the conversation. The agent cannot write to it; see [ADR-0002](./docs/adr/0002-core-userspace-boundary.md). What the agent cannot *write* it still shares a realm with: a loaded Surface runs in Core's webview, with Core's globals and Core's bridge to the host ([ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md)).
 _Avoid_: framework, platform, engine, shell (the shell is a surface, not the harness)
 
 **Userspace**:
-Everything built inside a clone of varnick that is not Core. The agent writes here freely, and a failure here must never take Core down with it.
+Everything built inside a clone of varnick that is not Core. The agent writes here freely, and a failure here must never take Core down with it. That separation is about *fault* and not about privilege — see [ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md), which records what a Surface can reach across the bridge and why nothing about a dynamic import makes it a trust boundary.
 _Avoid_: plugins, extensions, user code (all imply an API contract varnick deliberately does not have)
 
 **Surface**:
 One built thing in Userspace with its own place in the window — a panel, a route, a view. Discovered from the filesystem rather than registered in Core, so adding one never requires a Core edit.
 _Avoid_: page, screen, panel, widget, component (a Surface is composed of components; it is not one)
+
+**Realm**:
+One JavaScript world — a global object, a set of intrinsics and prototypes, and one origin. **Core and every loaded Surface share exactly one**, the webview's, so a Surface has Core's globals, Core's prototypes and Core's bridge to the host, and no `import()` changes that. The word earns an entry because the separation people read into **Userspace** is a realm boundary and there is not one: the split is about *fault*, and privilege is shared. See [ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md).
+_Avoid_: context, scope, sandbox (the Sandbox confines a process, not a page), iframe (an iframe is one way to *get* a second Realm; today there is one)
 
 **Workspace**:
 The environment a person builds around themselves inside their clone — the accumulated Surfaces, integrations, and data that make varnick theirs. What the product exists to let you grow.
