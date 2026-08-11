@@ -1,8 +1,10 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import { DEV_URL_ENV_VAR, hotUpdateVerdict, portToBind } from './dev-server.ts'
+import { versionDefine } from './version.ts'
 
 /*
   The clone this dev server is serving. Not `process.cwd()` — a Preview is a
@@ -10,6 +12,17 @@ import { DEV_URL_ENV_VAR, hotUpdateVerdict, portToBind } from './dev-server.ts'
   its own window reloads on.
 */
 const cloneRoot = fileURLToPath(new URL('../..', import.meta.url))
+
+/*
+  The one impure line of the version's resolution: read the manifest of the
+  clone being built, here, once, while there is still a filesystem. Everything
+  it decides is `version.ts`, so `bun run drive` can assert it without a build.
+
+  The read is unguarded on purpose. A clone with no root manifest, or one whose
+  manifest has no version, must fail the build rather than produce a window that
+  claims a number nothing wrote down.
+*/
+const version = versionDefine(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'))
 
 /**
  * Core is excluded from hot-swap: a change under `packages/core/**` reloads the
@@ -47,6 +60,9 @@ const coreReloadsRatherThanSwaps = (): Plugin => ({
 // the chat down with it.
 export default defineConfig({
   plugins: [react(), tailwindcss(), coreReloadsRatherThanSwaps()],
+  // Applied by `vite build` and by `vite serve` alike, so the window a
+  // developer has open and the artifact a release ships show the same number.
+  define: version,
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

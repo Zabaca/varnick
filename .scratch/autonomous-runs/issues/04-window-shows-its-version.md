@@ -13,8 +13,8 @@ release chain depends on this being data instead.
 
 **Status:** ready-for-agent
 
-- [ ] The version reaches the header from the root manifest rather than from a literal in a component
-- [ ] It is resolved when the renderer is built, not read at run time from a file the webview cannot see
-- [ ] Changing the manifest's version and rebuilding changes what the window shows, with no source edit
-- [ ] The states page and the live chat show the same version, because they render the same component
-- [ ] An assertion covers the resolution, so a build that loses the version fails rather than showing a placeholder
+- [x] The version reaches the header from the root manifest rather than from a literal in a component
+- [x] It is resolved when the renderer is built, not read at run time from a file the webview cannot see
+- [x] Changing the manifest's version and rebuilding changes what the window shows, with no source edit
+- [x] The states page and the live chat show the same version, because they render the same component
+- [x] An assertion covers the resolution, so a build that loses the version fails rather than showing a placeholder

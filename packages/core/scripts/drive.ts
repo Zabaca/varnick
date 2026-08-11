@@ -57,6 +57,12 @@ import {
   portToBind,
   sharedTargetDir,
 } from '../dev-server.ts'
+import {
+  VERSION_GLOBAL,
+  displayedVersion,
+  versionDefine,
+  versionFromManifest,
+} from '../version.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { CREDENTIAL_SHAPE_PROBE } from '@varnick/harness/credentials'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
@@ -6411,6 +6417,99 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check(
     'the default launch asks for the port a fresh checkout already has',
     first.env[DEV_URL_ENV_VAR] === conf.build.devUrl,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The version — one number, resolved when the renderer is built
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The header used to say `v0.0.0` because a component said so. That made a
+    release a change to Core: a number that could disagree with the manifest
+    with nothing noticing, in a file that has to typecheck.
+
+    The number is data now, and the failure this section is really about is the
+    quiet one — a build that loses the version and ships a plausible placeholder
+    instead of stopping. So the refusals matter more than the happy path.
+  */
+  const manifest = readFileSync(new URL('../../../package.json', import.meta.url), 'utf-8')
+  const declared = (JSON.parse(manifest) as { version?: string }).version
+
+  check('the root manifest carries a version at all', typeof declared === 'string')
+  check('and that is the version the build resolves', versionFromManifest(manifest) === declared)
+
+  /*
+    The criterion behind the whole ticket: change the manifest, rebuild, and the
+    window says something else. No source edit anywhere in the middle.
+  */
+  check(
+    'a different manifest is a different number, with nothing else edited',
+    versionFromManifest('{"name":"varnick","version":"1.2.3"}') === '1.2.3',
+  )
+  check('and the window shows it with the v it never stores', displayedVersion('1.2.3') === 'v1.2.3')
+  check(
+    'a pre-release version survives intact, because a release cuts them',
+    versionFromManifest('{"version":"0.1.0-pre.4"}') === '0.1.0-pre.4',
+  )
+
+  /*
+    The wiring, asserted here rather than found out by opening a window. Vite's
+    `define` values are *source text*, not strings — an unencoded version would
+    splice a bare identifier into the renderer.
+  */
+  const defines = versionDefine('{"version":"1.2.3"}')
+  check('the substitution names exactly one identifier', Object.keys(defines).join() === VERSION_GLOBAL)
+  check('and gives it the version as source text, quoted', defines[VERSION_GLOBAL] === '"1.2.3"')
+
+  /*
+    The two ends of that substitution are in different files and only agree by
+    name, so the name is checked rather than assumed: a rename on one side would
+    otherwise leave a renderer reading an identifier nothing replaces.
+
+    The same read is what proves "build-time, not run-time". The webview is
+    served a bundle over http and has no `package.json` to open; a module that
+    reached for one would be a version that fails in the window rather than at
+    the build.
+  */
+  const renderer = readFileSync(new URL('../src/version.ts', import.meta.url), 'utf-8')
+  check('the renderer reads the identifier the config defines', renderer.includes(VERSION_GLOBAL))
+  check(
+    'and reaches for no file, because by then there is none to reach for',
+    !renderer.includes('node:fs') && !renderer.includes('readFile') && !renderer.includes('fetch('),
+  )
+
+  /*
+    And the literal is gone from the component. `#/states` and the live chat
+    render this same file, which is why they cannot disagree — a version prop
+    written here would be one place too many.
+  */
+  const surface = readFileSync(new URL('../src/components/chat-surface.tsx', import.meta.url), 'utf-8')
+  check('no version literal is left in the header call', !/version="v?\d/.test(surface))
+  check('the header is handed the resolved one', surface.includes('version={VARNICK_VERSION_LABEL}'))
+
+  const refuses = (label: string, run: () => unknown) => {
+    let threw = false
+    try {
+      run()
+    } catch {
+      threw = true
+    }
+    check(label, threw)
+  }
+
+  refuses('a manifest with no version fails the build', () =>
+    versionFromManifest('{"name":"varnick"}'),
+  )
+  refuses('and so does an empty one', () => versionFromManifest('{"version":"  "}'))
+  refuses('and one that is not a string', () => versionFromManifest('{"version":123}'))
+  refuses('and a manifest that is not JSON at all', () => versionFromManifest('not json'))
+  refuses('a version nested somewhere else does not count', () =>
+    versionFromManifest('{"packages":{"":{"version":"9.9.9"}}}'),
+  )
+  refuses('a stored leading v is refused, or the window would say vv', () =>
+    versionFromManifest('{"version":"v1.2.3"}'),
   )
 }
 
