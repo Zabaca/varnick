@@ -35,6 +35,7 @@ import {
   isUnexpectedViolation,
   releaseSandbox,
   ensureSandboxPolicy,
+  sandboxBaselinePath,
   sandboxPolicyFor,
   sandboxPolicyPath,
   sandboxViolations,
@@ -1889,6 +1890,180 @@ test.skipIf(blocked !== null)(
     }
   },
   120_000,
+)
+
+// ---------------------------------------------------------------------------
+// 11d. What confining a Preview handed it, and what that made reachable
+// ---------------------------------------------------------------------------
+
+test.skipIf(blocked !== null)(
+  'a Preview can make a worktree inside its own, which is why the policy root is handed down',
+  async () => {
+    /*
+      Review round 2, settled by construction rather than by reading — two
+      reviewers disagreed about whether a **Preview launching a Preview** could
+      ever happen, and the answer decided whether the fix was code or a comment.
+
+      The case: `answer_preview` hands a child the tree whose policy will
+      confine it. If that were this process's *clone* root, a Preview would hand
+      down a **Worktree** — and a worktree's `sandbox-policy.json` is a file the
+      agent may write, because the live tree's `denyWrite` names
+      `<live>/sandbox-policy.json` and the worktree's copy is a different
+      absolute path. The nested window would open, work, and be fenced by a
+      policy the agent wrote.
+
+      One reviewer called it unreachable, because `worktrees_of` joins
+      `.claude/worktrees` onto the clone root and no *sibling* worktree matches.
+      True of siblings, and silent about children. The other said this ticket
+      had just *created* the reachability, because confining a Preview by the
+      live tree's policy is what gives its agent working git.
+
+      **The second is right, and this is the measurement.** The same two
+      commands are run under the two policies, in a real repository with a real
+      worktree:
+
+        * under the live tree's policy — what a Preview gets now — `git
+          worktree add` inside the worktree succeeds, so the nested path exists;
+        * under the worktree's own policy — what a Preview got before this
+          ticket — it is refused, because `.git` in a worktree is a file
+          pointing at `<live>/.git/worktrees/<name>` and that is outside the
+          worktree's `allowRead`. That is ADR-0014's "git-blind", measured.
+
+      So confining a Preview traded git-blindness for a nesting case, and the
+      trade is worth making with `policy_root_for_child` in place and not
+      without it. Nothing here asserts the Rust side; `preview.rs`'s own tests
+      do. What this measures is the kernel: whether the commands the chain needs
+      can run at all.
+    */
+    await releaseSandbox()
+    const live = mkdtempSync(join(homedir(), '.varnick-probe-nest-'))
+    try {
+      /*
+        `GIT_CONFIG_GLOBAL=/dev/null`, set **inside** the wrapper, and it is not
+        a workaround for the boundary — it is what stops this machine's dotfiles
+        from deciding the result.
+
+        Without it git exits 128 with `unable to access '$HOME/.gitconfig':
+        Operation not permitted`, in *both* arms, because `denyRead` covers
+        `$HOME` and git fatals on a config file it can see and cannot read. That
+        is a real observation and it is not this boundary: it depends on the
+        developer having a `~/.gitconfig` at all, and an agent that wanted the
+        nested worktree would set this variable itself — the command line is
+        the agent's. Left in, the probe would report "unreachable" on this
+        laptop and "reachable" on a fresh one, which is a probe that measures
+        nothing. Same layering as probe 9c's TMPDIR: the environment is set
+        within the Sandbox, and `allowRead` is untouched.
+      */
+      const git = async (sandbox: EstablishedSandbox, cwd: string, args: string) => {
+        const { argv, env } = await sandbox.wrap(
+          `cd ${JSON.stringify(cwd)} && env GIT_CONFIG_GLOBAL=/dev/null git ${args}`,
+        )
+        const child = Bun.spawn({
+          cmd: argv,
+          cwd: sandbox.cloneRoot,
+          env: { ...process.env, ...env },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+        const [stdout, stderr] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ])
+        return { code: await child.exited, stdout, stderr }
+      }
+
+      // A real repository with a real worktree, built outside any Sandbox —
+      // this is the starting state a Preview is launched into, not part of what
+      // is being measured.
+      const plain = async (cwd: string, command: string) => {
+        const child = Bun.spawn({
+          cmd: ['/bin/bash', '-c', command],
+          cwd,
+          env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+        await child.exited
+        return child
+      }
+      await plain(
+        live,
+        'git init -q . && git config user.email a@b.c && git config user.name a && ' +
+          'echo hi > f && git add -A && git commit -qm init && ' +
+          'git worktree add -q -b previewed .claude/worktrees/previewed',
+      )
+      const worktree = join(live, '.claude', 'worktrees', 'previewed')
+      expect(existsSync(worktree)).toBe(true)
+
+      ensureSandboxPolicy({ cloneRoot: live })
+
+      // What a Preview gets now: its worktree as the clone root, the live tree
+      // as the policy root.
+      const confined = await establishSandbox({ cloneRoot: worktree, policyRoot: live })
+      const nestedAdd = await git(confined, worktree, 'worktree add -q -b nested .claude/worktrees/nested')
+      // Read here rather than at the assertions, which run after the second arm
+      // has cleaned this away. The fact is "the directory existed when the
+      // command returned", and that is the moment to ask.
+      const nestedExists = existsSync(join(worktree, '.claude', 'worktrees', 'nested'))
+      const policyWrite = await git(confined, worktree, 'status --short')
+      // The exact file in the chain: a worktree's own policy, which nothing in
+      // the live tree's denyWrite names.
+      const wroteOwnPolicy = await (async () => {
+        const { argv, env } = await confined.wrap(
+          `/bin/echo '{}' > ${JSON.stringify(sandboxPolicyPath(worktree))}`,
+        )
+        const child = Bun.spawn({ cmd: argv, cwd: worktree, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' })
+        return { code: await child.exited, stdout: '', stderr: await new Response(child.stderr).text() }
+      })()
+      await releaseSandbox()
+
+      // What a Preview got before this ticket: the worktree confining itself.
+      rmSync(join(worktree, '.claude', 'worktrees', 'nested'), { recursive: true, force: true })
+      rmSync(sandboxPolicyPath(worktree), { force: true })
+      rmSync(sandboxBaselinePath(worktree), { force: true })
+      const bySelf = await establishSandbox({ cloneRoot: worktree })
+      const nestedAddBefore = await git(bySelf, worktree, 'worktree add -q -b nested2 .claude/worktrees/nested2')
+      const statusBefore = await git(bySelf, worktree, 'status --short')
+      await releaseSandbox()
+
+      report('probe 11d — what a Preview may do inside its own worktree', [
+        ["confined by the live tree's policy  (a Preview, now)", ''],
+        ['git status', outcome(policyWrite)],
+        ['git worktree add .claude/worktrees/nested', outcome(nestedAdd)],
+        ['  …and the directory is there', nestedExists ? 'yes' : 'no'],
+        ['write the worktree’s own sandbox-policy.json', outcome(wroteOwnPolicy)],
+        ['', ''],
+        ["confined by the worktree's own policy  (a Preview, before)", ''],
+        ['git status', outcome(statusBefore)],
+        ['git worktree add .claude/worktrees/nested2', outcome(nestedAddBefore)],
+      ])
+
+      /*
+        The finding. A Preview's agent has working git now, so it can create
+        exactly the path `worktrees_of` would then admit — and it can write the
+        policy file that path would be confined by. Both halves are needed for
+        the chain and both succeed, which is why `policy_root_for_child` hands
+        down this process's own policy root rather than its clone root.
+      */
+      expect(nestedAdd.code).toBe(0)
+      expect(nestedExists).toBe(true)
+      expect(wroteOwnPolicy.code).toBe(0)
+
+      /*
+        And the control, which is also the honest half of the trade: under the
+        arrangement this ticket replaced, the same command is refused. ADR-0014
+        recorded that as "the Preview's agent is git-blind, and that is accepted
+        for now"; this is that sentence measured, and it is what makes "this
+        ticket created the nesting case" a fact rather than an attribution.
+      */
+      expect(nestedAddBefore.code).not.toBe(0)
+      expect(statusBefore.code).not.toBe(0)
+    } finally {
+      await releaseSandbox()
+      rmSync(live, { recursive: true, force: true })
+    }
+  },
+  180_000,
 )
 
 // ---------------------------------------------------------------------------

@@ -235,17 +235,45 @@ export function requirePolicyRoot(
     )
   }
 
-  if (!holds(candidate, cloneRoot)) {
+  /*
+    Normalised before anything compares it, and the comparison is the reason.
+
+    `establishSandbox` decides whether this agent is a **Preview** by asking
+    whether the two roots are the same directory, and a trailing separator is
+    the same directory spelled differently. Left as it arrived, `/live/` and
+    `/live` would take opposite branches: the policy would be *read* rather
+    than ensured, skipping generation, the baseline and the strengthening
+    report, for a varnick nobody previewed. Narrow, and it is the branch that
+    decides confinement, so it does not get to depend on how somebody typed a
+    path.
+  */
+  const root = withoutTrailingSeparator(candidate)
+
+  if (!holds(root, cloneRoot)) {
     throw new Error(
-      `${candidate} does not contain ${cloneRoot}, so its policy would confine this agent to a tree it does not work in. ${POLICY_ROOT_ENV_VAR} names the clone that holds ${CLONE_ROOT_ENV_VAR}; a preview runs from a worktree inside the live clone, which is what makes the live clone's policy reach it.`,
+      `${root} does not contain ${cloneRoot}, so its policy would confine this agent to a tree it does not work in. ${POLICY_ROOT_ENV_VAR} names the clone that holds ${CLONE_ROOT_ENV_VAR}; a preview runs from a worktree inside the live clone, which is what makes the live clone's policy reach it.`,
     )
   }
 
-  return candidate
+  return root
 }
 
-/** Is `inner` the same directory as `outer`, or one below it? */
+/** `/live/` and `/live` are one directory. The filesystem root keeps its slash. */
+function withoutTrailingSeparator(path: string): string {
+  return path.length > sep.length && path.endsWith(sep) ? path.slice(0, -sep.length) : path
+}
+
+/**
+ * Is `inner` the same directory as `outer`, or one below it?
+ *
+ * The separator is appended before the prefix test, so `/live` does not hold
+ * `/livex`. The filesystem root is the one path that already ends in one, and
+ * appending a second would make `//Users` the prefix and `/` hold nothing —
+ * found by the normalisation test above rather than by reading, which is the
+ * argument for having written it.
+ */
 function holds(outer: string, inner: string): boolean {
-  const root = outer.endsWith(sep) ? outer.slice(0, -sep.length) : outer
-  return inner === root || inner.startsWith(root + sep)
+  const root = withoutTrailingSeparator(outer)
+  if (inner === root) return true
+  return inner.startsWith(root.endsWith(sep) ? root : root + sep)
 }

@@ -75,8 +75,6 @@ export {
   type PreviewOutcome,
 } from './preview.ts'
 
-export { FENCE_PATHS, isFencePath, touchesFence } from './fence.ts'
-
 export {
   DEFAULT_ALLOWED_HOSTS,
   MACHINE_KEYCHAIN_DIR,

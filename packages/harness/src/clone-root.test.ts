@@ -110,8 +110,21 @@ describe('the root whose policy confines the agent', () => {
 
   test('the live tree confines a worktree inside it', () => {
     expect(requirePolicyRoot(live, worktree, anywhere)).toBe(live)
-    // A trailing separator is the same directory, not a different one.
-    expect(requirePolicyRoot(`${live}/`, worktree, anywhere)).toBe(live + '/')
+  })
+
+  test('a trailing separator is the same directory, and is normalised away', () => {
+    /*
+      Not cosmetic. `establishSandbox` decides whether this agent is a Preview
+      by asking whether the two roots are the same directory, so `/live/`
+      against a clone root of `/live` would take the *other* branch: the policy
+      read rather than ensured, with no generation, no baseline and no
+      strengthening report, for a varnick nobody previewed. The normalisation
+      is here so that comparison can be an equality test.
+    */
+    expect(requirePolicyRoot(`${live}/`, worktree, anywhere)).toBe(live)
+    expect(requirePolicyRoot(`${live}/`, live, anywhere)).toBe(live)
+    // The filesystem root is the one path whose separator is the path.
+    expect(requirePolicyRoot('/', '/Users/dev', anywhere)).toBe('/')
   })
 
   test('a policy root that does not hold the clone root is refused', () => {

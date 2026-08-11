@@ -121,6 +121,14 @@ Preview's environment says, and the parent host is running the code a human
 merged.** The Preview's own `sandbox.ts` could disregard `VARNICK_POLICY_ROOT`,
 because it is the code being previewed.
 
+The deleted dialog did not close this either, and it is worth being exact about
+why rather than generous to it. A Preview starts with `bun run dev:app`, which
+executes the Worktree's `package.json`, `scripts/dev.ts` and `vite.config` —
+none of them Fence paths. So a Worktree that changed only those, or only
+`packages/core/**`, launched an unconfined agent-authored host **silently**,
+with no dialog at all. The dialog narrowed which unconfined code a developer
+glanced at on the way past; it never made a Preview's host confined.
+
 Recording that plainly matters more than the dialog did, because the dialog did
 not close it either. The `NSAlert` fired on a *diff of Fence paths*; a Worktree
 that changed only `packages/core/**` launched silently and its unconfined host
@@ -146,7 +154,11 @@ One of these, and none of them is true today:
   flag, a config file inside the clone, a field on the `launch_preview` request:
   any of those puts the answer somewhere the agent can write, and the fence is
   back inside the fence. The variable is set by the spawning process and read
-  once, in `bridge.rs`, for this reason.
+  only in `bridge.rs` for this reason — twice there, and the two readings are
+  two questions: `start_runtime` passes it to the runtime as an argument, and
+  the `read-credential` arm asks whether this varnick was handed a Credential
+  and so must not open the Keychain. Nothing below `bridge.rs` reads it, which
+  is the property that matters.
 
   This one was nearly shipped broken, and the near miss is worth keeping.
   `answer_preview` first handed the child *this process's clone root*, which
@@ -166,6 +178,18 @@ One of these, and none of them is true today:
   agent inside a Preview, and the failure is invisible — the nested window
   opens and works.
 
+  **This decision is what made it reachable**, which is the part worth keeping.
+  Probe 11d runs the same two commands under both arrangements: under the live
+  tree's policy `git status` and `git worktree add` succeed inside the worktree;
+  under the policy a Preview generated for itself — what ADR-0014 shipped —
+  both are refused with *fatal: not a git repository*, because a worktree's
+  `.git` is a file pointing at `<live>/.git/worktrees/<name>` and that is
+  outside its own `allowRead`. So the git-blindness this ADR fixes several
+  paragraphs above is the same fact as the nesting case it opens. The trade is
+  worth making with `policy_root_for_child` in place and would not have been
+  without it, and a feature that quietly creates the reachability of a hole it
+  documents elsewhere is not a documented hole.
+
   The fix is `policy_root_for_child`: hand down *this process's own policy
   root*, falling back to its clone root. It composes to any depth, and the
   window that opens three levels down is fenced by the tree a human merged.
@@ -180,6 +204,13 @@ One of these, and none of them is true today:
   minting or resolving its own would be a second holder of a secret and a
   different question.
 
+## Noted and not done
+
+`holds` in `clone-root.ts` is a third spelling of a containment test that also
+lives in `sandbox.ts` and `provision.ts`. Extracting it needs a leaf module —
+`clone-root.ts` already imports `agent.ts`, and the other two would close a ring
+— so it is named here rather than done. If a fourth appears, that is the moment.
+
 ## Consequences
 
 **Previewing a Fence change proves less than previewing anything else, and says
@@ -190,11 +221,13 @@ about a Fence change is that it builds, starts, and does not break the app.
 Whether the policy it generates is *right* is `sandbox.test.ts`,
 `fence.test.ts` and the containment probes, none of which need a window.
 
-**`Fence` has two mechanisms keying off it now, not three.** The list in
-`packages/harness/src/fence.ts` is unchanged and still lives once; the
-pending-worktree list's flag and the diff view's highlighting still ask it. The
-dialog was the third. Both survivors are about *reading* a change before a human
-merges it, which is where the attention belongs.
+**`Fence` has three mechanisms keying off it now, not four.** The list in
+`packages/harness/src/fence.ts` is unchanged and still lives once: the
+pending-worktree list's flag, the diff view's highlighting, and `denyWrite`
+itself, which `fence.test.ts` holds it against. The dialog was the fourth. Of
+the three left, two are about *reading* a change before a human merges it and
+the third is the kernel refusing the write — a division the dialog straddled,
+which is part of why it was the one that could go.
 
 **A Preview stops being a step in an escalation chain and becomes ordinary.** It
 has no failure mode that needs a person, so `answer_preview` no longer consults

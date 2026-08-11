@@ -2050,6 +2050,24 @@ function policyInForceAt(
   }
 }
 
+/**
+ * Was this agent's confinement handed to it by another tree — is it a
+ * **Preview**?
+ *
+ * Named rather than written inline as `policyRoot === cloneRoot`, because it is
+ * the fact the whole arrangement turns on and it is asked in two languages:
+ * `confined_by_parent` in src-tauri/src/preview.rs is the same question about
+ * the same launch, and an unnamed comparison on this side is one nobody would
+ * find when reading that one.
+ *
+ * Both roots have been through {@link requirePolicyRoot} by the time this is
+ * asked, which is what makes an equality test sound: `/live/` and `/live` are
+ * one directory, and the normalisation happens there rather than here.
+ */
+function confinedByParent(cloneRoot: string, policyRoot: string): boolean {
+  return policyRoot !== cloneRoot
+}
+
 export interface EstablishSandboxInput extends SandboxPolicyInput {
   /**
    * The clone whose policy in force confines this agent. Defaults to
@@ -2123,10 +2141,9 @@ export async function establishSandbox(
     throw new Error(`sandbox-runtime dependencies are missing: ${deps.errors.join(', ')}`)
   }
 
-  const { policy, path, report } =
-    policyRoot === cloneRoot
-      ? ensureSandboxPolicy({ ...input, cloneRoot })
-      : policyInForceAt(policyRoot, cloneRoot)
+  const { policy, path, report } = confinedByParent(cloneRoot, policyRoot)
+    ? policyInForceAt(policyRoot, cloneRoot)
+    : ensureSandboxPolicy({ ...input, cloneRoot })
 
   // Printed, not returned and forgotten. A clone whose boundary is weaker than
   // the one varnick generates has to learn about it somewhere a developer

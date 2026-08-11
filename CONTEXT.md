@@ -7,16 +7,20 @@ varnick is a desktop harness for a coding agent: a sandbox, credential injection
 ### The two spaces
 
 **Core**:
-The harness and the chat — the code that confines the agent, injects its credentials, resolves its secrets, and holds the conversation. The agent cannot write to it; see [ADR-0002](./docs/adr/0002-core-userspace-boundary.md).
+The harness and the chat — the code that confines the agent, injects its credentials, resolves its secrets, and holds the conversation. The agent cannot write to it; see [ADR-0002](./docs/adr/0002-core-userspace-boundary.md). What the agent cannot *write* it still shares a realm with: a loaded Surface runs in Core's webview, with Core's globals and Core's bridge to the host ([ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md)).
 _Avoid_: framework, platform, engine, shell (the shell is a surface, not the harness)
 
 **Userspace**:
-Everything built inside a clone of varnick that is not Core. The agent writes here freely, and a failure here must never take Core down with it.
+Everything built inside a clone of varnick that is not Core. The agent writes here freely, and a failure here must never take Core down with it. That separation is about *fault* and not about privilege — see [ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md), which records what a Surface can reach across the bridge and why nothing about a dynamic import makes it a trust boundary.
 _Avoid_: plugins, extensions, user code (all imply an API contract varnick deliberately does not have)
 
 **Surface**:
 One built thing in Userspace with its own place in the window — a panel, a route, a view. Discovered from the filesystem rather than registered in Core, so adding one never requires a Core edit.
 _Avoid_: page, screen, panel, widget, component (a Surface is composed of components; it is not one)
+
+**Realm**:
+One JavaScript world — a global object, a set of intrinsics and prototypes, and one origin. **Core and every loaded Surface share exactly one**, the webview's, so a Surface has Core's globals, Core's prototypes and Core's bridge to the host, and no `import()` changes that. The word earns an entry because the separation people read into **Userspace** is a realm boundary and there is not one: the split is about *fault*, and privilege is shared. See [ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md).
+_Avoid_: context, scope, sandbox (the Sandbox confines a process, not a page), iframe (an iframe is one way to *get* a second Realm; today there is one)
 
 **Workspace**:
 The environment a person builds around themselves inside their clone — the accumulated Surfaces, integrations, and data that make varnick theirs. What the product exists to let you grow.
@@ -94,11 +98,11 @@ It used to run under the policy its own tree generated, which was privilege esca
 _Avoid_: staging, sandbox, dev build, second instance (there may be several)
 
 **Fence**:
-The code that decides what the agent may do: `packages/harness/**`, which generates the Sandbox policy; `src-tauri/**`, which holds the Credential; and `sandbox-policy.baseline.json`, which is how a widening is told from varnick's own work. Named because separate mechanisms key off the same list — the pending-worktree list's flag, the diff view's highlighting, and `denyWrite` itself. There was a fourth, the Preview dialog, and it went with the escalation it gated ([ADR-0019](./docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md)); the two survivors are both about *reading* a change before a human merges it, which is where the attention belongs.
+The code that decides what the agent may do: `packages/harness/**`, which generates the Sandbox policy; `src-tauri/**`, which holds the Credential; and `sandbox-policy.baseline.json`, which is how a widening is told from varnick's own work. Named because three separate mechanisms key off the same list — the pending-worktree list's flag, the diff view's highlighting, and `denyWrite` itself. There was a fourth, the Preview dialog, and it went with the escalation it gated ([ADR-0019](./docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md)). Of the three left, two are about *reading* a change before a human merges it and the third is the kernel refusing the write, which is the division the dialog straddled and is why it was the one that could be removed.
 
 Distinct from Core, which is larger. `packages/core/**`, `vite.config.*` and `package.json` are Core and are not Fence: they are denied so a broken edit cannot take the conversation down, not because they decide the boundary. `sandbox-policy.json` is not Fence either, and for a subtler reason: it is the generated *output*, compared against the baseline and regenerated from the generator, both of which are.
 
-The list lives once, as `FENCE_PATHS` and `isFencePath` in `packages/harness/src/fence.ts` — a pure function over one repository-relative path, with no imports, so the host-side listing and the webview's diff view ask the same question. Two glob lists would drift, and the drift is invisible: each caller goes on working, and the one that fell behind stops flagging a file the other still colours.
+The list lives once, as `FENCE_PATHS` and `isFencePath` in `packages/harness/src/fence.ts` — a pure function over one repository-relative path, with no imports, so the host-side listing and the webview's diff view ask the same question, and `fence.test.ts` holds it against the generated `denyWrite`. Separate glob lists would drift, and the drift is invisible: each caller goes on working, and the one that fell behind stops flagging a file the others still colour.
 _Avoid_: privileged paths, protected files, boundary (the boundary is what the Fence produces)
 
 Retired with the Clone: **Escalation**, a queued request for a change the agent could not make, and **Collect**, the host-initiated step that brought a branch out of a Clone. Both are `git merge` now. The gate needs nothing built, because landing a Core change means writing `packages/core/**` in the live tree and `denyWrite` refuses it — a mechanism rather than a policy, which is why a developer who deletes those entries gets agent-merges and that is their call.
