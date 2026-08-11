@@ -2,25 +2,28 @@
  * Where built frontends live, and which one the window is served from.
  *
  * This module is the **convention**: where an artifact goes, what an artifact
- * may be called, which file records the choice, and — once — how a built
- * directory becomes one. Everything that decides a *name* or a *path* is a pure
- * function over strings, so `packages/core/scripts/drive.ts` can assert it with
- * nothing built and nothing serving.
+ * may be called, and which file records the choice. Every export is a total,
+ * deterministic function over strings, it imports `node:path` and nothing else,
+ * and `packages/core/scripts/drive.ts` asserts all of it with nothing built and
+ * nothing serving.
  *
- * {@link installArtifact} is the exception and is here deliberately. It touches
- * the filesystem, which costs this module the "pure, imports `node:path` only"
- * property it used to have — and the alternative costs more. Writing an
- * artifact is something two callers do (`bun run build` today, a release next),
- * and the sequence carries a `dereference` that is the whole of why a symlink
- * in a build cannot put a path outside the artifact behind a URL. A second
- * caller reimplementing that sequence reopens the hole silently, so it is one
- * function next to the paths it uses rather than a comment somebody has to have
- * read.
+ * Two neighbours hold what this deliberately does not, and each is its own file
+ * for its own reason:
  *
- * What a *request* may reach inside an artifact is deliberately not here. That
- * is `artifact-assets.ts`, and it is a boundary rather than a convention: this
- * file is what tickets 06 and 07 edit next, and a boundary sitting next to churn
- * is a boundary that gets moved by somebody who was doing something else.
+ *   * `artifact-store.ts` **writes** the store — one function, the only impure
+ *     step in the set. Two callers write artifacts (`bun run build` today, a
+ *     release next) and the sequence carries a `dereference` that is the whole
+ *     of why a symlink in a build cannot put a path outside the artifact behind
+ *     a URL, so it must exist once. It is there rather than here so that this
+ *     file stays a thing you can reason about by reading it — the arrangement
+ *     `dev-server.ts` has, and what ADR-0013 argues for.
+ *   * `artifact-assets.ts` decides what a **request** may reach inside an
+ *     artifact. That is a boundary rather than a convention, and this file is
+ *     what tickets 06 and 07 edit next; a boundary sitting next to churn is one
+ *     that gets moved by somebody who was doing something else.
+ *
+ * Both depend on this one and it depends on neither, which is what makes the
+ * split hold rather than being three files by preference.
  *
  * Nothing here is loaded by the application. It is imported by the artifact
  * server, by the build, and by the driver — the same arrangement
@@ -58,7 +61,6 @@
  * developer looking at a broken window can fix it with a text editor.
  */
 
-import { cpSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 // ---------------------------------------------------------------------------
@@ -195,58 +197,4 @@ export function servedArtifactId(marker: string | undefined | null): string | nu
 /** What to write into {@link SERVED_MARKER} for an id. */
 export function servedMarkerText(id: string): string {
   return `${id}\n`
-}
-
-// ---------------------------------------------------------------------------
-// Putting one there
-// ---------------------------------------------------------------------------
-
-/**
- * Make a built directory into the artifact `id`, and answer where it landed.
- *
- * **The one impure function in this module, and the reason it is here rather
- * than at a call site.** Two things write the store — `bun run build` today and
- * whatever cuts a pre-release next — and neither has any reason to read the
- * other's file. Two implementations of this sequence is one implementation with
- * the `dereference` left off, which reopens a hole nothing would notice:
- * `assetPath` resolves lexically and `Bun.file` follows symlinks, so a link
- * inside an artifact puts a path outside it behind a URL.
- *
- * So the two properties an artifact must have are held here, by construction:
- *
- *   * **it is a tree of ordinary files** — `dereference`, which is what closes
- *     the symlink case at the moment the tree is written rather than costing a
- *     `realpath` on every request;
- *   * **it is never half of one** — assembled in {@link incomingArtifactPath}
- *     and renamed in, so nothing ever observes a partial copy under the id.
- *
- * **Whole or absent, not whole or previous.** POSIX `rename` will not replace a
- * non-empty directory, so the old artifact is removed first and there is a
- * moment when the id names nothing. That is a real window and it is the one the
- * design accepts: a launch inside it reads *nothing served*, which is a state
- * the artifact server already has a page and a rebuild for, whereas a partial
- * copy is a window that opens on a page whose script is not there. Closing the
- * gap entirely means swapping a symlink — the one operation that is atomic
- * against a live path — and ADR-0020 turned symlinks down for a different
- * reason worth keeping: `cat served` says what is running.
- *
- * **It does not touch `served`.** Writing an artifact and choosing to serve it
- * are two acts, and a release performs only the first — that is ticket 06's
- * "without switching what is currently served", and making it the default here
- * is what keeps a caller from having to remember it.
- */
-export function installArtifact(cloneRoot: string, id: string, from: string): string {
-  const artifact = artifactPath(cloneRoot, id)
-  const incoming = incomingArtifactPath(cloneRoot, id)
-  if (artifact === null || incoming === null) {
-    throw new Error(`${JSON.stringify(id)} is not a usable artifact id`)
-  }
-
-  mkdirSync(artifactStore(cloneRoot), { recursive: true })
-  rmSync(incoming, { recursive: true, force: true })
-  cpSync(from, incoming, { recursive: true, dereference: true })
-  rmSync(artifact, { recursive: true, force: true })
-  renameSync(incoming, artifact)
-
-  return artifact
 }

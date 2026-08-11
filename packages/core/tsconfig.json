@@ -14,6 +14,7 @@
     "dev-server.ts",
     "version.ts",
     "artifacts.ts",
-    "artifact-assets.ts"
+    "artifact-assets.ts",
+    "artifact-store.ts"
   ]
 }

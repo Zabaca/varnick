@@ -77,13 +77,13 @@ import {
   artifactPath,
   artifactStore,
   incomingArtifactPath,
-  installArtifact,
   isArtifactId,
   servedArtifactId,
   servedMarkerPath,
   servedMarkerText,
 } from '../artifacts.ts'
 import { assetPath } from '../artifact-assets.ts'
+import { installArtifact } from '../artifact-store.ts'
 import {
   VERSION_MODULE_ID,
   VERSION_MODULE_RESOLVED,
@@ -6491,6 +6491,31 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check(
     'a sibling artifact cannot be reached from inside one',
     assetPath(root, '/../0.2.0-1/index.html') === null,
+  )
+
+  /*
+    The convention module is pure, and that is checked rather than asserted in
+    its header — `version.ts` holds its Node-free rule the same way, for the
+    reason `eslint.config.js` gives about its own rules: the alternative was a
+    sentence in a header nothing checked, and that sentence had already gone
+    stale.
+
+    It went stale here once already. The install sequence landed in this file
+    for a good reason — one implementation of the `dereference` that keeps a
+    symlink out of an artifact — and spent the property to get it. It did not
+    have to: the same function in `artifact-store.ts` is exactly as findable by
+    whoever writes a release. This is what stops the next person paying that
+    price again without noticing they are paying it.
+  */
+  const convention = readFileSync(new URL('../artifacts.ts', import.meta.url).pathname, 'utf-8')
+  const imports = [...convention.matchAll(/^import .*? from '([^']+)'/gm)].map((m) => m[1])
+  check(
+    `the convention module imports node:path and nothing else (found: ${imports.join(', ') || 'nothing'})`,
+    imports.length === 1 && imports[0] === 'node:path',
+  )
+  check(
+    'and reaches no filesystem, so reading it is enough to know what it does',
+    !/\bfrom '(node:fs|node:fs\/promises)'/.test(convention) && !convention.includes('Bun.'),
   )
 
   /*

@@ -94,11 +94,22 @@ atomic against a live path, and symlinks were turned down above for a reason
 worth keeping.
 
 Both properties are held in one place, `installArtifact` in
-`packages/core/artifacts.ts`, rather than at the call site. A release writes an
-artifact too and has no reason to read `build.ts` — so a second implementation
-of the sequence would be one with the `dereference` left off, which reopens the
-symlink case silently. `drive.ts` asserts it by planting a symlink out of a
-build and checking what lands. A developer who typed `bun run build` asked for this tree, now — which is
+`packages/core/artifact-store.ts`, rather than at the call site. A release
+writes an artifact too and has no reason to read `build.ts` — so a second
+implementation of the sequence would be one with the `dereference` left off,
+which reopens the symlink case silently. `drive.ts` asserts it by planting a
+symlink out of a build and checking what lands.
+
+**Three files, and each earns its own.** `artifacts.ts` decides names and paths
+and is pure — every export total and deterministic, `node:path` its only import,
+all of it assertable with nothing built. `artifact-store.ts` is the one impure
+step, kept out of the convention module so that module stays a thing you can
+reason about by reading it; that is the arrangement `dev-server.ts` already has
+and what [ADR-0013](./0013-behaviour-is-proved-headlessly.md) argues for.
+`artifact-assets.ts` is the request boundary, kept away from the file tickets 06
+and 07 will be editing. The two neighbours depend on the convention and it
+depends on neither, which is what makes the split hold rather than being three
+files by preference. A developer who typed `bun run build` asked for this tree, now — which is
 the opposite of a pre-release, cut while somebody is asleep, and the reason the
 two are different code paths rather than one with a flag.
 

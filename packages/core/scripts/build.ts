@@ -22,12 +22,8 @@
 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  LOCAL_ARTIFACT_ID,
-  installArtifact,
-  servedMarkerPath,
-  servedMarkerText,
-} from '../artifacts.ts'
+import { LOCAL_ARTIFACT_ID, servedMarkerPath, servedMarkerText } from '../artifacts.ts'
+import { installArtifact } from '../artifact-store.ts'
 import { cloneRootOfScript } from '../dev-server.ts'
 
 const buildRoot = cloneRootOfScript(import.meta.url)
@@ -51,7 +47,7 @@ if (code !== 0) {
 
 /*
   One call, and the sequence behind it is `installArtifact` in
-  `packages/core/artifacts.ts` rather than four lines here.
+  `packages/core/artifact-store.ts` rather than four lines here.
 
   That placement is the point. A release writes an artifact too and has no
   reason to open this file, so a copy of the sequence written over there would
