@@ -51,6 +51,7 @@ rather than left implicit in a script.
 <clone>/.varnick/builds/            the store
 <clone>/.varnick/builds/<id>/       one artifact, index.html at its root
 <clone>/.varnick/builds/served      one line: the id the window is served from
+<clone>/.varnick/builds/previous    one line: the id it was served from before
 ```
 
 `.varnick/` because that is already where varnick keeps per-clone machine state
@@ -113,10 +114,72 @@ files by preference. A developer who typed `bun run build` asked for this tree, 
 the opposite of a pre-release, cut while somebody is asleep, and the reason the
 two are different code paths rather than one with a flag.
 
-**A launch builds only when nothing resolves.** A fresh clone has never built,
+**A launch builds only when nothing is named.** A fresh clone has never built,
 and `bun install && bun tauri dev` has to open a window; that is the one case.
 A launch that rebuilt every time would undo a promoted release on the next
-restart, which is the one thing switching the served artifact is for.
+restart, which is the one thing switching the served artifact is for. This said
+"only when nothing resolves" until the amendment below, which is a narrower rule
+than it sounds: a marker naming an artifact that is not there resolves to
+nothing and is now a fall back rather than a build.
+
+## Amendment — falling back to the previous build
+
+Written when ticket 07 landed, into this ADR rather than a new one, because it
+is the third of the three cases the store's shape was chosen for and the
+decision it settles is what "a build that will not start" is allowed to mean.
+
+**The store remembers.** `previous` is a second one-line file, written at the
+same moment as `served` and by the same function. It is not inferred: a
+directory's modification time says when an artifact was *written*, and an
+artifact can be written weeks before anything serves it. So the fact is recorded
+by whoever switches. One function does both writes for the reason
+`installArtifact` is one function — two callers switch (`bun run build` today, a
+promotion next), and "remember what was there" is exactly the step a second copy
+leaves out, silently, with nothing looking wrong until the day a build does not
+start.
+
+**Which artifact to serve is a pure function**, `servingPlan`, over two ids and a
+predicate. Four outcomes, because each is a different thing for the launch to
+do: serve it; fall back and say so; build one; or say there is nothing. The
+argument is [ADR-0013](./0013-behaviour-is-proved-headlessly.md)'s — the branch
+it replaces was four lines of launch script that could only be observed by
+launching, and the case it is for arrives at two in the morning.
+
+**Only a store with no choice recorded in it builds.** This is the sentence the
+branch it replaced carried, and it is now a property with assertions rather than
+a comment. A launch that rebuilt whenever it could not serve would replace a
+promoted release with a build of the working tree and move `served` onto it,
+which presents as the build reverting on its own. `served` naming a broken
+artifact with nothing behind it is therefore a page, not a build — and `served`
+is left naming the artifact that failed, because rewriting it would erase the
+evidence and make the next launch a launch with no problem in it.
+
+**What "fails to start" means is deliberately narrow.** Two things are decidable
+before a port is bound and both are certain: there is no `index.html`, or the
+entry document loads a script the artifact does not contain. Everything past
+that is a guess. A build that comes up and throws is still the build the
+developer chose, and at launch it is indistinguishable from one that works; a
+host that fell back on a runtime error would be overruling a promotion on
+evidence it does not have. **A fallback on the wrong signal is worse than none.**
+A boot receipt was considered and turned down for the same reason from the other
+side: a page that throws still runs a later classic script, so the receipt would
+arrive from a broken build and the mechanism would be a comment.
+
+**The window's half is appended to the entry document**, not fetched by the app,
+and this is the one place anything is ever added to what an artifact serves. The
+artifact being served in this state is by definition the *older* build — quite
+possibly built before this code existed — so anything that asked the frontend to
+render the notice would be silent in exactly the case it is for. It is appended,
+only on this path and only to `index.html`; the artifact's own bytes go out
+unchanged and the notice follows them. It declares no custom property, so an
+app whose `:root` carries the real palette is untouched.
+
+**Retention is bounded at four** — the served build, the one behind it, a
+pre-release cut and not yet promoted, and one spare — pruned newest-first at
+launch, with the two named ones spared whatever their age. Keeping the previous
+build is otherwise a promise to hold a second copy of a frontend for the life of
+the clone. Assembly directories are left alone: removing one would race a build
+filling it, to reclaim a directory the next build overwrites anyway.
 
 ## The one thing that is a boundary rather than a convention
 

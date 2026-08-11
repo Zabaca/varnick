@@ -126,6 +126,16 @@ _Avoid_: current, active, live (all three read as a status the store computes; t
 
 A directory per id rather than one `dist`, because three things have to be possible at once: writing a build **without** serving it, switching which one is served, and still having the previous one when the new one will not start. `.varnick/` because that is already where varnick keeps per-clone machine state, and because an artifact is a build of one clone on one machine — never history, never committed.
 
+**Previous**:
+The Artifact that was **Served** before this one, held as a second one-line file named `previous` beside it. Written by whatever switches, at the moment it switches, and never inferred — a directory's modification time says when a build was *written*, and a build can be written weeks before anything serves it. Absent means there has never been a switch, which is the honest answer for a clone that has only ever served one build and not the same thing as an old Artifact the store happens to still hold.
+_Avoid_: last, N-1, backup (nothing is copied for this; it is the build that was already there), rollback target (nothing rolls back — **Served** is left naming what failed)
+
+**Fall back**:
+Serving **Previous** because the **Served** Artifact will not start, with the window saying so. The host does it on its own, at launch, and changes nothing on disk: `served` goes on naming the Artifact that failed, because rewriting it would erase the evidence and make the next launch a launch with no problem in it. It is [ADR-0004](./docs/adr/0004-core-never-statically-imports-userspace.md)'s argument one level out — a broken Surface must not leave a window with no chat, and a broken build must not leave a developer with no varnick to fix it in.
+
+**Will not start** is deliberately narrow and means one of exactly two things, both decidable before a port is bound: the Artifact has no `index.html`, or its `index.html` loads a script the Artifact does not contain. A build that comes up and throws is still the build the developer chose. A launch never rebuilds to escape this — that would undo a promotion and present as the build reverting on its own.
+_Avoid_: rollback, revert, downgrade (all three describe a change to what is served; nothing is changed), recover, self-heal
+
 The live tree's window is served from one of these, and a **Preview** is served by the dev server. That is the whole of the rule, and the reason for it is that work now lands in the live tree while nobody is watching: a watcher there would reload the window the developer left open, at whatever hour the merge happened. Live Surface hot-reloading is what that costs in the main window, and it is a recorded consequence rather than an oversight — see [ADR-0020](./docs/adr/0020-the-main-window-serves-a-built-artifact.md).
 _Avoid_: bundle, dist, release (a release *produces* one; the artifact is the directory), build (fine as a verb, ambiguous as a noun)
 
