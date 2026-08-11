@@ -13,7 +13,7 @@ Five things about this repo that are not obvious from the code:
 - **The view layer is pure** — [ADR-0001](docs/adr/0001-pure-view-layer.md). Components are functions of `(snapshot, send)`; machines declare actors without importing implementations. This is what lets the states page and the live app be the same code.
 - **A state is named in exactly one place: the machines.** Their exported path lists are the source, `CONTEXT.md` defines the names, `#/states` renders them, a ticket points at a card. Surface briefs carry ranges, never states — `drive.ts` fails the build if one does.
 
-Read [CONTEXT.md](CONTEXT.md) before using any domain term — `Core`, `Userspace`, `Surface`, `Workspace`, `Profile`, `Worktree`, `Preview`, and `Fence` all have precise meanings here, and `Workspace` means the opposite of what it means in the sibling `zbc` repository. `Fence` is smaller than `Core`: it is the code that decides what the agent may do, and three separate mechanisms key off that same list.
+Read [CONTEXT.md](CONTEXT.md) before using any domain term — `Core`, `Userspace`, `Surface`, `Realm`, `Workspace`, `Profile`, `Worktree`, `Preview`, and `Fence` all have precise meanings here, and `Workspace` means the opposite of what it means in the sibling `zbc` repository. `Fence` is smaller than `Core`: it is the code that decides what the agent may do, and three separate mechanisms key off that same list.
 
 ## Agent skills
 

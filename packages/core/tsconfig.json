@@ -12,6 +12,7 @@
     "scripts",
     "vite.config.ts",
     "dev-server.ts",
+    "version.ts",
     "artifacts.ts",
     "artifact-assets.ts"
   ]
