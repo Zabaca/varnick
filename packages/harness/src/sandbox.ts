@@ -141,16 +141,58 @@ export const HOST_INVOKED_SCRIPTS = 'scripts/**'
  * Where hooks live instead: a tracked directory, which is what husky and
  * lefthook do.
  *
- * The agent loses nothing it can use, and hooks come back **better** than they
- * were. As tracked files they appear in the diff, travel through the merge, and
- * are gated by the same review as everything else — the agent writes them
- * freely and a human reads them, which was never true of `.git/hooks`.
- *
- * Not written into the policy: this is a *grant* by omission, so naming it here
- * is what lets `sandbox.test.ts` assert it is not denied and lets the bootstrap
- * in `scripts/use-tracked-git-hooks.sh` spell it the same way.
+ * The bare name, without a glob, because three things want it spelled this way
+ * and none of them is the policy: `core.hooksPath` is set to it by the
+ * bootstrap in `scripts/use-tracked-git-hooks.sh`, git resolves it against the
+ * top of the working tree so one value is right in the clone and in every
+ * worktree, and the generated file's prose names the directory a developer
+ * would `cd` into. {@link TRACKED_HOOKS_GLOB} is the form `denyWrite` takes.
  */
 export const TRACKED_HOOKS_DIR = '.githooks'
+
+/**
+ * The same directory, denied in the live tree.
+ *
+ * **Tracked was never the property that mattered.** ADR-0016 moved hooks here
+ * on the argument that a tracked file reaches the developer through a diff they
+ * read — but tracked says where a file *can* be reviewed, not that it was. A
+ * hook the agent writes into the live tree's `.githooks/` is on no branch, in
+ * no diff and in nobody's review, and git runs it on the developer's next
+ * commit with the same unconfined privilege the `.git/hooks` entry above exists
+ * to refuse. Redirecting the hooks path bought a better *place* for hooks and
+ * left the hole exactly where it was, one directory out.
+ *
+ * So this joins the deny list, and it is the same denial `packages/core/**` is
+ * rather than the one `.git/hooks/**` is. The path is absolute and live-tree,
+ * so a Worktree's `.githooks/` matches nothing: the agent authors hooks there
+ * under its ordinary Profile and they become code git runs when a human merges
+ * them (ADR-0014). What ADR-0016's README already promised is now true rather
+ * than assumed.
+ *
+ * `/**` and not the bare directory, matching {@link HOST_INVOKED_SCRIPTS}: what
+ * has to be refused is the hook file. The glob does not name the directory
+ * *node*, and the node matters — a directory the agent can `mv` aside or
+ * replace with a symlink is a denial it can step around without ever writing a
+ * denied path.
+ *
+ * **srt covers it, and the mechanism is worth naming because it is not this
+ * glob.** `generateMoveBlockingRules` splits the pattern at its first glob
+ * character, takes the static prefix as a base directory, and emits
+ * `file-write-unlink` and `file-write-create` denials on that directory as a
+ * literal and on every ancestor — its own comment says this exists to stop a
+ * not-yet-existing protected path being replaced with an attacker-controlled
+ * symlink. The regex the glob itself compiles to is `^<clone>/\.githooks/.*$`,
+ * which matches nothing at the node.
+ *
+ * Measured, because the first version of this comment claimed the wrong
+ * mechanism — that the README inside kept the directory alive. It does not, and
+ * the difference is testable: with `.githooks` **empty**, `rmdir`, `mv` and
+ * `rm -rf` are all refused; with it **absent**, `mkdir` and `ln -s /tmp
+ * .githooks` are refused too. Nothing depends on a file being in there.
+ * `sandbox.boundary.test.ts` asserts exactly that, on an empty directory, so a
+ * future srt that stopped emitting those rules fails there rather than silently.
+ */
+export const TRACKED_HOOKS_GLOB = `${TRACKED_HOOKS_DIR}/**`
 
 /** Where the generated policy lives inside the clone. */
 export const SANDBOX_POLICY_FILENAME = 'sandbox-policy.json'
@@ -589,10 +631,28 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           What the agent loses is `git remote add`, `git config` and
           `--set-upstream`, and it cannot reach a forge with this allowlist
           anyway. What it gets back is better than what it had: hooks live in
-          {@link TRACKED_HOOKS_DIR}, where they are tracked files the agent
-          writes freely and a human reads in a diff.
+          {@link TRACKED_HOOKS_DIR}, where the agent authors them in a Worktree
+          and a human reads them in a diff — see the entry below, which is what
+          makes that sentence true rather than hopeful.
         */
         ...GIT_EXECUTABLE_CONFIG.map((entry) => join(clone, entry)),
+        /*
+          And the directory the hooks path was pointed *at*.
+
+          The same failure shape as the two entries above, one directory out.
+          They are denied because `.git` is unversioned and a write there is in
+          no diff; this one is tracked and a write to it in the live tree is
+          still in no diff, because tracked describes where a file can be
+          reviewed rather than whether it was. Either way git runs the file
+          unconfined on the developer's next commit, including the merge commit
+          that was meant to be the gate — so ADR-0016's fix moved hooks to a
+          better place and left its own hole open behind them.
+
+          Denied as an absolute live-tree path like Core, which is the whole of
+          how the agent still writes hooks: a Worktree's `.githooks/` matches
+          nothing here (ADR-0014). See {@link TRACKED_HOOKS_GLOB}.
+        */
+        join(clone, TRACKED_HOOKS_GLOB),
         /*
           And the scripts the root manifest runs, for the reason `package.json`
           itself is denied. Found reviewing this ticket: it added a
@@ -1455,9 +1515,23 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     '  decorative, and because it defines the filter commands .gitattributes runs.',
     '',
     `  Hooks live in ${TRACKED_HOOKS_DIR}/ instead, with core.hooksPath pointed at it —`,
-    '  the same thing husky and lefthook do. They come back better than they were:',
-    '  tracked files, in the diff, read by a human before they run. Nothing else in',
-    '  .git is denied, so git worktree add, git commit and git merge all still work.',
+    '  the same thing husky and lefthook do. Nothing else in .git is denied, so git',
+    '  worktree add, git commit and git merge are all permitted by this policy.',
+    '',
+    '  Permitted, and on some machines still not usable, for a reason that is not',
+    '  about .git: git treats an unreadable ~/.gitconfig as fatal rather than as a',
+    '  warning, and your home directory is denied above. So on a machine that has a',
+    '  global git config, every git command in here — down to git --version — exits',
+    '  128 with "unable to access ... .gitconfig" until GIT_CONFIG_GLOBAL is set.',
+    '  Measured, and tracked separately: it is a gap in the read allowlist, not a',
+    '  denial anyone chose, and it is not something this file can fix by itself.',
+    '',
+    `  ${TRACKED_HOOKS_GLOB} is denied as well, for the reason above rather than in spite`,
+    '  of it. Tracked says where a file can be reviewed, not that it was: a hook',
+    '  written into this tree is on no branch and in no diff either, and git runs it',
+    '  on your next commit just the same. So it is denied the way packages/core is —',
+    '  an absolute path in this clone, which a worktree does not match. The agent',
+    '  writes hooks in a worktree and they run once you have merged them.',
     '',
     '  Reachable over the network: only these hosts:',
     list(policy.network.allowedDomains),
