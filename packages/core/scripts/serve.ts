@@ -146,12 +146,19 @@ if (plan.outcome === 'build-one') {
   })
   await built.exited
 
-  // Re-read rather than assume: the build writes both markers, and a build that
-  // failed leaves them exactly as they were. Once, not in a loop — a second
-  // build would be the rebuild-every-launch this branch exists to stay clear of.
+  /*
+    Re-read rather than assume: the build writes both markers, and a build that
+    failed leaves them exactly as they were. Planned again from what is there
+    now, which is how a fresh clone reaches the ordinary `served` outcome.
+
+    A branch and not a loop. A build that failed replans to `build-one` a second
+    time and nothing acts on it — control has left this block — so the window
+    opens on the no-build page saying what to run. Retrying here would be the
+    rebuild-every-launch this branch exists to stay clear of, with a failing
+    build turning it into a rebuild-twice-every-launch.
+  */
   const afterBuild = readServedMarkers(buildRoot)
   plan = servingPlan(afterBuild.served, afterBuild.previous, startable)
-  if (plan.outcome === 'build-one') plan = { outcome: 'nothing-startable', serve: null, failed: null }
 }
 
 const servedRoot = plan.serve === null ? null : artifactPath(buildRoot, plan.serve)
