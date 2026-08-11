@@ -35,3 +35,21 @@ This is a Fence change and lands through a human merge.
 - [x] A Preview whose Worktree rewrote the policy generator is measurably fenced by the live tree's policy
 - [x] An ADR records that confining Previews supersedes the approval dialog, and what would have to become true to need one again
 - [x] CONTEXT.md's Preview and Fence entries are amended — both currently state that a Preview runs unconfined
+
+## Notes for the spec
+
+**Recorded drift, deliberate.** Testing Decisions name `preview.ts` /
+`preview.test.ts` as where "which policy confines a Preview" is asserted. It is
+not there. `preview.ts` no longer decides anything about confinement — it is the
+tool's shape and the sentences for its outcomes — so the assertions live where
+the decisions do: `clone-root.test.ts` for `requirePolicyRoot`, `preview.rs`'s
+own tests for `policy_root_for_child` and the launch shape, and probe 11b for
+the kernel. The spec's other line held exactly: the security half went to
+`containment.probe.test.ts`.
+
+**One thing found in review and fixed rather than commented.** `answer_preview`
+handed a child Preview this process's *clone* root as its policy root, which is
+correct for every varnick a developer starts and wrong for a Preview launching
+one: the child would have been fenced by a worktree's `sandbox-policy.json`,
+which the agent can write. Reachable in three measured steps, not latent. See
+`policy_root_for_child` and ADR-0019's condition 2.

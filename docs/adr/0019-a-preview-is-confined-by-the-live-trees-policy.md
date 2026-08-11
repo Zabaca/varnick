@@ -147,6 +147,28 @@ One of these, and none of them is true today:
   any of those puts the answer somewhere the agent can write, and the fence is
   back inside the fence. The variable is set by the spawning process and read
   once, in `bridge.rs`, for this reason.
+
+  This one was nearly shipped broken, and the near miss is worth keeping.
+  `answer_preview` first handed the child *this process's clone root*, which
+  reads correctly and is correct in every varnick a developer starts. In a
+  Preview it is not: the clone root is a **Worktree**, and the live tree's
+  `denyWrite` names `<live>/sandbox-policy.json` — a worktree's copy is a
+  different absolute path, so the agent may write it. A Preview launching a
+  Preview would have fenced the child with a policy the agent authored.
+
+  It was called unreachable on the grounds that `worktrees_of` joins
+  `.claude/worktrees` onto the clone root and no sibling worktree path matches.
+  That is true of siblings and says nothing about children. Measured instead:
+  `git worktree add .claude/worktrees/y` inside a worktree works and
+  `git worktree list --porcelain` reports the nested path from either tree, so
+  run in a Preview the base becomes `<worktree>/.claude/worktrees` and the
+  nested worktree matches it by construction. Three steps, all reachable by the
+  agent inside a Preview, and the failure is invisible — the nested window
+  opens and works.
+
+  The fix is `policy_root_for_child`: hand down *this process's own policy
+  root*, falling back to its clone root. It composes to any depth, and the
+  window that opens three levels down is fenced by the tree a human merged.
 - **A Preview is spawned by something other than an agent varnick already
   trusts.** Today the request arrives on the agent host's stdout, from inside the
   Sandbox. If the renderer could ask — a Surface is Userspace and the agent

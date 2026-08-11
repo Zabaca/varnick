@@ -63,10 +63,18 @@ Use it when the change is something to *use* rather than read: anything that
 alters the chat, the window, a state machine, the way the agent behaves. Skip it
 for a change whose whole story is in the diff.
 
-If the worktree touches **Fence** — `packages/harness/**`, `src-tauri/**`,
-`sandbox-policy.baseline.json` — the developer gets a native dialog showing
-those hunks and has to approve before anything launches. Expect it, say so
-before you call the tool, and do not treat a decline as an error to retry.
+**Nothing is asked of the developer, and any worktree can be previewed** —
+including one that rewrites the Sandbox policy generator. Do not announce a
+dialog, wait for one, or treat a launch as something that needs agreement.
+
+There is one thing to know about what a preview of a **Fence** change proves.
+The preview's agent is confined by the policy in force in the **live clone**,
+never by the one in the worktree, so a `sandbox.ts` you changed here decides
+nothing in the window that opens. That is deliberate — see
+[ADR-0019](../../../docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md).
+A preview of a Fence change proves it builds, starts and does not break the app;
+whether the policy it generates is *right* is `sandbox.test.ts`, `fence.test.ts`
+and the containment probes, none of which need a window.
 
 First preview of a worktree compiles Tauri and takes minutes. Say so, rather
 than leaving them watching a window that has not appeared.

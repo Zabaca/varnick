@@ -323,15 +323,16 @@ pub const PREVIEW_POLICY_ROOT_VAR: &str = crate::bridge::POLICY_ROOT_VAR;
 /// Three things are true of this and all three are asserted below. The worktree
 /// **path** appears, twice — as the working directory and as the clone root —
 /// and it is a value out of git's own listing. The **live clone** appears once,
-/// as the policy root, and it is this process's own. The worktree **name**
-/// appears nowhere: nothing the agent typed is in the argv, in the environment,
-/// or in the directory.
+/// as the policy root, and it comes from {@link policy_root_for_child} rather
+/// than from this process's clone root. The worktree **name** appears nowhere:
+/// nothing the agent typed is in the argv, in the environment, or in the
+/// directory.
 ///
 /// **The Credential is not here**, and its absence is a property worth keeping:
 /// this type derives `Debug`, is built by a pure function and is read whole by
 /// the tests below. The secret is applied at the spawn instead, from an
 /// `Injection` that redacts itself — see {@link spawn_preview}.
-pub fn preview_launch(worktree: &Path, clone_root: &Path, port: u16) -> PreviewLaunch {
+pub fn preview_launch(worktree: &Path, policy_root: &Path, port: u16) -> PreviewLaunch {
     let mut env = BTreeMap::new();
     env.insert(
         PREVIEW_CLONE_ROOT_VAR.to_string(),
@@ -339,7 +340,7 @@ pub fn preview_launch(worktree: &Path, clone_root: &Path, port: u16) -> PreviewL
     );
     env.insert(
         PREVIEW_POLICY_ROOT_VAR.to_string(),
-        clone_root.display().to_string(),
+        policy_root.display().to_string(),
     );
     PreviewLaunch {
         program: PREVIEW_PROGRAM.to_string(),
@@ -364,6 +365,39 @@ pub fn preview_launch(worktree: &Path, clone_root: &Path, port: u16) -> PreviewL
 /// silently take the Keychain away from a varnick nobody previewed.
 pub fn confined_by_parent(policy_root: Option<String>) -> bool {
     policy_root.is_some_and(|root| !root.trim().is_empty())
+}
+
+/// The tree whose policy will confine a Preview this process launches.
+///
+/// **This process's own policy root when it has one, and its clone root
+/// otherwise.** The second half is every varnick a developer starts. The first
+/// half is a Preview launching a Preview, and it is not a hypothetical tidiness:
+/// handing down the *clone* root unconditionally would give the child a
+/// **Worktree** as its policy root, and a worktree's `sandbox-policy.json` is a
+/// file the agent can write — `denyWrite` names `<live>/sandbox-policy.json`,
+/// and a worktree's copy is a different absolute path.
+///
+/// Each link in that chain was measured rather than argued, because the first
+/// reading of it was that nesting could not happen at all:
+///
+///   * `git worktree add .claude/worktrees/y` **inside** a worktree works, and
+///     `git worktree list --porcelain` reports the nested path from either tree.
+///   * `worktrees_of` joins `.claude/worktrees` onto whatever clone root it is
+///     given, so run in a Preview it resolves that nested worktree by name —
+///     see the test below.
+///   * the live tree's `allowWrite` names the live clone, so the agent in a
+///     Preview may write `<worktree>/sandbox-policy.json`.
+///
+/// So the answer composes instead: live → x is confined by live, and x → y is
+/// confined by live as well, to any depth. This is ADR-0019's condition 2 —
+/// *something other than the parent host decides a Preview's policy root* — and
+/// it is the one to keep enforcing, because the failure is invisible: the
+/// nested window opens, works, and is fenced by a file the agent wrote.
+pub fn policy_root_for_child(policy_root: Option<String>, clone_root: &Path) -> PathBuf {
+    match policy_root {
+        Some(root) if !root.trim().is_empty() => PathBuf::from(root),
+        _ => clone_root.to_path_buf(),
+    }
 }
 
 /// The first port from `from` upwards that nothing is listening on.
@@ -451,11 +485,13 @@ fn spawn_preview(launch: &PreviewLaunch, credential: Injection) -> bool {
 /// is no longer something a broken machine could hand over.
 ///
 /// The clone root is this process's own — `VARNICK_CLONE_ROOT` or the build path
-/// — and never anything the agent sent. It is used twice and they are two
-/// different questions: which worktrees exist, and whose policy the Preview
-/// runs under. The Preview's *own* clone root is the worktree, which is where it
-/// is launched, so its build root and its clone root are one directory and
-/// ticket 30's second-root case does not arise.
+/// — and never anything the agent sent. It answers one question: which
+/// worktrees exist. Whose policy the child runs under is a *second* question
+/// with a second answer, {@link policy_root_for_child}, and conflating them is
+/// the bug that reading looks like it does not have. The Preview's own clone
+/// root is the worktree, which is where it is launched, so its build root and
+/// its clone root are one directory and ticket 30's second-root case does not
+/// arise.
 ///
 /// A missing Credential is `NoLaunch` rather than a tag of its own. It cannot
 /// happen on the path that reaches here — an agent had to ask for this, and an
@@ -466,6 +502,20 @@ pub fn answer_preview(app: &tauri::AppHandle, worktree: &str) -> PreviewOutcome 
     use tauri::Manager;
 
     let clone_root = crate::bridge::clone_root(std::env::var(crate::bridge::CLONE_ROOT_VAR).ok());
+    /*
+      Whose policy the child gets, which is *this* process's — not this
+      process's clone root.
+
+      The two are the same directory in the varnick a developer started, and
+      they differ in a Preview. A Preview that handed down its clone root would
+      hand down a Worktree, whose `sandbox-policy.json` the agent can write. See
+      {@link policy_root_for_child}, where the three measurements behind that
+      sentence are written down.
+    */
+    let policy_root = policy_root_for_child(
+        std::env::var(crate::bridge::POLICY_ROOT_VAR).ok(),
+        &clone_root,
+    );
 
     let Some(listing) = worktree_listing(&clone_root) else {
         return PreviewOutcome::NoWorktrees;
@@ -494,7 +544,7 @@ pub fn answer_preview(app: &tauri::AppHandle, worktree: &str) -> PreviewOutcome 
         return PreviewOutcome::NoLaunch;
     };
 
-    if spawn_preview(&preview_launch(&path, &clone_root, port), credential) {
+    if spawn_preview(&preview_launch(&path, &policy_root, port), credential) {
         PreviewOutcome::Launched
     } else {
         PreviewOutcome::NoLaunch
@@ -504,9 +554,10 @@ pub fn answer_preview(app: &tauri::AppHandle, worktree: &str) -> PreviewOutcome 
 #[cfg(test)]
 mod tests {
     use super::{
-        confined_by_parent, first_free_port, is_plain_worktree_name, preview_answer_line,
-        preview_launch, preview_request_of, resolve_worktree, worktrees_of, PreviewOutcome,
-        PreviewRequest, PREVIEW_CLONE_ROOT_VAR, PREVIEW_POLICY_ROOT_VAR, WORKTREE_BASE,
+        confined_by_parent, first_free_port, is_plain_worktree_name, policy_root_for_child,
+        preview_answer_line, preview_launch, preview_request_of, resolve_worktree, worktrees_of,
+        PreviewOutcome, PreviewRequest, PREVIEW_CLONE_ROOT_VAR, PREVIEW_POLICY_ROOT_VAR,
+        WORKTREE_BASE,
     };
     use std::path::{Path, PathBuf};
 
@@ -767,6 +818,90 @@ mod tests {
         // `requirePolicyRoot` in packages/harness/src/clone-root.ts refuses the
         // launch if this is ever untrue.
         assert!(worktree.starts_with(clone_root()));
+    }
+
+    #[test]
+    fn a_preview_of_a_preview_is_confined_by_the_live_tree_and_not_by_its_parent_worktree() {
+        /*
+          ADR-0019's condition 2, as the one assertion that keeps it.
+
+          A Preview launching a Preview is the case where "hand down the clone
+          root" and "hand down the policy root" stop being the same sentence.
+          The parent Preview's clone root is a **Worktree**, and a worktree's
+          `sandbox-policy.json` is a file the agent can write — the live tree's
+          `denyWrite` names `<live>/sandbox-policy.json`, and the worktree's
+          copy is a different absolute path. So a child handed its parent's
+          clone root would be fenced by a policy the agent authored, which is
+          exactly what this ticket closed one level up.
+
+          The failure would be invisible: the nested window opens and works.
+        */
+        let live = PathBuf::from("/Users/dev/varnick");
+        let parent_worktree = live.join(".claude/worktrees/agent-one");
+
+        // The varnick a developer started: no policy root of its own, so its
+        // clone root is the answer. Unchanged, and the common case.
+        assert_eq!(policy_root_for_child(None, &live), live);
+
+        // A Preview: confined by the live tree, and it hands the live tree on
+        // rather than the worktree it is running from.
+        assert_eq!(
+            policy_root_for_child(Some(live.display().to_string()), &parent_worktree),
+            live,
+        );
+        assert_ne!(
+            policy_root_for_child(Some(live.display().to_string()), &parent_worktree),
+            parent_worktree,
+        );
+
+        // And it composes: nothing here is depth-aware, so the third window is
+        // fenced by the same tree the first one was.
+        let child_worktree = parent_worktree.join(".claude/worktrees/agent-two");
+        assert_eq!(
+            policy_root_for_child(Some(live.display().to_string()), &child_worktree),
+            live,
+        );
+
+        // An empty value is not a policy root, for the reason it is not a
+        // Preview: the Rust host passes an empty argument rather than omitting
+        // one, so this is the ordinary launch arriving with a blank.
+        assert_eq!(policy_root_for_child(Some(String::new()), &live), live);
+        assert_eq!(policy_root_for_child(Some("  ".to_string()), &live), live);
+    }
+
+    #[test]
+    fn a_worktree_nested_inside_a_worktree_resolves_which_is_why_the_policy_root_is_handed_down() {
+        /*
+          The premise the test above rests on, measured rather than assumed.
+
+          The first reading of nesting was that it could not happen — that
+          `worktrees_of` joins `.claude/worktrees` onto the clone root, and no
+          sibling worktree path matches. That is true of *siblings* and says
+          nothing about children: run in a Preview, the base becomes
+          `<worktree>/.claude/worktrees`, and a worktree created there matches
+          it by construction.
+
+          `git worktree add .claude/worktrees/y` inside a worktree works and
+          `git worktree list --porcelain` reports the nested path from either
+          tree — run against a real repository, which is what the listing below
+          is copied from. So the escalation was reachable, not latent.
+        */
+        let parent = PathBuf::from("/Users/dev/varnick/.claude/worktrees/agent-one");
+        let nested = [
+            "worktree /Users/dev/varnick",
+            "",
+            "worktree /Users/dev/varnick/.claude/worktrees/agent-one",
+            "",
+            "worktree /Users/dev/varnick/.claude/worktrees/agent-one/.claude/worktrees/agent-two",
+            "",
+        ]
+        .join("\n");
+
+        assert_eq!(
+            resolve_worktree("agent-two", &nested, &parent),
+            Ok(parent.join(".claude/worktrees/agent-two")),
+            "a Preview can enumerate a worktree made inside its own"
+        );
     }
 
     #[test]
