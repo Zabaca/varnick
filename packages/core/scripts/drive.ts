@@ -56,7 +56,23 @@ import {
   hotUpdateVerdict,
   portToBind,
   sharedTargetDir,
+  windowSource,
+  worktreeOwner,
 } from '../dev-server.ts'
+import {
+  ARTIFACT_ENTRY,
+  ARTIFACT_STORE_RELATIVE_PATH,
+  LOCAL_ARTIFACT_ID,
+  SERVED_MARKER,
+  artifactEntry,
+  artifactPath,
+  artifactStore,
+  assetPath,
+  isArtifactId,
+  servedArtifactId,
+  servedMarkerPath,
+  servedMarkerText,
+} from '../artifacts.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { CREDENTIAL_SHAPE_PROBE } from '@varnick/harness/credentials'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
@@ -6183,6 +6199,190 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check(
     'and neither does a sibling clone with a longer name',
     hotUpdateVerdict(`${clone}-two/packages/core/x.ts`, clone) === 'hot-swap',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// What is behind the window — a build in the live tree, a dev server in a
+// Worktree
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The verdict above is unchanged and its assertions are the regression guard
+    on that. What changed is **what asks it**: the live tree no longer runs a
+    watcher, so nothing in it produces a hot update to have a verdict about,
+    and a merge landing at three in the morning cannot reload the window the
+    developer left open.
+
+    A Preview is the other half and it must not have moved. It runs from a
+    Worktree, it runs the dev server, and `core-reloads` is still on it — which
+    is what keeps ADR-0014's argument true: a Preview exists so a change can be
+    *used* before it is merged.
+
+    ADR-0020.
+  */
+  const clone = '/Users/someone/varnick'
+  const worktree = `${clone}/.claude/worktrees/agent-1`
+
+  check('the live tree is served a built artifact', windowSource(clone) === 'artifact')
+  check('and a Preview runs the dev server', windowSource(worktree) === 'dev-server')
+
+  /*
+    The same near-misses `sharedTargetDir` is checked against, asserted here
+    separately on purpose. Both decisions read `worktreeOwner`, and the reason
+    it is one exported function with two callers rather than one caller reading
+    the other is that they must be able to move apart — a change to where a
+    Worktree's Rust artifacts go must never decide what a window is served.
+  */
+  check(
+    'a directory nested below a Worktree is not itself one',
+    windowSource(`${worktree}/packages/core`) === 'artifact',
+  )
+  check(
+    'and a directory that only looks like the base is not the base',
+    windowSource(`${clone}/.claude/worktrees-old/agent-1`) === 'artifact',
+  )
+  check('a trailing separator decides the same thing', windowSource(`${worktree}/`) === 'dev-server')
+  check('the owner of a Worktree is the clone it is under', worktreeOwner(worktree) === clone)
+  check('and the live tree is owned by nobody', worktreeOwner(clone) === null)
+
+  /*
+    The config itself rather than a restatement of it. `beforeDevCommand` is the
+    whole of how this decision reaches `bun tauri dev`, and a config that named
+    the Vite dev server again would put a watcher back on the live tree with
+    every assertion above still passing.
+  */
+  const conf = JSON.parse(
+    readFileSync(new URL('../../../src-tauri/tauri.conf.json', import.meta.url).pathname, 'utf-8'),
+  ) as { build: { beforeDevCommand: string } }
+  check(
+    'tauri.conf.json starts the artifact server rather than the dev server',
+    conf.build.beforeDevCommand === 'bun run packages/core/scripts/serve.ts',
+  )
+
+  const manifest = JSON.parse(
+    readFileSync(new URL('../../../package.json', import.meta.url).pathname, 'utf-8'),
+  ) as { scripts: Record<string, string> }
+  check(
+    'and `bun run build` writes into the store rather than only into dist',
+    manifest.scripts.build === 'bun run packages/core/scripts/build.ts',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Where built artifacts live, and which one is served
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The convention the release chain is built on, asserted as strings so that
+    "where the artifacts are" is a fact something else can read rather than a
+    path repeated in three scripts.
+
+    Three later tickets need exactly this shape: an artifact written *without*
+    being served, a switch of which one is served, and a fall back to the one
+    before it. That is a directory per id and a file naming one — a single
+    `dist` answers none of the three.
+  */
+  const clone = '/Users/someone/varnick'
+
+  check(
+    'the store is under varnick’s own per-clone state directory',
+    artifactStore(clone) === `${clone}/.varnick/builds`,
+  )
+  check(
+    'and the relative path is the fact, so nothing has to spell it twice',
+    ARTIFACT_STORE_RELATIVE_PATH === '.varnick/builds',
+  )
+  check(
+    'which one is served is a file inside it',
+    servedMarkerPath(clone) === `${clone}/.varnick/builds/${SERVED_MARKER}`,
+  )
+  check('one artifact is one directory under the store', artifactPath(clone, '0.2.0-1') === `${clone}/.varnick/builds/0.2.0-1`)
+  check(
+    'and its entry is the file a window opens on',
+    artifactEntry(`${clone}/.varnick/builds/local`) ===
+      `${clone}/.varnick/builds/local/${ARTIFACT_ENTRY}` && ARTIFACT_ENTRY === 'index.html',
+  )
+  check('what `bun run build` writes has a name of its own', LOCAL_ARTIFACT_ID === 'local')
+
+  /*
+    An id is joined onto a root and then served files out of. A name that is not
+    a name must resolve to nothing rather than to a directory above the store —
+    the same rule `is_plain_worktree_name` holds in src-tauri/src/preview.rs,
+    written twice on purpose because the two answer for different roots.
+  */
+  for (const bad of ['', '.', '..', '../..', '/etc', 'a/b', 'a\\b', '-p', '.git', 'a b', 'a\0b']) {
+    check(`${JSON.stringify(bad)} is not an artifact id`, !isArtifactId(bad))
+    check(`and resolves to no artifact`, artifactPath(clone, bad) === null)
+  }
+  check('two hundred characters is somebody probing', !isArtifactId('a'.repeat(200)))
+  check('a version is an ordinary id', isArtifactId('0.2.0-1') && isArtifactId('0.2.0+3f2a1c'))
+
+  /*
+    The marker is one line and a launch reads it before anything else happens.
+    Absent is a real answer — a fresh clone has never built — and so is a file
+    that says something else, because the honest reading of a marker nobody can
+    parse is that nothing is served.
+  */
+  check('a marker naming an artifact answers it', servedArtifactId('local\n') === 'local')
+  check('trailing whitespace is not part of the name', servedArtifactId('  0.2.0-1  \n') === '0.2.0-1')
+  check('only the first line is read', servedArtifactId('local\nand something else\n') === 'local')
+  check('no file at all is nothing served', servedArtifactId(undefined) === null)
+  check('an empty file is nothing served', servedArtifactId('') === null)
+  check('and so is one full of whitespace', servedArtifactId('   \n\n') === null)
+  check('a marker that names a path names nothing', servedArtifactId('../../../etc\n') === null)
+  check('what is written is what is read back', servedArtifactId(servedMarkerText('local')) === 'local')
+
+  /*
+    The one boundary between an HTTP request and the disk.
+
+    The listener binds localhost, so what reaches it is the webview — and the
+    webview renders Userspace, which the agent writes freely, so a Surface can
+    issue any `fetch` it likes. A path that climbed out of the artifact would be
+    that Surface reading the developer's home directory over HTTP, which is
+    exactly what the Sandbox exists to prevent.
+
+    Asserted rather than observed, because a traversal is not something to find
+    out about from a running server.
+  */
+  const root = `${clone}/.varnick/builds/local`
+  check('the root of the site is the entry file', assetPath(root, '/') === `${root}/index.html`)
+  check('so is any directory', assetPath(root, '/thing/') === `${root}/thing/index.html`)
+  check('an asset resolves inside the artifact', assetPath(root, '/assets/app-a1b2.js') === `${root}/assets/app-a1b2.js`)
+  check('a percent-encoded name is decoded', assetPath(root, '/assets/a%20b.css') === `${root}/assets/a b.css`)
+
+  for (const escaping of [
+    '/../../../etc/passwd',
+    '/..%2f..%2fetc/passwd',
+    '/%2e%2e/%2e%2e/etc/passwd',
+    '/assets/../../../../Users/someone/.ssh/id_rsa',
+    '/./../../sandbox-policy.json',
+  ]) {
+    check(`${escaping} reaches nothing`, assetPath(root, escaping) === null)
+  }
+  check('a path that is not a path at all is refused', assetPath(root, 'assets/app.js') === null)
+  check('malformed encoding is not guessed at', assetPath(root, '/%zz') === null)
+  check('a NUL truncates nothing, because it resolves nothing', assetPath(root, '/a%00.js') === null)
+  check(
+    'the artifact root itself is not a file to serve',
+    assetPath(root, '/..') === null && assetPath(root, '/.') === null,
+  )
+  check(
+    'a sibling artifact cannot be reached from inside one',
+    assetPath(root, '/../0.2.0-1/index.html') === null,
+  )
+
+  /*
+    An artifact is a build of one clone on one machine. It is not history, and a
+    committed one would be a second copy of the frontend in the repository that
+    nothing ever rebuilds.
+  */
+  const ignored = readFileSync(new URL('../../../.gitignore', import.meta.url).pathname, 'utf-8')
+  check(
+    'the store is not committed — `.varnick/` already covers it',
+    ignored.split('\n').some((line) => line.trim() === '/.varnick/'),
   )
 }
 

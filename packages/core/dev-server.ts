@@ -199,8 +199,15 @@ const WORKTREE_BASE = '.claude/worktrees'
  *
  * A string operation on purpose. This runs before anything is installed, in a
  * launcher whose whole virtue is that it does almost nothing.
+ *
+ * Exported because two decisions now turn on it and they are not the same
+ * decision: where cargo builds ({@link sharedTargetDir}) and whether this
+ * varnick runs a dev server at all ({@link windowSource}). One of them could be
+ * written in terms of the other and should not be — they would then move
+ * together, and a change to where a Worktree's Rust artifacts go would silently
+ * decide what the developer's window is served from.
  */
-function cloneOwning(cloneRoot: string): string | null {
+export function worktreeOwner(cloneRoot: string): string | null {
   const root = resolve(cloneRoot)
   const marker = `/${WORKTREE_BASE}/`
   const at = root.lastIndexOf(marker)
@@ -267,8 +274,48 @@ function cloneOwning(cloneRoot: string): string | null {
  */
 export function sharedTargetDir(cloneRoot: string, existing?: string | undefined): string | null {
   if (existing !== undefined && existing !== '') return null
-  const owner = cloneOwning(cloneRoot)
+  const owner = worktreeOwner(cloneRoot)
   return owner === null ? null : `${owner}/src-tauri/target`
+}
+
+// ---------------------------------------------------------------------------
+// Whether there is a dev server at all
+// ---------------------------------------------------------------------------
+
+/** What puts a frontend behind the window. */
+export type WindowSource =
+  /** A built frontend out of `.varnick/builds/`, served as files. Nothing watches. */
+  | 'artifact'
+  /** Vite, watching this tree, with the `core-reloads` plugin on it. */
+  | 'dev-server'
+
+/**
+ * What serves the window of a varnick running from `buildRoot`.
+ *
+ * **The live tree gets a build; a Worktree gets the dev server.** One rule, and
+ * it is the same distinction ADR-0014 already draws — a varnick running from a
+ * Worktree is a **Preview**, and a Preview exists so a change can be *used*
+ * before it is merged. Hot reloading is what makes that worth doing.
+ *
+ * The live tree is the other case, and it changed. Work now lands in it while
+ * nobody is watching, so a dev server on the live tree sends a full reload to
+ * whatever window the developer left open, at whatever hour the merge happened.
+ * `hotUpdateVerdict` was right about that reload and still is — a hot swap of
+ * Core remounts the machine holding the conversation — which is why the fix is
+ * not to change the verdict but to stop there being a watcher to ask it. See
+ * docs/adr/0020-the-main-window-serves-a-built-artifact.md.
+ *
+ * Keyed on the **build root** — the tree the frontend would come from — and not
+ * on `VARNICK_CLONE_ROOT`, which is the tree the *agent* works in. They are the
+ * same directory for a Preview and need not be in general, and the question
+ * here is about the frontend.
+ *
+ * The consequence is stated rather than hidden: a developer editing Core in the
+ * live tree sees nothing until they build. `bun run dev` is still Vite in a
+ * browser, and a Worktree is still the place Core is authored.
+ */
+export function windowSource(buildRoot: string): WindowSource {
+  return worktreeOwner(buildRoot) === null ? 'artifact' : 'dev-server'
 }
 
 // ---------------------------------------------------------------------------

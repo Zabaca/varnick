@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../packages/core/dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "bun run --filter @varnick/core dev",
+    "beforeDevCommand": "bun run packages/core/scripts/serve.ts",
     "beforeBuildCommand": "bun run --filter @varnick/core build"
   },
   "app": {
