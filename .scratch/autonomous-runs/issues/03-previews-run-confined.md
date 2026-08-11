@@ -1,0 +1,37 @@
+# 03 — Previews run confined, and the approval dialog is gone
+
+**What to build:** a Preview of any Worktree opens without asking the developer
+for anything, including a Worktree that rewrote the code generating the Sandbox
+policy. It opens as a working varnick — an agent you can talk to, not a screen
+you can only look at.
+
+Today a Preview runs unconfined, because it reads the Keychain to resolve a
+Credential, and that is the whole reason the dialog exists: there is a path from
+confined to unconfined that runs the agent's own fence. Close the path and the
+dialog protects nothing.
+
+A Preview is therefore confined by the **live tree's** policy rather than by the
+one in the Worktree it is previewing, and its Credential is injected into its
+agent's environment by the parent host — the arrangement the primary agent
+already has, so no new process comes to hold a secret. The agent may then write
+any policy generator it likes and the running Preview is still fenced by the
+version the developer merged.
+
+The dialog is deleted rather than made skippable. A dialog that fires on nothing
+is worse than no dialog, because it teaches everyone to dismiss it.
+
+This is a Fence change and lands through a human merge.
+
+**Blocked by:** None — can start immediately.
+
+**Status:** ready-for-agent
+
+- [ ] A Preview's agent is confined, and by the policy in force in the live tree rather than the one in the Worktree
+- [ ] The Preview's Credential is injected by the host into its agent's environment; no additional process reads the Keychain
+- [ ] A Preview of a Fence-touching Worktree launches with no dialog and no approval
+- [ ] The dialog and the decision that raised it are removed, including the sentences the agent used to read back when a launch was declined
+- [ ] The Custom Tool's input is unchanged: one Worktree name, still checked by the host against git
+- [ ] The containment probe measures that a Preview's agent is confined, rather than a comment asserting it
+- [ ] A Preview whose Worktree rewrote the policy generator is measurably fenced by the live tree's policy
+- [ ] An ADR records that confining Previews supersedes the approval dialog, and what would have to become true to need one again
+- [ ] CONTEXT.md's Preview and Fence entries are amended — both currently state that a Preview runs unconfined
