@@ -25,7 +25,7 @@ itself to, which is exactly why it needs writing down.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** done
+**Status:** ready-for-agent
 
 - [x] An ADR records that Userspace has fault isolation and not privilege isolation, and distinguishes the two
 - [x] It states what is reachable from a Surface today and what that does and does not expose

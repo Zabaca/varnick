@@ -40,8 +40,25 @@ handed the host's reply unrebuilt.
 
 ## What a Surface can reach today
 
-Read rather than run: `route_of` in `src-tauri/src/bridge.rs` is the whole list,
-and every arm it dispatches to was followed to its handler.
+Read rather than run. `route_of` in `src-tauri/src/bridge.rs` is the whole of
+what the renderer may ask for — thirteen kinds answered by the host, eight by
+the Harness runtime — and all twenty-one are named below rather than the
+interesting ones, because a list of the interesting ones is how two of these
+were missed the first time this was written.
+
+**Nine answer a question.** `read-credential`, `await-agent-exit`,
+`read-session`, `read-commands`, `list-worktrees` and `read-worktree-diff` leave
+the world as they found it. `next-mint-event`, `next-turn-event` and
+`next-unprompted-event` read a queue by draining it, which is the difference
+that matters below.
+
+**Twelve change something.** `check-sandbox` establishes the Sandbox rather than
+reporting on one. `store-credential`, `mint-subscription-token` and
+`cancel-mint` write or start or stop an authentication. `spawn-agent`,
+`stop-agent`, `run-turn` and `interrupt-turn` are the agent's process and what is
+said to it. `persist-session` writes the mirror. `merge-worktree` and
+`reap-worktree` are git in the developer's clone, and `restart-varnick` replaces
+this process image.
 
 **No answer on this bridge returns a Credential, and that is structural rather
 than lucky.** `read-credential` answers `Reading { source, kind }`, and `Secret`
@@ -65,9 +82,25 @@ Two reads are worth stating exactly:
   the transcript loses messages to. That is not a leak. It is a way to break the
   chat that requires no cleverness at all.
 
-**Reads are not all that is on the list.** `merge-worktree` writes the
-developer's tree and `restart-varnick` replaces the process image, and this is
-where the gap stops being theoretical.
+**The twelve that change something are where the gap stops being theoretical**,
+and they are not equally interesting. Starting, stopping and interrupting the
+agent are a nuisance; `run-turn` is a prompt, so a Surface can put words in the
+agent's mouth, which is the agent prompting itself laundered through the window.
+`store-credential` cannot read a credential back but can replace the one the
+developer stored. None of that reaches what varnick is protecting. Three are
+worth taking one at a time, and the third is the one that ends well.
+
+**`persist-session` writes the mirror, and nothing stands in front of it.** The
+mirror is the copy that survives a build the agent just broke, which is the
+whole of [ADR-0009](./0009-resume-reads-the-mirror.md) — and `persist` in
+`packages/harness/src/session.ts` replaces the transcript for a Session id with
+whatever passes shape validation. Redaction still runs on the way in, so this
+cannot be used to *write* a secret to disk; what it can do is overwrite the
+record. There is no guard here to be in the wrong place, because there is no
+guard: the call is trusted for the same reason every call on this bridge is,
+which is that Core is the only thing expected to make it.
+
+**`merge-worktree` and `restart-varnick` are ADR-0014's gate.**
 
 [ADR-0017](./0017-the-host-performs-the-merge-a-human-still-decides-it.md) asked
 the right question — *can anything the agent says cause this call* — and its
@@ -100,6 +133,25 @@ Two qualifications, so this is not read as larger than it is. Loading is lazy �
 has to open it once. And `mergeWorktree` refuses a dirty live tree and an
 unmergeable branch; neither is a security check, but both mean the sequence is
 not silent in every state.
+
+**`reap-worktree` is the destructive route the realm gap does not reach, and it
+is the most useful thing on this list.** It sits one line from the merge in
+`route_of` and ends in `worktree remove` and `branch -D`, so the obvious reading
+is that a Surface can force-delete the agent's own finished, unmerged branch.
+**It cannot.** `reapWorktree` calls `contentLanded` before it removes anything
+and throws if the answer is no; `contentLanded` in
+`packages/harness/src/worktrees.ts` proves the answer with
+`merge-tree --write-tree HEAD <ref>`, refusing unless merging the branch into
+the live tree produces exactly `HEAD`'s own tree, and returning `false` on every
+error path so the only direction it can be wrong in is leaving the worktree
+alone.
+
+That check is in the runtime, on the far side of the bridge, and it therefore
+holds against a caller no machine ever saw. **The difference between reap and
+merge is not how dangerous they are — it is where the guard lives.** Reap's is
+host-side and survives; merge's is an XState guard in Core and does not. The one
+route that already got this right is the shape the rest of the list would have
+to take, and it needs no second realm to say so.
 
 One more fact about the realm rather than the bridge: `src-tauri/tauri.conf.json`
 sets `"csp": null`, and the webview is not a confined process — srt wraps the
@@ -140,6 +192,15 @@ happens to route.
 component in Core's tree, sharing React and the machines, is most of what makes
 one cheap to write — and it needs an answer for the Surface that legitimately
 wants Core's data. This ADR records the limit; it does not buy it.
+
+**And there is a cheaper thing that is not the same thing.** `reap-worktree`
+shows that a route can carry its own precondition on the host's side of the
+wire, where a caller the machine never saw still meets it. Moving a guard there
+is one route's worth of work rather than a new loader, and it is what should be
+reached for when a particular route stops being tolerable. It closes routes, not
+the realm: a Surface still shares Core's globals and its network, and the next
+route added arrives undefended unless somebody remembers. That is a reason to
+prefer it as first aid and not to mistake it for the boundary.
 
 ## The condition that makes closing it urgent
 
