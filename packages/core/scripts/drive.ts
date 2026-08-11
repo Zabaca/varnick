@@ -72,18 +72,31 @@ import {
   worktreeOwner,
 } from '../dev-server.ts'
 import {
+  ARTIFACTS_KEPT,
   ARTIFACT_ENTRY,
   LOCAL_ARTIFACT_ID,
+  PREVIOUS_MARKER,
   artifactPath,
   artifactStore,
+  artifactsToPrune,
+  entryScriptSources,
   incomingArtifactPath,
   isArtifactId,
-  servedArtifactId,
+  markedArtifactId,
+  previousMarkerPath,
   servedMarkerPath,
   servedMarkerText,
+  servedSwitch,
+  servingPlan,
 } from '../artifacts.ts'
 import { assetPath } from '../artifact-assets.ts'
-import { installArtifact } from '../artifact-store.ts'
+import {
+  artifactStartFailure,
+  installArtifact,
+  pruneArtifacts,
+  readServedMarkers,
+  switchServedArtifact,
+} from '../artifact-store.ts'
 import {
   VERSION_MODULE_ID,
   VERSION_MODULE_RESOLVED,
@@ -6435,7 +6448,7 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   )
   check(
     'and what it is assembled in can never itself be served',
-    !isArtifactId('.local.incoming') && servedArtifactId('.local.incoming\n') === null,
+    !isArtifactId('.local.incoming') && markedArtifactId('.local.incoming\n') === null,
   )
   check('a name that is not an id has nowhere to be assembled', incomingArtifactPath(clone, '../x') === null)
 
@@ -6445,14 +6458,28 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     that says something else, because the honest reading of a marker nobody can
     parse is that nothing is served.
   */
-  check('a marker naming an artifact answers it', servedArtifactId('local\n') === 'local')
-  check('trailing whitespace is not part of the name', servedArtifactId('  0.2.0-1  \n') === '0.2.0-1')
-  check('only the first line is read', servedArtifactId('local\nand something else\n') === 'local')
-  check('no file at all is nothing served', servedArtifactId(undefined) === null)
-  check('an empty file is nothing served', servedArtifactId('') === null)
-  check('and so is one full of whitespace', servedArtifactId('   \n\n') === null)
-  check('a marker that names a path names nothing', servedArtifactId('../../../etc\n') === null)
-  check('what is written is what is read back', servedArtifactId(servedMarkerText('local')) === 'local')
+  check('a marker naming an artifact answers it', markedArtifactId('local\n') === 'local')
+  check('trailing whitespace is not part of the name', markedArtifactId('  0.2.0-1  \n') === '0.2.0-1')
+  check('only the first line is read', markedArtifactId('local\nand something else\n') === 'local')
+  check('no file at all is nothing served', markedArtifactId(undefined) === null)
+  check('an empty file is nothing served', markedArtifactId('') === null)
+  check('and so is one full of whitespace', markedArtifactId('   \n\n') === null)
+  check('a marker that names a path names nothing', markedArtifactId('../../../etc\n') === null)
+  check('what is written is what is read back', markedArtifactId(servedMarkerText('local')) === 'local')
+
+  /*
+    The second marker, and it is the same file format on purpose: two one-line
+    files read by one parse, because "the previous build" is not a different
+    kind of answer from "the served build". `previous` is written by whatever
+    switches, never inferred by a launch — a directory's modification time says
+    when it was written, and an artifact can be written weeks before anything
+    serves it.
+  */
+  check(
+    'the build behind the served one is a file beside it',
+    previousMarkerPath(clone) === `${clone}/.varnick/builds/${PREVIOUS_MARKER}`,
+  )
+  check('and it is read by the same parse as `served`', markedArtifactId('0.2.0-1\n') === '0.2.0-1')
 
   /*
     The one boundary between an HTTP request and the disk.
@@ -6599,6 +6626,288 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     'the store is not committed — `.varnick/` already covers it',
     ignored.split('\n').some((line) => line.trim() === '/.varnick/'),
   )
+}
+
+// ---------------------------------------------------------------------------
+// A build that will not start falls back to the one before it
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    ADR-0004's argument one level out. A broken Userspace module must be a
+    failed Surface rather than a window with no chat; a build that will not come
+    up must not take away the tool the developer would fix it with.
+
+    The whole decision is `servingPlan`, and it is a pure function over two ids
+    and a predicate so that every branch of it is asserted here rather than
+    found out about by promoting a broken release at two in the morning. The
+    predicate is the seam: on disk it reads an artifact, and here it is a set.
+  */
+  const clone = '/Users/someone/varnick'
+  const startableIn = (...ids: string[]) => {
+    const set = new Set(ids)
+    return (id: string) => set.has(id)
+  }
+
+  check(
+    'the artifact `served` names is the one that is served',
+    servingPlan('0.2.0-1', 'local', startableIn('0.2.0-1', 'local')).outcome === 'served',
+  )
+  check(
+    'and nothing is said about a build that came up',
+    servingPlan('0.2.0-1', 'local', startableIn('0.2.0-1', 'local')).failed === null,
+  )
+
+  const fell = servingPlan('0.2.0-1', 'local', startableIn('local'))
+  check('a build that will not start falls back to the one before it', fell.outcome === 'fell-back')
+  check('which is what gets served', fell.serve === 'local')
+  check('and the one that failed is named rather than forgotten', fell.failed === '0.2.0-1')
+
+  /*
+    The constraint ADR-0020 wrote down and this ticket had to carry across
+    intact: **a launch builds only when nothing has ever been served**. Any
+    other rebuild quietly undoes a promotion — the developer promoted a release,
+    it did not come up, and the next restart replaces it with a build of
+    whatever is in the tree while `served` moves to `local`. That presents as
+    the build reverting on its own, which is the one failure switching the
+    served artifact exists to prevent.
+  */
+  check(
+    'a store with no choice recorded in it builds one',
+    servingPlan(null, null, startableIn()).outcome === 'build-one',
+  )
+  check(
+    'and so does one whose marker nobody can parse, because that is the same thing',
+    servingPlan(markedArtifactId('   \n'), null, startableIn()).outcome === 'build-one',
+  )
+  for (const [served, previous] of [
+    ['0.2.0-1', null],
+    ['0.2.0-1', 'local'],
+    ['0.2.0-1', '0.2.0-1'],
+  ] as const) {
+    const plan = servingPlan(served, previous, startableIn())
+    check(
+      `a resolvable \`served\` (${served}, previous ${previous ?? 'none'}) is never rebuilt over`,
+      plan.outcome !== 'build-one' && plan.serve !== LOCAL_ARTIFACT_ID,
+    )
+  }
+  check(
+    'a build that will not start with nothing behind it says so rather than building',
+    servingPlan('0.2.0-1', null, startableIn()).outcome === 'nothing-startable',
+  )
+  check(
+    'and names what failed, because the developer promoted it and needs to know',
+    servingPlan('0.2.0-1', null, startableIn()).failed === '0.2.0-1',
+  )
+  check(
+    'a previous that is the same broken artifact is not a fall back',
+    servingPlan('0.2.0-1', '0.2.0-1', startableIn()).outcome === 'nothing-startable',
+  )
+  check(
+    'and neither is a previous that will not start either',
+    servingPlan('0.2.0-1', 'local', startableIn()).outcome === 'nothing-startable',
+  )
+
+  /*
+    What a launch is allowed to call "will not start", parsed rather than
+    guessed at. A Vite build writes one module script into `index.html`, and an
+    artifact whose entry document loads a file the artifact does not contain is
+    a window that opens on nothing — certainly, before anything runs.
+
+    The exclusions are the part that keeps the signal honest. A fallback that
+    triggers on the wrong thing is worse than none: a script somebody else
+    serves says nothing about this build, and a stylesheet that is missing is an
+    artifact that is *also* broken and is still a varnick a developer can work
+    in.
+  */
+  check(
+    'the entry document names the script it needs',
+    entryScriptSources('<script type="module" src="/assets/index-a1b2.js"></script>').join() ===
+      '/assets/index-a1b2.js',
+  )
+  check(
+    "single quotes and no type are the same document to a parser that isn't guessing",
+    entryScriptSources("<script src='/x.js'></script><script src=/y.js></script>").join() === '/x.js,/y.js',
+  )
+  check(
+    'a query or a fragment is not part of the file on disk',
+    entryScriptSources('<script src="/a.js?t=1"></script><script src="/b.js#c"></script>').join() === '/a.js,/b.js',
+  )
+  for (const elsewhere of [
+    '<script src="https://cdn.example/x.js"></script>',
+    '<script src="//cdn.example/x.js"></script>',
+    '<script src="data:text/javascript,void 0"></script>',
+    '<script>console.log(1)</script>',
+    '<link rel="stylesheet" href="/assets/app.css">',
+  ]) {
+    check(`${elsewhere.slice(0, 34)}… is nothing this artifact has to contain`, entryScriptSources(elsewhere).length === 0)
+  }
+
+  /*
+    Switching, and the one thing a second implementation of it leaves out.
+
+    Two things point the window at an artifact — `bun run build` today, a
+    promotion next — and "remember what was there" is the step that goes
+    missing silently. Nothing looks wrong until the day a build does not start,
+    which is the day the remembering was for. Hence one function, next to the
+    paths, with the write beside it.
+  */
+  check('switching remembers what was being served', servedSwitch('local', null, '0.2.0-1').previous === 'local')
+  check('and points at the new one', servedSwitch('local', null, '0.2.0-1').served === '0.2.0-1')
+  check(
+    'building over what is already served moves nothing',
+    servedSwitch('local', '0.2.0-1', 'local').previous === '0.2.0-1',
+  )
+  check(
+    'so a release built over stays the thing to fall back to',
+    servedSwitch('local', '0.2.0-1', 'local').served === 'local',
+  )
+  check('a first build has nothing behind it', servedSwitch(null, null, 'local').previous === null)
+  check(
+    'and switching back onto the previous one makes the outgoing one previous',
+    servedSwitch('0.2.0-1', 'local', 'local').previous === '0.2.0-1',
+  )
+
+  /*
+    Keeping the previous build is a promise to hold a second copy of a frontend
+    for ever unless something removes the third. Bounded by recency, with the
+    named ones spared whatever their age — and the sparing is the half that
+    matters: an artifact the store points at is one this ticket exists to keep.
+  */
+  const store = [
+    { id: 'oldest', modified: 1 },
+    { id: '0.1.0', modified: 2 },
+    { id: '0.2.0', modified: 3 },
+    { id: '0.3.0', modified: 4 },
+    { id: 'local', modified: 5 },
+  ]
+  check('the store is bounded', artifactsToPrune(store, [], 2).join() === '0.2.0,0.1.0,oldest')
+  check('newest first, so a pre-release cut last night survives', !artifactsToPrune(store, [], 2).includes('local'))
+  check(
+    'and what is served or fallen back to survives whatever its age',
+    artifactsToPrune(store, ['oldest', '0.1.0'], 2).join() === '0.2.0',
+  )
+  check('a null previous is an ordinary answer, not a name', artifactsToPrune(store, [null], 2).length === 3)
+  check('a store inside the bound loses nothing', artifactsToPrune(store, [], ARTIFACTS_KEPT + 1).length === 0)
+  check(
+    'and a directory the store does not own is never handed back to be removed',
+    artifactsToPrune([...store, { id: '.local.incoming', modified: 0 }, { id: '..', modified: 0 }], [], 0).join() ===
+      'local,0.3.0,0.2.0,0.1.0,oldest',
+  )
+
+  /*
+    The impure half, run for real against a temporary tree — because "will not
+    start" is a claim about files, and the whole point of making it narrow is
+    that it is *true* rather than likely.
+  */
+  const scratch = mkdtempSync(join(tmpdir(), 'varnick-fallback-'))
+  try {
+    const build = (id: string, html: string, assets: Record<string, string> = {}) => {
+      const source = join(scratch, `dist-${id}`)
+      mkdirSync(join(source, 'assets'), { recursive: true })
+      writeFileSync(join(source, 'index.html'), html)
+      for (const [name, body] of Object.entries(assets)) writeFileSync(join(source, 'assets', name), body)
+      return installArtifact(scratch, id, source)
+    }
+
+    const whole = build('0.1.0', '<script type="module" src="/assets/app-a1b2.js"></script>', {
+      'app-a1b2.js': 'export {}',
+    })
+    check('an artifact with everything it loads will start', artifactStartFailure(whole) === null)
+
+    const truncated = build('0.2.0', '<script type="module" src="/assets/app-c3d4.js"></script>')
+    check('one that loads a script it does not contain will not', artifactStartFailure(truncated) !== null)
+    check(
+      'and says which file, because the developer has to fix it',
+      (artifactStartFailure(truncated) ?? '').includes('/assets/app-c3d4.js'),
+    )
+
+    const gone = artifactPath(scratch, '0.3.0') ?? ''
+    check('an id naming no directory at all will not start', artifactStartFailure(gone) !== null)
+
+    const climbing = build('0.4.0', '<script src="/../0.1.0/assets/app-a1b2.js"></script>')
+    check(
+      'a document that references its way out of the artifact will not start',
+      (artifactStartFailure(climbing) ?? '').includes('outside the artifact'),
+    )
+
+    /*
+      End to end, which is the acceptance criterion itself: switch onto a build
+      that will not start, and the launch serves the one before it without
+      anybody intervening — with `served` left naming the artifact that failed,
+      because rewriting it would erase the evidence and make the next launch a
+      launch with no problem in it.
+    */
+    switchServedArtifact(scratch, '0.1.0')
+    check('the first switch has nothing behind it', readServedMarkers(scratch).previous === null)
+    check('and names what it switched to', readServedMarkers(scratch).served === '0.1.0')
+
+    switchServedArtifact(scratch, '0.2.0')
+    const markers = readServedMarkers(scratch)
+    check('a second switch keeps the one it replaced', markers.previous === '0.1.0')
+    check('and the artifact it replaced is still on disk', existsSync(whole))
+
+    const startsHere = (id: string) => artifactStartFailure(artifactPath(scratch, id) ?? '') === null
+    const plan = servingPlan(markers.served, markers.previous, startsHere)
+    check('the launch falls back on its own', plan.outcome === 'fell-back' && plan.serve === '0.1.0')
+    check('`served` is left naming the build that failed', readServedMarkers(scratch).served === '0.2.0')
+
+    // And pruning, run against the same store, spares both of them.
+    for (const id of ['0.5.0', '0.6.0', '0.7.0', '0.8.0', '0.9.0']) {
+      build(id, '<script src="/assets/x.js"></script>', { 'x.js': '' })
+    }
+    const removed = pruneArtifacts(scratch, [markers.served, markers.previous, plan.serve])
+    check('a launch bounds the store', removed.length > 0)
+    check('and removes neither what it serves nor what it fell back from', !removed.includes('0.1.0') && !removed.includes('0.2.0'))
+    check('what it removed is gone', removed.every((id) => !existsSync(artifactPath(scratch, id) ?? '')))
+    check('and what it kept is not', existsSync(whole) && existsSync(truncated))
+
+    // Housekeeping never stops a window opening: a store that is not there is
+    // nothing to prune rather than something to throw about.
+    check('pruning a clone with no store at all is quiet', pruneArtifacts(join(scratch, 'nowhere'), []).length === 0)
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// What the window says when it fell back
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    A fall back nobody is told about is a build that reverted on its own — the
+    developer promoted something, went to bed, and comes back to a varnick that
+    looks exactly as it did. So the launch says it in the terminal and the
+    window says it too, and the window's half is appended to the entry document
+    rather than fetched by the app: the artifact being served in this state is
+    the *older* build, quite possibly built before this code existed, so
+    anything asking the frontend to render the notice would be silent in exactly
+    the case it is for.
+
+    Same file, same rules as the no-build page above it. It renders over
+    varnick's own window, which makes it a product surface.
+  */
+  const serve = readFileSync(new URL('./serve.ts', import.meta.url).pathname, 'utf-8')
+  const banner = serve.slice(serve.indexOf('#varnick-fell-back'))
+
+  check('the launch has a notice to append at all', serve.includes('varnick-fell-back'))
+  check('and appends it to the entry document rather than to every response', serve.includes('path === entry'))
+
+  // The Inherited Palette Rule — the notice is drawn on `ground` with the
+  // transcript's own red, inlined for the reason the pages inline theirs.
+  for (const literal of ['#1a1b26', '#c0caf5', '#f7768e', '#8b8fa3', '#7dcfff']) {
+    check(`the notice draws in ${literal}, which the transcript already had`, banner.includes(literal))
+  }
+
+  /*
+    And it defines no custom property. This is the one thing in the repository
+    that renders *inside* somebody else's document, so a `:root` block here
+    would silently repaint the app it is reporting on — the values are literals
+    scoped to one id precisely so that cannot happen.
+  */
+  check('it declares no variable that could reach the app around it', !/--[a-z-]+\s*:/.test(banner))
+  check('every rule it writes is scoped to its own element', !/^\s*(body|html|:root)\s*\{/m.test(banner))
 }
 
 // ---------------------------------------------------------------------------

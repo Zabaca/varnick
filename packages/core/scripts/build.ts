@@ -20,10 +20,9 @@
  * the ground under the window they left open.
  */
 
-import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { LOCAL_ARTIFACT_ID, servedMarkerPath, servedMarkerText } from '../artifacts.ts'
-import { installArtifact } from '../artifact-store.ts'
+import { LOCAL_ARTIFACT_ID } from '../artifacts.ts'
+import { installArtifact, switchServedArtifact } from '../artifact-store.ts'
 import { cloneRootOfScript } from '../dev-server.ts'
 
 const buildRoot = cloneRootOfScript(import.meta.url)
@@ -63,7 +62,16 @@ const artifact = installArtifact(buildRoot, LOCAL_ARTIFACT_ID, join(buildRoot, '
   only the first half, and the window a developer left open must not move
   because something was built. `bun run build` is the case where switching is
   exactly what was asked for.
-*/
-writeFileSync(servedMarkerPath(buildRoot), servedMarkerText(LOCAL_ARTIFACT_ID))
 
-console.log(`artifact ${LOCAL_ARTIFACT_ID} written to ${artifact} and served`)
+  Through `switchServedArtifact` rather than a `writeFileSync` on the marker,
+  which is the same argument as the line above it. Switching records what was
+  being served, and that record is the whole of what a launch has to fall back
+  to when the new artifact will not start — a step a second copy of "write the
+  marker" leaves out, with nothing looking wrong until the day it was for.
+*/
+const markers = switchServedArtifact(buildRoot, LOCAL_ARTIFACT_ID)
+
+console.log(
+  `artifact ${LOCAL_ARTIFACT_ID} written to ${artifact} and served` +
+    (markers.previous === null ? '' : ` — ${markers.previous} is kept to fall back to`),
+)

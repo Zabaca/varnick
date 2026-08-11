@@ -36,6 +36,7 @@
  * <clone>/.varnick/builds/            the store
  * <clone>/.varnick/builds/<id>/       one artifact, with index.html at its root
  * <clone>/.varnick/builds/served      one line: the id the window is served from
+ * <clone>/.varnick/builds/previous    one line: the id it was served from before
  * ```
  *
  * `.varnick/` because that is already what varnick's own per-clone machine
@@ -84,6 +85,22 @@ export const ARTIFACT_STORE_RELATIVE_PATH = '.varnick/builds'
 export const SERVED_MARKER = 'served'
 
 /**
+ * The file naming the artifact the window was served from before this one.
+ *
+ * Same shape as {@link SERVED_MARKER} and written at the same moment, by
+ * `switchServedArtifact` — which is the whole reason it can be trusted. "The
+ * previous build" is not something a launch can work out from what it finds on
+ * disk: modification times say when a directory was *written*, and an artifact
+ * can be written weeks before anything serves it. So the fact is recorded by
+ * whoever switches, in a second one-line file, and a launch reads it.
+ *
+ * Absent means there has never been a switch — a clone that has only ever
+ * served one build has nothing to fall back to, and that is the honest answer
+ * rather than a directory the store happens to still hold.
+ */
+export const PREVIOUS_MARKER = 'previous'
+
+/**
  * What `bun run build` writes, and the only id varnick makes up for itself.
  *
  * A developer's own build of the tree in front of them. Release artifacts are
@@ -111,6 +128,11 @@ export function artifactStore(cloneRoot: string): string {
 /** The file naming the served artifact, for a clone. */
 export function servedMarkerPath(cloneRoot: string): string {
   return resolve(artifactStore(cloneRoot), SERVED_MARKER)
+}
+
+/** The file naming the artifact served before that one, for a clone. */
+export function previousMarkerPath(cloneRoot: string): string {
+  return resolve(artifactStore(cloneRoot), PREVIOUS_MARKER)
 }
 
 /**
@@ -177,7 +199,12 @@ export function incomingArtifactPath(cloneRoot: string, id: string): string | nu
 }
 
 /**
- * The id a `served` file names, or `null` for nothing usable.
+ * The id a one-line marker names, or `null` for nothing usable.
+ *
+ * Both {@link SERVED_MARKER} and {@link PREVIOUS_MARKER} are read through this
+ * — they are the same file format holding the same kind of answer, and it was
+ * called `servedArtifactId` while there was only one of them. A marker is a
+ * marker; which question it answers is the path it was read from.
  *
  * Takes the file's whole contents rather than a line, because the caller's job
  * is to read a file and this one's is to decide what it said. `undefined` is
@@ -186,15 +213,203 @@ export function incomingArtifactPath(cloneRoot: string, id: string): string | nu
  *
  * A file that says something that is not an id answers `null` rather than
  * throwing: the honest reading of a marker nobody can parse is that nothing is
- * served, and the server has a page for that.
+ * named, and the server has a page for that.
  */
-export function servedArtifactId(marker: string | undefined | null): string | null {
+export function markedArtifactId(marker: string | undefined | null): string | null {
   if (marker === undefined || marker === null) return null
   const first = marker.split('\n')[0]?.trim() ?? ''
   return isArtifactId(first) ? first : null
 }
 
-/** What to write into {@link SERVED_MARKER} for an id. */
+/** What to write into a marker for an id. */
 export function servedMarkerText(id: string): string {
   return `${id}\n`
+}
+
+// ---------------------------------------------------------------------------
+// Which one to serve
+// ---------------------------------------------------------------------------
+
+/**
+ * The `src` of every script an entry document loads out of its own artifact.
+ *
+ * This is what "the artifact will not start" is decided from, and it is a
+ * parse rather than a guess for that reason. A Vite build writes exactly one
+ * `<script type="module" src="/assets/index-HASH.js">` into `index.html`, and
+ * an artifact whose `index.html` names a file the artifact does not contain is
+ * a window that opens on nothing — certainly, before anything runs, with no
+ * browser needed to find out.
+ *
+ * Only sources this artifact could answer itself are returned. A scheme
+ * (`https:`, `data:`) or a protocol-relative `//host/x` is somebody else's to
+ * serve and its absence says nothing about this build; a query or a fragment is
+ * dropped, because the file on disk is the part before them.
+ *
+ * **Scripts and not stylesheets.** A missing stylesheet is an artifact that is
+ * also broken, and it is not one that fails to *start* — an unstyled varnick is
+ * still a varnick a developer can fix things with, and falling back from one
+ * would be the host overruling a build on a signal that is not the question
+ * being asked.
+ */
+export function entryScriptSources(html: string): string[] {
+  const found: string[] = []
+  const scripts = html.matchAll(/<script\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)
+  for (const match of scripts) {
+    const raw = (match[1] ?? match[2] ?? match[3] ?? '').trim()
+    // The file is what comes before a query or a fragment; neither reaches disk.
+    const source = raw.split(/[?#]/)[0] ?? ''
+    if (source === '') continue
+    // Somebody else's to serve, so its absence is not this artifact's failure.
+    if (source.startsWith('//') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source)) continue
+    found.push(source)
+  }
+  return found
+}
+
+/** What a launch does about the store it found. */
+export type ServingOutcome =
+  /** `served` names an artifact and it will start. The ordinary case. */
+  | 'served'
+  /** It will not start, and the one before it will. */
+  | 'fell-back'
+  /** Nothing has ever been served here, so build one. A fresh clone. */
+  | 'build-one'
+  /** `served` names something that will not start and there is nothing behind it. */
+  | 'nothing-startable'
+
+/** Which artifact a launch serves, and what it has to say about it. */
+export interface ServingPlan {
+  readonly outcome: ServingOutcome
+  /** The artifact to serve, or `null` when there is none. */
+  readonly serve: string | null
+  /** The artifact `served` names, when that is not the one being served. */
+  readonly failed: string | null
+}
+
+/**
+ * Which artifact the window opens on, given what the store says and which
+ * artifacts will start.
+ *
+ * **The decision, entire.** It is a pure function over two ids and a predicate
+ * so that every branch of it is assertable with nothing built and nothing
+ * serving — ADR-0013 — and because the branch it replaces was four lines of
+ * launch script that could only be observed by launching.
+ *
+ * The four outcomes are four different things for the caller to do, which is
+ * why they are four and not a boolean:
+ *
+ *   * **`served`** — serve it, say nothing beyond which one it is.
+ *   * **`fell-back`** — serve `previous`, and say so loudly in both places a
+ *     developer will be looking: the terminal and the window. `served` is left
+ *     naming the artifact that failed, because rewriting it would erase the
+ *     evidence and turn the next launch into a launch with no problem in it.
+ *   * **`build-one`** — the fresh-clone path, and the *only* one that builds.
+ *     `bun install && bun tauri dev` has to open a window.
+ *   * **`nothing-startable`** — `served` names something that will not start
+ *     and there is nothing behind it. This deliberately does **not** build.
+ *
+ * That last refusal is the constraint ADR-0020 wrote down and this function is
+ * where it now lives: a launch that rebuilt whenever the served artifact was
+ * unusable would quietly undo a promotion — the developer promoted a release,
+ * it did not come up, and the next restart replaces it with a build of whatever
+ * happens to be in the tree while `served` moves to `local`. That presents as
+ * the build reverting on its own. Only a store with no choice recorded in it at
+ * all is a store with nothing to undo.
+ *
+ * `previous === served` is not a fallback. It cannot happen through
+ * {@link servedSwitch}, and if a hand-edited marker makes it happen, serving
+ * the same broken artifact twice under a banner saying it was fallen back to is
+ * worse than saying there is nothing.
+ */
+export function servingPlan(
+  served: string | null,
+  previous: string | null,
+  startable: (id: string) => boolean,
+): ServingPlan {
+  if (served === null) return { outcome: 'build-one', serve: null, failed: null }
+  if (startable(served)) return { outcome: 'served', serve: served, failed: null }
+  if (previous !== null && previous !== served && startable(previous)) {
+    return { outcome: 'fell-back', serve: previous, failed: served }
+  }
+  return { outcome: 'nothing-startable', serve: null, failed: served }
+}
+
+/**
+ * What the two markers say after the window is switched onto `to`.
+ *
+ * One function because two things switch — `bun run build` today, a promotion
+ * next — and "remember what was there" is exactly the step a second
+ * implementation leaves out. It would leave it out silently: nothing is
+ * different until the day a build does not start, which is the day the
+ * remembering was for.
+ *
+ * Switching onto what is already served moves nothing. That is not a
+ * degenerate case, it is the common one — `bun run build` writes `local` over
+ * `local` all day — and recording `local` as its own previous would make the
+ * fallback resolve to the artifact that just failed. An earlier `previous`
+ * survives it, so a developer who promoted a release and then built over it
+ * still has the release to fall back to.
+ */
+export function servedSwitch(
+  served: string | null,
+  previous: string | null,
+  to: string,
+): { readonly served: string; readonly previous: string | null } {
+  if (to === served) return { served: to, previous }
+  return { served: to, previous: served ?? previous }
+}
+
+// ---------------------------------------------------------------------------
+// How many to keep
+// ---------------------------------------------------------------------------
+
+/**
+ * How many artifacts the store holds before a launch starts removing them.
+ *
+ * Four, and the number is chosen against what has to fit rather than by taste:
+ * the served build, the one behind it, a pre-release that has been cut and not
+ * yet promoted, and one spare so that a night's work does not evict the release
+ * the developer is running. A frontend build is tens of megabytes; a clone that
+ * kept every one of them would grow for the life of the clone, which is the
+ * cost this ticket's "keep the previous one" would otherwise sign up for
+ * indefinitely.
+ */
+export const ARTIFACTS_KEPT = 4
+
+/**
+ * Which artifacts a launch removes, newest-first with the named ones spared.
+ *
+ * Recency is by modification time and it is the *only* thing time is used for
+ * — which one is previous is a fact the store records rather than one a launch
+ * infers. Here it is answering a different question, "which of these is nobody
+ * likely to want", and for that it is the right instrument and the only one
+ * available: an artifact nothing points at has no other order to it.
+ *
+ * **`keep` wins over the limit, always.** A pre-release cut last night is the
+ * newest thing in the store and survives on recency; the served artifact and
+ * the one behind it may be neither, and removing either is the whole failure
+ * this function exists inside a ticket about preventing.
+ *
+ * Anything that is not an artifact id comes back out of the list, so a caller
+ * handed a directory name off a disk can never be handed one to delete that the
+ * store does not own. `null` entries in `keep` are the ordinary shape of "there
+ * is no previous", passed straight through rather than filtered at the call
+ * site.
+ */
+export function artifactsToPrune(
+  present: readonly { readonly id: string; readonly modified: number }[],
+  keep: readonly (string | null)[],
+  limit: number = ARTIFACTS_KEPT,
+): string[] {
+  const spared = new Set(keep.filter((id): id is string => id !== null))
+  const newestFirst = [...present]
+    .filter((entry) => isArtifactId(entry.id))
+    // Ties broken by id so two artifacts written in the same millisecond — one
+    // `cp -r` of a store, one fast test — do not order differently per run.
+    .sort((a, b) => b.modified - a.modified || a.id.localeCompare(b.id))
+
+  return newestFirst
+    .slice(Math.max(limit, 0))
+    .map((entry) => entry.id)
+    .filter((id) => !spared.has(id))
 }
