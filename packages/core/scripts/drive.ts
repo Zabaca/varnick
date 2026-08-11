@@ -105,6 +105,7 @@ import {
   parsePendingRecord,
   parseTicket,
   parseVersion,
+  ticketBody,
   pendingEntry,
   pendingRecordText,
   promotedNoteIds,
@@ -7363,6 +7364,25 @@ the developer can accept in the morning.
     parseTicket(ticketFile.replace(/^- \[x\].*$/gm, '')) === null,
   )
   check('and a file that is not a ticket is not one', parseTicket('# notes\n\nsome thoughts\n') === null)
+
+  /*
+    The conversation at the bottom of a ticket is not part of what it asks for,
+    and reading it as such is not a hypothetical: this ticket's own comments
+    explain what an accepted-consequence line is for, and the first version of
+    this parser read that explanation as one — quietly turning a patch release
+    into a minor one. A box quoted in a comment is somebody quoting a box, for
+    the same reason.
+  */
+  const withComments = `${ticketFile}
+## Comments
+
+A ticket that takes something away writes an **Accepted consequence:** line.
+
+- [ ] and a box quoted here is somebody quoting one
+`
+  check('a ticket is what it asks for, not what was said about it afterwards', parseTicket(withComments)?.acceptedConsequence === null)
+  check('and a box inside a comment does not park it', parseTicket(withComments)?.id === '06')
+  check('the body is everything above the conversation', !ticketBody(withComments).includes('somebody quoting one'))
 
   // --- the changelog, which is the accumulator ----------------------------
 

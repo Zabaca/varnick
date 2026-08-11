@@ -893,19 +893,21 @@ export function releasePlan(input: ReleasePlanInput): ReleasePlan {
  * has not been satisfied.
  */
 export function parseTicket(text: string): TicketSummary | null {
-  const heading = /^#\s+(\S+)\s+[—-]\s+(.+?)\s*$/m.exec(text)
+  const body = ticketBody(text)
+
+  const heading = /^#\s+(\S+)\s+[—-]\s+(.+?)\s*$/m.exec(body)
   if (heading === null) return null
 
-  const boxes = [...text.matchAll(/^-\s+\[( |x|X)\]/gm)]
+  const boxes = [...body.matchAll(/^-\s+\[( |x|X)\]/gm)]
   if (boxes.length === 0) return null
   if (boxes.some((box) => (box[1] ?? '') === ' ')) return null
 
-  const build = /\*\*What to build:\*\*\s*([\s\S]*?)(?:\n\s*\n|$)/.exec(text)
+  const build = /\*\*What to build:\*\*\s*([\s\S]*?)(?:\n\s*\n|$)/.exec(body)
   if (build === null) return null
   const summary = (build[1] ?? '').replace(/\s+/g, ' ').trim()
   if (summary === '') return null
 
-  const consequence = /\*\*Accepted consequence:\*\*\s*([\s\S]*?)(?:\n\s*\n|$)/.exec(text)
+  const consequence = /\*\*Accepted consequence:\*\*\s*([\s\S]*?)(?:\n\s*\n|$)/.exec(body)
 
   return {
     id: heading[1] ?? '',
@@ -914,4 +916,23 @@ export function parseTicket(text: string): TicketSummary | null {
     acceptedConsequence:
       consequence === null ? null : (consequence[1] ?? '').replace(/\s+/g, ' ').trim() || null,
   }
+}
+
+/**
+ * A ticket without its conversation — everything above `## Comments`.
+ *
+ * `docs/agents/issue-tracker.md` puts comments at the bottom under that heading,
+ * and a release must read only the half above it. This is not tidiness: the
+ * comments are where the ticket is *discussed*, and a ticket whose comments
+ * explain what an `**Accepted consequence:**` line is for would otherwise be
+ * read as having one. That happened to this very ticket, which is why the rule
+ * is here rather than in a note asking people to phrase comments carefully.
+ *
+ * The acceptance boxes are cut off with it, and that is the same rule rather
+ * than a second one: a criterion is something the ticket asks for, and a box
+ * drawn inside a comment is somebody quoting one.
+ */
+export function ticketBody(text: string): string {
+  const comments = /^##\s+Comments\s*$/m.exec(text)
+  return comments === null ? text : text.slice(0, comments.index)
 }
