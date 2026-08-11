@@ -514,7 +514,7 @@ export function changelogWith(
 
   const lines = changelog.split('\n')
   const kept: string[] = []
-  let header: string[] = []
+  const header: string[] = []
   let seenHeading = false
   let droppingPending = false
 
@@ -533,11 +533,16 @@ export function changelogWith(
     kept.push(line)
   }
 
-  // The header keeps its own trailing blank lines out of the way, so the entry
-  // and whatever follows it are separated by exactly one.
+  /*
+    The header's own trailing blank lines go, so the entry is separated from it
+    by exactly one however the file was left. A changelog with no entries yet is
+    all header — the loop above put every line there — so this is also the path a
+    first cut takes, and it is the one that made the rule necessary: a file
+    ending in a newline contributes a final empty line, which read as a blank the
+    entry then added a second to.
+  */
   while (header.length > 0 && (header[header.length - 1] ?? '').trim() === '') header.pop()
   while (kept.length > 0 && (kept[0] ?? '').trim() === '') kept.shift()
-  if (!seenHeading) header = lines.slice()
 
   const tail = kept.length === 0 ? '' : `\n${kept.join('\n').replace(/\n+$/, '')}\n`
   return `${header.join('\n')}\n\n${entry}${tail}`

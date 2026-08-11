@@ -7423,6 +7423,18 @@ A sentence about the file.
     'a changelog that does not exist yet is created with its header',
     changelogWith(undefined, '0.0.1', [note('06', 'a')]).startsWith('# Changelog'),
   )
+  /*
+    A changelog that exists and has no entries yet is the other first cut, and it
+    is the one this got wrong: the file ends in a newline, which is a final empty
+    line, which read as a blank the entry then added a second to. Nobody would
+    have noticed for a while, which is why it is a check.
+  */
+  check(
+    'and one that exists with nothing in it gets exactly one blank line before the entry',
+    changelogWith(CHANGELOG_HEADER, '0.0.1', [note('06', 'a')]).includes(
+      'packages/core/release.ts`.\n\n## v0.0.1 — pending',
+    ),
+  )
   check(
     'exactly one entry is ever pending',
     changelogEntries(written).filter((entry) => entry.promotedOn === null).length === 1,
