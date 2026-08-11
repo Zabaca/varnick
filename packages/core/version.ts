@@ -14,8 +14,8 @@
  * imports is a literal that was true when it was resolved.
  *
  * **A module and not a `define`, and that is not a preference.** The first
- * version of this substituted a free identifier through Vite's `define`, which
- * is the obvious way and works only under `vite build`. Vite 8's `vite:define`
+ * version of this was `define: { __VARNICK_VERSION__: '"0.0.0"' }`, which is
+ * the obvious way and works only under `vite build`. Vite 8's `vite:define`
  * installs user defines through `applyToEnvironment`, gated on
  * `environment.config.isBundled`, and its `transform` handler opens with
  * `if (this.environment.config.consumer === "client") return`. A dev server is

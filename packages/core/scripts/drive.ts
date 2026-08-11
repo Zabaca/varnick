@@ -6572,33 +6572,56 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   try {
     await server.listen()
     const origin = server.resolvedUrls?.local[0] ?? ''
-    const served = await (await fetch(new URL('src/version.ts', origin))).text()
 
-    const beside = await (await fetch(new URL('version.ts', origin))).text()
+    /*
+      A 200 is not evidence. Vite answers any path it does not recognise with
+      the SPA fallback — `index.html`, status 200 — so `res.ok` is true for a
+      module that is not being served at all, and a check written on it can
+      never fail. What separates the two is the content type.
+    */
+    const module_ = async (path: string) => {
+      const res = await fetch(new URL(path, origin))
+      const body = await res.text()
+      const served = res.ok && (res.headers.get('content-type') ?? '').includes('javascript')
+      return { served, body }
+    }
 
-    check('a dev server serves the module the header reads', served.length > 0)
+    const renderer_ = await module_('src/version.ts')
+    const beside = await module_('version.ts')
+
+    check('a dev server serves the module the header reads, as a module', renderer_.served)
+    check('and the one beside it that the header reads through', beside.served)
     check(
       'it imports the version rather than reading a free identifier',
-      served.includes(VERSION_MODULE_ID),
+      renderer_.body.includes(VERSION_MODULE_ID),
     )
+
     /*
-      Both halves of the version's chain, because the dead identifier is exactly
-      the kind of thing that comes back in the file next door. Comments are
-      served verbatim in dev, so this also holds the prose to it.
+      Both halves of the version's chain, with comments taken out first.
+
+      Grepping served text for a dead identifier catches it in a comment as
+      readily as in code, and the first version of this check did — which pushed
+      a test constraint into the prose of two product files, telling them which
+      words they were not allowed to use. The positive check above is what
+      actually holds the mechanism; this is the negative twin, and it should
+      constrain the code and nothing else.
     */
+    const withoutComments = (source: string) =>
+      source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
     check(
-      'and nothing in what it serves is waiting for a bundler to substitute it',
-      !served.includes('__VARNICK_VERSION__') && !beside.includes('__VARNICK_VERSION__'),
+      'and no code it serves is waiting for a bundler to substitute it',
+      !withoutComments(renderer_.body).includes('__VARNICK_VERSION__') &&
+        !withoutComments(beside.body).includes('__VARNICK_VERSION__'),
     )
 
-    const specifier = /from\s*["']([^"']*virtual[^"']*)["']/.exec(served)?.[1] ?? ''
-    const answer = await fetch(new URL(specifier, origin))
-    const virtual = await answer.text()
+    const specifier = /from\s*["']([^"']*virtual[^"']*)["']/.exec(renderer_.body)?.[1] ?? ''
+    const virtual = await module_(specifier === '' ? 'nothing-was-named' : specifier)
 
-    check('the specifier it hands the browser leads somewhere', answer.ok && specifier !== '')
+    check('the specifier it hands the browser leads to a module', specifier !== '' && virtual.served)
     check(
       'and what comes back is the number the manifest actually carries',
-      virtual.includes(JSON.stringify(declared)),
+      virtual.body.includes(JSON.stringify(declared)),
     )
   } finally {
     await server.close()

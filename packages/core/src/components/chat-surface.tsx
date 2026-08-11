@@ -567,11 +567,12 @@ export function ChatSurface({
                 next turn runs on.
 
                 The version is read the same way, one step further out: it is
-                the root manifest's, substituted when this bundle was built. It
-                was a literal, and a literal made a release a change to Core —
-                a number that could disagree with the manifest, in a file that
-                has to typecheck. `#/states` and the live chat both render this
-                component, so there is no second place for it to be wrong.
+                the root manifest's, resolved when this renderer was served or
+                built. It was a literal, and a literal made a release a change
+                to Core — a number that could disagree with the manifest, in a
+                file that has to typecheck. `#/states` and the live chat both
+                render this component, so there is no second place for it to be
+                wrong.
               */}
               <ClaudeHeader
                 cwd=""

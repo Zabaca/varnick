@@ -6,11 +6,10 @@
   cannot disagree about how the version arrives.
 
   An import rather than a substituted identifier. The first version of this read
-  a free identifier set up by Vite's `define`, which never reaches a dev
-  server's client environment under Vite 8: the renderer was served the
-  identifier itself and threw on load. `version.ts`'s header has the mechanism
-  and names it; `drive.ts` has the assertion that catches it, and that assertion
-  reads this file, so the dead name is deliberately not written here.
+  a bare `__VARNICK_VERSION__` set up by Vite's `define`, which never reaches a
+  dev server's client environment under Vite 8: the renderer was served the
+  identifier itself and threw on load, taking the window with it. `version.ts`'s
+  header has the mechanism; `drive.ts` has the assertion that catches it.
 */
 import { VARNICK_VERSION } from 'virtual:varnick-version'
 import { displayedVersion } from '../version.ts'
