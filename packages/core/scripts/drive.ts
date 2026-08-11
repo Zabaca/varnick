@@ -3671,11 +3671,12 @@ type Listing = { worktrees: readonly PendingWorktree[]; liveTreeDirty: boolean }
   /*
     The one visual requirement, decided here.
 
-    `isFencePath` is the Harness's, imported rather than restated: three
-    mechanisms key off that list — the pending list's flag, the Preview dialog,
-    and this — and a fourth glob written here would drift from the other three
-    invisibly. Each caller goes on working, and the one that fell behind stops
-    marking a file the others still mark.
+    `isFencePath` is the Harness's, imported rather than restated: two
+    mechanisms key off that list — the pending list's flag and this — and a
+    third glob written here would drift from them invisibly. Each caller goes on
+    working, and the one that fell behind stops marking a file the other still
+    marks. The Preview dialog was the third until ADR-0019 removed what it
+    gated.
   */
   check('a path that decides what the agent may do is Fence', files[1]?.fence === true)
   check('and Core that does not is not', files[0]?.fence === false)

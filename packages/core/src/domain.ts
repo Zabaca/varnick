@@ -90,10 +90,11 @@ export interface PendingWorktree {
    * Whether any changed path is Fence.
    *
    * The field the next ticket turns into colour. Decided by one pure function
-   * in the Harness — `isFencePath` — because three separate things key off the
-   * same list: this row, the Preview dialog, and the diff view's highlighting.
-   * Three glob lists would drift, and the drift is invisible until the one that
-   * fell behind stops raising a dialog for a file the others still colour.
+   * in the Harness — `isFencePath` — because two separate things key off the
+   * same list: this row and the diff view's highlighting. Two glob lists would
+   * drift, and the drift is invisible until the one that fell behind stops
+   * flagging a file the other still colours. The Preview dialog was the third
+   * until a Preview stopped being an escalation (ADR-0019).
    */
   readonly touchesFence: boolean
   /**

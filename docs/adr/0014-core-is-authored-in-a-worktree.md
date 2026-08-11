@@ -1,6 +1,11 @@
 # Core is authored in a Worktree, not a Clone
 
 **Status:** accepted. Supersedes [ADR-0005](./0005-two-profiles-live-userspace-cloned-core.md).
+The three consequences below about the Preview dialog are superseded by
+[ADR-0019](./0019-a-preview-is-confined-by-the-live-trees-policy.md) — a Preview
+is confined by the live tree's policy, so there is nothing to approve and the
+dialog is deleted. Everything else here stands, including the merge gate this
+rests on.
 
 ## Context
 
@@ -68,7 +73,11 @@ works. varnick ships a fence, not a bureaucracy.
 
 ## Consequences
 
-**A Preview runs unconfined, and that is a real escalation path.** It has to:
+**A Preview runs unconfined, and that is a real escalation path.** *(Superseded
+by [ADR-0019](./0019-a-preview-is-confined-by-the-live-trees-policy.md): a
+Preview's agent is confined by the live tree's policy and its Credential is
+injected by the parent host, so this chain no longer exists and the three
+paragraphs below describe a dialog that has been deleted.)* It has to:
 it reads the Keychain to resolve a Credential, and the Keychain is under the
 denied `$HOME`. So the chain is three steps — the agent edits `sandbox.ts` in a
 worktree, calls `launch_preview`, and the host spawns a varnick whose fence the
@@ -110,7 +119,11 @@ remember, and this makes it mechanical. A full reload is safe here because the
 Session is durable host-side and resumes from the mirror
 ([ADR-0009](./0009-resume-reads-the-mirror.md)).
 
-**The Preview's agent is git-blind, and that is accepted for now.** Its
+**The Preview's agent is git-blind, and that is accepted for now.** *(No longer
+true, and by the route this paragraph names: under
+[ADR-0019](./0019-a-preview-is-confined-by-the-live-trees-policy.md) a Preview's
+`allowRead` is the live clone, so `<clone>/.git/worktrees/<name>` is inside it.)*
+Its
 `allowRead` is the worktree; the worktree's `.git` is a file pointing at
 `<clone>/.git/worktrees/<name>`, outside it. So inside a Preview there is no
 `git status`, `git diff` or commit — it can edit, run and test. A Preview exists

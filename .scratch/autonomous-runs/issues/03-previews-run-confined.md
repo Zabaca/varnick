@@ -24,14 +24,14 @@ This is a Fence change and lands through a human merge.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ready-for-review
 
-- [ ] A Preview's agent is confined, and by the policy in force in the live tree rather than the one in the Worktree
-- [ ] The Preview's Credential is injected by the host into its agent's environment; no additional process reads the Keychain
-- [ ] A Preview of a Fence-touching Worktree launches with no dialog and no approval
-- [ ] The dialog and the decision that raised it are removed, including the sentences the agent used to read back when a launch was declined
-- [ ] The Custom Tool's input is unchanged: one Worktree name, still checked by the host against git
-- [ ] The containment probe measures that a Preview's agent is confined, rather than a comment asserting it
-- [ ] A Preview whose Worktree rewrote the policy generator is measurably fenced by the live tree's policy
-- [ ] An ADR records that confining Previews supersedes the approval dialog, and what would have to become true to need one again
-- [ ] CONTEXT.md's Preview and Fence entries are amended — both currently state that a Preview runs unconfined
+- [x] A Preview's agent is confined, and by the policy in force in the live tree rather than the one in the Worktree
+- [x] The Preview's Credential is injected by the host into its agent's environment; no additional process reads the Keychain
+- [x] A Preview of a Fence-touching Worktree launches with no dialog and no approval
+- [x] The dialog and the decision that raised it are removed, including the sentences the agent used to read back when a launch was declined
+- [x] The Custom Tool's input is unchanged: one Worktree name, still checked by the host against git
+- [x] The containment probe measures that a Preview's agent is confined, rather than a comment asserting it
+- [x] A Preview whose Worktree rewrote the policy generator is measurably fenced by the live tree's policy
+- [x] An ADR records that confining Previews supersedes the approval dialog, and what would have to become true to need one again
+- [x] CONTEXT.md's Preview and Fence entries are amended — both currently state that a Preview runs unconfined

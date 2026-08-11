@@ -19,9 +19,10 @@ import type { HarnessSnapshot } from './chat-surface.tsx'
  *
  * A Surface is Userspace and the agent writes Userspace freely, so a diff
  * renderer the agent could rewrite is a diff renderer that can hide its own
- * hunks — the same class of problem as a forged dialog and a worse consequence,
- * because a forged dialog asks once and a shaded diff is the only thing standing
- * between a widening and a merge. Nothing here is loaded from Userspace, and
+ * hunks. That was once the same class of problem as a forged approval dialog
+ * with a worse consequence; the dialog is gone (ADR-0019) and this is what the
+ * argument was really about — a shaded diff is the only thing standing between
+ * a widening and a merge. Nothing here is loaded from Userspace, and
  * nothing here can be: this file is `packages/core/**`, which `denyWrite` refuses
  * the agent in the live tree (ADR-0002, ADR-0014).
  *
