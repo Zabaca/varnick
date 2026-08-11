@@ -529,7 +529,26 @@ export function ChatSurface({
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-            <div className="space-y-3" style={{ maxWidth: 'var(--prose)' }}>
+            {/*
+              The transcript runs to the width of the window, and is the one
+              block on the surface that is not capped.
+
+              It was capped at `var(--prose)` with everything else, which on a
+              wide window drew the conversation into a 110ch strip on the left
+              and left the rest of the screen empty. That is not what the cap
+              is for: The Wide Measure Rule exists so that tool output, diffs
+              and absolute paths are not wrapped, and a transcript is mostly
+              those. The prompt rows made it plainest — `ClaudeMessage` draws a
+              user turn as a full-width bar, and a full-width bar that stops in
+              the middle of the window reads as a layout that failed rather
+              than as a measure that was chosen.
+
+              A terminal does the same thing: the text is as wide as the window
+              the developer sized. The cap stays everywhere it is genuinely
+              prose — first-run setup, the report bands, `#/states` — which are
+              paragraphs someone reads rather than a stream they scan.
+            */}
+            <div className="space-y-3">
               {/*
                 Every prop is passed explicitly. The component's defaults carry
                 another project's user, org and release notes, and PRODUCT.md is
@@ -1112,10 +1131,11 @@ export function ChatSurface({
           It does have to go when there is nothing left to put in it, and that
           is why the condition is written out rather than being the panel's own
           `hidden`. 320px of border and empty scroll area is not a smaller cost
-          than the panel — the transcript caps at `var(--prose)` and on a laptop
-          the column is what pushes it under that measure, so a gutter kept for
-          a panel that is not there would give the developer nothing back for
-          the click. Hiding Core's panel must still leave Userspace's output
+          than the panel — the transcript is uncapped and takes whatever this
+          column leaves it, so every pixel held here is a pixel a diff does not
+          get, and a gutter kept for a panel that is not there would give the
+          developer nothing back for the click. Hiding Core's panel must still
+          leave Userspace's output
           exactly where it was (ADR-0004), which is why the two halves of this
           condition are separate and why a loaded Surface keeps the column
           standing on its own.

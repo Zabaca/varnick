@@ -155,7 +155,7 @@ Ten tokens, inherited from the transcript, and most of a screen uses three of th
 
 **The exception, named so the rule stays true.** `#/states` uses 15px for its page title and 11px for card timestamps. It is a coverage surface for whoever is building the product rather than a surface the product presents, and it is the only place in the codebase above 13px. Nothing in the chat surface may follow it.
 
-**The Wide Measure Rule.** Prose caps at 110ch, not the 65ch an essay wants. A transcript is interleaved with tool output, diffs and absolute paths that must not wrap, and a comfortable reading measure would break the thing being read.
+**The Wide Measure Rule.** Prose caps at 110ch, not the 65ch an essay wants, and the transcript is not capped at all. A transcript is interleaved with tool output, diffs and absolute paths that must not wrap, so it takes the width of the window as a terminal does; a comfortable reading measure would break the thing being read. The cap belongs to blocks someone reads as paragraphs — first-run setup, the report bands, `#/states` — and not to the stream they scan.
 
 ## Layout
 
@@ -163,7 +163,7 @@ A full-width shell, as a terminal is: the window is the frame and nothing is cen
 
 Rhythm is small and regular. The shell pads `24px` horizontally and `16px` vertically; the transcript stacks at `12px`; controls sit `8px` apart; a bordered control is `6px 12px`. Everything is a multiple of two and nothing is looser than the gutter.
 
-Only prose is constrained, by `--prose: 110ch`, and it is applied per block rather than to a page container — so a diff or a tool result can run to the full width of the window while the sentence above it stays readable.
+Only prose is constrained, by `--prose: 110ch`, and it is applied per block rather than to a page container — so a diff or a tool result can run to the full width of the window while a paragraph of explanation stays readable. The transcript itself carries no cap: it is the whole subject of the window, and a conversation drawn into a strip down the left of a wide screen leaves the rest of the screen doing nothing.
 
 There are no breakpoints. This is a desktop application in a window the developer sizes; it reflows continuously and has no mobile form.
 
@@ -225,7 +225,7 @@ The one radius in the codebase is `6px` on the scrollbar thumb (`rounded.scroll`
 - **Do** take every new colour from the transcript components. If it is not already in the session, it is not in the product (The Inherited Palette Rule).
 - **Do** express hierarchy with colour and position, keeping 13px as the ceiling and stepping *down* for chrome (The Quiet Chrome Rule).
 - **Do** render a control only when the machine accepts the event, and let its presence be the affordance — no disabled states to style.
-- **Do** cap prose at 110ch per block, and let tool output, diffs and paths run full width (The Wide Measure Rule).
+- **Do** cap prose at 110ch per block, and let the transcript, tool output, diffs and paths run full width (The Wide Measure Rule).
 - **Do** carry depth with `ground-raised` plus a 1px `rule` border, and nothing else (The Tonal Depth Rule).
 - **Do** apply `[data-numeric]` to any figure that updates in place, so it does not jitter.
 
