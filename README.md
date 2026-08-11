@@ -342,7 +342,7 @@ bun test packages         # unit tests plus the real-kernel boundary probes
 bun run probe             # the same probes with no skip in them; needs a credential
 bun run drive             # the state-machine driver
 bun run typecheck
-bun run build
+bun run build             # builds the frontend and serves it — see ADR-0020
 bun run lint              # three import rules — two ADRs and the bundle boundary
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
@@ -363,8 +363,24 @@ Core is authored ([ADR-0014](docs/adr/0014-core-is-authored-in-a-worktree.md)).
 The two have separate Sessions, because the mirror is keyed by clone root
 ([ADR-0012](docs/adr/0012-the-clone-root-is-an-input.md)).
 
+**The live tree's window is a built artifact, and a Worktree's is the dev
+server.** `bun tauri dev` in the clone serves `.varnick/builds/<id>/` as files,
+with nothing watching anything — so work landing in the live tree cannot reload
+a window you left open. The same command inside `.claude/worktrees/<name>` runs
+Vite exactly as it always did, because that is a **Preview** and running a change
+is the point of one. See
+[ADR-0020](docs/adr/0020-the-main-window-serves-a-built-artifact.md), which also
+records what that costs: live Surface hot-reloading does not work in the main
+window any more.
+
+So in the live tree, `bun run build` is how a change gets on screen — it builds,
+installs the result as the artifact `local`, points `served` at it, and the next
+launch serves it. `bun run dev` is still Vite in a browser with hot reloading and
+no host behind it, which is the short loop for pure interface work.
+
 **A change under `packages/core/**` reloads the window rather than hot-swapping
-a module.** Hot-swapping the module that owns the Session remounts the machine
+a module.** This is the rule wherever there *is* a dev server — a Preview, and
+`bun run dev`. Hot-swapping the module that owns the Session remounts the machine
 holding the conversation that asked for the change; the reload costs a moment
 and loses nothing, because the Session resumes from the mirror
 ([ADR-0009](docs/adr/0009-resume-reads-the-mirror.md)). Userspace is untouched

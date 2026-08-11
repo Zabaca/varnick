@@ -101,6 +101,16 @@ _Avoid_: privileged paths, protected files, boundary (the boundary is what the F
 
 Retired with the Clone: **Escalation**, a queued request for a change the agent could not make, and **Collect**, the host-initiated step that brought a branch out of a Clone. Both are `git merge` now. The gate needs nothing built, because landing a Core change means writing `packages/core/**` in the live tree and `denyWrite` refuses it — a mechanism rather than a policy, which is why a developer who deletes those entries gets agent-merges and that is their call.
 
+### What the window runs
+
+**Artifact**:
+One built frontend, kept as a directory under `<clone>/.varnick/builds/` and named by an **id** — `local` for the one `bun run build` writes, a version for one a release cuts. Beside them, `served` names the single artifact the window is served from.
+
+A directory per id rather than one `dist`, because three things have to be possible at once: writing a build **without** serving it, switching which one is served, and still having the previous one when the new one will not start. `.varnick/` because that is already where varnick keeps per-clone machine state, and because an artifact is a build of one clone on one machine — never history, never committed.
+
+The live tree's window is served from one of these, and a **Preview** is served by the dev server. That is the whole of the rule, and the reason for it is that work now lands in the live tree while nobody is watching: a watcher there would reload the window the developer left open, at whatever hour the merge happened. Live Surface hot-reloading is what that costs in the main window, and it is a recorded consequence rather than an oversight — see [ADR-0020](./docs/adr/0020-the-main-window-serves-a-built-artifact.md).
+_Avoid_: bundle, dist, release (a release *produces* one; the artifact is the directory), build (fine as a verb, ambiguous as a noun)
+
 ### Conversation
 
 **Session**:
