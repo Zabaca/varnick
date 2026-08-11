@@ -75,6 +75,26 @@ export {
   type PreviewOutcome,
 } from './preview.ts'
 
+// What may not be landed unattended, which is a different question from the one
+// above and answered by a different list in the same module. Exported here and
+// not through ./preview.ts, because it has nothing to do with a Preview: the
+// callers are the run loop and `bun run landable`. See ./fence.ts and
+// docs/adr/0018-three-lists-three-questions.md.
+export {
+  INSTALL_LIFECYCLE_FIELDS,
+  PROTECTED_PATHS,
+  ROOT_MANIFEST,
+  isProtectedPath,
+  isReadablePath,
+  isRootManifest,
+  unattendedLanding,
+  type InstallLifecycle,
+  type InstallLifecycleField,
+  type LandingRefusal,
+  type UnattendedLanding,
+  type UnattendedLandingInput,
+} from './fence.ts'
+
 export {
   DEFAULT_ALLOWED_HOSTS,
   MACHINE_KEYCHAIN_DIR,

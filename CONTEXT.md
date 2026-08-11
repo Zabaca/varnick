@@ -103,7 +103,15 @@ The code that decides what the agent may do: `packages/harness/**`, which genera
 Distinct from Core, which is larger. `packages/core/**`, `vite.config.*` and `package.json` are Core and are not Fence: they are denied so a broken edit cannot take the conversation down, not because they decide the boundary. `sandbox-policy.json` is not Fence either, and for a subtler reason: it is the generated *output*, compared against the baseline and regenerated from the generator, both of which are.
 
 The list lives once, as `FENCE_PATHS` and `isFencePath` in `packages/harness/src/fence.ts` — a pure function over one repository-relative path, with no imports, so the host-side listing and the webview's diff view ask the same question, and `fence.test.ts` holds it against the generated `denyWrite`. Separate glob lists would drift, and the drift is invisible: each caller goes on working, and the one that fell behind stops flagging a file the others still colour.
-_Avoid_: privileged paths, protected files, boundary (the boundary is what the Fence produces)
+_Avoid_: privileged paths, boundary (the boundary is what the Fence produces), **Protected Path** — a real term below, and a larger list; calling the Fence "the protected paths" is now wrong rather than merely vague
+
+**Protected Path**:
+A path an unattended run may not merge: the Fence, plus `sandbox-policy.json`, `scripts/**` and `.githooks/**`, plus a `package.json` diff that changes `preinstall`, `postinstall` or `prepare`. Everything else the agent lands itself when the checks are green — `packages/core/**`, `vite.config.*`, the rest of that manifest, and Userspace.
+
+**A third list, and none of the three derives from another.** The Fence is what may not be Previewed unconfined; this is what may not be landed unattended; `denyWrite` is what may not be written in the live tree. They answer different questions and have already disagreed on real entries in both directions — `sandbox-policy.json` is not Fence and is protected, `packages/core/**` is denied and lands. `PROTECTED_PATHS` and `unattendedLanding` live beside `FENCE_PATHS` in `packages/harness/src/fence.ts`, and the containment between the three is a test rather than a comment. See [ADR-0018](./docs/adr/0018-three-lists-three-questions.md).
+
+The failure this naming exists to prevent is silent: a gate written as `touchesFence` looks correct and lands `scripts/**` at three in the morning.
+_Avoid_: **Fence** (smaller), auto-merge list (it says what the answer is used for rather than what it is), blocked, forbidden (the paths are landed constantly — by a human)
 
 Retired with the Clone: **Escalation**, a queued request for a change the agent could not make, and **Collect**, the host-initiated step that brought a branch out of a Clone. Both are `git merge` now. The gate needs nothing built, because landing a Core change means writing `packages/core/**` in the live tree and `denyWrite` refuses it — a mechanism rather than a policy, which is why a developer who deletes those entries gets agent-merges and that is their call.
 

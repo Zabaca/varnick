@@ -14,6 +14,7 @@ import {
   CLAUDE_CWD_MARKER_GLOB,
   SANDBOX_POLICY_FILENAME,
   TRACKED_HOOKS_DIR,
+  TRACKED_HOOKS_GLOB,
   UNREADABLE_BINARIES,
   describeSandboxPolicy,
   describeSandboxViolation,
@@ -379,12 +380,51 @@ describe('what the policy denies', () => {
       `${CLONE}/.git/refs/heads/main`,
       `${CLONE}/.git/index`,
       `${CLONE}/.git/COMMIT_EDITMSG`,
-      // The tracked hooks directory git is pointed at instead. It is Userspace
-      // as far as the boundary is concerned: the agent writes hooks freely and
-      // they arrive through a diff a human read.
-      `${CLONE}/${TRACKED_HOOKS_DIR}/pre-commit`,
     ]) {
       expect(denyWrite.some((denied) => coversWrite(denied, needed))).toBe(false)
+    }
+  })
+
+  test('the tracked hooks directory is unwritable in the live tree', () => {
+    /*
+      ADR-0016 one directory out, and the assertion that used to say the
+      opposite. This entry read as a *grant* — the tracked directory was named
+      in the source so this file could assert it was not denied — on the
+      argument that a tracked hook reaches the developer through a diff.
+
+      Tracked says where a file can be reviewed, not that it was. A hook written
+      into the live tree's `.githooks/` is on no branch and in no diff, and git
+      runs it unconfined on the next commit including the merge commit that was
+      meant to be the gate — which is the whole of what `.git/hooks/**` above is
+      denied for. Pointing `core.hooksPath` somewhere better moved the hole
+      rather than closing it.
+    */
+    const { denyWrite } = policy().filesystem
+    const hook = `${CLONE}/${TRACKED_HOOKS_DIR}/pre-commit`
+    expect(denyWrite).toContain(`${CLONE}/${TRACKED_HOOKS_GLOB}`)
+    expect(denyWrite.some((denied) => coversWrite(denied, hook))).toBe(true)
+    // The two spellings stay one directory. The bootstrap script and
+    // `core.hooksPath` want the bare name; only the policy wants the glob.
+    expect(TRACKED_HOOKS_GLOB).toBe(`${TRACKED_HOOKS_DIR}/**`)
+  })
+
+  test('a hook authored in a worktree is not denied, which is where hooks come from now', () => {
+    /*
+      ADR-0014, and the half that keeps the deny above from costing the agent
+      anything. `denyWrite` names an *absolute live-tree* path, so the same
+      relative path inside `.claude/worktrees/` matches nothing: the agent
+      writes the hook there under its ordinary Profile and it becomes a file git
+      runs when a human merges it.
+
+      The sibling below is the near miss this shape always has — a prefix test
+      without the separator would call `.githooks-notes/` part of the denial.
+    */
+    const { denyWrite } = policy().filesystem
+    for (const authored of [
+      `${CLONE}/.claude/worktrees/hooks-change/${TRACKED_HOOKS_DIR}/pre-commit`,
+      `${CLONE}/${TRACKED_HOOKS_DIR}-notes.md`,
+    ]) {
+      expect(denyWrite.some((denied) => coversWrite(denied, authored))).toBe(false)
     }
   })
 
@@ -462,6 +502,25 @@ describe('readable without reading the source', () => {
     expect(text).toContain('.git/config')
     expect(text).toContain(TRACKED_HOOKS_DIR)
     expect(text).toContain('core.hooksPath')
+  })
+
+  test('the description says why the tracked hooks directory is denied too', () => {
+    /*
+      The entry a developer is most likely to read as a mistake: the file above
+      it says hooks moved to `.githooks/` because tracked files are reviewed,
+      and the deny list then names `.githooks/**`. If the prose does not settle
+      that in the same place, the obvious edit is to delete the entry.
+
+      What settles it is the distinction, said out loud: tracked is where a file
+      *can* be reviewed, not that it was, and a hook written into the live tree
+      is in no diff either.
+    */
+    const text = describeSandboxPolicy(policy())
+    expect(text).toContain(TRACKED_HOOKS_GLOB)
+    expect(text.toLowerCase()).toContain('no diff')
+    // And the half that says the agent has not lost hooks, only a tree to write
+    // them in — otherwise the entry reads as a capability removed.
+    expect(text.toLowerCase()).toContain('worktree')
   })
 
   test('the description does not claim the denied binaries cannot run', () => {
@@ -806,6 +865,79 @@ describe('a strengthening reaches a clone that already has a policy', () => {
       // difference is indistinguishable from a developer's own narrowing.
       const second = ensureSandboxPolicy({ cloneRoot: clone })
       expect(second.policy.network.allowLocalBinding).toBe(false)
+    })
+  })
+
+  /**
+   * The policy as the generator produced it before the tracked hooks directory
+   * was denied — everything else current, one entry missing.
+   *
+   * A third plant beside `olderGenerator` and `beforeTicket45`, and for the
+   * reason the second one exists: this ticket's entry has to reach the clone
+   * the developer already has, not only the next one somebody makes.
+   */
+  const beforeHooksWereDenied = (clone: string): SandboxPolicy => {
+    const older = sandboxPolicyFor({ cloneRoot: clone })
+    older.filesystem.denyWrite = older.filesystem.denyWrite.filter(
+      (path) => path !== `${clone}/${TRACKED_HOOKS_GLOB}`,
+    )
+    return older
+  }
+
+  test('the tracked hooks deny reaches a clone whose baseline predates it, and is then varnick’s', () => {
+    /*
+      Both halves of ticket 17's rule for this entry.
+
+      **It lands.** `filesystem.denyWrite` strengthens by growing, and this clone
+      never disagreed about the field, so it takes the generator's current list.
+      Reported as `ours` rather than as something the developer did.
+
+      **And the baseline is rewritten to say so.** That is the half worth a test
+      of its own: `ensureSandboxPolicy` records what the generator produces now,
+      so from the *next* launch the entry is part of what varnick is believed to
+      have generated. Without it every subsequent run would re-derive the same
+      difference, and a developer who then removed the entry on purpose would
+      have their removal read as varnick's own work instead of as their edit.
+    */
+    withClone((clone) => {
+      const older = beforeHooksWereDenied(clone)
+      writeFileSync(
+        sandboxBaselinePath(clone),
+        `${JSON.stringify(normalizeSandboxPolicy(older, { cloneRoot: clone }), null, 2)}\n`,
+      )
+      writeFileSync(sandboxPolicyPath(clone), `${JSON.stringify(older, null, 2)}\n`)
+
+      const { policy, report } = ensureSandboxPolicy({ cloneRoot: clone })
+
+      expect(policy.filesystem.denyWrite).toContain(`${clone}/${TRACKED_HOOKS_GLOB}`)
+      expect(report.outcome).toBe('updated')
+      expect(report.yours).toEqual([])
+      expect(report.ours.some((c) => c.detail.includes(TRACKED_HOOKS_DIR))).toBe(true)
+      // Said on stderr as well as written to the file.
+      expect(report.lines.join('\n')).toContain(TRACKED_HOOKS_DIR)
+
+      // The baseline now carries it, so the next run has nothing to attribute.
+      const recorded = readSandboxBaseline(clone)
+      expect(recorded?.policy.filesystem.denyWrite).toContain(`<clone>/${TRACKED_HOOKS_GLOB}`)
+      const again = ensureSandboxPolicy({ cloneRoot: clone })
+      expect(again.report.ours).toEqual([])
+      expect(again.report.outcome).toBe('unchanged')
+    })
+  })
+
+  test('a clone with no baseline gets the tracked hooks deny too, by the union', () => {
+    // The unattributable clone credits nothing to anybody and takes the stronger
+    // side of every difference. A denial strengthens by growing, so this one
+    // lands here as well — unlike a widening, which does not. See the local
+    // binding test above for the other half of that asymmetry.
+    withClone((clone) => {
+      const older = beforeHooksWereDenied(clone)
+      writeFileSync(sandboxPolicyPath(clone), `${JSON.stringify(older, null, 2)}\n`)
+
+      const { policy, report } = ensureSandboxPolicy({ cloneRoot: clone })
+
+      expect(report.unattributed).toBe(true)
+      expect(policy.filesystem.denyWrite).toContain(`${clone}/${TRACKED_HOOKS_GLOB}`)
     })
   })
 

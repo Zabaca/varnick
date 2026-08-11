@@ -17,9 +17,15 @@ for why this shape rather than another. This file is the procedure.
 **Core is authored in a git worktree. Never in the live tree.**
 
 The Sandbox denies writes to `packages/core/**`, `packages/harness/**`,
-`src-tauri/**`, `vite.config.*`, `package.json` and `scripts/**` — but it names
-those as *absolute paths in the live tree*, so the same paths inside a worktree
-match nothing and you may write them freely.
+`src-tauri/**`, `vite.config.*`, `package.json`, `scripts/**` and `.githooks/**`
+— but it names those as *absolute paths in the live tree*, so the same paths
+inside a worktree match nothing and you may write them freely.
+
+The last one is tracked and denied at the same time, which reads as a mistake
+until you have the reason: tracked says a git hook *can* be reviewed, not that
+it was, and one written into the live tree runs unconfined on the developer's
+next commit with no diff anywhere. Hooks are authored here like Core. See the
+amendment to [ADR-0016](../../../docs/adr/0016-gits-own-directory-is-outside-the-review-path.md).
 
 That is not a loophole. It is the design: what you write in a worktree is text
 until a human merges it, so you can change anything at all and nothing you write
