@@ -21,7 +21,6 @@
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath, URL } from 'node:url'
 import {
   CARGO_TARGET_ENV_VAR,
   DEV_PORT_ENV_VAR,
@@ -29,6 +28,7 @@ import {
   INSTALL_MARKER,
   bootstrapCommand,
   chosenDevPort,
+  cloneRootOfScript,
   devLaunch,
   sharedTargetDir,
 } from '../dev-server.ts'
@@ -50,7 +50,7 @@ try {
 }
 
 const launch = devLaunch(port)
-const cloneRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
+const cloneRoot = cloneRootOfScript(import.meta.url)
 
 console.log(`varnick on ${launch.env[DEV_URL_ENV_VAR]} — clone ${cloneRoot}`)
 

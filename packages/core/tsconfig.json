@@ -7,5 +7,12 @@
     },
     "types": ["bun", "vite/client"]
   },
-  "include": ["src", "scripts", "vite.config.ts", "dev-server.ts", "artifacts.ts"]
+  "include": [
+    "src",
+    "scripts",
+    "vite.config.ts",
+    "dev-server.ts",
+    "artifacts.ts",
+    "artifact-assets.ts"
+  ]
 }

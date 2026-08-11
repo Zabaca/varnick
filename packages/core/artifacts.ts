@@ -1,11 +1,15 @@
 /**
  * Where built frontends live, and which one the window is served from.
  *
- * This module is the **convention**, not the machinery. It says where an
- * artifact goes, what an artifact may be called, which file records the choice
- * and how a request for a file inside one is turned into a path — and it says
- * all of that as pure functions over strings, so `packages/core/scripts/drive.ts`
- * can assert every one of them with nothing built and nothing serving.
+ * This module is the **convention**: where an artifact goes, what an artifact
+ * may be called, and which file records the choice — all of it as pure
+ * functions over strings, so `packages/core/scripts/drive.ts` can assert every
+ * one with nothing built and nothing serving.
+ *
+ * What a *request* may reach inside an artifact is deliberately not here. That
+ * is `artifact-assets.ts`, and it is a boundary rather than a convention: this
+ * file is what tickets 06 and 07 edit next, and a boundary sitting next to churn
+ * is a boundary that gets moved by somebody who was doing something else.
  *
  * Nothing here is loaded by the application. It is imported by the artifact
  * server, by the build, and by the driver — the same arrangement
@@ -43,7 +47,7 @@
  * developer looking at a broken window can fix it with a text editor.
  */
 
-import { isAbsolute, relative, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 // ---------------------------------------------------------------------------
 // Where
@@ -75,7 +79,14 @@ export const SERVED_MARKER = 'served'
  */
 export const LOCAL_ARTIFACT_ID = 'local'
 
-/** The file a request for `/` is answered with, and the SPA fallback. */
+/**
+ * The file at an artifact's root — what a request for `/` is answered with, and
+ * what having one is the test of whether an artifact is there at all.
+ *
+ * Read by `artifact-assets.ts` too, which is the one direction of dependency
+ * between the two: the boundary asks the convention what a directory means, and
+ * the convention never asks the boundary anything.
+ */
 export const ARTIFACT_ENTRY = 'index.html'
 
 /** The store for a clone. */
@@ -171,58 +182,4 @@ export function servedArtifactId(marker: string | undefined | null): string | nu
 /** What to write into {@link SERVED_MARKER} for an id. */
 export function servedMarkerText(id: string): string {
   return `${id}\n`
-}
-
-// ---------------------------------------------------------------------------
-// Serving one
-// ---------------------------------------------------------------------------
-
-/**
- * The file a request path asks for inside an artifact, or `null` for one that
- * asks for something outside it.
- *
- * **This is the whole of the boundary between an HTTP request and the disk**,
- * and it is a pure function for exactly that reason: a traversal is a thing you
- * assert about, not a thing you find out about from a running server.
- *
- * The listener binds localhost, so the requests it sees come from the webview
- * — but the webview renders Userspace, which the agent writes freely, and a
- * Surface can issue any `fetch` it likes. A path that climbed out of the
- * artifact would be that Surface reading the developer's home directory over
- * HTTP, which is precisely what the Sandbox is for and precisely the sort of
- * hole a static file server is traditionally how you open.
- *
- * Decided by resolving and then asking whether the answer is still inside,
- * rather than by rejecting `..` in the input. The second is a filter and
- * filters are a list of things somebody thought of; this is the property.
- */
-export function assetPath(artifactRoot: string, urlPath: string): string | null {
-  if (!urlPath.startsWith('/')) return null
-
-  let decoded: string
-  try {
-    decoded = decodeURIComponent(urlPath)
-  } catch {
-    // Malformed percent-encoding. Not a path, and not worth guessing at.
-    return null
-  }
-
-  // A NUL truncates the path for anything that reaches a syscall with it, which
-  // is how a name that passed a check becomes a different name.
-  if (decoded.includes('\0')) return null
-
-  // A directory is its entry file. `/` is the window opening; `/thing/` is a
-  // Surface asking for one, and neither is a file.
-  const wanted = decoded.endsWith('/') ? `${decoded}${ARTIFACT_ENTRY}` : decoded
-
-  const root = resolve(artifactRoot)
-  const path = resolve(root, `.${wanted}`)
-  const inside = relative(root, path)
-  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) return null
-  return path
-}
-
-/** The entry file of an artifact — what `/` is, and what an unknown route falls back to. */
-export function artifactEntry(artifactRoot: string): string {
-  return resolve(artifactRoot, ARTIFACT_ENTRY)
 }

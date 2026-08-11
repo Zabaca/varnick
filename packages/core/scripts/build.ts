@@ -22,7 +22,6 @@
 
 import { cpSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath, URL } from 'node:url'
 import {
   LOCAL_ARTIFACT_ID,
   artifactPath,
@@ -31,8 +30,9 @@ import {
   servedMarkerPath,
   servedMarkerText,
 } from '../artifacts.ts'
+import { cloneRootOfScript } from '../dev-server.ts'
 
-const buildRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
+const buildRoot = cloneRootOfScript(import.meta.url)
 
 const built = Bun.spawn(['bun', 'run', '--filter', '@varnick/core', 'build'], {
   cwd: buildRoot,

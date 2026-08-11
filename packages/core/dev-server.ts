@@ -11,6 +11,36 @@
  */
 
 import { relative, resolve } from 'node:path'
+import { fileURLToPath, URL } from 'node:url'
+
+// ---------------------------------------------------------------------------
+// Which tree this is
+// ---------------------------------------------------------------------------
+
+/**
+ * The clone a module under `packages/core/scripts/` belongs to.
+ *
+ * Every launch script needs this and each one had written it out: three copies
+ * of `fileURLToPath(new URL('../../..', import.meta.url))`, where the literal
+ * `'../../..'` encodes where the caller happens to sit. A fourth script, or one
+ * moved a directory, and the copies disagree about which tree varnick is —
+ * which decides the Sandbox, the Session mirror, and now what the window is
+ * served from.
+ *
+ * Taken from the module's own URL rather than `process.cwd()`, which is the
+ * whole point: a Preview is launched in its Worktree and runs that Worktree's
+ * copy of these files, so "where is this file" and "which varnick is this" are
+ * the same question. `vite.config.ts` computes its clone root the same way and
+ * is left alone, because a Vite config's root is Vite's own concern.
+ *
+ * The trailing separator is stripped for the sake of anything that prints or
+ * joins the result by hand. Nothing downstream depends on it — `worktreeOwner`
+ * and `artifactStore` both `resolve()` first — so this is tidiness rather than a
+ * load-bearing step, and the assertions cover the slashed form either way.
+ */
+export function cloneRootOfScript(moduleUrl: string): string {
+  return fileURLToPath(new URL('../../..', moduleUrl)).replace(/\/$/, '')
+}
 
 // ---------------------------------------------------------------------------
 // The port

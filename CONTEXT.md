@@ -104,7 +104,11 @@ Retired with the Clone: **Escalation**, a queued request for a change the agent 
 ### What the window runs
 
 **Artifact**:
-One built frontend, kept as a directory under `<clone>/.varnick/builds/` and named by an **id** — `local` for the one `bun run build` writes, a version for one a release cuts. Beside them, `served` names the single artifact the window is served from.
+One built frontend, kept as a directory under `<clone>/.varnick/builds/` and named by an **id** — `local` for the one `bun run build` writes, a version for one a release cuts.
+
+**Served**:
+Which Artifact the window opens on, held as a one-line file named `served` beside them in the store. A fact on disk rather than a path inside a launch, because the three things that have to be possible are exactly the three a file makes possible: a release **writes** an Artifact without touching it, a promotion **rewrites** it, and a launch **reads** it. Absent is a real answer and means nothing is served — the ordinary state of a clone nobody has built yet.
+_Avoid_: current, active, live (all three read as a status the store computes; this is a choice somebody wrote down)
 
 A directory per id rather than one `dist`, because three things have to be possible at once: writing a build **without** serving it, switching which one is served, and still having the previous one when the new one will not start. `.varnick/` because that is already where varnick keeps per-clone machine state, and because an artifact is a build of one clone on one machine — never history, never committed.
 

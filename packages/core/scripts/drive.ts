@@ -54,26 +54,23 @@ import {
   devLaunch,
   devUrlFor,
   hotUpdateVerdict,
+  cloneRootOfScript,
   portToBind,
   sharedTargetDir,
   windowSource,
   worktreeOwner,
 } from '../dev-server.ts'
 import {
-  ARTIFACT_ENTRY,
-  ARTIFACT_STORE_RELATIVE_PATH,
   LOCAL_ARTIFACT_ID,
-  SERVED_MARKER,
-  artifactEntry,
   artifactPath,
   artifactStore,
-  assetPath,
   incomingArtifactPath,
   isArtifactId,
   servedArtifactId,
   servedMarkerPath,
   servedMarkerText,
 } from '../artifacts.ts'
+import { assetPath } from '../artifact-assets.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { CREDENTIAL_SHAPE_PROBE } from '@varnick/harness/credentials'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
@@ -6269,6 +6266,68 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     'and `bun run build` writes into the store rather than only into dist',
     manifest.scripts.build === 'bun run packages/core/scripts/build.ts',
   )
+
+  /*
+    Three launch scripts each need to know which tree they are in, and each had
+    written the answer out. The literal `'../../..'` encodes where the caller
+    happens to sit, so a script moved a directory would disagree with its
+    siblings about which varnick this is — which decides the Sandbox, the
+    Session mirror and now what the window is served from.
+  */
+  check(
+    'a launch script finds the clone it is in',
+    cloneRootOfScript(import.meta.url) ===
+      new URL('../../..', import.meta.url).pathname.replace(/\/$/, ''),
+  )
+  check(
+    'and every one of them finds the same one',
+    cloneRootOfScript(new URL('./dev.ts', import.meta.url).href) ===
+      cloneRootOfScript(new URL('./serve.ts', import.meta.url).href) &&
+      cloneRootOfScript(new URL('./build.ts', import.meta.url).href) ===
+        cloneRootOfScript(import.meta.url),
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The page a window with no build behind it opens on
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    varnick draws this, in varnick's own window, and it is the first thing a
+    developer sees when a build is missing — which makes it more of a product
+    surface than most, not less. DESIGN.md enumerates its exceptions and a
+    pre-boot page is not among them.
+
+    Asserted against the source rather than trusted to a comment, because it is
+    the one place in the product whose styles cannot come from `app.css`: this
+    page exists precisely when there is no bundle to take them from, so the
+    tokens are inlined and nothing else in the repository would notice them
+    drifting.
+  */
+  const serve = readFileSync(new URL('./serve.ts', import.meta.url).pathname, 'utf-8')
+
+  // The Quiet Chrome Rule — 13px is the ceiling, and `#/states` is the one
+  // exception in the codebase above it.
+  const sizes = [...serve.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]))
+  check('the no-build page sets a size at all', sizes.length > 0)
+  check(
+    `and nothing on it is above 13px (found ${sizes.join(', ') || 'none'})`,
+    sizes.every((size) => size <= 13),
+  )
+
+  // The Square Corner Rule — no border-radius on anything varnick draws.
+  check('nothing on it is rounded', !serve.includes('border-radius'))
+
+  // The Inherited Palette Rule — it renders on `ground`, not on the browser's
+  // white, and every colour it uses is one the transcript already had.
+  for (const token of ['--ground: #1a1b26', '--fg: #c0caf5', '--rule: #2c2e40']) {
+    check(`it carries ${token.split(':')[0]} from the palette`, serve.includes(token))
+  }
+  check('and paints the ground rather than inheriting one', serve.includes('background: var(--ground)'))
+
+  // The Wide Measure Rule — prose caps at 110ch.
+  check('its prose is capped where the product caps prose', serve.includes('max-width: 110ch'))
 }
 
 // ---------------------------------------------------------------------------
@@ -6293,20 +6352,22 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     artifactStore(clone) === `${clone}/.varnick/builds`,
   )
   check(
-    'and the relative path is the fact, so nothing has to spell it twice',
-    ARTIFACT_STORE_RELATIVE_PATH === '.varnick/builds',
-  )
-  check(
     'which one is served is a file inside it',
-    servedMarkerPath(clone) === `${clone}/.varnick/builds/${SERVED_MARKER}`,
+    servedMarkerPath(clone) === `${clone}/.varnick/builds/served`,
   )
-  check('one artifact is one directory under the store', artifactPath(clone, '0.2.0-1') === `${clone}/.varnick/builds/0.2.0-1`)
   check(
-    'and its entry is the file a window opens on',
-    artifactEntry(`${clone}/.varnick/builds/local`) ===
-      `${clone}/.varnick/builds/local/${ARTIFACT_ENTRY}` && ARTIFACT_ENTRY === 'index.html',
+    'one artifact is one directory under the store',
+    artifactPath(clone, '0.2.0-1') === `${clone}/.varnick/builds/0.2.0-1`,
   )
-  check('what `bun run build` writes has a name of its own', LOCAL_ARTIFACT_ID === 'local')
+  check(
+    'and a directory a request is answered out of is one an id names',
+    assetPath(`${clone}/.varnick/builds/0.2.0-1`, '/') ===
+      `${artifactPath(clone, '0.2.0-1')}/index.html`,
+  )
+  check(
+    'what `bun run build` writes is a name the store will accept',
+    isArtifactId(LOCAL_ARTIFACT_ID) && artifactPath(clone, LOCAL_ARTIFACT_ID) !== null,
+  )
 
   /*
     An id is joined onto a root and then served files out of. A name that is not

@@ -92,9 +92,16 @@ restart, which is the one thing switching the served artifact is for.
 
 ## The one thing that is a boundary rather than a convention
 
-`assetPath` in `packages/core/artifacts.ts` turns a request path into a file
-path, or into nothing. It is a pure function with its own assertions, and it is
-the whole of what stands between an HTTP request and the disk.
+`assetPath` turns a request path into a file path, or into nothing. It is a pure
+function with its own assertions, and it is the whole of what stands between an
+HTTP request and the disk.
+
+**It lives in its own module**, `packages/core/artifact-assets.ts`, rather than
+beside the store's layout in `artifacts.ts`. The store is what tickets 06 and 07
+edit next; "the release chain changed" is never a reason to open a file holding a
+boundary, and a boundary adjacent to churn is one that gets moved by somebody who
+was doing something else. The dependency runs one way — the boundary asks the
+convention what `index.html` is, and the convention asks the boundary nothing.
 
 The listener binds localhost, so what reaches it is the webview — and the
 webview renders **Userspace**, which the agent writes freely, so a Surface can

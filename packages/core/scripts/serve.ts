@@ -21,23 +21,23 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { fileURLToPath, URL } from 'node:url'
+import { resolve } from 'node:path'
+import { ARTIFACT_ENTRY, artifactPath, servedArtifactId, servedMarkerPath } from '../artifacts.ts'
+import { assetPath } from '../artifact-assets.ts'
 import {
-  artifactEntry,
-  artifactPath,
-  assetPath,
-  servedArtifactId,
-  servedMarkerPath,
-} from '../artifacts.ts'
-import { DEV_URL_ENV_VAR, portToBind, windowSource } from '../dev-server.ts'
+  DEV_URL_ENV_VAR,
+  cloneRootOfScript,
+  portToBind,
+  windowSource,
+} from '../dev-server.ts'
 
 /*
   The tree this frontend would come from, taken from where this file is rather
-  than from `process.cwd()` — the same way `vite.config.ts` takes its clone
-  root. A Preview is launched in its Worktree and this file is the Worktree's
-  copy, which is exactly what makes the one-line decision below work.
+  than from `process.cwd()`. A Preview is launched in its Worktree and this file
+  is the Worktree's copy, which is exactly what makes the one-line decision
+  below work.
 */
-const buildRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
+const buildRoot = cloneRootOfScript(import.meta.url)
 
 const port = portToBind(process.env[DEV_URL_ENV_VAR])
 
@@ -48,14 +48,11 @@ const port = portToBind(process.env[DEV_URL_ENV_VAR])
 if (windowSource(buildRoot) === 'dev-server') {
   console.log(`preview: vite on ${port} — ${buildRoot}`)
   /*
-    Spawned rather than imported. Vite reads its own port back out of
-    `VARNICK_DEV_URL`, which is already in this process's environment, so the
-    child is handed the same one string both ends of a launch are handed and
-    nothing here recomputes it.
-  */
-  /*
     The exact command `beforeDevCommand` used to be, spawned rather than
-    reimplemented, so a Preview runs the dev server it always ran.
+    reimplemented, so a Preview runs the dev server it always ran. Vite reads
+    its own port back out of `VARNICK_DEV_URL`, which is already in this
+    process's environment, so the child is handed the same one string both ends
+    of a launch are handed and nothing here recomputes it.
 
     **This adds no layer to what the Tauri CLI has to take down.** That was
     checked rather than assumed, because it is the plausible way an indirection
@@ -89,7 +86,7 @@ function servedArtifact(): { id: string; root: string } | null {
   // marker, and it is reported as itself below rather than folded into one
   // "nothing to serve". Ticket 07 is what turns this case into a fall back to
   // the previous build; until then it is a sentence, not a guess.
-  if (root === null || !existsSync(artifactEntry(root))) return null
+  if (root === null || !existsSync(resolve(root, ARTIFACT_ENTRY))) return null
   return { id, root }
 }
 
@@ -120,6 +117,21 @@ if (artifact === null) {
 }
 
 /**
+ * Anything going into that page as text rather than as markup.
+ *
+ * There is exactly one interpolation — a filesystem path — and a path may
+ * contain `<`, `&` or a quote. This is a file whose entire job is serving, so
+ * an unescaped interpolation is not a thing to leave in it whatever today's
+ * value happens to be.
+ */
+const asText = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+
+/**
  * What the window gets when there is no artifact behind it.
  *
  * A page rather than a refusal, and a listener that answers rather than one
@@ -131,18 +143,56 @@ if (artifact === null) {
  * `200` and not a `503`, for that same reason and against the semantics: the
  * Tauri CLI's wait is the only thing that reads this status, and a window that
  * opens saying what to run beats a correct status code nobody sees.
+ *
+ * **It is drawn to DESIGN.md, and the reflex to exempt it is wrong.** This
+ * renders in varnick's own window and is the first thing a developer sees when
+ * a build is missing, which makes it more of a product surface than most —
+ * DESIGN.md enumerates its exceptions and a pre-boot page is not among them. So
+ * 13px and no larger (The Quiet Chrome Rule), square corners (The Square Corner
+ * Rule), and `ground`/`fg`/`fg-dim`/`rule`/`accent` rather than the browser's
+ * white (The Inherited Palette Rule).
+ *
+ * The values are inlined rather than imported, and that is the one concession:
+ * this page exists precisely when there is no bundle to take `app.css` from. It
+ * is the only copy of those tokens in the repository, and it is here because the
+ * alternative is a page that cannot be styled at all.
  */
 const nothingServed = (): Response =>
   new Response(
     `<!doctype html><meta charset="utf-8"><title>varnick — no build</title>
 <style>
-  body { font: 14px/1.6 ui-monospace, monospace; margin: 4rem auto; max-width: 34rem; padding: 0 1.5rem }
-  code { background: #0001; padding: .1em .35em; border-radius: .2em }
+  :root {
+    --ground: #1a1b26;
+    --rule: #2c2e40;
+    --fg: #c0caf5;
+    --fg-dim: #8b8fa3;
+    --accent: #7dcfff;
+  }
+  body {
+    margin: 0;
+    padding: 16px 24px;
+    background: var(--ground);
+    color: var(--fg);
+    font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  h1 { font-size: 13px; font-weight: 400; margin: 0 0 16px; color: var(--fg) }
+  p { max-width: 110ch; margin: 0 0 12px; color: var(--fg-dim) }
+  code { color: var(--accent) }
+  pre {
+    max-width: 110ch;
+    margin: 0 0 12px;
+    padding: 6px 12px;
+    border: 1px solid var(--rule);
+    color: var(--fg);
+    overflow-x: auto;
+  }
 </style>
 <h1>No build to serve</h1>
 <p>varnick's window is served from a built artifact under
-<code>.varnick/builds/</code>, and there is none in <code>${buildRoot}</code>
-that <code>served</code> points at.</p>
+<code>.varnick/builds/</code>, and there is none in
+<code>${asText(buildRoot)}</code> that <code>served</code> points at.</p>
 <p>Build one:</p>
 <pre><code>bun run build</code></pre>
 <p>Then restart varnick. See
