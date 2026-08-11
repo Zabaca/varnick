@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { DEV_URL_ENV_VAR, hotUpdateVerdict, portToBind } from './dev-server.ts'
 import { versionDefine } from './version.ts'
@@ -22,7 +23,7 @@ const cloneRoot = fileURLToPath(new URL('../..', import.meta.url))
   manifest has no version, must fail the build rather than produce a window that
   claims a number nothing wrote down.
 */
-const version = versionDefine(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'))
+const version = versionDefine(readFileSync(join(cloneRoot, 'package.json'), 'utf-8'))
 
 /**
  * Core is excluded from hot-swap: a change under `packages/core/**` reloads the

@@ -18,7 +18,15 @@
  * server and looking at a window, so the decisions live where
  * `scripts/drive.ts` can assert them headlessly. And `src/version.ts` imports
  * {@link displayedVersion} from here, so anything in this module is code the
- * renderer bundles: `node:fs` in here would be `node:fs` in the browser.
+ * renderer bundles: a `node:` built-in in here is a `node:` built-in in the
+ * browser, and it need not be written directly — importing `dev-server.ts`
+ * would bring `node:path` along with it.
+ *
+ * **This module imports nothing, and `drive.ts` asserts that it imports
+ * nothing.** That is the whole enforcement, and it is a check rather than this
+ * paragraph because `eslint.config.js` says of its own rules that the
+ * alternative was a sentence in a header nothing checked, and that sentence had
+ * already gone stale.
  */
 
 /**
@@ -26,7 +34,7 @@
  * literal in its output; declared where it is read so nothing else in Core can
  * reach for it by accident.
  */
-export const VERSION_GLOBAL = '__VARNICK_VERSION__'
+export const VERSION_IDENTIFIER = '__VARNICK_VERSION__'
 
 /**
  * The version in a manifest's text, or a refusal.
@@ -84,5 +92,5 @@ export function displayedVersion(version: string): string {
  * `drive.ts` can check, instead of a thing you find out by opening the window.
  */
 export function versionDefine(manifestText: string): Record<string, string> {
-  return { [VERSION_GLOBAL]: JSON.stringify(versionFromManifest(manifestText)) }
+  return { [VERSION_IDENTIFIER]: JSON.stringify(versionFromManifest(manifestText)) }
 }

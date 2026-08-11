@@ -58,7 +58,7 @@ import {
   sharedTargetDir,
 } from '../dev-server.ts'
 import {
-  VERSION_GLOBAL,
+  VERSION_IDENTIFIER,
   displayedVersion,
   versionDefine,
   versionFromManifest,
@@ -99,6 +99,22 @@ function check(label: string, condition: boolean) {
   } else {
     failures.push(label)
   }
+}
+
+/**
+ * A refusal, asserted as a refusal. What is being checked is that the call
+ * throws rather than returning something plausible, so the thrown value is
+ * deliberately not inspected — a message is prose and would make these
+ * assertions fail on a reworded sentence.
+ */
+function refuses(label: string, run: () => unknown) {
+  let threw = false
+  try {
+    run()
+  } catch {
+    threw = true
+  }
+  check(label, threw)
 }
 
 // Seeded actor implementations. Generic over input as well as output, or the
@@ -6293,16 +6309,6 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check('a chosen port becomes exactly one URL', devUrlFor(chosen) === 'http://localhost:1421')
   check('and the frontend binds the port that URL names', portToBind(devUrlFor(chosen)) === 1421)
 
-  const refuses = (label: string, run: () => unknown) => {
-    let threw = false
-    try {
-      run()
-    } catch {
-      threw = true
-    }
-    check(label, threw)
-  }
-
   // Refusals, because a port that quietly becomes 1420 is a collision with the
   // varnick that is already running.
   refuses('a port that is not a number is refused', () => chosenDevPort('nineteen'))
@@ -6460,8 +6466,8 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     splice a bare identifier into the renderer.
   */
   const defines = versionDefine('{"version":"1.2.3"}')
-  check('the substitution names exactly one identifier', Object.keys(defines).join() === VERSION_GLOBAL)
-  check('and gives it the version as source text, quoted', defines[VERSION_GLOBAL] === '"1.2.3"')
+  check('the substitution names exactly one identifier', Object.keys(defines).join() === VERSION_IDENTIFIER)
+  check('and gives it the version as source text, quoted', defines[VERSION_IDENTIFIER] === '"1.2.3"')
 
   /*
     The two ends of that substitution are in different files and only agree by
@@ -6473,11 +6479,30 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     reached for one would be a version that fails in the window rather than at
     the build.
   */
+  const reachesForAFile = (source: string) =>
+    /from ['"]node:/.test(source) || /readFile|fetch\(/.test(source)
+
   const renderer = readFileSync(new URL('../src/version.ts', import.meta.url), 'utf-8')
-  check('the renderer reads the identifier the config defines', renderer.includes(VERSION_GLOBAL))
+  check('the renderer reads the identifier the config defines', renderer.includes(VERSION_IDENTIFIER))
   check(
     'and reaches for no file, because by then there is none to reach for',
-    !renderer.includes('node:fs') && !renderer.includes('readFile') && !renderer.includes('fetch('),
+    !reachesForAFile(renderer),
+  )
+
+  /*
+    And the same of the module behind it, which is the half a header sentence
+    cannot hold. `version.ts` is imported by the renderer, so a `node:` built-in
+    in there is a `node:` built-in in the browser — and it need not be written
+    directly, because importing `dev-server.ts` would bring `node:path` along
+    with it. `eslint.config.js` covers the Harness subpaths and nothing here, so
+    the leaf property is asserted rather than described: the module imports
+    nothing at all, and there is no path through it for Node to arrive by.
+  */
+  const buildtime = readFileSync(new URL('../version.ts', import.meta.url), 'utf-8')
+  check('the version module reaches for no file either', !reachesForAFile(buildtime))
+  check(
+    'and imports nothing, so nothing can bring Node into the renderer through it',
+    !/^\s*import\s/m.test(buildtime),
   )
 
   /*
@@ -6488,16 +6513,6 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   const surface = readFileSync(new URL('../src/components/chat-surface.tsx', import.meta.url), 'utf-8')
   check('no version literal is left in the header call', !/version="v?\d/.test(surface))
   check('the header is handed the resolved one', surface.includes('version={VARNICK_VERSION_LABEL}'))
-
-  const refuses = (label: string, run: () => unknown) => {
-    let threw = false
-    try {
-      run()
-    } catch {
-      threw = true
-    }
-    check(label, threw)
-  }
 
   refuses('a manifest with no version fails the build', () =>
     versionFromManifest('{"name":"varnick"}'),

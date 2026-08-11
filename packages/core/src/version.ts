@@ -16,6 +16,12 @@ declare const __VARNICK_VERSION__: string
 /**
  * The version this build is, exactly as the root manifest spells it. The single
  * source of the number for anything in Core that needs it.
+ *
+ * Exported rather than kept private even though {@link VARNICK_VERSION_LABEL}
+ * is its only reader in the tree today: the release chain is the other one. It
+ * compares the running version against the pre-release it is offering and puts
+ * the number in the changelog entry, and neither wants the `v` — so the raw
+ * number is the thing, and the label is one presentation of it.
  */
 export const VARNICK_VERSION: string = __VARNICK_VERSION__
 
