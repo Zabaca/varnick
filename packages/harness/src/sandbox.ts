@@ -170,9 +170,27 @@ export const TRACKED_HOOKS_DIR = '.githooks'
  * than assumed.
  *
  * `/**` and not the bare directory, matching {@link HOST_INVOKED_SCRIPTS}: what
- * has to be refused is the hook file, and the directory itself cannot be
- * swapped for a symlink to somewhere writable while a file inside it — the
- * README that keeps the directory tracked — is undeletable.
+ * has to be refused is the hook file. The glob does not name the directory
+ * *node*, and the node matters — a directory the agent can `mv` aside or
+ * replace with a symlink is a denial it can step around without ever writing a
+ * denied path.
+ *
+ * **srt covers it, and the mechanism is worth naming because it is not this
+ * glob.** `generateMoveBlockingRules` splits the pattern at its first glob
+ * character, takes the static prefix as a base directory, and emits
+ * `file-write-unlink` and `file-write-create` denials on that directory as a
+ * literal and on every ancestor — its own comment says this exists to stop a
+ * not-yet-existing protected path being replaced with an attacker-controlled
+ * symlink. The regex the glob itself compiles to is `^<clone>/\.githooks/.*$`,
+ * which matches nothing at the node.
+ *
+ * Measured, because the first version of this comment claimed the wrong
+ * mechanism — that the README inside kept the directory alive. It does not, and
+ * the difference is testable: with `.githooks` **empty**, `rmdir`, `mv` and
+ * `rm -rf` are all refused; with it **absent**, `mkdir` and `ln -s /tmp
+ * .githooks` are refused too. Nothing depends on a file being in there.
+ * `sandbox.boundary.test.ts` asserts exactly that, on an empty directory, so a
+ * future srt that stopped emitting those rules fails there rather than silently.
  */
 export const TRACKED_HOOKS_GLOB = `${TRACKED_HOOKS_DIR}/**`
 
