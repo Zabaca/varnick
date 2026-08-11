@@ -20,21 +20,28 @@ this in the live tree*.
 ```
 FENCE_PATHS      packages/harness/**   src-tauri/**   sandbox-policy.baseline.json
 PROTECTED_PATHS  …those, plus          sandbox-policy.json   scripts/**
-                 plus  .githooks/**    — NOT on denyWrite today; see below
+                 plus  .githooks/**
                  plus, in package.json: preinstall | postinstall | prepare
 denyWrite        …those, plus          packages/core/**   vite.config.*   package.json
                                        .git/hooks/**   .git/config*
 ```
 
-The middle list is strictly larger than the first, and **is intended to be**
-strictly smaller than the third. It is not, quite, today: `.githooks/**` is
-protected here and is a grant by omission in `sandbox.ts` — the one row marked
-above, closed by ticket 01 of this feature. Saying "is" rather than "is intended
-to be" was wrong in this document for one round of review, which is the reason
-the containment lives in `fence.test.ts` as an assertion with a named exception
-rather than in this paragraph. **A comment that describes a containment is a
-comment that goes on describing it after it stops being true**, and this one had
-already started to.
+The middle list is strictly larger than the first and strictly smaller than the
+third.
+
+That was not true when this document was first written. `.githooks/**` was
+protected here while remaining a grant by omission in `sandbox.ts`, and this
+paragraph said "is" when it should have said "is intended to be" — wrong, in a
+security document, for one round of review. Ticket 01 closed it at the merge,
+and the exception `fence.test.ts` carried to keep the claim honest went red the
+moment it did, which is what forced its removal rather than leaving it to
+somebody's memory.
+
+The episode is the argument for where the containment lives. **A comment that
+describes a containment goes on describing it after it stops being true.** The
+assertion in `fence.test.ts` does not: it is unconditional now, it forgives
+nothing, and a future entry that is protected without being denied fails it on
+the spot.
 
 ## Why not one list
 
@@ -77,14 +84,13 @@ Three assertions, each of which fails on a specific future mistake:
 - **Every protected path is a path the agent cannot write in the live tree.** A
   rule about merging is worth nothing over a file the agent can simply write.
 
-The third has one accounted-for exception today, `.githooks/**`, which is a
-*grant by omission* in the sandbox policy — hooks were moved there so the agent
-could write them and a human would read them in a diff. That argument survives
-this list, because a landing gate is precisely the human in the diff. It does not
-survive the live tree, where a written hook is on no branch at all. Ticket 01 of
-this feature closes it; the exception is named in the test with that sentence
-beside it, and the test checks that the exception is an entry of the list it
-excuses, so a typo cannot silence a real one.
+The third held one accounted-for exception while this feature was being built:
+`.githooks/**` was a *grant by omission* in the sandbox policy, because hooks
+were moved there so the agent could write them and a human would read them in a
+diff. That argument survives this list, since a landing gate is precisely the
+human in the diff. It does not survive the live tree, where a written hook is on
+no branch at all. Ticket 01 closed it, and the third assertion is unconditional
+now.
 
 ## Why the manifest is read rather than refused
 

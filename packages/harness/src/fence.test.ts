@@ -650,8 +650,6 @@ describe('the verdict on a whole change', () => {
  * of this feature closes it; when it lands, the entry below stops doing
  * anything and should go.
  */
-const PROTECTED_BUT_NOT_YET_DENIED: readonly string[] = [`${TRACKED_HOOKS_DIR}/**`]
-
 describe('how the three lists relate', () => {
   test('everything the Fence covers may also not be landed', () => {
     /*
@@ -691,40 +689,19 @@ describe('how the three lists relate', () => {
     /*
       The containment the spec states: this list is smaller than `denyWrite`.
       An entry here that the live tree lets the agent write is a rule the agent
-      can get around without a merge at all, so a new one has to be denied or
-      explicitly accounted for above.
+      can get around without a merge at all.
+
+      This was written with an accounted-for exception, because `.githooks/**`
+      was protected here before ticket 01 denied it, and with two tests holding
+      the exception honest — one checking it named a real entry, one going red
+      the moment the deny landed. It did, at the merge, and the only fix was to
+      delete it. The assertion below is what it was always meant to become:
+      unconditional, with no list of things it forgives.
     */
     const denyWrite = denyWriteFor(CLONE)
 
     for (const entry of PROTECTED_PATHS) {
-      if (PROTECTED_BUT_NOT_YET_DENIED.includes(entry)) continue
       expect(denyWrite).toContain(`${CLONE}/${entry}`)
-    }
-  })
-
-  test('the accounted-for exceptions are entries of the list they except', () => {
-    // A typo here would silence a real entry, so the exception list is checked
-    // against the list it excuses rather than trusted.
-    for (const entry of PROTECTED_BUT_NOT_YET_DENIED) {
-      expect(PROTECTED_PATHS as readonly string[]).toContain(entry)
-    }
-  })
-
-  test('every accounted-for exception is still needed', () => {
-    /*
-      The half that makes the exception self-clearing rather than permanent.
-
-      Listing an entry here is a claim that the live tree really does still let
-      the agent write it. The moment ticket 01 adds `.githooks/**` to
-      `denyWrite`, this goes red and the only fix is to delete the entry above —
-      which is the point. An exception that outlives its reason is indis-
-      tinguishable from a rule, and it would sit here excusing a real gap on the
-      next entry somebody adds.
-    */
-    const denyWrite = denyWriteFor(CLONE)
-
-    for (const entry of PROTECTED_BUT_NOT_YET_DENIED) {
-      expect(denyWrite).not.toContain(`${CLONE}/${entry}`)
     }
   })
 
