@@ -7,11 +7,11 @@ varnick is a desktop harness for a coding agent: a sandbox, credential injection
 ### The two spaces
 
 **Core**:
-The harness and the chat — the code that confines the agent, injects its credentials, resolves its secrets, and holds the conversation. The agent cannot write to it; see [ADR-0002](./docs/adr/0002-core-userspace-boundary.md).
+The harness and the chat — the code that confines the agent, injects its credentials, resolves its secrets, and holds the conversation. The agent cannot write to it; see [ADR-0002](./docs/adr/0002-core-userspace-boundary.md). What the agent cannot *write* it still shares a realm with: a loaded Surface runs in Core's webview, with Core's globals and Core's bridge to the host ([ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md)).
 _Avoid_: framework, platform, engine, shell (the shell is a surface, not the harness)
 
 **Userspace**:
-Everything built inside a clone of varnick that is not Core. The agent writes here freely, and a failure here must never take Core down with it.
+Everything built inside a clone of varnick that is not Core. The agent writes here freely, and a failure here must never take Core down with it. That separation is about *fault* and not about privilege — see [ADR-0021](./docs/adr/0021-userspace-shares-cores-realm.md), which records what a Surface can reach across the bridge and why nothing about a dynamic import makes it a trust boundary.
 _Avoid_: plugins, extensions, user code (all imply an API contract varnick deliberately does not have)
 
 **Surface**:
