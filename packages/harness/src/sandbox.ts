@@ -29,7 +29,7 @@ import {
 // boundary — and the alternative is not watching the kernel at all.
 import { startMacOSSandboxLogMonitor } from '@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js'
 import { agentSdkEntry, developerToolsBin, sandboxEnvOverlay } from './agent.ts'
-import { requireCloneRoot } from './clone-root.ts'
+import { POLICY_ROOT_ENV_VAR, requireCloneRoot, requirePolicyRoot } from './clone-root.ts'
 
 /**
  * Binaries the agent cannot **open for reading**. It can still run them.
@@ -1976,6 +1976,15 @@ export interface EstablishedSandbox {
   /** The clone this Sandbox was established for. */
   readonly cloneRoot: string
   /**
+   * The clone whose policy is in force, which is the clone root unless this is
+   * a **Preview**.
+   *
+   * Carried so that "which policy confines this agent" is a fact a caller can
+   * read rather than one it has to re-derive from a path. `path` is the file
+   * and this is the tree it was found in.
+   */
+  readonly policyRoot: string
+  /**
    * What the policy file did on the way here: your edits, varnick's
    * strengthenings, and which is which. Already printed to stderr by
    * `establishSandbox` — carried here so a surface can render the same thing
@@ -1993,11 +2002,96 @@ export interface EstablishedSandbox {
 }
 
 /**
+ * Another tree's policy, exactly as that tree has it — a **Preview**'s fence.
+ *
+ * The counterpart of `ensureSandboxPolicy` and deliberately not a variant of
+ * it: nothing here generates, merges, attributes or writes. What a Preview is
+ * confined by has to be the bytes a human merged and a developer can read,
+ * because the *code* that would otherwise produce it is the code being
+ * previewed.
+ *
+ * A tree with no policy file refuses. That is not a defensive branch — it is
+ * the only interesting one: the live tree has a policy from the moment its own
+ * varnick started, so an absent file means the parent host named the wrong
+ * tree, and the fallback that suggests itself is generating one from the
+ * Worktree's generator, which is the escalation being closed.
+ *
+ * The report carries no changes and one line. It is printed on every Preview
+ * launch, which is where "this window is fenced by the tree you merged" is
+ * worth saying — the alternative is a second varnick that looks identical to
+ * the first and is confined by something else.
+ */
+function policyInForceAt(
+  policyRoot: string,
+  cloneRoot: string,
+): { policy: SandboxPolicy; path: string; report: SandboxPolicyReport } {
+  const path = sandboxPolicyPath(policyRoot)
+  const policy = readSandboxPolicy(policyRoot)
+  if (policy === null) {
+    throw new Error(
+      `There is no ${SANDBOX_POLICY_FILENAME} in ${policyRoot}, so there is no policy in force to confine ${cloneRoot} with. varnick will not generate one from the tree being previewed — that tree's generator is the thing a preview exists to try out. Start the varnick at ${policyRoot} once, or unset ${POLICY_ROOT_ENV_VAR}.`,
+    )
+  }
+  return {
+    policy,
+    path,
+    report: {
+      outcome: 'unchanged',
+      yours: [],
+      ours: [],
+      unattributed: false,
+      lines: [
+        `varnick: ${cloneRoot} is confined by ${path}`,
+        '  A preview is fenced by the policy in force in the tree it was launched from,',
+        '  not by the one in the worktree it is previewing. A change to the generator',
+        '  here decides nothing until a human merges it and restarts.',
+      ],
+    },
+  }
+}
+
+export interface EstablishSandboxInput extends SandboxPolicyInput {
+  /**
+   * The clone whose policy in force confines this agent. Defaults to
+   * `cloneRoot`.
+   *
+   * Different from the clone root in exactly one situation: a **Preview**,
+   * which works in a **Worktree** and is confined by the live tree. See
+   * {@link establishSandbox} for what changes when the two differ, and
+   * docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md for why.
+   */
+  readonly policyRoot?: string
+}
+
+/**
  * Establish the sandbox, or fail.
  *
  * There is no third outcome. A root that is not there, an unsupported platform,
  * a missing dependency, a policy the schema rejects, and a proxy that will not
  * start all raise; none of them degrade to running the agent unconfined.
+ *
+ * ## Two roots, and only a Preview has two
+ *
+ * `cloneRoot` is where the agent works. `policyRoot` is whose policy confines
+ * it, and it defaults to the same directory — which is every varnick a
+ * developer launches, unchanged.
+ *
+ * A **Preview** is the case where they differ: it works in a Worktree and is
+ * confined by the tree the Worktree hangs off. Three things follow, and each is
+ * the opposite of what the single-root path does.
+ *
+ *   * **The policy is read, never generated.** `ensureSandboxPolicy` writes the
+ *     file it ensures, and the file here belongs to the live tree — the one
+ *     `denyWrite` keeps the agent out of. A Preview that regenerated it would
+ *     be the agent editing the live boundary through a second process, which is
+ *     a longer way round to the thing this whole arrangement closes.
+ *   * **A missing policy refuses.** There is nothing weaker to fall back to,
+ *     and the fallback that suggests itself — generate one for the Worktree —
+ *     is the escalation: the generator in a Worktree is code the agent wrote.
+ *   * **The Worktree is covered by the policy it did not generate**, because
+ *     `.claude/worktrees/<name>` is inside the live clone and `allowRead` and
+ *     `allowWrite` name that clone. {@link requirePolicyRoot} is what holds
+ *     that true rather than assuming it.
  *
  * ## The root is an argument, and it used to be a working directory
  *
@@ -2013,9 +2107,10 @@ export interface EstablishedSandbox {
  * which names a file they never created inside a directory they no longer have.
  */
 export async function establishSandbox(
-  input: SandboxPolicyInput,
+  input: EstablishSandboxInput,
 ): Promise<EstablishedSandbox> {
   const cloneRoot = requireCloneRoot(input.cloneRoot)
+  const policyRoot = requirePolicyRoot(input.policyRoot, cloneRoot)
 
   if (!SandboxManager.isSupportedPlatform()) {
     throw new Error(
@@ -2028,7 +2123,10 @@ export async function establishSandbox(
     throw new Error(`sandbox-runtime dependencies are missing: ${deps.errors.join(', ')}`)
   }
 
-  const { policy, path, report } = ensureSandboxPolicy({ ...input, cloneRoot })
+  const { policy, path, report } =
+    policyRoot === cloneRoot
+      ? ensureSandboxPolicy({ ...input, cloneRoot })
+      : policyInForceAt(policyRoot, cloneRoot)
 
   // Printed, not returned and forgotten. A clone whose boundary is weaker than
   // the one varnick generates has to learn about it somewhere a developer
@@ -2055,6 +2153,7 @@ export async function establishSandbox(
     policy,
     path,
     cloneRoot,
+    policyRoot,
     report,
     wrap: async (command: string) => {
       const { argv, env } = await SandboxManager.wrapWithSandboxArgv(command, WRAPPING_SHELL)

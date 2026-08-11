@@ -21,8 +21,10 @@
 // `fence` is the fourth, and it is on the list for a reason the other three do
 // not have. It is not a capability behind the bridge: it is one pure function
 // over one path, and Core's diff view has to ask exactly the question the
-// pending-worktree list and the Preview dialog ask. Three glob lists would
-// drift, and the drift is invisible — see ./fence.ts.
+// pending-worktree list asks. Two glob lists would drift, and the drift is
+// invisible — see ./fence.ts. There were three callers until previews stopped
+// being an escalation and the dialog that was the third went with it
+// (ADR-0019).
 //
 // Four responsibilities, each with an ADR behind it:
 //   sandbox      — @anthropic-ai/sandbox-runtime around the agent's whole
@@ -67,15 +69,13 @@ export {
 } from './agent.ts'
 
 export {
-  FENCE_BASELINE_FILE,
-  FENCE_DIRECTORIES,
   LAUNCH_PREVIEW_TOOL,
   PREVIEW_OUTCOMES,
-  fenceHunks,
-  isFencePath,
   previewOutcomeMessage,
   type PreviewOutcome,
 } from './preview.ts'
+
+export { FENCE_PATHS, isFencePath, touchesFence } from './fence.ts'
 
 export {
   DEFAULT_ALLOWED_HOSTS,
@@ -97,6 +97,7 @@ export {
   validateSandboxPolicy,
   type EnsuredSandboxPolicy,
   type EstablishedSandbox,
+  type EstablishSandboxInput,
   type PolicyChange,
   type SandboxPolicy,
   type SandboxPolicyInput,
@@ -111,7 +112,9 @@ export {
 // see docs/adr/0012-the-clone-root-is-an-input.md.
 export {
   CLONE_ROOT_ENV_VAR,
+  POLICY_ROOT_ENV_VAR,
   cloneRootFromLaunch,
   requireCloneRoot,
+  requirePolicyRoot,
   type CloneRootChecks,
 } from './clone-root.ts'

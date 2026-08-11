@@ -2142,7 +2142,6 @@ export default function Billing() {
     readCommands: unreached,
     listWorktrees: unreached,
     liveTreeDirty: unreached,
-    readFenceDiff: unreached,
     readWorktreeDiff: unreached,
     mergeWorktree: unreached,
     reapWorktree: unreached,

@@ -68,6 +68,25 @@ pub const RUNNER_VAR: &str = "VARNICK_HARNESS_RUNNER";
 /// cannot read this one.
 pub const CLONE_ROOT_VAR: &str = "VARNICK_CLONE_ROOT";
 
+/// The environment variable that chooses whose policy confines the agent.
+///
+/// Unset in a varnick a developer launched, where the answer is this clone.
+/// Set by a *parent* varnick when it spawns a **Preview** — see
+/// `preview_launch` in preview.rs — and it names the parent's own tree, so a
+/// Worktree that rewrote the sandbox policy generator still runs under the
+/// version a human merged. That is what replaced the approval dialog; see
+/// docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md.
+///
+/// Read here and nowhere else, like the clone root beside it, and handed to the
+/// runtime as an argument for the same reason. Mirrored as
+/// `POLICY_ROOT_ENV_VAR` in packages/harness/src/clone-root.ts.
+///
+/// It decides one thing more, in credential.rs: a varnick that was given a
+/// policy root was given a Credential too, and does not open the Keychain. One
+/// variable, because being confined by a parent and being credentialled by one
+/// are the same fact about the same launch.
+pub const POLICY_ROOT_VAR: &str = "VARNICK_POLICY_ROOT";
+
 /// Why a call produced no answer.
 ///
 /// Mirrored as `HarnessFailure` in packages/harness/src/bridge.ts. A tag, not a
@@ -436,32 +455,6 @@ impl HarnessRuntime {
             .collect())
     }
 
-    /// Ask the runtime what a Worktree changes about the **Fence**.
-    ///
-    /// Host-internal like `agent_wrapping` and `secret_names`, and absent from
-    /// `route_of` for the same reason: it is a step inside answering a Preview,
-    /// not a capability the renderer has. Keeping it off that list also keeps
-    /// the webview — which the agent writes Surfaces for — from being able to
-    /// ask what a diff of the fence looks like, or to be told one that is not
-    /// the truth.
-    ///
-    /// The worktree is an absolute path this process resolved out of
-    /// `git worktree list`. Nothing the agent typed reaches here.
-    ///
-    /// Hunks, and there is no shape on this answer that could carry anything
-    /// else: the runtime rebuilds the reply to one string, and this reads one
-    /// string back out of it.
-    pub fn fence_diff(&self, worktree: &str) -> Result<String, Failure> {
-        let answer = self.call(&serde_json::json!({
-            "kind": "read-fence-diff",
-            "worktree": worktree,
-        }))?;
-        match answer.get("hunks").and_then(Value::as_str) {
-            Some(hunks) => Ok(hunks.to_string()),
-            None => Err(Failure::of("malformed")),
-        }
-    }
-
     /// Ask the runtime to do one thing.
     ///
     /// Calls are serialised by the lock. That is not a limitation worked around:
@@ -536,12 +529,25 @@ fn start_runtime() -> Result<Channel, Failure> {
     let root = checked_clone_root(clone_root(std::env::var(CLONE_ROOT_VAR).ok()))?;
 
     let mut child = Command::new(runtime_runner(std::env::var(RUNNER_VAR).ok()))
-        // Two paths, and they are two different questions. The entry is where
-        // varnick's own code is — the build path, which ADR-0008 records as
-        // unsolved for packaging. The argument after it is the clone the agent
-        // works in, which is now a choice.
+        // Three paths, and they are three different questions. The entry is
+        // where varnick's own code is — the build path, which ADR-0008 records
+        // as unsolved for packaging. The argument after it is the clone the
+        // agent works in, which is now a choice.
         .arg(runtime_entry(std::env::var(ENTRY_VAR).ok()))
         .arg(&root)
+        /*
+          And the third: whose policy confines it, which is the same directory
+          in every launch but a Preview's.
+
+          Passed as an empty string rather than omitted when there is none. The
+          runtime reads positional arguments, so a hole in the middle of them
+          would be an argument list whose meaning depends on its length — and
+          `requirePolicyRoot` already reads an empty value as "this clone's
+          own", which is the answer. Nothing is validated here: unlike the clone
+          root, this host does not spawn anything in it, and the runtime refuses
+          with a sentence naming the path.
+        */
+        .arg(std::env::var(POLICY_ROOT_VAR).unwrap_or_default())
         // Still set, and no longer load-bearing. The runtime reads its root from
         // the argument above; this only keeps relative resolution inside the
         // runtime agreeing with it. Nothing downstream infers the clone from it
@@ -663,8 +669,15 @@ fn answer(request: Value, app: &tauri::AppHandle) -> Result<Value, Failure> {
             // serialises to `{ source }` and `Secret` has no `Serialize` at all,
             // so the value has no way through even if this line were wrong.
             "read-credential" => {
-                let reading =
-                    crate::credential::read_credential(&credentials).map_err(Failure::refused)?;
+                // A Preview does not open the Keychain: its parent already
+                // injected a Credential into the environment this reads. One
+                // variable answers both halves of that — see
+                // `confined_by_parent` in preview.rs.
+                let keychain = !crate::preview::confined_by_parent(
+                    std::env::var(POLICY_ROOT_VAR).ok(),
+                );
+                let reading = crate::credential::read_credential(&credentials, keychain)
+                    .map_err(Failure::refused)?;
                 serde_json::to_value(reading).map_err(|_| Failure::of("malformed"))
             }
             /*
@@ -1087,23 +1100,23 @@ mod tests {
     }
 
     #[test]
-    fn the_renderer_cannot_ask_for_a_preview_or_for_what_one_would_show() {
+    fn the_renderer_cannot_ask_for_a_preview() {
         /*
-          Neither half of a Preview is on this bridge, and both are absent for
-          their own reason.
+          Neither half of a Preview is on this bridge.
 
           `launch-preview` is not a call at all — it arrives on the agent's own
           stdout, from inside the Sandbox, because the agent is who asks. A
           renderer that could send one would be a Surface — Userspace, which the
-          agent writes freely — able to start an unconfined varnick from a
-          worktree the agent also wrote, with no dialog and no agent in the loop.
-          That is the whole escalation path with its one gate removed.
+          agent writes freely — able to start a second varnick from a worktree
+          the agent also wrote, with nothing in the conversation to show for it.
+          A Preview is confined by this tree's policy now (ADR-0019), so that is
+          no longer an escalation; it is still a window nobody asked for, opened
+          by the half of the product the agent writes.
 
-          `read-fence-diff` is the runtime's, but — like `wrap-agent-command`
-          and `read-secret-names` — only when this process asks, as a step inside
-          answering a Preview. The window has no reason to hold a diff of the
-          fence, and a window that could ask for one is a window that could be
-          answered with a different one.
+          `read-fence-diff` was here, as a host-internal call for the diff the
+          approval dialog showed. Both went with the dialog — there is nothing
+          to approve, so there is nothing to show. `route_of` never carried it,
+          and now nothing does.
         */
         assert_eq!(route_of("launch-preview"), None);
         assert_eq!(route_of("preview-answer"), None);

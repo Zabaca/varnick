@@ -1899,20 +1899,26 @@ describe('asking the host for a preview', () => {
     expect(previewToolResult(answers[0] as PreviewOutcome).launched).toBe(true)
   })
 
-  test('declining reaches the agent as a declined tool call rather than as a launch', async () => {
-    // The ticket's own criterion: declining the dialog launches nothing and
-    // tells the agent it was declined.
+  test('a launch that did not happen reaches the agent as a tool call that did not launch', async () => {
+    /*
+      There is no `declined` any more — a Preview is confined by the live tree's
+      policy, so there is nothing for a developer to approve and no dialog to
+      say no at (ADR-0019). What is left are the outcomes where the host tried
+      and there is no window, and the agent has to be able to tell one of those
+      from a launch: an agent that went on to describe what the preview shows
+      would be describing a window nobody opened.
+    */
     const answers: PreviewOutcome[] = []
     await serve(async ({ control, askForPreview, written }) => {
       const asking = askForPreview('agent-one').then((outcome) => answers.push(outcome))
       await settle()
-      control.push(answerLine(requested(written)[0]?.requestId as string, 'declined'))
+      control.push(answerLine(requested(written)[0]?.requestId as string, 'no-launch'))
       await asking
     })
-    expect(answers).toEqual(['declined'])
+    expect(answers).toEqual(['no-launch'])
     const result = previewToolResult(answers[0] as PreviewOutcome)
     expect(result.launched).toBe(false)
-    expect(result.text).toContain('declined')
+    expect(result.text).toContain('Nothing is running from it')
   })
 
   test('the request carries a name and has no field a command could arrive in', async () => {
@@ -1934,13 +1940,14 @@ describe('asking the host for a preview', () => {
       const two = askForPreview('agent-two').then((outcome) => answers.push(`two:${outcome}`))
       await settle()
       // The second answered first. A loop that paired these up by arrival would
-      // tell the agent that the worktree it did not ask about was declined.
-      control.push(answerLine('preview-2', 'declined'))
+      // tell the agent that the worktree it did not ask about is the one with
+      // no window.
+      control.push(answerLine('preview-2', 'no-launch'))
       await settle()
       control.push(answerLine('preview-1', 'launched'))
       await Promise.all([one, two])
     })
-    expect(answers).toEqual(['two:declined', 'one:launched'])
+    expect(answers).toEqual(['two:no-launch', 'one:launched'])
   })
 
   test('an answer to a request nobody is waiting for changes nothing', async () => {
@@ -1953,8 +1960,8 @@ describe('asking the host for a preview', () => {
       // Replayed, and again for a request that never existed. A promise
       // resolved twice would be a tool call answered by whichever line arrived
       // last rather than by the developer's decision.
-      control.push(answerLine('preview-1', 'declined'))
-      control.push(answerLine('preview-99', 'declined'))
+      control.push(answerLine('preview-1', 'no-launch'))
+      control.push(answerLine('preview-99', 'no-launch'))
       await settle()
     })
     expect(answers).toEqual(['launched'])
