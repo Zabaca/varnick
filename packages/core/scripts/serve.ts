@@ -7,7 +7,9 @@
  * `packages/core/dev-server.ts`:
  *
  *   * the **live tree** is served a built artifact out of `.varnick/builds/`,
- *     as files, with nothing watching anything;
+ *     as files, with nothing watching the frontend — `tauri dev`'s own watcher
+ *     on `src-tauri/**` is untouched and is the one exception, named in
+ *     ADR-0020;
  *   * a **Worktree** — a Preview — runs the Vite dev server exactly as before,
  *     `core-reloads` plugin and all, because a Preview exists so a change can be
  *     used before it is merged and hot reloading is what makes that worth doing.
@@ -78,8 +80,23 @@ if (windowSource(buildRoot) === 'dev-server') {
 
 /** The artifact `served` names, if it is there. */
 function servedArtifact(): { id: string; root: string } | null {
-  const marker = servedMarkerPath(buildRoot)
-  const id = servedArtifactId(existsSync(marker) ? readFileSync(marker, 'utf-8') : undefined)
+  /*
+    Read inside a try, because every way this can fail means the same thing and
+    none of them may throw. `served` could be a directory, could be unreadable,
+    could vanish between the check and the read — and a throw here happens
+    before the listener binds, so the Tauri CLI waits on a port that never opens
+    and the developer gets a terminal saying "waiting for your frontend dev
+    server" with no window and no reason. Nothing served is a state this file
+    has a page for; an unreadable marker is that state.
+  */
+  let marker: string | undefined
+  try {
+    marker = readFileSync(servedMarkerPath(buildRoot), 'utf-8')
+  } catch {
+    marker = undefined
+  }
+
+  const id = servedArtifactId(marker)
   if (id === null) return null
   const root = artifactPath(buildRoot, id)
   // A marker naming an artifact that is not there is *not* the same as no

@@ -20,13 +20,11 @@
  * the ground under the window they left open.
  */
 
-import { cpSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   LOCAL_ARTIFACT_ID,
-  artifactPath,
-  artifactStore,
-  incomingArtifactPath,
+  installArtifact,
   servedMarkerPath,
   servedMarkerText,
 } from '../artifacts.ts'
@@ -51,35 +49,25 @@ if (code !== 0) {
   process.exit(code)
 }
 
-const dist = join(buildRoot, 'packages/core/dist')
-const artifact = artifactPath(buildRoot, LOCAL_ARTIFACT_ID)
-const incoming = incomingArtifactPath(buildRoot, LOCAL_ARTIFACT_ID)
-if (artifact === null || incoming === null) {
-  throw new Error(`${LOCAL_ARTIFACT_ID} is not a usable artifact id`)
-}
+/*
+  One call, and the sequence behind it is `installArtifact` in
+  `packages/core/artifacts.ts` rather than four lines here.
 
-mkdirSync(artifactStore(buildRoot), { recursive: true })
+  That placement is the point. A release writes an artifact too and has no
+  reason to open this file, so a copy of the sequence written over there would
+  be a copy with the `dereference` left off — and nothing would notice, because
+  what it costs is a symlink inside an artifact putting a path outside it behind
+  a URL. One implementation, beside the paths it uses.
+*/
+const artifact = installArtifact(buildRoot, LOCAL_ARTIFACT_ID, join(buildRoot, 'packages/core/dist'))
 
 /*
-  Assembled beside its final place and renamed into it, so an artifact appears
-  whole or not at all — see `incomingArtifactPath`. A copy straight into the
-  served directory leaves a window in which the store holds half a build that
-  `served` already points at, and a launch inside that window opens on a page
-  whose script is not there.
-
-  `dereference` so what lands is a tree of ordinary files. Vite's output has no
-  symlinks in it today; an artifact that did would put a path outside itself
-  behind a URL, which `assetPath` cannot see because it resolves lexically. The
-  cheap place to close that is here, where the tree is written, rather than in
-  the request path where it would cost a `realpath` per file.
+  Last, and separately, because writing an artifact and choosing to serve it are
+  two acts. `installArtifact` deliberately does not do this: a release performs
+  only the first half, and the window a developer left open must not move
+  because something was built. `bun run build` is the case where switching is
+  exactly what was asked for.
 */
-rmSync(incoming, { recursive: true, force: true })
-cpSync(dist, incoming, { recursive: true, dereference: true })
-rmSync(artifact, { recursive: true, force: true })
-renameSync(incoming, artifact)
-
-// Last, and only once the artifact is whole: this is the line that points a
-// window at it.
 writeFileSync(servedMarkerPath(buildRoot), servedMarkerText(LOCAL_ARTIFACT_ID))
 
 console.log(`artifact ${LOCAL_ARTIFACT_ID} written to ${artifact} and served`)

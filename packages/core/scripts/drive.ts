@@ -8,7 +8,17 @@
  *
  * Run: bun run drive
  */
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createActor, fromPromise, waitFor } from 'xstate'
@@ -65,6 +75,7 @@ import {
   artifactPath,
   artifactStore,
   incomingArtifactPath,
+  installArtifact,
   isArtifactId,
   servedArtifactId,
   servedMarkerPath,
@@ -6456,6 +6467,77 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     'a sibling artifact cannot be reached from inside one',
     assetPath(root, '/../0.2.0-1/index.html') === null,
   )
+
+  /*
+    The install, run for real against a temporary tree.
+
+    This is the one thing in the store that is not a pure function, and it is
+    also the one carrying a property nothing else can see: a symlink inside an
+    artifact would put a path outside it behind a URL, because `assetPath`
+    resolves lexically and `Bun.file` follows links. `dereference` is what
+    closes that, at the moment the tree is written.
+
+    So it is asserted by planting exactly that — a link out of the build,
+    pointing at a file the artifact must not be able to serve — and checking
+    what lands. A comment saying `dereference: true` is there is not the same
+    fact, and a release writing artifacts through this function is why the
+    difference matters: ticket 06 gets the property rather than the reminder.
+  */
+  const scratch = mkdtempSync(join(tmpdir(), 'varnick-drive-'))
+  try {
+    const source = join(scratch, 'dist')
+    mkdirSync(join(source, 'assets'), { recursive: true })
+    writeFileSync(join(source, 'index.html'), '<!doctype html>built')
+    writeFileSync(join(scratch, 'outside-the-artifact'), 'a secret')
+    symlinkSync(join(scratch, 'outside-the-artifact'), join(source, 'assets', 'escape.txt'))
+
+    const landed = installArtifact(scratch, '0.2.0-1', source)
+    check('an install lands where the id says it does', landed === artifactPath(scratch, '0.2.0-1'))
+    check('and what it wrote is there', readFileSync(join(landed, 'index.html'), 'utf-8') === '<!doctype html>built')
+
+    const planted = join(landed, 'assets', 'escape.txt')
+    check(
+      'a symlink in a build lands as an ordinary file, not as a link out of the artifact',
+      !lstatSync(planted).isSymbolicLink(),
+    )
+    check('with the content copied in', readFileSync(planted, 'utf-8') === 'a secret')
+
+    // Nothing is left half-written, and the assembly directory does not survive
+    // a successful install.
+    check(
+      'the directory a build is assembled in is gone afterwards',
+      !existsSync(incomingArtifactPath(scratch, '0.2.0-1') ?? ''),
+    )
+
+    /*
+      And installing does not decide what is served. A release writes an
+      artifact and leaves the developer's window where it was; making that the
+      default is what keeps a caller from having to remember it.
+    */
+    check('an install writes no marker', !existsSync(servedMarkerPath(scratch)))
+
+    // Installing over an existing artifact replaces it wholesale rather than
+    // merging, so a file from a previous build cannot survive into this one.
+    const second = join(scratch, 'dist-two')
+    mkdirSync(second, { recursive: true })
+    writeFileSync(join(second, 'index.html'), '<!doctype html>rebuilt')
+    installArtifact(scratch, '0.2.0-1', second)
+    check(
+      'a second install replaces rather than merges',
+      readFileSync(join(landed, 'index.html'), 'utf-8') === '<!doctype html>rebuilt' &&
+        !existsSync(join(landed, 'assets')),
+    )
+
+    let refused = false
+    try {
+      installArtifact(scratch, '../escape', source)
+    } catch {
+      refused = true
+    }
+    check('and an id that is not one installs nothing anywhere', refused)
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
 
   /*
     An artifact is a build of one clone on one machine. It is not history, and a

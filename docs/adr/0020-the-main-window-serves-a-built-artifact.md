@@ -76,12 +76,29 @@ a text editor.
 
 **`bun run build` writes the store.** Vite still writes `packages/core/dist`;
 that directory is then installed as the artifact `local` and `served` is pointed
-at it. **An artifact appears whole or not at all** — the build is assembled in
+at it. **Nothing ever observes half an artifact** — the build is assembled in
 `.<id>.incoming` and renamed into place, because a copy straight into the served
-directory leaves a window in which the store holds half a build that `served`
+directory leaves a window in which the store holds part of a build that `served`
 already points at, and a launch inside that window opens on a page whose script
 is not there. The leading dot means an assembly directory can never itself be
-served: it is a name `isArtifactId` refuses. A developer who typed `bun run build` asked for this tree, now — which is
+served: it is a name `isArtifactId` refuses.
+
+**Whole or absent, not whole or previous**, and the difference is worth stating
+because the stronger claim is the one to reach for. POSIX `rename` will not
+replace a non-empty directory, so the old artifact is removed first and there is
+a moment when the id names nothing at all. A launch inside *that* window reads
+"nothing served" — a state the artifact server already has a page and a rebuild
+for — where a launch inside the other one gets a page whose script is missing.
+Closing the remaining gap means swapping a symlink, the one operation that is
+atomic against a live path, and symlinks were turned down above for a reason
+worth keeping.
+
+Both properties are held in one place, `installArtifact` in
+`packages/core/artifacts.ts`, rather than at the call site. A release writes an
+artifact too and has no reason to read `build.ts` — so a second implementation
+of the sequence would be one with the `dereference` left off, which reopens the
+symlink case silently. `drive.ts` asserts it by planting a symlink out of a
+build and checking what lands. A developer who typed `bun run build` asked for this tree, now — which is
 the opposite of a pre-release, cut while somebody is asleep, and the reason the
 two are different code paths rather than one with a flag.
 

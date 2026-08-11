@@ -365,8 +365,9 @@ The two have separate Sessions, because the mirror is keyed by clone root
 
 **The live tree's window is a built artifact, and a Worktree's is the dev
 server.** `bun tauri dev` in the clone serves `.varnick/builds/<id>/` as files,
-with nothing watching anything — so work landing in the live tree cannot reload
-a window you left open. The same command inside `.claude/worktrees/<name>` runs
+with nothing watching the frontend — so work landing in the live tree cannot
+reload a window you left open. (`tauri dev` still watches `src-tauri/**` and
+restarts the host on a Rust change; that watcher is deliberately left alone.) The same command inside `.claude/worktrees/<name>` runs
 Vite exactly as it always did, because that is a **Preview** and running a change
 is the point of one. See
 [ADR-0020](docs/adr/0020-the-main-window-serves-a-built-artifact.md), which also
