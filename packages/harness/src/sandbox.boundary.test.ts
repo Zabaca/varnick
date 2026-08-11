@@ -632,9 +632,12 @@ test.skipIf(blocked !== null)(
 
     console.log(
       'boundary probe: .git/hooks, .git/config and the tracked' +
-        ` ${TRACKED_HOOKS_DIR}/ are refused by the kernel — including through git's own` +
-        ' lock-and-rename — while worktree add, commit, merge, a hook authored in a' +
-        ' worktree and a hook git runs from the live tree all still work.',
+        ` ${TRACKED_HOOKS_DIR}/ are refused by the kernel — including the directory node` +
+        " itself, and including through git's own lock-and-rename — while worktree add," +
+        ' commit, merge, a hook authored in a worktree and a hook git runs from the live' +
+        ' tree are all permitted. The git half is measured with GIT_CONFIG_GLOBAL pinned:' +
+        ' an unreadable ~/.gitconfig is fatal to every git command under this policy, which' +
+        ' is a read-allowlist gap tracked separately and not this boundary.',
     )
   },
   120_000,

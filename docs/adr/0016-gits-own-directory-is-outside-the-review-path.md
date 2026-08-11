@@ -107,6 +107,18 @@ Measured in `sandbox.boundary.test.ts`: a write to the live tree's
 `.claude/worktrees/…` succeeds, and git still runs the hook it finds once one is
 there.
 
+**One qualification on that last clause, because it is the kind that gets
+dropped.** The hook-running half is measured with `GIT_CONFIG_GLOBAL` pinned in
+the probe, and it needs to be: git treats an unreadable `~/.gitconfig` as fatal,
+and `$HOME` is denied by design, so on a machine whose developer has a global
+git config *every* git command inside the Sandbox exits 128 — `git --version`
+included, since git stats the global config before dispatching a subcommand.
+That is a read-allowlist gap rather than anything this ADR decided, it is
+independent of the hooks deny (measured with the deny in force and with it
+absent: identical either way), and it is tracked as its own ticket. Until it is
+closed, read every "git still works" sentence in this ADR as *permitted by the
+policy*, which is what it measures, rather than as *works on your machine*.
+
 **Why this was not visible in the original.** The two denials this ADR added
 were chosen by the property "no diff shows this", and `.githooks/` genuinely
 does not have that property. It has a different one — "no diff shows this *yet*"
