@@ -11,6 +11,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createActor, fromPromise, waitFor } from 'xstate'
 import {
   harnessMachine,
@@ -58,10 +59,11 @@ import {
   sharedTargetDir,
 } from '../dev-server.ts'
 import {
-  VERSION_IDENTIFIER,
+  VERSION_MODULE_ID,
+  VERSION_MODULE_RESOLVED,
   displayedVersion,
-  versionDefine,
   versionFromManifest,
+  versionModuleSource,
 } from '../version.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { CREDENTIAL_SHAPE_PROBE } from '@varnick/harness/credentials'
@@ -6461,29 +6463,36 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   )
 
   /*
-    The wiring, asserted here rather than found out by opening a window. Vite's
-    `define` values are *source text*, not strings — an unencoded version would
-    splice a bare identifier into the renderer.
+    The wiring, asserted here rather than found out by opening a window. What
+    the plugin returns is *source text* the bundler then parses, which is why
+    the version is JSON-encoded: unencoded, it would export a bare identifier.
   */
-  const defines = versionDefine('{"version":"1.2.3"}')
-  check('the substitution names exactly one identifier', Object.keys(defines).join() === VERSION_IDENTIFIER)
-  check('and gives it the version as source text, quoted', defines[VERSION_IDENTIFIER] === '"1.2.3"')
+  const generated = versionModuleSource('{"version":"1.2.3"}')
+  check('the generated module exports the version as a literal', generated.includes('"1.2.3"'))
+  check(
+    'and exports it under the name the renderer imports',
+    /^export const VARNICK_VERSION = /m.test(generated),
+  )
+  check(
+    'the module id is virtual, so nothing looks for it on disk',
+    VERSION_MODULE_ID.startsWith('virtual:') && VERSION_MODULE_RESOLVED === `\0${VERSION_MODULE_ID}`,
+  )
 
   /*
-    The two ends of that substitution are in different files and only agree by
-    name, so the name is checked rather than assumed: a rename on one side would
-    otherwise leave a renderer reading an identifier nothing replaces.
+    The two ends only agree by name, so the name is checked rather than assumed:
+    a rename on one side would otherwise leave a renderer importing a module
+    nothing answers for.
 
     The same read is what proves "build-time, not run-time". The webview is
     served a bundle over http and has no `package.json` to open; a module that
-    reached for one would be a version that fails in the window rather than at
-    the build.
+    reached for one would be a version that fails in the window rather than
+    before it.
   */
   const reachesForAFile = (source: string) =>
     /from ['"]node:/.test(source) || /readFile|fetch\(/.test(source)
 
   const renderer = readFileSync(new URL('../src/version.ts', import.meta.url), 'utf-8')
-  check('the renderer reads the identifier the config defines', renderer.includes(VERSION_IDENTIFIER))
+  check('the renderer imports the module the plugin answers for', renderer.includes(VERSION_MODULE_ID))
   check(
     'and reaches for no file, because by then there is none to reach for',
     !reachesForAFile(renderer),
@@ -6526,6 +6535,74 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   refuses('a stored leading v is refused, or the window would say vv', () =>
     versionFromManifest('{"version":"v1.2.3"}'),
   )
+
+  /*
+    And the assertion none of the above can make, which is the one that matters.
+
+    Every check in this section passed while the dev server was serving a broken
+    module. They are all pure, and the bug was not: Vite's `define` is installed
+    through `applyToEnvironment` gated on `isBundled`, and its transform handler
+    returns early for a client consumer, so a user `define` reaches `vite build`
+    and never reaches `vite serve`. The renderer was served the bare identifier,
+    threw on load, and — because `chat-surface.tsx` imports it — took the whole
+    window with it. Reading the config would not have caught that. Reading the
+    built artifact would not have caught it either.
+
+    So this starts a real dev server and fetches from it over http, which is
+    what a window does. Not `transformRequest` — that is one layer below the
+    middleware that decodes a virtual module's URL, and testing the layer under
+    the bug is how the bug got here. On port 0, so it cannot collide with the
+    varnick a developer already has running on 1420.
+
+    The second request follows the specifier out of the first rather than
+    building one, so what is proved is that the link the browser would follow
+    actually leads somewhere.
+
+    This is the check that keeps ticket 05 honest: it keeps the dev server for
+    Previews, and a Preview has to be a varnick you can talk to.
+  */
+  const { createServer } = await import('vite')
+  const server = await createServer({
+    configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+    root: fileURLToPath(new URL('..', import.meta.url)),
+    server: { port: 0, strictPort: false, host: 'localhost' },
+    logLevel: 'silent',
+  })
+
+  try {
+    await server.listen()
+    const origin = server.resolvedUrls?.local[0] ?? ''
+    const served = await (await fetch(new URL('src/version.ts', origin))).text()
+
+    const beside = await (await fetch(new URL('version.ts', origin))).text()
+
+    check('a dev server serves the module the header reads', served.length > 0)
+    check(
+      'it imports the version rather than reading a free identifier',
+      served.includes(VERSION_MODULE_ID),
+    )
+    /*
+      Both halves of the version's chain, because the dead identifier is exactly
+      the kind of thing that comes back in the file next door. Comments are
+      served verbatim in dev, so this also holds the prose to it.
+    */
+    check(
+      'and nothing in what it serves is waiting for a bundler to substitute it',
+      !served.includes('__VARNICK_VERSION__') && !beside.includes('__VARNICK_VERSION__'),
+    )
+
+    const specifier = /from\s*["']([^"']*virtual[^"']*)["']/.exec(served)?.[1] ?? ''
+    const answer = await fetch(new URL(specifier, origin))
+    const virtual = await answer.text()
+
+    check('the specifier it hands the browser leads somewhere', answer.ok && specifier !== '')
+    check(
+      'and what comes back is the number the manifest actually carries',
+      virtual.includes(JSON.stringify(declared)),
+    )
+  } finally {
+    await server.close()
+  }
 }
 
 // ---------------------------------------------------------------------------

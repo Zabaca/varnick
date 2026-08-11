@@ -9,9 +9,25 @@
  *
  * Build-time and not run-time. The webview is served a bundle over http and has
  * no filesystem to ask; `package.json` is not something it could read even if
- * it wanted to. `vite.config.ts` reads the file once and {@link versionDefine}
- * turns the answer into the substitution the bundler performs, so what ships is
- * a literal that was true when it was built.
+ * it wanted to. `vite.config.ts` reads the file once and {@link
+ * versionModuleSource} turns the answer into a module, so what the renderer
+ * imports is a literal that was true when it was resolved.
+ *
+ * **A module and not a `define`, and that is not a preference.** The first
+ * version of this substituted a free identifier through Vite's `define`, which
+ * is the obvious way and works only under `vite build`. Vite 8's `vite:define`
+ * installs user defines through `applyToEnvironment`, gated on
+ * `environment.config.isBundled`, and its `transform` handler opens with
+ * `if (this.environment.config.consumer === "client") return`. A dev server is
+ * a client environment and is not bundled, so neither path runs and the
+ * renderer is served the bare identifier — a `ReferenceError` on load, and
+ * because `chat-surface.tsx` imports this, a blank window rather than a broken
+ * header. `drive.ts` starts a real dev server and reads what it serves, so that
+ * is a failing assertion now rather than a Preview nobody can talk to.
+ *
+ * A virtual module has no such split. `resolveId` and `load` are how a dev
+ * server answers a request and how a bundler resolves one, so there is a single
+ * mechanism with a single failure mode.
  *
  * Nothing here touches the filesystem, for two reasons. It is the same reason
  * `dev-server.ts` exists — a Vite config is only observable by starting a
@@ -30,11 +46,17 @@
  */
 
 /**
- * The identifier the bundler replaces. Free in the renderer's source, a string
- * literal in its output; declared where it is read so nothing else in Core can
- * reach for it by accident.
+ * What the renderer imports. Not a file — nothing on disk has this name, and
+ * the plugin in `vite.config.ts` answers for it in both serve and build.
  */
-export const VERSION_IDENTIFIER = '__VARNICK_VERSION__'
+export const VERSION_MODULE_ID = 'virtual:varnick-version'
+
+/**
+ * The same module once it is resolved. The leading NUL is Rollup's convention
+ * for "this id is mine, nobody else look at it"; without it Vite's own resolver
+ * would try to find `virtual:varnick-version` on disk and fail.
+ */
+export const VERSION_MODULE_RESOLVED = `\0${VERSION_MODULE_ID}`
 
 /**
  * The version in a manifest's text, or a refusal.
@@ -84,13 +106,16 @@ export function displayedVersion(version: string): string {
 }
 
 /**
- * The substitution, ready for Vite's `define`.
+ * The whole of {@link VERSION_MODULE_ID}: the one module in the renderer whose
+ * text is generated rather than written.
  *
- * Values there are source text rather than strings, which is why the version is
- * JSON-encoded: `define` splices what it is given straight into the module.
- * Built here rather than spelled out in the config so the wiring is a thing
- * `drive.ts` can check, instead of a thing you find out by opening the window.
+ * It is source rather than a value, which is why the version is JSON-encoded —
+ * what comes back is spliced into a module the bundler then parses. Built here
+ * rather than inside the plugin so the wiring is a thing `drive.ts` can check
+ * without a server, and so the refusal happens on the same call that produces
+ * the text: there is no arrangement where the module exists and the version
+ * does not.
  */
-export function versionDefine(manifestText: string): Record<string, string> {
-  return { [VERSION_IDENTIFIER]: JSON.stringify(versionFromManifest(manifestText)) }
+export function versionModuleSource(manifestText: string): string {
+  return `export const VARNICK_VERSION = ${JSON.stringify(versionFromManifest(manifestText))}\n`
 }

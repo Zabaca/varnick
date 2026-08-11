@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { DEV_URL_ENV_VAR, hotUpdateVerdict, portToBind } from './dev-server.ts'
-import { versionDefine } from './version.ts'
+import { VERSION_MODULE_ID, VERSION_MODULE_RESOLVED, versionModuleSource } from './version.ts'
 
 /*
   The clone this dev server is serving. Not `process.cwd()` — a Preview is a
@@ -14,16 +14,35 @@ import { versionDefine } from './version.ts'
 */
 const cloneRoot = fileURLToPath(new URL('../..', import.meta.url))
 
-/*
-  The one impure line of the version's resolution: read the manifest of the
-  clone being built, here, once, while there is still a filesystem. Everything
-  it decides is `version.ts`, so `bun run drive` can assert it without a build.
-
-  The read is unguarded on purpose. A clone with no root manifest, or one whose
-  manifest has no version, must fail the build rather than produce a window that
-  claims a number nothing wrote down.
-*/
-const version = versionDefine(readFileSync(join(cloneRoot, 'package.json'), 'utf-8'))
+/**
+ * The version the window shows, as a module the renderer imports.
+ *
+ * The one impure line of the resolution is the read: the manifest of the clone
+ * being served or built, here, once, while there is still a filesystem. It
+ * happens at `load` rather than at config time so a release that edits the
+ * manifest is picked up by the next request rather than needing the server
+ * restarted. Everything it decides is `version.ts`, so `bun run drive` can
+ * assert it — and `drive.ts` also starts one of these servers and reads what it
+ * answers, because that is the half a pure function cannot cover.
+ *
+ * The read is unguarded on purpose, and `versionModuleSource` throws rather
+ * than defaulting. A clone with no root manifest, or one whose manifest has no
+ * version, must fail loudly rather than produce a window claiming a number
+ * nothing wrote down.
+ *
+ * Deliberately not `define`. See the header of `version.ts`: under Vite 8 a
+ * user `define` never reaches a dev server's client environment, so that
+ * version of this served the renderer a bare identifier and the window came up
+ * blank.
+ */
+const versionModule = (): Plugin => ({
+  name: 'varnick:version',
+  resolveId: (id) => (id === VERSION_MODULE_ID ? VERSION_MODULE_RESOLVED : undefined),
+  load: (id) =>
+    id === VERSION_MODULE_RESOLVED
+      ? versionModuleSource(readFileSync(join(cloneRoot, 'package.json'), 'utf-8'))
+      : undefined,
+})
 
 /**
  * Core is excluded from hot-swap: a change under `packages/core/**` reloads the
@@ -60,10 +79,7 @@ const coreReloadsRatherThanSwaps = (): Plugin => ({
 // discovered and loaded with dynamic import() so a broken one cannot take
 // the chat down with it.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), coreReloadsRatherThanSwaps()],
-  // Applied by `vite build` and by `vite serve` alike, so the window a
-  // developer has open and the artifact a release ships show the same number.
-  define: version,
+  plugins: [react(), tailwindcss(), coreReloadsRatherThanSwaps(), versionModule()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
