@@ -22,12 +22,12 @@ This is a Fence change and lands through a human merge.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ready-for-review
 
-- [ ] A pure function answers, from a set of changed paths and the before/after install lifecycle fields of the root manifest, whether the change may land unattended
-- [ ] A refusal carries which rule refused it, in terms a report can print
-- [ ] The function is exported from the module that already holds the Fence question, and imports nothing that would stop it running headlessly
-- [ ] A command runs it against a branch and prints the verdict
-- [ ] Tests cover every protected entry, the sibling paths that must not match them, a manifest diff that only changes dependencies, and a manifest diff that changes a lifecycle script
-- [ ] A test asserts the containment relationship between the three lists, and fails if a future entry breaks it
-- [ ] An ADR records why the auto-merge list is separate from the Fence list and from the sandbox's own denials, and why they are not derived from one another
+- [x] A pure function answers, from a set of changed paths and the before/after install lifecycle fields of the root manifest, whether the change may land unattended
+- [x] A refusal carries which rule refused it, in terms a report can print
+- [x] The function is exported from the module that already holds the Fence question, and imports nothing that would stop it running headlessly
+- [x] A command runs it against a branch and prints the verdict
+- [x] Tests cover every protected entry, the sibling paths that must not match them, a manifest diff that only changes dependencies, and a manifest diff that changes a lifecycle script
+- [x] A test asserts the containment relationship between the three lists, and fails if a future entry breaks it
+- [x] An ADR records why the auto-merge list is separate from the Fence list and from the sandbox's own denials, and why they are not derived from one another
