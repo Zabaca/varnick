@@ -123,6 +123,14 @@ if (artifact === null) {
     It writes `served`, because something that resolves to nothing is not a
     choice anybody made. Cutting a pre-release must not do that — see ticket 06,
     which writes an artifact and leaves this file alone.
+
+    **Ticket 07 replaces this branch with a fall back to the previous build, and
+    the sentence above is the one to carry across.** Falling back is a better
+    answer than building for the case 07 is about — an artifact that will not
+    start — but neither answer may become "rebuild on every launch", because
+    that quietly undoes a promotion the developer made and presents as the build
+    reverting on its own. Whatever replaces this must still leave a resolvable
+    `served` alone.
   */
   console.log(`nothing is served from ${servedMarkerPath(buildRoot)} — building one`)
   const built = Bun.spawn(['bun', 'run', 'build'], {
