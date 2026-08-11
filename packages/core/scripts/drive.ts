@@ -11,6 +11,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createActor, fromPromise, waitFor } from 'xstate'
 import {
   harnessMachine,
@@ -57,6 +58,13 @@ import {
   portToBind,
   sharedTargetDir,
 } from '../dev-server.ts'
+import {
+  VERSION_MODULE_ID,
+  VERSION_MODULE_RESOLVED,
+  displayedVersion,
+  versionFromManifest,
+  versionModuleSource,
+} from '../version.ts'
 import { MAX_IMAGE_BYTES, parseControlRequest } from '@varnick/harness/turn'
 import { CREDENTIAL_SHAPE_PROBE } from '@varnick/harness/credentials'
 import { credentialMintGuidance } from '@varnick/harness/credentials'
@@ -93,6 +101,22 @@ function check(label: string, condition: boolean) {
   } else {
     failures.push(label)
   }
+}
+
+/**
+ * A refusal, asserted as a refusal. What is being checked is that the call
+ * throws rather than returning something plausible, so the thrown value is
+ * deliberately not inspected — a message is prose and would make these
+ * assertions fail on a reworded sentence.
+ */
+function refuses(label: string, run: () => unknown) {
+  let threw = false
+  try {
+    run()
+  } catch {
+    threw = true
+  }
+  check(label, threw)
 }
 
 // Seeded actor implementations. Generic over input as well as output, or the
@@ -6287,16 +6311,6 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check('a chosen port becomes exactly one URL', devUrlFor(chosen) === 'http://localhost:1421')
   check('and the frontend binds the port that URL names', portToBind(devUrlFor(chosen)) === 1421)
 
-  const refuses = (label: string, run: () => unknown) => {
-    let threw = false
-    try {
-      run()
-    } catch {
-      threw = true
-    }
-    check(label, threw)
-  }
-
   // Refusals, because a port that quietly becomes 1420 is a collision with the
   // varnick that is already running.
   refuses('a port that is not a number is refused', () => chosenDevPort('nineteen'))
@@ -6412,6 +6426,206 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     'the default launch asks for the port a fresh checkout already has',
     first.env[DEV_URL_ENV_VAR] === conf.build.devUrl,
   )
+}
+
+// ---------------------------------------------------------------------------
+// The version — one number, resolved when the renderer is built
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The header used to say `v0.0.0` because a component said so. That made a
+    release a change to Core: a number that could disagree with the manifest
+    with nothing noticing, in a file that has to typecheck.
+
+    The number is data now, and the failure this section is really about is the
+    quiet one — a build that loses the version and ships a plausible placeholder
+    instead of stopping. So the refusals matter more than the happy path.
+  */
+  const manifest = readFileSync(new URL('../../../package.json', import.meta.url), 'utf-8')
+  const declared = (JSON.parse(manifest) as { version?: string }).version
+
+  check('the root manifest carries a version at all', typeof declared === 'string')
+  check('and that is the version the build resolves', versionFromManifest(manifest) === declared)
+
+  /*
+    The criterion behind the whole ticket: change the manifest, rebuild, and the
+    window says something else. No source edit anywhere in the middle.
+  */
+  check(
+    'a different manifest is a different number, with nothing else edited',
+    versionFromManifest('{"name":"varnick","version":"1.2.3"}') === '1.2.3',
+  )
+  check('and the window shows it with the v it never stores', displayedVersion('1.2.3') === 'v1.2.3')
+  check(
+    'a pre-release version survives intact, because a release cuts them',
+    versionFromManifest('{"version":"0.1.0-pre.4"}') === '0.1.0-pre.4',
+  )
+
+  /*
+    The wiring, asserted here rather than found out by opening a window. What
+    the plugin returns is *source text* the bundler then parses, which is why
+    the version is JSON-encoded: unencoded, it would export a bare identifier.
+  */
+  const generated = versionModuleSource('{"version":"1.2.3"}')
+  check('the generated module exports the version as a literal', generated.includes('"1.2.3"'))
+  check(
+    'and exports it under the name the renderer imports',
+    /^export const VARNICK_VERSION = /m.test(generated),
+  )
+  check(
+    'the module id is virtual, so nothing looks for it on disk',
+    VERSION_MODULE_ID.startsWith('virtual:') && VERSION_MODULE_RESOLVED === `\0${VERSION_MODULE_ID}`,
+  )
+
+  /*
+    The two ends only agree by name, so the name is checked rather than assumed:
+    a rename on one side would otherwise leave a renderer importing a module
+    nothing answers for.
+
+    The same read is what proves "build-time, not run-time". The webview is
+    served a bundle over http and has no `package.json` to open; a module that
+    reached for one would be a version that fails in the window rather than
+    before it.
+  */
+  const reachesForAFile = (source: string) =>
+    /from ['"]node:/.test(source) || /readFile|fetch\(/.test(source)
+
+  const renderer = readFileSync(new URL('../src/version.ts', import.meta.url), 'utf-8')
+  check('the renderer imports the module the plugin answers for', renderer.includes(VERSION_MODULE_ID))
+  check(
+    'and reaches for no file, because by then there is none to reach for',
+    !reachesForAFile(renderer),
+  )
+
+  /*
+    And the same of the module behind it, which is the half a header sentence
+    cannot hold. `version.ts` is imported by the renderer, so a `node:` built-in
+    in there is a `node:` built-in in the browser — and it need not be written
+    directly, because importing `dev-server.ts` would bring `node:path` along
+    with it. `eslint.config.js` covers the Harness subpaths and nothing here, so
+    the leaf property is asserted rather than described: the module imports
+    nothing at all, and there is no path through it for Node to arrive by.
+  */
+  const buildtime = readFileSync(new URL('../version.ts', import.meta.url), 'utf-8')
+  check('the version module reaches for no file either', !reachesForAFile(buildtime))
+  check(
+    'and imports nothing, so nothing can bring Node into the renderer through it',
+    !/^\s*import\s/m.test(buildtime),
+  )
+
+  /*
+    And the literal is gone from the component. `#/states` and the live chat
+    render this same file, which is why they cannot disagree — a version prop
+    written here would be one place too many.
+  */
+  const surface = readFileSync(new URL('../src/components/chat-surface.tsx', import.meta.url), 'utf-8')
+  check('no version literal is left in the header call', !/version="v?\d/.test(surface))
+  check('the header is handed the resolved one', surface.includes('version={VARNICK_VERSION_LABEL}'))
+
+  refuses('a manifest with no version fails the build', () =>
+    versionFromManifest('{"name":"varnick"}'),
+  )
+  refuses('and so does an empty one', () => versionFromManifest('{"version":"  "}'))
+  refuses('and one that is not a string', () => versionFromManifest('{"version":123}'))
+  refuses('and a manifest that is not JSON at all', () => versionFromManifest('not json'))
+  refuses('a version nested somewhere else does not count', () =>
+    versionFromManifest('{"packages":{"":{"version":"9.9.9"}}}'),
+  )
+  refuses('a stored leading v is refused, or the window would say vv', () =>
+    versionFromManifest('{"version":"v1.2.3"}'),
+  )
+
+  /*
+    And the assertion none of the above can make, which is the one that matters.
+
+    Every check in this section passed while the dev server was serving a broken
+    module. They are all pure, and the bug was not: Vite's `define` is installed
+    through `applyToEnvironment` gated on `isBundled`, and its transform handler
+    returns early for a client consumer, so a user `define` reaches `vite build`
+    and never reaches `vite serve`. The renderer was served the bare identifier,
+    threw on load, and — because `chat-surface.tsx` imports it — took the whole
+    window with it. Reading the config would not have caught that. Reading the
+    built artifact would not have caught it either.
+
+    So this starts a real dev server and fetches from it over http, which is
+    what a window does. Not `transformRequest` — that is one layer below the
+    middleware that decodes a virtual module's URL, and testing the layer under
+    the bug is how the bug got here. On port 0, so it cannot collide with the
+    varnick a developer already has running on 1420.
+
+    The second request follows the specifier out of the first rather than
+    building one, so what is proved is that the link the browser would follow
+    actually leads somewhere.
+
+    This is the check that keeps ticket 05 honest: it keeps the dev server for
+    Previews, and a Preview has to be a varnick you can talk to.
+  */
+  const { createServer } = await import('vite')
+  const server = await createServer({
+    configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+    root: fileURLToPath(new URL('..', import.meta.url)),
+    server: { port: 0, strictPort: false, host: 'localhost' },
+    logLevel: 'silent',
+  })
+
+  try {
+    await server.listen()
+    const origin = server.resolvedUrls?.local[0] ?? ''
+
+    /*
+      A 200 is not evidence. Vite answers any path it does not recognise with
+      the SPA fallback — `index.html`, status 200 — so `res.ok` is true for a
+      module that is not being served at all, and a check written on it can
+      never fail. What separates the two is the content type.
+    */
+    const module_ = async (path: string) => {
+      const res = await fetch(new URL(path, origin))
+      const body = await res.text()
+      const served = res.ok && (res.headers.get('content-type') ?? '').includes('javascript')
+      return { served, body }
+    }
+
+    const renderer_ = await module_('src/version.ts')
+    const beside = await module_('version.ts')
+
+    check('a dev server serves the module the header reads, as a module', renderer_.served)
+    check('and the one beside it that the header reads through', beside.served)
+    check(
+      'it imports the version rather than reading a free identifier',
+      renderer_.body.includes(VERSION_MODULE_ID),
+    )
+
+    /*
+      Both halves of the version's chain, with comments taken out first.
+
+      Grepping served text for a dead identifier catches it in a comment as
+      readily as in code, and the first version of this check did — which pushed
+      a test constraint into the prose of two product files, telling them which
+      words they were not allowed to use. The positive check above is what
+      actually holds the mechanism; this is the negative twin, and it should
+      constrain the code and nothing else.
+    */
+    const withoutComments = (source: string) =>
+      source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+    check(
+      'and no code it serves is waiting for a bundler to substitute it',
+      !withoutComments(renderer_.body).includes('__VARNICK_VERSION__') &&
+        !withoutComments(beside.body).includes('__VARNICK_VERSION__'),
+    )
+
+    const specifier = /from\s*["']([^"']*virtual[^"']*)["']/.exec(renderer_.body)?.[1] ?? ''
+    const virtual = await module_(specifier === '' ? 'nothing-was-named' : specifier)
+
+    check('the specifier it hands the browser leads to a module', specifier !== '' && virtual.served)
+    check(
+      'and what comes back is the number the manifest actually carries',
+      virtual.body.includes(JSON.stringify(declared)),
+    )
+  } finally {
+    await server.close()
+  }
 }
 
 // ---------------------------------------------------------------------------

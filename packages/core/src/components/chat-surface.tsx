@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import type { ActorRefFrom, SnapshotFrom } from 'xstate'
 import { useChildRevision, toPath } from '../hooks.ts'
+import { VARNICK_VERSION_LABEL } from '../version.ts'
 import { seededDetail, type ActorMode } from '../actors/index.ts'
 import type { surfaceMachine } from '../machines/surface.ts'
 import { ClaudeHeader } from './brainless/claude/claude-header.tsx'
@@ -564,13 +565,21 @@ export function ChatSurface({
                 The model is read from the Session rather than written down, so
                 the welcome box and the composer cannot disagree about what the
                 next turn runs on.
+
+                The version is read the same way, one step further out: it is
+                the root manifest's, resolved when this renderer was served or
+                built. It was a literal, and a literal made a release a change
+                to Core — a number that could disagree with the manifest, in a
+                file that has to typecheck. `#/states` and the live chat both
+                render this component, so there is no second place for it to be
+                wrong.
               */}
               <ClaudeHeader
                 cwd=""
                 model={modelLabel}
                 user="you"
                 org=""
-                version="v0.0.0"
+                version={VARNICK_VERSION_LABEL}
                 tips={['Describe what you want built and the agent goes and builds it']}
                 whatsNew={[]}
               />
