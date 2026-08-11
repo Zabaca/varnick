@@ -276,6 +276,61 @@ fn token_run(text: &str) -> &str {
     &text[..end]
 }
 
+/// Where `needle` begins in `haystack`, ignoring whitespace in either.
+///
+/// ## Why the terminator cannot be matched literally
+///
+/// Because the spaces in it do not survive the render. `claude setup-token`
+/// draws a full-screen UI and positions text by *moving the cursor* rather than
+/// by emitting spaces, and [`plain_text`] strips those escape sequences without
+/// putting anything back where they were. So the sentence the parse looks for
+/// arrives with its spacing gone:
+///
+/// ```text
+/// Store this token securely.   ->   Storethistokensecurely.
+/// Use this token by setting:   ->   Usethistokenbysetting:
+/// ```
+///
+/// Neither contains its `TOKEN_TERMINATORS` entry as a substring, so the search
+/// found nothing, `minted_token_of` answered `None`, and every mint on this
+/// version ended in `unreadable-token` — with a perfectly good token sitting on
+/// the line above. Measured on Claude Code 2.1.227, from a capture taken through
+/// the `setup-key` path.
+///
+/// Matching this way rather than un-squashing the render is the narrower fix:
+/// restoring the spaces would mean interpreting cursor-movement parameters,
+/// which is emulating a terminal, and the whole of what depends on the spacing
+/// is these two sentences.
+///
+/// The answer is an index into `haystack` as it really is, so everything
+/// downstream — [`until_blank_line`], the gap check — keeps working on the
+/// original text with its newlines intact.
+fn find_ignoring_whitespace(haystack: &str, needle: &str) -> Option<usize> {
+    let wanted: Vec<char> = needle.chars().filter(|c| !c.is_whitespace()).collect();
+    if wanted.is_empty() {
+        return None;
+    }
+
+    for (start, _) in haystack.char_indices() {
+        let mut wanted = wanted.iter();
+        let mut next = wanted.next();
+        for candidate in haystack[start..].chars() {
+            let Some(expected) = next else { break };
+            if candidate.is_whitespace() {
+                continue;
+            }
+            if candidate != *expected {
+                break;
+            }
+            next = wanted.next();
+        }
+        if next.is_none() {
+            return Some(start);
+        }
+    }
+    None
+}
+
 /// Everything up to the first blank line.
 ///
 /// A blank line is the render moving on to the next thing it has to say. It used
@@ -353,7 +408,7 @@ pub fn minted_token_of(rendered: &Rendered) -> Option<Result<Secret, &'static st
     let tail = &rest[candidate.len()..];
     let end = match TOKEN_TERMINATORS
         .iter()
-        .filter_map(|marker| tail.find(marker))
+        .filter_map(|marker| find_ignoring_whitespace(tail, marker))
         .min()
     {
         Some(end) => end,
@@ -935,7 +990,7 @@ fn kill_group(_group: Option<i32>) {}
 mod tests {
     use super::{
         authorize_url_of, build_mint_command, minted_token_of, plain_text, store_minted_token,
-        Rendered, SetupKey, CONFIG_DIR_VAR, MINT_ARGV,
+        find_ignoring_whitespace, Rendered, SetupKey, CONFIG_DIR_VAR, MINT_ARGV,
     };
     use crate::credential::{Kind, Security, API_KEY_ENV_VAR, SUBSCRIPTION_ENV_VAR};
     use std::sync::Mutex;
@@ -1000,6 +1055,42 @@ mod tests {
     /// invented, as everywhere else in this module. The label changed too
     /// ("Your OAuth token (valid for 1 year):" for "Your token:"), which is why
     /// nothing here is keyed off it.
+    /// The shape Claude Code 2.1.227 really produces, spaces and all — or
+    /// rather, spaces and none.
+    ///
+    /// Not imagined this time. Taken from a capture of a real failed mint, made
+    /// through the `setup-key` path this module now writes, with the token
+    /// replaced. The lines are what `plain_text` actually handed the parse:
+    /// the UI positions text by moving the cursor instead of emitting spaces, so
+    /// stripping the escape sequences leaves the words run together.
+    ///
+    /// That is what broke the terminator match — `Storethistokensecurely.` does
+    /// not contain `Store this token` — and it is why the sentence is now found
+    /// with [`find_ignoring_whitespace`]. The token itself arrives contiguous
+    /// and at the end of its line, which is why reading a run forward from the
+    /// prefix was already right.
+    fn recorded_2_1_227() -> Rendered {
+        let token = fake_token();
+        Rendered::of(&format!(
+            concat!(
+                "WelcometoClaudeCodev2.1.227\n",
+                "..........................................................\n",
+                "\n",
+                "\u{b7}Openingbrowsertosignin\u{2026}\n",
+                "\n",
+                // One line, and the token is the end of it: the label's spaces
+                // are gone and the value follows the colon with nothing between.
+                "\u{2713} Long-lived authentication token created successfully!",
+                "YourOAuthtoken(validfor1year):{token}\n",
+                "\n",
+                "Storethistokensecurely.Youwon'tbeabletoseeitagain.\n",
+                "\n",
+                "Usethistokenbysetting:exportCLAUDE_CODE_OAUTH_TOKEN=<token>\n",
+            ),
+            token = token,
+        ))
+    }
+
     fn recorded_full_screen() -> Rendered {
         let token = fake_token();
         Rendered::of(&format!(
@@ -1206,6 +1297,49 @@ mod tests {
             .expect("the full-screen shape holds a token");
         let (_, stdin) = security.calls().remove(0);
         assert_eq!(stdin, hex_script_for(&fake_token()));
+    }
+
+    #[test]
+    fn a_render_whose_spaces_did_not_survive_is_still_parsed() {
+        /*
+          The regression this fix is for, and the first fixture in this module
+          taken from a measurement rather than from reasoning about one.
+
+          Two earlier attempts at this failure guessed at what was wrong with the
+          render — box-drawing characters, repainted frames — and both were
+          wrong. What is actually wrong is subtractive: the UI positions text by
+          moving the cursor, `plain_text` strips those sequences, and the spaces
+          they stood in for are simply not there. `Store this token` never
+          matched `Storethistokensecurely.`, so no terminator was ever found and
+          every mint on this version failed with the token on screen.
+
+          The token was never the problem, which is why this asserts it stores
+          byte-for-byte the same script as the plain shape.
+        */
+        let security = Recorder::ok();
+        store_minted_token(&security, &Kept::working(), &recorded_2_1_227())
+            .expect("the measured shape holds a token");
+        let (_, stdin) = security.calls().remove(0);
+        assert_eq!(stdin, hex_script_for(&fake_token()));
+    }
+
+    #[test]
+    fn a_terminator_is_found_however_the_render_spaced_it() {
+        /*
+          The unit underneath, asserted on its own because the whole failure was
+          one substring search answering no.
+
+          Both spellings have to work: varnick cannot tell in advance which parts
+          of a frame a given version will draw with real spaces and which it will
+          position with the cursor, and the same run produced both — the tick
+          sentence kept its spaces while the label beside it lost them.
+        */
+        assert_eq!(find_ignoring_whitespace("Store this token securely.", "Store this token"), Some(0));
+        assert_eq!(find_ignoring_whitespace("Storethistokensecurely.", "Store this token"), Some(0));
+        assert_eq!(find_ignoring_whitespace("xx\nStorethistoken", "Store this token"), Some(2));
+        // And it still says no when the sentence is not there at all, which is
+        // what makes "still arriving" distinguishable from "finished".
+        assert_eq!(find_ignoring_whitespace("nothing like it", "Store this token"), None);
     }
 
     #[test]
