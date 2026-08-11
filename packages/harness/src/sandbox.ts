@@ -29,7 +29,7 @@ import {
 // boundary — and the alternative is not watching the kernel at all.
 import { startMacOSSandboxLogMonitor } from '@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js'
 import { agentSdkEntry, developerToolsBin, sandboxEnvOverlay } from './agent.ts'
-import { requireCloneRoot } from './clone-root.ts'
+import { POLICY_ROOT_ENV_VAR, requireCloneRoot, requirePolicyRoot } from './clone-root.ts'
 
 /**
  * Binaries the agent cannot **open for reading**. It can still run them.
@@ -141,16 +141,58 @@ export const HOST_INVOKED_SCRIPTS = 'scripts/**'
  * Where hooks live instead: a tracked directory, which is what husky and
  * lefthook do.
  *
- * The agent loses nothing it can use, and hooks come back **better** than they
- * were. As tracked files they appear in the diff, travel through the merge, and
- * are gated by the same review as everything else — the agent writes them
- * freely and a human reads them, which was never true of `.git/hooks`.
- *
- * Not written into the policy: this is a *grant* by omission, so naming it here
- * is what lets `sandbox.test.ts` assert it is not denied and lets the bootstrap
- * in `scripts/use-tracked-git-hooks.sh` spell it the same way.
+ * The bare name, without a glob, because three things want it spelled this way
+ * and none of them is the policy: `core.hooksPath` is set to it by the
+ * bootstrap in `scripts/use-tracked-git-hooks.sh`, git resolves it against the
+ * top of the working tree so one value is right in the clone and in every
+ * worktree, and the generated file's prose names the directory a developer
+ * would `cd` into. {@link TRACKED_HOOKS_GLOB} is the form `denyWrite` takes.
  */
 export const TRACKED_HOOKS_DIR = '.githooks'
+
+/**
+ * The same directory, denied in the live tree.
+ *
+ * **Tracked was never the property that mattered.** ADR-0016 moved hooks here
+ * on the argument that a tracked file reaches the developer through a diff they
+ * read — but tracked says where a file *can* be reviewed, not that it was. A
+ * hook the agent writes into the live tree's `.githooks/` is on no branch, in
+ * no diff and in nobody's review, and git runs it on the developer's next
+ * commit with the same unconfined privilege the `.git/hooks` entry above exists
+ * to refuse. Redirecting the hooks path bought a better *place* for hooks and
+ * left the hole exactly where it was, one directory out.
+ *
+ * So this joins the deny list, and it is the same denial `packages/core/**` is
+ * rather than the one `.git/hooks/**` is. The path is absolute and live-tree,
+ * so a Worktree's `.githooks/` matches nothing: the agent authors hooks there
+ * under its ordinary Profile and they become code git runs when a human merges
+ * them (ADR-0014). What ADR-0016's README already promised is now true rather
+ * than assumed.
+ *
+ * `/**` and not the bare directory, matching {@link HOST_INVOKED_SCRIPTS}: what
+ * has to be refused is the hook file. The glob does not name the directory
+ * *node*, and the node matters — a directory the agent can `mv` aside or
+ * replace with a symlink is a denial it can step around without ever writing a
+ * denied path.
+ *
+ * **srt covers it, and the mechanism is worth naming because it is not this
+ * glob.** `generateMoveBlockingRules` splits the pattern at its first glob
+ * character, takes the static prefix as a base directory, and emits
+ * `file-write-unlink` and `file-write-create` denials on that directory as a
+ * literal and on every ancestor — its own comment says this exists to stop a
+ * not-yet-existing protected path being replaced with an attacker-controlled
+ * symlink. The regex the glob itself compiles to is `^<clone>/\.githooks/.*$`,
+ * which matches nothing at the node.
+ *
+ * Measured, because the first version of this comment claimed the wrong
+ * mechanism — that the README inside kept the directory alive. It does not, and
+ * the difference is testable: with `.githooks` **empty**, `rmdir`, `mv` and
+ * `rm -rf` are all refused; with it **absent**, `mkdir` and `ln -s /tmp
+ * .githooks` are refused too. Nothing depends on a file being in there.
+ * `sandbox.boundary.test.ts` asserts exactly that, on an empty directory, so a
+ * future srt that stopped emitting those rules fails there rather than silently.
+ */
+export const TRACKED_HOOKS_GLOB = `${TRACKED_HOOKS_DIR}/**`
 
 /** Where the generated policy lives inside the clone. */
 export const SANDBOX_POLICY_FILENAME = 'sandbox-policy.json'
@@ -589,10 +631,28 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           What the agent loses is `git remote add`, `git config` and
           `--set-upstream`, and it cannot reach a forge with this allowlist
           anyway. What it gets back is better than what it had: hooks live in
-          {@link TRACKED_HOOKS_DIR}, where they are tracked files the agent
-          writes freely and a human reads in a diff.
+          {@link TRACKED_HOOKS_DIR}, where the agent authors them in a Worktree
+          and a human reads them in a diff — see the entry below, which is what
+          makes that sentence true rather than hopeful.
         */
         ...GIT_EXECUTABLE_CONFIG.map((entry) => join(clone, entry)),
+        /*
+          And the directory the hooks path was pointed *at*.
+
+          The same failure shape as the two entries above, one directory out.
+          They are denied because `.git` is unversioned and a write there is in
+          no diff; this one is tracked and a write to it in the live tree is
+          still in no diff, because tracked describes where a file can be
+          reviewed rather than whether it was. Either way git runs the file
+          unconfined on the developer's next commit, including the merge commit
+          that was meant to be the gate — so ADR-0016's fix moved hooks to a
+          better place and left its own hole open behind them.
+
+          Denied as an absolute live-tree path like Core, which is the whole of
+          how the agent still writes hooks: a Worktree's `.githooks/` matches
+          nothing here (ADR-0014). See {@link TRACKED_HOOKS_GLOB}.
+        */
+        join(clone, TRACKED_HOOKS_GLOB),
         /*
           And the scripts the root manifest runs, for the reason `package.json`
           itself is denied. Found reviewing this ticket: it added a
@@ -1455,9 +1515,23 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     '  decorative, and because it defines the filter commands .gitattributes runs.',
     '',
     `  Hooks live in ${TRACKED_HOOKS_DIR}/ instead, with core.hooksPath pointed at it —`,
-    '  the same thing husky and lefthook do. They come back better than they were:',
-    '  tracked files, in the diff, read by a human before they run. Nothing else in',
-    '  .git is denied, so git worktree add, git commit and git merge all still work.',
+    '  the same thing husky and lefthook do. Nothing else in .git is denied, so git',
+    '  worktree add, git commit and git merge are all permitted by this policy.',
+    '',
+    '  Permitted, and on some machines still not usable, for a reason that is not',
+    '  about .git: git treats an unreadable ~/.gitconfig as fatal rather than as a',
+    '  warning, and your home directory is denied above. So on a machine that has a',
+    '  global git config, every git command in here — down to git --version — exits',
+    '  128 with "unable to access ... .gitconfig" until GIT_CONFIG_GLOBAL is set.',
+    '  Measured, and tracked separately: it is a gap in the read allowlist, not a',
+    '  denial anyone chose, and it is not something this file can fix by itself.',
+    '',
+    `  ${TRACKED_HOOKS_GLOB} is denied as well, for the reason above rather than in spite`,
+    '  of it. Tracked says where a file can be reviewed, not that it was: a hook',
+    '  written into this tree is on no branch and in no diff either, and git runs it',
+    '  on your next commit just the same. So it is denied the way packages/core is —',
+    '  an absolute path in this clone, which a worktree does not match. The agent',
+    '  writes hooks in a worktree and they run once you have merged them.',
     '',
     '  Reachable over the network: only these hosts:',
     list(policy.network.allowedDomains),
@@ -1976,6 +2050,15 @@ export interface EstablishedSandbox {
   /** The clone this Sandbox was established for. */
   readonly cloneRoot: string
   /**
+   * The clone whose policy is in force, which is the clone root unless this is
+   * a **Preview**.
+   *
+   * Carried so that "which policy confines this agent" is a fact a caller can
+   * read rather than one it has to re-derive from a path. `path` is the file
+   * and this is the tree it was found in.
+   */
+  readonly policyRoot: string
+  /**
    * What the policy file did on the way here: your edits, varnick's
    * strengthenings, and which is which. Already printed to stderr by
    * `establishSandbox` — carried here so a surface can render the same thing
@@ -1993,11 +2076,114 @@ export interface EstablishedSandbox {
 }
 
 /**
+ * Another tree's policy, exactly as that tree has it — a **Preview**'s fence.
+ *
+ * The counterpart of `ensureSandboxPolicy` and deliberately not a variant of
+ * it: nothing here generates, merges, attributes or writes. What a Preview is
+ * confined by has to be the bytes a human merged and a developer can read,
+ * because the *code* that would otherwise produce it is the code being
+ * previewed.
+ *
+ * A tree with no policy file refuses. That is not a defensive branch — it is
+ * the only interesting one: the live tree has a policy from the moment its own
+ * varnick started, so an absent file means the parent host named the wrong
+ * tree, and the fallback that suggests itself is generating one from the
+ * Worktree's generator, which is the escalation being closed.
+ *
+ * The report carries no changes and one line. It is printed on every Preview
+ * launch, which is where "this window is fenced by the tree you merged" is
+ * worth saying — the alternative is a second varnick that looks identical to
+ * the first and is confined by something else.
+ */
+function policyInForceAt(
+  policyRoot: string,
+  cloneRoot: string,
+): { policy: SandboxPolicy; path: string; report: SandboxPolicyReport } {
+  const path = sandboxPolicyPath(policyRoot)
+  const policy = readSandboxPolicy(policyRoot)
+  if (policy === null) {
+    throw new Error(
+      `There is no ${SANDBOX_POLICY_FILENAME} in ${policyRoot}, so there is no policy in force to confine ${cloneRoot} with. varnick will not generate one from the tree being previewed — that tree's generator is the thing a preview exists to try out. Start the varnick at ${policyRoot} once, or unset ${POLICY_ROOT_ENV_VAR}.`,
+    )
+  }
+  return {
+    policy,
+    path,
+    report: {
+      outcome: 'unchanged',
+      yours: [],
+      ours: [],
+      unattributed: false,
+      lines: [
+        `varnick: ${cloneRoot} is confined by ${path}`,
+        '  A preview is fenced by the policy in force in the tree it was launched from,',
+        '  not by the one in the worktree it is previewing. A change to the generator',
+        '  here decides nothing until a human merges it and restarts.',
+      ],
+    },
+  }
+}
+
+/**
+ * Was this agent's confinement handed to it by another tree — is it a
+ * **Preview**?
+ *
+ * Named rather than written inline as `policyRoot === cloneRoot`, because it is
+ * the fact the whole arrangement turns on and it is asked in two languages:
+ * `confined_by_parent` in src-tauri/src/preview.rs is the same question about
+ * the same launch, and an unnamed comparison on this side is one nobody would
+ * find when reading that one.
+ *
+ * Both roots have been through {@link requirePolicyRoot} by the time this is
+ * asked, which is what makes an equality test sound: `/live/` and `/live` are
+ * one directory, and the normalisation happens there rather than here.
+ */
+function confinedByParent(cloneRoot: string, policyRoot: string): boolean {
+  return policyRoot !== cloneRoot
+}
+
+export interface EstablishSandboxInput extends SandboxPolicyInput {
+  /**
+   * The clone whose policy in force confines this agent. Defaults to
+   * `cloneRoot`.
+   *
+   * Different from the clone root in exactly one situation: a **Preview**,
+   * which works in a **Worktree** and is confined by the live tree. See
+   * {@link establishSandbox} for what changes when the two differ, and
+   * docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md for why.
+   */
+  readonly policyRoot?: string
+}
+
+/**
  * Establish the sandbox, or fail.
  *
  * There is no third outcome. A root that is not there, an unsupported platform,
  * a missing dependency, a policy the schema rejects, and a proxy that will not
  * start all raise; none of them degrade to running the agent unconfined.
+ *
+ * ## Two roots, and only a Preview has two
+ *
+ * `cloneRoot` is where the agent works. `policyRoot` is whose policy confines
+ * it, and it defaults to the same directory — which is every varnick a
+ * developer launches, unchanged.
+ *
+ * A **Preview** is the case where they differ: it works in a Worktree and is
+ * confined by the tree the Worktree hangs off. Three things follow, and each is
+ * the opposite of what the single-root path does.
+ *
+ *   * **The policy is read, never generated.** `ensureSandboxPolicy` writes the
+ *     file it ensures, and the file here belongs to the live tree — the one
+ *     `denyWrite` keeps the agent out of. A Preview that regenerated it would
+ *     be the agent editing the live boundary through a second process, which is
+ *     a longer way round to the thing this whole arrangement closes.
+ *   * **A missing policy refuses.** There is nothing weaker to fall back to,
+ *     and the fallback that suggests itself — generate one for the Worktree —
+ *     is the escalation: the generator in a Worktree is code the agent wrote.
+ *   * **The Worktree is covered by the policy it did not generate**, because
+ *     `.claude/worktrees/<name>` is inside the live clone and `allowRead` and
+ *     `allowWrite` name that clone. {@link requirePolicyRoot} is what holds
+ *     that true rather than assuming it.
  *
  * ## The root is an argument, and it used to be a working directory
  *
@@ -2013,9 +2199,10 @@ export interface EstablishedSandbox {
  * which names a file they never created inside a directory they no longer have.
  */
 export async function establishSandbox(
-  input: SandboxPolicyInput,
+  input: EstablishSandboxInput,
 ): Promise<EstablishedSandbox> {
   const cloneRoot = requireCloneRoot(input.cloneRoot)
+  const policyRoot = requirePolicyRoot(input.policyRoot, cloneRoot)
 
   if (!SandboxManager.isSupportedPlatform()) {
     throw new Error(
@@ -2028,7 +2215,9 @@ export async function establishSandbox(
     throw new Error(`sandbox-runtime dependencies are missing: ${deps.errors.join(', ')}`)
   }
 
-  const { policy, path, report } = ensureSandboxPolicy({ ...input, cloneRoot })
+  const { policy, path, report } = confinedByParent(cloneRoot, policyRoot)
+    ? policyInForceAt(policyRoot, cloneRoot)
+    : ensureSandboxPolicy({ ...input, cloneRoot })
 
   // Printed, not returned and forgotten. A clone whose boundary is weaker than
   // the one varnick generates has to learn about it somewhere a developer
@@ -2055,6 +2244,7 @@ export async function establishSandbox(
     policy,
     path,
     cloneRoot,
+    policyRoot,
     report,
     wrap: async (command: string) => {
       const { argv, env } = await SandboxManager.wrapWithSandboxArgv(command, WRAPPING_SHELL)

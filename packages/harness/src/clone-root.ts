@@ -46,10 +46,20 @@
  * The library gate deliberately does not ask this: the Sandbox is established
  * for temporary directories by every probe in this package, and they are roots
  * without being clones.
+ *
+ * ## And a second root, for a **Preview**
+ *
+ * {@link requirePolicyRoot} answers a different question: *whose* policy
+ * confines this agent. For the varnick a developer launched the two roots are
+ * one directory, and nothing changes. For a Preview they differ — the agent
+ * works in a **Worktree** and is confined by the policy in force in the live
+ * tree, so that a Worktree which rewrote the policy generator still runs under
+ * the version a human merged. See
+ * docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md.
  */
 
 import { statSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, sep } from 'node:path'
 import { AGENT_ENTRY_RELATIVE_PATH } from './agent.ts'
 
 /**
@@ -62,6 +72,25 @@ import { AGENT_ENTRY_RELATIVE_PATH } from './agent.ts'
  * for. Mirrored there as `CLONE_ROOT_VAR`, because Rust cannot read this one.
  */
 export const CLONE_ROOT_ENV_VAR = 'VARNICK_CLONE_ROOT'
+
+/**
+ * The variable that chooses whose policy confines this agent.
+ *
+ * Set by the **parent host** when it spawns a **Preview**, and by nobody else:
+ * it names the live tree, while {@link CLONE_ROOT_ENV_VAR} names the Worktree
+ * the Preview runs from. Unset in the varnick a developer launched, where the
+ * two are one directory.
+ *
+ * Read in one place — `policy_root` in src-tauri/src/bridge.rs — and passed to
+ * the runtime as an argument, for the reason the clone root is: two readers of
+ * one variable are two answers waiting to disagree. Mirrored there as
+ * `POLICY_ROOT_VAR`, because Rust cannot read this one.
+ *
+ * **It is a fence the agent cannot move**, for the same reason the clone root
+ * is not a setting in the clone: a Preview's environment is composed by the
+ * process that spawned it, which is running the code a human merged.
+ */
+export const POLICY_ROOT_ENV_VAR = 'VARNICK_POLICY_ROOT'
 
 /** The filesystem facts a root is judged on. Injected so tests need no disk. */
 export interface CloneRootChecks {
@@ -158,4 +187,93 @@ export function cloneRootFromLaunch(
   }
 
   return root
+}
+
+/**
+ * Whose policy confines this agent, or a refusal naming what is wrong with it.
+ *
+ * `candidate` is `undefined` in the varnick a developer launched, and the
+ * answer is then the clone root itself — one directory, and the behaviour that
+ * existed before Previews were confined. A Preview is given the live tree, and
+ * three things are checked.
+ *
+ *   * **absolute**, for the reason {@link requireCloneRoot} demands it: a root
+ *     resolved against a working directory is a root nobody named.
+ *   * **it is there**, because the policy in force is read out of it and a
+ *     missing directory is a missing policy.
+ *   * **it holds the clone root.** This is the one check that is not a copy of
+ *     the clone root's, and it is the load-bearing one. The policy names the
+ *     tree it was generated for in `allowRead` and `allowWrite`; a Worktree
+ *     inside that tree is covered by both, which is what makes the live tree's
+ *     policy a *usable* fence for a Preview rather than merely a strict one. A
+ *     clone root outside it would produce an agent that cannot read its own
+ *     working directory — an interpreter that dies naming nothing, which is
+ *     precisely the failure ticket 28 spent a day on.
+ *
+ * Throws rather than falling back to the clone root's own policy. Falling back
+ * is exactly the escalation this exists to close: a Preview that could not be
+ * confined by the live tree would be confined by the tree the agent wrote.
+ */
+export function requirePolicyRoot(
+  candidate: string | undefined,
+  cloneRoot: string,
+  checks: CloneRootChecks = {},
+): string {
+  if (candidate === undefined || candidate === '') return cloneRoot
+
+  const isDirectory = checks.isDirectory ?? directoryOnDisk
+
+  if (!isAbsolute(candidate)) {
+    throw new Error(
+      `The policy root ${JSON.stringify(candidate)} is not an absolute path. varnick will not resolve it against a working directory. Set ${POLICY_ROOT_ENV_VAR} to an absolute path, or leave it unset to be confined by this clone's own policy.`,
+    )
+  }
+
+  if (!isDirectory(candidate)) {
+    throw new Error(
+      `There is no directory at ${candidate}, so there is no policy in force to be confined by. Check ${POLICY_ROOT_ENV_VAR} — it names the tree whose sandbox policy confines this agent, which for a preview is the live clone.`,
+    )
+  }
+
+  /*
+    Normalised before anything compares it, and the comparison is the reason.
+
+    `establishSandbox` decides whether this agent is a **Preview** by asking
+    whether the two roots are the same directory, and a trailing separator is
+    the same directory spelled differently. Left as it arrived, `/live/` and
+    `/live` would take opposite branches: the policy would be *read* rather
+    than ensured, skipping generation, the baseline and the strengthening
+    report, for a varnick nobody previewed. Narrow, and it is the branch that
+    decides confinement, so it does not get to depend on how somebody typed a
+    path.
+  */
+  const root = withoutTrailingSeparator(candidate)
+
+  if (!holds(root, cloneRoot)) {
+    throw new Error(
+      `${root} does not contain ${cloneRoot}, so its policy would confine this agent to a tree it does not work in. ${POLICY_ROOT_ENV_VAR} names the clone that holds ${CLONE_ROOT_ENV_VAR}; a preview runs from a worktree inside the live clone, which is what makes the live clone's policy reach it.`,
+    )
+  }
+
+  return root
+}
+
+/** `/live/` and `/live` are one directory. The filesystem root keeps its slash. */
+function withoutTrailingSeparator(path: string): string {
+  return path.length > sep.length && path.endsWith(sep) ? path.slice(0, -sep.length) : path
+}
+
+/**
+ * Is `inner` the same directory as `outer`, or one below it?
+ *
+ * The separator is appended before the prefix test, so `/live` does not hold
+ * `/livex`. The filesystem root is the one path that already ends in one, and
+ * appending a second would make `//Users` the prefix and `/` hold nothing —
+ * found by the normalisation test above rather than by reading, which is the
+ * argument for having written it.
+ */
+function holds(outer: string, inner: string): boolean {
+  const root = withoutTrailingSeparator(outer)
+  if (inner === root) return true
+  return inner.startsWith(root.endsWith(sep) ? root : root + sep)
 }

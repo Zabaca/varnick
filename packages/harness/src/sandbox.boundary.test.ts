@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -427,6 +428,24 @@ test.skipIf(blocked !== null)(
     Bun.spawnSync({ cmd: ['git', '-C', clone, 'add', '-A'] })
     Bun.spawnSync({ cmd: ['git', '-C', clone, 'commit', '-q', '-m', 'first'], cwd: clone })
     mkdirSync(join(clone, TRACKED_HOOKS_DIR), { recursive: true })
+
+    /*
+      A Worktree, made from outside the Sandbox on purpose.
+
+      It stands for the tree the agent authors a hook in, and the question asked
+      of it below is only whether the *write* is permitted there — which is the
+      one thing `denyWrite` decides. Whether the agent can run `git worktree
+      add` itself is a different claim with its own assertions further down, and
+      putting the two in one step would leave a hook-boundary result that a
+      failure in git could take with it.
+    */
+    const authored = join(clone, '.claude/worktrees/authored')
+    const addWorktree = Bun.spawnSync({
+      cmd: ['git', '-C', clone, 'worktree', 'add', '-q', authored, '-b', 'authored'],
+      cwd: clone,
+    })
+    expect(addWorktree.exitCode).toBe(0)
+
     const configBefore = readFileSync(join(gitDir, 'config'), 'utf8')
 
     const run = runner(await establishSandbox({ cloneRoot: clone }))
@@ -453,10 +472,136 @@ test.skipIf(blocked !== null)(
     expect(redirected.code).not.toBe(0)
     expect(redirected.stderr).toMatch(/not permitted|Permission denied|read-only/i)
 
-    const viaGit = await run(`cd ${q} && git config core.hooksPath /tmp/evil`)
+    /*
+      Pinned like every git command below — see the block at `ranHook`. Without
+      it this assertion passes for the wrong reason on a machine with a global
+      git config: the run fails at `~/.gitconfig` before it ever reaches the
+      write, and `not permitted` in that message satisfies the matcher. Pinning
+      makes the refusal the one this line is about.
+    */
+    const viaGit = await run(
+      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null git config core.hooksPath /tmp/evil`,
+    )
     expect(viaGit.code).not.toBe(0)
     expect(viaGit.stderr).toMatch(/could not write config file|not permitted/i)
     expect(readFileSync(join(gitDir, 'config'), 'utf8')).toBe(configBefore)
+
+    /*
+      And the directory `core.hooksPath` was pointed at, which is the same
+      denial one step out.
+
+      `.githooks/` is tracked, and that was the argument for moving hooks here:
+      a tracked file reaches the developer through a diff they read. Tracked
+      says where a file *can* be reviewed, not that it was — a hook written into
+      the live tree is on no branch and in no diff, and git runs it on the next
+      commit exactly as a planted `.git/hooks/pre-commit` would. So the live
+      tree's copy is refused too.
+    */
+    const liveHook = join(clone, TRACKED_HOOKS_DIR, 'pre-commit')
+    const trackedHook = await run(
+      `printf '#!/bin/sh\\necho pwned\\n' > ${JSON.stringify(liveHook)}`,
+    )
+    expect(trackedHook.code).not.toBe(0)
+    expect(trackedHook.stderr).toMatch(/not permitted|Permission denied|read-only/i)
+    expect(existsSync(liveHook)).toBe(false)
+
+    /*
+      And the tree the agent writes it in instead. ADR-0014: the deny above
+      names an absolute live-tree path, so the same relative path inside a
+      Worktree matches nothing and the hook is authored there under the ordinary
+      Profile. `mkdir -p` is part of the assertion — the directory does not
+      exist in a fresh worktree, and a policy that refused creating it would
+      leave the agent unable to write the hook it is being pointed at.
+    */
+    const wroteInWorktree = await run(
+      `mkdir -p ${JSON.stringify(join(authored, TRACKED_HOOKS_DIR))}` +
+        ` && printf '#!/bin/sh\\necho HOOK-RAN >&2\\n' >` +
+        ` ${JSON.stringify(join(authored, TRACKED_HOOKS_DIR, 'pre-commit'))}`,
+    )
+    expect(wroteInWorktree.code).toBe(0)
+    expect(existsSync(join(authored, TRACKED_HOOKS_DIR, 'pre-commit'))).toBe(true)
+
+    /*
+      The directory *node*, which the glob does not name and which a deny on the
+      files inside it would not protect on its own. A directory the agent can
+      `mv` aside or replace with a symlink is a denial it steps around without
+      ever writing a denied path.
+
+      Asserted with `.githooks` **empty** on purpose. The first version of this
+      change claimed in a comment that the README inside was what kept the
+      directory alive; it is not, and this is the assertion that tells the two
+      apart. What actually holds is srt's `generateMoveBlockingRules`, which
+      takes the static prefix of the glob and denies `file-write-unlink` and
+      `file-write-create` on that directory and every ancestor as literals.
+    */
+    const liveHooks = join(clone, TRACKED_HOOKS_DIR)
+    expect(readdirSync(liveHooks)).toEqual([])
+
+    for (const vector of [
+      `rmdir ${JSON.stringify(liveHooks)}`,
+      `mv ${JSON.stringify(liveHooks)} ${JSON.stringify(`${liveHooks}-aside`)}`,
+      `rm -rf ${JSON.stringify(liveHooks)}`,
+    ]) {
+      const refused = await run(vector)
+      expect(refused.code).not.toBe(0)
+      expect(refused.stderr).toMatch(/not permitted|Permission denied|read-only/i)
+    }
+    expect(existsSync(liveHooks)).toBe(true)
+
+    /*
+      And the same node when it does not exist at all — srt's own comment for
+      those rules says they are there to stop a not-yet-existing protected path
+      being replaced with an attacker-controlled symlink. Removed and restored
+      from outside the Sandbox, because from inside it is exactly what was just
+      refused.
+    */
+    rmSync(liveHooks, { recursive: true, force: true })
+    for (const vector of [
+      `mkdir ${JSON.stringify(liveHooks)}`,
+      `ln -s /tmp ${JSON.stringify(liveHooks)}`,
+    ]) {
+      const refused = await run(vector)
+      expect(refused.code).not.toBe(0)
+      expect(refused.stderr).toMatch(/not permitted|Permission denied|read-only/i)
+    }
+    expect(existsSync(liveHooks)).toBe(false)
+    mkdirSync(liveHooks, { recursive: true })
+
+    /*
+      And git still runs what it finds in the live tree's copy — the half that
+      says this denies authorship rather than the mechanism. The hook is planted
+      from outside the Sandbox, which is what a merge is: the human put it
+      there, and the agent's own commit runs it.
+
+      Every git command below is pinned to `GIT_CONFIG_GLOBAL=/dev/null`, and
+      the reason is a finding rather than a convenience. git *fatals* when it
+      cannot stat `~/.gitconfig`, and `$HOME` is denied by design:
+
+        fatal: unable to access '/…/.gitconfig': Operation not permitted   exit 128
+
+      That is every git command inside the Sandbox, on any machine whose
+      developer has a global config — `git worktree add`, `git commit` and `git
+      merge` included, which is the whole of ADR-0014's model. Measured with the
+      `.githooks` deny in force and with it absent: identical either way, so it
+      is not this boundary. `~/.config/git/ignore` under the same denial only
+      *warns*, which is what makes the global config specifically the problem.
+
+      Pinned here so this probe measures the thing it is named for. Without it
+      the test is red for a reason that has nothing to do with `.git` or
+      `.githooks`, and a red test gates nothing — a regression in the hook
+      boundary asserted above would look exactly like the failure already there.
+      The finding is tracked as its own ticket and is deliberately not fixed on
+      this branch: closing it means either reading one file back out of the
+      denied root or setting this variable in the agent's real environment, and
+      both are Fence decisions for the developer rather than test hygiene.
+    */
+    writeFileSync(liveHook, '#!/bin/sh\necho HOOK-RAN >&2\n', { encoding: 'utf8', mode: 0o755 })
+    const ranHook = await run(
+      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null` +
+        ` git -c core.hooksPath=${TRACKED_HOOKS_DIR} commit -q --allow-empty -m hooked`,
+    )
+    expect(ranHook.code).toBe(0)
+    expect(ranHook.stderr).toContain('HOOK-RAN')
 
     /*
       What a worktree, a commit and a merge need, asked of git itself for the
@@ -465,38 +610,34 @@ test.skipIf(blocked !== null)(
       `.git` would take that with it — failing in a developer's `git commit` a
       week later rather than here.
     */
-    const worktree = await run(`cd ${q} && git worktree add -q .claude/worktrees/probe -b probe`)
+    const worktree = await run(
+      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null git worktree add -q .claude/worktrees/probe -b probe`,
+    )
     expect(worktree.code).toBe(0)
 
     const committed = await run(
-      `cd ${q}/.claude/worktrees/probe && printf b > b.txt && git add -A && git commit -q -m second`,
+      `cd ${q}/.claude/worktrees/probe && printf b > b.txt` +
+        ` && GIT_CONFIG_GLOBAL=/dev/null git add -A` +
+        ` && GIT_CONFIG_GLOBAL=/dev/null git commit -q -m second`,
     )
     expect(committed.code).toBe(0)
 
-    const merged = await run(`cd ${q} && git merge --no-ff -m merged probe`)
+    const merged = await run(
+      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null git merge --no-ff -m merged probe`,
+    )
     expect(merged.code).toBe(0)
-
-    // And the tracked hooks directory the agent is given instead: it writes one
-    // freely, and git runs what it finds there.
-    const wroteHook = await run(
-      `printf '#!/bin/sh\\necho HOOK-RAN >&2\\n' > ${q}/${TRACKED_HOOKS_DIR}/pre-commit` +
-        ` && chmod +x ${q}/${TRACKED_HOOKS_DIR}/pre-commit`,
-    )
-    expect(wroteHook.code).toBe(0)
-
-    const ranHook = await run(
-      `cd ${q} && git -c core.hooksPath=${TRACKED_HOOKS_DIR} commit -q --allow-empty -m hooked`,
-    )
-    expect(ranHook.code).toBe(0)
-    expect(ranHook.stderr).toContain('HOOK-RAN')
 
     // Nothing in all of that touched the one file the deny is about.
     expect(readFileSync(join(gitDir, 'config'), 'utf8')).toBe(configBefore)
 
     console.log(
-      'boundary probe: .git/hooks and .git/config are refused by the kernel — including' +
-        " through git's own lock-and-rename — while worktree add, commit, merge and a" +
-        ` hook in ${TRACKED_HOOKS_DIR}/ all still work.`,
+      'boundary probe: .git/hooks, .git/config and the tracked' +
+        ` ${TRACKED_HOOKS_DIR}/ are refused by the kernel — including the directory node` +
+        " itself, and including through git's own lock-and-rename — while worktree add," +
+        ' commit, merge, a hook authored in a worktree and a hook git runs from the live' +
+        ' tree are all permitted. The git half is measured with GIT_CONFIG_GLOBAL pinned:' +
+        ' an unreadable ~/.gitconfig is fatal to every git command under this policy, which' +
+        ' is a read-allowlist gap tracked separately and not this boundary.',
     )
   },
   120_000,

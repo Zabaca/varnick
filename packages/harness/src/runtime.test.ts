@@ -26,7 +26,6 @@ interface Recorded {
   reads: string[]
   secretNameReads: number
   worktreeListings: number
-  fenceDiffs: string[]
   diffReads: string[]
   merges: string[]
   reaps: string[]
@@ -41,7 +40,6 @@ function capabilities(
     reads: [],
     secretNameReads: 0,
     worktreeListings: 0,
-    fenceDiffs: [],
     diffReads: [],
     merges: [],
     reaps: [],
@@ -74,10 +72,6 @@ function capabilities(
       return []
     },
     liveTreeDirty: async () => false,
-    readFenceDiff: async (worktree) => {
-      recorded.fenceDiffs.push(worktree)
-      return ''
-    },
     readWorktreeDiff: async (path) => {
       recorded.diffReads.push(path)
       return ''
@@ -514,92 +508,18 @@ describe('list-worktrees answers with what git said', () => {
   })
 })
 
-describe('read-fence-diff answers with hunks and takes a path it was given', () => {
-  test('the worktree it names is the one the diff is taken in', async () => {
-    const caps = capabilities()
-    const answer = await reply(
-      call(1, {
-        kind: 'read-fence-diff',
-        worktree: '/Users/dev/varnick/.claude/worktrees/agent-one',
-      }),
-      caps,
-    )
-    expect(answer.ok).toEqual({ hunks: '' })
-    expect(caps.recorded.fenceDiffs).toEqual([
-      '/Users/dev/varnick/.claude/worktrees/agent-one',
-    ])
-  })
+/*
+  `read-fence-diff` was here.
 
-  test('an empty answer is the answer that launches without a dialog', async () => {
-    // One condition on the dialog, and this is the value of it. A worktree
-    // whose Fence matches the running one is a Preview nobody is asked about.
-    const answer = await reply(
-      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
-      capabilities({ readFenceDiff: async () => '' }),
-    )
-    expect(answer.ok).toEqual({ hunks: '' })
-  })
-
-  test('the hunks cross as git wrote them, newlines and all, on one line', async () => {
-    const hunks = 'diff --git a/src-tauri/src/credential.rs b/…\n@@ -1 +1 @@\n-a\n+b\n'
-    const raw = await answerHarnessLine(
-      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
-      capabilities({ readFenceDiff: async () => hunks }),
-    )
-    // A diff is the one answer on this pipe that is full of newlines, and the
-    // framing is one reply per line. `JSON.stringify` is what holds that.
-    expect(raw.slice(0, -1)).not.toContain('\n')
-    expect((JSON.parse(raw) as { ok: { hunks: string } }).ok.hunks).toBe(hunks)
-  })
-
-  test('a git that would not answer is an error, never an empty diff', async () => {
-    /*
-      Empty and unknown are two facts and only one of them is safe to render as
-      "nothing to show". Empty means this worktree's Fence is the Fence already
-      running, which launches without a dialog; unknown means nobody can say,
-      and the host refuses the launch.
-
-      This was written the other way first — `fenceDiffOf` returned `''` on any
-      failure, so a worktree whose diff could not be taken launched with no
-      dialog. The argument was that the alternative is a dialog with nothing in
-      it, asking the developer to approve bytes it cannot show. The premise is
-      right and the conclusion does not follow: the alternative is refusing. A
-      gate that disappears when git is unwell is not a gate, and this is the one
-      step between a confined agent and an unconfined one.
-    */
-    const answer = await reply(
-      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
-      capabilities({
-        readFenceDiff: async () => {
-          throw new Error('fatal: not a git repository')
-        },
-      }),
-    )
-    expect(answer.ok).toBeUndefined()
-    expect(answer.error).toBe('fatal: not a git repository')
-    // The distinction the host reads. Both are answers; only one is a diff.
-    const empty = await reply(
-      call(1, { kind: 'read-fence-diff', worktree: '/w' }),
-      capabilities({ readFenceDiff: async () => '' }),
-    )
-    expect(empty.ok).toEqual({ hunks: '' })
-  })
-
-  test('a request naming no worktree is refused rather than defaulted', async () => {
-    // There is no sensible default. The live tree would be the one worth
-    // guessing at, and a diff of the live tree against itself is empty — which
-    // reads as "no fence change" for a request that named nothing.
-    for (const request of [
-      { kind: 'read-fence-diff' },
-      { kind: 'read-fence-diff', worktree: '' },
-      { kind: 'read-fence-diff', worktree: 3 },
-    ]) {
-      const answer = await reply(call(1, request))
-      expect(answer.ok).toBeUndefined()
-      expect(answer.error).toBeTypeOf('string')
-    }
-  })
-})
+  It answered the diff the approval dialog in front of a Preview showed, and its
+  tests were about the one distinction that mattered: an empty diff launched
+  without asking, and a git that would not answer refused the launch rather than
+  launching with an empty dialog. Both went with the dialog — a Preview is
+  confined by the live tree's policy now, so there is nothing to approve
+  (ADR-0019). What replaced the assertions is a measurement:
+  `containment.probe.test.ts` runs a command under the policy a Preview would
+  get and reports what it reached.
+*/
 
 /*
   The hunks of the one worktree a developer opened.

@@ -11,11 +11,13 @@ import { isFencePath } from '@varnick/harness/fence'
  *
  * ## Fence is asked, never restated
  *
- * `isFencePath` comes from the Harness. Three mechanisms key off that one list —
- * the pending-worktree list's flag, the Preview dialog, and this — and a fourth
- * glob written here would drift from the other three invisibly: every caller
- * goes on working, and the one that fell behind stops marking a file the others
- * still mark. See packages/harness/src/fence.ts.
+ * `isFencePath` comes from the Harness. Two mechanisms key off that one list —
+ * the pending-worktree list's flag and this — and a third glob written here
+ * would drift from them invisibly: every caller goes on working, and the one
+ * that fell behind stops marking a file the other still marks. There was a
+ * third, the Preview dialog, and it went with the escalation it gated
+ * (ADR-0019); both survivors are about reading a change before a human merges
+ * it. See packages/harness/src/fence.ts.
  *
  * ## Nothing is dropped
  *

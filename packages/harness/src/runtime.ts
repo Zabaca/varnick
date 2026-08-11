@@ -60,9 +60,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { agentCommand, commandsCachePath } from './agent.ts'
 import {
   liveTreeIsDirty,
@@ -81,7 +79,6 @@ import {
   type PendingWorktree,
 } from './worktrees.ts'
 import { readLines } from './framing.ts'
-import { fenceHunks, UNTRACKED_PREVIEW_BYTES } from './preview.ts'
 import {
   establishSandbox,
   type EstablishedSandbox,
@@ -184,26 +181,6 @@ export interface HarnessCapabilities {
    */
   liveTreeDirty(): Promise<boolean>
   /**
-   * The **Fence** part of what a Worktree changes, as hunks.
-   *
-   * What the native dialog in front of a Preview shows, and the whole of what
-   * decides whether one is raised: empty means the worktree's Fence is the Fence
-   * already running, and that launches without asking.
-   *
-   * **Here rather than in the Rust host**, though the host is what draws the
-   * dialog. Two reasons, and the second is the load-bearing one. This is the
-   * process with a filesystem and with git already in reach, so running two
-   * commands and reading a diff costs nothing new. And `isFencePath` — which
-   * decides what Fence *is* — is one list that three separate mechanisms key off
-   * (the dialog, the diff view's highlighting, and `denyWrite` itself), so it
-   * belongs where the other two can read it rather than written a second time in
-   * another language.
-   *
-   * The path is absolute and comes from the host, which resolved it out of what
-   * `git worktree list` reported. Nothing the agent typed reaches this.
-   */
-  readFenceDiff(worktree: string): Promise<string>
-  /**
    * Everything one pending Worktree changed, as git printed it.
    *
    * The contents behind one row of the listing, read when a developer opens it,
@@ -263,6 +240,16 @@ export interface HostCapabilitiesInput {
    * docs/adr/0012-the-clone-root-is-an-input.md.
    */
   readonly cloneRoot: string
+  /**
+   * The clone whose policy confines the agent, when that is not this one.
+   *
+   * Absent in the varnick a developer launched. Present in a **Preview**, where
+   * it names the live tree — so a Worktree that rewrote the policy generator
+   * still runs under the version a human merged. It arrives the way the clone
+   * root does, as an argument the host resolved once, and for the same reason.
+   * See docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md.
+   */
+  readonly policyRoot?: string
 }
 
 /**
@@ -336,7 +323,11 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
       // It used to be no argument at all, which meant `process.cwd()` inside
       // sandbox.ts, which meant the directory the Tauri host had set from a
       // path compiled into the binary. Nothing in that chain was a decision.
-      sandbox = await establishSandbox({ cloneRoot })
+      //
+      // The policy root beside it is the same shape of decision one level up:
+      // *whose* policy this is. Undefined for a varnick a developer launched;
+      // the live tree for a Preview.
+      sandbox = await establishSandbox({ cloneRoot, policyRoot: input.policyRoot })
     },
 
     wrapAgentCommand: async () => {
@@ -394,7 +385,6 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
       }),
 
     liveTreeDirty: async () => liveTreeIsDirty(gitIn(cloneRoot)),
-    readFenceDiff: async (worktree) => fenceDiffOf(worktree, cloneRoot),
 
     // The clone is this process's, as it is for the listing; the path names
     // which of the worktrees git reported in it. Nothing chooses the tree.
@@ -575,90 +565,6 @@ function gitAttemptIn(cloneRoot: string) {
         },
       )
     })
-}
-
-/**
- * What git says a Worktree has that the running varnick does not, filtered to
- * the Fence.
- *
- * Two commands, and the second one is not belt-and-braces. `git diff <live
- * HEAD>` shows tracked changes — committed and uncommitted — but says nothing
- * about a file that has never been added, so a fresh
- * `packages/harness/src/widen.ts` sitting in a worktree would produce an empty
- * diff and launch with no dialog at all. That hole is exactly the shape of the
- * thing the dialog exists to catch, which is why untracked files are
- * enumerated separately and rendered as added files.
- *
- * **The base is the live clone's `HEAD`, not the worktree's merge base.** The
- * question the developer is being asked is "what is different about the fence
- * between the varnick you are running and the one about to start", and that is a
- * comparison against what is checked out here — not against a fork point, which
- * would also show changes the live tree already has.
- *
- * **A failure anywhere throws, and the host then refuses the launch.** This was
- * written the other way first, returning `''` so that a diff which could not be
- * taken launched with no dialog, on the argument that the alternative is a
- * dialog with nothing in it — asking the developer to approve bytes it cannot
- * show them, when approving bytes is the whole mechanism.
- *
- * The premise is right and the conclusion does not follow: the alternative is
- * not an empty dialog, it is **refusing**. Empty and unknown are two facts and
- * only one of them is safe to render as "nothing to show". A git that will not
- * answer is indeed a broken machine rather than an attack — but this is the
- * single step between a confined agent and an unconfined one, a broken machine
- * is a rare, visible, fixable state, and the developer can still start the
- * Preview by hand. A gate that disappears when git is unwell is not a gate.
- */
-async function fenceDiffOf(worktree: string, cloneRoot: string): Promise<string> {
-  const git = async (cwd: string, args: readonly string[]): Promise<string | null> => {
-    try {
-      const run = Bun.spawn(['git', ...args], {
-        cwd,
-        stdout: 'pipe',
-        stderr: 'ignore',
-        stdin: 'ignore',
-      })
-      const text = await new Response(run.stdout).text()
-      return (await run.exited) === 0 ? text : null
-    } catch {
-      return null
-    }
-  }
-
-  /*
-    A git that will not answer **throws**, and the host refuses the launch.
-
-    Empty and unknown are two different facts and only one of them is safe to
-    treat as "nothing to show": empty means this worktree's Fence is the Fence
-    already running, and unknown means nobody can say. Returning `''` for both
-    would make the dialog disappear exactly when the machine is in a state
-    nobody understands, and this is the single step between a confined agent
-    and an unconfined one.
-  */
-  const head = (await git(cloneRoot, ['rev-parse', 'HEAD']))?.trim()
-  if (head === undefined || head === '') {
-    throw new Error('git would not say what the live tree has checked out, so the Fence cannot be compared against it.')
-  }
-
-  const patch = await git(worktree, ['diff', head, '--'])
-  const untracked = await git(worktree, ['ls-files', '--others', '--exclude-standard'])
-  if (patch === null || untracked === null) {
-    throw new Error('git would not say what this worktree changes, so whether it touches the Fence is unknown.')
-  }
-
-  return fenceHunks({
-    patch: patch ?? '',
-    untracked: (untracked ?? '').split('\n').filter((path) => path.length > 0),
-    readUntracked: (path) => {
-      try {
-        // Bounded on the way in as well as on the way out: an untracked file is
-        // whatever size the agent made it, and this process reads it whole.
-        return readFileSync(join(worktree, path), 'utf8').slice(0, UNTRACKED_PREVIEW_BYTES)
-      } catch {
-        return null
-      }
-    },
-  })
 }
 
 /** A message, as much of one as the mirror stores. Nothing else crosses. */
@@ -870,24 +776,6 @@ async function answer(
         heldBy: report.heldBy.map((holder) => ({ pid: holder.pid, command: holder.command })),
         leftOver: report.leftOver,
       }
-    }
-
-    case 'read-fence-diff': {
-      const { worktree } = request as Record<string, unknown>
-      if (typeof worktree !== 'string' || worktree.length === 0) {
-        throw new Error('A fence diff needs the worktree to take it in, and this request named none.')
-      }
-      /*
-        Asked by the host and by nothing else — it is absent from `route_of`,
-        like `wrap-agent-command` and `read-secret-names`, because it is a step
-        inside answering a Preview rather than a capability the renderer has.
-
-        The answer is hunks git wrote and never a summary of them. ADR-0005
-        found the reason and it survives its own supersession: approving a
-        request means approving a sentence the agent wrote, and that sentence is
-        exactly what prompt injection produces.
-      */
-      return { hunks: await capabilities.readFenceDiff(worktree) }
     }
 
     case 'read-secret-names': {

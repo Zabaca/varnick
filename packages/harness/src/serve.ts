@@ -10,9 +10,9 @@
  * stdout is the wire. Anything that writes to it that is not a reply
  * desynchronises the pipe, so diagnostics go to stderr, which the host inherits.
  *
- * ## The one argument
+ * ## The arguments
  *
- *     bun packages/harness/src/serve.ts <clone-root>
+ *     bun packages/harness/src/serve.ts <clone-root> [policy-root]
  *
  * The clone the agent works in, resolved by the host from `VARNICK_CLONE_ROOT`
  * or from the path varnick was built at, and passed here explicitly. It is
@@ -20,6 +20,13 @@
  * still sets one: that inheritance is what ticket 28 removed. A runtime started
  * without it refuses and says how to start it, rather than quietly adopting
  * `process.cwd()` — see ./clone-root.ts.
+ *
+ * The second is whose policy confines the agent, and it is absent from every
+ * launch but one: a **Preview**, which works in a Worktree and is fenced by the
+ * live tree. Absent means "this clone's own", which is what every varnick a
+ * developer starts gets. It is checked in ./clone-root.ts and read in
+ * ./sandbox.ts; nothing here interprets it, for the reason nothing here
+ * interprets the first.
  *
  * A refusal here goes to stderr and exits non-zero. It cannot be a reply,
  * because it happens before any call has been read and there is no id to
@@ -67,6 +74,6 @@ watchForOrphaning({
 await serveHarness(
   process.stdin,
   (reply) => process.stdout.write(reply),
-  hostCapabilities({ cloneRoot }),
+  hostCapabilities({ cloneRoot, policyRoot: process.argv[3] }),
   (line) => process.stderr.write(line),
 )

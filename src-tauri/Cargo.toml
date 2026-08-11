@@ -25,29 +25,12 @@ serde_json = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# The Preview dialog, drawn by this process.
+# The Preview dialog was here — objc2, objc2-app-kit and objc2-foundation, for
+# an NSAlert with a scrolling accessory view showing the Fence hunks.
 #
-# A Preview whose Worktree edits the Fence is the one path from confined to
-# unconfined, and the dialog is what stands in it — so it must be a thing
-# Userspace cannot draw. Userspace renders in the same window and the agent
-# writes Userspace freely, so anything the webview could paint could be forged
-# and the developer trained to click through; an NSAlert removes the class
-# rather than mitigating it. See docs/adr/0014-core-is-authored-in-a-worktree.md.
-#
-# These are already in this build's dependency graph — tauri's macOS backend
-# pulls the same versions — so naming them costs nothing at compile time and
-# gains a dialog with a scrolling accessory view, which is what showing hunks
-# rather than a summary needs.
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = [
-    "NSAlert",
-    "NSApplication",
-    "NSFont",
-    "NSResponder",
-    "NSScrollView",
-    "NSText",
-    "NSTextView",
-    "NSView",
-] }
-objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
+# It is gone with the escalation it gated: a Preview is confined by the live
+# tree's policy now, so there is nothing to approve
+# (docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md). Nothing
+# else in this host draws AppKit directly, so the direct dependencies went too —
+# tauri's macOS backend still pulls the same crates, which is why they cost
+# nothing to name and also nothing to stop naming.

@@ -293,10 +293,35 @@ fn read_keychain(account: &str) -> Result<Option<String>, ()> {
 /// `String` on this error path for a value to be formatted into. The prose a
 /// developer reads is authored once, in packages/harness/src/credentials.ts, so
 /// the two halves cannot drift into two different first-run instructions.
-pub fn read_credential(store: &CredentialStore) -> Result<Reading, &'static str> {
+///
+/// ## `keychain` is false in exactly one varnick
+///
+/// A **Preview**. Its parent host already holds a Credential and injects it
+/// into the environment this reads (`preview_launch` in preview.rs), which is
+/// the arrangement the primary agent has — so opening the Keychain here would
+/// be a second process reaching for a secret that has already arrived. The
+/// answer is then `Source::Env`, which is true and is what the window prints.
+///
+/// It is not a hardening of the Keychain: a Preview's host is not confined and
+/// could run `security` itself. It is the removal of a *reason* to, which is
+/// what makes "no new process comes to hold a secret" a description of the
+/// code rather than a hope. See
+/// docs/adr/0019-a-preview-is-confined-by-the-live-trees-policy.md.
+///
+/// A Preview whose parent had nothing to inject gets `nothing-stored` and the
+/// first-run screen, rather than silently authenticating as whoever this
+/// machine's Keychain belongs to.
+pub fn read_credential(store: &CredentialStore, keychain: bool) -> Result<Reading, &'static str> {
+    let ask_keychain = |account: &str| {
+        if keychain {
+            read_keychain(account)
+        } else {
+            Ok(None)
+        }
+    };
     let (source, kind, value) = resolve(Stores {
-        keychain_subscription: read_keychain(Kind::Subscription.keychain_account()),
-        keychain_api_key: read_keychain(Kind::ApiKey.keychain_account()),
+        keychain_subscription: ask_keychain(Kind::Subscription.keychain_account()),
+        keychain_api_key: ask_keychain(Kind::ApiKey.keychain_account()),
         env_subscription: std::env::var(SUBSCRIPTION_ENV_VAR).ok(),
         env_api_key: std::env::var(API_KEY_ENV_VAR).ok(),
     })?;
@@ -490,8 +515,10 @@ impl std::fmt::Debug for Injection {
 /// The environment the agent subprocess is spawned with.
 ///
 /// The one way the value leaves this module, and it goes into a child process's
-/// environment rather than into any string the host keeps. Called from exactly
-/// one place — the spawn in agent.rs — and nothing else may call it.
+/// environment rather than into any string the host keeps. Two callers, and
+/// both are spawns of the same shape: the agent in agent.rs, and a **Preview**
+/// in preview.rs — which is a varnick that will hand it on to an agent of its
+/// own. Nothing that is not a spawn may call it.
 ///
 /// The split that spawn implements, recorded here because this is the function
 /// that would be misused: the Harness runtime holds the Sandbox, so the obvious

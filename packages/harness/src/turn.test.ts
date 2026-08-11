@@ -569,13 +569,14 @@ describe('a failure says which failure it was, and never quotes the API', () => 
       this test enforces: it must **end**. Every module on it imports at most
       one thing and the last imports nothing, so no step can close a ring.
 
-      The chain is turn.ts → preview.ts → fence.ts. ./preview.ts is the closed
-      list of outcomes a `preview-answer` may carry, beside the sentences
-      written for them; ./fence.ts is the one definition of which paths decide
-      what the agent may do, which preview.ts imports rather than restating —
-      it had its own copy for one afternoon, and the two spellings had already
-      begun to disagree. The last assertion is the whole of what makes the
-      others safe.
+      The chain is turn.ts → preview.ts, and it is one step shorter than it was.
+      ./preview.ts is the closed list of outcomes a `preview-answer` may carry,
+      beside the sentences written for them. It used to import ./fence.ts as
+      well, for `fenceHunks` — the diff the approval dialog showed — and both
+      went when a Preview stopped being an escalation (ADR-0019). ./fence.ts is
+      still the one definition of which paths decide what the agent may do; it
+      simply has no reader on this chain any more. The last assertion is the
+      whole of what makes the others safe.
     */
     const runtimeImportsIn = (module: string) => {
       const source = readFileSync(new URL(`./${module}`, import.meta.url), 'utf8')
@@ -584,7 +585,10 @@ describe('a failure says which failure it was, and never quotes the API', () => 
       )
     }
     expect(runtimeImportsIn('turn.ts')).toEqual(['./preview.ts'])
-    expect(new Set(runtimeImportsIn('preview.ts'))).toEqual(new Set(['./fence.ts']))
+    expect(runtimeImportsIn('preview.ts')).toHaveLength(0)
+    // Kept, though nothing on the chain reaches it now: ./fence.ts is imported
+    // by Core's diff view across a package boundary, and a leaf that grew an
+    // import would be a leaf that could grow a cycle later.
     expect(runtimeImportsIn('fence.ts')).toHaveLength(0)
   })
 
