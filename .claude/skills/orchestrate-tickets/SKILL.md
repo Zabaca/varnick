@@ -84,7 +84,13 @@ conflict resolution is code nobody has reviewed.
 
 ### 5. When the queue is empty
 
-Run the pre-release skill. Then write the report.
+[cut-a-pre-release](../cut-a-pre-release/SKILL.md) is the procedure, and it is
+the last thing the run does before the report. It leaves exactly one **Pending**
+pre-release — or says why a night's work was not worth cutting one for — and it
+stops there. Promoting is the developer's, always.
+
+Then write the report. The release is a section of it, and that skill says what
+belongs in that section.
 
 ## Parking a ticket
 

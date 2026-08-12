@@ -18,9 +18,9 @@ adjusting a merge.
 
 **Status:** ready-for-agent
 
-- [ ] A skill exists that takes a finished run and leaves exactly one pending pre-release
-- [ ] It states how to write an announcement from tickets, with the standard that it says what changed for the developer rather than what changed in the code
-- [ ] It says what to do when a run merged nothing, or merged only work with no visible effect — a release nobody needs is not cut
-- [ ] It says explicitly that promotion is never the agent's, and why
-- [ ] It names what to record when a pre-release supersedes one the developer never promoted
-- [ ] The orchestrator skill's final step points at it
+- [x] A skill exists that takes a finished run and leaves exactly one pending pre-release
+- [x] It states how to write an announcement from tickets, with the standard that it says what changed for the developer rather than what changed in the code
+- [x] It says what to do when a run merged nothing, or merged only work with no visible effect — a release nobody needs is not cut
+- [x] It says explicitly that promotion is never the agent's, and why
+- [x] It names what to record when a pre-release supersedes one the developer never promoted
+- [x] The orchestrator skill's final step points at it
