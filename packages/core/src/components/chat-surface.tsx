@@ -691,6 +691,29 @@ export function ChatSurface({
                       </span>
                     ) : null}
                   </ClaudeMessage>
+                ) : m.role === 'varnick' ? (
+                  /*
+                    varnick's own words, which are neither the developer's nor
+                    the agent's. Today it says exactly one thing: a release was
+                    promoted and the ground under this conversation moved.
+
+                    Drawn as a report rather than as a turn — a hairline down
+                    the left and a dim label — because a chat bubble would put
+                    it in the exchange, and it is not part of the exchange. It
+                    is the transcript recording something that happened *to* it.
+                    The next Turn does not carry it to the model, for the same
+                    reason: see MessageRole in domain.ts.
+                  */
+                  <div
+                    key={m.id}
+                    className="my-1 border-l pl-3"
+                    style={{ borderColor: 'var(--rule)' }}
+                  >
+                    <div className="text-[12px]" style={{ color: 'var(--fg-dim)' }}>
+                      varnick
+                    </div>
+                    <Markdown text={m.text} />
+                  </div>
                 ) : (
                   <div key={m.id}>
                     {/* Why the agent started talking, when nobody asked it to.

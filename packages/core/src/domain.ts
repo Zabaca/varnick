@@ -213,7 +213,24 @@ export interface SurfaceDescriptor {
   readonly modulePath: string
 }
 
-export type MessageRole = 'user' | 'agent'
+/**
+ * Who said a thing in the transcript.
+ *
+ * **`varnick` is the third one, and it exists because there were two.** A
+ * release announcement has to go into the conversation — the transcript is the
+ * record of what happened, and a build changing underneath it is the most
+ * consequential thing that can happen to it — and it is not something the
+ * developer typed or something the agent answered. Posting it as `agent` would
+ * put words in the agent's mouth that the agent did not say and cannot be asked
+ * about; posting it as `user` would be worse, because the next Turn would carry
+ * it back to the model as though the developer had written it.
+ *
+ * It is deliberately not a general-purpose "system" role. varnick says exactly
+ * one kind of thing — see the `release` region in `machines/harness.ts` — and a
+ * role named for the speaker rather than for a category is one that cannot
+ * quietly accumulate notifications.
+ */
+export type MessageRole = 'user' | 'agent' | 'varnick'
 
 /**
  * How a tool call ended, as far as the transcript can tell.

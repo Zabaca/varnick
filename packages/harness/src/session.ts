@@ -32,7 +32,25 @@ import { parseStoredTool, type StoredToolCall } from './stored.ts'
  *  declared here because the Harness must not import Core. */
 export interface StoredMessage {
   readonly id: string
-  readonly role: 'user' | 'agent'
+  /**
+   * Who said it.
+   *
+   * **`varnick` is the third, and the mirror has to know about it or the
+   * announcement does not survive the restart it is announcing.** A release
+   * promotion posts one message into the transcript and then replaces the
+   * process; if this rejected the role on the way back in, the developer would
+   * be told the ground moved and then find no record of it — which is the
+   * failure the announcement exists to prevent, arriving through the mechanism
+   * meant to prevent it.
+   *
+   * This is `packages/harness/**`, so it is Fence and a human merges it. It is
+   * here rather than in Core because the mirror's format is the mirror's, and a
+   * role Core could add unilaterally would be a role that could be written to
+   * disk and then not read back. See `MessageRole` in
+   * `packages/core/src/domain.ts` for why the role is `varnick` rather than
+   * `system`.
+   */
+  readonly role: 'user' | 'agent' | 'varnick'
   readonly text: string
   /** How many pictures went with it. Absent for the messages that carry none. */
   readonly attachments?: number
@@ -353,7 +371,10 @@ function parseLine(line: string): StoredMessage | null {
     if (typeof value !== 'object' || value === null) return null
     const { id, role, text, attachments, tool } = value as Record<string, unknown>
     if (typeof id !== 'string' || typeof text !== 'string') return null
-    if (role !== 'user' && role !== 'agent') return null
+    // A role this does not know is a line from a newer varnick, and dropping it
+    // silently is how a transcript loses a message it was trusted to keep. The
+    // three it knows are the three there are; see StoredMessage.
+    if (role !== 'user' && role !== 'agent' && role !== 'varnick') return null
     /*
       A tool call or nothing, and a malformed one is a malformed line.
 

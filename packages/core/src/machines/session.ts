@@ -205,6 +205,8 @@ export type SessionEvent =
    * the silence it replaces — so the cause rides on the answer instead.
    */
   | { type: 'UNPROMPTED_ANSWER'; text: string; cause: string }
+  /** varnick's own words — a promoted release. See the handler for why. */
+  | { type: 'VARNICK_ANNOUNCED'; text: string }
   /** The agent summarised the conversation. A report, like `CLEAR`. `null`
    *  tokens means the Session would not say what it now holds. */
   | { type: 'COMPACTED'; summary: string; tokensUsed: number | null }
@@ -505,6 +507,37 @@ export const sessionMachine = setup({
       Guarded on having something to say. An empty answer is a run that produced
       no text, and an empty message in the transcript is worse than none.
     */
+    /*
+      varnick saying something itself, which today is exactly one thing: a
+      release was promoted and this conversation is about to be handed to a new
+      build.
+
+      **A Turn boundary for the same reason `UNPROMPTED_ANSWER` is one, and a
+      sharper one.** The restart happens moments later and deliberately — so an
+      announcement that reached the window and not the mirror would be lost by
+      the very act it was announcing, which is the one failure this message
+      exists to prevent.
+
+      Guarded on having something to say, like its neighbour. It carries no
+      `cause`: a Cause explains why the *agent* spoke unprompted, and varnick
+      speaking needs no such account — the announcement says what happened.
+    */
+    VARNICK_ANNOUNCED: {
+      guard: ({ event }) => event.text.trim().length > 0,
+      actions: [
+        assign({
+          messages: ({ context, event }) => [
+            ...context.messages,
+            {
+              id: `m${context.messages.length + 1}`,
+              role: 'varnick' as const,
+              text: event.text,
+            },
+          ],
+        }),
+        'saveTranscript',
+      ],
+    },
     UNPROMPTED_ANSWER: {
       guard: ({ event }) => event.text.trim().length > 0,
       actions: [
