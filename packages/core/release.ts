@@ -374,13 +374,14 @@ export function isSourcePath(path: string): boolean {
  * ticket fields live; it is not a bump declaration, and nobody writes a level on
  * a ticket to choose a version.
  *
- * **It is new, and no ticket in `.scratch/` carries it yet.** An earlier version
- * of this comment cited ticket 05 as the motivating case — a loss that ADR-0020
- * does record, and that ticket 05's *file* does not state under any field, so the
- * citation was for a case the mechanism could not actually have read. The
- * motivating shape is real; the claim that it was already being read was not.
- * Until tickets adopt the field, this route contributes nothing and the diff
- * decides alone — see ADR-0022, which says so rather than leaving it implied.
+ * Ticket 05 is the case, and it is worth knowing that the field was written onto
+ * it deliberately and afterwards. The loss was always real and always recorded —
+ * the feature spec calls it an accepted consequence in those words, and ADR-0020
+ * has a section on it — but ticket 05's own file stated it under no field, so an
+ * earlier version of this comment cited a case the mechanism could not have
+ * read. The repair was to record it where it had always been true rather than to
+ * soften the claim: 05 now carries the line, and the first pre-release is a minor
+ * because the work was.
  */
 export function levelOfRun(
   tickets: readonly TicketSummary[],

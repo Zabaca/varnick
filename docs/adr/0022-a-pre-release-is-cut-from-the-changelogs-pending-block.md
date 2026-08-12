@@ -73,13 +73,19 @@ something the developer relied on stops working, and it exists because a loss ca
 arrive entirely as additions: ADR-0020 records exactly such a loss, live Surface
 hot-reloading in the main window, delivered by *adding* a script.
 
-## The first release is a patch, and both routes to breaking are dark
+## What the first release actually is, and why
 
 Stated plainly rather than left for somebody to measure, because the honest
 version of "the bump is inferred" has to say what it currently infers.
 
-**Today every route to `breaking` is unreachable, so the level is patch by
-construction.** Two reasons, and only one of them is a gap:
+**The first pre-release is `v0.1.0`, a minor, and it is one because the work
+was.** Ticket 05 took live Surface hot-reloading away from the main window. That
+is a thing the developer relied on and can no longer do, which pre-1.0 convention
+puts at the minor — a release that silently removed it under a patch number would
+be the version lying about the work.
+
+The two routes to `breaking` behave differently on a first cut, and only one of
+them is doing anything here:
 
 **The diff cannot see a removal on a first cut, and that is correct.** With
 nothing promoted, the diff is taken from the empty tree, where every path is an
@@ -89,22 +95,31 @@ Once something is promoted the diff is taken from its tag, and a deleted source
 file reads as `breaking` from that point on — the same file, measured both ways,
 gives `feature` from the empty tree and `breaking` from `v0.0.1`.
 
-**No ticket carries an accepted consequence yet.** The field is new here. It is
-documented where ticket fields are documented and it is exercised end to end —
-`drive.ts` cuts a real release from a ticket carrying one and watches the version
-rise — but nothing in `.scratch/` has adopted it, so it contributes nothing to
-the next real cut.
+**So the accepted consequence is the whole of the signal here**, which is exactly
+the case the field exists for: a loss delivered entirely as additions, invisible
+to every diff.
 
-An earlier draft of this ADR cited ticket 05 as the case the field was already
-reading. It was not: the loss is real and ADR-0020 records it, but ticket 05's
-file states it under no field, so the mechanism could never have seen it. The
-shape was right and the claim was wrong, and retrofitting the field onto a landed
-ticket to make the sentence true would have changed this release's version number
-as a side effect of fixing a comment. That is the developer's call, not a
-release's.
+### The field was added to ticket 05 afterwards, deliberately
 
-So: **v0.0.1 is a patch, and it is a patch honestly.** The machinery that would
-make it a minor works, is asserted, and has nothing to read yet.
+Worth recording, because "the ticket grew the field that changed the version" is
+a sentence that should never be true by accident.
+
+An earlier draft of this ADR cited ticket 05 as the case the mechanism was
+already reading. It was not. The loss was always real and always recorded — the
+feature spec calls it an accepted consequence in those words, and ADR-0020 has a
+section on it — but ticket 05's own file stated it under no field, so nothing
+could have read it. The citation was false and was removed.
+
+The repair was then to write the field where it had always been true, rather than
+to soften the claim. That is a different act from retrofitting a field to make a
+sentence true: nothing about ticket 05 changed except that a consequence recorded
+in two other documents is now recorded on the ticket, in the form
+`docs/agents/issue-tracker.md` documents.
+
+The version moving from `0.0.1` to `0.1.0` as a result is the machinery working,
+not a side effect to avoid. It is also why a release must never be the thing that
+decides to add such a field to a ticket: the number would then be arguing for
+itself. A person decided this one.
 
 ## Pre-1.0, a feature and a fix are the same bump
 

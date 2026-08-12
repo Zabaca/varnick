@@ -16,6 +16,11 @@ the developer wants, and where the work now happens.
 This ticket also establishes where built artifacts live and which one the host
 serves — the convention the release chain builds on.
 
+**Accepted consequence:** live Surface hot-reloading — "ask for a Surface and it
+appears" — stops working in the main window. It continues to work in a Preview,
+and `bun run dev` still opens the same interface with hot reloading and no host
+behind it.
+
 This touches the host and lands through a human merge.
 
 **Blocked by:** None — can start immediately.
