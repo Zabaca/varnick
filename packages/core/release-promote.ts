@@ -39,6 +39,17 @@
  *     ticket asks for. The alternative — clearing first — turns a half-finished
  *     promotion into a release nobody can accept and nobody can see.
  *
+ * **Ordering the writes is not the same as making them atomic, and the gap
+ * between those two had a permanent failure in it.** Crash after the changelog
+ * write and before the record is cleared, and the record names a version the
+ * changelog has already accepted — at which point `changelogPromoted` answers
+ * `null` exactly as it would for an entry that never existed, every later press
+ * refuses, and the band offers a pre-release that can never be taken for the
+ * life of the clone. That state was reached and measured rather than reasoned
+ * about. {@link alreadyPromoted} is what closes it: a second attempt can now
+ * tell *already done* from *cannot be done*, and finishes the job instead of
+ * refusing it.
+ *
  * ## The one writer
  *
  * `switchServedArtifact` is the only thing in the repository that writes
@@ -52,9 +63,14 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { switchServedArtifact, artifactStartFailureById } from './artifact-store.ts'
+import { switchServedArtifact, artifactStartFailureById, readServedMarkers } from './artifact-store.ts'
 import { changelogPath, clearPendingRecord, pendingRecordPath } from './release-cut.ts'
-import { parsePendingRecord, promotionPlan, type PendingPreRelease } from './release.ts'
+import {
+  alreadyPromoted,
+  parsePendingRecord,
+  promotionPlan,
+  type PendingPreRelease,
+} from './release.ts'
 
 /** What a promotion did, or why it did nothing. */
 export type PromotionOutcome =
@@ -106,12 +122,36 @@ export function promotePreRelease(cloneRoot: string, now: string): PromotionOutc
   const startFailure =
     record === null ? null : artifactStartFailureById(cloneRoot, record.artifact)
 
-  const plan = promotionPlan({
-    record,
-    changelog: textAt(changelogPath(cloneRoot)),
-    now,
-    startFailure,
-  })
+  const changelog = textAt(changelogPath(cloneRoot))
+
+  /*
+    A promotion that already happened, finishing itself.
+
+    The three writes below are not one atomic act, so a crash between the
+    changelog write and the record clear leaves a record naming a version the
+    changelog has already accepted. Without this branch every later press
+    refuses — `changelogPromoted` cannot tell a stamped entry from a missing one
+    — and the band offers a pre-release that can never be taken, permanently.
+    Measured, not imagined.
+
+    Converging rather than refusing: the developer is almost certainly on the
+    old build, so the honest answer is the one that clears the stale record and
+    leaves them owed a restart. The announcement may be posted a second time if
+    the first attempt got that far, which is a far smaller harm than a band that
+    is stuck for the life of the clone.
+  */
+  if (record !== null && alreadyPromoted(changelog, record.version)) {
+    clearPendingRecord(cloneRoot)
+    return {
+      promoted: true,
+      version: record.version,
+      artifact: record.artifact,
+      previous: readServedMarkers(cloneRoot).previous,
+      announcement: record.announcement,
+    }
+  }
+
+  const plan = promotionPlan({ record, changelog, now, startFailure })
   if (!plan.promote) return { promoted: false, reason: plan.reason }
 
   // The only writer of either marker, and this file does not become the second.

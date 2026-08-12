@@ -1085,6 +1085,28 @@ export function changelogPromoted(
   return stamped ? lines.join('\n') : null
 }
 
+/**
+ * Has this version already been accepted?
+ *
+ * **The question a half-finished promotion leaves behind.** The three writes a
+ * promotion makes are ordered so that a failure part-way is recoverable, and
+ * that recovery only works if a second attempt can tell "already done" from
+ * "cannot be done". Without this it cannot: a changelog stamped by the first
+ * attempt makes {@link changelogPromoted} answer `null`, which is
+ * indistinguishable from a changelog that never had the entry — so the record
+ * stays on disk and the band offers a pre-release that can never be accepted,
+ * for ever.
+ *
+ * That state was reachable and was measured, not imagined: crash after the
+ * changelog write and before the record is cleared, and every subsequent press
+ * refuses with "no pending entry".
+ */
+export function alreadyPromoted(changelog: string | undefined | null, version: string): boolean {
+  return changelogEntries(changelog).some(
+    (entry) => entry.version === version && entry.promotedOn !== null,
+  )
+}
+
 /** What a promotion decides, before anything is written. */
 export type PromotionPlan =
   | { readonly promote: false; readonly reason: string }

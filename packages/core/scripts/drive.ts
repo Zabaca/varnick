@@ -134,8 +134,13 @@ import {
   releasePlan,
   tagDisposition,
   tagForVersion,
+  alreadyPromoted,
+  changelogPromoted,
+  promotionDate,
+  promotionPlan,
 } from '../release.ts'
 import { cutPreRelease } from '../release-cut.ts'
+import { promotePreRelease } from '../release-promote.ts'
 import {
   VERSION_MODULE_ID,
   VERSION_MODULE_RESOLVED,
@@ -8759,6 +8764,117 @@ A sentence about the file.
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Accepting a pre-release
+// ---------------------------------------------------------------------------
+
+{
+  /*
+    The promotion, and above all its refusals. Every one of them happens before
+    the first write, which is what makes "a promotion that fails leaves the
+    developer on the build they were already running" a property of the shape
+    rather than a rule somebody keeps — so each is asserted here, where it can be
+    exercised with nothing built and nothing serving.
+  */
+  const record = {
+    version: '0.0.2',
+    artifact: '0.0.2',
+    tag: 'v0.0.2',
+    cutAt: '2026-08-11T03:14:00.000Z',
+    announcement: 'varnick v0.0.2 is cut and waiting.',
+    notes: [],
+  }
+  const pendingLog = '# Changelog\n\n## v0.0.2 — pending\n\n- **08 — A band** — a thing.\n'
+
+  check('a promotion stamps the day rather than the instant', promotionDate('2026-08-11T09:30:00Z') === '2026-08-11')
+
+  const taken = promotionPlan({ record, changelog: pendingLog, now: '2026-08-11T09:30:00Z', startFailure: null })
+  check('a pending entry is accepted', taken.promote)
+  check('and the entry it stamps is the one on offer', taken.promote && taken.version === '0.0.2')
+  check(
+    'the changelog it writes marks that entry with the date and nothing else',
+    taken.promote && taken.changelog.includes('## v0.0.2 — 2026-08-11') && taken.changelog.includes('**08 — A band**'),
+  )
+
+  /*
+    The three refusals, each leaving everything where it was. The first is the
+    one ticket 07 made it possible to state at all, and it is the one a retry
+    cannot fix: promoting onto a build that will not start hands the developer a
+    window that does not open, and the fallback would serve the old build back on
+    the next launch — which works, and still reads as a promotion that undid
+    itself.
+  */
+  check(
+    'a build that will not start is refused rather than promoted',
+    !promotionPlan({ record, changelog: pendingLog, now: 'x', startFailure: 'index.html loads /assets/a.js, which is not in the artifact' }).promote,
+  )
+  check(
+    'and the refusal says which file, because that is what the developer fixes',
+    (() => {
+      const r = promotionPlan({ record, changelog: pendingLog, now: 'x', startFailure: 'index.html loads /assets/a.js, which is not in the artifact' })
+      return !r.promote && r.reason.includes('/assets/a.js')
+    })(),
+  )
+  check(
+    'nothing pending is a refusal rather than a promotion of nothing',
+    !promotionPlan({ record: null, changelog: pendingLog, now: 'x', startFailure: null }).promote,
+  )
+  check(
+    'a changelog naming a different version is refused, because the two disagree',
+    !promotionPlan({ record, changelog: '# Changelog\n\n## v0.9.9 — pending\n\n- **x — y** — z.\n', now: 'x', startFailure: null }).promote,
+  )
+  check(
+    'and so is one with no pending entry at all',
+    !promotionPlan({ record, changelog: '# Changelog\n\n## v0.0.1 — 2026-08-01\n\n- **x — y** — z.\n', now: 'x', startFailure: null }).promote,
+  )
+
+  check('a stamped entry is not pending', changelogPromoted(pendingLog, '0.0.2', '2026-08-11') !== null)
+  check('and stamping one that is not there answers nothing', changelogPromoted(pendingLog, '9.9.9', '2026-08-11') === null)
+  check('an accepted version reads as accepted', alreadyPromoted('# Changelog\n\n## v0.0.2 — 2026-08-11\n', '0.0.2'))
+  check('a pending one does not', !alreadyPromoted(pendingLog, '0.0.2'))
+
+  /*
+    **Ordering the writes is not the same as making them atomic**, and the gap
+    between those two held a permanent failure.
+
+    Crash after the changelog write and before the record is cleared, and the
+    record names a version the changelog has already accepted — at which point
+    `changelogPromoted` answers `null` exactly as it would for an entry that
+    never existed. Every later press refused, and the band offered a pre-release
+    that could never be taken for the life of the clone.
+
+    Run for real against that exact state rather than reasoned about, because
+    reasoning about it is what missed it: the refusals were all before the first
+    write, which was true and was not the whole story.
+  */
+  const scratch = mkdtempSync(join(tmpdir(), 'varnick-promote-'))
+  try {
+    const source = join(scratch, 'dist')
+    mkdirSync(join(source, 'assets'), { recursive: true })
+    writeFileSync(join(source, 'index.html'), '<script src="/assets/a.js"></script>')
+    writeFileSync(join(source, 'assets', 'a.js'), 'export {}')
+    installArtifact(scratch, 'local', source)
+    installArtifact(scratch, '0.0.2', source)
+    switchServedArtifact(scratch, 'local')
+    switchServedArtifact(scratch, '0.0.2')
+
+    mkdirSync(join(scratch, '.varnick'), { recursive: true })
+    // The half-finished state: changelog stamped, record never cleared.
+    writeFileSync(join(scratch, 'CHANGELOG.md'), '# Changelog\n\n## v0.0.2 — 2026-08-11\n\n- **08 — A band** — a thing.\n')
+    writeFileSync(join(scratch, '.varnick', 'pending-release.json'), pendingRecordText(record))
+
+    const finished = promotePreRelease(scratch, '2026-08-12T00:00:00Z')
+    check('a promotion that already happened finishes itself rather than refusing', finished.promoted)
+    check(
+      'and the offer is gone afterwards, so the band cannot be stuck on it',
+      !existsSync(join(scratch, '.varnick', 'pending-release.json')),
+    )
+    check('with the fallback still naming the build the developer came from', readServedMarkers(scratch).previous === 'local')
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
 console.log(`\n${passed} assertions passed`)
 if (failures.length > 0) {
   console.error(`${failures.length} FAILED:`)
@@ -8766,3 +8882,4 @@ if (failures.length > 0) {
   process.exit(1)
 }
 console.log('all green — UI may begin\n')
+

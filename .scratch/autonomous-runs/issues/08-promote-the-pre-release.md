@@ -146,6 +146,22 @@ developer a window that does not open, and the fallback would serve the old buil
 back on the next launch — which works, and still reads as a promotion that undid
 itself.
 
+### A third bug, found by attacking the ordering rather than by reading it
+
+**Ordering the writes is not the same as making them atomic.** The claim that
+every refusal precedes the first write is true and was not the whole story: the
+three writes themselves are not one act, and a crash between the changelog write
+and the record clear left a record naming a version the changelog had already
+accepted. `changelogPromoted` answers `null` for that exactly as it does for an
+entry that never existed, so every later press refused and **the band offered a
+pre-release that could never be taken, for the life of the clone.**
+
+Reached and measured against a scratch clone, not imagined. `alreadyPromoted`
+closes it: a second attempt can now tell *already done* from *cannot be done*,
+and converges by clearing the stale record and leaving the developer owed a
+restart. The announcement may be posted twice if the first attempt got that far,
+which is a much smaller harm than a permanently stuck band.
+
 ### Two bugs written and caught before committing
 
 Both silent in the good case, so both worth recording:
@@ -168,13 +184,30 @@ Both silent in the good case, so both worth recording:
   `uncoveredPaths()` regresses and `drive.ts` fails. They are the `The release`
   group.
 
-### One thing narrowed rather than closed
+### One thing narrowed rather than closed, and a claim about it that was wrong
 
 The announcement's mirror write is *issued* before the restart — the entry action
 runs before the `invoke` — but nothing waits on it completing. Closing it means
 the region observing `persistence.saved`, which is a cross-region read ADR-0007
-deliberately makes awkward. This is the same exposure `worktreeMerge` carries
-today; named here rather than left to be found.
+deliberately makes awkward.
+
+**An earlier version of this note said `worktreeMerge` carries the same
+exposure. It does not, and the difference runs the wrong way.** Checked rather
+than assumed: `worktreeMerge.merged` posts nothing to the transcript — its entry
+is `raise({ type: 'LIST_WORKTREES' })` and nothing else — so it has no
+persistence to race. And its restart is a *second, deliberate press*
+(`RESTART_VARNICK` from the band) taken after the developer has read the report,
+where `release.promoted` posts and invokes the restart in the same instant.
+
+So this exposure is **new and unique to this region**, not inherited. What is
+lost if the race is lost: the developer restarts onto the promoted build and the
+announcement is missing from the restored transcript — the record of why the
+ground moved, gone by the act of moving it, which is the failure the announcement
+exists to prevent. The changelog still has it, so nothing is unrecoverable.
+
+The fix, if it is wanted, is the Session telling its parent when the save landed
+and `promoted` waiting for that before invoking the restart — children reporting
+to parents by event is the ADR-0007-blessed shape, and it is not large.
 
 ### For ticket 09
 
