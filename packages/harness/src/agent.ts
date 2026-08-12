@@ -60,6 +60,7 @@ import { fileURLToPath } from 'node:url'
 import type { Pointer } from 'bun:ffi'
 import { CREDENTIAL_ENV_VARS, credentialRejection } from './credentials.ts'
 import { readLines } from './framing.ts'
+import { GIT_CONFIG_GLOBAL_ENV_VAR, agentGitConfigPath } from './gitconfig.ts'
 import { watchForOrphaning } from './orphan.ts'
 import {
   BUN_CACHE_ENV_VAR,
@@ -889,6 +890,34 @@ export function agentEnvironment(
   */
   environment[TEMP_DIR_ENV_VAR] = agentTempDir(input.cloneRoot)
   environment[TEMP_PREFIX_ENV_VAR] = agentTempPrefix(input.cloneRoot)
+
+  /*
+    And git's global config, which arrives *fatal* rather than wrong or missing.
+
+    `$HOME` is denied (ADR-0003) and git treats a global config it can see and
+    cannot read as fatal, so without this every git command in the Sandbox exits
+    128 — `git --version` included, and `git worktree add`, `git commit` and `git
+    merge` with it, which is the whole of how the agent authors Core (ADR-0014).
+
+    Pointed at the clone for the same reason `TMPDIR` is: the clone is already
+    writable, so a variable pointed into it costs nothing and moves nothing —
+    `allowRead` and `allowWrite` are untouched by this. What is *different* from
+    the three above is that the file it names is denied to the agent, because a
+    gitconfig runs commands. See ./gitconfig.ts, which is also where the two
+    candidates this rejected are argued: allowing a read on `~/.gitconfig`, and
+    `GIT_CONFIG_GLOBAL=/dev/null`.
+
+    Set in both modes, like the config directory and the cache. Under `inherit`
+    the developer's own config is still unreadable in here, so honouring their
+    value would hand the agent a path the kernel refuses and call it inheritance.
+
+    `establishSandbox` puts the same value on the wrapper's overlay, so this
+    process usually has it already. Set again rather than read back, because this
+    function builds the environment outright and an inherited value is a value
+    that can be absent — an agent host started any other way would get a Claude
+    Code with no `GIT_CONFIG_GLOBAL` and no git at all.
+  */
+  environment[GIT_CONFIG_GLOBAL_ENV_VAR] = agentGitConfigPath(input.cloneRoot)
 
   // The real toolchain ahead of the shim, so `git` is git. See
   // {@link developerToolsBin} for what the shim does and why allowing its

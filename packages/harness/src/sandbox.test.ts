@@ -35,6 +35,11 @@ import {
   validateSandboxPolicy,
   type SandboxPolicy,
 } from './sandbox.ts'
+import {
+  PROJECTED_GITCONFIG_RELATIVE_PATH,
+  PROJECTED_GIT_KEYS,
+  agentGitConfigPath,
+} from './gitconfig.ts'
 
 /*
   The seam is the policy the generator produces, never how it assembles it.
@@ -408,6 +413,46 @@ describe('what the policy denies', () => {
     expect(TRACKED_HOOKS_GLOB).toBe(`${TRACKED_HOOKS_DIR}/**`)
   })
 
+  test('the git config varnick hands the agent is unwritable, and the rest of .varnick is not', () => {
+    /*
+      The newest entry, and the one whose absence would be hardest to spot,
+      because varnick creates the file itself. Ticket 11: git fatals on a global
+      config it can see and cannot read and `$HOME` is denied, so every git
+      command in the Sandbox exited 128 until `GIT_CONFIG_GLOBAL` was pointed at
+      `.varnick/gitconfig`. A gitconfig runs commands — `core.hooksPath`,
+      `core.editor`, `alias.*` and `credential.helper` beginning `!`,
+      `filter.*.clean` — so writable, it would be the `.githooks` hole again,
+      arriving through the fix for something else.
+    */
+    const { denyWrite } = policy().filesystem
+    expect(denyWrite).toContain(agentGitConfigPath(CLONE))
+    expect(denyWrite.some((denied) => coversWrite(denied, agentGitConfigPath(CLONE)))).toBe(true)
+
+    /*
+      And the three neighbours that must stay writable. The session store, the
+      temp directory and the `node` shim are written by the confined process
+      itself — a deny that grew into `.varnick/**` would stop Claude Code
+      starting at all, which is a much louder failure than the one it fixed and
+      would be "fixed" by deleting the entry above.
+    */
+    for (const needed of [
+      `${CLONE}/.varnick/claude/last-session.json`,
+      `${CLONE}/.varnick/tmp/zsh1234`,
+      `${CLONE}/.varnick/bin/node`,
+    ]) {
+      expect(denyWrite.some((denied) => coversWrite(denied, needed))).toBe(false)
+    }
+  })
+
+  test('a git config inside a worktree is not denied, for the reason a hook is not', () => {
+    // ADR-0014 again. The entry is an absolute live-tree path, so a Preview
+    // working in a Worktree writes and reads its own — which decides what runs
+    // inside that Preview's Sandbox and nothing on the developer's machine.
+    const { denyWrite } = policy().filesystem
+    const inWorktree = `${CLONE}/.claude/worktrees/some-change/${PROJECTED_GITCONFIG_RELATIVE_PATH}`
+    expect(denyWrite.some((denied) => coversWrite(denied, inWorktree))).toBe(false)
+  })
+
   test('a hook authored in a worktree is not denied, which is where hooks come from now', () => {
     /*
       ADR-0014, and the half that keeps the deny above from costing the agent
@@ -521,6 +566,23 @@ describe('readable without reading the source', () => {
     // And the half that says the agent has not lost hooks, only a tree to write
     // them in — otherwise the entry reads as a capability removed.
     expect(text.toLowerCase()).toContain('worktree')
+  })
+
+  test('the description says why git works at all, and what the file it reads is', () => {
+    /*
+      The other entry a developer will read as a mistake, and this one has a
+      second failure mode: the fix is a file varnick writes into the clone, so
+      someone who deletes the deny to "let the agent configure git" would be
+      handing it `core.hooksPath` on the developer's machine. The prose has to
+      carry the word projection and the reason, in the same place as the path.
+    */
+    const text = describeSandboxPolicy(policy())
+    expect(text).toContain(PROJECTED_GITCONFIG_RELATIVE_PATH)
+    expect(text).toContain('GIT_CONFIG_GLOBAL')
+    expect(text).toContain('projection')
+    for (const key of PROJECTED_GIT_KEYS) expect(text).toContain(key)
+    // And the reason, which is the half a reader needs to not delete the entry.
+    expect(text).toContain('core.hooksPath')
   })
 
   test('the description does not claim the denied binaries cannot run', () => {

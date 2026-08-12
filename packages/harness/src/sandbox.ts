@@ -29,6 +29,12 @@ import {
 // boundary — and the alternative is not watching the kernel at all.
 import { startMacOSSandboxLogMonitor } from '@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js'
 import { agentSdkEntry, developerToolsBin, sandboxEnvOverlay } from './agent.ts'
+import {
+  GIT_CONFIG_GLOBAL_ENV_VAR,
+  PROJECTED_GITCONFIG_RELATIVE_PATH,
+  PROJECTED_GIT_KEYS,
+  writeProjectedGitConfig,
+} from './gitconfig.ts'
 import { POLICY_ROOT_ENV_VAR, requireCloneRoot, requirePolicyRoot } from './clone-root.ts'
 
 /**
@@ -662,6 +668,44 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           without touching a denied file at all. See {@link HOST_INVOKED_SCRIPTS}.
         */
         join(clone, HOST_INVOKED_SCRIPTS),
+        /*
+          And the git config varnick itself hands the agent.
+
+          The newest entry and the one whose absence would be hardest to
+          notice, because varnick creates the file: every git command inside the
+          Sandbox now runs with `GIT_CONFIG_GLOBAL` pointed at
+          `.varnick/gitconfig`, since git fatals on a global config it can see
+          and cannot read and `$HOME` is denied. That is the fix for ticket 11,
+          and left writable it would be a hole of the same shape as the three
+          entries above: a gitconfig is executable configuration —
+          `core.hooksPath`, `core.editor`, `core.pager`, `core.sshCommand`,
+          `alias.*` and `credential.helper` beginning `!`, `filter.*.clean`,
+          `diff.*.textconv`, `merge.*.driver`, `include.path` — so an agent that
+          can write it chooses what runs on the developer's next commit. Exactly
+          what `.githooks/**` above was added to stop, arriving through a file
+          varnick introduced to fix something else.
+
+          `.varnick/` is otherwise agent-writable and stays that way: the
+          session store, the temp directory and the `node` shim beside this file
+          grant nothing, and the Claude Code process cannot start without
+          writing them. So this is one file rather than the directory.
+
+          A literal path, not a glob, and srt covers the node for it: with no
+          glob character, `generateMoveBlockingRules` emits `file-write-unlink`
+          and `file-write-create` denials on the path as a *subpath* and on every
+          ancestor as a literal — so the file cannot be deleted and replaced, and
+          `.varnick/` cannot be moved aside. The same mechanism `.githooks`
+          relies on, in the branch for literals. It has one consequence worth
+          naming: `.varnick/` must exist before the confined process starts,
+          because creating it becomes a denied `file-write-create` on an
+          ancestor. `writeProjectedGitConfig` is called by the unconfined runtime
+          in `establishSandbox` below, which is early enough.
+
+          Not on `PROTECTED_PATHS` in ./fence.ts, and that is not a drift: the
+          file is gitignored per-clone machine state, so no merge can ever carry
+          one and a landing rule naming it would guard nothing.
+        */
+        join(clone, PROJECTED_GITCONFIG_RELATIVE_PATH),
         /*
           Knowingly not here: the paths that run code on the *developer's*
           machine through an install rather than a build.
@@ -1518,13 +1562,19 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     '  the same thing husky and lefthook do. Nothing else in .git is denied, so git',
     '  worktree add, git commit and git merge are all permitted by this policy.',
     '',
-    '  Permitted, and on some machines still not usable, for a reason that is not',
-    '  about .git: git treats an unreadable ~/.gitconfig as fatal rather than as a',
-    '  warning, and your home directory is denied above. So on a machine that has a',
-    '  global git config, every git command in here — down to git --version — exits',
-    '  128 with "unable to access ... .gitconfig" until GIT_CONFIG_GLOBAL is set.',
-    '  Measured, and tracked separately: it is a gap in the read allowlist, not a',
-    '  denial anyone chose, and it is not something this file can fix by itself.',
+    '  They were not, on any machine with a global git config, for a reason that is',
+    '  not about .git: git treats an unreadable ~/.gitconfig as fatal rather than as',
+    '  a warning, and your home directory is denied above — so every git command in',
+    '  here, down to git --version, exited 128 with "unable to access ... .gitconfig".',
+    `  varnick now writes ${PROJECTED_GITCONFIG_RELATIVE_PATH} and points GIT_CONFIG_GLOBAL at it.`,
+    '',
+    `  That file is a *projection* of your config and not a copy: ${PROJECTED_GIT_KEYS.join(' and ')}`,
+    '  cross it and nothing else does, so the agent commits under your name and your',
+    '  aliases, credential helpers and filters stay outside the fence. It is denied',
+    '  above for the reason .githooks/ is: a gitconfig runs commands — core.hooksPath,',
+    '  core.editor, credential.helper, filter.*.clean — so an agent that could write',
+    '  the file varnick points every git command at would choose what runs on your',
+    '  next commit. The rest of .varnick/ stays writable; this one file does not.',
     '',
     `  ${TRACKED_HOOKS_GLOB} is denied as well, for the reason above rather than in spite`,
     '  of it. Tracked says where a file can be reviewed, not that it was: a hook',
@@ -2240,6 +2290,29 @@ export async function establishSandbox(
   watching?.stop()
   watching = watchSandboxViolations({ policy })
 
+  /*
+    The git config the confined tree will run with, written here because here is
+    the last unconfined moment.
+
+    Every git command inside this Sandbox exits 128 without it — `$HOME` is
+    denied and git fatals on a global config it can see and cannot read — which
+    takes `git worktree add`, `git commit` and `git merge` with it, and therefore
+    the whole of ADR-0014. See ./gitconfig.ts for what crosses into the file and
+    why it is two keys.
+
+    Written on every launch, and by *this* process rather than by the agent host:
+    reading the developer's real config needs a process outside the fence, and
+    creating `.varnick/` needs one before the fence exists, because the deny on
+    the file below makes `file-write-create` on its ancestors a denial too.
+
+    Done for a Preview as well, whose `cloneRoot` is the Worktree it works in.
+    The Worktree's copy is not the one the live tree's `denyWrite` names, exactly
+    as its `.githooks/` is not — and it grants nothing, because what a Preview's
+    git reads decides what runs *inside* that Preview's Sandbox. The developer's
+    own git never looks here; only a process varnick pointed at it does.
+  */
+  const gitConfig = writeProjectedGitConfig(cloneRoot)
+
   return {
     policy,
     path,
@@ -2253,7 +2326,19 @@ export async function establishSandbox(
       // process inherits the host's environment — which may hold an exported
       // credential. Only the difference crosses, and the credential variable
       // never does.
-      return { argv, env: sandboxEnvOverlay(env, process.env), cwd: cloneRoot }
+      //
+      // `GIT_CONFIG_GLOBAL` is added here rather than only in
+      // `agentEnvironment`, because git is broken for *everything* inside the
+      // Sandbox and not only for the agent's own Claude Code process — the
+      // boundary probes shell out to git directly, and so does anything else a
+      // caller wraps. `agentEnvironment` sets it too: it builds the Claude Code
+      // environment outright rather than inheriting one, so a value that is only
+      // here would not survive that rebuild. One path, one function, set twice.
+      return {
+        argv,
+        env: { ...sandboxEnvOverlay(env, process.env), [GIT_CONFIG_GLOBAL_ENV_VAR]: gitConfig },
+        cwd: cloneRoot,
+      }
     },
   }
 }

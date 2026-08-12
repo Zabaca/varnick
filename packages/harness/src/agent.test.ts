@@ -39,6 +39,7 @@ import {
   zodEntry,
   type AgentSessionPort,
 } from './agent.ts'
+import { GIT_CONFIG_GLOBAL_ENV_VAR, agentGitConfigPath } from './gitconfig.ts'
 import { previewToolResult, type PreviewOutcome } from './preview.ts'
 import { RESTART_STILL_OWED } from './merge.ts'
 import {
@@ -1593,6 +1594,38 @@ describe('somewhere to put a temporary file', () => {
 
   test('the prefix is inside the directory, so one mkdir covers both', () => {
     expect(agentTempPrefix(CLONE).startsWith(`${agentTempDir(CLONE)}/`)).toBe(true)
+  })
+
+  test('git’s global config is pointed into the clone too, and it arrives fatal', () => {
+    /*
+      Ticket 11, and the difference from `TMPDIR` above is worth saying: that one
+      arrives *wrong*, this one arrives **fatal**. git treats a global config it
+      can see and cannot read as an error rather than a warning, and `$HOME` is
+      denied, so without this every git command in the Sandbox exits 128 — `git
+      --version` included, and `git worktree add`, `git commit` and `git merge`
+      with it, which is the whole of ADR-0014.
+
+      Pointed at the clone for the same reason `TMPDIR` is: the clone is already
+      writable, so `allowRead` and `allowWrite` are untouched. Unlike its
+      neighbours, the file it names is in `denyWrite` — see ./gitconfig.ts.
+    */
+    const env = agentEnvironment({}, { cloneRoot: CLONE, inherit: false })
+    expect(env[GIT_CONFIG_GLOBAL_ENV_VAR]).toBe(agentGitConfigPath(CLONE))
+    expect(agentGitConfigPath(CLONE)).toBe(`${CLONE}/.varnick/gitconfig`)
+  })
+
+  test('a developer’s own GIT_CONFIG_GLOBAL is replaced rather than honoured', () => {
+    // The case that matters, in both modes: a value pointing anywhere under
+    // `$HOME` is a path the kernel refuses, so honouring it under `inherit`
+    // would be handing the agent the exact failure this fixes and calling it
+    // inheritance.
+    for (const inherit of [false, true]) {
+      const env = agentEnvironment(
+        { [GIT_CONFIG_GLOBAL_ENV_VAR]: '/Users/dev/.gitconfig' },
+        { cloneRoot: CLONE, inherit },
+      )
+      expect(env[GIT_CONFIG_GLOBAL_ENV_VAR]).toBe(agentGitConfigPath(CLONE))
+    }
   })
 
   test('Claude Code’s own scratch is a different path and stays granted', () => {

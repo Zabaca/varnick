@@ -1943,16 +1943,20 @@ test.skipIf(blocked !== null)(
         a workaround for the boundary — it is what stops this machine's dotfiles
         from deciding the result.
 
-        Without it git exits 128 with `unable to access '$HOME/.gitconfig':
-        Operation not permitted`, in *both* arms, because `denyRead` covers
-        `$HOME` and git fatals on a config file it can see and cannot read. That
-        is a real observation and it is not this boundary: it depends on the
-        developer having a `~/.gitconfig` at all, and an agent that wanted the
-        nested worktree would set this variable itself — the command line is
-        the agent's. Left in, the probe would report "unreachable" on this
-        laptop and "reachable" on a fresh one, which is a probe that measures
-        nothing. Same layering as probe 9c's TMPDIR: the environment is set
-        within the Sandbox, and `allowRead` is untouched.
+        It used to be load-bearing for a second reason as well: without it git
+        exited 128 with `unable to access '$HOME/.gitconfig': Operation not
+        permitted`, in *both* arms, because `denyRead` covers `$HOME` and git
+        fatals on a config file it can see and cannot read. Ticket 11 closed
+        that — `establishSandbox` writes `.varnick/gitconfig`, a projection of
+        the developer's identity carrying nothing that executes, and points the
+        variable at it for every command it wraps.
+
+        The pin stays anyway, and the reason it stays is the first one. What is
+        measured here is whether a nested `git worktree add` is *reachable*, and
+        that answer must not become a function of what the projection happened
+        to find in one developer's config. The value set here wins over the
+        wrapper's, which is the layering probe 9c's TMPDIR has: the environment
+        is set within the Sandbox, and `allowRead` is untouched.
       */
       const git = async (sandbox: EstablishedSandbox, cwd: string, args: string) => {
         const { argv, env } = await sandbox.wrap(

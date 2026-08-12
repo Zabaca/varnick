@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { CLAUDE_CONFIG_RELATIVE_PATH, SELFTEST_MARKER, agentCommand } from './agent.ts'
+import { PROJECTED_GITCONFIG_RELATIVE_PATH, PROJECTED_GIT_KEYS } from './gitconfig.ts'
 
 import {
   MACHINE_KEYCHAIN_DIR,
@@ -473,15 +474,21 @@ test.skipIf(blocked !== null)(
     expect(redirected.stderr).toMatch(/not permitted|Permission denied|read-only/i)
 
     /*
-      Pinned like every git command below — see the block at `ranHook`. Without
-      it this assertion passes for the wrong reason on a machine with a global
-      git config: the run fails at `~/.gitconfig` before it ever reaches the
-      write, and `not permitted` in that message satisfies the matcher. Pinning
-      makes the refusal the one this line is about.
+      Asked of git rather than of a shell redirect, because git writes this file
+      through `.git/config.lock` and a rename — so the deny has to hold on the
+      destination of the rename rather than on the write.
+
+      **Unpinned, and that is the point of ticket 11.** Every git command in this
+      test used to carry `GIT_CONFIG_GLOBAL=/dev/null`, because an unreadable
+      `~/.gitconfig` is fatal and this whole probe was otherwise measuring the
+      developer's home directory. Worse here than anywhere: the run would fail at
+      `~/.gitconfig` before reaching the write, and `not permitted` in *that*
+      message satisfies the matcher below — a green assertion about a command
+      that never ran. The pins are gone because `establishSandbox` now points the
+      variable at the projected config itself, so a git that works is part of
+      what this measures rather than something the probe arranges.
     */
-    const viaGit = await run(
-      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null git config core.hooksPath /tmp/evil`,
-    )
+    const viaGit = await run(`cd ${q} && git config core.hooksPath /tmp/evil`)
     expect(viaGit.code).not.toBe(0)
     expect(viaGit.stderr).toMatch(/could not write config file|not permitted/i)
     expect(readFileSync(join(gitDir, 'config'), 'utf8')).toBe(configBefore)
@@ -573,35 +580,96 @@ test.skipIf(blocked !== null)(
       from outside the Sandbox, which is what a merge is: the human put it
       there, and the agent's own commit runs it.
 
-      Every git command below is pinned to `GIT_CONFIG_GLOBAL=/dev/null`, and
-      the reason is a finding rather than a convenience. git *fatals* when it
-      cannot stat `~/.gitconfig`, and `$HOME` is denied by design:
+      Every git command from here down used to be pinned to
+      `GIT_CONFIG_GLOBAL=/dev/null`, and the finding behind that pin is ticket
+      11: git *fatals* when it cannot stat `~/.gitconfig`, and `$HOME` is denied
+      by design.
 
         fatal: unable to access '/…/.gitconfig': Operation not permitted   exit 128
 
-      That is every git command inside the Sandbox, on any machine whose
+      That was every git command inside the Sandbox on any machine whose
       developer has a global config — `git worktree add`, `git commit` and `git
       merge` included, which is the whole of ADR-0014's model. Measured with the
       `.githooks` deny in force and with it absent: identical either way, so it
-      is not this boundary. `~/.config/git/ignore` under the same denial only
-      *warns*, which is what makes the global config specifically the problem.
+      never was this boundary.
 
-      Pinned here so this probe measures the thing it is named for. Without it
-      the test is red for a reason that has nothing to do with `.git` or
-      `.githooks`, and a red test gates nothing — a regression in the hook
-      boundary asserted above would look exactly like the failure already there.
-      The finding is tracked as its own ticket and is deliberately not fixed on
-      this branch: closing it means either reading one file back out of the
-      denied root or setting this variable in the agent's real environment, and
-      both are Fence decisions for the developer rather than test hygiene.
+      **The pins are gone**, because the variable is now set by the wrapper
+      rather than by the probe: `establishSandbox` writes `.varnick/gitconfig` —
+      a projection of the developer's identity and nothing that executes — and
+      points `GIT_CONFIG_GLOBAL` at it for every command it wraps. So the
+      assertions below are green because git works in here, which is what they
+      were always meant to say. A pin left in would have hidden a regression of
+      exactly that.
     */
     writeFileSync(liveHook, '#!/bin/sh\necho HOOK-RAN >&2\n', { encoding: 'utf8', mode: 0o755 })
     const ranHook = await run(
-      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null` +
-        ` git -c core.hooksPath=${TRACKED_HOOKS_DIR} commit -q --allow-empty -m hooked`,
+      `cd ${q} && git -c core.hooksPath=${TRACKED_HOOKS_DIR} commit -q --allow-empty -m hooked`,
     )
     expect(ranHook.code).toBe(0)
     expect(ranHook.stderr).toContain('HOOK-RAN')
+
+    /*
+      And the file that makes all of the above possible is itself refused —
+      which is the half of ticket 11 that is not about git running.
+
+      A gitconfig is executable configuration: `core.hooksPath` in the file every
+      git command in here reads is unconfined execution on the developer's next
+      commit, and varnick is the one that put the file there. Asked three ways,
+      because a deny on the contents alone would leave the node: written,
+      unlinked, and moved aside. Asked through git as well, since `git config
+      --global` is the spelling an agent would actually reach for and it writes
+      through a lock-and-rename like the one above.
+    */
+    const projected = join(clone, PROJECTED_GITCONFIG_RELATIVE_PATH)
+    expect(existsSync(projected)).toBe(true)
+    const projectedBefore = readFileSync(projected, 'utf8')
+    for (const vector of [
+      `printf '[core]\\n\\thooksPath = /tmp/evil\\n' > ${JSON.stringify(projected)}`,
+      `rm -f ${JSON.stringify(projected)}`,
+      `mv ${JSON.stringify(projected)} ${JSON.stringify(`${projected}-aside`)}`,
+      `cd ${q} && git config --global core.hooksPath /tmp/evil`,
+    ]) {
+      const refused = await run(vector)
+      expect(refused.code).not.toBe(0)
+      expect(refused.stderr).toMatch(/not permitted|Permission denied|read-only|could not (lock|write)/i)
+    }
+    expect(readFileSync(projected, 'utf8')).toBe(projectedBefore)
+
+    /*
+      And it carries the developer's identity and nothing that executes, read
+      back from the file the kernel just refused. This is the projection's whole
+      claim, asserted on the bytes a real launch wrote rather than on a fixture —
+      gitconfig.test.ts owns the rendering, and this owns "that is what is
+      actually on this disk".
+    */
+    const settings = projectedBefore
+      .split('\n')
+      .filter((line) => line.trim().length > 0 && !line.startsWith('#'))
+    for (const line of settings) {
+      // Either a section header for a section the allowlist reaches, or an
+      // assignment whose key the allowlist names. Nothing else may be in here,
+      // and this machine's own config is what it was projected from — so a
+      // developer with `alias.lg` and two `!gh` credential helpers, which is
+      // what wrote this file, produces the same three lines as one with none.
+      const allowed = PROJECTED_GIT_KEYS.some(
+        (key) =>
+          line === `[${key.split('.')[0]}]` || line.trim().startsWith(`${key.split('.')[1]} = `),
+      )
+      expect(allowed).toBe(true)
+    }
+
+    /*
+      The identity actually reaches a commit, which is the reason the projection
+      exists rather than `GIT_CONFIG_GLOBAL=/dev/null`. This clone sets
+      `user.name` per-repository — see the `git init` above — so what is asserted
+      here is that pointing the variable into the clone did not take the
+      repository config with it: `.git/config` is readable inside the Sandbox and
+      still wins, which is the case a developer who configures identity per-repo
+      is in.
+    */
+    const author = await run(`cd ${q} && git log -1 --format=%an`)
+    expect(author.code).toBe(0)
+    expect(author.stdout.trim()).toBe('varnick boundary probe')
 
     /*
       What a worktree, a commit and a merge need, asked of git itself for the
@@ -611,19 +679,18 @@ test.skipIf(blocked !== null)(
       week later rather than here.
     */
     const worktree = await run(
-      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null git worktree add -q .claude/worktrees/probe -b probe`,
+      `cd ${q} && git worktree add -q .claude/worktrees/probe -b probe`,
     )
     expect(worktree.code).toBe(0)
 
     const committed = await run(
       `cd ${q}/.claude/worktrees/probe && printf b > b.txt` +
-        ` && GIT_CONFIG_GLOBAL=/dev/null git add -A` +
-        ` && GIT_CONFIG_GLOBAL=/dev/null git commit -q -m second`,
+        ` && git add -A && git commit -q -m second`,
     )
     expect(committed.code).toBe(0)
 
     const merged = await run(
-      `cd ${q} && GIT_CONFIG_GLOBAL=/dev/null git merge --no-ff -m merged probe`,
+      `cd ${q} && git merge --no-ff -m merged probe`,
     )
     expect(merged.code).toBe(0)
 
@@ -635,9 +702,9 @@ test.skipIf(blocked !== null)(
         ` ${TRACKED_HOOKS_DIR}/ are refused by the kernel — including the directory node` +
         " itself, and including through git's own lock-and-rename — while worktree add," +
         ' commit, merge, a hook authored in a worktree and a hook git runs from the live' +
-        ' tree are all permitted. The git half is measured with GIT_CONFIG_GLOBAL pinned:' +
-        ' an unreadable ~/.gitconfig is fatal to every git command under this policy, which' +
-        ' is a read-allowlist gap tracked separately and not this boundary.',
+        ' tree are all permitted. Every git command in it ran unpinned: the projected' +
+        ' .varnick/gitconfig is what GIT_CONFIG_GLOBAL points at, it carries identity and' +
+        ' nothing that executes, and the kernel refuses writing, deleting and moving it.',
     )
   },
   120_000,
