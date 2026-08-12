@@ -73,6 +73,25 @@ the same file — that one is `~/.gitconfig`, this one is the read allowlist.
 - [ ] The chosen approach is recorded with its trade-off, since the obvious one is a widening
 - [ ] Both test names say what they actually measure
 
+## Do not close this on a green run
+
+The failure is **intermittent in a full-suite run**. Measured on `main` at
+`ce6bb4c`, same tree, three consecutive `bun test packages`:
+
+```
+run 1   839 pass   0 fail
+run 2   838 pass   1 fail
+run 3   838 pass   1 fail
+```
+
+Run the two files in isolation instead, where the result is consistent. A green
+full-suite run is not evidence that this is fixed, and at least one agent this
+run reported `0 fail` on a branch that had shown the failure minutes earlier and
+correctly declined to claim credit for it.
+
+Whatever closes this ticket needs to demonstrate the fix by making the probe
+fail for the right reason and then pass — not by observing a green run.
+
 ## Comments
 
 Surfaced independently by three agents during the autonomous-runs implementation
