@@ -2243,6 +2243,8 @@ export default function Billing() {
     readSession: unreached,
     readCommands: unreached,
     listWorktrees: unreached,
+    readPendingRelease: unreached,
+    promoteRelease: unreached,
     liveTreeDirty: unreached,
     readWorktreeDiff: unreached,
     mergeWorktree: unreached,

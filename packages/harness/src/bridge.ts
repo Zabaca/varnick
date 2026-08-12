@@ -342,6 +342,36 @@ export interface RestartVarnickRequest {
   readonly kind: 'restart-varnick'
 }
 
+/**
+ * What pre-release is on offer, if any.
+ *
+ * A file read, so it is the runtime's — the same reason `read-commands` is.
+ * It carries nothing: there is exactly one pending pre-release per clone and a
+ * request naming a version could ask about a different one from the one the
+ * window is about to show.
+ */
+export interface ReadPendingReleaseRequest {
+  readonly kind: 'read-pending-release'
+}
+
+/**
+ * Accept the pending pre-release.
+ *
+ * The runtime's, because it writes files in the clone. It carries nothing for
+ * the same reason the read does, and for a sharper one: a promotion that named
+ * its own target would be a window choosing which artifact to serve, and what
+ * may be served is the store's decision rather than the caller's.
+ *
+ * **The Fence's share of this feature is this call and nothing else.** What it
+ * runs is `bun run promote`, which is `packages/core/**` — so the release
+ * machinery stays where it can be iterated on without a human merge, which is
+ * the whole argument for putting it in Core. See
+ * `packages/core/release-promote.ts`.
+ */
+export interface PromoteReleaseRequest {
+  readonly kind: 'promote-release'
+}
+
 export interface AwaitAgentExitRequest {
   readonly kind: 'await-agent-exit'
 }
@@ -469,6 +499,8 @@ export type HarnessRequest =
   | ReadWorktreeDiffRequest
   | MergeWorktreeRequest
   | ReapWorktreeRequest
+  | ReadPendingReleaseRequest
+  | PromoteReleaseRequest
   | RestartVarnickRequest
 
 /** What each call answers with, on success. */
@@ -531,6 +563,12 @@ export interface HarnessAnswers {
   // replaced while the call is in flight. What it is *for* is the case where
   // that does not happen.
   'restart-varnick': { readonly ok: true }
+  // The record, or `null` for nothing on offer. `null` is the ordinary answer.
+  'read-pending-release': unknown
+  // What the promotion did, or the reason it refused. A refusal is an answer
+  // rather than an error: it is a decision the promotion made on purpose, and
+  // every one of them happens before anything is written.
+  'promote-release': unknown
 }
 
 /**
@@ -1032,6 +1070,11 @@ export async function callHarness<R extends HarnessRequest>(
       return mergeAnswer(answer) as HarnessAnswers[R['kind']]
     case 'reap-worktree':
       return reapAnswer(answer) as HarnessAnswers[R['kind']]
+    // Passed through as the runtime shaped them. Core owns both of these
+    // shapes — `PendingPreRelease` and `PromotionOutcome` — and parses what it
+    // gets; a second reading of them here would be a copy that could disagree.
+    case 'read-pending-release':
+    case 'promote-release':
     case 'restart-varnick':
     case 'check-sandbox':
     case 'store-credential':

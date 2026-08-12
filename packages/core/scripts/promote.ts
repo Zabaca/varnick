@@ -41,6 +41,20 @@ const REFUSED = 1
 const cloneRoot = cloneRootOfScript(import.meta.url)
 const outcome = promotePreRelease(cloneRoot, new Date().toISOString())
 
+/*
+  `--json` prints the outcome as one line and nothing else, which is how the
+  window asks for a promotion: the Harness spawns this and parses the last line.
+
+  One script rather than two entry points, because the developer's terminal and
+  the band must not be able to promote differently — that would be two
+  implementations of the one act that moves what is served. The flag changes how
+  the answer is printed and nothing about what is done.
+*/
+if (process.argv.includes('--json')) {
+  console.log(JSON.stringify(outcome))
+  process.exit(outcome.promoted ? PROMOTED : REFUSED)
+}
+
 if (!outcome.promoted) {
   console.error(outcome.reason)
   process.exit(REFUSED)

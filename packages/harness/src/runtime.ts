@@ -223,6 +223,28 @@ export interface HarnessCapabilities {
    * standing in. Nothing is killed and nothing is forced — see ./merge.ts.
    */
   reapWorktree(path: string): Promise<ReapReport>
+  /**
+   * What pre-release is on offer, as Core shaped the record, or `null`.
+   *
+   * Answered by running Core rather than by reading the file here. The record's
+   * shape is `packages/core/release.ts`'s and a second reading of it in the
+   * Fence would be a copy that could disagree with the one the band renders.
+   */
+  readPendingRelease(): Promise<unknown>
+  /**
+   * Accept the pending pre-release, and answer what happened.
+   *
+   * **The Fence's whole share of the release feature.** It runs `bun run
+   * promote`, which is `packages/core/**` — every decision, every refusal and
+   * every write is over there, where it can be improved without a human merge.
+   * That is the spec's argument: the release machinery is the part most worth
+   * iterating on overnight, so putting it behind the slowest gate would be the
+   * wrong trade.
+   *
+   * A refusal is an answer rather than a throw, because each one is a decision
+   * the promotion made on purpose and each happens before anything is written.
+   */
+  promoteRelease(): Promise<unknown>
 }
 
 export interface HostCapabilitiesInput {
@@ -385,6 +407,57 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
       }),
 
     liveTreeDirty: async () => liveTreeIsDirty(gitIn(cloneRoot)),
+
+    /*
+      Both halves of the release feature, and both are one line because the work
+      is Core's.
+
+      `bun run promote` and `bun --print` rather than an import: this package
+      never imports `packages/core/**` — the dependency runs the other way, and
+      reversing it here would make the Fence depend on the code it fences.
+      Spawning keeps the direction and keeps every decision in a module a run
+      can improve without a human merge.
+
+      The clone is this process's, as it is for the listing and the merge.
+      Nothing in either request chooses a path, a version or an artifact.
+    */
+    readPendingRelease: async () => {
+      const read = Bun.spawn(
+        [
+          'bun',
+          '--print',
+          'JSON.stringify((await import("./packages/core/release-promote.ts")).pendingPreRelease(process.cwd()))',
+        ],
+        { cwd: cloneRoot, stdout: 'pipe', stderr: 'pipe' },
+      )
+      const text = await new Response(read.stdout).text()
+      if ((await read.exited) !== 0) {
+        throw new Error(`could not read the pending pre-release: ${await new Response(read.stderr).text()}`)
+      }
+      return JSON.parse(text.trim() || 'null') as unknown
+    },
+
+    promoteRelease: async () => {
+      const promote = Bun.spawn(['bun', 'run', 'promote', '--json'], {
+        cwd: cloneRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const text = await new Response(promote.stdout).text()
+      await promote.exited
+      /*
+        Parsed rather than read off the exit code, because a refusal and a
+        promotion are both answers and only the reason tells them apart. A run
+        that produced nothing parseable is the one case that is a real failure —
+        the script could not start — and that throws.
+      */
+      const line = text.trim().split('\n').pop() ?? ''
+      try {
+        return JSON.parse(line) as unknown
+      } catch {
+        throw new Error(`the promotion did not answer: ${await new Response(promote.stderr).text() || text}`)
+      }
+    },
 
     // The clone is this process's, as it is for the listing; the path names
     // which of the worktrees git reported in it. Nothing chooses the tree.
@@ -750,6 +823,18 @@ async function answer(
         whileRunning: RESTART_STILL_OWED,
       }
     }
+
+    /*
+      Neither carries anything, so neither validates anything. That is the
+      shape of both requests rather than an omission: there is one pending
+      pre-release per clone, and a request that named a version or an artifact
+      would be a window choosing what gets served.
+    */
+    case 'read-pending-release':
+      return (await capabilities.readPendingRelease()) as Record<string, unknown>
+
+    case 'promote-release':
+      return (await capabilities.promoteRelease()) as Record<string, unknown>
 
     case 'reap-worktree': {
       const { path } = request as Record<string, unknown>

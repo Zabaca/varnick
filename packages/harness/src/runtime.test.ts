@@ -99,6 +99,8 @@ function capabilities(
     // Records like the merge does, and for the same reason: the property under
     // the runtime's tests is which path crossed, not what git would have done
     // with it.
+    readPendingRelease: async () => null,
+    promoteRelease: async () => ({ promoted: false, reason: "not in this test" }),
     reapWorktree: async (path) => {
       recorded.reaps.push(path)
       return {

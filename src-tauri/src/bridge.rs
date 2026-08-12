@@ -218,8 +218,22 @@ pub fn route_of(kind: &str) -> Option<Route> {
         // `denyWrite` refuses the agent. What makes the deletion safe is asked
         // in TypeScript, not here — the branch's content has to already be in
         // the live tree.
+        //
+        // `read-pending-release` and `promote-release` are the release pair, and
+        // they are the runtime's for the plainest of these reasons: both are
+        // work in the clone's filesystem, and the runtime is the process with
+        // one. Neither carries a path, a version or an artifact — there is one
+        // pending pre-release per clone, so there is nothing for a request to
+        // select and nothing for this side to check.
+        //
+        // The promotion writes the developer's clone, like the merge, and it is
+        // safe for the same reason: the control that sends it lives in
+        // `packages/core/**`, which `denyWrite` refuses the agent, and every
+        // refusal that matters is decided in TypeScript against current facts —
+        // most of all that the build being promoted will actually start.
         "check-sandbox" | "persist-session" | "read-session" | "read-commands"
-        | "list-worktrees" | "read-worktree-diff" | "merge-worktree" | "reap-worktree" => {
+        | "list-worktrees" | "read-worktree-diff" | "merge-worktree" | "reap-worktree"
+        | "read-pending-release" | "promote-release" => {
             Some(Route::Runtime)
         }
         // `wrap-agent-command` is absent on purpose. The runtime answers it, but
@@ -1045,6 +1059,13 @@ mod tests {
         // directory. It answers where git runs, like everything else that
         // touches the clone.
         assert_eq!(route_of("reap-worktree"), Some(Route::Runtime));
+        // The release pair is file work, so it belongs where the filesystem is.
+        // Asserted rather than assumed: a promotion routed to the host would be
+        // one this process had to reimplement, and the whole point of the pair
+        // is that the work stays in Core.
+        assert_eq!(route_of("read-pending-release"), Some(Route::Runtime));
+        assert_eq!(route_of("promote-release"), Some(Route::Runtime));
+        assert_ne!(route_of("promote-release"), Some(Route::Host));
         assert_ne!(route_of("reap-worktree"), Some(Route::Host));
     }
 

@@ -61,7 +61,9 @@ const capabilities = (over: Partial<HarnessCapabilities> = {}): HarnessCapabilit
     heldBy: [],
     leftOver: null,
   }),
-  reapWorktree: async (path) => ({
+  readPendingRelease: async () => null,
+    promoteRelease: async () => ({ promoted: false, reason: "not in this test" }),
+    reapWorktree: async (path) => ({
     path,
     branch: 'ticket/49',
     worktreeRemoved: true,
