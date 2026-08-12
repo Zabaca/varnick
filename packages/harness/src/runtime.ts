@@ -78,6 +78,8 @@ import {
   type GitAttemptResult,
   type PendingWorktree,
 } from './worktrees.ts'
+import { landWorktree } from './landing.ts'
+import { isFeatureSlug, type LandingAnswer, type ReleaseAnswer } from './unattended.ts'
 import { readLines } from './framing.ts'
 import {
   establishSandbox,
@@ -210,6 +212,45 @@ export interface HarnessCapabilities {
    * standing in. See ./merge.ts, which sequences all of it.
    */
   mergeWorktree(path: string): Promise<MergeReport>
+
+  /**
+   * Land one pending Worktree **because the agent asked**, if it may be landed.
+   *
+   * The second door onto the same write, and the difference between it and
+   * {@link mergeWorktree} is entirely the gate: that one is a human having
+   * clicked and merges whatever they clicked on, this one is a confined process
+   * having asked and merges only what `unattendedLanding` permits — the Fence,
+   * the sandbox policy, `scripts/**`, the tracked hooks and an install lifecycle
+   * change are all refused, and a human merges those exactly as today.
+   *
+   * `denyWrite` is unchanged by its existence and must stay so: the agent still
+   * cannot write `packages/core/**` in the live tree, on any branch or none.
+   * What it may do is ask for a *merge*, which happens here, unconfined, out of
+   * git's own account of what the branch changed. See ./landing.ts and
+   * docs/adr/0023-a-second-door-rather-than-a-wider-one.md.
+   *
+   * `path` is a selector against git's own listing, like the merge's — the Rust
+   * host resolved the agent's worktree *name* against `git worktree list` before
+   * this was called, and ./landing.ts looks it up again here.
+   */
+  landWorktree(path: string): Promise<LandingAnswer>
+
+  /**
+   * Cut a Pre-release, on the agent's request.
+   *
+   * The release half of the same trade, and it is one line for the reason
+   * {@link promoteRelease} is: `bun run release` is `packages/core/**`, where
+   * every decision about versions, changelogs and announcements belongs and
+   * where a run can improve them without a human merge. The Fence's whole share
+   * is a slug and a spawn.
+   *
+   * It exists because `package.json` is in `denyWrite` and a release bumps it —
+   * so without this the agent finishes a night's tickets and cannot deliver
+   * them. Removing the manifest from `denyWrite` instead would hand the agent
+   * `postinstall`, which runs on the developer's next install: unreviewed code
+   * execution, which is the shape ADR-0016 is about.
+   */
+  cutPreRelease(feature: string): Promise<ReleaseAnswer>
 
   /**
    * Remove a Worktree whose work is already in the live tree.
@@ -478,6 +519,69 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
         path,
       }),
 
+    // The same four ports the merge is given, because underneath the gate it is
+    // the same merge. What differs is upstream of here — ./landing.ts asks the
+    // predicate first, out of git's own listing — and nothing about the
+    // performing half is relaxed because the asker was an agent.
+    landWorktree: async (path) =>
+      landWorktree({
+        git: gitIn(cloneRoot),
+        attempt: gitAttemptIn(cloneRoot),
+        holders: cwdHoldersOf,
+        cloneRoot,
+        path,
+      }),
+
+    /*
+      The release, spawned rather than imported, exactly as the promotion beside
+      it is and for the same reason: this package never imports
+      `packages/core/**`.
+
+      **The slug is checked here because this is where it becomes an argument.**
+      It reaches this process as a string an agent chose; `isFeatureSlug` is what
+      stands between that and an argv, and it is asked before the spawn rather
+      than inside `release.ts`, which has its own check and is one edit away from
+      not having it.
+
+      The answer is the exit code, which `release.ts` documents as a three-way
+      contract — 0 cut, 1 refused on purpose, 2 could not answer — plus the last
+      line it printed. That is deliberately not `--json`: the two things worth
+      telling the agent are which of the three happened and one sentence saying
+      why, and a JSON mode for this script would be a second output format to
+      keep in step with a record `packages/core/release.ts` already shapes for
+      the window.
+
+      It fits inside the host's 90-second wait with room to spare — the build it
+      runs is a vite build measured at well under a second on this tree — but the
+      wait is the constraint to remember if this ever grows a step that installs
+      or uploads anything.
+    */
+    cutPreRelease: async (feature) => {
+      if (!isFeatureSlug(feature)) return { outcome: 'not-a-feature', detail: null }
+
+      const cut = Bun.spawn(['bun', 'run', 'release', feature], {
+        cwd: cloneRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      // Both pipes drained before the exit is awaited: a script that fills one
+      // of them and is never read blocks in the write rather than exiting, and
+      // then this waits for a process that is waiting for this.
+      const [out, said] = await Promise.all([
+        new Response(cut.stdout).text(),
+        new Response(cut.stderr).text(),
+      ])
+      const code = await cut.exited
+
+      if (code === 0) return { outcome: 'cut', detail: lastLine(out) }
+      // 1 is the release refusing on purpose — nothing landed to announce — and
+      // it says so on stderr. Anything else is the world broken underneath it,
+      // and the two must not collapse: an orchestrator that read them as one
+      // would retry a quiet night for ever.
+      if (code === 1) return { outcome: 'refused', detail: lastLine(said) || lastLine(out) }
+      return { outcome: 'no-release', detail: lastLine(said) || lastLine(out) }
+    },
+
     // The same four ports the merge is given, because it is the same cleanup
     // reached at a different moment.
     reapWorktree: async (path) =>
@@ -489,6 +593,30 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
         path,
       }),
   }
+}
+
+/**
+ * The last thing a script said, bounded, for a confined process to read.
+ *
+ * Two rules and both are about the reader. **The last non-empty line**, because
+ * that is where these scripts put their answer and everything above it is
+ * progress a model does not need. **Capped**, because this is the one string on
+ * the control channel composed from a subprocess's output rather than from
+ * something this package wrote: a build that printed a megabyte of warnings must
+ * not put a megabyte into the agent's context, and a line long enough to be
+ * suspicious is a line worth losing.
+ *
+ * Empty when there is nothing to say, which callers read as "no detail" — the
+ * tag's own sentence is then the whole answer, and that is a complete one.
+ */
+function lastLine(output: string): string {
+  const said = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .pop()
+  if (said === undefined) return ''
+  return said.length > 400 ? `${said.slice(0, 400)}…` : said
 }
 
 /**
@@ -827,6 +955,37 @@ async function answer(
         */
         whileRunning: RESTART_STILL_OWED,
       }
+    }
+
+    /*
+      The agent's two asks, and neither is on `route_of` in
+      src-tauri/src/bridge.rs — they arrive from the Rust host on the agent's
+      own pipe, not from the renderer. See ./unattended.ts for the shape and
+      ./landing.ts for the gate.
+    */
+    case 'land-worktree': {
+      const { path } = request as Record<string, unknown>
+      // Refused rather than defaulted, and for the merge's reason sharpened by
+      // who is asking: picking a worktree when none was named would be the host
+      // choosing which of the agent's branches to write into the live tree.
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error('A landing is of one Worktree, and this request named none.')
+      }
+      // Rebuilt field by field like every other answer here, so a capability
+      // that volunteered something alongside the answer could not have it
+      // forwarded to the confined process.
+      const answer = await capabilities.landWorktree(path)
+      return { outcome: answer.outcome, detail: answer.detail }
+    }
+
+    case 'cut-release': {
+      const { feature } = request as Record<string, unknown>
+      // A missing slug is `not-a-feature` rather than a throw, because it is the
+      // same mistake as a malformed one and the agent reads one sentence about
+      // it. There is no default: a release that guessed which queue it was
+      // releasing would announce the wrong night's work.
+      const answer = await capabilities.cutPreRelease(typeof feature === 'string' ? feature : '')
+      return { outcome: answer.outcome, detail: answer.detail }
     }
 
     /*

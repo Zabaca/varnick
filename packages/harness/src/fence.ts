@@ -181,6 +181,55 @@ export type InstallLifecycleField = (typeof INSTALL_LIFECYCLE_FIELDS)[number]
  */
 export type InstallLifecycle = Readonly<Partial<Record<InstallLifecycleField, string>>>
 
+/**
+ * One revision's install lifecycle fields, read out of the manifest's text.
+ *
+ * Here rather than beside a caller because there are two callers now — the CLI a
+ * developer runs and the tool the agent asks (./landing.ts) — and the fields
+ * this reads are the fields {@link unattendedLanding} decides on. Two readings
+ * of one manifest is two answers to "does this run something at install time",
+ * and the one that drifted would be the one that landed.
+ *
+ * Still importing nothing: `JSON.parse` is a global, so the promise the module
+ * header makes holds and the webview can still load this file.
+ *
+ * **Throws rather than guessing.** A manifest that is not JSON, a `scripts` that
+ * is not an object, a `postinstall` that is not a string: none of those is a
+ * manifest with no lifecycle script in it, and answering `{}` for any of them is
+ * how one lands unnoticed. What a caller does with the throw is the caller's —
+ * `landing-cli.ts` dies with the revision named, and ./landing.ts turns it into
+ * the `manifest-not-read` refusal, which is the same decision one level up.
+ *
+ * The messages are sentence fragments beginning with a verb, so a caller can
+ * prefix them with the revision they were reading.
+ */
+export function installLifecycleOf(source: string): InstallLifecycle {
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(source)
+  } catch (error) {
+    throw new Error(`is not JSON, so its install lifecycle fields cannot be read: ${String(error)}`)
+  }
+  if (typeof manifest !== 'object' || manifest === null) throw new Error('is not an object.')
+
+  const scripts = (manifest as { scripts?: unknown }).scripts
+  if (scripts === undefined) return {}
+  if (typeof scripts !== 'object' || scripts === null) {
+    throw new Error('has a "scripts" field that is not an object.')
+  }
+
+  const fields: Record<string, string> = {}
+  for (const field of INSTALL_LIFECYCLE_FIELDS) {
+    const value = (scripts as Record<string, unknown>)[field]
+    // A non-string is not "absent" — it is a manifest shape nothing should guess
+    // at, and guessing is how a lifecycle script lands unnoticed.
+    if (value === undefined) continue
+    if (typeof value !== 'string') throw new Error(`has a "${field}" that is not a string.`)
+    fields[field] = value
+  }
+  return fields
+}
+
 /** Which rule refused, for a report that has to say more than "no". */
 export type LandingRefusal =
   | 'protected-path'

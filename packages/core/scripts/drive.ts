@@ -2253,6 +2253,8 @@ export default function Billing() {
     liveTreeDirty: unreached,
     readWorktreeDiff: unreached,
     mergeWorktree: unreached,
+    landWorktree: unreached,
+    cutPreRelease: unreached,
     reapWorktree: unreached,
     readSecretNames: async () => {
       await secrets.reload()

@@ -62,7 +62,12 @@ const capabilities = (over: Partial<HarnessCapabilities> = {}): HarnessCapabilit
     leftOver: null,
   }),
   readPendingRelease: async () => null,
-    promoteRelease: async () => ({ promoted: false, reason: "not in this test" }),
+  promoteRelease: async () => ({ promoted: false, reason: 'not in this test' }),
+  // The agent's two asks. Neither is on this route — they arrive on the agent's
+  // own pipe rather than through the bridge these tests join up — so both answer
+  // the tag that says nothing happened.
+  landWorktree: async () => ({ outcome: 'no-landing' as const, detail: null }),
+  cutPreRelease: async () => ({ outcome: 'no-release' as const, detail: null }),
     reapWorktree: async (path) => ({
     path,
     branch: 'ticket/49',

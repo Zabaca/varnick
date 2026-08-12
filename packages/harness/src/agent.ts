@@ -75,6 +75,18 @@ import {
   LAUNCH_PREVIEW_TOOL,
   type PreviewOutcome,
 } from './preview.ts'
+import {
+  encodeLandingRequest,
+  encodeReleaseRequest,
+  landingToolResult,
+  releaseToolResult,
+  CUT_PRE_RELEASE_DESCRIPTION,
+  CUT_PRE_RELEASE_TOOL,
+  LAND_WORKTREE_DESCRIPTION,
+  LAND_WORKTREE_TOOL,
+  type LandingAnswer,
+  type ReleaseAnswer,
+} from './unattended.ts'
 import { describeSecretsForAgent } from './secrets.ts'
 import {
   beginTurn,
@@ -1800,6 +1812,29 @@ export interface ServeTurnsInput {
    */
   readonly previewLaunches?: (ask: (worktree: string) => Promise<PreviewOutcome>) => void
   /**
+   * Where a request to land a Worktree goes out, and how its answer comes back.
+   *
+   * The same shape as {@link previewLaunches} and the same reason for it: the
+   * loop owns the request ids and the pending answers, `runAgentHost` owns the
+   * Custom Tool. Optional, so every test that drives Turns drives them with no
+   * landing anywhere.
+   *
+   * **The confined process cannot do this itself either**, and here it is the
+   * kernel rather than a mach service: `git merge` writes `packages/core/**` in
+   * the live tree and `denyWrite` refuses it — which is ADR-0014's whole gate and
+   * is not weakened by this. The host is asked, the host asks the protected-path
+   * predicate, and this loop carries a name out and a tag and a sentence back.
+   */
+  readonly landingRequests?: (ask: (worktree: string) => Promise<LandingAnswer>) => void
+  /**
+   * Where a request to cut a Pre-release goes out, and how its answer comes back.
+   *
+   * The other half of the same trade — `bun run release` writes `package.json`,
+   * which `denyWrite` refuses for the sharper reason that its `postinstall` runs
+   * on the developer's next install. See ./unattended.ts.
+   */
+  readonly releaseRequests?: (ask: (feature: string) => Promise<ReleaseAnswer>) => void
+  /**
    * Whether this Session was opened by resuming the last one.
    *
    * Reported rather than inferred: the init message describes the session the
@@ -2032,6 +2067,45 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   })
 
   /*
+    The other two things the host is asked for, kept the same way and for the
+    same three reasons: no Turn names them, a request is answered exactly once,
+    and a control stream that ends is an answer that is never coming.
+
+    What they are told when that happens is the difference worth reading. A
+    Preview falls back to `no-launch`; these fall back to the outcome that says
+    *the host could not be asked* rather than one that says the branch was
+    refused — because an orchestrator hands a refused branch to a person and
+    stops, and it must not do that on account of a pipe.
+  */
+  const awaitingLanding = new Map<string, (answer: LandingAnswer) => void>()
+  let landingsAsked = 0
+
+  input.landingRequests?.((worktree: string) => {
+    landingsAsked += 1
+    const requestId = `landing-${landingsAsked}`
+    return new Promise<LandingAnswer>((resolve) => {
+      awaitingLanding.set(requestId, resolve)
+      // The name, unexamined, exactly as the Preview's is — and here the reason
+      // is stronger: this process could not check what the branch changed if it
+      // wanted to, because the answer has to come from git in the tree it is
+      // being merged into, and that is the other side of the Sandbox.
+      write(encodeLandingRequest(requestId, worktree))
+    })
+  })
+
+  const awaitingRelease = new Map<string, (answer: ReleaseAnswer) => void>()
+  let releasesAsked = 0
+
+  input.releaseRequests?.((feature: string) => {
+    releasesAsked += 1
+    const requestId = `release-${releasesAsked}`
+    return new Promise<ReleaseAnswer>((resolve) => {
+      awaitingRelease.set(requestId, resolve)
+      write(encodeReleaseRequest(requestId, feature))
+    })
+  })
+
+  /*
     A compaction, which arrives out of band through the SDK's `PostCompact`
     hook rather than on the message stream.
 
@@ -2142,6 +2216,23 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       waiting(request.outcome)
       return
     }
+    if (request.kind === 'landing-answer') {
+      // Answered once and forgotten, like a Preview's — and the second answer
+      // this drops is a worse thing to accept here, because the first one may
+      // have said a branch landed and nothing would tell the two apart.
+      const waiting = awaitingLanding.get(request.requestId)
+      if (waiting === undefined) return
+      awaitingLanding.delete(request.requestId)
+      waiting({ outcome: request.outcome, detail: request.detail ?? null })
+      return
+    }
+    if (request.kind === 'release-answer') {
+      const waiting = awaitingRelease.get(request.requestId)
+      if (waiting === undefined) return
+      awaitingRelease.delete(request.requestId)
+      waiting({ outcome: request.outcome, detail: request.detail ?? null })
+      return
+    }
     // A stale interrupt from an abandoned Turn must not stop the one that
     // replaced it, so it has to name the Turn it means.
     const named = running !== null && !running.finished && running.turnId === request.turnId
@@ -2160,6 +2251,21 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       for (const [requestId, waiting] of awaitingPreview) {
         awaitingPreview.delete(requestId)
         waiting('no-launch')
+      }
+      /*
+        And the same for the two that write the developer's clone, with the
+        outcome that says the host was not reached. **Never `refused`**: a
+        refusal is a decision about the branch, and a decision nobody made must
+        not be reported as one — an orchestrator reading it would hand finished
+        work to a person and say the Fence stopped it.
+      */
+      for (const [requestId, waiting] of awaitingLanding) {
+        awaitingLanding.delete(requestId)
+        waiting({ outcome: 'no-landing', detail: null })
+      }
+      for (const [requestId, waiting] of awaitingRelease) {
+        awaitingRelease.delete(requestId)
+        waiting({ outcome: 'no-release', detail: null })
       }
     }
   }
@@ -2409,6 +2515,17 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
   let askForPreview: ((worktree: string) => Promise<PreviewOutcome>) | null = null
 
   /*
+    And where a request to land a Worktree or to cut a Pre-release goes, assigned
+    the same way and unreachable for the same window.
+
+    Null answers with the outcome that says the host was not asked, never with a
+    refusal. See the drain in `readControl`: a decision nobody made must not
+    reach the agent as one.
+  */
+  let askForLanding: ((worktree: string) => Promise<LandingAnswer>) | null = null
+  let askForRelease: ((feature: string) => Promise<ReleaseAnswer>) | null = null
+
+  /*
     The `launch_preview` **Custom Tool**.
 
     ADR-0014's one addition to what the agent can do, and it is a Custom Tool
@@ -2429,7 +2546,7 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
   */
   type McpServers = NonNullable<NonNullable<Parameters<typeof query>[0]['options']>['mcpServers']>
 
-  const previewServers: McpServers = await (async (): Promise<McpServers> => {
+  const varnickTools: McpServers = await (async (): Promise<McpServers> => {
     if (zodPath === '') return {}
     try {
       const { z } = (await import(zodPath)) as typeof import('zod')
@@ -2459,12 +2576,84 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
           }
         },
       )
+      /*
+        The two tools that ask the host to write the developer's clone.
+
+        Built here beside the Preview because they are the same mechanism — one
+        narrow capability granted in process, whose own surface is the security
+        boundary — and they are shaped by the same rule taken further: the whole
+        of what crosses is one string, and what that string may be is decided
+        outside the Sandbox. A worktree name is looked up in `git worktree list`
+        and a feature slug is checked before it can become an argument.
+
+        **Neither carries the decision.** There is no field for a base, a path
+        list, a version or a force: what the branch changed is read from git and
+        what a release announces is read from what landed, both host-side. An
+        agent that could say what it changed would be an agent answering the
+        protected-path question about itself.
+
+        See ./unattended.ts, and
+        docs/adr/0023-a-second-door-rather-than-a-wider-one.md for why this is a
+        second door rather than a shorter `denyWrite`.
+      */
+      const landTool = sdk.tool(
+        LAND_WORKTREE_TOOL,
+        LAND_WORKTREE_DESCRIPTION,
+        {
+          worktree: z
+            .string()
+            .describe(
+              'The name of a worktree under .claude/worktrees/ — one path component, not a path.',
+            ),
+        },
+        async (args) => {
+          const ask = askForLanding
+          const answer =
+            ask === null
+              ? ({ outcome: 'no-landing', detail: null } as const)
+              : await ask(args.worktree)
+          const { landed, text } = landingToolResult(answer)
+          return {
+            content: [{ type: 'text' as const, text }],
+            // A refusal is a refusal, not a broken tool. `isError` is what stops
+            // the model reading "the Fence says a human merges this" as "try a
+            // different argument" — the branch is finished, and the next step is
+            // to leave it for the developer.
+            isError: !landed,
+          }
+        },
+      )
+
+      const releaseTool = sdk.tool(
+        CUT_PRE_RELEASE_TOOL,
+        CUT_PRE_RELEASE_DESCRIPTION,
+        {
+          feature: z
+            .string()
+            .describe(
+              'The feature slug the run is named by — the directory under .scratch/, one path component.',
+            ),
+        },
+        async (args) => {
+          const ask = askForRelease
+          const answer =
+            ask === null
+              ? ({ outcome: 'no-release', detail: null } as const)
+              : await ask(args.feature)
+          const { cut, text } = releaseToolResult(answer)
+          return { content: [{ type: 'text' as const, text }], isError: !cut }
+        },
+      )
+
       return {
-        varnick: sdk.createSdkMcpServer({ name: 'varnick', tools: [previewTool] }),
+        varnick: sdk.createSdkMcpServer({
+          name: 'varnick',
+          tools: [previewTool, landTool, releaseTool],
+        }),
       }
     } catch (error) {
       process.stderr.write(
-        `varnick: the launch_preview tool could not be built, so this agent cannot ask for a preview — ${error instanceof Error ? error.message : String(error)}\n`,
+        `varnick: the varnick tools could not be built, so this agent cannot ask for a preview, a landing or a release — ${error instanceof Error ? error.message : String(error)}\n`,
       )
       return {}
     }
@@ -2727,14 +2916,19 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
       },
       ...agentConfigurationOptions(inherit),
       /*
-        The Custom Tools. One, and it is `launch_preview` — an in-process SDK
-        MCP server, which is what CONTEXT.md means by the term: code running in
-        this process rather than a capability the Sandbox policy had to grant.
+        The Custom Tools. Three — `launch_preview`, `land_worktree` and
+        `cut_pre_release` — served by one in-process SDK MCP server, which is
+        what CONTEXT.md means by the term: code running in this process rather
+        than a capability the Sandbox policy had to grant.
 
-        Empty when the tool could not be built, which is an agent without it
+        That they are Custom Tools is the whole shape of ADR-0023. Each is one
+        narrow ask, answered outside the Sandbox against facts the agent cannot
+        influence, instead of a policy loosened for everything else.
+
+        Empty when they could not be built, which is an agent without them
         rather than no agent at all.
       */
-      mcpServers: previewServers,
+      mcpServers: varnickTools,
       /*
         Plugins the clone carries. Empty on a fresh checkout, which is the
         honest default — a plugin only exists for this agent if it is somewhere
@@ -2761,6 +2955,15 @@ async function runAgentHost(sdkEntry: string, zodPath: string): Promise<void> {
     // ask, and the tool's handler is what calls it.
     previewLaunches: (ask) => {
       askForPreview = ask
+    },
+    // The same handover for the two tools that ask the host to write the
+    // developer's clone. Three tools, three asks, one loop that owns the
+    // request ids and the pending answers.
+    landingRequests: (ask) => {
+      askForLanding = ask
+    },
+    releaseRequests: (ask) => {
+      askForRelease = ask
     },
     // Replaced wholesale, so a secret the developer removed stops being named
     // on the next Turn rather than lingering as a name nothing can resolve.

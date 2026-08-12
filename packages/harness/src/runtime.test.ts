@@ -28,6 +28,10 @@ interface Recorded {
   worktreeListings: number
   diffReads: string[]
   merges: string[]
+  /** Which Worktree paths the agent's landing tool reached the runtime with. */
+  landings: string[]
+  /** Which feature slugs its release tool did. */
+  releases: string[]
   reaps: string[]
 }
 
@@ -42,6 +46,8 @@ function capabilities(
     worktreeListings: 0,
     diffReads: [],
     merges: [],
+    landings: [],
+    releases: [],
     reaps: [],
   }
   return {
@@ -100,7 +106,22 @@ function capabilities(
     // the runtime's tests is which path crossed, not what git would have done
     // with it.
     readPendingRelease: async () => null,
-    promoteRelease: async () => ({ promoted: false, reason: "not in this test" }),
+    promoteRelease: async () => ({ promoted: false, reason: 'not in this test' }),
+    /*
+      The agent's two asks, recorded rather than performed, for the reason the
+      merge above is: what these tests hold is which string crossed the runtime's
+      dispatch, not what git or a release script would have done with it. The
+      gate itself is proved in packages/harness/src/landing.test.ts, against
+      ports, with no repository at all.
+    */
+    landWorktree: async (path) => {
+      recorded.landings.push(path)
+      return { outcome: 'refused' as const, detail: 'not in this test' }
+    },
+    cutPreRelease: async (feature) => {
+      recorded.releases.push(feature)
+      return { outcome: 'refused' as const, detail: 'not in this test' }
+    },
     reapWorktree: async (path) => {
       recorded.reaps.push(path)
       return {

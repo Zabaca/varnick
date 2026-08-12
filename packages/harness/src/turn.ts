@@ -42,6 +42,15 @@
 
 import type { NonNullableUsage, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { isPreviewOutcome, type PreviewOutcome } from './preview.ts'
+// Admissible here for the reason ./preview.ts is, and it is the same shape of
+// module: it imports nothing, reaches no Node built-in, and holds the closed
+// list of outcomes an answer may carry beside the sentences written for them.
+import {
+  isLandingOutcome,
+  isReleaseOutcome,
+  type LandingOutcome,
+  type ReleaseOutcome,
+} from './unattended.ts'
 
 // ---------------------------------------------------------------------------
 // What the agent host is asked to do
@@ -83,6 +92,8 @@ export type ControlRequest =
   | DescribeSecretsRequest
   | PreviewAnswerRequest
   | ReportMergeRequest
+  | LandingAnswerRequest
+  | ReleaseAnswerRequest
 
 /**
  * Tell the confined process which secrets exist, by name.
@@ -209,6 +220,61 @@ export interface ReportMergeRequest {
 }
 
 /**
+ * What the host did about a Worktree the agent asked to land.
+ *
+ * The same shape as {@link PreviewAnswerRequest} — an answer to a question the
+ * confined process cannot answer itself — with one field it does not have, and
+ * that field is the whole of the difference between the two.
+ *
+ * **A tag, and a sentence somebody in TypeScript wrote.** A Preview's answer is
+ * a tag alone because the process that produces it is the Rust host, and prose
+ * composed there is the string most likely to carry a path or an environment
+ * into the Sandbox. This answer is produced in the *runtime*, by the code that
+ * asked the predicate and performed the merge, and it has to say which rule
+ * refused and about what — a refusal that arrives as `refused` and nothing else
+ * is a run report that says "it would not land" and a developer with no reason.
+ * That is the division `report-merge` above already makes: the sentence is
+ * written where the work happened and the Rust host copies it.
+ *
+ * So the rule this keeps is narrower and is kept on the far side:
+ * src-tauri/src/unattended.rs sends a detail only for outcomes the *runtime*
+ * decided, and never for the ones it decides itself.
+ */
+export interface LandingAnswerRequest {
+  readonly kind: 'landing-answer'
+  /** Which `land_worktree` call this answers. */
+  readonly requestId: string
+  /** One of `LANDING_OUTCOMES` in ./unattended.ts. */
+  readonly outcome: LandingOutcome
+  /** What the host said about it, or absent. Never the only thing that matters. */
+  readonly detail?: string
+}
+
+/** What the host did about a Pre-release the agent asked for. See {@link LandingAnswerRequest}. */
+export interface ReleaseAnswerRequest {
+  readonly kind: 'release-answer'
+  /** Which `cut_pre_release` call this answers. */
+  readonly requestId: string
+  /** One of `RELEASE_OUTCOMES` in ./unattended.ts. */
+  readonly outcome: ReleaseOutcome
+  readonly detail?: string
+}
+
+/**
+ * How much detail an answer may carry into the Sandbox.
+ *
+ * Generous for a sentence and small for a payload. The details are composed from
+ * git's account of a branch and from the last line a release script printed, and
+ * both are bounded in practice — this is the bound for when one is not.
+ *
+ * Over-long is **dropped rather than truncated**, and that is the decision worth
+ * naming: a truncated sentence is a sentence nobody wrote, and the tag's own
+ * message is a complete answer without it. Losing a reason is better than
+ * inventing half of one.
+ */
+export const MAX_ANSWER_DETAIL = 2000
+
+/**
  * What a picture may be, crossing into the Sandbox.
  *
  * The control channel is the one way into the confined process, and until now
@@ -329,8 +395,20 @@ export function parseControlRequest(line: string): ControlRequest | null {
     return null
   }
 
-  const { kind, turnId, prompt, model, effort, names, images, requestId, outcome, briefing, whileRunning } =
-    (value ?? {}) as Record<string, unknown>
+  const {
+    kind,
+    turnId,
+    prompt,
+    model,
+    effort,
+    names,
+    images,
+    requestId,
+    outcome,
+    briefing,
+    whileRunning,
+    detail,
+  } = (value ?? {}) as Record<string, unknown>
 
   /*
     Rebuilt to `kind` and `names`, which is what makes "no value can arrive
@@ -360,6 +438,39 @@ export function parseControlRequest(line: string): ControlRequest | null {
     if (typeof requestId !== 'string' || requestId.length === 0) return null
     if (!isPreviewOutcome(outcome)) return null
     return { kind, requestId, outcome }
+  }
+
+  /*
+    The host's answers to the two things the agent may ask it to do. Rebuilt like
+    everything else here, and the outcome is checked against its closed list
+    rather than carried through as a string: an answer this build does not
+    understand must not become a sentence nothing wrote.
+
+    The detail is optional and is dropped rather than refused when it is missing,
+    empty or too long — see {@link MAX_ANSWER_DETAIL}. Refusing the whole request
+    over it would leave the tool call waiting for an answer that has already been
+    sent, which is the one failure here that costs a Turn rather than a sentence.
+  */
+  if (kind === 'landing-answer' || kind === 'release-answer') {
+    if (typeof requestId !== 'string' || requestId.length === 0) return null
+    const known = kind === 'landing-answer' ? isLandingOutcome(outcome) : isReleaseOutcome(outcome)
+    if (!known) return null
+    const said =
+      typeof detail === 'string' && detail.trim().length > 0 && detail.length <= MAX_ANSWER_DETAIL
+        ? detail
+        : undefined
+    // Two branches rather than a cast: the outcome guard narrowed one of two
+    // unions, and which one it narrowed is what `kind` says.
+    if (kind === 'landing-answer') {
+      const answer = outcome as LandingOutcome
+      return said === undefined
+        ? { kind, requestId, outcome: answer }
+        : { kind, requestId, outcome: answer, detail: said }
+    }
+    const answer = outcome as ReleaseOutcome
+    return said === undefined
+      ? { kind, requestId, outcome: answer }
+      : { kind, requestId, outcome: answer, detail: said }
   }
 
   /*

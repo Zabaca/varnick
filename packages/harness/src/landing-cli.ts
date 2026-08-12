@@ -23,7 +23,7 @@
 
 import { resolve } from 'node:path'
 import {
-  INSTALL_LIFECYCLE_FIELDS,
+  installLifecycleOf,
   isRootManifest,
   ROOT_MANIFEST,
   unattendedLanding,
@@ -65,41 +65,24 @@ function requireGit(args: readonly string[], what: string): string {
  * the branch that adds one has no fields before it, which is a real answer.
  * `undefined` is reserved for "not read", which {@link unattendedLanding}
  * refuses — so a parse failure here dies rather than returning it.
+ *
+ * The reading itself is `installLifecycleOf` in ./fence.ts and is not written
+ * here, because the tool the agent asks reads the same fields of the same file
+ * and the two must not be able to disagree about what a `postinstall` is. What
+ * is left here is what a *command* does about a manifest it cannot read: say
+ * which revision, and stop with the code that means "not answered".
  */
 function lifecycleAt(revision: string): InstallLifecycle {
   const source = git(['show', `${revision}:${ROOT_MANIFEST}`])
   if (source === null) return {}
 
-  let manifest: unknown
   try {
-    manifest = JSON.parse(source)
+    return installLifecycleOf(source)
   } catch (error) {
-    die(
-      `${ROOT_MANIFEST} at ${revision} is not JSON, so its install lifecycle fields cannot be read: ${String(error)}`,
-    )
+    // The fragment is a verb phrase, so this reads as one sentence about one
+    // revision — see `installLifecycleOf`.
+    die(`${ROOT_MANIFEST} at ${revision} ${error instanceof Error ? error.message : String(error)}`)
   }
-  if (typeof manifest !== 'object' || manifest === null) {
-    die(`${ROOT_MANIFEST} at ${revision} is not an object.`)
-  }
-
-  const scripts = (manifest as { scripts?: unknown }).scripts
-  if (scripts === undefined) return {}
-  if (typeof scripts !== 'object' || scripts === null) {
-    die(`${ROOT_MANIFEST} at ${revision} has a "scripts" field that is not an object.`)
-  }
-
-  const fields: Record<string, string> = {}
-  for (const field of INSTALL_LIFECYCLE_FIELDS) {
-    const value = (scripts as Record<string, unknown>)[field]
-    // A non-string here is not "absent" — it is a manifest shape nothing should
-    // guess at, and guessing is how a lifecycle script lands unnoticed.
-    if (value === undefined) continue
-    if (typeof value !== 'string') {
-      die(`${ROOT_MANIFEST} at ${revision} has a "${field}" that is not a string.`)
-    }
-    fields[field] = value
-  }
-  return fields
 }
 
 function report(branch: string, base: string, verdict: UnattendedLanding): string {
