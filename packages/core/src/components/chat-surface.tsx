@@ -13,6 +13,7 @@ import { ClaudePrompt } from './brainless/claude/claude-prompt.tsx'
 import { SlashMenu } from './slash-menu.tsx'
 import { RuntimePanel } from './runtime-panel.tsx'
 import { RunningTasks } from './running-tasks.tsx'
+import { ReleaseBand } from './release-band.tsx'
 import {
   MergeReportBand,
   ReapReportBand,
@@ -474,7 +475,9 @@ export function ChatSurface({
           could show would appear behind a diff of a worktree that no longer
           exists, with nothing on screen to say what happened.
         */}
-        <MergeReportBand snapshot={snapshot} send={send} />
+        <ReleaseBand snapshot={snapshot} send={send} />
+        <ReleaseBand snapshot={snapshot} send={send} />
+      <MergeReportBand snapshot={snapshot} send={send} />
         <ReapReportBand snapshot={snapshot} send={send} />
         <WorktreeDiffView diff={ctx.worktreeDiff} snapshot={snapshot} send={send} />
       </div>
