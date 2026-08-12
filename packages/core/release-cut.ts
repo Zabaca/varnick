@@ -318,22 +318,8 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
   }
 
   /*
-    A pre-release the developer is offered stops being one, because the version
-    that supersedes it has a different name. Removing it here rather than leaving
-    it is the difference between "the newer supersedes the older" and "the newer
-    exists too": nothing else prunes tags — ticket 07's retention bounds
-    artifacts and does not look at refs — so a tag left here is left for ever.
-
-    Guarded exactly as the move is, and by the same reading: only a tag the
-    pending record claims. A tag anybody else wrote is never touched, which is
-    why this is safe to do with nobody watching.
-  */
-  if (pending !== null && pending.tag !== tag) {
-    git(cloneRoot, ['tag', '-d', pending.tag])
-  }
-
-  /*
-    **The record is the last write, and that ordering is the whole guarantee.**
+    **The record is the write that makes the release exist, and that ordering is
+    the whole guarantee.**
 
     Everything above can fail, and until this line lands there is nothing on disk
     claiming a pre-release is on offer. That matters because the thing that
@@ -351,6 +337,31 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
   */
   mkdirSync(dirname(pendingRecordPath(cloneRoot)), { recursive: true })
   writeFileSync(pendingRecordPath(cloneRoot), pendingRecordText(plan.record))
+
+  /*
+    Cleanup, and it comes *after* the record for the same reason the record comes
+    after the tag.
+
+    A pre-release the developer was offered stops being one when the version that
+    supersedes it has a different name, and the superseded tag is then named by
+    nothing — not the record, not `served`, not ticket 07's `previous`. Nothing
+    else prunes refs: 07's retention bounds artifacts and never looks at tags, so
+    a tag left here is left for ever.
+
+    But deleting it *before* the new record lands would reopen the hole this
+    function just closed, one release older: for the width of two syscalls the
+    old record would name a tag that no longer exists, and a band reading it in
+    that window offers a release that is gone. So the new record is written
+    first — after which the old tag is referenced by nothing and removing it is
+    pure cleanup, safe to lose to a crash and re-run next cut.
+
+    Guarded exactly as the move is, and by the same reading: only a tag the
+    pending record claimed. A tag anybody else wrote is never touched, which is
+    what makes this safe to do with nobody watching.
+  */
+  if (pending !== null && pending.tag !== tag) {
+    git(cloneRoot, ['tag', '-d', pending.tag])
+  }
 
   return { cut: true, record: plan.record, artifact }
 }
