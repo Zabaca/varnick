@@ -205,9 +205,45 @@ announcement is missing from the restored transcript — the record of why the
 ground moved, gone by the act of moving it, which is the failure the announcement
 exists to prevent. The changelog still has it, so nothing is unrecoverable.
 
-The fix, if it is wanted, is the Session telling its parent when the save landed
-and `promoted` waiting for that before invoking the restart — children reporting
-to parents by event is the ADR-0007-blessed shape, and it is not large.
+**Decided, since the `worktreeMerge` defence is not available:** the behaviour
+stays, and the reason is that the obvious fix is worse than the exposure.
+
+Making `promoted` wait for the save means waiting on something that can fail. A
+persistence that never confirms would mean a restart that never happens — the
+developer accepts a release and is left on the old build for ever, which is a
+certain failure traded for a probable one. Bounding the wait with a delay is
+worse again: ADR-0007 requires named delays precisely because a number in an
+`after` is luck written down.
+
+What makes it acceptable rather than merely tolerated:
+
+- **The announcement is not the only record.** `CHANGELOG.md` carries the same
+  entry, committed, and it is the durable one — the transcript copy is a
+  convenience so the conversation reads continuously across the restart.
+- **The band says it too.** `promoted` renders the version and that a restart is
+  owed, so nothing about the promotion is invisible if the message is lost.
+- **The ordering is as good as it can be without waiting.** The send is a
+  transition action, so it runs before the target's entry and before the restart
+  invoke starts. The mirror write is issued first; it is only the completion
+  that is unawaited.
+
+The fix if it is ever wanted: the Session emits a fact when the save lands and
+`promoted` waits for it *or* proceeds on a named timeout — children reporting to
+parents by event is the ADR-0007-blessed shape. That is a follow-up ticket, not
+a line in this one, because it needs the timeout argued rather than picked.
+
+### A fresh clone with no Session: decided, and it holds
+
+The announcement is dropped when there is no **Session** to send it to, and the
+guard that does that is what stops `sendTo` throwing and taking the window down
+on the way to a restart.
+
+**This is right rather than tolerated.** Criterion 6 asks for the announcement to
+be posted into the transcript; a clone with no Session has no transcript, so
+there is nothing for it to be absent from — and the developer is not left
+uninformed, because the band in `promoted` names the version and says the restart
+is owed. Writing a conversation into existence to hold one message would be
+varnick inventing a Session nobody started.
 
 ### For ticket 09
 

@@ -8291,6 +8291,59 @@ A sentence about the file.
 
   // --- the pending record -------------------------------------------------
 
+  const parkedRelease = {
+    version: '0.0.2',
+    artifact: '0.0.2',
+    tag: 'v0.0.2',
+    cutAt: '2026-08-11T03:14:00.000Z',
+    announcement: 'varnick v0.0.2 is cut and waiting.',
+    notes: [],
+  }
+
+  /*
+    The event, driven against the machine rather than reasoned about from the
+    region's source — which is what the ticket's "including the refusals" asks
+    for, and what the first version of this ticket ticked without doing.
+
+    Every one of these is a control that is drawn or not drawn: `snapshot.can()`
+    is what the band gates on, so a state that accepts when it should not is a
+    button offering something the machine will drop.
+  */
+  const promote = { type: 'PROMOTE_RELEASE' } as const
+  const parked = (enterRelease: string) =>
+    createActor(harnessMachine, {
+      input: { policy: seedPolicy, enterRelease, pendingRelease: parkedRelease },
+    }).start()
+
+  check('a pending pre-release offers the control', parked('pending').getSnapshot().can(promote))
+  check('a failed promotion offers it again, which is what makes the retry a retry', parked('failed').getSnapshot().can(promote))
+  check(
+    'and a promoted one offers it too, because the restart is still owed',
+    parked('promoted').getSnapshot().can(promote),
+  )
+  check(
+    'a promotion in flight refuses a second press',
+    !parked('promoting').getSnapshot().can(promote),
+  )
+  check(
+    'and so does a region with nothing on offer, so no band is drawn at all',
+    !createActor(harnessMachine, { input: { policy: seedPolicy } }).start().getSnapshot().can(promote),
+  )
+
+  /*
+    The dead end that was here: `promoted` sent `PROMOTE_RELEASE` back to
+    `promoting`, which refused with "no pre-release is pending" and landed in
+    `failed` — destroying the one useful sentence on the screen, that the
+    promotion went through and the restart is owed. It re-enters itself now, so
+    the press asks for the restart a second time.
+  */
+  const owed = parked('promoted')
+  owed.send(promote)
+  check(
+    'pressing again from `promoted` stays in `promoted` rather than falling into `failed`',
+    owed.getSnapshot().value.release === 'promoted',
+  )
+
   const record = {
     version: '0.0.2',
     artifact: '0.0.2',

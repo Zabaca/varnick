@@ -2136,6 +2136,24 @@ export const harnessMachine = setup({
                 actions: assign({ pendingRelease: ({ event }) => event.output }),
               },
             ],
+            /*
+              **Required, not defensive.** An invoke with no `onError` does not
+              leave a machine where it was: in XState v5 an unhandled actor
+              rejection propagates to the *parent*, which stops. This is the
+              **initial** state of a region on the root machine, and the read
+              throws whenever the host's `bun --print` exits nonzero or prints
+              something unparseable — so the missing handler turned a failed
+              read of an optional file into no window at all. Chat, the menu,
+              the conversation: gone, at launch, with no band on screen to
+              explain it.
+
+              An empty handler is the whole fix and it is the honest one. There
+              is nothing to report: nothing pending is the correct reading of a
+              record that cannot be read, it is what the developer would see if
+              there genuinely were none, and a band that appeared only to say it
+              could not look would be worse than the silence.
+            */
+            onError: {},
           },
         },
         /*
@@ -2170,17 +2188,35 @@ export const harnessMachine = setup({
                 target: 'promoted',
                 guard: ({ event }) => event.output.promoted,
                 /*
-                  `pendingRelease` is deliberately *not* cleared here. The
-                  announcement to post lives on it, and `promoted` posts on
-                  entry — clearing it on the way in would send an empty message
-                  and lose the only account of what the night produced. The band
-                  reads the region's state rather than this field, so leaving it
-                  set shows nothing stale.
+                  The announcement is posted **here**, on the transition, rather
+                  than on `promoted`'s entry — and that placement is what makes
+                  the restart re-requestable. `promoted` re-enters itself when
+                  the developer presses again, which is how the restart is asked
+                  for a second time; an entry action would re-post the
+                  announcement on every one of those presses.
+
+                  Transition actions run before the target's entry and before
+                  its invoke starts, so the ordering the state exists for is
+                  unchanged: the message is sent, and only then is the restart
+                  asked for.
+
+                  Guarded on there being a Session at all. The band is drawn
+                  whatever the agent is doing, so a developer can promote before
+                  one has ever started — and `sendTo` with no target throws,
+                  which would take the window down on the way to a restart.
                 */
-                actions: assign({
-                  promotedVersion: ({ event }) =>
-                    event.output.promoted ? event.output.version : null,
-                }),
+                actions: [
+                  assign({
+                    promotedVersion: ({ event }) =>
+                      event.output.promoted ? event.output.version : null,
+                  }),
+                  enqueueActions(({ context, enqueue }) => {
+                    const session = context.session
+                    const announcement = context.pendingRelease?.announcement ?? ''
+                    if (session === null || announcement.trim() === '') return
+                    enqueue.sendTo(session, { type: 'VARNICK_ANNOUNCED', text: announcement })
+                  }),
+                ],
               },
               {
                 target: 'failed',
@@ -2216,23 +2252,6 @@ export const harnessMachine = setup({
           now, so the actor promotes nothing and asks for the restart again.
         */
         promoted: {
-          /*
-            Guarded on there being a Session at all, which is not a formality:
-            the band is drawn whatever the agent is doing, so a developer can
-            promote before one has ever started — a fresh clone whose first act
-            is accepting a build cut on another machine. `sendTo` with no target
-            throws, and a machine that crashed on the way to a restart would
-            take the window with it.
-
-            A conversation that does not exist has nothing to record, and the
-            announcement is in the changelog either way.
-          */
-          entry: enqueueActions(({ context, enqueue }) => {
-            const session = context.session
-            const announcement = context.pendingRelease?.announcement ?? ''
-            if (session === null || announcement.trim() === '') return
-            enqueue.sendTo(session, { type: 'VARNICK_ANNOUNCED', text: announcement })
-          }),
           invoke: {
             src: 'restartVarnick',
             input: () => ({}) as Record<string, never>,
@@ -2249,7 +2268,19 @@ export const harnessMachine = setup({
               }),
             },
           },
-          on: { PROMOTE_RELEASE: 'promoting' },
+          /*
+            **Re-enters itself rather than promoting again**, which is the whole
+            of what the control does from here. There is nothing left to
+            promote — the record is cleared — so a press that went back to
+            `promoting` would refuse with "no pre-release is pending" and land
+            in `failed`, destroying the one useful sentence on the screen: that
+            the promotion went through and the restart is owed. It said it did
+            this before it did.
+
+            `reenter` is what makes it work: a self-transition without it does
+            not restart the invoke, and the invoke is the restart.
+          */
+          on: { PROMOTE_RELEASE: { target: 'promoted', reenter: true } },
         },
         /*
           It did not go through, and nothing moved.

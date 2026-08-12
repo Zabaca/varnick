@@ -1251,7 +1251,6 @@ export const SCENARIOS: readonly Scenario[] = [
   },
 ]
 
-
 /**
  * Paths the coverage banner checks.
  *

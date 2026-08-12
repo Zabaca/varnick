@@ -476,8 +476,7 @@ export function ChatSurface({
           exists, with nothing on screen to say what happened.
         */}
         <ReleaseBand snapshot={snapshot} send={send} />
-        <ReleaseBand snapshot={snapshot} send={send} />
-      <MergeReportBand snapshot={snapshot} send={send} />
+        <MergeReportBand snapshot={snapshot} send={send} />
         <ReapReportBand snapshot={snapshot} send={send} />
         <WorktreeDiffView diff={ctx.worktreeDiff} snapshot={snapshot} send={send} />
       </div>
@@ -525,6 +524,14 @@ export function ChatSurface({
         the tree the window is running from. Both are silent when they have
         nothing to say, so in the ordinary case neither band exists.
       */}
+      {/*
+        And the release band above both, on the screen the ticket is about. A
+        pre-release is the most consequential thing that can be on this window —
+        the ground under the conversation is about to move — so it sits where a
+        developer cannot scroll away from it, and it is silent whenever there is
+        nothing pending.
+      */}
+      <ReleaseBand snapshot={snapshot} send={send} />
       <MergeReportBand snapshot={snapshot} send={send} />
       <ReapReportBand snapshot={snapshot} send={send} />
 

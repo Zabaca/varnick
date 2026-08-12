@@ -447,9 +447,14 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
       await promote.exited
       /*
         Parsed rather than read off the exit code, because a refusal and a
-        promotion are both answers and only the reason tells them apart. A run
-        that produced nothing parseable is the one case that is a real failure —
-        the script could not start — and that throws.
+        promotion are both answers and only the reason tells them apart.
+
+        The last line, because that is where `--json` puts the answer. Anything
+        this cannot parse throws — which covers the script failing to start, and
+        also covers a script that printed something after its answer. The second
+        is a bug in `promote.ts` rather than a state of the clone, and throwing
+        is the right response to both: neither is a promotion, and neither is a
+        refusal the window can render.
       */
       const line = text.trim().split('\n').pop() ?? ''
       try {

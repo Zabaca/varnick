@@ -153,21 +153,14 @@ _Avoid_: unreleased, staged, queued
 
 **Promotion**:
 Accepting a Pre-release: the changelog heading's `pending` becomes a date, `served` moves to its Artifact, the pending record goes, and varnick restarts onto it with the **Session** resumed from the mirror. The developer's, always — a run with nobody watching cuts but never promotes, which is what keeps a night's work a thing to accept rather than a thing that happened.
-_Avoid_: publish, ship, deploy (nothing leaves the machine — there is no remote in the network allowlist)
+The announcement is posted into the transcript as varnick's own — neither the developer's words nor the agent's, because it is the transcript recording something that happened *to* it. That is what the third **Message role** is for.
+
+**Every refusal happens before the first write**, so a promotion that does not go through leaves the window on the build it was already running. The sharpest is a build that **will not start**: promoting onto one would hand the developer a window that does not open, and the fallback would serve the old build back on the next launch — which works, and still reads as a promotion that undid itself. Ordering the writes is not the same as making them atomic, so a promotion that finds its version already accepted in the changelog **finishes the job** rather than refusing it, which is what stops a half-written one wedging the band for ever.
+_Avoid_: publish, ship, deploy (nothing leaves the machine — there is no remote in the network allowlist), rollback/revert (nothing goes back; a failed promotion changed nothing to go back from)
 
 **Version**:
 One number, with one source: the root `package.json`, read when the renderer is built. A release edits that field and nothing else in Core, which is what keeps a release from being able to fail typecheck. Inferred rather than declared — a removed source file or a ticket recording an **Accepted consequence** moves the minor, everything else moves the patch while the major is `0`. `src-tauri/`'s two version fields do not follow, because a release that wrote there would need a human; see [ADR-0022](./docs/adr/0022-a-pre-release-is-cut-from-the-changelogs-pending-block.md) for that and for why the changelog is the accumulator.
 _Avoid_: build number, revision, semver (the scheme is semver; this is the number)
-
-**Pre-release**:
-A build cut from a finished run and **not** served — a version, a changelog entry, an announcement written from the tickets, an Artifact and a tag. Exactly one is pending at a time, recorded in `.varnick/pending-release.json`; each night's supersedes the last. Cutting one never moves **Served**: it is cut while somebody is asleep and must not change the ground under the window they left open.
-_Avoid_: draft, candidate, beta (all imply a stage in a pipeline; this is a finished build nobody has accepted), nightly
-
-**Promotion**:
-The developer accepting a **Pre-release**. It switches **Served** to the Artifact, stamps the changelog entry with the date, posts the announcement into the transcript as varnick's own, and restarts varnick onto the build. Always the developer's — a run cuts, it never promotes.
-
-Every refusal happens before the first write, so a promotion that does not go through leaves the window on the build it was already running. The sharpest is a build that **will not start**: promoting onto one would hand the developer a window that does not open, and the fallback would serve the old build back on the next launch — which works, and still reads as a promotion that undid itself.
-_Avoid_: release (a **Pre-release** is the noun; this is the act of taking it), accept/apply (both lose that the window restarts), deploy, ship
 
 ### Conversation
 
@@ -268,6 +261,13 @@ Clearing away a Worktree whose work is already in the live tree. A sixth region 
 
 Unlike a merge, a reap needs no diff open. ADR-0014's gate is a human agreeing to a *change*; a reap removes a second copy of work the tree already holds, and requiring a read first would make tidying up two clicks and teach a developer to click through the first.
 
+**Harness — `release`**: `idle`, `pending`, `promoting`, `promoted`, `failed`.
+Where a **Pre-release** stands with this window. `idle` is the state it is in almost always — nothing has been cut since the last **Promotion** — and the band draws nothing at all there, because a permanent slot saying so is how the conversation ends up below the fold. `idle` rather than a name about the store, unlike `unmerged`: the fact is `pending`, and its absence is simply this region having nothing to do, which is what `worktreeReap.idle` is named for.
+
+**`promoted` is the state the ordinary path never lingers in**, and it exists for the case where the ordinary path does not happen. The promotion went through, the announcement is in the transcript, and the restart was asked for — so in the ordinary case the process is replaced while this state is being drawn. What it is *for* is a restart that did not happen: the developer is still looking at the build they promoted away from, and saying so is the whole job. Pressing the control again re-enters the state and asks for the restart a second time; it does not promote again, because there is nothing left to promote. Both ends of the restart come back here for the reason `worktreeMerge.restarting` returns to `merged` — a resolve is no better news than an error, the process is still here, and the restart is still owed.
+
+`failed` is a promotion that did not go through, and everything that reaches it left the store exactly as it was.
+
 **Worktree diff — `worktreeDiff`**: `loading`, `loaded`, `failed`.
 What one pending **Worktree** changed, read when a developer opens it. A child machine rather than a fifth region on the Harness, spawned by `OPEN_WORKTREE` and dropped by `CLOSE_WORKTREE`, for the three reasons a **Surface** is one: it has something to wait on, it can fail, and it must fail without disturbing the conversation running beside it. At most one is open, so opening a second is refused rather than leaving the first running unwatched — and a re-listing deliberately does not close it, because the list is a fact about a filesystem that changes while varnick runs.
 
@@ -299,6 +299,10 @@ The machine has a fourth, `unloaded`, and it is the exception to the line above:
 `LIST_WORKTREES` has two askers and one meaning. A developer sends it with *look again* or `/pending`; the Harness sends it to itself when the Session announces a Turn has ended. There is deliberately no second event for the automatic one — nothing new is being said — and the refusal that already stopped a second click from restarting a listing in flight is what stops a Turn ending from doing it too.
 
 **`TURN_ENDED` is the one event nothing accepts.** It is *emitted* by the Session rather than sent to anybody: a fact about itself, with no recipient, no payload and no state that handles it. That is what lets the Harness act on the end of a Turn without the Session knowing there is a `review` region, a Worktree or a Harness at all. An emitted fact and an event are different things and the naming convention is the same — named for what happened, never for what somebody should do about it.
+
+`PROMOTE_RELEASE` is one event for the whole of accepting a **Pre-release** — switch, stamp, announce, restart — because that is one act from the developer's side, and splitting it would let the window sit half-promoted in a state nobody asked for. It is accepted from `pending`, from `failed` (which is what makes the retry a retry), and from `promoted`, where it means *ask for the restart again* rather than *promote again*.
+
+`VARNICK_ANNOUNCED` is the one event that puts varnick's own words into a **Session**. It is a **Turn** boundary, so it writes the mirror — which it must be, because the promotion replaces the process moments later and an announcement that reached the window and not the mirror would be lost by the very act it was announcing.
 
 Two conventions hold: an event is named for what the user or the world did, never for the state it produces (`AGENT_EXIT`, not `CRASH`); and an event a machine will not accept in its current state has no handler rather than a disabled control.
 

@@ -57,9 +57,14 @@
  * invariant is what the whole fallback rests on: a promotion that composed
  * marker text by hand would move `served` and leave `previous` naming a build
  * two promotions old, and nothing would look wrong until the day the fallback
- * was needed. `drive.ts` asserts the invariant directly now rather than leaving
- * it to there being one function, because this ticket is the first time a second
- * caller existed at all.
+ * was needed.
+ *
+ * It is held by there being one function, and `drive.ts` asserts the *effect* —
+ * that a promotion leaves `previous` naming the build the developer came from —
+ * rather than the absence of a second writer. That is the weaker of the two
+ * checks and it is worth saying so: this ticket is the first time a second
+ * caller of the store existed at all, and what would catch the next one is a
+ * grep nobody runs.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'

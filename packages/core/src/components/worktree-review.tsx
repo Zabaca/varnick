@@ -890,7 +890,16 @@ export function ReapReportBand({
 }
 
 /** The same full-width slot the review list uses, so the two stack. */
-function Band({ children }: { children: React.ReactNode }) {
+/**
+ * The shared shell every band on this window sits in.
+ *
+ * Exported because the release band uses it too. It is where Quiet Chrome lives
+ * for all of them — 12px, stepping down from the transcript's 13 — along with
+ * the hairline and the raised ground that make a band read as laid over the
+ * conversation rather than as part of it. A band that drew its own box would be
+ * a second opinion about all three.
+ */
+export function Band({ children }: { children: React.ReactNode }) {
   return (
     <section
       className="shrink-0 px-6 py-2 text-[12px]"
