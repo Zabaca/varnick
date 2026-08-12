@@ -111,7 +111,16 @@ silently restarts the accumulation.
 
 `.varnick/pending-release.json` is what a band reads: version, artifact id, tag,
 `cutAt`, the announcement text, and the notes. `parsePendingRecord` answers `null`
-for absent, unparseable and shaped-wrong alike, the way `servedArtifactId` does.
+for absent, unparseable and shaped-wrong alike, the way `markedArtifactId` does.
+
+**The record is written last, and you can rely on that.** A cut writes it only
+after the artifact is installed, the changelog is written, the commit is made and
+the tag is written — so a record that exists names a pre-release that is entirely
+there. A failure anywhere earlier leaves no record at all, which means the band
+shows nothing rather than offering a build whose tag does not exist. Do not
+weaken that ordering: it is the reason the CLI and the window can never disagree
+about whether a release happened, and it is asserted by driving a real cut
+through a failing commit.
 
 **08 — promoting.** Three things, and the first is the cheap one people miss:
 

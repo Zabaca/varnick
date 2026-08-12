@@ -46,11 +46,18 @@
  * first night's entry before replacing it.
  *
  * That is also what makes the version recompute rather than compound. The base
- * is the last **promoted** version, never the manifest — so two patch nights in
- * a row both land on the same number, the same artifact id, and the same tag,
- * and the store does not grow one directory per night nobody looked. A version
+ * is the last **promoted** version, never the manifest — so two nights *at the
+ * same level* land on the same number, the same artifact id and the same tag,
+ * and reuse the one artifact directory rather than adding another. A version
  * only moves when the accumulated level rises, which is the honest reading of
  * "this is what would be released if you took it".
+ *
+ * When the level *does* rise the names all change, and the pre-release being
+ * superseded leaves things behind. The **tag** is deleted by the cut, because
+ * nothing else prunes refs — ticket 07's retention bounds artifacts and never
+ * looks at tags, so one left here is left for ever. The **artifact** is not: it
+ * is an orphan directory under an id nothing points at, which is exactly what
+ * that retention exists to bound.
  *
  * ## The format, written down because three tickets read it
  *
@@ -358,11 +365,22 @@ export function isSourcePath(path: string): boolean {
 /**
  * How much this run moved, from its tickets and its diff together.
  *
- * The diff is the floor and a ticket can only raise it. A ticket that records an
- * **accepted consequence** has said in prose that something the developer relied
- * on stops working, which is the definition of the top level and is a thing no
- * diff can show: ticket 05 took live Surface hot-reloading away from the main
- * window by *adding* a script, and every path in its diff reads as a feature.
+ * The diff is the floor and a ticket can only raise it. A ticket carrying an
+ * `**Accepted consequence:**` line has said in prose that something the
+ * developer relied on stops working, which is the definition of the top level
+ * and is a thing no diff can show — a loss can arrive entirely as additions.
+ *
+ * The field is documented in `docs/agents/issue-tracker.md`, which is where
+ * ticket fields live; it is not a bump declaration, and nobody writes a level on
+ * a ticket to choose a version.
+ *
+ * **It is new, and no ticket in `.scratch/` carries it yet.** An earlier version
+ * of this comment cited ticket 05 as the motivating case — a loss that ADR-0020
+ * does record, and that ticket 05's *file* does not state under any field, so the
+ * citation was for a case the mechanism could not actually have read. The
+ * motivating shape is real; the claim that it was already being read was not.
+ * Until tickets adopt the field, this route contributes nothing and the diff
+ * decides alone — see ADR-0022, which says so rather than leaving it implied.
  */
 export function levelOfRun(
   tickets: readonly TicketSummary[],

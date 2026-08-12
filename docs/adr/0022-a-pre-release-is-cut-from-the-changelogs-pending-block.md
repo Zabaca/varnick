@@ -66,12 +66,45 @@ message is not. `ReleaseNote` carries no sha, no author and no subject line, so
 rather than a rule a function has to keep.
 
 **One thing a ticket says does move the number**: an `**Accepted consequence:**`
-line. That is not the per-ticket bump declaration this design turned down —
-nobody writes `breaking` on a ticket to choose a version. It is a sentence a
-ticket writes anyway when something the developer relied on stops working, and
-ticket 05 is why it has to be read: it took live Surface hot-reloading away from
-the main window by *adding* a script, so every path in its diff reads as a
-feature and no diff could have seen the loss.
+line, documented in `docs/agents/issue-tracker.md`. That is not the per-ticket
+bump declaration this design turned down — nobody writes `breaking` on a ticket
+to choose a version. It is a sentence a ticket owes its reader anyway when
+something the developer relied on stops working, and it exists because a loss can
+arrive entirely as additions: ADR-0020 records exactly such a loss, live Surface
+hot-reloading in the main window, delivered by *adding* a script.
+
+## The first release is a patch, and both routes to breaking are dark
+
+Stated plainly rather than left for somebody to measure, because the honest
+version of "the bump is inferred" has to say what it currently infers.
+
+**Today every route to `breaking` is unreachable, so the level is patch by
+construction.** Two reasons, and only one of them is a gap:
+
+**The diff cannot see a removal on a first cut, and that is correct.** With
+nothing promoted, the diff is taken from the empty tree, where every path is an
+addition and no file has ever been deleted. That is not a blind spot to fix: a
+first release cannot break anything, because there was nothing released to break.
+Once something is promoted the diff is taken from its tag, and a deleted source
+file reads as `breaking` from that point on — the same file, measured both ways,
+gives `feature` from the empty tree and `breaking` from `v0.0.1`.
+
+**No ticket carries an accepted consequence yet.** The field is new here. It is
+documented where ticket fields are documented and it is exercised end to end —
+`drive.ts` cuts a real release from a ticket carrying one and watches the version
+rise — but nothing in `.scratch/` has adopted it, so it contributes nothing to
+the next real cut.
+
+An earlier draft of this ADR cited ticket 05 as the case the field was already
+reading. It was not: the loss is real and ADR-0020 records it, but ticket 05's
+file states it under no field, so the mechanism could never have seen it. The
+shape was right and the claim was wrong, and retrofitting the field onto a landed
+ticket to make the sentence true would have changed this release's version number
+as a side effect of fixing a comment. That is the developer's call, not a
+release's.
+
+So: **v0.0.1 is a patch, and it is a patch honestly.** The machinery that would
+make it a minor works, is asserted, and has nothing to read yet.
 
 ## Pre-1.0, a feature and a fix are the same bump
 
@@ -158,6 +191,25 @@ does, so the claim can fail.
 happens before the build, so putting it back is the whole of the undo. What the
 developer wakes to is the tree they went to bed with, rather than a version and a
 tag with no artifact behind them.
+
+**And the pending record is the last write, which is the same rule from the other
+side.** A commit or a tag that fails leaves an artifact, a rewritten changelog and
+a bumped manifest — the mirror image of the failure above, and the more expensive
+one. Not because more is left behind, but because the component that *reports* it
+and the component that *acts* on it are different: the command returns a sentence
+to a terminal nobody is reading at three in the morning, while the release band
+reads the pending record and offers the developer a build. A record written
+before the tag meant the two could disagree about whether a release had happened
+— the CLI saying nothing was cut, the window offering a pre-release whose tag did
+not exist. That is the exact opposite of story 13's "a single thing to accept or
+reject".
+
+So nothing on disk claims a pre-release is on offer until every part of it
+exists, and a post-build failure puts the two committed files back. It is the
+same property `installArtifact` holds one level down — assemble everything, and
+make the thing that points at it the final single act — and the artifact is the
+one thing not undone, because an orphan under an id nothing names is what ticket
+07's retention exists to bound.
 
 ## What a cut never does
 

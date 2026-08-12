@@ -191,9 +191,17 @@ export function changedPathsSince(cloneRoot: string, base: string): readonly Cha
  * 4. **on a failed build, put the manifest back and stop.** Nothing pending, no
  *    version bump with no artifact behind it. This is the one step that exists
  *    entirely to undo step 3, and it is why step 3 is the only pre-build write.
- * 5. **install the artifact, then record it.** In that order, so the pending
- *    record can never name an artifact that is not there.
- * 6. **commit and tag.**
+ * 5. **install the artifact and write the changelog, then commit and tag.** Any
+ *    failure here puts the two committed files back.
+ * 6. **write the pending record last.** Nothing on disk offers a pre-release
+ *    until every part of it exists — see the comment at that line, which is
+ *    where the two-sided version of criterion 8 actually lives.
+ *
+ * Criterion 8 reads "a version bump with no artifact behind it", and the
+ * symmetric failure is the one that costs more: an artifact, a changelog and a
+ * record with no tag behind them, reported as "nothing was cut" while ticket
+ * 08's band offers it to the developer anyway. Steps 4 and 6 are the two
+ * directions of the same rule.
  */
 export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
   const { cloneRoot } = input
@@ -259,8 +267,19 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
   const artifact = installArtifact(cloneRoot, plan.record.artifact, built.distDirectory)
 
   writeFileSync(changelogPath(cloneRoot), plan.changelog)
-  mkdirSync(dirname(pendingRecordPath(cloneRoot)), { recursive: true })
-  writeFileSync(pendingRecordPath(cloneRoot), pendingRecordText(plan.record))
+
+  /**
+   * Put the two committed files back, for a failure after the build.
+   *
+   * Not the artifact: it is installed under an id nothing points at yet, so an
+   * orphan there is a directory taking up space, which ticket 07's pruner
+   * bounds. Undoing a `renameSync` is not worth inventing for that.
+   */
+  const restoreTree = () => {
+    writeFileSync(manifestPath, manifestBefore)
+    if (changelogBefore === undefined) rmSync(changelogPath(cloneRoot), { force: true })
+    else writeFileSync(changelogPath(cloneRoot), changelogBefore)
+  }
 
   /*
     The commit is what the tag names, so the two are one step. `git add` is given
@@ -280,21 +299,58 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
     `varnick v${plan.record.version} — a pre-release nobody has promoted yet`,
   ])
   if (!committed.ok) {
+    restoreTree()
     return {
       cut: false,
       kind: 'environment',
-      reason: `the release could not be committed, so it has not been tagged — ${committed.stderr.trim()}`,
+      reason: `the release could not be committed, so nothing is pending — ${committed.stderr.trim()}`,
     }
   }
 
   const tagged = git(cloneRoot, disposition === 'move' ? ['tag', '-f', tag] : ['tag', tag])
   if (!tagged.ok) {
+    restoreTree()
     return {
       cut: false,
       kind: 'environment',
-      reason: `the release is committed but ${tag} could not be written — ${tagged.stderr.trim()}`,
+      reason: `${tag} could not be written, so nothing is pending — ${tagged.stderr.trim()}`,
     }
   }
+
+  /*
+    A pre-release the developer is offered stops being one, because the version
+    that supersedes it has a different name. Removing it here rather than leaving
+    it is the difference between "the newer supersedes the older" and "the newer
+    exists too": nothing else prunes tags — ticket 07's retention bounds
+    artifacts and does not look at refs — so a tag left here is left for ever.
+
+    Guarded exactly as the move is, and by the same reading: only a tag the
+    pending record claims. A tag anybody else wrote is never touched, which is
+    why this is safe to do with nobody watching.
+  */
+  if (pending !== null && pending.tag !== tag) {
+    git(cloneRoot, ['tag', '-d', pending.tag])
+  }
+
+  /*
+    **The record is the last write, and that ordering is the whole guarantee.**
+
+    Everything above can fail, and until this line lands there is nothing on disk
+    claiming a pre-release is on offer. That matters because the thing that
+    *reports* a failure and the thing that *acts* on it are different: this
+    function returns a sentence to a terminal nobody is reading at 3am, while
+    ticket 08's band reads this file and offers the developer a build. A record
+    written before the tag meant the CLI could say "not cut" while the window
+    said "promote this", pointing at a tag that does not exist — the two
+    disagreeing about whether a release happened, which is the worst available
+    version of this failure and the opposite of story 13's "a single thing to
+    accept or reject".
+
+    It is the same property `installArtifact` holds one level down: assemble
+    everything, and make the thing that points at it the final, single act.
+  */
+  mkdirSync(dirname(pendingRecordPath(cloneRoot)), { recursive: true })
+  writeFileSync(pendingRecordPath(cloneRoot), pendingRecordText(plan.record))
 
   return { cut: true, record: plan.record, artifact }
 }

@@ -7367,6 +7367,21 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     changedPathsFromNameStatus('A\0a.ts\0D\0').length === 1,
   )
 
+  /*
+    Why a first cut can never be breaking from its diff, asserted so the property
+    reads as intended rather than as an oversight somebody measures later.
+
+    With nothing promoted the diff is taken from the empty tree, where every path
+    is an addition — git cannot report a deletion against a tree that never had
+    the file. A first release therefore cannot break anything, which is correct
+    rather than a blind spot: there was nothing released to break. From a
+    promoted tag the same file reads as the removal it is.
+  */
+  const fromEmptyTree = changedPathsFromNameStatus('A\0packages/core/src/x.ts\0A\0packages/core/src/y.ts\0')
+  const fromLastTag = changedPathsFromNameStatus('D\0packages/core/src/x.ts\0A\0packages/core/src/y.ts\0')
+  check('against the empty tree everything is an addition, so a first cut is a feature at most', levelOfPaths(fromEmptyTree) === 'feature')
+  check('and the same tree measured from a promoted tag can be breaking', levelOfPaths(fromLastTag) === 'breaking')
+
   // --- the number, from the tickets ---------------------------------------
 
   const landed = (over: Partial<TicketSummary> = {}): TicketSummary => ({
@@ -7998,6 +8013,47 @@ A sentence about the file.
     check('one tag, moved rather than added beside', tags().join(',') === 'v0.0.1')
     check('and the artifact is the newer build', read(join('.varnick/builds/0.0.1', ARTIFACT_ENTRY)).includes('second'))
 
+    // --- a third cut where the level RISES ----------------------------------
+
+    /*
+      Supersession is clean when two nights sit at the same level, because the
+      version, the artifact id and the tag are all the same string. When the
+      level rises they are not, and the pre-release being superseded leaves a tag
+      behind that nothing names — not the record, not `served`, not ticket 07's
+      `previous`. Nothing else prunes refs: 07's retention bounds artifacts and
+      never looks at tags, so a tag left here is left for ever.
+
+      So the cut deletes it, guarded exactly as the move is and by the same
+      reading — only a tag the pending record claims. A tag anybody else wrote is
+      never touched, which is what makes this safe with nobody watching.
+    */
+    writeFileSync(
+      join(clone, '.scratch/night/issues/04-takes-something-away.md'),
+      '# 04 — A thing that takes something away\n\n' +
+        '**What to build:** the window is served from a build.\n\n' +
+        '**Accepted consequence:** live Surface hot-reloading stops working in the main window.\n\n' +
+        '- [x] done\n',
+    )
+    run('add', '-A')
+    run('commit', '-q', '-m', 'the breaking night')
+
+    const risen = await cutPreRelease({
+      cloneRoot: clone,
+      issuesDirectory: join(clone, '.scratch/night/issues'),
+      build: buildsInto('third'),
+      now: () => new Date('2026-08-13T02:00:00.000Z'),
+    })
+
+    check('a ticket that takes something away raises the level', risen.cut && risen.record.version === '0.1.0')
+    check('the new tag is written', tags().includes('v0.1.0'))
+    check('the superseded tag is gone rather than left naming nothing', !tags().includes('v0.0.1'))
+    check('exactly one tag remains', tags().length === 1)
+    check('and one record, naming the newer', parsePendingRecord(read('.varnick/pending-release.json'))?.tag === 'v0.1.0')
+    check(
+      'still exactly one pending entry',
+      changelogEntries(read('CHANGELOG.md')).filter((entry) => entry.promotedOn === null).length === 1,
+    )
+
     // --- a build that fails leaves nothing pending --------------------------
 
     /*
@@ -8068,6 +8124,77 @@ A sentence about the file.
     check('once everything is promoted, a run with no landed tickets cuts nothing', !quiet.cut)
     check('and that is a decision rather than an environment failure', !quiet.cut && quiet.kind === 'decided')
     check('the build was never reached, so the manifest was never bumped', read('package.json') === before.manifest)
+
+    // --- a failure AFTER the build leaves nothing pending either ------------
+
+    /*
+      The other half of criterion 8, and the half that costs more.
+
+      A build that fails leaves no artifact behind a version — asserted above. A
+      *tag* that fails leaves the opposite: an artifact, a rewritten changelog
+      and a commit, with the CLI reporting "nothing was cut". That state is worse
+      than either, because the thing reporting the failure and the thing acting
+      on it are different — this function returns a sentence to a terminal nobody
+      is reading at 3am, while ticket 08's band reads the pending record and
+      offers the developer a build whose tag does not exist. Story 13 is "a
+      single thing to accept or reject"; two components disagreeing about whether
+      a release happened is the opposite of it.
+
+      Forced through the commit rather than the tag, and deliberately: a failing
+      `pre-commit` hook needs no guess about which version this cut will land on,
+      where wedging a tag ref does. The first attempt at this test predicted the
+      wrong tag name, the cut succeeded, and the assertions failed for a reason
+      that had nothing to do with the property. The two failures share every line
+      that matters — `restoreTree`, and the record written after both.
+    */
+    writeFileSync(
+      join(clone, '.scratch/night/issues/05-postbuild.md'),
+      '# 05 — A thing that will not commit\n\n**What to build:** something to release.\n\n- [x] done\n',
+    )
+    run('add', '-A')
+    run('commit', '-q', '-m', 'a ticket to release')
+
+    writeFileSync(join(clone, 'no-hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+
+    const beforePostBuild = {
+      manifest: read('package.json'),
+      changelog: read('CHANGELOG.md'),
+      pendingExists: existsSync(join(clone, '.varnick/pending-release.json')),
+      tags: tags().join(','),
+      head: new TextDecoder().decode(run('rev-parse', 'HEAD').stdout).trim(),
+    }
+
+    const postBuild = await cutPreRelease({
+      cloneRoot: clone,
+      issuesDirectory: join(clone, '.scratch/night/issues'),
+      build: buildsInto('commit will fail'),
+      now: () => new Date('2026-08-15T03:00:00.000Z'),
+    })
+
+    check('a release that cannot be committed cuts nothing', !postBuild.cut)
+    check('and reports it as the environment failing', !postBuild.cut && postBuild.kind === 'environment')
+    /*
+      The assertion that matters most in this file. Nothing on disk may offer a
+      pre-release that is not fully there, because the record is the last write —
+      so a run that got as far as building and rewriting the changelog still
+      leaves ticket 08's band with nothing to show.
+    */
+    check(
+      'nothing is left offering a pre-release that was never tagged',
+      existsSync(join(clone, '.varnick/pending-release.json')) === beforePostBuild.pendingExists &&
+        parsePendingRecord(
+          beforePostBuild.pendingExists ? read('.varnick/pending-release.json') : undefined,
+        )?.cutAt !== '2026-08-15T03:00:00.000Z',
+    )
+    check('the manifest is back where it was', read('package.json') === beforePostBuild.manifest)
+    check('the changelog is back where it was', read('CHANGELOG.md') === beforePostBuild.changelog)
+    check('no tag was written', tags().join(',') === beforePostBuild.tags)
+    check(
+      'and no commit was left behind',
+      new TextDecoder().decode(run('rev-parse', 'HEAD').stdout).trim() === beforePostBuild.head,
+    )
+
+    rmSync(join(clone, 'no-hooks', 'pre-commit'), { force: true })
   } finally {
     rmSync(clone, { recursive: true, force: true })
   }
