@@ -59,21 +59,29 @@ import {
 /**
  * A control request, as one line on the agent host's stdin.
  *
- * Three, and each one is a decision rather than a convenience. The agent host is
+ * Seven, and each one is a decision rather than a convenience. The agent host is
  * a Claude Code session inside the Sandbox; every additional thing it can be
  * asked to do is another thing something outside the Sandbox can make it do.
  *
- * Two of them are a Turn. The third goes the other way: every other kind asks
- * the confined process to *do* something, and {@link DescribeSecretsRequest}
- * tells it something it has no way to find out — see there for why the
- * environment could not carry it.
+ * They divide three ways, and the divisions are what the count is for:
  *
- * There were five. `read-plan-usage` left in ticket 31, because the read had no
- * figure to return under any credential varnick can hold. `compact` left later,
- * for a different reason: the CLI compacts on its own and varnick has to hear
- * about it either way, and once it hears, asking is a second way to do
- * something that already happens. Both departures shrank the channel without
- * touching it; it is still the only way in.
+ *   * **two are a Turn** — `run-turn` and `interrupt`, the only kinds that ask
+ *     the confined process to *do* something;
+ *   * **two tell it a fact it has no way to find out** —
+ *     {@link DescribeSecretsRequest}, and {@link ReportMergeRequest} for a branch
+ *     of its own that landed;
+ *   * **three are answers to questions it asked** — {@link PreviewAnswerRequest},
+ *     {@link LandingAnswerRequest} and {@link ReleaseAnswerRequest}. Each is a
+ *     reply to a line the agent host wrote on its stdout, and each exists because
+ *     a confined process cannot open a window or write the live tree.
+ *
+ * Kinds have left as well as arrived. `read-plan-usage` went in ticket 31,
+ * because the read had no figure to return under any credential varnick can
+ * hold. `compact` went later, for a different reason: the CLI compacts on its own
+ * and varnick has to hear about it either way, and once it hears, asking is a
+ * second way to do something that already happens. Neither departure and none of
+ * the arrivals changed what this channel is: still one line at a time, still
+ * rebuilt field by field, still the only way in.
  *
  * The type is no longer called `TurnControl` for that reason: the channel
  * carries control requests, of which a Turn is two.
