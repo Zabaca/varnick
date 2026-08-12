@@ -6726,6 +6726,11 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
       '/assets/index-a1b2.js',
   )
   check(
+    'including the shape a Vite build actually writes',
+    entryScriptSources('<script type="module" crossorigin src="/assets/index-Cf9.js"></script>').join() ===
+      '/assets/index-Cf9.js',
+  )
+  check(
     "single quotes and no type are the same document to a parser that isn't guessing",
     entryScriptSources("<script src='/x.js'></script><script src=/y.js></script>").join() === '/x.js,/y.js',
   )
@@ -6733,15 +6738,79 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     'a query or a fragment is not part of the file on disk',
     entryScriptSources('<script src="/a.js?t=1"></script><script src="/b.js#c"></script>').join() === '/a.js,/b.js',
   )
+
+  /*
+    Every shape below is a script the artifact genuinely has to contain, and
+    each is written differently on purpose. A parse that missed one would be a
+    fallback that never fires, which is the failure mode that reads as working.
+  */
+  for (const [written, expected] of [
+    ['<SCRIPT SRC="/A.js"></SCRIPT>', '/A.js'],
+    ['<ScRiPt SrC="/m.js"></ScRiPt>', '/m.js'],
+    ['<script defer src="/d.js"></script>', '/d.js'],
+    ['<script src="/e.js" async></script>', '/e.js'],
+    ['<script src = "/sp.js"></script>', '/sp.js'],
+    ['<script\n  type="module"\n  src="/nl.js"\n></script>', '/nl.js'],
+    ['<script src="/sc.js"/>', '/sc.js'],
+  ] as const) {
+    check(`${JSON.stringify(written).slice(0, 44)}… is still a script it must contain`, entryScriptSources(written).join() === expected)
+  }
+
+  /*
+    And every shape below is one it does **not** have to contain. This is the
+    half that matters most: a source returned in error is the host falling back
+    over a build the developer deliberately promoted, which is worse than the
+    failure the fallback exists to prevent. The two errors are not symmetric, so
+    neither is the list.
+
+    The commented-out cases are not hypothetical. varnick's own `index.html`
+    carries a long design brief as an HTML comment and Vite keeps it in the
+    built output, so a brief that ever quoted a `<script>` tag would have taken
+    the window down to a fallback with nothing wrong with the build.
+  */
   for (const elsewhere of [
     '<script src="https://cdn.example/x.js"></script>',
     '<script src="//cdn.example/x.js"></script>',
     '<script src="data:text/javascript,void 0"></script>',
     '<script>console.log(1)</script>',
+    '<script src=""></script>',
     '<link rel="stylesheet" href="/assets/app.css">',
+    '<img srcset="/img.png 2x">',
+    '<script data-src="/lazy.js"></script>',
+    '<script x-src="/lazy.js"></script>',
+    '<!-- <script src="/ghost.js"></script> -->',
+    '<!--\n  FORM: see <script src="/notes.js"></script>\n-->',
+    '<noscript><script src="/ns.js"></script></noscript>',
+    '<div id="root"></div>',
   ]) {
-    check(`${elsewhere.slice(0, 34)}… is nothing this artifact has to contain`, entryScriptSources(elsewhere).length === 0)
+    check(`${elsewhere.slice(0, 40).replace(/\n/g, ' ')}… is nothing this artifact has to contain`, entryScriptSources(elsewhere).length === 0)
   }
+
+  check(
+    'an attribute holding `src=` in its value is a value, not a second script',
+    entryScriptSources('<script data-note="a src=/fake.js b" src="/real.js"></script>').join() === '/real.js',
+  )
+  check(
+    'and a document that loads nothing at all is not a document that failed',
+    entryScriptSources('<!doctype html><html><body><div id="root"></div></body></html>').length === 0,
+  )
+
+  /*
+    Against varnick's own entry document rather than against a string written to
+    pass. It is the file the design brief lives in, it is the one Vite copies the
+    comment out of, and it is the document every artifact this store will ever
+    hold is built from — so if the parse is ever wrong about a real file, it is
+    wrong about this one first.
+  */
+  const ownEntry = readFileSync(new URL('../index.html', import.meta.url).pathname, 'utf-8')
+  check(
+    'varnick’s own entry document parses to exactly the one script it loads',
+    entryScriptSources(ownEntry).join() === '/src/main.tsx',
+  )
+  check(
+    'and its design brief is a comment, which is checked because it is what would break this',
+    ownEntry.includes('<!--') && ownEntry.includes('THESIS:'),
+  )
 
   /*
     Switching, and the one thing a second implementation of it leaves out.

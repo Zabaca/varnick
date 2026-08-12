@@ -240,6 +240,29 @@ export function servedMarkerText(id: string): string {
  * a window that opens on nothing — certainly, before anything runs, with no
  * browser needed to find out.
  *
+ * **Every judgement here is biased toward returning nothing**, and that is the
+ * whole shape of the function. A source returned in error is a *false positive*
+ * — the host falls back over a build the developer deliberately promoted, which
+ * is worse than the failure the fallback exists to prevent. A source missed is
+ * a fallback that does not happen, which leaves the developer exactly where
+ * they were. The two errors are not symmetric, so neither is the parse.
+ *
+ * Which is why it is stricter than "find `src=`", in four ways that were each
+ * found by trying them rather than reasoned about:
+ *
+ *   * **Comments are removed first.** varnick's own `index.html` ships a long
+ *     design brief as an HTML comment and Vite keeps it in the built output, so
+ *     a brief that ever quoted a `<script>` tag would have taken the window down
+ *     to a fallback. A script inside a comment is not loaded by anything.
+ *   * **`<noscript>` blocks are removed with them**, for the same reason one
+ *     step on: its contents load precisely when scripts do not.
+ *   * **Attributes are walked in order rather than searched for.** `src=` inside
+ *     *another* attribute's quoted value is a value, not an attribute — a lazy
+ *     search finds the impostor and misses the real one.
+ *   * **The attribute is `src` and not something ending in it.** `data-src` and
+ *     `x-src` are lazy-loading conventions, and a word boundary treats the
+ *     hyphen as the start of a new word.
+ *
  * Only sources this artifact could answer itself are returned. A scheme
  * (`https:`, `data:`) or a protocol-relative `//host/x` is somebody else's to
  * serve and its absence says nothing about this build; a query or a fragment is
@@ -250,18 +273,39 @@ export function servedMarkerText(id: string): string {
  * still a varnick a developer can fix things with, and falling back from one
  * would be the host overruling a build on a signal that is not the question
  * being asked.
+ *
+ * A known and accepted limit, stated rather than left to be found: a `<script>`
+ * inside a `<template>` is not executed and is still returned. Recognising it
+ * needs nesting, this is a regex, and Vite emits no templates into an entry
+ * document. If one ever appears there, this is the function to teach about it.
  */
 export function entryScriptSources(html: string): string[] {
+  // Neither a comment nor a `<noscript>` body is loaded by a window that opens,
+  // so neither can be a reason one did not.
+  const loaded = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi, '')
+
   const found: string[] = []
-  const scripts = html.matchAll(/<script\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)
-  for (const match of scripts) {
-    const raw = (match[1] ?? match[2] ?? match[3] ?? '').trim()
-    // The file is what comes before a query or a fragment; neither reaches disk.
-    const source = raw.split(/[?#]/)[0] ?? ''
-    if (source === '') continue
-    // Somebody else's to serve, so its absence is not this artifact's failure.
-    if (source.startsWith('//') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source)) continue
-    found.push(source)
+  for (const tag of loaded.matchAll(/<script\b([^>]*)>/gi)) {
+    /*
+      Attribute by attribute, in order. A quoted value is *consumed* as a value
+      here, which is what stops `data-note="a src=/fake.js b"` from answering
+      `/fake.js` — a search for `src=` reads that as an attribute, because it
+      has no idea it is standing inside one.
+    */
+    const attributes = (tag[1] ?? '').matchAll(
+      /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]*)))?/g,
+    )
+    for (const attribute of attributes) {
+      if ((attribute[1] ?? '').toLowerCase() !== 'src') continue
+
+      const raw = (attribute[2] ?? attribute[3] ?? attribute[4] ?? '').trim()
+      // The file is what comes before a query or a fragment; neither reaches disk.
+      const source = raw.split(/[?#]/)[0] ?? ''
+      if (source === '') continue
+      // Somebody else's to serve, so its absence is not this artifact's failure.
+      if (source.startsWith('//') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source)) continue
+      found.push(source)
+    }
   }
   return found
 }
