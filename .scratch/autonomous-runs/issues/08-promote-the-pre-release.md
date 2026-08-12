@@ -29,3 +29,42 @@ switches the build under an open window.
 - [ ] The announcement is posted into the transcript, attributed as varnick's own rather than as something the developer or the agent said
 - [ ] A promotion that fails leaves the developer on the build they were already running, with the reason on screen and a way to try again
 - [ ] The states are named in the machine, carry cards on the states page, and are driven headlessly — including the refusals
+
+## Comments
+
+Inherited from ticket 07, which built the artifact store's fallback. Recorded
+here rather than left in a conversation, because the conversation will not
+survive to the person who needs it.
+
+**Use `switchServedArtifact`; never write `served` by hand.** It is what records
+`previous`, and `previous` is what the whole fallback rests on. A promotion that
+writes the marker directly silently destroys the fallback rather than failing.
+
+**The read side changed after that hand-off was first written.** As of `d67bc31`:
+
+```
+readServedMarkers(cloneRoot).served   // MarkerReading, NOT string | null
+readServedMarkers(cloneRoot).previous // string | null, unchanged
+switchServedArtifact(cloneRoot, id)   // -> { served: string; previous: string | null }
+```
+
+`served` is now `{ state: 'absent' } | { state: 'named'; id } | { state: 'unusable' }`,
+because an absent marker and an unreadable one are different situations and only
+the first may cause a rebuild. Where a promotion needs the current id, that is
+`state === 'named' ? id : null`. It fails typecheck rather than doing anything
+silent, so it is a five-second fix rather than a trap.
+
+**`served` and `previous` must move together.** `switchServedArtifact` is the
+only writer of either, and that invariant is currently held by there being one
+function rather than by an assertion. If this ticket adds a second writer, the
+invariant needs a test before it needs anything else.
+
+**A promotion must not prune.** Pruning happens at launch and already spares
+`served`, `previous` and the artifact that failed. A promotion that also pruned
+would be a second retention policy to keep in step with the first.
+
+**Ordering, from ticket 06:** move `served` and `previous` in that order. A
+`served` moved first leaves a fallback pointing at the build that just failed.
+
+**The store is bounded** at `ARTIFACTS_KEPT = 4`, sized to leave room for an
+unpromoted pre-release plus a spare. Do not assume an unbounded store.
