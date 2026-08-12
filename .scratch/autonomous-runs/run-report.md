@@ -159,16 +159,18 @@ A report that reads as a clean sweep is the one that gets believed.
 
 | # | Ticket | Why it matters |
 |---|---|---|
-| 11 | git cannot run inside the Sandbox with a global config | `git --version` exits 128, so **ADR-0014's model does not work** on any machine with a `~/.gitconfig`. The one defect that stops varnick running a night unattended at all. |
+| 11 | git cannot run inside the Sandbox with a global config | **Closed** — `247d84d`. A projected `user.name`/`user.email` config written by the unconfined host to `<clone>/.varnick/gitconfig`, with `GIT_CONFIG_GLOBAL` pointed at it and the file in both `denyWrite` and `PROTECTED_PATHS`. |
 | 12 | A quoted Fence path raises no flag | The hole ticket 02 closed in the landing gate exists in `isFencePath` too, now landing on the review band. Must not be fixed by copying 02's answer — the two predicates want opposite failure directions. |
 | 13 | Read-allowlist gaps report as boundary failures | The containment probe is red for environmental reasons in the two files where containment is *measured*. It absorbed a real defect's diagnosis for most of this run. |
 | 14 | The bundle takes its version from the manifest | One line in `tauri.conf.json`, human-merged once, after which no release touches `src-tauri/**` again. |
 | 15 | A carried note loses its paragraph | Every re-cut shrinks a carried announcement to its first sentence, silently, in exactly the case the accumulator exists for. |
 | 16 | The announcement races the restart it announces | New and unique to the release region, not inherited. Carries the design notes from the attempt that was stopped and reverted. |
 
-**Ticket 11 outranks all of them.** Until it is closed, this run could only happen
-because the orchestrating agent ran *outside* the sandbox. varnick cannot yet do
-this to itself.
+**Ticket 11 is now closed**, at the developer's request, after the ten. Until it
+landed, this run could only happen because the orchestrating agent ran *outside*
+the sandbox — a confined agent could not have made a Worktree, let alone
+committed in one. It is the change that makes the rest of this feature reachable
+from inside varnick, and it is worth reading on its own: see the section below.
 
 ## What the run is worth knowing for
 
@@ -180,3 +182,96 @@ The reviews were worth more than the authoring. Six defects that would have
 shipped were found by an agent that had not written the code, and two were found
 only because two reviewers disagreed and the disagreement was settled by
 construction rather than by picking the more confident one.
+
+---
+
+## Addendum: ticket 11, closed after the ten
+
+`main` `034ad36` → `247d84d`. Three commits, 15 files, +1,428 / −81.
+
+The defect: on any machine with a `~/.gitconfig`, **every** git command inside
+the Sandbox exits 128. `$HOME` is denied by design and git treats an unreadable
+*global* config as fatal — so `git worktree add`, `commit` and `merge` all fail,
+which is the whole of ADR-0014. A confined agent could not make a Worktree, let
+alone author Core in one. This run only happened because the orchestrating agent
+ran outside the sandbox.
+
+**The fix is the house pattern, applied a fourth time.** `CLAUDE_CONFIG_DIR`,
+`TMPDIR` and `TMPPREFIX` are already redirected into `.varnick/*` by environment
+variable rather than by widening the policy; `GIT_CONFIG_GLOBAL` joins them. The
+unconfined host writes `<clone>/.varnick/gitconfig` at launch and points the
+confined agent at it.
+
+**It is a projection, not a copy** — an allowlist of `user.name` and
+`user.email`, enforced by *asking git for each key by name*, so no code path can
+return an unrequested one. The rejected alternatives are recorded: reading
+`~/.gitconfig` back out of the denied root widens the fence onto a file the
+developer edits for unrelated reasons (this machine's already carries five
+executing entries — three `filter.lfs.*`, an alias, and two `!gh` credential
+helpers), and `GIT_CONFIG_GLOBAL=/dev/null` loses authorship in a history a human
+is expected to read before merging.
+
+**The file is in `denyWrite` and in `PROTECTED_PATHS`.** A gitconfig is
+executable configuration; writable, it is `core.hooksPath` and unconfined
+execution on the next commit — the hole ticket 01 closed for `.githooks`,
+arriving through a file introduced to fix something else.
+
+### What the reviews found
+
+- **Two assertions that could not fail.** The per-repo author check ran against a
+  clone whose `.git/config` set both identity keys two lines above, so it passed
+  with the projection empty, absent, or `/dev/null`; and the allowlist loop
+  iterated the settings, so an empty file satisfied it. Third instance this week
+  of the same shape.
+- **The same swallow, found twice from opposite directions.** Spec: a silent
+  write failure produces commits under git's auto-detected identity — *the exact
+  outcome the `/dev/null` candidate was rejected for*, arriving through the back
+  door. Standards: the docblock justified the swallow with "a git that works with
+  no identity", true if the file write failed and false if `mkdir` failed, in
+  which case the confined agent cannot create `.varnick/claude` and does not
+  start at all. Now three outcomes, both failures reported on the `varnick:`
+  channel with their errno.
+- **ADR-0016's amendment had become false.** It said to read every "git still
+  works" sentence as *permitted by the policy* **until this ticket closed** — and
+  this ticket closed it. Corrected in place, ADR-0003's precedent.
+
+### Findings the work produced
+
+- **srt denies `file-write-create` on every ancestor of a literal deny path.** So
+  denying `.varnick/gitconfig` stops the confined process creating `.varnick/` —
+  where the session store lives. The write must happen in `establishSandbox`; the
+  obvious placement would have broken every fresh clone's first launch.
+- **`--global` is two files**, `~/.gitconfig` and `$XDG_CONFIG_HOME/git/config`.
+  Asking git rather than parsing a path is load-bearing: a hand parser would
+  silently produce an empty projection for XDG-only developers.
+- **Config values can carry newlines**, so a pasted `user.name` could inject
+  `\n[core]\n\thooksPath = …`. Values with control characters are refused rather
+  than escaped, on the grounds that *escaping is a claim about git's parser this
+  file would have to keep true — a dropped name costs a commit its author, an
+  escaping bug costs the Fence.*
+- **A matcher wide enough to be satisfied by anything.** `sandbox.boundary.test.ts`
+  asserted the agent cannot redirect `core.hooksPath`, matching
+  `/could not write config file|not permitted/` — and unpinned, `not permitted`
+  arrives from `~/.gitconfig` before the write happens. Green against a command
+  that never ran. Second instance in that file; ticket 01 found the first one
+  assertion away. Recorded as a defect *class*, because the reflex fix for a
+  flaky assertion is to widen the matcher, which is the move that creates it.
+- **A false claim the author made and then disproved.** The first version said
+  `.varnick/gitconfig` needed no landing rule because "no merge can ever carry
+  one". Gitignore is a default, not a prohibition: `git add -f` puts it in a diff,
+  and `unattendedLanding` answered `mayLand: true`. The sentence had been reused
+  from `.git/**`'s exemption, where the premise is a *fact* — git refuses to track
+  paths inside `.git` — rather than a default. Both places corrected, and the
+  error recorded rather than replaced.
+
+### State after
+
+typecheck 0 · lint clean · drive 1269 · `bun test packages` 863 pass / 1 skip /
+1 fail (ticket 13's intermittent nix probe) · `sandbox.boundary.test.ts` 8 pass /
+0 fail with **101** expects, up from 83, and with all four `GIT_CONFIG_GLOBAL`
+pins removed. Backing the wiring out returns it to 7/1 at `git worktree add`
+exit 128, so the suite is green because git works.
+
+**A confined agent can now make a Worktree, commit in it and merge it.** That was
+the precondition for everything else in this feature, and it was missing for the
+whole of the run that built it.
