@@ -2,6 +2,7 @@ import {
   setup,
   assign,
   fromPromise,
+  enqueueActions,
   raise,
   spawnChild,
   stopChild,
@@ -28,6 +29,15 @@ import type {
 import { surfaceMachine } from './surface.ts'
 import { worktreeDiffMachine } from './worktree-diff.ts'
 import { sessionMachine, type SessionInput } from './session.ts'
+/*
+  Types and nothing else, from the two release modules. `release.ts` imports
+  nothing at all and `release-promote.ts` is its impure twin — neither is loaded
+  by the application, and a machine that imported the *implementation* would
+  break ADR-0001's rule about actors. What crosses here is the shape of the
+  record the band renders and the shape of the answer the actor gives.
+*/
+import type { PendingPreRelease } from '../../release.ts'
+import type { PromotionOutcome } from '../../release-promote.ts'
 
 /**
  * The Harness: parent machine, owning the facts that decide whether an agent
@@ -69,6 +79,11 @@ export const HARNESS_STATE_PATHS = [
   'worktreeReap.reaping',
   'worktreeReap.reaped',
   'worktreeReap.reapFailed',
+  'release.idle',
+  'release.pending',
+  'release.promoting',
+  'release.promoted',
+  'release.failed',
 ] as const
 export type HarnessStatePath = (typeof HARNESS_STATE_PATHS)[number]
 
@@ -281,12 +296,27 @@ export interface HarnessContext {
   reapError: string | null
   /** Which Worktree is being cleared away, while one is. */
   reaping: string | null
+  /**
+   * The pre-release on offer, as `.varnick/pending-release.json` holds it.
+   *
+   * Plain data, which is what lets `#/states` park a card over it — see
+   * ADR-0001 on context being JSON-serializable. It is the *record* rather than
+   * a flattened version string because the band shows the version and the
+   * announcement, and the promotion needs the artifact id: three readings of one
+   * fact, and three fields could disagree about which pre-release they describe.
+   */
+  pendingRelease: PendingPreRelease | null
+  /** The version that was accepted, once one has been. */
+  promotedVersion: string | null
+  /** Why the last promotion did not go through, for as long as one has not. */
+  promotionError: string | null
   readonly enterCredential: string | null
   readonly enterSandbox: string | null
   readonly enterAgent: string | null
   readonly enterReview: string | null
   readonly enterWorktreeMerge: string | null
   readonly enterWorktreeReap: string | null
+  readonly enterRelease: string | null
 }
 
 export interface HarnessInput {
@@ -300,6 +330,10 @@ export interface HarnessInput {
   enterReview?: string | null
   enterWorktreeMerge?: string | null
   enterWorktreeReap?: string | null
+  enterRelease?: string | null
+  pendingRelease?: PendingPreRelease | null
+  promotedVersion?: string | null
+  promotionError?: string | null
   /** Seeded only by the states page, which parks a card over a listing. */
   worktrees?: readonly PendingWorktree[]
   worktreeError?: string | null
@@ -464,6 +498,15 @@ export type HarnessEvent =
    * knows it is not.
    */
   | { type: 'RESTART_VARNICK' }
+  /**
+   * Accept the pending pre-release.
+   *
+   * One event for the whole thing — promote, announce, restart — because that is
+   * one act from the developer's side and splitting it would let the window sit
+   * in a half-promoted state nobody asked for. It is accepted from `pending` and
+   * from `failed`, which is what makes the retry a retry.
+   */
+  | { type: 'PROMOTE_RELEASE' }
   /**
    * Put the merge report away without restarting.
    *
@@ -681,6 +724,48 @@ export const harnessMachine = setup({
     reapWorktree: fromPromise<ReapReport, { path: string }>(async () => {
       throw new Error(
         'No reap implementation was provided to this Harness, so no Worktree was removed. This is a wiring mistake in varnick rather than anything about the branch: see `reapWorktree` in packages/core/src/actors/live.ts and the `.provide()` in hooks.ts.',
+      )
+    }),
+    /*
+      Real-service contract for readPendingRelease:
+        input  {} — there is one pending pre-release or none, and naming a
+               version would let a window ask about a different one from the one
+               it is about to show.
+        output PendingPreRelease | null — what `.varnick/pending-release.json`
+               holds. `null` is the ordinary answer and means nothing is on
+               offer.
+        error  thrown Error — the read could not be done. The region treats that
+               as nothing pending, which is the reading that shows no band
+               rather than a broken one.
+    */
+    /*
+      Answers `null` rather than refusing, which is the opposite of the two
+      above and deliberate. A Harness with no implementation wired has nothing
+      to offer, and a band that is silent is exactly right for that — where a
+      merge that silently did nothing would be a lie about the developer's
+      clone, a pre-release that is not shown is a pre-release nobody is misled
+      about.
+    */
+    readPendingRelease: fromPromise<PendingPreRelease | null, Record<string, never>>(
+      async () => null,
+    ),
+    /*
+      Real-service contract for promoteRelease:
+        input  {} — the record is the offer; see `bun run promote`.
+        output PromotionOutcome — `{promoted: false, reason}` for a refusal it
+               made on purpose, and every one of those happens before anything
+               is written. A resolve is therefore not automatically good news
+               and the region branches on it.
+        error  thrown Error — the promotion could not be attempted.
+    */
+    /*
+      Refuses, for the reason the merge's default does: this one writes the
+      developer's clone, and a default that reported success would say a release
+      was accepted while the store still points at the old build.
+    */
+    promoteRelease: fromPromise<PromotionOutcome, Record<string, never>>(async () => {
+      throw new Error(
+        'No promotion implementation was provided to this Harness, so nothing was promoted. This is a wiring mistake in varnick rather than anything about the release: see `promoteRelease` in packages/core/src/actors/live.ts and the `.provide()` in hooks.ts.',
       )
     }),
     /*
@@ -944,6 +1029,10 @@ export const harnessMachine = setup({
     enterReview: input.enterReview ?? null,
     enterWorktreeMerge: input.enterWorktreeMerge ?? null,
     enterWorktreeReap: input.enterWorktreeReap ?? null,
+    enterRelease: input.enterRelease ?? null,
+    pendingRelease: input.pendingRelease ?? null,
+    promotedVersion: input.promotedVersion ?? null,
+    promotionError: input.promotionError ?? null,
   }),
   on: {
     // Surfaces are discovered, never registered — adding one must not require
@@ -1982,6 +2071,198 @@ export const harnessMachine = setup({
             REAP_WORKTREE: { target: 'reaping', guard: 'reapable' },
             DISMISS_REAP: 'idle',
           },
+        },
+      },
+    },
+
+    /*
+      The pre-release a night's work cut, and the developer accepting it.
+
+      **Five states rather than the four the ticket named**, and the fifth is
+      `promoted`. `worktreeMerge` is the precedent and it needs the same one: a
+      restart that did not happen leaves a developer believing they are running
+      code they accepted and are not, so "it went through and the restart is
+      owed" has to be somewhere. Folding it into `failed` would say the
+      promotion did not happen when it did; folding it into `promoting` would
+      put two invokes on one state, which ADR-0007 records as the bug that
+      billed a Turn twice.
+
+      It is also the only place the ordering can live. The announcement has to
+      reach the Session mirror *before* the process is replaced — a message
+      posted and then lost by the restart it announces is the failure the
+      announcement exists to prevent — so one state posts it on entry and
+      invokes the restart, and nothing else can express that.
+
+      `idle` rather than a name about the store, unlike `worktreeMerge.unmerged`.
+      There the word is about the *tree*: a branch is unmerged whether or not
+      this window is doing anything. Here the fact is `pending`, and its absence
+      is exactly this region having nothing to do — which is what
+      `worktreeReap.idle` is named for, in this same machine.
+    */
+    release: {
+      initial: 'routing',
+      states: {
+        routing: {
+          always: [
+            { target: 'pending', guard: ({ context }) => context.enterRelease === 'pending' },
+            { target: 'promoting', guard: ({ context }) => context.enterRelease === 'promoting' },
+            { target: 'promoted', guard: ({ context }) => context.enterRelease === 'promoted' },
+            { target: 'failed', guard: ({ context }) => context.enterRelease === 'failed' },
+            { target: 'idle' },
+          ],
+        },
+        /*
+          Nothing is on offer.
+
+          It asks, on the way in, rather than waiting to be told. The record is a
+          file written by a run that finished while nobody was watching, so the
+          only moment a window can learn about it is a moment the window chooses
+          — and this is the state that means "as far as I know there is
+          nothing", which is exactly the claim that has to be checked rather
+          than assumed.
+
+          A read that fails leaves it here. Nothing pending is the honest
+          reading of a record nobody can read, and it is the reading that shows
+          the developer no band rather than a broken one.
+        */
+        idle: {
+          invoke: {
+            src: 'readPendingRelease',
+            input: () => ({}) as Record<string, never>,
+            onDone: [
+              {
+                target: 'pending',
+                guard: ({ event }) => event.output !== null,
+                actions: assign({ pendingRelease: ({ event }) => event.output }),
+              },
+            ],
+          },
+        },
+        /*
+          A pre-release is waiting, and the band is showing it.
+
+          Nothing dismisses it. A pre-release does not stop being on offer
+          because the developer looked at it, and a control that put it away
+          would be one that loses the only record of what a night produced —
+          the band is silent whenever there is nothing, so there is nothing to
+          tidy away.
+        */
+        pending: {
+          on: { PROMOTE_RELEASE: 'promoting' },
+        },
+        promoting: {
+          // Cleared on the way in, so a retry never shows the previous reason
+          // beside a promotion that is still running.
+          entry: assign({ promotionError: null }),
+          invoke: {
+            src: 'promoteRelease',
+            input: () => ({}) as Record<string, never>,
+            /*
+              The actor answers rather than throwing for the refusals it makes
+              on purpose — nothing pending, a changelog that disagrees, a build
+              that will not start — so a resolve is not automatically good news
+              and is branched on. Every one of those refusals happened before
+              anything was written, which is what leaves the developer on the
+              build they were already running.
+            */
+            onDone: [
+              {
+                target: 'promoted',
+                guard: ({ event }) => event.output.promoted,
+                /*
+                  `pendingRelease` is deliberately *not* cleared here. The
+                  announcement to post lives on it, and `promoted` posts on
+                  entry — clearing it on the way in would send an empty message
+                  and lose the only account of what the night produced. The band
+                  reads the region's state rather than this field, so leaving it
+                  set shows nothing stale.
+                */
+                actions: assign({
+                  promotedVersion: ({ event }) =>
+                    event.output.promoted ? event.output.version : null,
+                }),
+              },
+              {
+                target: 'failed',
+                actions: assign({
+                  promotionError: ({ event }) =>
+                    event.output.promoted ? null : event.output.reason,
+                }),
+              },
+            ],
+            onError: {
+              target: 'failed',
+              actions: assign({
+                promotionError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+              }),
+            },
+          },
+        },
+        /*
+          It was accepted. The store has moved, the changelog says so, and the
+          conversation is about to be handed to the new build.
+
+          The announcement goes first and the restart second, which is the whole
+          reason this state exists. `VARNICK_ANNOUNCED` is a Turn boundary on the
+          Session, so it writes the mirror — and the mirror is what the restarted
+          window reads back. Reversed, the developer would be told the ground
+          moved by a message that did not survive the move.
+
+          Both ends of the restart come back here, exactly as `worktreeMerge`'s
+          does, because a resolve is no better news than an error: the process is
+          still here, the promotion still stands, and the restart is still owed.
+          Pressing again is not a second promotion — there is nothing pending
+          now, so the actor promotes nothing and asks for the restart again.
+        */
+        promoted: {
+          /*
+            Guarded on there being a Session at all, which is not a formality:
+            the band is drawn whatever the agent is doing, so a developer can
+            promote before one has ever started — a fresh clone whose first act
+            is accepting a build cut on another machine. `sendTo` with no target
+            throws, and a machine that crashed on the way to a restart would
+            take the window with it.
+
+            A conversation that does not exist has nothing to record, and the
+            announcement is in the changelog either way.
+          */
+          entry: enqueueActions(({ context, enqueue }) => {
+            const session = context.session
+            const announcement = context.pendingRelease?.announcement ?? ''
+            if (session === null || announcement.trim() === '') return
+            enqueue.sendTo(session, { type: 'VARNICK_ANNOUNCED', text: announcement })
+          }),
+          invoke: {
+            src: 'restartVarnick',
+            input: () => ({}) as Record<string, never>,
+            onDone: {
+              actions: assign({
+                promotionError:
+                  'varnick asked the host to restart and is still running, so the promoted build is not what this window is showing. Restart varnick from the View menu.',
+              }),
+            },
+            onError: {
+              actions: assign({
+                promotionError: ({ event }) =>
+                  event.error instanceof Error ? event.error.message : String(event.error),
+              }),
+            },
+          },
+          on: { PROMOTE_RELEASE: 'promoting' },
+        },
+        /*
+          It did not go through, and nothing moved.
+
+          Offering it again from here is right for the reason `reapFailed`
+          offers the reap: the retry exists because the state has a handler, and
+          a promotion the machine will not accept is a control that is not
+          drawn. Most of what reaches this state is a refusal a developer can
+          act on — a build that will not start is the interesting one, and it is
+          the one that says which file is missing.
+        */
+        failed: {
+          on: { PROMOTE_RELEASE: 'promoting' },
         },
       },
     },
