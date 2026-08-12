@@ -245,7 +245,9 @@ three outcomes happened, say which, and then:
 - **What you decided rather than what the command decided**: a paragraph you
   corrected, a release you chose not to cut, a loss you think needs an
   `**Accepted consequence:**` line that only a person can add.
-- That promoting it is still theirs to do, and the control is in the window.
+- That promoting it is still theirs to do. It is recorded in `CHANGELOG.md` and
+  in `.varnick/pending-release.json`, and the control that takes it is ticket
+  08's band in the window.
 
 ## Two things that have cost time
 
