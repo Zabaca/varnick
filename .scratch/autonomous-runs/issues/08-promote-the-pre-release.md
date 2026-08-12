@@ -76,8 +76,7 @@ ticket 07's comments give: the conversation will not survive to the person who
 needs it. This ticket is **done** — the note is a record of what was decided and
 why, not a handoff.
 
-### The `Realizes:` line gained a fifth state, and the ticket was the thing that
-### was wrong
+### The `Realizes:` line gained a fifth state, and the ticket was what was wrong
 
 `release.promoted` — *accepted; the restart is owed*. The ticket named four
 states because it was written before the restart ordering was understood.
