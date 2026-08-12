@@ -44,6 +44,7 @@ import {
 import { join, resolve } from 'node:path'
 import {
   ARTIFACT_ENTRY,
+  type MarkerReading,
   artifactPath,
   artifactStore,
   artifactsToPrune,
@@ -105,36 +106,52 @@ export function installArtifact(cloneRoot: string, id: string, from: string): st
 // Which one is served
 // ---------------------------------------------------------------------------
 
-/** What the store's two markers say, as ids or as nothing. */
+/** What the store's two markers say. */
 export interface ServedMarkers {
-  readonly served: string | null
+  /** Three answers, because absent and unreadable are not the same store. */
+  readonly served: MarkerReading
+  /** An id or nothing — an unreadable `previous` is simply no fallback. */
   readonly previous: string | null
 }
 
 /**
- * Read a marker without ever throwing.
+ * Read a marker without ever throwing, distinguishing *no file* from *a file
+ * this launch cannot act on*.
  *
- * Every way this can fail means the same thing and none of them may be an
- * exception. A marker could be a directory, could be unreadable, could vanish
- * between the check and the read — and the only caller is a launch, which reads
- * these *before* it binds a port. A throw there is the Tauri CLI waiting on a
- * port that never opens: a terminal saying "waiting for your frontend dev
- * server", no window, and no reason given. A marker nobody can read names
- * nothing, and naming nothing is a state the server has a page for.
+ * Never an exception, because the only caller is a launch and it reads these
+ * *before* it binds a port. A throw there is the Tauri CLI waiting on a port
+ * that never opens: a terminal saying "waiting for your frontend dev server",
+ * no window, and no reason given.
+ *
+ * **But not one answer for every failure.** The first version of this returned
+ * `null` for all of them, which made a marker with the wrong permissions
+ * indistinguishable from a clone that had never built — and the launch rebuilt,
+ * overwriting a promoted release. `ENOENT` is the only error that means nothing
+ * was ever recorded; everything else means something is there and this process
+ * is not the one to decide what it said.
  */
-function markerAt(path: string): string | null {
+function markerAt(path: string): MarkerReading {
+  let text: string
   try {
-    return markedArtifactId(readFileSync(path, 'utf-8'))
-  } catch {
-    return null
+    text = readFileSync(path, 'utf-8')
+  } catch (error) {
+    const absent = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+    return absent ? { state: 'absent' } : { state: 'unusable' }
   }
+
+  const id = markedArtifactId(text)
+  return id === null ? { state: 'unusable' } : { state: 'named', id }
 }
 
 /** What this clone's store says it is serving, and what it served before. */
 export function readServedMarkers(cloneRoot: string): ServedMarkers {
+  const previous = markerAt(previousMarkerPath(cloneRoot))
   return {
     served: markerAt(servedMarkerPath(cloneRoot)),
-    previous: markerAt(previousMarkerPath(cloneRoot)),
+    // A `previous` that is absent and one that is unreadable are the same thing
+    // to every caller: there is nothing to fall back to. Only `served` decides
+    // whether a launch builds, so only `served` has to tell them apart.
+    previous: previous.state === 'named' ? previous.id : null,
   }
 }
 
@@ -150,9 +167,16 @@ export function readServedMarkers(cloneRoot: string): ServedMarkers {
  * What to write is {@link servedSwitch}, next door and asserted; this is the
  * write.
  */
-export function switchServedArtifact(cloneRoot: string, id: string): ServedMarkers {
+export function switchServedArtifact(cloneRoot: string, id: string): { served: string; previous: string | null } {
   const current = readServedMarkers(cloneRoot)
-  const next = servedSwitch(current.served, current.previous, id)
+  /*
+    An unreadable `served` is not something to record as the previous build.
+    It is a file this process could not make out, and writing its name into
+    `previous` is not possible — there is no name. The switch proceeds; what is
+    lost is a fallback nobody could have used.
+  */
+  const currentId = current.served.state === 'named' ? current.served.id : null
+  const next = servedSwitch(currentId, current.previous, id)
 
   mkdirSync(artifactStore(cloneRoot), { recursive: true })
   if (next.previous !== null) {
@@ -208,6 +232,22 @@ export function artifactStartFailure(artifactRoot: string): string | null {
   }
 
   return null
+}
+
+/**
+ * The same question asked by id rather than by path, and the reason it exists.
+ *
+ * **Every sentence describing why an artifact will not start is produced in
+ * this module.** They were in two: this one wrote the two about a missing entry
+ * and a missing script, and the launch script wrote a third about an id that is
+ * not a usable name. Adding a fourth failure mode meant editing both files, and
+ * the one holding the odd sentence out was the one whose job is listening on a
+ * port.
+ */
+export function artifactStartFailureById(cloneRoot: string, id: string): string | null {
+  const root = artifactPath(cloneRoot, id)
+  if (root === null) return 'it is not a usable artifact id'
+  return artifactStartFailure(root)
 }
 
 // ---------------------------------------------------------------------------

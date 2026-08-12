@@ -230,6 +230,34 @@ export function servedMarkerText(id: string): string {
 // Which one to serve
 // ---------------------------------------------------------------------------
 
+/** The named and numeric entities an attribute value can spell a filename with. */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+}
+
+/**
+ * An attribute value as the characters it stands for.
+ *
+ * One pass, so a name that legitimately contains `&amp;` decodes to `&` and
+ * stops there rather than being decoded twice. Anything unrecognised is left
+ * exactly as it was: an entity nobody here knows is a filename character this
+ * function has no opinion about, and inventing one would be the false positive
+ * the whole parse is shaped to avoid.
+ */
+function decodeEntities(value: string): string {
+  return value.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, body: string) => {
+    if (body.startsWith('#')) {
+      const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+    }
+    return NAMED_ENTITIES[body.toLowerCase()] ?? whole
+  })
+}
+
 /**
  * The `src` of every script an entry document loads out of its own artifact.
  *
@@ -274,15 +302,27 @@ export function servedMarkerText(id: string): string {
  * would be the host overruling a build on a signal that is not the question
  * being asked.
  *
- * A known and accepted limit, stated rather than left to be found: a `<script>`
- * inside a `<template>` is not executed and is still returned. Recognising it
- * needs nesting, this is a regex, and Vite emits no templates into an entry
- * document. If one ever appears there, this is the function to teach about it.
+ * Four kinds of region are removed before anything is matched, and each is
+ * removed because a browser would not run what is inside it:
+ *
+ *   * **comments**, per above;
+ *   * **`<noscript>` bodies**, whose contents load precisely when scripts do not;
+ *   * **`<template>` bodies**, which are inert until something clones them, and
+ *     nothing clones one during a start;
+ *   * **script bodies**, keeping the opening tag. A `document.write` of a
+ *     `<script src>` is a string inside a script, not a tag in the document, and
+ *     the artifact is not required to contain what it writes. Dropping the body
+ *     and keeping the tag is also what a browser does with an unterminated
+ *     `<script src="…"/>`: there is no self-closing script element in HTML, so
+ *     everything after it is that script's content until `</script>`.
  */
 export function entryScriptSources(html: string): string[] {
-  // Neither a comment nor a `<noscript>` body is loaded by a window that opens,
-  // so neither can be a reason one did not.
-  const loaded = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi, '')
+  const loaded = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi, '')
+    .replace(/<template\b[^>]*>[\s\S]*?<\/template\s*>/gi, '')
+    // Body dropped, opening tag kept — `$1` is the tag, which is where a `src` is.
+    .replace(/(<script\b[^>]*>)[\s\S]*?<\/script\s*>/gi, '$1')
 
   const found: string[] = []
   for (const tag of loaded.matchAll(/<script\b([^>]*)>/gi)) {
@@ -298,7 +338,11 @@ export function entryScriptSources(html: string): string[] {
     for (const attribute of attributes) {
       if ((attribute[1] ?? '').toLowerCase() !== 'src') continue
 
-      const raw = (attribute[2] ?? attribute[3] ?? attribute[4] ?? '').trim()
+      // Decoded first, because an attribute value is entity-encoded markup and
+      // the file on disk is the decoded name. `/a&amp;b.js` is a file called
+      // `a&b.js`, and comparing the encoded form against the disk would report
+      // a build that is fine as one that will not start.
+      const raw = decodeEntities((attribute[2] ?? attribute[3] ?? attribute[4] ?? '').trim())
       // The file is what comes before a query or a fragment; neither reaches disk.
       const source = raw.split(/[?#]/)[0] ?? ''
       if (source === '') continue
@@ -310,15 +354,39 @@ export function entryScriptSources(html: string): string[] {
   return found
 }
 
+/**
+ * What a `served` file amounts to, which is three answers and not two.
+ *
+ * **`absent` and `unusable` are different, and conflating them rebuilds over a
+ * promotion.** A marker that is not there means nothing has ever been recorded;
+ * a marker that is there and cannot be read — the wrong permissions, or a
+ * directory where a file should be — means a choice exists that this launch
+ * cannot make out. Only the first is a store with nothing in it to undo. The
+ * first version of this answered `null` to both, so a launch that could not
+ * read the marker rebuilt and moved `served` onto the build it had just made,
+ * which is exactly the failure the rest of this module is shaped against.
+ *
+ * `unusable` also covers a marker whose contents are not an id. Something wrote
+ * that file; a launch that cannot parse it knows only that it is not the one to
+ * decide what it meant.
+ */
+export type MarkerReading =
+  /** No file. Nothing has ever been recorded here. */
+  | { readonly state: 'absent' }
+  /** One id, read cleanly. */
+  | { readonly state: 'named'; readonly id: string }
+  /** A file is there and this launch cannot act on it. */
+  | { readonly state: 'unusable' }
+
 /** What a launch does about the store it found. */
 export type ServingOutcome =
   /** `served` names an artifact and it will start. The ordinary case. */
   | 'served'
-  /** It will not start, and the one before it will. */
+  /** The recorded choice cannot be honoured, and the one before it can. */
   | 'fell-back'
-  /** Nothing has ever been served here, so build one. A fresh clone. */
-  | 'build-one'
-  /** `served` names something that will not start and there is nothing behind it. */
+  /** Nothing has ever been recorded here, so build one. A fresh clone. */
+  | 'never-built'
+  /** The recorded choice cannot be honoured and there is nothing behind it. */
   | 'nothing-startable'
 
 /** Which artifact a launch serves, and what it has to say about it. */
@@ -326,8 +394,13 @@ export interface ServingPlan {
   readonly outcome: ServingOutcome
   /** The artifact to serve, or `null` when there is none. */
   readonly serve: string | null
-  /** The artifact `served` names, when that is not the one being served. */
-  readonly failed: string | null
+  /**
+   * The artifact `served` named, when that is not the one being served.
+   *
+   * `null` while the outcome is still a failure means the marker itself could
+   * not be read, so there is no id to name — the caller says that instead.
+   */
+  readonly failedId: string | null
 }
 
 /**
@@ -347,10 +420,10 @@ export interface ServingPlan {
  *     developer will be looking: the terminal and the window. `served` is left
  *     naming the artifact that failed, because rewriting it would erase the
  *     evidence and turn the next launch into a launch with no problem in it.
- *   * **`build-one`** — the fresh-clone path, and the *only* one that builds.
+ *   * **`never-built`** — the fresh-clone path, and the *only* one that builds.
  *     `bun install && bun tauri dev` has to open a window.
- *   * **`nothing-startable`** — `served` names something that will not start
- *     and there is nothing behind it. This deliberately does **not** build.
+ *   * **`nothing-startable`** — the recorded choice cannot be honoured and
+ *     there is nothing behind it. This deliberately does **not** build.
  *
  * That last refusal is the constraint ADR-0020 wrote down and this function is
  * where it now lives: a launch that rebuilt whenever the served artifact was
@@ -358,7 +431,13 @@ export interface ServingPlan {
  * it did not come up, and the next restart replaces it with a build of whatever
  * happens to be in the tree while `served` moves to `local`. That presents as
  * the build reverting on its own. Only a store with no choice recorded in it at
- * all is a store with nothing to undo.
+ * all is a store with nothing to undo, which is why the marker's three states
+ * are three and not two — see {@link MarkerReading}.
+ *
+ * A marker that cannot be read still falls back if there is something behind
+ * it: the developer's choice is unreadable either way, and a working window
+ * with a banner beats a page. There is no id to blame in that case, so
+ * `failedId` is `null` and the caller supplies the sentence.
  *
  * `previous === served` is not a fallback. It cannot happen through
  * {@link servedSwitch}, and if a hand-edited marker makes it happen, serving
@@ -366,16 +445,20 @@ export interface ServingPlan {
  * worse than saying there is nothing.
  */
 export function servingPlan(
-  served: string | null,
+  served: MarkerReading,
   previous: string | null,
   startable: (id: string) => boolean,
 ): ServingPlan {
-  if (served === null) return { outcome: 'build-one', serve: null, failed: null }
-  if (startable(served)) return { outcome: 'served', serve: served, failed: null }
-  if (previous !== null && previous !== served && startable(previous)) {
-    return { outcome: 'fell-back', serve: previous, failed: served }
+  if (served.state === 'absent') return { outcome: 'never-built', serve: null, failedId: null }
+
+  const failedId = served.state === 'named' ? served.id : null
+  if (served.state === 'named' && startable(served.id)) {
+    return { outcome: 'served', serve: served.id, failedId: null }
   }
-  return { outcome: 'nothing-startable', serve: null, failed: served }
+  if (previous !== null && previous !== failedId && startable(previous)) {
+    return { outcome: 'fell-back', serve: previous, failedId }
+  }
+  return { outcome: 'nothing-startable', serve: null, failedId }
 }
 
 /**

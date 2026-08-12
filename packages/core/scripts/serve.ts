@@ -32,11 +32,7 @@
 import { resolve } from 'node:path'
 import { ARTIFACT_ENTRY, artifactPath, servedMarkerPath, servingPlan } from '../artifacts.ts'
 import { assetPath } from '../artifact-assets.ts'
-import {
-  artifactStartFailure,
-  pruneArtifacts,
-  readServedMarkers,
-} from '../artifact-store.ts'
+import { artifactStartFailureById, pruneArtifacts, readServedMarkers } from '../artifact-store.ts'
 import {
   DEV_URL_ENV_VAR,
   cloneRootOfScript,
@@ -97,31 +93,21 @@ if (windowSource(buildRoot) === 'dev-server') {
 */
 const markers = readServedMarkers(buildRoot)
 
-/*
-  Why each artifact this launch considered will not start, by id.
-
-  Rewritten rather than accumulated, so that an id which failed before a build
-  and starts after one does not carry the stale sentence into the banner. The
-  reason is wanted in two places — the terminal and, when it is a fall back, the
-  window — and it is produced once, here, where the disk was actually read.
-*/
-const failures = new Map<string, string>()
-
-/** Will this artifact open a window? See `artifactStartFailure` for what that means. */
-function startable(id: string): boolean {
-  const root = artifactPath(buildRoot, id)
-  const failure = root === null ? 'it is not a usable artifact id' : artifactStartFailure(root)
-  if (failure === null) {
-    failures.delete(id)
-    return true
-  }
-  failures.set(id, failure)
-  return false
-}
+/**
+ * Will this artifact open a window? See `artifactStartFailure` for what that
+ * means.
+ *
+ * A predicate and nothing else. An earlier version recorded *why* each artifact
+ * failed into a Map as it went, which made the function passed into a pure
+ * decision the one thing in the file with a side effect — and the purity of
+ * that seam is what the whole design rests on. The sentence is read back after
+ * planning instead, once, for the one id that turned out to matter.
+ */
+const startable = (id: string): boolean => artifactStartFailureById(buildRoot, id) === null
 
 let plan = servingPlan(markers.served, markers.previous, startable)
 
-if (plan.outcome === 'build-one') {
+if (plan.outcome === 'never-built') {
   /*
     Nothing has ever been served here, so build once.
 
@@ -134,9 +120,12 @@ if (plan.outcome === 'build-one') {
     artifact is for.
 
     `served` naming an artifact that will not start is now a fall back and not a
-    build, and the two outcomes below it are not builds either. Only an empty or
-    unreadable marker gets here, because only that is a store with no choice in
-    it to undo. `bun run build` writes the marker on its way out — through
+    build, and the two outcomes below it are not builds either. **Only a marker
+    that is not there gets here** — an unreadable one does not, because a file
+    with the wrong permissions is a choice this process cannot make out rather
+    than a choice nobody made, and rebuilding over it overwrites a promoted
+    release. That distinction is `MarkerReading`'s whole reason for having three
+    states. `bun run build` writes the marker on its way out — through
     `switchServedArtifact`, so the artifact it replaces is remembered.
   */
   console.log(`nothing is served from ${servedMarkerPath(buildRoot)} — building one`)
@@ -151,15 +140,30 @@ if (plan.outcome === 'build-one') {
     failed leaves them exactly as they were. Planned again from what is there
     now, which is how a fresh clone reaches the ordinary `served` outcome.
 
-    A branch and not a loop. A build that failed replans to `build-one` a second
-    time and nothing acts on it — control has left this block — so the window
-    opens on the no-build page saying what to run. Retrying here would be the
-    rebuild-every-launch this branch exists to stay clear of, with a failing
+    A branch and not a loop. A build that failed replans to `never-built` a
+    second time and nothing acts on it — control has left this block — so the
+    window opens on the no-build page saying what to run. Retrying here would be
+    the rebuild-every-launch this branch exists to stay clear of, with a failing
     build turning it into a rebuild-twice-every-launch.
   */
   const afterBuild = readServedMarkers(buildRoot)
   plan = servingPlan(afterBuild.served, afterBuild.previous, startable)
 }
+
+/**
+ * Why the artifact this launch could not serve could not be served.
+ *
+ * Read back after planning rather than collected during it, which is what keeps
+ * `startable` a predicate. `null` for `failedId` is the marker itself being
+ * unreadable — there is no id to ask about, so the sentence is about the file.
+ */
+const whyNot = (): string =>
+  plan.failedId === null
+    ? `${servedMarkerPath(buildRoot)} could not be read`
+    : (artifactStartFailureById(buildRoot, plan.failedId) ?? 'it will not start')
+
+/** What failed, named for a reader: an id when there is one, the marker when not. */
+const failedLabel = (): string => plan.failedId ?? 'served'
 
 const servedRoot = plan.serve === null ? null : artifactPath(buildRoot, plan.serve)
 const serving = plan.serve !== null && servedRoot !== null ? { id: plan.serve, root: servedRoot } : null
@@ -173,16 +177,24 @@ const serving = plan.serve !== null && servedRoot !== null ? { id: plan.serve, r
   artifact that just failed — removing the evidence would make the next launch a
   launch with no problem in it.
 */
-const pruned = pruneArtifacts(buildRoot, [markers.served, markers.previous, plan.serve])
+const pruned = pruneArtifacts(buildRoot, [
+  markers.served.state === 'named' ? markers.served.id : null,
+  markers.previous,
+  plan.serve,
+  plan.failedId,
+])
 if (pruned.length > 0) console.log(`pruned ${pruned.length} old artifact(s): ${pruned.join(', ')}`)
 
 /**
- * Anything going into that page as text rather than as markup.
+ * Anything going into a page or the notice as text rather than as markup.
  *
- * There is exactly one interpolation — a filesystem path — and a path may
- * contain `<`, `&` or a quote. This is a file whose entire job is serving, so
- * an unescaped interpolation is not a thing to leave in it whatever today's
- * value happens to be.
+ * Six interpolations across three sites now — the two pages and the fall-back
+ * notice — where there was one when this said "exactly one interpolation, a
+ * filesystem path". Two of them are artifact ids and one is a sentence composed
+ * from an id and a filename read out of a document, so the value can carry `<`,
+ * `&` or a quote by more routes than it could then. This is a file whose entire
+ * job is serving; an unescaped interpolation is not a thing to leave in it
+ * whatever today's values happen to be.
  */
 const asText = (value: string): string =>
   value
@@ -213,9 +225,16 @@ const asText = (value: string): string =>
  * white (The Inherited Palette Rule).
  *
  * The values are inlined rather than imported, and that is the one concession:
- * this page exists precisely when there is no bundle to take `app.css` from. It
- * is the only copy of those tokens in the repository, and it is here because the
- * alternative is a page that cannot be styled at all.
+ * this page exists precisely when there is no bundle to take `app.css` from,
+ * and the alternative is a page that cannot be styled at all.
+ *
+ * **There is a second copy of them in this file**, in {@link fellBackNotice} —
+ * this said "the only copy in the repository" until that notice was written.
+ * The two copies are not the same concession and neither can be spent to remove
+ * the other: this page renders when there is no bundle, and the notice renders
+ * *inside* one whose `:root` it must not touch. Both are asserted against this
+ * file's own source by `bun run drive`, which is what stops either drifting
+ * from `app.css` without anything noticing.
  */
 const page = (title: string, body: string): Response =>
   new Response(
@@ -334,8 +353,16 @@ const fellBackNotice = (from: string, why: string, running: string): string =>
     gap: 16px;
     align-items: baseline;
     padding: 6px 12px;
-    border-bottom: 1px solid #f7768e;
-    background: #1a1b26;
+    /*
+      The Tonal Depth Rule and the Hairline. This is fixed over the window, so
+      it is one step forward: ground-raised with a 1px rule border, which is the
+      entire elevation vocabulary DESIGN.md allows. It was ground with a bad
+      border, which read as elevation carried by colour — rule is every border
+      in the product, and app.css has no precedent for a bad one. The red stays
+      where it means something, on the id that failed.
+    */
+    border-bottom: 1px solid #2c2e40;
+    background: #1f2030;
     color: #c0caf5;
     font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
@@ -358,20 +385,20 @@ const fellBackNotice = (from: string, why: string, running: string): string =>
   <button onclick="this.parentNode.remove()">dismiss</button>
 </div>`
 
-/** Why an artifact would not start, in the sentence the disk produced. */
-const whyNot = (id: string): string => failures.get(id) ?? 'it will not start'
-
 /*
   Said in the terminal as well as in the window, because the two developers who
   need it are the same person at different moments: the one watching a launch,
   and the one who walked away and came back to a window.
 */
-if (plan.failed !== null) {
-  console.error(`artifact ${plan.failed} will not start: ${whyNot(plan.failed)}`)
+/** A choice is recorded in the store and this launch cannot honour it. */
+const unhonoured = plan.outcome === 'fell-back' || plan.outcome === 'nothing-startable'
+
+if (unhonoured) {
+  console.error(`${failedLabel()} will not start: ${whyNot()}`)
   console.error(
     serving === null
       ? `and there is nothing to fall back to — nothing was rebuilt, and the window will say so`
-      : `falling back to ${serving.id} — \`served\` still names ${plan.failed}`,
+      : `falling back to ${serving.id} — \`served\` is left as it was`,
   )
 } else if (serving === null) {
   console.error(`no artifact to serve from ${buildRoot} — the window will say so`)
@@ -384,9 +411,7 @@ const entry = serving === null ? null : resolve(serving.root, ARTIFACT_ENTRY)
 
 /** The notice this launch adds to that document, composed once. */
 const notice =
-  plan.outcome === 'fell-back' && serving !== null && plan.failed !== null
-    ? fellBackNotice(plan.failed, whyNot(plan.failed), serving.id)
-    : null
+  plan.outcome === 'fell-back' && serving !== null ? fellBackNotice(failedLabel(), whyNot(), serving.id) : null
 
 Bun.serve({
   port,
@@ -396,9 +421,7 @@ Bun.serve({
   // it to be worth putting on a network for.
   hostname: 'localhost',
   async fetch(request) {
-    if (serving === null) {
-      return plan.failed === null ? nothingServed() : willNotStart(plan.failed, whyNot(plan.failed))
-    }
+    if (serving === null) return unhonoured ? willNotStart(failedLabel(), whyNot()) : nothingServed()
 
     const path = assetPath(serving.root, new URL(request.url).pathname)
     // `null` is a request that resolved outside the artifact. Answered as

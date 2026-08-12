@@ -9,6 +9,7 @@
  * Run: bun run drive
  */
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -92,6 +93,7 @@ import {
 import { assetPath } from '../artifact-assets.ts'
 import {
   artifactStartFailure,
+  artifactStartFailureById,
   installArtifact,
   pruneArtifacts,
   readServedMarkers,
@@ -6648,20 +6650,25 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     const set = new Set(ids)
     return (id: string) => set.has(id)
   }
+  // The three readings a `served` file has, spelled once so the cases below read
+  // as the stores they are rather than as object literals.
+  const absent = { state: 'absent' } as const
+  const unusable = { state: 'unusable' } as const
+  const named = (id: string) => ({ state: 'named', id }) as const
 
   check(
     'the artifact `served` names is the one that is served',
-    servingPlan('0.2.0-1', 'local', startableIn('0.2.0-1', 'local')).outcome === 'served',
+    servingPlan(named('0.2.0-1'), 'local', startableIn('0.2.0-1', 'local')).outcome === 'served',
   )
   check(
     'and nothing is said about a build that came up',
-    servingPlan('0.2.0-1', 'local', startableIn('0.2.0-1', 'local')).failed === null,
+    servingPlan(named('0.2.0-1'), 'local', startableIn('0.2.0-1', 'local')).failedId === null,
   )
 
-  const fell = servingPlan('0.2.0-1', 'local', startableIn('local'))
+  const fell = servingPlan(named('0.2.0-1'), 'local', startableIn('local'))
   check('a build that will not start falls back to the one before it', fell.outcome === 'fell-back')
   check('which is what gets served', fell.serve === 'local')
-  check('and the one that failed is named rather than forgotten', fell.failed === '0.2.0-1')
+  check('and the one that failed is named rather than forgotten', fell.failedId === '0.2.0-1')
 
   /*
     The constraint ADR-0020 wrote down and this ticket had to carry across
@@ -6674,38 +6681,78 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   */
   check(
     'a store with no choice recorded in it builds one',
-    servingPlan(null, null, startableIn()).outcome === 'build-one',
+    servingPlan(absent, null, startableIn()).outcome === 'never-built',
+  )
+
+  /*
+    **And a marker that is there and cannot be read does not**, which is the
+    distinction the first version of this got wrong. `absent` and `unusable`
+    both answered "no id", so a marker with the wrong permissions — or a
+    directory where a file should be, or a line nobody can parse — rebuilt and
+    moved `served` onto the build it had just made. That is a promoted release
+    overwritten by a launch, which is the exact failure the constraint above is
+    written against, arriving through the one path that was not looking.
+
+    Something wrote that file. A launch that cannot read it knows only that it
+    is not the one to decide what it meant.
+  */
+  for (const previous of [null, 'local'] as const) {
+    check(
+      `an unreadable marker (previous ${previous ?? 'none'}) is never rebuilt over`,
+      servingPlan(unusable, previous, startableIn('local')).outcome !== 'never-built',
+    )
+  }
+  check(
+    'an unreadable marker falls back when there is something behind it',
+    servingPlan(unusable, 'local', startableIn('local')).serve === 'local',
   )
   check(
-    'and so does one whose marker nobody can parse, because that is the same thing',
-    servingPlan(markedArtifactId('   \n'), null, startableIn()).outcome === 'build-one',
+    'and there is no id to blame for it, so the caller says what it was',
+    servingPlan(unusable, 'local', startableIn('local')).failedId === null,
   )
+  check(
+    'with nothing behind it, an unreadable marker is a page rather than a build',
+    servingPlan(unusable, null, startableIn()).outcome === 'nothing-startable',
+  )
+  check(
+    'a marker nobody can parse reads as unusable rather than as absent',
+    markedArtifactId('   \n') === null,
+  )
+
   for (const [served, previous] of [
     ['0.2.0-1', null],
     ['0.2.0-1', 'local'],
     ['0.2.0-1', '0.2.0-1'],
   ] as const) {
-    const plan = servingPlan(served, previous, startableIn())
+    const plan = servingPlan(named(served), previous, startableIn())
     check(
-      `a resolvable \`served\` (${served}, previous ${previous ?? 'none'}) is never rebuilt over`,
-      plan.outcome !== 'build-one' && plan.serve !== LOCAL_ARTIFACT_ID,
+      `a recorded \`served\` (${served}, previous ${previous ?? 'none'}) is never rebuilt over`,
+      plan.outcome !== 'never-built',
     )
   }
   check(
+    'and a startable one is served rather than replaced by a fresh build',
+    servingPlan(named('0.2.0-1'), null, startableIn('0.2.0-1')).serve === '0.2.0-1',
+  )
+  check(
+    'which is the assertion that would catch a rebuild, since `local` is what one writes',
+    servingPlan(named('0.2.0-1'), null, startableIn('0.2.0-1')).serve !== LOCAL_ARTIFACT_ID,
+  )
+  check(
     'a build that will not start with nothing behind it says so rather than building',
-    servingPlan('0.2.0-1', null, startableIn()).outcome === 'nothing-startable',
+    servingPlan(named('0.2.0-1'), null, startableIn()).outcome === 'nothing-startable',
   )
   check(
     'and names what failed, because the developer promoted it and needs to know',
-    servingPlan('0.2.0-1', null, startableIn()).failed === '0.2.0-1',
+    servingPlan(named('0.2.0-1'), null, startableIn()).failedId === '0.2.0-1',
   )
   check(
     'a previous that is the same broken artifact is not a fall back',
-    servingPlan('0.2.0-1', '0.2.0-1', startableIn()).outcome === 'nothing-startable',
+    servingPlan(named('0.2.0-1'), '0.2.0-1', startableIn()).outcome === 'nothing-startable',
   )
   check(
     'and neither is a previous that will not start either',
-    servingPlan('0.2.0-1', 'local', startableIn()).outcome === 'nothing-startable',
+    servingPlan(named('0.2.0-1'), 'local', startableIn()).outcome === 'nothing-startable',
   )
 
   /*
@@ -6789,6 +6836,37 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   check(
     'an attribute holding `src=` in its value is a value, not a second script',
     entryScriptSources('<script data-note="a src=/fake.js b" src="/real.js"></script>').join() === '/real.js',
+  )
+  check(
+    'and a lazy-loading `data-src` beside a real one does not displace it',
+    entryScriptSources('<script data-src="lazy.js" src="/assets/i.js"></script>').join() === '/assets/i.js',
+  )
+
+  /*
+    Three more regions a browser does not run, each removed before matching.
+    `document.write` is the one worth naming: a `<script src>` inside a string
+    inside a script is text, not a tag, and the artifact is not required to
+    contain what a script writes at runtime.
+  */
+  check(
+    'a script written by another script is not one the artifact must contain',
+    entryScriptSources(`<script>document.write('<script src="/x.js">')</script>`).length === 0,
+  )
+  check(
+    'a script inside a template is inert until something clones it',
+    entryScriptSources('<template><script src="/t.js"></script></template>').length === 0,
+  )
+  check(
+    'and an entity in a filename is decoded, because the file on disk is the decoded name',
+    entryScriptSources('<script src="/a&amp;b.js"></script>').join() === '/a&b.js',
+  )
+  check(
+    'a numeric entity decodes the same way',
+    entryScriptSources('<script src="/a&#38;b.js"></script>').join() === '/a&b.js',
+  )
+  check(
+    'an entity nobody here knows is left alone rather than guessed at',
+    entryScriptSources('<script src="/a&zzz;b.js"></script>').join() === '/a&zzz;b.js',
   )
   check(
     'and a document that loads nothing at all is not a document that failed',
@@ -6909,23 +6987,56 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     */
     switchServedArtifact(scratch, '0.1.0')
     check('the first switch has nothing behind it', readServedMarkers(scratch).previous === null)
-    check('and names what it switched to', readServedMarkers(scratch).served === '0.1.0')
+    const first = readServedMarkers(scratch).served
+    check('and names what it switched to', first.state === 'named' && first.id === '0.1.0')
 
     switchServedArtifact(scratch, '0.2.0')
     const markers = readServedMarkers(scratch)
     check('a second switch keeps the one it replaced', markers.previous === '0.1.0')
     check('and the artifact it replaced is still on disk', existsSync(whole))
 
-    const startsHere = (id: string) => artifactStartFailure(artifactPath(scratch, id) ?? '') === null
+    const startsHere = (id: string) => artifactStartFailureById(scratch, id) === null
     const plan = servingPlan(markers.served, markers.previous, startsHere)
     check('the launch falls back on its own', plan.outcome === 'fell-back' && plan.serve === '0.1.0')
-    check('`served` is left naming the build that failed', readServedMarkers(scratch).served === '0.2.0')
+    const after = readServedMarkers(scratch).served
+    check('`served` is left naming the build that failed', after.state === 'named' && after.id === '0.2.0')
+
+    /*
+      The blocker case, run against real files rather than a constructed
+      reading: `chmod 000` on the marker is a store that has a choice in it
+      which this process cannot read, and a launch that treated that as "never
+      built" would rebuild and overwrite the promotion.
+    */
+    const markerPath = servedMarkerPath(scratch)
+    chmodSync(markerPath, 0o000)
+    try {
+      const unreadable = readServedMarkers(scratch)
+      check('a marker that cannot be read is not a marker that is absent', unreadable.served.state === 'unusable')
+      check(
+        'so the launch does not build over it',
+        servingPlan(unreadable.served, unreadable.previous, startsHere).outcome !== 'never-built',
+      )
+      check(
+        'and falls back to what is behind it instead',
+        servingPlan(unreadable.served, unreadable.previous, startsHere).serve === '0.1.0',
+      )
+    } finally {
+      chmodSync(markerPath, 0o644)
+    }
+    check('a store with no marker at all is the one case that builds', (() => {
+      const empty = mkdtempSync(join(tmpdir(), 'varnick-fresh-'))
+      try {
+        return servingPlan(readServedMarkers(empty).served, null, startsHere).outcome === 'never-built'
+      } finally {
+        rmSync(empty, { recursive: true, force: true })
+      }
+    })())
 
     // And pruning, run against the same store, spares both of them.
     for (const id of ['0.5.0', '0.6.0', '0.7.0', '0.8.0', '0.9.0']) {
       build(id, '<script src="/assets/x.js"></script>', { 'x.js': '' })
     }
-    const removed = pruneArtifacts(scratch, [markers.served, markers.previous, plan.serve])
+    const removed = pruneArtifacts(scratch, ['0.2.0', markers.previous, plan.serve])
     check('a launch bounds the store', removed.length > 0)
     check('and removes neither what it serves nor what it fell back from', !removed.includes('0.1.0') && !removed.includes('0.2.0'))
     check('what it removed is gone', removed.every((id) => !existsSync(artifactPath(scratch, id) ?? '')))
@@ -6965,7 +7076,7 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
 
   // The Inherited Palette Rule — the notice is drawn on `ground` with the
   // transcript's own red, inlined for the reason the pages inline theirs.
-  for (const literal of ['#1a1b26', '#c0caf5', '#f7768e', '#8b8fa3', '#7dcfff']) {
+  for (const literal of ['#1f2030', '#2c2e40', '#c0caf5', '#f7768e', '#8b8fa3', '#7dcfff']) {
     check(`the notice draws in ${literal}, which the transcript already had`, banner.includes(literal))
   }
 
@@ -6977,6 +7088,72 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
   */
   check('it declares no variable that could reach the app around it', !/--[a-z-]+\s*:/.test(banner))
   check('every rule it writes is scoped to its own element', !/^\s*(body|html|:root)\s*\{/m.test(banner))
+
+  /*
+    The two Named Rules the first version of this slice did not mechanise, which
+    are the two ticket 05 was pulled up for. The check above already covers the
+    palette; these cover the shape.
+  */
+  const bannerSizes = [...banner.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]))
+  check('the notice sets a size at all', bannerSizes.length > 0)
+  check(
+    `and steps down from the transcript rather than up (found ${bannerSizes.join(', ')})`,
+    bannerSizes.every((size) => size <= 13),
+  )
+  check('nothing on it is rounded', !banner.includes('border-radius'))
+
+  /*
+    The Tonal Depth Rule and the Hairline. It is fixed *over* the window, so it
+    is elevated — and the only elevation vocabulary DESIGN.md has is
+    `ground-raised` with a 1px `rule` border. It was `ground` with a `bad`
+    border, which carried elevation with colour and invented a border `app.css`
+    has no precedent for.
+  */
+  check('the notice is raised rather than painted on the ground', banner.includes('background: #1f2030'))
+  check('and its edge is the hairline every other border in the product is', banner.includes('1px solid #2c2e40'))
+  check(
+    'so the only red on it is the id that failed, where colour means something',
+    /#varnick-fell-back b \{ color: #f7768e/.test(banner),
+  )
+
+  /*
+    The Still Surface Rule — nothing moves that the machines did not move. A
+    notice that slid in would be motion the product performs rather than motion
+    it reports.
+  */
+  check('nothing on it animates', !/transition|animation|@keyframes/.test(banner))
+  // There are no shadows in this product. Not "few" — none.
+  check('and nothing on it casts a shadow', !banner.includes('box-shadow'))
+
+  /*
+    Against `app.css` rather than against literals written here.
+
+    `serve.ts` now holds *two* inlined copies of the palette — the pre-boot
+    pages, which render when there is no bundle to take `app.css` from, and this
+    notice, which renders inside a bundle whose `:root` it must not touch.
+    Neither copy can be spent to remove the other, so the thing to check is not
+    that there is one copy but that every copy still says what the stylesheet
+    says. Checking them against strings in this file would only assert that two
+    files nobody compares agree with a third.
+  */
+  const stylesheet = readFileSync(new URL('../src/styles/app.css', import.meta.url).pathname, 'utf-8')
+  const token = (name: string): string | null =>
+    new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`).exec(stylesheet)?.[1]?.toLowerCase() ?? null
+
+  for (const [name, where] of [
+    ['ground', 'page'],
+    ['rule', 'page'],
+    ['fg', 'page'],
+    ['fg-dim', 'page'],
+    ['accent', 'page'],
+    ['bad', 'page'],
+    ['ground-raised', 'notice'],
+  ] as const) {
+    const value = token(name)
+    const source = where === 'notice' ? banner : serve
+    check(`--${name} is a token app.css actually declares`, value !== null)
+    check(`and the ${where} in serve.ts still spells it ${value ?? '?'}`, value !== null && source.includes(value))
+  }
 }
 
 // ---------------------------------------------------------------------------

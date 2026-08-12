@@ -154,6 +154,15 @@ artifact with nothing behind it is therefore a page, not a build — and `served
 is left naming the artifact that failed, because rewriting it would erase the
 evidence and make the next launch a launch with no problem in it.
 
+**"No choice recorded" means the marker is not there, and nothing weaker.** A
+marker that exists and cannot be read — the wrong permissions, a directory where
+a file should be, a line nobody can parse — is a choice this launch cannot make
+out, which is not the same as a choice nobody made. The first implementation
+answered "no id" to both and therefore rebuilt over a promoted release whenever
+the marker was unreadable: the constraint above, defeated by the one path that
+was not looking at it. `MarkerReading` has three states for that reason, and
+`absent` is the only one that builds.
+
 **What "fails to start" means is deliberately narrow.** Two things are decidable
 before a port is bound and both are certain: there is no `index.html`, or the
 entry document loads a script the artifact does not contain. Everything past
@@ -161,9 +170,32 @@ that is a guess. A build that comes up and throws is still the build the
 developer chose, and at launch it is indistinguishable from one that works; a
 host that fell back on a runtime error would be overruling a promotion on
 evidence it does not have. **A fallback on the wrong signal is worse than none.**
-A boot receipt was considered and turned down for the same reason from the other
-side: a page that throws still runs a later classic script, so the receipt would
-arrive from a broken build and the mechanism would be a comment.
+
+A **boot receipt** — the page reporting that it came up, with silence read as
+failure — was considered and turned down, and the reason to record is not the
+first one that comes to mind. *That* reason was that a module script which
+throws still lets a later classic script run, so an injected receipt would
+arrive from a broken build; true, but it only indicts a receipt the host
+injects. A receipt emitted by the **app's own** code genuinely would be absent
+when the app throws, and would detect more than the static signal does.
+
+The decisive objection is the one the notice is built on: **the artifact being
+served in a fallback is the older build.** It was compiled before whatever is
+running now, quite possibly before this mechanism existed, and it cannot emit a
+receipt it was never written to emit. A launch would read that silence as
+failure and fall back — from a build that works, to one that also cannot report,
+for ever. The static signal needs nothing of the artifact and is therefore the
+one that works on the artifacts already on disk.
+
+**What the parse deliberately does not treat as loaded:** comments,
+`<noscript>`, `<template>`, and script bodies — a `document.write` of a
+`<script src>` is a string inside a script, not a tag in the document. Each was
+a false positive first and a rule second. The comment case was live in this
+repository: varnick's own `index.html` carries its design brief as a comment,
+Vite preserves it into every artifact, and one `<script src>` pasted into that
+brief would have made every build permanently "fail to start". A `<script>`
+inside a `<template>` is removed with the rest; nothing else about templates is
+modelled, because an entry document is not where they appear.
 
 **The window's half is appended to the entry document**, not fetched by the app,
 and this is the one place anything is ever added to what an artifact serves. The
