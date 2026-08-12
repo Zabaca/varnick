@@ -84,6 +84,11 @@ run 2   838 pass   1 fail
 run 3   838 pass   1 fail
 ```
 
+It is also **not reliably intermittent**: ticket 18's author measured it 3/3 on
+a branch that touches no policy file, on this same machine, where the
+orchestrator had measured 0/1/1 on `main` an hour earlier. So neither a green run
+nor a red one settles anything on its own.
+
 Run the two files in isolation instead, where the result is consistent. A green
 full-suite run is not evidence that this is fixed, and at least one agent this
 run reported `0 fail` on a branch that had shown the failure minutes earlier and
