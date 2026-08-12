@@ -134,14 +134,16 @@ A night's work, offered. A version, a changelog entry, an announcement, an **Art
 _Avoid_: draft, candidate, nightly (the first two suggest something unfinished — a Pre-release is a complete build nobody has accepted; the third suggests a schedule, and this is bounded by a queue rather than by a clock)
 
 **Pending**:
-The state of the one Pre-release nobody has accepted. Exactly one exists: cutting a second **supersedes** the first, on the same version if nothing has raised the level, so there is never a choice between two builds that each only get older. Held in two places that cannot disagree because one is written from the other — the `## v0.0.1 — pending` heading in `CHANGELOG.md`, which is the accumulator, and `.varnick/pending-release.json`, which is what a band in the window reads.
+The state of the one Pre-release nobody has accepted. Exactly one exists: cutting a second **supersedes** the first, on the same version if nothing has raised the level, so there is never a choice between two builds that each only get older. Recorded in two files, both written from the same plan in one act — the `## v0.0.1 — pending` heading in `CHANGELOG.md`, which is the committed accumulator a developer reads and edits, and `.varnick/pending-release.json`, which is the gitignored record a band in the window reads. The changelog is the one that decides: a next cut counts from what it says, and the record is derived from that reading.
 _Avoid_: unreleased, staged, queued
 
 **Promotion**:
 Accepting a Pre-release: the changelog heading's `pending` becomes a date, `served` moves to its Artifact, the pending record goes, and varnick restarts onto it with the **Session** resumed from the mirror. The developer's, always — a run with nobody watching cuts but never promotes, which is what keeps a night's work a thing to accept rather than a thing that happened.
 _Avoid_: publish, ship, deploy (nothing leaves the machine — there is no remote in the network allowlist)
 
-The version has one source, `package.json`, read when the renderer is built. A release edits that field and nothing else in Core, which is what keeps a release from being able to fail typecheck. See [ADR-0022](./docs/adr/0022-a-pre-release-is-cut-from-the-changelogs-pending-block.md) for how the number is inferred and why the changelog is the accumulator.
+**Version**:
+One number, with one source: the root `package.json`, read when the renderer is built. A release edits that field and nothing else in Core, which is what keeps a release from being able to fail typecheck. Inferred rather than declared — a removed source file or a ticket recording an **Accepted consequence** moves the minor, everything else moves the patch while the major is `0`. `src-tauri/`'s two version fields do not follow, because a release that wrote there would need a human; see [ADR-0022](./docs/adr/0022-a-pre-release-is-cut-from-the-changelogs-pending-block.md) for that and for why the changelog is the accumulator.
+_Avoid_: build number, revision, semver (the scheme is semver; this is the number)
 
 ### Conversation
 

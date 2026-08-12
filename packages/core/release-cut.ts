@@ -42,6 +42,7 @@ import {
   type ChangedPath,
   type PendingPreRelease,
   type TicketSummary,
+  changedPathsFromNameStatus,
   lastPromotedVersion,
   parsePendingRecord,
   parseTicket,
@@ -95,8 +96,22 @@ export interface CutInput {
   readonly now: () => Date
 }
 
+/**
+ * Why a cut did not happen, in the one distinction a caller can act on.
+ *
+ * `decided` is this refusing: nothing landed, or a tag that is not ours to move.
+ * A night where every ticket was parked is a real night and retrying it changes
+ * nothing. `environment` is the world failing underneath it — a build that will
+ * not compile, a commit that will not be made — which is worth a person looking.
+ *
+ * Two values rather than one code per refusal, because the caller is a shell
+ * exit status and `landing-cli.ts` already spends the codes this way: `1` for an
+ * answer of no, `2` for could not answer.
+ */
+export type RefusalKind = 'decided' | 'environment'
+
 export type CutOutcome =
-  | { readonly cut: false; readonly reason: string }
+  | { readonly cut: false; readonly kind: RefusalKind; readonly reason: string }
   | { readonly cut: true; readonly record: PendingPreRelease; readonly artifact: string }
 
 /**
@@ -144,27 +159,19 @@ export function landedTickets(issuesDirectory: string): readonly TicketSummary[]
 /**
  * What the run changed, since the last thing anybody promoted.
  *
- * `-z` and `--no-renames` for the reason `landing-cli.ts` gives: git quotes
- * non-ASCII paths by default and reports a rename as one entry with two paths,
- * and both arrive downstream as strings that match nothing. `-z` turns the
- * quoting off at the source.
+ * The spawn, and nothing else: what the output *means* is
+ * {@link changedPathsFromNameStatus} in `release.ts`, where it can be asserted
+ * against real git output without a repository. The flags are argued there,
+ * beside the parse that depends on them.
+ *
+ * A diff that fails answers no paths, which reads as "nothing changed" and
+ * therefore as the smallest bump. That is why {@link lastPromotedTag} verifies
+ * the tag resolves before this is ever asked to diff from it.
  */
 export function changedPathsSince(cloneRoot: string, base: string): readonly ChangedPath[] {
   const diff = git(cloneRoot, ['diff', '--name-status', '-z', '--no-renames', base, 'HEAD'])
   if (!diff.ok) return []
-
-  const fields = diff.stdout.split('\0').filter((field) => field !== '')
-  const paths: ChangedPath[] = []
-  for (let index = 0; index + 1 < fields.length; index += 2) {
-    const code = (fields[index] ?? '').charAt(0)
-    const path = fields[index + 1] ?? ''
-    if (path === '') continue
-    paths.push({
-      status: code === 'A' ? 'added' : code === 'D' ? 'removed' : 'modified',
-      path,
-    })
-  }
-  return paths
+  return changedPathsFromNameStatus(diff.stdout)
 }
 
 /**
@@ -213,7 +220,9 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
     cutAt: input.now().toISOString(),
   })
 
-  if (!plan.cut) return plan
+  // A plan that will not cut is always a decision — nothing landed, or a
+  // changelog this cannot count from. Nothing in `releasePlan` touches the world.
+  if (!plan.cut) return { cut: false, kind: 'decided', reason: plan.reason }
 
   const tag = plan.record.tag
   const disposition = tagDisposition(tag, {
@@ -223,6 +232,7 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
   if (disposition === 'refuse') {
     return {
       cut: false,
+      kind: 'decided',
       reason: `${tag} already exists and nothing pending claims it, so this would move a tag somebody else wrote`,
     }
   }
@@ -241,6 +251,7 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
     writeFileSync(manifestPath, manifestBefore)
     return {
       cut: false,
+      kind: 'environment',
       reason: `the build failed, so nothing was cut and the manifest is back at its previous version${built.reason === undefined ? '' : ` — ${built.reason}`}`,
     }
   }
@@ -271,13 +282,18 @@ export async function cutPreRelease(input: CutInput): Promise<CutOutcome> {
   if (!committed.ok) {
     return {
       cut: false,
+      kind: 'environment',
       reason: `the release could not be committed, so it has not been tagged — ${committed.stderr.trim()}`,
     }
   }
 
   const tagged = git(cloneRoot, disposition === 'move' ? ['tag', '-f', tag] : ['tag', tag])
   if (!tagged.ok) {
-    return { cut: false, reason: `the release is committed but ${tag} could not be written — ${tagged.stderr.trim()}` }
+    return {
+      cut: false,
+      kind: 'environment',
+      reason: `the release is committed but ${tag} could not be written — ${tagged.stderr.trim()}`,
+    }
   }
 
   return { cut: true, record: plan.record, artifact }

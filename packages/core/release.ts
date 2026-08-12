@@ -1,9 +1,16 @@
 /**
  * What a pre-release is, decided.
  *
- * Every export here is a total, deterministic function over strings, this module
- * imports nothing at all, and `packages/core/scripts/drive.ts` asserts all of it
- * with nothing built, nothing serving and no git repository. Its impure twin is
+ * Every export here is a total, deterministic function over strings, and
+ * `packages/core/scripts/drive.ts` exercises each of them with nothing built,
+ * nothing serving and no git repository.
+ *
+ * **This module imports nothing at all, and `drive.ts` asserts that it imports
+ * nothing** — the check is four lines from the one `artifacts.ts` already has,
+ * and it is a check rather than this sentence for the reason that file gives
+ * about its own: the alternative was a sentence in a header nothing verified,
+ * and that sentence had already gone stale. It went stale inside a single ticket
+ * once, which is why the assertion exists at all. Its impure twin is
  * `release-cut.ts`, which reads the files, spawns the build, writes the store and
  * moves the tag — the same split `artifacts.ts` and `artifact-store.ts` already
  * have, and for the reason
@@ -96,6 +103,46 @@ export function coarserLevel(a: ReleaseLevel, b: ReleaseLevel): ReleaseLevel {
 export interface ChangedPath {
   readonly status: 'added' | 'modified' | 'removed'
   readonly path: string
+}
+
+/**
+ * What `git diff --name-status -z` said, as changed paths.
+ *
+ * A decision rather than plumbing, which is why it is here and not beside the
+ * spawn that produces the text. `artifacts.ts` kept *every* decision and left
+ * `artifact-store.ts` a single sequence; the same line runs here, and this was
+ * on the wrong side of it — a total function over a string, reachable only
+ * through a real git repository, which is the definition of a thing that should
+ * have been pure and was not.
+ *
+ * `-z` means NUL-separated fields in `status\0path\0` pairs, and it is what the
+ * caller passes for the reason `landing-cli.ts` gives: git quotes non-ASCII
+ * paths under the default `core.quotePath`, and a quoted path matches nothing
+ * downstream. `--no-renames` keeps every entry to one path, so a rename arrives
+ * as the delete and the add it is — which is the honest reading for a version
+ * bump anyway, since a moved file is a file that is gone from where it was.
+ *
+ * A status letter this does not know answers `modified`, which is the
+ * conservative direction here and the opposite of the one `isProtectedPath`
+ * takes. That is deliberate: an unknown letter that read as `removed` would call
+ * a copy or a type change breaking, and the level only ever rises, so one
+ * misread letter would pin every future night to the wrong minor.
+ */
+export function changedPathsFromNameStatus(text: string): readonly ChangedPath[] {
+  const fields = text.split('\0').filter((field) => field !== '')
+  const paths: ChangedPath[] = []
+
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const code = (fields[index] ?? '').trim().charAt(0)
+    const path = fields[index + 1] ?? ''
+    if (path === '') continue
+    paths.push({
+      status: code === 'A' ? 'added' : code === 'D' ? 'removed' : 'modified',
+      path,
+    })
+  }
+
+  return paths
 }
 
 /**
@@ -360,6 +407,15 @@ export interface ChangelogEntry {
 }
 
 /**
+ * One bullet, once its continuation lines have been folded back into it.
+ *
+ * `- **06 — Title** — a sentence.` on one line, or the same sentence wrapped
+ * across three with the rest indented under it. Markdown reads those as one
+ * bullet and so does this.
+ */
+const NOTE_BULLET = /^-\s+\*\*(\S+)\s+[—-]\s+(.+?)\*\*\s+[—-]\s+(.+?)\s*$/
+
+/**
  * The whole changelog, as entries.
  *
  * A heading this cannot read ends the entry above it and starts nothing, so a
@@ -367,6 +423,17 @@ export interface ChangelogEntry {
  * than being absorbed into a release's notes. The one thing that must never
  * happen here is a parse that quietly swallows an entry: everything downstream
  * treats "not in the changelog" as "not yet released".
+ *
+ * **A wrapped bullet is one bullet**, which is the whole reason this reads lines
+ * into a buffer instead of matching each one. The first version of this was
+ * line-anchored, and it truncated a note at its first newline: `- **06 — Cut a
+ * pre-release** — one command turns a` and the rest of the sentence silently
+ * gone. That is worse than it looks, because {@link accumulate} makes the
+ * *carried* note win a collision — so a truncation is not a bad night, it is the
+ * text every night after that inherits. This file is prose that people edit, it
+ * is written wrapped to the width the repository wraps everything else to, and a
+ * reader that could not survive its own output was a reader that broke on the
+ * first hand edit in the house style.
  */
 export function changelogEntries(changelog: string | undefined | null): readonly ChangelogEntry[] {
   if (changelog === undefined || changelog === null) return []
@@ -379,24 +446,14 @@ export function changelogEntries(changelog: string | undefined | null): readonly
 
   const entries: Building[] = []
   let current: Building | null = null
+  /** The bullet being read, with any continuation lines already joined onto it. */
+  let bullet: string | null = null
 
-  for (const line of changelog.split('\n')) {
-    const heading = ENTRY_HEADING.exec(line)
-    if (heading !== null) {
-      const version = heading[1] ?? ''
-      const rest = heading[2] ?? ''
-      current = { version, promotedOn: rest === PENDING_MARKER ? null : rest, notes: [] }
-      entries.push(current)
-      continue
-    }
-    if (line.startsWith('## ')) {
-      current = null
-      continue
-    }
-    if (current === null) continue
-
-    const note = /^-\s+\*\*(\S+)\s+[—-]\s+(.+?)\*\*\s+[—-]\s+(.+?)\s*$/.exec(line)
-    if (note === null) continue
+  const finishBullet = () => {
+    if (bullet === null) return
+    const note = NOTE_BULLET.exec(bullet)
+    bullet = null
+    if (note === null || current === null) return
     current.notes.push({
       id: note[1] ?? '',
       title: note[2] ?? '',
@@ -404,6 +461,43 @@ export function changelogEntries(changelog: string | undefined | null): readonly
       detail: note[3] ?? '',
     })
   }
+
+  for (const line of changelog.split('\n')) {
+    const heading = ENTRY_HEADING.exec(line)
+    if (heading !== null) {
+      finishBullet()
+      const version = heading[1] ?? ''
+      const rest = heading[2] ?? ''
+      current = { version, promotedOn: rest === PENDING_MARKER ? null : rest, notes: [] }
+      entries.push(current)
+      continue
+    }
+    if (line.startsWith('## ')) {
+      finishBullet()
+      current = null
+      continue
+    }
+    if (current === null) continue
+
+    if (line.startsWith('- ')) {
+      finishBullet()
+      bullet = line
+      continue
+    }
+
+    /*
+      A continuation is an indented, non-empty line under a bullet — the shape a
+      wrapped markdown list item has. A blank line ends the bullet, and so does
+      anything starting at column zero: both of those end the list item for a
+      markdown renderer too, so this agrees with what the file looks like.
+    */
+    if (bullet !== null && line.trim() !== '' && /^\s/.test(line)) {
+      bullet = `${bullet} ${line.trim()}`
+      continue
+    }
+    finishBullet()
+  }
+  finishBullet()
 
   return entries
 }
@@ -470,15 +564,56 @@ export function accumulate(
   return notes
 }
 
-/** One entry, as it appears in the file. */
+/**
+ * The width the changelog wraps to — what the rest of the repository's prose
+ * uses, so a release's own entry and a hand-written one look the same.
+ */
+export const CHANGELOG_WRAP = 80
+
+/**
+ * One entry, as it appears in the file.
+ *
+ * **Wrapped, and {@link changelogEntries} folds it back.** The two have to agree
+ * and they are asserted round-trip rather than by inspection: a writer that
+ * emitted a shape its own reader truncated is exactly the defect this pair had,
+ * and the reason it was invisible is that both halves looked right on their own.
+ */
 export function changelogEntryText(
   version: string,
   notes: readonly ReleaseNote[],
   promotedOn: string | null = null,
 ): string {
   const heading = `## v${version} — ${promotedOn ?? PENDING_MARKER}`
-  const lines = notes.map((note) => `- **${note.id} — ${note.title}** — ${note.line}`)
+  const lines = notes.map((note) => wrapBullet(`- **${note.id} — ${note.title}** — ${note.line}`))
   return `${heading}\n\n${lines.join('\n')}\n`
+}
+
+/**
+ * One bullet, wrapped to {@link CHANGELOG_WRAP} with its continuations indented.
+ *
+ * Greedy and word-based, and it never breaks inside a word: an over-long token —
+ * a URL, a path — takes its line and overflows rather than being cut in half,
+ * because a broken path in a changelog is worse than a long line. Two spaces of
+ * indent, which is what puts a continuation under the bullet's text rather than
+ * under its dash.
+ */
+function wrapBullet(bullet: string): string {
+  const words = bullet.split(' ')
+  const lines: string[] = []
+  let line = ''
+
+  for (const word of words) {
+    const candidate = line === '' ? word : `${line} ${word}`
+    if (line !== '' && candidate.length > CHANGELOG_WRAP) {
+      lines.push(line)
+      line = `  ${word}`
+      continue
+    }
+    line = candidate
+  }
+  if (line !== '') lines.push(line)
+
+  return lines.join('\n')
 }
 
 /** What a changelog that does not exist yet starts with. */

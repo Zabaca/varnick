@@ -103,6 +103,18 @@ crossing 1.0 is not the first time that branch runs.
 ## v0.0.1 — 2026-08-04           <- promoted; a date rather than `pending`
 ```
 
+**The bullets wrap, and the reader folds them back.** That is part of the format
+rather than cosmetics, and it is the one thing here that was got wrong first:
+the writer emitted a single long line, the format above wrapped, and the reader
+was line-anchored — so a bullet in the house style parsed as its opening fragment
+and the rest was silently dropped. Worse than one bad entry, because `accumulate`
+lets the carried note win a collision, so the truncation is what every night
+after inherits — and this is the accumulator the "three unpromoted nights"
+promise rests on. A changelog is prose that people edit; a reader that cannot
+survive a hand-wrapped bullet is a reader that breaks the first time somebody
+tidies the file. Writer and reader are asserted round-trip now, not by
+inspection.
+
 There is no separate ledger of what has piled up. A cut reads the pending entry
 back, adds this run's notes to it, and writes the sum **in place of** it —
 replacing rather than prepending, which is where "exactly one pre-release is ever
@@ -177,9 +189,13 @@ That is a real gap rather than a solved problem: the bundled app's version stops
 tracking the window's. Story 35 asks for exactly one source, and the shape that
 gets there is Tauri's `"version": "../package.json"` in `tauri.conf.json` — a
 one-line **Fence** change a human merges once, after which no release ever
-touches `src-tauri/**` again. It is filed as ticket 14 rather than made here, for
-the same reason ticket 04 declined it: making it would turn a landable ticket
-into a parked one, and the thing being built is the ability to land tickets.
+touches `src-tauri/**` again. It is filed as ticket 14 rather than made here,
+because making it would turn a landable ticket into a parked one, and the thing
+being built is the ability to land tickets. The survey of which five files carry
+a version, and the observation that Tauri can read the manifest, were written by
+ticket 04's author into ticket 06's Comments — ticket 04's own file says nothing
+about any of this, and the decision recorded here is 06's rather than an
+inherited one.
 
 The four private workspace manifests stay at `0.0.0`. Nothing is published, so
 that means "unversioned" in the ordinary npm sense rather than disagreeing with

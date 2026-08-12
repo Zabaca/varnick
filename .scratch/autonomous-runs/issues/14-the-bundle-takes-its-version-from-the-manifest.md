@@ -16,9 +16,11 @@ Tauri accepts `"version": "../package.json"` in `tauri.conf.json` and reads the
 number out of it. That is one line, and after it the field is frozen for ever.
 
 **This is a Fence change and lands through a human merge**, which is exactly why
-it is its own ticket rather than a line inside ticket 06. Ticket 04 declined it
-for the same reason and recorded why; ticket 06 recorded the decision it took
-instead, which was to leave `src-tauri/**` alone and say so. Authored, checked
+it is its own ticket rather than a line inside ticket 06. Ticket 04's author
+surveyed the five files that carry a version and declined to unify them, writing
+that up under "Inherited from 04" in **ticket 06's** Comments rather than in
+ticket 04's own file, which says nothing about any of this. Ticket 06 then took
+the decision, which was to leave `src-tauri/**` alone and say so. Authored, checked
 and left pending is the right outcome here — it is a two-minute decision at
 breakfast, and the alternative is a landable ticket turned into a parked one.
 
@@ -41,8 +43,9 @@ bumping it by reflex.
 
 ### From 06 — why this exists and what 06 did instead
 
-Ticket 04 recorded the gap and declined to close it. Ticket 06 took the decision
-rather than repeating the observation: **a release bumps the root manifest and
+The gap was recorded — in this ticket's ancestor, ticket 06's Comments, by ticket
+04's author — and left open. Ticket 06 took the decision rather than repeating
+the observation: **a release bumps the root manifest and
 nothing else, and never touches `src-tauri/**`.** That keeps every release
 landable unattended, which is the property the whole feature exists for, and it
 accepts a real cost — the bundled app's version stops tracking the window's until

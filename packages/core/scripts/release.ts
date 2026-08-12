@@ -20,13 +20,28 @@ import { join } from 'node:path'
 import { cloneRootOfScript } from '../dev-server.ts'
 import { cutPreRelease } from '../release-cut.ts'
 
+/**
+ * The three answers, as exit codes, matching `landing-cli.ts`.
+ *
+ * `0` cut, `1` refused, `2` could not answer — and the middle one is the
+ * distinction worth keeping. A night where every ticket was parked is a real
+ * night and a refusal this made on purpose; a build that would not compile is
+ * the world failing underneath it. An orchestrator that saw one code for both
+ * would either retry a refusal for ever or report a broken toolchain as a quiet
+ * evening.
+ */
+const CUT = 0
+const REFUSED = 1
+const COULD_NOT = 2
+
+const USAGE = 'usage: bun run release <feature-slug>   (the run to release, as in .scratch/<feature-slug>/issues)'
+
 const cloneRoot = cloneRootOfScript(import.meta.url)
 const slug = process.argv[2] ?? ''
 
 if (slug === '' || slug.startsWith('-') || slug.includes('/')) {
-  console.error('usage: bun run release <feature-slug>')
-  console.error('  the slug of the run to release, as in .scratch/<feature-slug>/issues')
-  process.exit(2)
+  console.error(USAGE)
+  process.exit(COULD_NOT)
 }
 
 const outcome = await cutPreRelease({
@@ -57,9 +72,12 @@ const outcome = await cutPreRelease({
 
 if (!outcome.cut) {
   console.error(`nothing cut: ${outcome.reason}`)
-  process.exit(1)
+  // `kind` rather than a prefix of `reason`: the sentence is prose and would
+  // change the exit code the next time somebody rewords it.
+  process.exit(outcome.kind === 'environment' ? COULD_NOT : REFUSED)
 }
 
 console.log(`\n${outcome.record.announcement}`)
 console.log(`artifact ${outcome.record.artifact} written to ${outcome.artifact}, and not served`)
 console.log(`tagged ${outcome.record.tag}`)
+process.exit(CUT)

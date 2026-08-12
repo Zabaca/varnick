@@ -86,6 +86,7 @@ import { assetPath } from '../artifact-assets.ts'
 import { installArtifact } from '../artifact-store.ts'
 import {
   CHANGELOG_HEADER,
+  CHANGELOG_WRAP,
   INITIAL_VERSION,
   PENDING_RECORD_RELATIVE_PATH,
   type ReleaseNote,
@@ -93,9 +94,15 @@ import {
   accumulate,
   announcement,
   artifactIdForVersion,
+  changedPathsFromNameStatus,
   changelogEntries,
+  changelogEntryText,
   changelogWith,
   coarserLevel,
+  firstSentence,
+  formatVersion,
+  isSourcePath,
+  noteOf,
   levelBetween,
   levelOfPaths,
   levelOfRun,
@@ -7170,6 +7177,41 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     words.**
   */
 
+  /*
+    The purity claim, checked rather than asserted in the header — the same four
+    lines `artifacts.ts` has, for the same reason its comment gives: the
+    alternative was a sentence nothing verified, and that sentence had already
+    gone stale. It went stale inside a single ticket last round, which is why
+    that check exists, and copying it here rather than admiring it is the whole
+    of the lesson.
+
+    This module has a stronger property than `artifacts.ts` and so a stricter
+    check: it imports *nothing*. That is what lets a band in the window read a
+    pending record without dragging `node:path` into the bundle behind it.
+  */
+  const decisions = readFileSync(new URL('../release.ts', import.meta.url).pathname, 'utf-8')
+  const releaseImports = [...decisions.matchAll(/^import .*? from '([^']+)'/gm)].map((m) => m[1])
+  check(
+    `the release decisions import nothing at all (found: ${releaseImports.join(', ') || 'nothing'})`,
+    releaseImports.length === 0,
+  )
+  check(
+    'and reach no filesystem, so reading the module is enough to know what it does',
+    !/\bfrom '(node:fs|node:fs\/promises)'/.test(decisions) && !decisions.includes('Bun.'),
+  )
+
+  /*
+    And the header this file ships is the header the committed changelog starts
+    with. Two copies of that text existed with nothing relating them, which is
+    the same shape as the sentence above and fails the same way — quietly, and
+    only for whoever deletes CHANGELOG.md and regenerates it.
+  */
+  const committedChangelog = readFileSync(new URL('../../../CHANGELOG.md', import.meta.url).pathname, 'utf-8')
+  check(
+    'the committed changelog is the one a first cut would have written',
+    committedChangelog.startsWith(CHANGELOG_HEADER),
+  )
+
   // --- the number ---------------------------------------------------------
 
   check('the sequence starts where the manifest does', INITIAL_VERSION === '0.0.0')
@@ -7285,6 +7327,45 @@ const SIGN_IN_AT = 'https://claude.com/cai/oauth/authorize?state=drive'
     ]) === 'fix',
   )
   check('an empty diff is the smallest thing there is', levelOfPaths([]) === 'fix')
+
+  /*
+    What git actually prints, read directly rather than only through a real
+    repository. This was on the wrong side of the pure/impure line — a total
+    function over a string, reachable only by cloning something and committing to
+    it, which is the definition of a decision that should have been assertable
+    and was not.
+
+    `-z` is `status\0path\0` pairs with no quoting, which is what the flag is for:
+    under the default `core.quotePath` git prints `"scripts/caf\303\251.sh"` and
+    the leading quote defeats every path rule downstream.
+  */
+  check(
+    'what git prints is read as what changed',
+    changedPathsFromNameStatus('A\0packages/core/release.ts\0D\0src/old.ts\0M\0README.md\0')
+      .map((one) => `${one.status}:${one.path}`)
+      .join(',') === 'added:packages/core/release.ts,removed:src/old.ts,modified:README.md',
+  )
+  check('an empty diff is no paths rather than one empty one', changedPathsFromNameStatus('').length === 0)
+  check(
+    'a non-ASCII path arrives whole, because -z does not quote it',
+    changedPathsFromNameStatus('A\0scripts/café.sh\0')[0]?.path === 'scripts/café.sh',
+  )
+  /*
+    A letter this does not know reads as `modified`, which is the conservative
+    direction *here* and the opposite of the one `isProtectedPath` takes. The
+    level only ever rises, so a misread letter that answered `removed` would pin
+    every future night to a minor bump nobody could undo.
+  */
+  check(
+    'a status letter nobody planned for is a modification, not a removal',
+    changedPathsFromNameStatus('T\0packages/core/x.ts\0C\0packages/core/y.ts\0').every(
+      (one) => one.status === 'modified',
+    ),
+  )
+  check(
+    'a trailing status with no path is dropped rather than paired with nothing',
+    changedPathsFromNameStatus('A\0a.ts\0D\0').length === 1,
+  )
 
   // --- the number, from the tickets ---------------------------------------
 
@@ -7409,6 +7490,44 @@ A sentence about the file.
   const note = (id: string, line: string): ReleaseNote => ({ id, title: `t${id}`, line, detail: line })
 
   /*
+    The four exported decisions the header claimed were covered and were only
+    reached through their callers. Each is small, and each is a place a wrong
+    answer would be invisible: a bullet that runs to six lines, a document read
+    as source, a version formatted two ways, a note that dropped its title.
+  */
+  check('a bullet is the first sentence, not the paragraph', firstSentence('One. Two. Three.') === 'One.')
+  check('a paragraph with no full stop is left whole', firstSentence('no stop here') === 'no stop here')
+  check('and its newlines are collapsed, because a bullet is one line', firstSentence('one\n  two.') === 'one two.')
+  check('a full stop that ends the text still ends the sentence', firstSentence('Just one.') === 'Just one.')
+
+  check('code is source', isSourcePath('packages/core/release.ts') && isSourcePath('src-tauri/src/lib.rs'))
+  check(
+    'and what the run says about itself is not',
+    !isSourcePath('docs/adr/0022-x.md') && !isSourcePath('.scratch/run/issues/06.md') && !isSourcePath('README.md'),
+  )
+  check(
+    'nor is the way it is proved',
+    !isSourcePath('packages/harness/src/fence.test.ts') && !isSourcePath('packages/core/scripts/drive.ts'),
+  )
+  check('a leading ./ is the same path', isSourcePath('./packages/core/x.ts') && !isSourcePath('./docs/x.md'))
+
+  check('a version formats back to what it parsed', formatVersion({ major: 1, minor: 4, patch: 2 }) === '1.4.2')
+  check(
+    'and round-trips through the parser',
+    formatVersion(parseVersion('0.12.30') ?? { major: 0, minor: 0, patch: 0 }) === '0.12.30',
+  )
+
+  const fromTicket = noteOf({
+    id: '06',
+    title: 'Cut a pre-release',
+    summary: 'one command cuts a release. It does several things.',
+    acceptedConsequence: null,
+  })
+  check('a note keeps the ticket it came from', fromTicket.id === '06' && fromTicket.title === 'Cut a pre-release')
+  check('its bullet is one sentence', fromTicket.line === 'one command cuts a release.')
+  check('and its detail is the whole paragraph, for the announcement', fromTicket.detail.includes('several things'))
+
+  /*
     Three rules, and each one is a night this has to survive: carried notes come
     first and in order, a ticket cannot appear twice because last night's tickets
     are still ticked, and a promoted ticket never comes back because the tickets
@@ -7458,6 +7577,72 @@ A sentence about the file.
   check(
     'exactly one entry is ever pending',
     changelogEntries(written).filter((entry) => entry.promotedOn === null).length === 1,
+  )
+
+  /*
+    The writer and the reader, round-tripped on a note long enough to wrap —
+    which is every real note, because a ticket's first sentence is a sentence.
+
+    This is the assertion the pair did not have, and its absence was not
+    theoretical: the writer emitted one long line, the documented format wrapped,
+    and the reader was line-anchored — so a hand-edited entry in the house style
+    parsed as its first fragment and lost the rest. Worse than a bad night,
+    because `accumulate` lets the carried note win, so the truncation is what
+    every night after inherits. Story 20 is precisely "three nights nobody
+    promoted produce three nights of notes", so a silent truncation here costs
+    the thing the feature promises.
+  */
+  const long = note(
+    '06',
+    'one command turns a finished queue of tickets into something the developer can accept in the morning, with a version, a changelog entry, an announcement, a build and a tag.',
+  )
+  const wrapped = changelogEntryText('0.0.4', [long])
+
+  check('a real note wraps rather than running off the page', wrapped.split('\n').length > 3)
+  check(
+    'and every line of it is within the width the repository wraps to',
+    wrapped.split('\n').every((line) => line.length <= CHANGELOG_WRAP),
+  )
+  check(
+    'the reader folds a wrapped bullet back into the note that was written',
+    pendingEntry(wrapped)?.notes[0]?.line === long.line,
+  )
+  check('with its id and title intact across the wrap', pendingEntry(wrapped)?.notes[0]?.id === '06')
+
+  /*
+    And the same through the whole writer, because that is the path a second
+    night actually takes: read yesterday's file, accumulate, write it back. A
+    note that survived one round trip and lost a word on the next would be the
+    original defect wearing a different hat.
+  */
+  const nightOne = changelogWith(CHANGELOG_HEADER, '0.0.4', [long])
+  const nightTwo = changelogWith(nightOne, '0.0.4', accumulate(pendingEntry(nightOne)?.notes ?? [], []))
+  check('a note survives being written, read and written again unchanged', nightOne === nightTwo)
+  check(
+    'and still says what the ticket said',
+    pendingEntry(nightTwo)?.notes[0]?.line === long.line,
+  )
+
+  /*
+    A bullet somebody wrapped by hand, at a width and an indent this did not
+    choose. The reader has to take it, because the file is prose that people
+    edit and markdown reads it as one bullet.
+  */
+  const handWrapped = `## v0.0.5 — pending
+
+- **07 — Keep the previous build** — a build that will not
+      start does not take away the tool you would fix it with.
+
+## v0.0.4 — 2026-08-04
+`
+  check(
+    'a bullet somebody wrapped by hand is one bullet',
+    pendingEntry(handWrapped)?.notes[0]?.line ===
+      'a build that will not start does not take away the tool you would fix it with.',
+  )
+  check(
+    'and a blank line still ends it, so the entry below is not swallowed',
+    changelogEntries(handWrapped).length === 2 && lastPromotedVersion(handWrapped) === '0.0.4',
   )
 
   // --- the announcement ---------------------------------------------------
@@ -7846,10 +8031,43 @@ A sentence about the file.
 
     check('a failed build cuts nothing', !failed.cut)
     check('and says so rather than leaving it to be discovered', !failed.cut && failed.reason.includes('the build failed'))
+    /*
+      A build that will not compile is the world failing underneath the release,
+      not the release refusing — and the caller is a shell exit status, so the
+      two have to be distinguishable without reading the sentence. An
+      orchestrator that could not tell them apart would either retry a quiet
+      night for ever or report a broken toolchain as one.
+    */
+    check('and calls it an environment failure rather than a decision', !failed.cut && failed.kind === 'environment')
     check('the manifest is back at the version it had', read('package.json') === before.manifest)
     check('no changelog entry was written', read('CHANGELOG.md') === before.changelog)
     check('nothing new is pending', read('.varnick/pending-release.json') === before.record)
     check('and no tag was left behind', tags().join(',') === before.tags)
+
+    /*
+      The other refusal, against a real repository: nothing left to release.
+
+      Reaching it takes promoting first, and that is the point rather than
+      set-up. An empty ticket queue is *not* enough on its own — the pending
+      entry still carries unpromoted notes, so there is genuinely something to
+      cut and the release is right to cut it. Only a promotion empties the
+      accumulator. Writing this test the obvious way asserted the opposite and
+      failed, which is the behaviour worth pinning: a quiet night after an
+      unpromoted one still re-cuts the work nobody has taken.
+    */
+    writeFileSync(join(clone, 'CHANGELOG.md'), read('CHANGELOG.md').replace('— pending', '— 2026-08-14'))
+    run('add', '-A')
+    run('commit', '-q', '-m', 'promoted')
+
+    const quiet = await cutPreRelease({
+      cloneRoot: clone,
+      issuesDirectory: join(clone, '.scratch/no-such-run/issues'),
+      build: buildsInto('never runs'),
+      now: () => new Date('2026-08-14T03:00:00.000Z'),
+    })
+    check('once everything is promoted, a run with no landed tickets cuts nothing', !quiet.cut)
+    check('and that is a decision rather than an environment failure', !quiet.cut && quiet.kind === 'decided')
+    check('the build was never reached, so the manifest was never bumped', read('package.json') === before.manifest)
   } finally {
     rmSync(clone, { recursive: true, force: true })
   }
