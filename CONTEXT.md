@@ -60,7 +60,7 @@ A named preset deciding what an agent is — its instructions, tools, model, San
 _Avoid_: mode, persona, preset (the Agent SDK uses "preset" for its own system prompt)
 
 **Custom Tool**:
-A tool given to an agent as an in-process SDK MCP tool rather than a built-in. Runs in the host process, outside the Sandbox by construction — the sanctioned way to grant one narrow capability without widening a policy that applies to everything else.
+A tool given to an agent as an in-process SDK MCP tool rather than a built-in. Runs in the host process, outside the Sandbox by construction — the sanctioned way to grant one narrow capability without widening a policy that applies to everything else. There are three: `launch_preview`, `land_worktree` and `cut_pre_release`. Each takes exactly one string and decides nothing from it — a **Worktree** name is looked up in `git worktree list`, a feature slug is checked before it can become an argument, and what a branch changed is read from git rather than from the request. The two that write the developer's clone are a *second door* rather than a shorter `denyWrite`; see [ADR-0023](./docs/adr/0023-a-second-door-rather-than-a-wider-one.md).
 _Avoid_: MCP server (a Custom Tool may be one; the term is about where the code runs)
 
 **Secrets Store**:
@@ -115,6 +115,8 @@ _Avoid_: privileged paths, boundary (the boundary is what the Fence produces), *
 
 **Protected Path**:
 A path an unattended run may not merge: the Fence, plus `sandbox-policy.json`, `scripts/**` and `.githooks/**`, plus a `package.json` diff that changes `preinstall`, `postinstall` or `prepare`. Everything else the agent lands itself when the checks are green — `packages/core/**`, `vite.config.*`, the rest of that manifest, and Userspace.
+
+**It lands it by asking**, through the `land_worktree` **Custom Tool**: the host refuses a dirty live tree and an unmergeable branch, reads what the branch changed out of git itself, asks `unattendedLanding`, and merges only on permission — with the rule and the path that refused it coming back in words a run report can print. The agent still cannot write any of those paths in the live tree, which is the point: the write happens outside the Sandbox because the predicate said so, not because the fence moved. See [ADR-0023](./docs/adr/0023-a-second-door-rather-than-a-wider-one.md).
 
 **A third list, and none of the three derives from another.** The Fence is what may not be Previewed unconfined; this is what may not be landed unattended; `denyWrite` is what may not be written in the live tree. They answer different questions and have already disagreed on real entries in both directions — `sandbox-policy.json` is not Fence and is protected, `packages/core/**` is denied and lands. `PROTECTED_PATHS` and `unattendedLanding` live beside `FENCE_PATHS` in `packages/harness/src/fence.ts`, and the containment between the three is a test rather than a comment. See [ADR-0018](./docs/adr/0018-three-lists-three-questions.md).
 

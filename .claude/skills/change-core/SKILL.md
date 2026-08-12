@@ -28,8 +28,14 @@ next commit with no diff anywhere. Hooks are authored here like Core. See the
 amendment to [ADR-0016](../../../docs/adr/0016-gits-own-directory-is-outside-the-review-path.md).
 
 That is not a loophole. It is the design: what you write in a worktree is text
-until a human merges it, so you can change anything at all and nothing you write
-becomes running code without someone reading it first.
+until something merges it, so you can change anything at all and nothing you
+write becomes running code by being written.
+
+**What merges it depends on what you touched.** Ordinary Core lands on your own
+ask — see beat 4. The Fence, the sandbox policy, `scripts/**`, the tracked hooks
+and a `package.json` install lifecycle script are a human's merge, every time:
+whatever decides what you may do has to be re-established at launch from
+something you cannot write, or one restart undoes all of it.
 
 ## The four beats
 
@@ -85,7 +91,7 @@ and the containment probes, none of which need a window.
 First preview of a worktree compiles Tauri and takes minutes. Say so, rather
 than leaving them watching a window that has not appeared.
 
-### 4. Merge **down**, then hand over a fast-forward
+### 4. Merge **down**, then land it or hand over a fast-forward
 
 There are two merges and only one of them is yours.
 
@@ -106,17 +112,36 @@ Two things this is not just convenience for:
 So: merge `main` down, resolve, re-run the tests, and preview *again* if the
 merge changed anything that matters.
 
-**Theirs: the merge into the live tree.** Landing the change means writing
-`packages/core/**` there and the kernel refuses it — that refusal is the gate
-this whole arrangement is built around, not a bug to work around. If you have
-merged down first, their side is a fast-forward: a ref moves, files are checked
-out, nothing is decided.
+**The other one: the merge into the live tree.** Landing the change means
+writing `packages/core/**` there and the kernel refuses *you* — that refusal is
+the gate this whole arrangement is built around, not a bug to work around. If you
+have merged down first, that side is a fast-forward: a ref moves, files are
+checked out, nothing is decided.
 
-Hand over the branch name, say what you changed and what to look at, and say
-whether it is a fast-forward. Then stop.
+**Who performs it depends on what the branch touches**, and you do not have to
+work that out from memory. Ask `land_worktree` with the Worktree's name and read
+the answer:
 
-Hand over the branch name and say what the developer should look at. They merge,
-they restart, the change is live.
+- **It landed.** The host merged it, having read what the branch changed out of
+  git and asked the protected-path predicate. Ordinary Core is ordinary work —
+  `packages/core/**`, `vite.config.*`, dependencies, Userspace.
+- **It refused, naming a rule and a path.** The branch touches the Fence, the
+  sandbox policy, `scripts/**`, the tracked hooks, or a `package.json` install
+  lifecycle script. That is a human's merge and always will be
+  ([ADR-0023](../../../docs/adr/0023-a-second-door-rather-than-a-wider-one.md)).
+  Hand over the branch name, say what you changed and what to look at, say
+  whether it is a fast-forward, and **quote the refusal** — it is the reason the
+  developer is being asked at all.
+- **Anything else** — a dirty live tree, a branch that will not merge, a host
+  that could not be asked. Nothing was merged and nothing about the branch is
+  wrong. Say which, and do not retry it in a loop.
+
+`bun run landable <branch>` answers the same question without merging anything,
+which is worth asking *before* the work rather than after it.
+
+**A landed branch is not a running one.** varnick goes on serving the build it
+started with until the developer restarts it, so do not reason about your change
+as though the window in front of you has it.
 
 ## If a write is refused
 

@@ -129,16 +129,21 @@ time it was added afterwards and why that was a person's act.
 
 ## Cutting it
 
-```
-bun run release <feature-slug>
-```
+**`cut_pre_release`, naming the feature slug.** Not `bun run release` — that
+writes `package.json`, which `denyWrite` refuses you, and the run would fail on
+the first write. The tool asks the host to run the same command in the live
+clone; see [ADR-0023](../../../docs/adr/0023-a-second-door-rather-than-a-wider-one.md)
+for why the manifest stays denied rather than the deny list getting shorter (its
+`postinstall` runs on the developer's next install).
 
-**In the live clone, on `main`, after the last merge.** The clone root is taken
-from where the script file is, so running this inside a worktree cuts *that*
-worktree: the commit and the tag land on a branch nobody merges, and the artifact
-goes into a store the developer's window never reads. There is no default slug,
-because a release that guessed which queue it was releasing would announce the
-wrong night's work.
+**After the last merge, and there is no default slug** — a release that guessed
+which queue it was releasing would announce the wrong night's work. The host runs
+it in the live clone, which is also what stops the failure a hand-run had: run
+from inside a worktree, the commit and the tag land on a branch nobody merges and
+the artifact goes into a store the developer's window never reads.
+
+A developer running it by hand still types `bun run release <feature-slug>`, and
+everything below is true of both.
 
 It writes `package.json`, builds, installs the artifact under the version's own
 id, writes `CHANGELOG.md`, commits those two files and nothing else, writes the
@@ -146,11 +151,16 @@ tag, and writes `.varnick/pending-release.json` **last** — so nothing on disk
 offers a Pre-release until every part of it exists. It does not push, and it does
 not touch `served`.
 
-| Code | Means | What you do |
-|---|---|---|
-| `0` | cut | Read the announcement back, then report it. |
-| `1` | refused, on purpose | A decision, not a fault. **Report the sentence it printed**, and do not retry — nothing about the tree will have changed. |
-| `2` | could not | Something failed underneath it, or the invocation was wrong. Check the slug before you conclude anything else. |
+| Code | The tool says | Means | What you do |
+|---|---|---|---|
+| `0` | `cut` | cut | Read the announcement back, then report it. |
+| `1` | `refused` | refused, on purpose | A decision, not a fault. **Report the sentence it printed**, and do not retry — nothing about the tree will have changed. |
+| `2` | `no-release` | could not | Something failed underneath it, or the invocation was wrong. Check the slug before you conclude anything else. |
+| — | `not-a-feature` | the slug is not one | Refused before anything ran. It is one path component naming the run, not a path or a flag. |
+
+The tool answers with the tag and the last line the command printed, so "quote
+the sentence it printed" is the same instruction either way — the sentence is in
+the tool result.
 
 **Exit `1` is more than one refusal, so quote the one you got.** `no landed
 ticket is unreleased, so there is nothing to cut` is the quiet night: nothing

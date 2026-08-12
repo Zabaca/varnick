@@ -24,11 +24,18 @@ on. A branch that went green against a `main` from four hours ago has been
 checked against a tree that no longer exists.
 
 **Anything Fence stops.** `packages/harness/**`, `src-tauri/**`,
-`sandbox-policy.baseline.json`, `sandbox-policy.json`, `scripts/**` and
-`.githooks/**` are never merged unattended, and neither is a `package.json` diff
-that touches `postinstall`, `preinstall` or `prepare`. A ticket that needs one is
-**authored in full**, checked, and left pending for the developer — the work is
-the expensive part and you can do all of it. What you cannot do is land it.
+`sandbox-policy.baseline.json`, `sandbox-policy.json`, `scripts/**`,
+`.githooks/**` and `.varnick/gitconfig` are never merged unattended, and neither
+is a `package.json` diff that touches `postinstall`, `preinstall` or `prepare`. A
+ticket that needs one is **authored in full**, checked, and left pending for the
+developer — the work is the expensive part and you can do all of it. What you
+cannot do is land it.
+
+You do not have to remember that list. `land_worktree` refuses on it, reading
+what the branch changed out of git rather than out of anything you say, and its
+refusal names the rule and the path — quote that sentence in the report. Ask
+early too: `bun run landable <branch>` answers the same question before a night
+is spent on work that cannot be delivered.
 
 ## The loop
 
@@ -77,10 +84,27 @@ Inside the Worktree, merge `main` down. Resolve conflicts yourself — you have
 read both branches and the developer has read neither. `mattpocock-skills:resolving-merge-conflicts`
 is available and may be invoked.
 
-Re-run the full suite: typecheck, lint, `bun run drive`, build. Then land it.
+Re-run the full suite: typecheck, lint, `bun run drive`, build. Then land it with
+`land_worktree`, naming the Worktree — one path component under
+`.claude/worktrees/`, not a path.
 
 If the merge changes anything that matters, review again before landing. A
 conflict resolution is code nobody has reviewed.
+
+**Read the answer, and treat its three shapes differently.** A landing says so
+and says the commit; a refusal is finished work for the developer, so park the
+ticket with the sentence it gave you and move on; anything else — `no-landing`,
+a dirty live tree, a host that could not be asked — is the machine rather than
+the branch, and retrying it in a loop is how a night is spent on nothing.
+
+Two of those you can act on yourself. `unmergeable` means merge `main` down again
+and ask once more; `dirty-live-tree` means the developer has uncommitted work in
+the clone, which you must not commit or set aside for them — park what is
+waiting, say so in the report, and stop landing for the night.
+
+**A landed branch is not running.** varnick goes on serving the build it started
+with until it restarts, so nothing you land is in the varnick you are talking to.
+Do not test a later ticket against a change you merged an hour ago.
 
 ### 5. When the queue is empty
 
