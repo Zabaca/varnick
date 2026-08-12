@@ -15,20 +15,20 @@ screen and must not be scrollable away from.
 Promotion is the developer's, always. The run cuts the pre-release; it never
 switches the build under an open window.
 
-**Realizes:** release.idle, release.pending, release.promoting, release.failed
+**Realizes:** release.idle, release.pending, release.promoting, release.promoted, release.failed
 
 **Blocked by:** 06 — Cut a pre-release from the command line.
 
-**Status:** ready-for-agent
+**Status:** ready-for-review
 
-- [ ] A pending pre-release appears in the window with its version and its announcement
-- [ ] The band renders nothing when there is no pre-release pending
-- [ ] One control promotes it, and it is rendered only when the machine accepts the event
-- [ ] Promoting switches the served artifact and restarts varnick onto it
-- [ ] The conversation is intact afterwards, restored from the Session mirror
-- [ ] The announcement is posted into the transcript, attributed as varnick's own rather than as something the developer or the agent said
-- [ ] A promotion that fails leaves the developer on the build they were already running, with the reason on screen and a way to try again
-- [ ] The states are named in the machine, carry cards on the states page, and are driven headlessly — including the refusals
+- [x] A pending pre-release appears in the window with its version and its announcement
+- [x] The band renders nothing when there is no pre-release pending
+- [x] One control promotes it, and it is rendered only when the machine accepts the event
+- [x] Promoting switches the served artifact and restarts varnick onto it
+- [x] The conversation is intact afterwards, restored from the Session mirror
+- [x] The announcement is posted into the transcript, attributed as varnick's own rather than as something the developer or the agent said
+- [x] A promotion that fails leaves the developer on the build they were already running, with the reason on screen and a way to try again
+- [x] The states are named in the machine, carry cards on the states page, and are driven headlessly — including the refusals
 
 ## Comments
 

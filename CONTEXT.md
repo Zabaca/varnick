@@ -159,6 +159,16 @@ _Avoid_: publish, ship, deploy (nothing leaves the machine — there is no remot
 One number, with one source: the root `package.json`, read when the renderer is built. A release edits that field and nothing else in Core, which is what keeps a release from being able to fail typecheck. Inferred rather than declared — a removed source file or a ticket recording an **Accepted consequence** moves the minor, everything else moves the patch while the major is `0`. `src-tauri/`'s two version fields do not follow, because a release that wrote there would need a human; see [ADR-0022](./docs/adr/0022-a-pre-release-is-cut-from-the-changelogs-pending-block.md) for that and for why the changelog is the accumulator.
 _Avoid_: build number, revision, semver (the scheme is semver; this is the number)
 
+**Pre-release**:
+A build cut from a finished run and **not** served — a version, a changelog entry, an announcement written from the tickets, an Artifact and a tag. Exactly one is pending at a time, recorded in `.varnick/pending-release.json`; each night's supersedes the last. Cutting one never moves **Served**: it is cut while somebody is asleep and must not change the ground under the window they left open.
+_Avoid_: draft, candidate, beta (all imply a stage in a pipeline; this is a finished build nobody has accepted), nightly
+
+**Promotion**:
+The developer accepting a **Pre-release**. It switches **Served** to the Artifact, stamps the changelog entry with the date, posts the announcement into the transcript as varnick's own, and restarts varnick onto the build. Always the developer's — a run cuts, it never promotes.
+
+Every refusal happens before the first write, so a promotion that does not go through leaves the window on the build it was already running. The sharpest is a build that **will not start**: promoting onto one would hand the developer a window that does not open, and the fallback would serve the old build back on the next launch — which works, and still reads as a promotion that undid itself.
+_Avoid_: release (a **Pre-release** is the noun; this is the act of taking it), accept/apply (both lose that the window restarts), deploy, ship
+
 ### Conversation
 
 **Session**:
