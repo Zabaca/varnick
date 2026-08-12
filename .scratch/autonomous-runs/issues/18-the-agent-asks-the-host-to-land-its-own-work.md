@@ -111,13 +111,13 @@ feature needs, and the one that removes the rest.
 **Blocked by:** None. Ticket 02's predicate, ticket 08's bridge-to-runtime
 precedent and ticket 11's working git are all on `main`.
 
-**Status:** ready-for-agent
+**Status:** ready-for-review
 
-- [ ] A Custom Tool lets the agent ask for a Worktree to be landed, beside `launch_preview`
-- [ ] The host answers with `unattendedLanding`, asked from git's own listing rather than from the request
-- [ ] A branch touching any protected path is refused, with the rule that refused it, in words a report can print
-- [ ] A branch touching none of them is merged, and the agent can see that it was
-- [ ] A dirty live tree, an unmergeable branch and an unknown Worktree name each refuse distinctly
-- [ ] `denyWrite` is unchanged, and a test asserts the agent still cannot write `packages/core/**` in the live tree
-- [ ] The agent can cut a pre-release without a human, by the same host-side route
-- [ ] An ADR records why this is a second door rather than a wider one, and what would have to become true to narrow `denyWrite` instead
+- [x] A Custom Tool lets the agent ask for a Worktree to be landed, beside `launch_preview`
+- [x] The host answers with `unattendedLanding`, asked from git's own listing rather than from the request
+- [x] A branch touching any protected path is refused, with the rule that refused it, in words a report can print
+- [x] A branch touching none of them is merged, and the agent can see that it was
+- [x] A dirty live tree, an unmergeable branch and an unknown Worktree name each refuse distinctly
+- [x] `denyWrite` is unchanged, and a test asserts the agent still cannot write `packages/core/**` in the live tree
+- [x] The agent can cut a pre-release without a human, by the same host-side route
+- [x] An ADR records why this is a second door rather than a wider one, and what would have to become true to narrow `denyWrite` instead

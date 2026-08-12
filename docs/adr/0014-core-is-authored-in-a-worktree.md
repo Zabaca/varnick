@@ -5,7 +5,12 @@ The three consequences below about the Preview dialog are superseded by
 [ADR-0019](./0019-a-preview-is-confined-by-the-live-trees-policy.md) — a Preview
 is confined by the live tree's policy, so there is nothing to approve and the
 dialog is deleted. Everything else here stands, including the merge gate this
-rests on.
+rests on — and [ADR-0023](./0023-a-second-door-rather-than-a-wider-one.md) is
+what happens when the agent asks for that merge rather than performing it.
+`denyWrite` is unchanged by it, which is why "the gate needs nothing built"
+below is still the mechanism; the sentence that ADR revises is the one about
+deleting entries from `sandbox-policy.json`, which is now the wrong way to get
+what it offers.
 
 ## Context
 
@@ -70,6 +75,14 @@ This is what makes the boundary a default rather than a policy. A developer who
 wants their agent to merge its own Core changes deletes those entries from
 `sandbox-policy.json` — the file already says *"Edit this file freely"* — and it
 works. varnick ships a fence, not a bureaucracy.
+
+*(Revised by [ADR-0023](./0023-a-second-door-rather-than-a-wider-one.md). That is
+still a thing a developer may do and it is no longer the way to get what it
+offers: varnick's own agent lands ordinary Core through `land_worktree`, where
+the host performs the merge and the protected-path predicate decides. Deleting
+the entries instead gives up the property this whole ADR rests on — that a Core
+change exists as a branch and a diff before it exists as running code — because
+a direct write to the live tree is on no branch and in no diff at all.)*
 
 ## Consequences
 
