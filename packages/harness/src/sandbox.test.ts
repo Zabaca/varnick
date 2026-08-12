@@ -419,10 +419,9 @@ describe('what the policy denies', () => {
       because varnick creates the file itself. Ticket 11: git fatals on a global
       config it can see and cannot read and `$HOME` is denied, so every git
       command in the Sandbox exited 128 until `GIT_CONFIG_GLOBAL` was pointed at
-      `.varnick/gitconfig`. A gitconfig runs commands — `core.hooksPath`,
-      `core.editor`, `alias.*` and `credential.helper` beginning `!`,
-      `filter.*.clean` — so writable, it would be the `.githooks` hole again,
-      arriving through the fix for something else.
+      `.varnick/gitconfig`. A gitconfig runs commands — `EXECUTING_GIT_KEYS` in
+      ./gitconfig.ts is the one enumeration of which — so writable, it would be
+      the `.githooks` hole again, arriving through the fix for something else.
     */
     const { denyWrite } = policy().filesystem
     expect(denyWrite).toContain(agentGitConfigPath(CLONE))

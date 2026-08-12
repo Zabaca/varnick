@@ -53,11 +53,8 @@
  * list is complete on the day it is written and stale the next time git adds a
  * key, and the failure is silent — an executing key nobody listed lands in the
  * projection and runs. The keys that execute today are already more than most
- * people would name from memory: `core.hooksPath`, `core.editor`, `core.pager`,
- * `core.sshCommand`, `alias.*` beginning `!`, `credential.helper` beginning `!`,
- * `filter.*.clean` / `.smudge` / `.process`, `diff.*.textconv`,
- * `merge.*.driver`, `include.path` and `includeIf.*`. Any list of those is a
- * list to be caught out by.
+ * people would name from memory; they are enumerated once, as
+ * {@link EXECUTING_GIT_KEYS}, and any list of them is a list to be caught out by.
  *
  * The allowlist is enforced by **what is asked for** rather than by filtering
  * what came back — {@link projectGitConfig} asks git for each allowed key by
@@ -124,6 +121,41 @@ export function agentGitConfigPath(cloneRoot: string): string {
  * were added by mistake.
  */
 export const PROJECTED_GIT_KEYS = ['user.name', 'user.email'] as const
+
+/**
+ * Git config keys that run a command, enumerated **once**.
+ *
+ * Not a denylist — nothing filters on this, and the module docblock above says
+ * why a denylist would be the wrong shape. It exists because the argument for
+ * the allowlist is *"a gitconfig is executable configuration"*, and that
+ * sentence is only convincing with the list beside it. It was written out by
+ * hand in four places on the first pass — this module's docblock, the
+ * `denyWrite` entry in ./sandbox.ts, a test comment, and the ticket — which is
+ * four copies of a security-critical fact, free to drift.
+ *
+ * So it is a constant, and the two places that can interpolate one do:
+ * `describeSandboxPolicy` puts it in the generated policy's prose, and
+ * gitconfig.test.ts asserts the rendered projection contains none of it. Prose
+ * that cannot interpolate points here rather than re-listing.
+ *
+ * Each entry is the substring a reader would grep for, not a glob, because what
+ * the test needs to ask is "does this name appear in the rendered file at all".
+ * `alias` and `credential` are the bare section names on purpose: any key under
+ * them can carry a `!` prefix and become a shell command.
+ */
+export const EXECUTING_GIT_KEYS = [
+  'core.hooksPath',
+  'core.editor',
+  'core.pager',
+  'core.sshCommand',
+  'alias',
+  'credential',
+  'filter',
+  'diff.*.textconv',
+  'merge.*.driver',
+  'include.path',
+  'includeIf',
+] as const
 
 /** One key and the value the developer's config gave it. */
 export interface GitConfigEntry {
@@ -222,6 +254,13 @@ export function renderProjectedGitConfig(entries: readonly GitConfigEntry[]): st
  * project. The value's *content* is never trusted — see
  * {@link isProjectableValue}.
  *
+ * **A key set more than once is not one of those cases.** Review suggested it
+ * was, on the understanding that a multi-valued `--get` exits 2; measured on git
+ * 2.52 it exits **0** and prints the last value, which is documented behaviour
+ * (*"the last value if multiple key values were found"*) and is also the value
+ * any ordinary git command would have used. So a developer with two `user.name`
+ * lines gets the one git itself would honour, rather than nothing.
+ *
  * Runs on the host, outside the Sandbox, which is the only process that can read
  * the file at all. Nothing derived from the clone reaches this: the key comes
  * from {@link PROJECTED_GIT_KEYS}, a constant in this repository.
@@ -268,7 +307,73 @@ export function projectGitConfig(
 }
 
 /**
- * Write the projection into a clone, and answer with the path.
+ * What happened when varnick tried to write the projection.
+ *
+ * Three outcomes rather than a boolean, because **the two failures are not the
+ * same size** and the first version of this function reported them as though
+ * they were. It swallowed both and its comment justified the swallow with *"a
+ * `GIT_CONFIG_GLOBAL` naming a file that is not there is a git that works with
+ * no identity"* — which is true of one of them and false of the other.
+ *
+ *   * `written`  — the file is there, and its contents are what
+ *                  {@link projectGitConfig} produced.
+ *   * `unwritten` — the directory exists and the file could not be written.
+ *                  This is the survivable one, and it is the one the old comment
+ *                  described: git runs, and commits fall back to whatever it
+ *                  auto-detects.
+ *   * `uncreatable` — `.varnick/` itself could not be created. **Nothing
+ *                  survives this**, and it has nothing to do with git: srt
+ *                  denies `file-write-create` on every ancestor of a denied
+ *                  path, so a confined Claude Code cannot create
+ *                  `.varnick/claude` either and does not start at all. Reported
+ *                  as its own outcome so that the sentence varnick prints is
+ *                  about the launch that is about to fail rather than about a
+ *                  missing git identity.
+ *
+ * Both failures carry git's own `reason`, because "varnick could not write your
+ * git config" with no errno is a sentence that sends someone to the wrong file.
+ */
+export type ProjectedGitConfigOutcome =
+  | { readonly kind: 'written'; readonly path: string }
+  | { readonly kind: 'unwritten'; readonly path: string; readonly reason: string }
+  | { readonly kind: 'uncreatable'; readonly path: string; readonly reason: string }
+
+/**
+ * What varnick should say about an outcome, or null when there is nothing to
+ * say.
+ *
+ * Separate from the write so the sentence is a pure function of the outcome and
+ * can be asserted without a filesystem. Prefixed `varnick:` to match every other
+ * line this product prints to stderr — see `establishSandbox`, which is what
+ * puts it on that channel.
+ *
+ * **The `unwritten` sentence names the rejected alternative by name.** A clone
+ * whose projection failed to write produces commits under git's auto-detected
+ * identity, which is exactly the outcome `GIT_CONFIG_GLOBAL=/dev/null` was
+ * rejected for. Arriving there silently would be worse than having chosen it,
+ * because at least choosing it would have been a decision somebody made.
+ */
+export function projectedGitConfigReport(outcome: ProjectedGitConfigOutcome): string | null {
+  if (outcome.kind === 'written') return null
+  if (outcome.kind === 'unwritten') {
+    return [
+      `varnick: ${outcome.path} could not be written — ${outcome.reason}`,
+      '  git will run in the Sandbox, and its commits will carry whatever identity',
+      '  git auto-detects rather than yours. That is the outcome varnick rejected',
+      '  when it chose a projected config over GIT_CONFIG_GLOBAL=/dev/null, so it',
+      '  is said out loud rather than left to be discovered in a git log.',
+    ].join('\n')
+  }
+  return [
+    `varnick: ${dirname(outcome.path)} could not be created — ${outcome.reason}`,
+    '  This is not only about git. The agent writes its session store and its',
+    '  temporary directory inside that directory, and the Sandbox denies creating',
+    '  it from in there, so the agent is unlikely to start at all.',
+  ].join('\n')
+}
+
+/**
+ * Write the projection into a clone, and say what happened.
  *
  * **Called by the runtime, before the Sandbox wraps anything**, for two reasons
  * that both have to hold. The runtime is unconfined, so it is the only process
@@ -281,12 +386,12 @@ export function projectGitConfig(
  * their name gets it on the next start and a corrupted file repairs itself. The
  * agent cannot have edited it in between.
  *
- * The path is returned whether or not the write worked, and the caller sets the
- * variable either way. A `GIT_CONFIG_GLOBAL` naming a file that is not there is
- * a git that works with no identity; leaving the variable unset is a git that
- * exits 128 on every command. Those are not close, and the failure that gets
- * here is a clone whose `.varnick` cannot be written — which is a broken
- * install, not a reason to refuse to start.
+ * **Nothing here throws.** The path is answered whatever happened and the caller
+ * sets the variable either way, because a `GIT_CONFIG_GLOBAL` naming a file that
+ * is not there is a git that works with no identity, while leaving the variable
+ * unset is a git that exits 128 on every command. Those are not close. What this
+ * does *not* do any more is treat the two failures as one — see
+ * {@link ProjectedGitConfigOutcome}.
  */
 export function writeProjectedGitConfig(
   cloneRoot: string,
@@ -295,15 +400,27 @@ export function writeProjectedGitConfig(
     mkdir?: (path: string) => void
     write?: (path: string, contents: string) => void
   } = {},
-): string {
+): ProjectedGitConfigOutcome {
   const path = agentGitConfigPath(cloneRoot)
   const mkdir = deps.mkdir ?? ((at: string) => void mkdirSync(at, { recursive: true }))
   const write = deps.write ?? ((at: string, contents: string) => writeFileSync(at, contents, 'utf8'))
+
   try {
     mkdir(dirname(path))
-    write(path, projectGitConfig(deps.read ?? readGlobalGitConfigValue))
-  } catch {
-    // See above: the variable is still pointed here.
+  } catch (error) {
+    return { kind: 'uncreatable', path, reason: messageOf(error) }
   }
-  return path
+
+  try {
+    write(path, projectGitConfig(deps.read ?? readGlobalGitConfigValue))
+  } catch (error) {
+    return { kind: 'unwritten', path, reason: messageOf(error) }
+  }
+
+  return { kind: 'written', path }
+}
+
+/** git's own words for what went wrong, or the value if it was not an Error. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

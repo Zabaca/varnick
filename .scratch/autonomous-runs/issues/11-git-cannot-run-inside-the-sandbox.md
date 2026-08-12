@@ -28,12 +28,40 @@ the boundary it names.
 **Correction, on picking this up:** that test is no longer red. Ticket 01 pinned
 `GIT_CONFIG_GLOBAL=/dev/null` on every git command in it and merged, so it is
 green — and green for the reason the pin's own comment admits: the probe arranges
-around the finding rather than measuring it. Worse in one place than the comment
-said, since the `git config core.hooksPath` assertion only checks for a
-`not permitted` message, and an unpinned run supplies that from `~/.gitconfig`
-before the write it is about ever happens. Measured on this branch: 8/8 pass
+around the finding rather than measuring it. Measured on this branch: 8/8 pass
 before the change, 8/8 after with every pin removed, and 7/8 with the pins
 removed and the fix backed out — `git worktree add` at 128.
+
+## A finding in its own right: a matcher wide enough to be satisfied by anything
+
+Found while removing those pins, and recorded separately because it is a defect
+**class** rather than a fact about this ticket.
+
+`sandbox.boundary.test.ts` asserted that the agent cannot redirect `core.hooksPath`
+through git itself:
+
+```
+const viaGit = await run(`… GIT_CONFIG_GLOBAL=/dev/null git config core.hooksPath /tmp/evil`)
+expect(viaGit.code).not.toBe(0)
+expect(viaGit.stderr).toMatch(/could not write config file|not permitted/i)
+```
+
+Unpinned, that command fails at `~/.gitconfig` **before it reaches the write the
+assertion is about** — and the message it fails with contains `not permitted`,
+which satisfies the matcher. The assertion would have been green against a
+command that never ran. The pin hid it; removing the pin is what exposed it.
+
+The class: **a matcher broad enough that an unrelated failure satisfies it**. It
+is worth naming because the reflex fix for a flaky assertion is to widen the
+matcher until it stops failing, and that is precisely the move that creates this.
+An assertion of the form *"it failed, and the message mentions permissions"* is
+one environment change away from proving nothing.
+
+This is the second instance in the same file. Ticket 01 found the first, one
+assertion away: `ranHook` needed the hook's own output in stderr rather than
+merely a non-zero exit, for the same reason. Two instances, one file, one cause —
+so the thing to check when touching this suite is not "does it pass" but "could
+this pass for a reason I did not intend".
 
 The second failure has a **different cause** and wants its own ticket. The
 containment probe's "the kernel denials reach varnick, and only the unintended
@@ -127,6 +155,38 @@ written and stale the next time git adds one, and the failure is silent.
   there, which the live tree's `denyWrite` does not name. Same as its `.githooks/`
   and it grants nothing: what a Preview's git reads decides what runs inside that
   Preview's Sandbox, and the developer's own git never looks there.
+- **The projection cannot be written** — two failures, not one, and the first
+  version of this change treated them as one. A failed *write* is survivable and
+  is the only case the original comment described: git runs, and the agent's
+  commits carry whatever git auto-detects. A failed *mkdir* is not survivable at
+  all and has nothing to do with git — `.varnick/` missing means the confined
+  Claude Code cannot create `.varnick/claude` either, because the deny makes
+  `file-write-create` on the ancestors a denial too, so the agent does not start.
+  Both are now reported on the `varnick:` stderr channel, and the survivable one
+  names `GIT_CONFIG_GLOBAL=/dev/null` explicitly, because falling silently into
+  the alternative this ticket rejected is worse than having chosen it.
+
+## The landing list, which this ticket got wrong first
+
+`.varnick/gitconfig` is on `PROTECTED_PATHS` as well as `denyWrite`. The first
+version of this change argued it *out*, in prose, on the grounds that a gitignored
+file can never be carried by a merge.
+
+**That was false.** Gitignore is a default, not a prohibition: `git add -f
+.varnick/gitconfig && git commit` puts the path into `git diff --name-only
+main...HEAD` like any tracked file, and `unattendedLanding` then answered
+`mayLand: true`. Measured, after the sentence had already survived one review by
+reading plausibly. The `.git/hooks/**` exemption does not transfer, because git
+genuinely refuses to track paths inside `.git` while `.varnick/` had only a
+convention.
+
+Landing a poisoned copy buys nothing **today** — `writeProjectedGitConfig`
+overwrites unconditionally before any confined process exists — and that is the
+reason to protect it rather than a reason not to: the safety lives in
+`gitconfig.ts` while the decision relying on it would live in `fence.ts`, and
+"do not rewrite when the identity has not changed" is a plausible future
+optimisation that turns a dirty-tree nuisance into unconfined execution with
+nothing failing. ADR-0018 exists to refuse that coupling.
 
 This is a Fence change and lands through a human merge.
 

@@ -4,12 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  EXECUTING_GIT_KEYS,
   GIT_CONFIG_GLOBAL_ENV_VAR,
   PROJECTED_GITCONFIG_RELATIVE_PATH,
   PROJECTED_GIT_KEYS,
   agentGitConfigPath,
   isProjectableValue,
   projectGitConfig,
+  projectedGitConfigReport,
   readGlobalGitConfigValue,
   renderProjectedGitConfig,
   writeProjectedGitConfig,
@@ -75,20 +77,12 @@ describe('what crosses from the developer’s config into the agent’s', () => 
       fail on `hooksPath`, which is the failure a future widening should hit.
     */
     const projected = effective(projectGitConfig((key) => identity(key) ?? '/tmp/anything'))
-    for (const executes of [
-      'hooksPath',
-      'editor',
-      'pager',
-      'sshCommand',
-      'alias',
-      'credential',
-      'helper',
-      'filter',
-      'textconv',
-      'driver',
-      'include',
-    ]) {
+    for (const executes of EXECUTING_GIT_KEYS) {
+      // The bare key name as well as the qualified one: `core.hooksPath` would
+      // be rendered as `hooksPath = …` under a `[core]` header, so asserting
+      // only the dotted spelling would miss the very thing it is looking for.
       expect(projected).not.toContain(executes)
+      expect(projected).not.toContain(executes.split('.').pop() as string)
     }
   })
 
@@ -213,9 +207,13 @@ describe('the file, on disk', () => {
     */
     const clone = mkdtempSync(join(tmpdir(), 'varnick-gitconfig-'))
     try {
-      const path = writeProjectedGitConfig(clone, { read: identity })
-      expect(path).toBe(join(clone, PROJECTED_GITCONFIG_RELATIVE_PATH))
-      expect(readFileSync(path, 'utf8')).toContain('name = "Ada Lovelace"')
+      const outcome = writeProjectedGitConfig(clone, { read: identity })
+      expect(outcome.kind).toBe('written')
+      expect(outcome.path).toBe(join(clone, PROJECTED_GITCONFIG_RELATIVE_PATH))
+      expect(readFileSync(outcome.path, 'utf8')).toContain('name = "Ada Lovelace"')
+      // Nothing to say when it worked. A launch that printed a line about its
+      // git config every time would be a launch nobody reads the output of.
+      expect(projectedGitConfigReport(outcome)).toBeNull()
     } finally {
       rmSync(clone, { recursive: true, force: true })
     }
@@ -228,10 +226,10 @@ describe('the file, on disk', () => {
     const clone = mkdtempSync(join(tmpdir(), 'varnick-gitconfig-'))
     try {
       writeProjectedGitConfig(clone, { read: identity })
-      const path = writeProjectedGitConfig(clone, {
+      const outcome = writeProjectedGitConfig(clone, {
         read: (key) => (key === 'user.name' ? 'Ada Byron' : identity(key)),
       })
-      const contents = readFileSync(path, 'utf8')
+      const contents = readFileSync(outcome.path, 'utf8')
       expect(contents).toContain('name = "Ada Byron"')
       expect(contents).not.toContain('Ada Lovelace')
     } finally {
@@ -239,18 +237,65 @@ describe('the file, on disk', () => {
     }
   })
 
-  test('a clone that cannot be written still names the path', () => {
-    // The variable is set either way by the caller, and the two outcomes are not
-    // close: a `GIT_CONFIG_GLOBAL` pointing at a file that is not there is a git
-    // with no identity, and no variable at all is a git that exits 128 on every
-    // command.
-    const path = writeProjectedGitConfig(CLONE, {
+  test('a write that fails is survivable, and says which alternative it fell into', () => {
+    /*
+      The benign failure: `.varnick/` exists and the file could not be written.
+      git still runs — a `GIT_CONFIG_GLOBAL` naming a file that is not there is
+      an empty config, not a fatal one — and the only casualty is authorship.
+
+      Which is exactly the outcome `GIT_CONFIG_GLOBAL=/dev/null` was rejected
+      for, so it is said out loud. Both reviewers arrived at this function from
+      opposite sides and the shared complaint was the silence: a design that
+      rejects an alternative and then falls into it quietly is worse off than
+      one that chose it, because at least choosing would have been a decision.
+    */
+    const outcome = writeProjectedGitConfig(CLONE, {
       read: identity,
-      mkdir: () => {
-        throw new Error('EROFS')
+      mkdir: () => {},
+      write: () => {
+        throw new Error('EACCES: permission denied')
       },
     })
-    expect(path).toBe(`${CLONE}/.varnick/gitconfig`)
+    expect(outcome.kind).toBe('unwritten')
+    expect(outcome.path).toBe(`${CLONE}/.varnick/gitconfig`)
+
+    const said = projectedGitConfigReport(outcome) ?? ''
+    expect(said).toContain('varnick:')
+    expect(said).toContain('EACCES: permission denied')
+    // The rejected alternative, named. Someone reading this line should be able
+    // to tell what changed about their commits without reading gitconfig.ts.
+    expect(said).toContain('GIT_CONFIG_GLOBAL=/dev/null')
+    expect(said).toContain('auto-detects')
+  })
+
+  test('a directory that cannot be created is a different and much worse failure', () => {
+    /*
+      And this is the distinction the first version of this function did not
+      make. Its comment justified swallowing *both* failures with "a git that
+      works with no identity" — true above, false here.
+
+      If `.varnick/` does not exist, the confined Claude Code cannot create
+      `.varnick/claude` either, because the deny on the file makes
+      `file-write-create` on its ancestors a denial too. So the agent does not
+      start, and the sentence varnick prints must be about that rather than
+      about git. A comment promising degradation where the real outcome is a
+      launch that never happens is the failure this test exists to prevent.
+    */
+    const outcome = writeProjectedGitConfig(CLONE, {
+      read: identity,
+      mkdir: () => {
+        throw new Error('EROFS: read-only file system')
+      },
+    })
+    expect(outcome.kind).toBe('uncreatable')
+
+    const said = projectedGitConfigReport(outcome) ?? ''
+    expect(said).toContain('EROFS: read-only file system')
+    // It names the directory rather than the file, and says the agent is the
+    // casualty rather than the authorship.
+    expect(said).toContain(`${CLONE}/.varnick`)
+    expect(said).toContain('session store')
+    expect(said).not.toContain('GIT_CONFIG_GLOBAL=/dev/null')
   })
 })
 

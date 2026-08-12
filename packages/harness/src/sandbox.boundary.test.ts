@@ -659,17 +659,86 @@ test.skipIf(blocked !== null)(
     }
 
     /*
-      The identity actually reaches a commit, which is the reason the projection
-      exists rather than `GIT_CONFIG_GLOBAL=/dev/null`. This clone sets
-      `user.name` per-repository — see the `git init` above — so what is asserted
-      here is that pointing the variable into the clone did not take the
-      repository config with it: `.git/config` is readable inside the Sandbox and
-      still wins, which is the case a developer who configures identity per-repo
-      is in.
+      **And it is not empty.** Review caught the loop above passing trivially on
+      a projection with no `[user]` lines at all — it iterates `settings`, so
+      zero settings satisfies every assertion in it. A test that cannot fail is
+      the failure mode this suite exists to avoid, so the non-emptiness is
+      asserted against the machine rather than assumed.
+
+      Conditional on this machine having a global identity, and the condition is
+      checked out here in the host rather than inferred, so it is a real
+      assertion where there is something to assert and an explicit skip where
+      there is not — rather than quietly vacuous on both.
     */
-    const author = await run(`cd ${q} && git log -1 --format=%an`)
-    expect(author.code).toBe(0)
-    expect(author.stdout.trim()).toBe('varnick boundary probe')
+    const hostName = Bun.spawnSync({ cmd: ['git', 'config', '--global', '--get', 'user.name'] })
+    if (hostName.exitCode === 0 && hostName.stdout.toString().trim().length > 0) {
+      expect(projectedBefore).toContain(`name = "${hostName.stdout.toString().trim()}"`)
+    } else {
+      console.log(
+        'boundary probe: this machine has no global user.name, so the projection is' +
+          ' legitimately empty and its contents are not asserted. The end-to-end below' +
+          ' still runs, because it supplies its own identity.',
+      )
+    }
+
+    /*
+      **The projected identity reaches a commit.** This is the assertion that
+      would fail if the projection stopped working, and the first version of
+      this probe did not have it.
+
+      What it replaced asserted the author of a commit in `clone` — whose
+      `.git/config` sets both `user.name` and `user.email`, two lines up in this
+      very test. So it passed identically with the projection empty, absent, or
+      pointed at /dev/null. It proved the local config wins, which nobody
+      doubted, and nothing about the projection.
+
+      So: a repository with **no local identity at all**, and a projection
+      written from outside the Sandbox with a known name. The clone is where a
+      host may write; the file is denied to the confined process, which is what
+      the four vectors above just measured. If `GIT_CONFIG_GLOBAL` stopped being
+      set, or stopped pointing here, this commit fails outright with "unable to
+      auto-detect email address" rather than silently picking up something else.
+    */
+    const bare = join(clone, 'no-local-identity')
+    mkdirSync(bare, { recursive: true })
+    for (const argv of [
+      ['init', '-q', '-b', 'main', bare],
+      // Explicitly cleared rather than merely unset, so an inherited value from
+      // some future change to the fixture above cannot make this vacuous too.
+      ['-C', bare, 'config', '--unset-all', 'user.name'],
+      ['-C', bare, 'config', '--unset-all', 'user.email'],
+    ]) {
+      Bun.spawnSync({ cmd: ['git', ...argv], cwd: clone })
+    }
+    writeFileSync(
+      projected,
+      '[user]\n\tname = "Projected Identity"\n\temail = "projected@varnick.invalid"\n',
+      'utf8',
+    )
+
+    const projectedCommit = await run(
+      `cd ${JSON.stringify(bare)} && printf p > p.txt && git add -A && git commit -q -m projected` +
+        ` && git log -1 --format='%an <%ae>'`,
+    )
+    expect(projectedCommit.code).toBe(0)
+    expect(projectedCommit.stdout.trim()).toBe('Projected Identity <projected@varnick.invalid>')
+
+    /*
+      And the repository's own config still wins over it, which is the developer
+      who sets identity per-repo. Same commit shape, same projection in place —
+      only `.git/config` differs, and it decides.
+    */
+    Bun.spawnSync({ cmd: ['git', '-C', bare, 'config', 'user.name', 'Local Identity'] })
+    Bun.spawnSync({ cmd: ['git', '-C', bare, 'config', 'user.email', 'local@varnick.invalid'] })
+    const localCommit = await run(
+      `cd ${JSON.stringify(bare)} && printf q > q.txt && git add -A && git commit -q -m local` +
+        ` && git log -1 --format='%an <%ae>'`,
+    )
+    expect(localCommit.code).toBe(0)
+    expect(localCommit.stdout.trim()).toBe('Local Identity <local@varnick.invalid>')
+
+    // Put the real projection back, so nothing after this reads a fixture.
+    writeFileSync(projected, projectedBefore, 'utf8')
 
     /*
       What a worktree, a commit and a merge need, asked of git itself for the

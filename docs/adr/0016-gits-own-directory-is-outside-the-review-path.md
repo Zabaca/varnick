@@ -108,16 +108,29 @@ Measured in `sandbox.boundary.test.ts`: a write to the live tree's
 there.
 
 **One qualification on that last clause, because it is the kind that gets
-dropped.** The hook-running half is measured with `GIT_CONFIG_GLOBAL` pinned in
-the probe, and it needs to be: git treats an unreadable `~/.gitconfig` as fatal,
+dropped.** The hook-running half was measured with `GIT_CONFIG_GLOBAL` pinned in
+the probe, and it needed to be: git treats an unreadable `~/.gitconfig` as fatal,
 and `$HOME` is denied by design, so on a machine whose developer has a global
-git config *every* git command inside the Sandbox exits 128 — `git --version`
+git config *every* git command inside the Sandbox exited 128 — `git --version`
 included, since git stats the global config before dispatching a subcommand.
-That is a read-allowlist gap rather than anything this ADR decided, it is
+That was a read-allowlist gap rather than anything this ADR decided, it was
 independent of the hooks deny (measured with the deny in force and with it
-absent: identical either way), and it is tracked as its own ticket. Until it is
-closed, read every "git still works" sentence in this ADR as *permitted by the
-policy*, which is what it measures, rather than as *works on your machine*.
+absent: identical either way), and it was tracked as its own ticket.
+
+**That ticket has since closed, and this paragraph is corrected rather than
+deleted** — the same move ADR-0003 makes for its own overtaken sentence, and for
+the same reason: a qualification that is removed leaves no trace that it was ever
+needed, and the next person to measure git inside the Sandbox should be able to
+find out why it once did not work. Ticket 11 gave the confined tree a *projected*
+git config — `.varnick/gitconfig`, carrying the developer's identity and nothing
+that executes — and points `GIT_CONFIG_GLOBAL` at it for every command the
+Sandbox wraps. The pins in `sandbox.boundary.test.ts` are gone with it, so the
+"git still works" sentences in this ADR are now measured **unpinned**.
+
+So read them as *works on your machine* as well as *permitted by the policy*.
+The two were separate claims while the gap was open, and the probe that proves
+the second now proves the first: with the wiring backed out, the same suite fails
+at `git worktree add` with exit 128.
 
 **Why this was not visible in the original.** The two denials this ADR added
 were chosen by the property "no diff shows this", and `.githooks/` genuinely

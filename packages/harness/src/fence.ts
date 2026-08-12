@@ -116,6 +116,21 @@ export function touchesFence(paths: readonly string[]): boolean {
  * - `.githooks/**` is the tracked hooks directory, which the agent writes freely
  *   and a human reads in a diff. That argument is exactly an argument about the
  *   merge, so it holds only while the merge has a human in it.
+ * - `.varnick/gitconfig` is the one entry here that is **gitignored**, which
+ *   makes it look like a mistake until you try it. Gitignore is a default, not a
+ *   prohibition: `git add -f` puts the file in a commit and it reaches a branch
+ *   diff like anything else — measured, after the first version of this change
+ *   claimed in prose that no merge could ever carry one. `.git/hooks/**` below
+ *   is exempt because git genuinely refuses to track it; this had only a
+ *   convention saying so.
+ *
+ *   Landing a poisoned copy is harmless *today*, because varnick rewrites the
+ *   file before any confined process can read it. It is here because that
+ *   safety lives in `gitconfig.ts` while the decision to rely on it would live
+ *   here — and the obvious future optimisation, "do not rewrite when the
+ *   identity has not changed", would convert a dirty-tree nuisance into
+ *   unconfined execution with no test failing. In normal operation this entry
+ *   never fires, which is the best kind of rule to hold.
  *
  * Not here, and each absence is a decision rather than an oversight:
  *
@@ -137,6 +152,7 @@ export const PROTECTED_PATHS = [
   'sandbox-policy.json',
   'scripts/**',
   '.githooks/**',
+  '.varnick/gitconfig',
 ] as const
 
 /** The root manifest, whose diff is read rather than refused outright. */

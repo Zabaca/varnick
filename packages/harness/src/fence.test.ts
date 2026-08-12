@@ -20,6 +20,7 @@ import {
   SANDBOX_POLICY_FILENAME,
   TRACKED_HOOKS_DIR,
 } from './sandbox.ts'
+import { PROJECTED_GITCONFIG_RELATIVE_PATH } from './gitconfig.ts'
 
 /*
   The seam: one pure function over one path, and nothing else.
@@ -674,7 +675,36 @@ describe('how the three lists relate', () => {
       SANDBOX_POLICY_FILENAME,
       HOST_INVOKED_SCRIPTS,
       `${TRACKED_HOOKS_DIR}/**`,
+      PROJECTED_GITCONFIG_RELATIVE_PATH,
     ])
+  })
+
+  test('a gitignored path is still protected, because ignoring is a default', () => {
+    /*
+      `.varnick/gitconfig` is the only entry on the landing list that never
+      appears in an ordinary diff, and that is exactly why it is worth a test
+      rather than a comment.
+
+      The first version of this change argued it *out* of the list, in prose, on
+      the grounds that a gitignored file cannot be merged. Measured instead of
+      believed: `git add -f .varnick/gitconfig && git commit` puts it in `git
+      diff --name-only main...HEAD` like any tracked file. So the rule has to be
+      asked the question a force-add would ask it.
+
+      Harmless today — varnick rewrites the file before anything confined reads
+      it — and on the list because that safety lives in gitconfig.ts rather than
+      here. See PROTECTED_PATHS' own note.
+    */
+    expect(isProtectedPath(PROJECTED_GITCONFIG_RELATIVE_PATH)).toBe(true)
+    expect(
+      unattendedLanding({ changedPaths: [PROJECTED_GITCONFIG_RELATIVE_PATH] }),
+    ).toMatchObject({ mayLand: false, refusal: 'protected-path' })
+
+    // And the near miss this shape always has: the directory is not the file.
+    // Everything else under `.varnick/` is the agent's own machine state and is
+    // deliberately writable, so a prefix rule here would be wrong twice over.
+    expect(isProtectedPath('.varnick/claude/last-session.json')).toBe(false)
+    expect(isProtectedPath('.varnick/gitconfig-notes.md')).toBe(false)
   })
 
   test('the landing list is spelled the way the Sandbox spells the same paths', () => {

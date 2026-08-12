@@ -30,9 +30,11 @@ import {
 import { startMacOSSandboxLogMonitor } from '@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js'
 import { agentSdkEntry, developerToolsBin, sandboxEnvOverlay } from './agent.ts'
 import {
+  EXECUTING_GIT_KEYS,
   GIT_CONFIG_GLOBAL_ENV_VAR,
   PROJECTED_GITCONFIG_RELATIVE_PATH,
   PROJECTED_GIT_KEYS,
+  projectedGitConfigReport,
   writeProjectedGitConfig,
 } from './gitconfig.ts'
 import { POLICY_ROOT_ENV_VAR, requireCloneRoot, requirePolicyRoot } from './clone-root.ts'
@@ -677,13 +679,12 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           `.varnick/gitconfig`, since git fatals on a global config it can see
           and cannot read and `$HOME` is denied. That is the fix for ticket 11,
           and left writable it would be a hole of the same shape as the three
-          entries above: a gitconfig is executable configuration —
-          `core.hooksPath`, `core.editor`, `core.pager`, `core.sshCommand`,
-          `alias.*` and `credential.helper` beginning `!`, `filter.*.clean`,
-          `diff.*.textconv`, `merge.*.driver`, `include.path` — so an agent that
-          can write it chooses what runs on the developer's next commit. Exactly
-          what `.githooks/**` above was added to stop, arriving through a file
-          varnick introduced to fix something else.
+          entries above: a gitconfig is executable configuration — see
+          `EXECUTING_GIT_KEYS` in ./gitconfig.ts, which enumerates the keys once
+          so this comment does not become a fourth hand-copied list of them — so
+          an agent that can write it chooses what runs on the developer's next
+          commit. Exactly what `.githooks/**` above was added to stop, arriving
+          through a file varnick introduced to fix something else.
 
           `.varnick/` is otherwise agent-writable and stays that way: the
           session store, the temp directory and the `node` shim beside this file
@@ -701,9 +702,27 @@ export function sandboxPolicyFor(input: SandboxPolicyInput): SandboxPolicy {
           ancestor. `writeProjectedGitConfig` is called by the unconfined runtime
           in `establishSandbox` below, which is early enough.
 
-          Not on `PROTECTED_PATHS` in ./fence.ts, and that is not a drift: the
-          file is gitignored per-clone machine state, so no merge can ever carry
-          one and a landing rule naming it would guard nothing.
+          **It is on `PROTECTED_PATHS` in ./fence.ts as well, and the first
+          version of this comment argued the opposite on a false premise.** It
+          said the file is gitignored machine state, so *"no merge can ever carry
+          one"*. Gitignore is a default, not a prohibition: `git add -f
+          .varnick/gitconfig` puts it in a commit, and it then appears in `git
+          diff --name-only main...HEAD` exactly like any tracked file — measured,
+          because the sentence read plausibly enough to survive one review.
+
+          That is why the `.git/hooks/**` exemption does not transfer. Those are
+          exempt because git *refuses* to track paths inside `.git`, which is a
+          fact rather than a default; here the same words were true only by
+          convention.
+
+          Landing a poisoned copy buys nothing **today**, because
+          `writeProjectedGitConfig` overwrites unconditionally before any
+          confined process exists. That is the whole reason to protect it: the
+          safety lives in a different file from the decision relying on it, and
+          the obvious future optimisation — "do not rewrite when the identity has
+          not changed" — turns a dirty-tree nuisance into unconfined execution
+          with nothing failing anywhere. ADR-0018 exists to refuse exactly that
+          coupling.
         */
         join(clone, PROJECTED_GITCONFIG_RELATIVE_PATH),
         /*
@@ -1571,10 +1590,16 @@ export function describeSandboxPolicy(policy: SandboxPolicy): string {
     `  That file is a *projection* of your config and not a copy: ${PROJECTED_GIT_KEYS.join(' and ')}`,
     '  cross it and nothing else does, so the agent commits under your name and your',
     '  aliases, credential helpers and filters stay outside the fence. It is denied',
-    '  above for the reason .githooks/ is: a gitconfig runs commands — core.hooksPath,',
-    '  core.editor, credential.helper, filter.*.clean — so an agent that could write',
-    '  the file varnick points every git command at would choose what runs on your',
-    '  next commit. The rest of .varnick/ stays writable; this one file does not.',
+    '  above for the reason .githooks/ is: a gitconfig runs commands, and these are',
+    `  the keys that do — ${EXECUTING_GIT_KEYS.join(', ')} —`,
+    '  so an agent that could write the file varnick points every git command at',
+    '  would choose what runs on your next commit. The rest of .varnick/ stays',
+    '  writable; this one file does not.',
+    '',
+    '  varnick rewrites it on every launch, so editing it achieves nothing, and if it',
+    '  ever cannot be written you are told on stderr rather than left to find it in a',
+    '  git log. That matters because the failure is quiet by nature: git still runs,',
+    '  and only the authorship of the agent’s commits changes.',
     '',
     `  ${TRACKED_HOOKS_GLOB} is denied as well, for the reason above rather than in spite`,
     '  of it. Tracked says where a file can be reviewed, not that it was: a hook',
@@ -2312,6 +2337,21 @@ export async function establishSandbox(
     own git never looks here; only a process varnick pointed at it does.
   */
   const gitConfig = writeProjectedGitConfig(cloneRoot)
+  /*
+    And said out loud when it did not work, on the same channel the policy
+    report uses two blocks up.
+
+    Silence here was a finding from both reviewers, reached from opposite sides.
+    A clone whose projection fails to write produces commits under git's
+    auto-detected identity — which is precisely the outcome the
+    `GIT_CONFIG_GLOBAL=/dev/null` candidate was rejected for, arriving by the
+    back door with nothing saying so. And a clone whose `.varnick/` cannot be
+    created is not a git problem at all: the agent cannot make its session store
+    either, so it will not start. `projectedGitConfigReport` tells those two
+    apart; this prints whichever applies and nothing on the ordinary path.
+  */
+  const gitConfigReport = projectedGitConfigReport(gitConfig)
+  if (gitConfigReport !== null) console.warn(gitConfigReport)
 
   return {
     policy,
@@ -2336,7 +2376,7 @@ export async function establishSandbox(
       // here would not survive that rebuild. One path, one function, set twice.
       return {
         argv,
-        env: { ...sandboxEnvOverlay(env, process.env), [GIT_CONFIG_GLOBAL_ENV_VAR]: gitConfig },
+        env: { ...sandboxEnvOverlay(env, process.env), [GIT_CONFIG_GLOBAL_ENV_VAR]: gitConfig.path },
         cwd: cloneRoot,
       }
     },

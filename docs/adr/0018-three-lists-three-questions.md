@@ -20,23 +20,14 @@ this in the live tree*.
 ```
 FENCE_PATHS      packages/harness/**   src-tauri/**   sandbox-policy.baseline.json
 PROTECTED_PATHS  …those, plus          sandbox-policy.json   scripts/**
-                 plus  .githooks/**
+                 plus  .githooks/**   .varnick/gitconfig
                  plus, in package.json: preinstall | postinstall | prepare
 denyWrite        …those, plus          packages/core/**   vite.config.*   package.json
                                        .git/hooks/**   .git/config*
-                                       .varnick/gitconfig
 ```
 
 The middle list is strictly larger than the first and strictly smaller than the
 third.
-
-`.varnick/gitconfig` is the newest entry in the third list and is deliberately
-absent from the second, for the reason `.git/hooks/**` is: it is gitignored
-per-clone machine state, so no merge can carry one and a landing rule naming it
-would guard nothing. It is denied because varnick points every git command in
-the Sandbox at it (ticket 11) and a gitconfig runs commands —
-`packages/harness/src/gitconfig.ts` is where the projection and its allowlist
-are argued.
 
 That was not true when this document was first written. `.githooks/**` was
 protected here while remaining a grant by omission in `sandbox.ts`, and this
@@ -51,6 +42,30 @@ describes a containment goes on describing it after it stops being true.** The
 assertion in `fence.test.ts` does not: it is unconditional now, it forgives
 nothing, and a future entry that is protected without being denied fails it on
 the spot.
+
+`.varnick/gitconfig` is the newest entry, and it is on **both** the second and
+third lists. It is denied because varnick points every git command in the Sandbox
+at it (ticket 11) and a gitconfig runs commands;
+`packages/harness/src/gitconfig.ts` is where the projection and its allowlist are
+argued.
+
+Its place on the *landing* list was got wrong first, which is worth recording
+because the error is the one this document is about. The first version argued it
+out, on the grounds that a gitignored file *"can never be carried by a merge"*.
+That is false: gitignore is a default, and `git add -f` puts the file in a commit
+and thence into a branch diff — measured, after the sentence had already survived
+a review by reading plausibly. The `.git/hooks/**` exemption below does not
+transfer to it, because git genuinely refuses to track paths inside `.git` while
+`.varnick/` had only a convention.
+
+Landing a poisoned copy is harmless today, since varnick rewrites the file before
+any confined process can read it. It is protected because that safety lives in
+`gitconfig.ts` while the decision to rely on it would live in `fence.ts` — and
+"do not rewrite when the identity has not changed" is a plausible future
+optimisation that would turn a dirty-tree nuisance into unconfined execution with
+nothing failing. **That cross-file coupling is the thing these three lists exist
+to refuse**, so the containment is asserted in `fence.test.ts` rather than
+argued here.
 
 ## Why not one list
 
@@ -87,7 +102,7 @@ Three assertions, each of which fails on a specific future mistake:
 - **Every Fence path is protected.** The direction that must never invert. A
   Preview of a Fence change already needs a person; landing one unattended is
   the same escalation with the dialog removed and no window open to show it.
-- **The protected list is strictly larger than the Fence**, and the three extra
+- **The protected list is strictly larger than the Fence**, and the four extra
   entries are named. If the two lists ever became equal, the gate could be
   written as `touchesFence` and nothing anywhere would fail.
 - **Every protected path is a path the agent cannot write in the live tree.** A
