@@ -1028,6 +1028,138 @@ export function releasePlan(input: ReleasePlanInput): ReleasePlan {
 }
 
 // ---------------------------------------------------------------------------
+// Promotion
+// ---------------------------------------------------------------------------
+
+/**
+ * The date a promotion stamps on the entry it accepts.
+ *
+ * The date and not the instant. A changelog heading is read by people, the
+ * entry is the unit anybody cares about, and a time of day would say when a
+ * developer happened to press a control rather than which day the release
+ * became the one being run.
+ *
+ * Takes the whole ISO timestamp because that is what a caller has — `cutAt` is
+ * one, and so is anything a clock produces — and takes it as a string because
+ * this module has no clock. {@link ReleasePlanInput} passes `cutAt` in for the
+ * same reason.
+ */
+export function promotionDate(now: string): string {
+  return (now.split('T')[0] ?? now).trim()
+}
+
+/**
+ * The changelog with one pending entry marked accepted, or `null`.
+ *
+ * **A one-line edit, and deliberately the smallest possible one.** The heading's
+ * `pending` becomes a date and nothing else about the entry changes, because
+ * nothing else about it was ever provisional — the notes were written when the
+ * work landed and promoting is not a rewrite of them. That was the header's
+ * promise about this function before it existed; it is kept literally.
+ *
+ * `null` when there is no pending entry, or when the pending entry is a
+ * different version from the one being promoted. The second is the one worth
+ * having: a record and a changelog that disagree mean somebody edited one of
+ * them, and a promotion that stamped the date onto whatever entry it found
+ * would accept a release nobody offered.
+ */
+export function changelogPromoted(
+  changelog: string | undefined | null,
+  version: string,
+  date: string,
+): string | null {
+  const pending = pendingEntry(changelog)
+  if (pending === null || pending.version !== version) return null
+  if (changelog === undefined || changelog === null) return null
+
+  let stamped = false
+  const lines = changelog.split('\n').map((line) => {
+    if (stamped) return line
+    const heading = ENTRY_HEADING.exec(line)
+    if (heading === null) return line
+    if ((heading[1] ?? '') !== version || (heading[2] ?? '') !== PENDING_MARKER) return line
+    stamped = true
+    return `## v${version} — ${date}`
+  })
+
+  return stamped ? lines.join('\n') : null
+}
+
+/** What a promotion decides, before anything is written. */
+export type PromotionPlan =
+  | { readonly promote: false; readonly reason: string }
+  | {
+      readonly promote: true
+      readonly version: string
+      /** The artifact `served` is switched to. */
+      readonly artifact: string
+      /** Posted into the transcript, as varnick's own. */
+      readonly announcement: string
+      /** The changelog with this entry accepted. */
+      readonly changelog: string
+    }
+
+export interface PromotionPlanInput {
+  /** What `.varnick/pending-release.json` holds, already parsed. */
+  readonly record: PendingPreRelease | null
+  readonly changelog: string | undefined
+  /** Now, ISO 8601. The caller owns the clock; see ADR-0001 on ambient time. */
+  readonly now: string
+  /**
+   * Why the artifact will not start, if it will not — ticket 07's answer, asked
+   * by the caller because it is a question about files.
+   *
+   * **A promotion onto a build that will not start is the one refusal that
+   * cannot be recovered by trying again.** Everything else here is a disagreement
+   * between two files a developer can edit; this is the developer accepting a
+   * release and being handed a window that does not open. The fallback would
+   * catch it on the next launch and serve the old build back — which works, and
+   * still means the promotion appeared to succeed and then undid itself. Better
+   * to refuse while the old build is still the one being served and say why.
+   */
+  readonly startFailure: string | null
+}
+
+/**
+ * Everything promoting decides, decided at once and before anything is written.
+ *
+ * One function for the reason {@link releasePlan} is one: the order is what is
+ * easy to get wrong and impossible to see afterwards. Nothing here writes, so
+ * every refusal below leaves the developer on exactly the build they were
+ * already running — which is the acceptance criterion, held by the shape of the
+ * code rather than by a sequence somebody has to keep.
+ */
+export function promotionPlan(input: PromotionPlanInput): PromotionPlan {
+  const record = input.record
+  if (record === null) {
+    return { promote: false, reason: 'no pre-release is pending, so there is nothing to promote' }
+  }
+
+  if (input.startFailure !== null) {
+    return {
+      promote: false,
+      reason: `the build for v${record.version} will not start: ${input.startFailure}`,
+    }
+  }
+
+  const changelog = changelogPromoted(input.changelog, record.version, promotionDate(input.now))
+  if (changelog === null) {
+    return {
+      promote: false,
+      reason: `${CHANGELOG_RELATIVE_PATH} has no pending entry for v${record.version}, so the pre-release on offer is not the one written down`,
+    }
+  }
+
+  return {
+    promote: true,
+    version: record.version,
+    artifact: record.artifact,
+    announcement: record.announcement,
+    changelog,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Reading a ticket
 // ---------------------------------------------------------------------------
 
