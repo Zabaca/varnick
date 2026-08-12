@@ -25,6 +25,16 @@ configuration is refused by the kernel", which fails at `git worktree add`
 returning 128. That test is measuring the developer's home directory rather than
 the boundary it names.
 
+**Correction, on picking this up:** that test is no longer red. Ticket 01 pinned
+`GIT_CONFIG_GLOBAL=/dev/null` on every git command in it and merged, so it is
+green — and green for the reason the pin's own comment admits: the probe arranges
+around the finding rather than measuring it. Worse in one place than the comment
+said, since the `git config core.hooksPath` assertion only checks for a
+`not permitted` message, and an unpinned run supplies that from `~/.gitconfig`
+before the write it is about ever happens. Measured on this branch: 8/8 pass
+before the change, 8/8 after with every pin removed, and 7/8 with the pins
+removed and the fix backed out — `git worktree add` at 128.
+
 The second failure has a **different cause** and wants its own ticket. The
 containment probe's "the kernel denials reach varnick, and only the unintended
 ones are said out loud" fails at `containment.probe.test.ts:1463`, asserting no
@@ -55,34 +65,80 @@ control, same sandbox: printf x > <clone>/.githooks/pre-commit
 So the deny list is biting correctly in the same sandbox where git now works.
 The two are independent, and the failing assertions are not about the deny list.
 
-## The decision this needs
+## The decision this needed, and what was chosen
 
-Two candidate fixes, both Fence decisions, and they trade off against each
-other. This ticket is blocked on the developer picking one:
+**A projected config, not a copy, in a file the agent cannot write.** Neither of
+the two candidates below.
 
-- **Read `~/.gitconfig` back out of the denied root.** Narrow — one file — but it
-  is a widening of the fence, and the file is one an attacker who could write it
-  would love (`core.hooksPath`, `alias.*`, `core.editor` all execute).
-- **Set `GIT_CONFIG_GLOBAL` in the agent's environment overlay**
-  (`packages/harness/src/agent.ts`). No widening at all, but it silently drops
-  the developer's git identity and aliases, so commits the agent makes would
-  carry different authorship than the developer expects.
+varnick writes `<clone>/.varnick/gitconfig` at launch, from the *unconfined*
+runtime — `establishSandbox` in `packages/harness/src/sandbox.ts`, which is the
+last moment before the fence exists and the only process that can read the
+developer's real config. `GIT_CONFIG_GLOBAL` is pointed at it in two places: the
+wrapper's environment overlay, so *every* command run under the Sandbox has it
+(the boundary probes shell out to git directly), and `agentEnvironment`, which
+builds the Claude Code environment outright rather than inheriting one.
 
-The second is the safer default and the first is the more faithful one. Whoever
-takes this should also decide whether the two tests above are asserting what
-they mean to, since both currently fail for a reason unrelated to their names.
+**The file is in `denyWrite`, and that is the security half rather than a
+detail.** A gitconfig is executable configuration — `core.hooksPath`,
+`core.editor`, `core.pager`, `core.sshCommand`, `alias.*` and
+`credential.helper` beginning `!`, `filter.*.clean`, `diff.*.textconv`,
+`merge.*.driver`, `include.path`. Writable, the agent puts `core.hooksPath` into
+the file every git command in the Sandbox reads and has unconfined execution on
+the developer's next commit: exactly the hole ticket 01 closed for `.githooks/`,
+arriving through a file varnick introduced to fix something else. srt's
+move-blocking covers the node too, so it cannot be deleted or moved aside.
+
+**The projection is an allowlist and not a denylist**: `user.name` and
+`user.email`, and the allowlist is enforced by *what is asked for* — each key is
+read from git by name, so no other key is ever read, held or rendered. The
+argument is ADR-0018's: a denylist of executing keys is complete the day it is
+written and stale the next time git adds one, and the failure is silent.
+`packages/harness/src/gitconfig.ts` is where all of this is argued.
+
+### Why not the two candidates originally named
+
+- **Read `~/.gitconfig` back out of the denied root.** It widens the fence onto a
+  file the developer edits for reasons unrelated to varnick. Measured on this
+  machine, that file already carries five executing entries nobody added with an
+  agent in mind: `filter.lfs.clean`, `.smudge` and `.process` (git-lfs, which
+  fires on the checkout `git worktree add` performs), `alias.lg`, and two
+  `credential.<url>.helper` entries that are `!/opt/homebrew/bin/gh`.
+- **`GIT_CONFIG_GLOBAL=/dev/null`.** No widening, and it loses authorship:
+  commits would carry whatever git auto-detects from the hostname and passwd
+  entry. ADR-0014's model is a human reading the agent's diffs before merging, so
+  the authorship in that history is something a person relies on.
+
+### The cases, and what each does
+
+- **No `~/.gitconfig` at all** — the file is written anyway, with its header and
+  no keys. Absent would also work (git treats a missing global config as empty)
+  and is rejected because "not there" and "varnick could not write it" would then
+  look identical to anyone reading the clone.
+- **Identity set per-repository** — untouched. `.git/config` is inside the clone,
+  readable, and wins over the global one. Asserted at the kernel: the boundary
+  probe's clone sets `user.name` per-repo and `git log -1 --format=%an` reports it.
+- **Unreadable to the host for some other reason** — the same as having none.
+  Null covers "not set", "no config" and "git would not run", because all three
+  have one consequence.
+- **Regeneration** — rewritten every launch, like the `node` shim, so a changed
+  identity is picked up on the next start. The agent cannot have edited it in
+  between; that is what the deny is for.
+- **A Preview** — its `cloneRoot` is the Worktree, so it gets its own projection
+  there, which the live tree's `denyWrite` does not name. Same as its `.githooks/`
+  and it grants nothing: what a Preview's git reads decides what runs inside that
+  Preview's Sandbox, and the developer's own git never looks there.
 
 This is a Fence change and lands through a human merge.
 
 **Blocked by:** None — but everything that depends on the confined agent
 committing in a Worktree depends on this, so it should go ahead of them.
 
-**Status:** needs-triage
+**Status:** ready-for-review
 
-- [ ] A confined agent can run `git worktree add`, `git commit` and `git merge` on a machine that has a `~/.gitconfig`
-- [ ] The chosen fix is recorded with its trade-off, in an ADR or in the sandbox generator's own comments
-- [ ] The two tests that currently fail for this reason either pass or are renamed to say what they actually measure
-- [ ] A test covers the machine-with-a-global-config case, so this cannot go invisible again
+- [x] A confined agent can run `git worktree add`, `git commit` and `git merge` on a machine that has a `~/.gitconfig` — measured unpinned in `sandbox.boundary.test.ts`, on the machine whose `~/.gitconfig` caused this
+- [x] The chosen fix is recorded with its trade-off, in an ADR or in the sandbox generator's own comments — `packages/harness/src/gitconfig.ts`, the `denyWrite` entry in `sandbox.ts`, the generated policy's own prose, and ADR-0018's three-list table
+- [x] The two tests that currently fail for this reason either pass or are renamed to say what they actually measure — the boundary suite's git commands are unpinned and green; the containment probe's remaining pin is kept for a *different* reason (dotfile determinism in probe 11d) and its comment now says so
+- [x] A test covers the machine-with-a-global-config case, so this cannot go invisible again — the boundary probe reads the projected file back off disk and asserts every setting line is an allowlisted key, on a machine whose real config has an alias and two credential helpers in it
 
 ## Comments
 

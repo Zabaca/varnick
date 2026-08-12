@@ -24,10 +24,19 @@ PROTECTED_PATHS  …those, plus          sandbox-policy.json   scripts/**
                  plus, in package.json: preinstall | postinstall | prepare
 denyWrite        …those, plus          packages/core/**   vite.config.*   package.json
                                        .git/hooks/**   .git/config*
+                                       .varnick/gitconfig
 ```
 
 The middle list is strictly larger than the first and strictly smaller than the
 third.
+
+`.varnick/gitconfig` is the newest entry in the third list and is deliberately
+absent from the second, for the reason `.git/hooks/**` is: it is gitignored
+per-clone machine state, so no merge can carry one and a landing rule naming it
+would guard nothing. It is denied because varnick points every git command in
+the Sandbox at it (ticket 11) and a gitconfig runs commands —
+`packages/harness/src/gitconfig.ts` is where the projection and its allowlist
+are argued.
 
 That was not true when this document was first written. `.githooks/**` was
 protected here while remaining a grant by omission in `sandbox.ts`, and this
