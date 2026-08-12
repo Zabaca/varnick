@@ -37,6 +37,7 @@ export const GROUPS = [
   'Surfaces',
   'Persistence',
   'Pending Core changes',
+  'The release',
 ] as const
 export type Group = (typeof GROUPS)[number]
 
@@ -164,6 +165,29 @@ const up = {
  * is about rather than a mistake in the fixture — after a squash the branch is
  * nobody's ancestor, so git goes on offering a merge that would produce nothing.
  */
+/**
+ * The pre-release the release cards are drawn over.
+ *
+ * One record, shared by four of the five, so a reader moving between the cards
+ * is watching one release move through the region rather than four unrelated
+ * versions. The announcement is the shape `announcement()` actually produces —
+ * a first line, a paragraph per ticket in the ticket's own words, and the
+ * closing sentence saying nothing is served from it yet.
+ */
+const statesPendingRelease = {
+  version: '0.0.2',
+  artifact: '0.0.2',
+  tag: 'v0.0.2',
+  cutAt: '2026-08-11T03:14:00.000Z',
+  announcement: [
+    'varnick v0.0.2 is cut and waiting. Two tickets landed since v0.0.1.',
+    'A build that will not start does not take away the tool the developer would use to fix it. The host keeps the previously served artifact on disk, and if the one it has been switched to fails to come up, it falls back to it and says so.',
+    'The developer comes back to a window that says a pre-release is waiting, what version it is, and what changed. One control promotes it.',
+    'Nothing is served from it yet. The window is still running what it was running, and promoting this build is still yours to do.',
+  ].join('\n\n'),
+  notes: [],
+}
+
 const statesWorktrees: readonly PendingWorktree[] = [
   {
     path: '/Users/you/varnick/.claude/worktrees/ticket-48',
@@ -1141,7 +1165,92 @@ export const SCENARIOS: readonly Scenario[] = [
         'ticket/56-merge-from-the-window still holds work the live tree does not have, so removing it would be the only copy going. Merge it first, or check what is in it: git diff HEAD refs/heads/ticket/56-merge-from-the-window',
     },
   },
+  /*
+    The release band. It is silent almost all of the time — a pre-release exists
+    only for the hours between a night finishing and a developer deciding — so
+    the card that matters most is the one where there is nothing, and the thing
+    to check on it is that nothing is drawn at all.
+  */
+  {
+    id: 'release-none',
+    group: 'The release',
+    title: 'Nothing on offer',
+    blurb:
+      'The ordinary state, and the one the window is in almost always. No run has finished since the last promotion, so there is no band \u2014 a permanent slot reading \u201cno pre-release\u201d is how something ends up below the fold.',
+    question: 'Is there genuinely nothing drawn here, rather than an empty container?',
+    covers: ['release.idle'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-release-none', messages: seedMessages },
+    },
+  },
+  {
+    id: 'release-pending',
+    group: 'The release',
+    title: 'A pre-release is waiting',
+    blurb:
+      'A night finished while nobody was watching. The band says which version and what changed, in the words the tickets used. Nothing has moved: the window is still serving what it was serving, and the decision is the developer\u2019s.',
+    question: 'Can the developer tell what they would be accepting, without leaving this screen?',
+    covers: ['release.pending'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-release-pending', messages: seedMessages },
+      enterRelease: 'pending',
+      pendingRelease: statesPendingRelease,
+    },
+  },
+  {
+    id: 'release-promoting',
+    group: 'The release',
+    title: 'Accepting it',
+    blurb:
+      'One wait, because from the developer\u2019s side this is one act: the store is switched, the changelog is stamped, the announcement is posted and varnick restarts onto the build. Nothing has been written at the moment this card represents \u2014 every refusal happens before the first write.',
+    question: 'Is it clear this is going somewhere, rather than that something is stuck?',
+    covers: ['release.promoting'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-release-promoting', messages: seedMessages },
+      enterRelease: 'promoting',
+      pendingRelease: statesPendingRelease,
+    },
+  },
+  {
+    id: 'release-promoted',
+    group: 'The release',
+    title: 'Accepted, and the restart is owed',
+    blurb:
+      'The state the ordinary path never lingers in, because the process is replaced while it is being drawn. What it is for is the case where that does not happen: the promotion went through, the announcement is in the transcript, and this window is still showing the old build.',
+    question: 'Does the developer learn they are not yet running what they accepted?',
+    covers: ['release.promoted'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-release-promoted', messages: seedMessages },
+      enterRelease: 'promoted',
+      pendingRelease: statesPendingRelease,
+      promotedVersion: '0.0.2',
+      promotionError:
+        'varnick asked the host to restart and is still running, so the promoted build is not what this window is showing. Restart varnick from the View menu.',
+    },
+  },
+  {
+    id: 'release-failed',
+    group: 'The release',
+    title: 'It did not go through',
+    blurb:
+      'The interesting refusal, and the one ticket 07 made it possible to state: the build being offered will not start, so promoting it would hand the developer a window that does not open. Nothing moved, the offer stands, and the control still works.',
+    question: 'Does the reason say what is wrong with the build, rather than that something failed?',
+    covers: ['release.failed'],
+    input: {
+      ...up,
+      sessionInput: { sessionId: 'states-release-failed', messages: seedMessages },
+      enterRelease: 'failed',
+      pendingRelease: statesPendingRelease,
+      promotionError:
+        'the build for v0.0.2 will not start: index.html loads /assets/index-C8f2a1.js, which is not in the artifact',
+    },
+  },
 ]
+
 
 /**
  * Paths the coverage banner checks.

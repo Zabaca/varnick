@@ -12,6 +12,8 @@ import type {
   SandboxPolicy,
 } from '../domain.ts'
 import { brokenSurfaceError, seedWorktreeDiff } from '../data/seed.ts'
+import type { PendingPreRelease } from '../../release.ts'
+import type { PromotionOutcome } from '../../release-promote.ts'
 
 /**
  * Seeded actor implementations for development.
@@ -296,6 +298,31 @@ export function seededActors() {
       states page, because that is the outcome a developer will actually meet
       and it needs to be reachable without waiting for a Turn to end.
     */
+    /*
+      Seeded: one pre-release, always on offer, so the band can be worked on
+      without a night's run behind it. The promotion answers success without
+      touching a store — `bun run dev` has no clone to promote in, and a seeded
+      mode that wrote one would be a development server moving what a developer
+      is served.
+    */
+    readPendingRelease: fromPromise<PendingPreRelease | null, Record<string, never>>(async () => ({
+      version: '0.0.2',
+      artifact: '0.0.2',
+      tag: 'v0.0.2',
+      cutAt: '2026-08-11T03:14:00.000Z',
+      announcement:
+        'varnick v0.0.2 is cut and waiting. Two tickets landed since v0.0.1.\n\nThe window keeps the build it was serving when a new one will not start, and falls back to it rather than leaving you with no varnick to fix it in.\n\nNothing is served from it yet. The window is still running what it was running, and promoting this build is still yours to do.',
+      notes: [],
+    })),
+
+    promoteRelease: fromPromise<PromotionOutcome, Record<string, never>>(async () => ({
+      promoted: true,
+      version: '0.0.2',
+      artifact: '0.0.2',
+      previous: 'local',
+      announcement: 'varnick v0.0.2 is cut and waiting.',
+    })),
+
     reapWorktree: fromPromise<ReapReport, { path: string }>(async ({ input }) => {
       await wait(400)
       return {

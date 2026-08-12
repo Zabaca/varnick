@@ -31,6 +31,9 @@ import type {
   ToolSettled,
 } from '../domain.ts'
 import type { SessionInput } from '../machines/session.ts'
+// Types only, from the two release modules — the same rule the machine follows.
+import type { PendingPreRelease } from '../../release.ts'
+import type { PromotionOutcome } from '../../release-promote.ts'
 
 /*
   The real implementations.
@@ -704,6 +707,27 @@ export function liveActors(
       not happen leaves a developer believing they are running code they merged
       and are not, which is the failure this whole region exists to prevent.
     */
+    /*
+      Real, and the pair the release band runs on.
+
+      Both carry nothing, which is the whole of what makes them safe to send
+      from a window: there is one pending pre-release per clone, so neither the
+      read nor the promotion chooses which one. The host runs `bun run promote`
+      — Core — so what is decided and what is written is next door in
+      `release-promote.ts` rather than behind the bridge.
+
+      The promotion answers its refusals rather than throwing them, because each
+      is a decision it made on purpose and each happens before anything is
+      written. The machine branches on that; see the `release` region.
+    */
+    readPendingRelease: fromPromise<PendingPreRelease | null, Record<string, never>>(
+      async () => (await callHarness({ kind: 'read-pending-release' })) as PendingPreRelease | null,
+    ),
+
+    promoteRelease: fromPromise<PromotionOutcome, Record<string, never>>(
+      async () => (await callHarness({ kind: 'promote-release' })) as PromotionOutcome,
+    ),
+
     restartVarnick: fromPromise<void, Record<string, never>>(async () => {
       await callHarness({ kind: 'restart-varnick' })
     }),
