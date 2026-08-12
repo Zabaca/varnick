@@ -120,14 +120,21 @@ for absent, unparseable and shaped-wrong alike, the way `servedArtifactId` does.
    keys off that: the accumulation restarts, the version base moves, and last
    night's notes stop coming back even though their tickets stay ticked for ever.
    `promotedNoteIds` is what enforces the last part.
-2. **Then write `served`** — `servedMarkerText(record.artifact)` into
-   `servedMarkerPath(cloneRoot)`. The artifact is already in the store; a cut
-   deliberately never pointed at it. `RESTART_VARNICK` already exists.
+2. **Then move the markers** — `served` to `record.artifact`, and `previous` to
+   whatever `served` named a moment ago. The artifact is already in the store; a
+   cut deliberately never pointed at it. `RESTART_VARNICK` already exists.
+   **`previous` is ticket 07's and it is written, never inferred** — mtime says
+   when an artifact was *built*, not when it was last served, and a pre-release
+   can sit unpromoted for weeks. So the promotion is the thing that writes it;
+   read 07's module for the call rather than composing the marker text here.
+   Both markers parse through one function, `markedArtifactId`, renamed from
+   `servedArtifactId` by 07 for that reason.
 3. **Then `clearPendingRecord(cloneRoot)`**, exported from `release-cut.ts` for
    exactly this and the only other thing that may touch that file.
 
 Do those in that order. A `served` written before the changelog is a window
-running a build the file still calls pending.
+running a build the file still calls pending, and a `served` moved before
+`previous` is a fallback pointing at the build that just failed.
 
 **07 — falling back.** Nothing here reads or writes `served`, so 07's branch in
 `packages/core/scripts/serve.ts` is untouched and still yours. Two facts that
@@ -138,6 +145,12 @@ per night. Reaping is therefore about promoted builds — N-1 — and not about
 pre-releases piling up. 06 deletes nothing from the store, on purpose: deleting a
 build the developer might be inspecting is not a thing to do while they are
 asleep.
+
+07 landed that pruning: `ARTIFACTS_KEPT = 4`, newest-first at launch, sparing
+`served`, `previous` and whatever is currently being served regardless of age.
+Four was sized to leave room for an unpromoted pre-release plus a spare, so a
+cut is not pruned out from under the developer overnight — but the store is
+bounded now, and nothing here should assume otherwise.
 
 **09 — the skill.** The command is `bun run release <feature-slug>`, and the slug
 has no default because a release that guessed which queue it was releasing would

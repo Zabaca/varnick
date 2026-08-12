@@ -673,10 +673,10 @@ export function pendingRecordText(record: PendingPreRelease): string {
  * The record a file holds, or `null` for nothing usable.
  *
  * Absent, unparseable and shaped wrong all answer the same way, for the reason
- * `servedArtifactId` gives: the honest reading of a record nobody can parse is
- * that nothing is pending, and there is no partial pre-release to offer. It
- * throws for nothing, because its callers are a band in a window and a release
- * that is about to overwrite it.
+ * `markedArtifactId` gives about the store's own markers: the honest reading of
+ * a record nobody can parse is that nothing is pending, and there is no partial
+ * pre-release to offer. It throws for nothing, because its callers are a band in
+ * a window and a release that is about to overwrite it.
  */
 export function parsePendingRecord(text: string | undefined | null): PendingPreRelease | null {
   if (text === undefined || text === null) return null
