@@ -639,6 +639,82 @@ describe('a bad line does not take the runtime down', () => {
 // The trace, which exists because a merge that wrote nothing left nothing to read
 // ---------------------------------------------------------------------------
 
+describe('the agent’s two asks reach the capability that gates them', () => {
+  /*
+    The dispatch and nothing else. What the gate decides is
+    packages/harness/src/landing.test.ts, and what a release does is
+    `packages/core/scripts/release.ts` — here the property is that the request
+    reaches the right capability with the right string, and that a request naming
+    nothing does not quietly become a request naming something.
+  */
+
+  test('a landing forwards the selector and answers with the outcome and its reason', async () => {
+    const caps = capabilities()
+    const answer = await reply(
+      call(1, { kind: 'land-worktree', path: '/w/49' }),
+      caps,
+    )
+    expect(caps.recorded.landings).toEqual(['/w/49'])
+    expect(answer).toEqual({
+      id: 1,
+      ok: { outcome: 'refused', detail: 'not in this test' },
+    })
+  })
+
+  test('a landing that names no worktree is refused rather than defaulted', async () => {
+    // Picking one would be the host choosing which of the agent's branches to
+    // write into the developer's tree.
+    const caps = capabilities()
+    for (const request of [
+      { kind: 'land-worktree' },
+      { kind: 'land-worktree', path: '' },
+      { kind: 'land-worktree', path: 42 },
+    ]) {
+      const answer = await reply(call(1, request), caps)
+      expect(answer.ok).toBeUndefined()
+      expect(answer.error).toContain('named none')
+    }
+    expect(caps.recorded.landings).toEqual([])
+  })
+
+  test('a release forwards the slug, and a request with none reaches the shape check', async () => {
+    const caps = capabilities()
+    expect(await reply(call(1, { kind: 'cut-release', feature: 'autonomous-runs' }), caps)).toEqual({
+      id: 1,
+      ok: { outcome: 'refused', detail: 'not in this test' },
+    })
+    await reply(call(2, { kind: 'cut-release' }), caps)
+    // The empty string rather than a guess: it is not a feature slug, and the
+    // capability says so in one sentence instead of the dispatch inventing one.
+    expect(caps.recorded.releases).toEqual(['autonomous-runs', ''])
+  })
+
+  test('the real capability refuses a slug that could climb or flag, before anything is spawned', async () => {
+    /*
+      `hostCapabilities` rather than a stub, because this is the one check that
+      stands between an agent's string and an argv. A stub that answered
+      `not-a-feature` would prove nothing about the code that runs.
+
+      Only refusals are asked for here: every one of these returns before the
+      spawn, so no test in this file starts a release.
+    */
+    const real = hostCapabilities({ cloneRoot: '/Users/dev/code/varnick' })
+    for (const shapeless of ['', '..', '../../etc', '-f', '--json', 'runs/../..', 'a b']) {
+      expect(await real.cutPreRelease(shapeless), shapeless).toEqual({
+        outcome: 'not-a-feature',
+        detail: null,
+      })
+    }
+  })
+
+  test('both are traced, because both write the developer’s clone', async () => {
+    // The defect the tracing came from was a merge that left nothing to read.
+    // These are the same write asked for by a process nobody is watching.
+    expect(worthTracing('land-worktree')).toBe(true)
+    expect(worthTracing('cut-release')).toBe(true)
+  })
+})
+
 describe('every act the runtime performs is traceable', () => {
   /*
     The defect this comes from. A merge writes the developer's repository, and it

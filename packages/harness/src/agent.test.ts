@@ -41,6 +41,12 @@ import {
 } from './agent.ts'
 import { GIT_CONFIG_GLOBAL_ENV_VAR, agentGitConfigPath } from './gitconfig.ts'
 import { previewToolResult, type PreviewOutcome } from './preview.ts'
+import {
+  landingToolResult,
+  releaseToolResult,
+  type LandingAnswer,
+  type ReleaseAnswer,
+} from './unattended.ts'
 import { RESTART_STILL_OWED } from './merge.ts'
 import {
   parseTurnEvent,
@@ -602,6 +608,13 @@ async function serve(
      * with no Claude Code process and no window.
      */
     askForPreview: (worktree: string) => Promise<PreviewOutcome>
+    /**
+     * What the `land_worktree` and `cut_pre_release` Custom Tools call. Same
+     * shape as `askForPreview` and here for the same reason: the round trip is
+     * driven with no Claude Code process, no git and no window.
+     */
+    askForLanding: (worktree: string) => Promise<LandingAnswer>
+    askForRelease: (feature: string) => Promise<ReleaseAnswer>
     /** Everything the loop has written so far, while it is still running. */
     written: readonly string[]
   }) => Promise<void>,
@@ -624,6 +637,14 @@ async function serve(
   /** Every list of secret names the loop handed over, in order. */
   const described: (readonly string[])[] = []
   let ask: (worktree: string) => Promise<PreviewOutcome> = async () => 'no-launch'
+  let askLanding: (worktree: string) => Promise<LandingAnswer> = async () => ({
+    outcome: 'no-landing',
+    detail: null,
+  })
+  let askRelease: (feature: string) => Promise<ReleaseAnswer> = async () => ({
+    outcome: 'no-release',
+    detail: null,
+  })
 
   const served = serveTurns({
     control,
@@ -634,6 +655,12 @@ async function serve(
     },
     previewLaunches: (deliver) => {
       ask = deliver
+    },
+    landingRequests: (deliver) => {
+      askLanding = deliver
+    },
+    releaseRequests: (deliver) => {
+      askRelease = deliver
     },
     secretsDescribed: (names) => {
       described.push(names)
@@ -655,6 +682,8 @@ async function serve(
     asked,
     summarised: (summary) => report(summary),
     askForPreview: (worktree) => ask(worktree),
+    askForLanding: (worktree) => askLanding(worktree),
+    askForRelease: (feature) => askRelease(feature),
     written: lines,
   })
   control.close()
@@ -2060,5 +2089,151 @@ describe('asking the host for a preview', () => {
       await settle()
     })
     expect(written.map((event) => event.kind)).toEqual(['delta', 'done'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Landing a branch and cutting a release, asked for from inside the Sandbox
+// ---------------------------------------------------------------------------
+
+/*
+  The round trip and nothing else. No branch is merged and no release is cut
+  here — both are the host's, and what the confined half owns is the question
+  going out and the answer coming back.
+
+  The gate itself is packages/harness/src/landing.test.ts, against ports. The
+  routing is src-tauri/src/unattended.rs.
+*/
+
+describe('asking the host to land a branch', () => {
+  const requested = (lines: readonly string[], kind: string) =>
+    lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((value) => value.kind === kind)
+
+  const answerLine = (
+    kind: string,
+    requestId: string,
+    outcome: string,
+    extra: Record<string, unknown> = {},
+  ) => `${JSON.stringify({ kind, requestId, outcome, ...extra })}\n`
+
+  test('the name goes out as a request and the refusal comes back as the tool result', async () => {
+    const answers: LandingAnswer[] = []
+    const reason =
+      'src-tauri/src/bridge.rs is protected — src-tauri/** may not be landed without a human.'
+
+    await serve(async ({ control, askForLanding, written }) => {
+      const asking = askForLanding('agent-one').then((answer) => answers.push(answer))
+      await settle()
+      const request = requested(written, 'land-worktree')[0] as Record<string, unknown>
+      // One name, and no field a path list, a base or a force could arrive in.
+      expect(Object.keys(request).sort()).toEqual(['kind', 'requestId', 'worktree'])
+      expect(request.worktree).toBe('agent-one')
+      control.push(
+        answerLine('landing-answer', request.requestId as string, 'refused', { detail: reason }),
+      )
+      await asking
+    })
+
+    expect(answers).toEqual([{ outcome: 'refused', detail: reason }])
+    const result = landingToolResult(answers[0] as LandingAnswer)
+    expect(result.landed).toBe(false)
+    // The whole sentence, so a run report prints the rule and the path rather
+    // than reconstructing them.
+    expect(result.text).toContain(reason)
+  })
+
+  test('a branch that landed reaches the agent as a tool call that landed', async () => {
+    const answers: LandingAnswer[] = []
+    await serve(async ({ control, askForLanding, written }) => {
+      const asking = askForLanding('agent-one').then((answer) => answers.push(answer))
+      await settle()
+      control.push(
+        answerLine(
+          'landing-answer',
+          requested(written, 'land-worktree')[0]?.requestId as string,
+          'landed',
+          { detail: 'varnick merged agent-one into the live tree.' },
+        ),
+      )
+      await asking
+    })
+    expect(landingToolResult(answers[0] as LandingAnswer).landed).toBe(true)
+  })
+
+  test('two requests in flight are answered by request id rather than by order', async () => {
+    const answers: string[] = []
+    await serve(async ({ control, askForLanding }) => {
+      const one = askForLanding('agent-one').then((answer) => answers.push(`one:${answer.outcome}`))
+      const two = askForLanding('agent-two').then((answer) => answers.push(`two:${answer.outcome}`))
+      await settle()
+      // The second answered first. A loop that paired these by arrival would
+      // tell the agent that the branch it did not ask about is the one that
+      // merged — and one of these two writes the developer's tree.
+      control.push(answerLine('landing-answer', 'landing-2', 'unmergeable'))
+      await settle()
+      control.push(answerLine('landing-answer', 'landing-1', 'landed'))
+      await Promise.all([one, two])
+    })
+    expect(answers).toEqual(['two:unmergeable', 'one:landed'])
+  })
+
+  test('a host that goes away answers no-landing, and never a refusal', async () => {
+    /*
+      The distinction an orchestrator acts on, kept at the one place it could be
+      lost. `refused` means the Fence decided and the branch is finished work for
+      a person; a control stream that ended is nobody deciding anything. Reporting
+      the second as the first would hand a night of work over as fenced.
+    */
+    const answers: LandingAnswer[] = []
+    const releases: ReleaseAnswer[] = []
+    await serve(async ({ askForLanding, askForRelease }) => {
+      void askForLanding('agent-one').then((answer) => answers.push(answer))
+      void askForRelease('autonomous-runs').then((answer) => releases.push(answer))
+      await settle()
+      // The script returns, which closes the control channel — the same thing a
+      // host exiting does.
+    })
+    await settle()
+    expect(answers).toEqual([{ outcome: 'no-landing', detail: null }])
+    expect(releases).toEqual([{ outcome: 'no-release', detail: null }])
+  })
+
+  test('an answer to a request nobody is waiting for changes nothing', async () => {
+    const answers: LandingAnswer[] = []
+    await serve(async ({ control, askForLanding, written }) => {
+      const asking = askForLanding('agent-one').then((answer) => answers.push(answer))
+      await settle()
+      const requestId = requested(written, 'land-worktree')[0]?.requestId as string
+      control.push(answerLine('landing-answer', requestId, 'landed'))
+      await asking
+      // A second answer to the same call, and one that says the opposite. It
+      // resolves nothing: the promise is already settled and the map no longer
+      // holds it, so the agent keeps the answer it was given.
+      control.push(answerLine('landing-answer', requestId, 'refused', { detail: 'too late.' }))
+      control.push(answerLine('landing-answer', 'landing-99', 'landed'))
+      await settle()
+    })
+    expect(answers).toEqual([{ outcome: 'landed', detail: null }])
+  })
+
+  test('a release request carries the slug and its answer comes back the same way', async () => {
+    const answers: ReleaseAnswer[] = []
+    await serve(async ({ control, askForRelease, written }) => {
+      const asking = askForRelease('autonomous-runs').then((answer) => answers.push(answer))
+      await settle()
+      const request = requested(written, 'cut-release')[0] as Record<string, unknown>
+      expect(Object.keys(request).sort()).toEqual(['feature', 'kind', 'requestId'])
+      expect(request.feature).toBe('autonomous-runs')
+      control.push(
+        answerLine('release-answer', request.requestId as string, 'cut', {
+          detail: 'tagged v0.0.2-pre.1',
+        }),
+      )
+      await asking
+    })
+    expect(releaseToolResult(answers[0] as ReleaseAnswer).cut).toBe(true)
+    expect(releaseToolResult(answers[0] as ReleaseAnswer).text).toContain('tagged v0.0.2-pre.1')
   })
 })
