@@ -554,7 +554,9 @@ impl AgentProcess {
         */
         let queue = self.events.clone_handle();
         let shared = Arc::clone(&self.shared);
-        let previews = app.clone();
+        // One handle, three questions the agent can ask this host: a Preview, a
+        // landing and a release. Each is answered off this loop.
+        let asks = app.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Some(event) = agent_event_of(&line) {
@@ -578,7 +580,7 @@ impl AgentProcess {
                   else.
                 */
                 if let Some(request) = crate::preview::preview_request_of(&line) {
-                    let app = previews.clone();
+                    let app = asks.clone();
                     let shared = Arc::clone(&shared);
                     std::thread::spawn(move || {
                         let outcome = crate::preview::answer_preview(&app, &request.worktree);
@@ -586,6 +588,57 @@ impl AgentProcess {
                             &shared,
                             queue_generation,
                             &crate::preview::preview_answer_line(&request.request_id, outcome),
+                        );
+                    });
+                    continue;
+                }
+                /*
+                  The fourth and fifth shapes: the agent asking for one of its
+                  branches to be landed, or for a pre-release to be cut.
+
+                  **On threads of their own, and here that is not a nicety.**
+                  Answering a landing means running git, asking the runtime, and
+                  waiting for a squash merge; answering a release means waiting
+                  for a build. This loop is what carries the answer of the Turn
+                  the agent asked from — the developer would watch their answer
+                  stop dead behind a merge of something else.
+
+                  Neither writes anything itself. Both hand the request to
+                  unattended.rs, which resolves a name against git's own listing
+                  and asks the Harness runtime, where the protected-path
+                  predicate decides. See
+                  docs/adr/0023-a-second-door-rather-than-a-wider-one.md.
+                */
+                if let Some(request) = crate::unattended::landing_request_of(&line) {
+                    let app = asks.clone();
+                    let shared = Arc::clone(&shared);
+                    std::thread::spawn(move || {
+                        let answer = crate::unattended::answer_landing(&app, &request.worktree);
+                        write_control(
+                            &shared,
+                            queue_generation,
+                            &crate::unattended::answer_line(
+                                crate::unattended::LANDING_ANSWER_KIND,
+                                &request.request_id,
+                                &answer,
+                            ),
+                        );
+                    });
+                    continue;
+                }
+                if let Some(request) = crate::unattended::release_request_of(&line) {
+                    let app = asks.clone();
+                    let shared = Arc::clone(&shared);
+                    std::thread::spawn(move || {
+                        let answer = crate::unattended::answer_release(&app, &request.feature);
+                        write_control(
+                            &shared,
+                            queue_generation,
+                            &crate::unattended::answer_line(
+                                crate::unattended::RELEASE_ANSWER_KIND,
+                                &request.request_id,
+                                &answer,
+                            ),
                         );
                     });
                 }

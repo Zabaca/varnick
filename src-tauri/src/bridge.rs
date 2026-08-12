@@ -430,6 +430,41 @@ impl HarnessRuntime {
         }
     }
 
+    /// Ask the runtime to land one Worktree, because the agent asked this host.
+    ///
+    /// Host-internal, and **absent from `route_of` on purpose** — like
+    /// {@link agent_wrapping} and {@link secret_names}, and here for the sharper
+    /// version of their reason. The renderer already has `merge-worktree`, which
+    /// merges what a human clicked; this one exists for a request that came out
+    /// of the Sandbox, and putting it on the renderer's list would be a second
+    /// way to reach the gated merge from a surface that does not need one.
+    ///
+    /// The path is a value out of `git worktree list`, resolved in unattended.rs
+    /// from the name the agent sent. Nothing the agent typed reaches this call.
+    ///
+    /// The answer is forwarded whole to `answer_of`, which is where an outcome
+    /// this build cannot read becomes a tag rather than a sentence.
+    pub fn land_worktree(&self, path: &std::path::Path) -> Result<Value, Failure> {
+        self.call(&serde_json::json!({
+            "kind": crate::unattended::LAND_WORKTREE_KIND,
+            "path": path.display().to_string(),
+        }))
+    }
+
+    /// Ask the runtime to cut a Pre-release, because the agent asked this host.
+    ///
+    /// Host-internal for the same reason, and the slug crosses unexamined: it
+    /// becomes an argument to `bun run release` in the runtime and nowhere else,
+    /// so the runtime is where its shape is decided. That is the call this file
+    /// already makes about a worktree diff's path — a validation written on both
+    /// sides is a validation that drifts.
+    pub fn cut_pre_release(&self, feature: &str) -> Result<Value, Failure> {
+        self.call(&serde_json::json!({
+            "kind": crate::unattended::CUT_RELEASE_KIND,
+            "feature": feature,
+        }))
+    }
+
     /// Ask the runtime for the wrapping that starts an agent.
     ///
     /// The only caller is the spawn in this module. It is not reachable from
@@ -1142,6 +1177,36 @@ mod tests {
         assert_eq!(route_of("launch-preview"), None);
         assert_eq!(route_of("preview-answer"), None);
         assert_eq!(route_of("read-fence-diff"), None);
+    }
+
+    #[test]
+    fn the_renderer_cannot_ask_for_the_agents_landing_or_the_agents_release() {
+        /*
+          The same rule for the two calls that write the developer's clone on the
+          agent's behalf, and here it cuts both ways.
+
+          Neither request is on this bridge: they arrive on the agent's own
+          stdout, are turned into a path and a slug in unattended.rs, and reach
+          the runtime through `HarnessRuntime::land_worktree` and
+          `cut_pre_release` — host-internal, like `wrap-agent-command` and
+          `read-secret-names`.
+
+          A renderer that could send one would be a Surface — Userspace, which
+          the agent writes freely — able to merge a branch into the live tree
+          with no human anywhere in it. The window's own control is
+          `merge-worktree`, which is a human having clicked in a surface
+          `denyWrite` refuses the agent (ADR-0002), and it is deliberately a
+          different call: this pair carries a gate that one does not need.
+
+          The answers are not on it either. They are control lines on the
+          agent's stdin, like `preview-answer`.
+        */
+        assert_eq!(route_of("land-worktree"), None);
+        assert_eq!(route_of("cut-release"), None);
+        assert_eq!(route_of("landing-answer"), None);
+        assert_eq!(route_of("release-answer"), None);
+        // And the merge the window sends is unchanged and still the runtime's.
+        assert_eq!(route_of("merge-worktree"), Some(Route::Runtime));
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod bridge;
 mod credential;
 mod mint;
 mod preview;
+mod unattended;
 
 use tauri::Manager;
 
