@@ -36,6 +36,7 @@
  * <clone>/.varnick/builds/            the store
  * <clone>/.varnick/builds/<id>/       one artifact, with index.html at its root
  * <clone>/.varnick/builds/served      one line: the id the window is served from
+ * <clone>/.varnick/builds/previous    one line: the id it was served from before
  * ```
  *
  * `.varnick/` because that is already what varnick's own per-clone machine
@@ -84,6 +85,22 @@ export const ARTIFACT_STORE_RELATIVE_PATH = '.varnick/builds'
 export const SERVED_MARKER = 'served'
 
 /**
+ * The file naming the artifact the window was served from before this one.
+ *
+ * Same shape as {@link SERVED_MARKER} and written at the same moment, by
+ * `switchServedArtifact` — which is the whole reason it can be trusted. "The
+ * previous build" is not something a launch can work out from what it finds on
+ * disk: modification times say when a directory was *written*, and an artifact
+ * can be written weeks before anything serves it. So the fact is recorded by
+ * whoever switches, in a second one-line file, and a launch reads it.
+ *
+ * Absent means there has never been a switch — a clone that has only ever
+ * served one build has nothing to fall back to, and that is the honest answer
+ * rather than a directory the store happens to still hold.
+ */
+export const PREVIOUS_MARKER = 'previous'
+
+/**
  * What `bun run build` writes, and the only id varnick makes up for itself.
  *
  * A developer's own build of the tree in front of them. Release artifacts are
@@ -111,6 +128,11 @@ export function artifactStore(cloneRoot: string): string {
 /** The file naming the served artifact, for a clone. */
 export function servedMarkerPath(cloneRoot: string): string {
   return resolve(artifactStore(cloneRoot), SERVED_MARKER)
+}
+
+/** The file naming the artifact served before that one, for a clone. */
+export function previousMarkerPath(cloneRoot: string): string {
+  return resolve(artifactStore(cloneRoot), PREVIOUS_MARKER)
 }
 
 /**
@@ -177,7 +199,12 @@ export function incomingArtifactPath(cloneRoot: string, id: string): string | nu
 }
 
 /**
- * The id a `served` file names, or `null` for nothing usable.
+ * The id a one-line marker names, or `null` for nothing usable.
+ *
+ * Both {@link SERVED_MARKER} and {@link PREVIOUS_MARKER} are read through this
+ * — they are the same file format holding the same kind of answer, and it was
+ * called `servedArtifactId` while there was only one of them. A marker is a
+ * marker; which question it answers is the path it was read from.
  *
  * Takes the file's whole contents rather than a line, because the caller's job
  * is to read a file and this one's is to decide what it said. `undefined` is
@@ -186,15 +213,330 @@ export function incomingArtifactPath(cloneRoot: string, id: string): string | nu
  *
  * A file that says something that is not an id answers `null` rather than
  * throwing: the honest reading of a marker nobody can parse is that nothing is
- * served, and the server has a page for that.
+ * named, and the server has a page for that.
  */
-export function servedArtifactId(marker: string | undefined | null): string | null {
+export function markedArtifactId(marker: string | undefined | null): string | null {
   if (marker === undefined || marker === null) return null
   const first = marker.split('\n')[0]?.trim() ?? ''
   return isArtifactId(first) ? first : null
 }
 
-/** What to write into {@link SERVED_MARKER} for an id. */
+/** What to write into a marker for an id. */
 export function servedMarkerText(id: string): string {
   return `${id}\n`
+}
+
+// ---------------------------------------------------------------------------
+// Which one to serve
+// ---------------------------------------------------------------------------
+
+/** The named and numeric entities an attribute value can spell a filename with. */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+}
+
+/**
+ * An attribute value as the characters it stands for.
+ *
+ * One pass, so a name that legitimately contains `&amp;` decodes to `&` and
+ * stops there rather than being decoded twice. Anything unrecognised is left
+ * exactly as it was: an entity nobody here knows is a filename character this
+ * function has no opinion about, and inventing one would be the false positive
+ * the whole parse is shaped to avoid.
+ */
+function decodeEntities(value: string): string {
+  return value.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, body: string) => {
+    if (body.startsWith('#')) {
+      const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+    }
+    return NAMED_ENTITIES[body.toLowerCase()] ?? whole
+  })
+}
+
+/**
+ * The `src` of every script an entry document loads out of its own artifact.
+ *
+ * This is what "the artifact will not start" is decided from, and it is a
+ * parse rather than a guess for that reason. A Vite build writes exactly one
+ * `<script type="module" src="/assets/index-HASH.js">` into `index.html`, and
+ * an artifact whose `index.html` names a file the artifact does not contain is
+ * a window that opens on nothing — certainly, before anything runs, with no
+ * browser needed to find out.
+ *
+ * **Every judgement here is biased toward returning nothing**, and that is the
+ * whole shape of the function. A source returned in error is a *false positive*
+ * — the host falls back over a build the developer deliberately promoted, which
+ * is worse than the failure the fallback exists to prevent. A source missed is
+ * a fallback that does not happen, which leaves the developer exactly where
+ * they were. The two errors are not symmetric, so neither is the parse.
+ *
+ * Which is why it is stricter than "find `src=`", in four ways that were each
+ * found by trying them rather than reasoned about:
+ *
+ *   * **Comments are removed first.** varnick's own `index.html` ships a long
+ *     design brief as an HTML comment and Vite keeps it in the built output, so
+ *     a brief that ever quoted a `<script>` tag would have taken the window down
+ *     to a fallback. A script inside a comment is not loaded by anything.
+ *   * **`<noscript>` blocks are removed with them**, for the same reason one
+ *     step on: its contents load precisely when scripts do not.
+ *   * **Attributes are walked in order rather than searched for.** `src=` inside
+ *     *another* attribute's quoted value is a value, not an attribute — a lazy
+ *     search finds the impostor and misses the real one.
+ *   * **The attribute is `src` and not something ending in it.** `data-src` and
+ *     `x-src` are lazy-loading conventions, and a word boundary treats the
+ *     hyphen as the start of a new word.
+ *
+ * Only sources this artifact could answer itself are returned. A scheme
+ * (`https:`, `data:`) or a protocol-relative `//host/x` is somebody else's to
+ * serve and its absence says nothing about this build; a query or a fragment is
+ * dropped, because the file on disk is the part before them.
+ *
+ * **Scripts and not stylesheets.** A missing stylesheet is an artifact that is
+ * also broken, and it is not one that fails to *start* — an unstyled varnick is
+ * still a varnick a developer can fix things with, and falling back from one
+ * would be the host overruling a build on a signal that is not the question
+ * being asked.
+ *
+ * Four kinds of region are removed before anything is matched, and each is
+ * removed because a browser would not run what is inside it:
+ *
+ *   * **comments**, per above;
+ *   * **`<noscript>` bodies**, whose contents load precisely when scripts do not;
+ *   * **`<template>` bodies**, which are inert until something clones them, and
+ *     nothing clones one during a start;
+ *   * **script bodies**, keeping the opening tag. A `document.write` of a
+ *     `<script src>` is a string inside a script, not a tag in the document, and
+ *     the artifact is not required to contain what it writes. Dropping the body
+ *     and keeping the tag is also what a browser does with an unterminated
+ *     `<script src="…"/>`: there is no self-closing script element in HTML, so
+ *     everything after it is that script's content until `</script>`.
+ */
+export function entryScriptSources(html: string): string[] {
+  const loaded = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi, '')
+    .replace(/<template\b[^>]*>[\s\S]*?<\/template\s*>/gi, '')
+    // Body dropped, opening tag kept — `$1` is the tag, which is where a `src` is.
+    .replace(/(<script\b[^>]*>)[\s\S]*?<\/script\s*>/gi, '$1')
+
+  const found: string[] = []
+  for (const tag of loaded.matchAll(/<script\b([^>]*)>/gi)) {
+    /*
+      Attribute by attribute, in order. A quoted value is *consumed* as a value
+      here, which is what stops `data-note="a src=/fake.js b"` from answering
+      `/fake.js` — a search for `src=` reads that as an attribute, because it
+      has no idea it is standing inside one.
+    */
+    const attributes = (tag[1] ?? '').matchAll(
+      /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]*)))?/g,
+    )
+    for (const attribute of attributes) {
+      if ((attribute[1] ?? '').toLowerCase() !== 'src') continue
+
+      // Decoded first, because an attribute value is entity-encoded markup and
+      // the file on disk is the decoded name. `/a&amp;b.js` is a file called
+      // `a&b.js`, and comparing the encoded form against the disk would report
+      // a build that is fine as one that will not start.
+      const raw = decodeEntities((attribute[2] ?? attribute[3] ?? attribute[4] ?? '').trim())
+      // The file is what comes before a query or a fragment; neither reaches disk.
+      const source = raw.split(/[?#]/)[0] ?? ''
+      if (source === '') continue
+      // Somebody else's to serve, so its absence is not this artifact's failure.
+      if (source.startsWith('//') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source)) continue
+      found.push(source)
+    }
+  }
+  return found
+}
+
+/**
+ * What a `served` file amounts to, which is three answers and not two.
+ *
+ * **`absent` and `unusable` are different, and conflating them rebuilds over a
+ * promotion.** A marker that is not there means nothing has ever been recorded;
+ * a marker that is there and cannot be read — the wrong permissions, or a
+ * directory where a file should be — means a choice exists that this launch
+ * cannot make out. Only the first is a store with nothing in it to undo. The
+ * first version of this answered `null` to both, so a launch that could not
+ * read the marker rebuilt and moved `served` onto the build it had just made,
+ * which is exactly the failure the rest of this module is shaped against.
+ *
+ * `unusable` also covers a marker whose contents are not an id. Something wrote
+ * that file; a launch that cannot parse it knows only that it is not the one to
+ * decide what it meant.
+ */
+export type MarkerReading =
+  /** No file. Nothing has ever been recorded here. */
+  | { readonly state: 'absent' }
+  /** One id, read cleanly. */
+  | { readonly state: 'named'; readonly id: string }
+  /** A file is there and this launch cannot act on it. */
+  | { readonly state: 'unusable' }
+
+/** What a launch does about the store it found. */
+export type ServingOutcome =
+  /** `served` names an artifact and it will start. The ordinary case. */
+  | 'served'
+  /** The recorded choice cannot be honoured, and the one before it can. */
+  | 'fell-back'
+  /** Nothing has ever been recorded here, so build one. A fresh clone. */
+  | 'never-built'
+  /** The recorded choice cannot be honoured and there is nothing behind it. */
+  | 'nothing-startable'
+
+/** Which artifact a launch serves, and what it has to say about it. */
+export interface ServingPlan {
+  readonly outcome: ServingOutcome
+  /** The artifact to serve, or `null` when there is none. */
+  readonly serve: string | null
+  /**
+   * The artifact `served` named, when that is not the one being served.
+   *
+   * `null` while the outcome is still a failure means the marker itself could
+   * not be read, so there is no id to name — the caller says that instead.
+   */
+  readonly failedId: string | null
+}
+
+/**
+ * Which artifact the window opens on, given what the store says and which
+ * artifacts will start.
+ *
+ * **The decision, entire.** It is a pure function over two ids and a predicate
+ * so that every branch of it is assertable with nothing built and nothing
+ * serving — ADR-0013 — and because the branch it replaces was four lines of
+ * launch script that could only be observed by launching.
+ *
+ * The four outcomes are four different things for the caller to do, which is
+ * why they are four and not a boolean:
+ *
+ *   * **`served`** — serve it, say nothing beyond which one it is.
+ *   * **`fell-back`** — serve `previous`, and say so loudly in both places a
+ *     developer will be looking: the terminal and the window. `served` is left
+ *     naming the artifact that failed, because rewriting it would erase the
+ *     evidence and turn the next launch into a launch with no problem in it.
+ *   * **`never-built`** — the fresh-clone path, and the *only* one that builds.
+ *     `bun install && bun tauri dev` has to open a window.
+ *   * **`nothing-startable`** — the recorded choice cannot be honoured and
+ *     there is nothing behind it. This deliberately does **not** build.
+ *
+ * That last refusal is the constraint ADR-0020 wrote down and this function is
+ * where it now lives: a launch that rebuilt whenever the served artifact was
+ * unusable would quietly undo a promotion — the developer promoted a release,
+ * it did not come up, and the next restart replaces it with a build of whatever
+ * happens to be in the tree while `served` moves to `local`. That presents as
+ * the build reverting on its own. Only a store with no choice recorded in it at
+ * all is a store with nothing to undo, which is why the marker's three states
+ * are three and not two — see {@link MarkerReading}.
+ *
+ * A marker that cannot be read still falls back if there is something behind
+ * it: the developer's choice is unreadable either way, and a working window
+ * with a banner beats a page. There is no id to blame in that case, so
+ * `failedId` is `null` and the caller supplies the sentence.
+ *
+ * `previous === served` is not a fallback. It cannot happen through
+ * {@link servedSwitch}, and if a hand-edited marker makes it happen, serving
+ * the same broken artifact twice under a banner saying it was fallen back to is
+ * worse than saying there is nothing.
+ */
+export function servingPlan(
+  served: MarkerReading,
+  previous: string | null,
+  startable: (id: string) => boolean,
+): ServingPlan {
+  if (served.state === 'absent') return { outcome: 'never-built', serve: null, failedId: null }
+
+  const failedId = served.state === 'named' ? served.id : null
+  if (served.state === 'named' && startable(served.id)) {
+    return { outcome: 'served', serve: served.id, failedId: null }
+  }
+  if (previous !== null && previous !== failedId && startable(previous)) {
+    return { outcome: 'fell-back', serve: previous, failedId }
+  }
+  return { outcome: 'nothing-startable', serve: null, failedId }
+}
+
+/**
+ * What the two markers say after the window is switched onto `to`.
+ *
+ * One function because two things switch — `bun run build` today, a promotion
+ * next — and "remember what was there" is exactly the step a second
+ * implementation leaves out. It would leave it out silently: nothing is
+ * different until the day a build does not start, which is the day the
+ * remembering was for.
+ *
+ * Switching onto what is already served moves nothing. That is not a
+ * degenerate case, it is the common one — `bun run build` writes `local` over
+ * `local` all day — and recording `local` as its own previous would make the
+ * fallback resolve to the artifact that just failed. An earlier `previous`
+ * survives it, so a developer who promoted a release and then built over it
+ * still has the release to fall back to.
+ */
+export function servedSwitch(
+  served: string | null,
+  previous: string | null,
+  to: string,
+): { readonly served: string; readonly previous: string | null } {
+  if (to === served) return { served: to, previous }
+  return { served: to, previous: served ?? previous }
+}
+
+// ---------------------------------------------------------------------------
+// How many to keep
+// ---------------------------------------------------------------------------
+
+/**
+ * How many artifacts the store holds before a launch starts removing them.
+ *
+ * Four, and the number is chosen against what has to fit rather than by taste:
+ * the served build, the one behind it, a pre-release that has been cut and not
+ * yet promoted, and one spare so that a night's work does not evict the release
+ * the developer is running. A frontend build is tens of megabytes; a clone that
+ * kept every one of them would grow for the life of the clone, which is the
+ * cost this ticket's "keep the previous one" would otherwise sign up for
+ * indefinitely.
+ */
+export const ARTIFACTS_KEPT = 4
+
+/**
+ * Which artifacts a launch removes, newest-first with the named ones spared.
+ *
+ * Recency is by modification time and it is the *only* thing time is used for
+ * — which one is previous is a fact the store records rather than one a launch
+ * infers. Here it is answering a different question, "which of these is nobody
+ * likely to want", and for that it is the right instrument and the only one
+ * available: an artifact nothing points at has no other order to it.
+ *
+ * **`keep` wins over the limit, always.** A pre-release cut last night is the
+ * newest thing in the store and survives on recency; the served artifact and
+ * the one behind it may be neither, and removing either is the whole failure
+ * this function exists inside a ticket about preventing.
+ *
+ * Anything that is not an artifact id comes back out of the list, so a caller
+ * handed a directory name off a disk can never be handed one to delete that the
+ * store does not own. `null` entries in `keep` are the ordinary shape of "there
+ * is no previous", passed straight through rather than filtered at the call
+ * site.
+ */
+export function artifactsToPrune(
+  present: readonly { readonly id: string; readonly modified: number }[],
+  keep: readonly (string | null)[],
+  limit: number = ARTIFACTS_KEPT,
+): string[] {
+  const spared = new Set(keep.filter((id): id is string => id !== null))
+  const newestFirst = [...present]
+    .filter((entry) => isArtifactId(entry.id))
+    // Ties broken by id so two artifacts written in the same millisecond — one
+    // `cp -r` of a store, one fast test — do not order differently per run.
+    .sort((a, b) => b.modified - a.modified || a.id.localeCompare(b.id))
+
+  return newestFirst
+    .slice(Math.max(limit, 0))
+    .map((entry) => entry.id)
+    .filter((id) => !spared.has(id))
 }

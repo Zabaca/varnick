@@ -14,10 +14,10 @@ This touches the host and lands through a human merge.
 
 **Blocked by:** 05 — The main window is served from a built artifact.
 
-**Status:** ready-for-agent
+**Status:** ready-for-review
 
-- [ ] The previously served artifact is retained when a new one is switched to
-- [ ] An artifact that fails to start causes the host to serve the previous one instead, without the developer intervening
-- [ ] The fallback is visible rather than silent — the window says which build it is running and that it fell back
-- [ ] Which artifact to serve, and whether to fall back, is decided by a pure function with its own assertions
-- [ ] Retention is bounded, so artifacts do not accumulate for the life of the clone
+- [x] The previously served artifact is retained when a new one is switched to
+- [x] An artifact that fails to start causes the host to serve the previous one instead, without the developer intervening
+- [x] The fallback is visible rather than silent — the window says which build it is running and that it fell back
+- [x] Which artifact to serve, and whether to fall back, is decided by a pure function with its own assertions
+- [x] Retention is bounded, so artifacts do not accumulate for the life of the clone
