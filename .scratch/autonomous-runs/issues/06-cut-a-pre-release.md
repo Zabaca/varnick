@@ -129,15 +129,18 @@ through a failing commit.
    keys off that: the accumulation restarts, the version base moves, and last
    night's notes stop coming back even though their tickets stay ticked for ever.
    `promotedNoteIds` is what enforces the last part.
-2. **Then move the markers** — `served` to `record.artifact`, and `previous` to
-   whatever `served` named a moment ago. The artifact is already in the store; a
-   cut deliberately never pointed at it. `RESTART_VARNICK` already exists.
-   **`previous` is ticket 07's and it is written, never inferred** — mtime says
-   when an artifact was *built*, not when it was last served, and a pre-release
-   can sit unpromoted for weeks. So the promotion is the thing that writes it;
-   read 07's module for the call rather than composing the marker text here.
-   Both markers parse through one function, `markedArtifactId`, renamed from
-   `servedArtifactId` by 07 for that reason.
+2. **Then move the markers** — one call, now that 07 has landed:
+   `switchServedArtifact(cloneRoot, record.artifact)` from
+   `packages/core/artifact-store.ts`. It reads the current `served`, writes it to
+   `previous`, points `served` at the id, and hands back both. Do **not** compose
+   the marker text yourself: the decision it wraps is `servedSwitch`, which is
+   pure and asserted, and an unreadable `served` deliberately does not become a
+   `previous` — there is no name to write.
+   **`previous` is written, never inferred** — mtime says when an artifact was
+   *built*, not when it was last served, and a pre-release can sit unpromoted for
+   weeks. Both markers parse through one function, `markedArtifactId`, renamed
+   from `servedArtifactId` by 07 for that reason. `RESTART_VARNICK` already
+   exists.
 3. **Then `clearPendingRecord(cloneRoot)`**, exported from `release-cut.ts` for
    exactly this and the only other thing that may touch that file.
 
@@ -155,11 +158,21 @@ pre-releases piling up. 06 deletes nothing from the store, on purpose: deleting 
 build the developer might be inspecting is not a thing to do while they are
 asleep.
 
-07 landed that pruning: `ARTIFACTS_KEPT = 4`, newest-first at launch, sparing
-`served`, `previous` and whatever is currently being served regardless of age.
-Four was sized to leave room for an unpromoted pre-release plus a spare, so a
-cut is not pruned out from under the developer overnight — but the store is
-bounded now, and nothing here should assume otherwise.
+07 landed that pruning and it is now merged here: `ARTIFACTS_KEPT = 4`,
+newest-first at launch, sparing `served`, `previous`, the artifact being served
+and one that failed to start. Measured against the merged tree, it does the job
+this ticket wanted and did not do itself — a store left holding
+`0.0.1, 0.1.0, 0.2.0, 0.3.0, 0.4.0, local` after several nights where the level
+rose prunes down to the newest four, so the orphans a level rise leaves behind
+are collected rather than kept for ever.
+
+**The pending pre-release is spared by recency, not by name.** It is the newest
+thing in the store the moment it is cut, and `keep` does not list it — 07
+reasoned about exactly this and sized four for it. Reachable only if four
+artifacts were newer, which nothing in the current design produces, since only
+`local` and a cut ever write ids and a cut writes the pending one last. Recorded
+because it is a guarantee that rests on ordering rather than on a name, and
+whoever adds a third writer of artifact ids should reread it.
 
 **09 — the skill.** The command is `bun run release <feature-slug>`, and the slug
 has no default because a release that guessed which queue it was releasing would
