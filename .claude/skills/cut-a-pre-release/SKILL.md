@@ -153,14 +153,16 @@ not touch `served`.
 
 | Code | The tool says | Means | What you do |
 |---|---|---|---|
-| `0` | `cut` | cut | Read the announcement back, then report it. |
+| `0` | `cut` | cut | The tool answers with the tag line. **The announcement is not in it** — read it from the pending block of `CHANGELOG.md`, or from `.varnick/pending-release.json`, then report it. |
 | `1` | `refused` | refused, on purpose | A decision, not a fault. **Report the sentence it printed**, and do not retry — nothing about the tree will have changed. |
 | `2` | `no-release` | could not | Something failed underneath it, or the invocation was wrong. Check the slug before you conclude anything else. |
 | — | `not-a-feature` | the slug is not one | Refused before anything ran. It is one path component naming the run, not a path or a flag. |
 
-The tool answers with the tag and the last line the command printed, so "quote
-the sentence it printed" is the same instruction either way — the sentence is in
-the tool result.
+The tool answers with the tag and **the last line** the command printed, which is
+what makes "quote the sentence it printed" work for a refusal — that sentence is
+the last thing a refusal prints. A success prints the announcement several lines
+earlier, so it does not cross: read it from the files above rather than from the
+tool result, and do not paraphrase it from the version number.
 
 **Exit `1` is more than one refusal, so quote the one you got.** `no landed
 ticket is unreleased, so there is nothing to cut` is the quiet night: nothing
@@ -185,8 +187,9 @@ store's retention collects.
 commit, so whatever hooks live there run inside it. Look there before looking at
 the release.
 
-Then read the announcement the command printed and check its opening count
-against what you think landed. A number larger than tonight's tickets is
+Then read the announcement — from `CHANGELOG.md`'s pending block, since it does
+not come back through the tool — and check its opening count against what you
+think landed. A number larger than tonight's tickets is
 accumulation from a night nobody promoted — correct, and worth saying in the
 report.
 

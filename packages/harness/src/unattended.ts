@@ -90,7 +90,7 @@ export const LAND_WORKTREE_DESCRIPTION = [
 /**
  * What happened to a request to land a Worktree.
  *
- * Seven, and they divide in three: one that landed, four the host refused about
+ * Eight, and they divide in three: one that landed, five the host refused about
  * *this* branch, and two where the question could not be put. The last two are
  * separated from the refusals on purpose — "protected, so a human merges it" is
  * a finished ticket to hand over, and "the host could not be asked" is a broken
@@ -106,6 +106,8 @@ export const LANDING_OUTCOMES = [
   'dirty-live-tree',
   /** The branch conflicts, or git could not say whether it merges. */
   'unmergeable',
+  /** The branch grew a commit between the check and the merge. Nothing merged. */
+  'branch-moved',
   /** No worktree of that name has commits the live tree does not. */
   'unknown-worktree',
   /** git could not be asked what worktrees exist, so nothing was checked. */
@@ -116,8 +118,23 @@ export const LANDING_OUTCOMES = [
 
 export type LandingOutcome = (typeof LANDING_OUTCOMES)[number]
 
-export function isLandingOutcome(value: unknown): value is LandingOutcome {
-  return typeof value === 'string' && (LANDING_OUTCOMES as readonly string[]).includes(value)
+/**
+ * Whether a string is one of a closed list of outcomes.
+ *
+ * One function taking the list, rather than one per list, because that is what
+ * the other side of this wire does: `answer_of(reply, known, fallback)` in
+ * src-tauri/src/unattended.rs takes the list too. Two halves of one protocol
+ * making opposite choices about the same check is how they drift.
+ *
+ * The narrowing is what earns it: a caller passes `LANDING_OUTCOMES` and gets a
+ * `LandingOutcome` back, so a release tag checked against the landing list is a
+ * type error rather than a sentence nothing wrote.
+ */
+export function isOutcome<Outcome extends string>(
+  value: unknown,
+  outcomes: readonly Outcome[],
+): value is Outcome {
+  return typeof value === 'string' && (outcomes as readonly string[]).includes(value)
 }
 
 /**
@@ -144,12 +161,14 @@ export function landingOutcomeMessage(outcome: LandingOutcome): string {
       return 'The live tree has uncommitted work in it. A merge over that is how a change nobody knew about is lost, so nothing was merged. Nothing here can commit it for you — this one waits for the developer.'
     case 'unmergeable':
       return 'That branch does not merge into the live tree as it stands, so nothing was merged. Merge the live branch down into the worktree, where you may write, and ask again.'
+    case 'branch-moved':
+      return 'That branch changed between being checked and being merged, so nothing was merged — what was checked is not what would have landed. Nothing is wrong with the branch: ask again and it will be checked as it stands now.'
     case 'unknown-worktree':
       return 'That is not the name of a worktree under .claude/worktrees/ with commits the live tree does not have. The name is one path component — not a path, not the live clone — and a branch level with the live tree has nothing to land.'
     case 'no-worktrees':
       return 'The host could not ask git what worktrees exist, so nothing was checked and nothing was merged.'
     case 'no-landing':
-      return 'The host could not carry out the landing. Nothing was merged, and this is a broken machine rather than a refusal — do not retry it in a loop.'
+      return 'The host gave no answer about the landing. This is a broken machine rather than a refusal, so do not retry it in a loop — and do not report that nothing was merged, because a host that stopped answering may have been part-way through: check whether the branch is in the live tree before doing anything else with it.'
   }
 }
 
@@ -187,7 +206,7 @@ export function landingToolResult(answer: LandingAnswer): {
  * for it.
  */
 export function encodeLandingRequest(requestId: string, worktree: string): string {
-  return `${JSON.stringify({ kind: 'land-worktree', requestId, worktree })}\n`
+  return unattendedRequest('land-worktree', requestId, 'worktree', worktree)
 }
 
 // ---------------------------------------------------------------------------
@@ -241,10 +260,6 @@ export const RELEASE_OUTCOMES = [
 
 export type ReleaseOutcome = (typeof RELEASE_OUTCOMES)[number]
 
-export function isReleaseOutcome(value: unknown): value is ReleaseOutcome {
-  return typeof value === 'string' && (RELEASE_OUTCOMES as readonly string[]).includes(value)
-}
-
 export type ReleaseAnswer = UnattendedAnswer<ReleaseOutcome>
 
 /** What to tell the agent, in one sentence, selected by the tag. */
@@ -257,7 +272,7 @@ export function releaseOutcomeMessage(outcome: ReleaseOutcome): string {
     case 'not-a-feature':
       return 'That is not a feature slug. It is one path component naming the run — the directory under .scratch/ the tickets are in — and it is not a path, a flag or a version.'
     case 'no-release':
-      return 'The release could not be run, so nothing was cut, tagged or announced. This is a broken machine rather than a refusal — do not retry it in a loop.'
+      return 'The release gave no answer. This is a broken machine rather than a refusal, so do not retry it in a loop — and do not cut again on the strength of it: a release that overran the host\'s wait goes on running, so a pre-release may exist, be tagged and be waiting. Read what is pending before concluding anything.'
   }
 }
 
@@ -288,7 +303,29 @@ export function releaseToolResult(answer: ReleaseAnswer): {
  * name a version would be an agent announcing whatever it liked.
  */
 export function encodeReleaseRequest(requestId: string, feature: string): string {
-  return `${JSON.stringify({ kind: 'cut-release', requestId, feature })}\n`
+  return unattendedRequest('cut-release', requestId, 'feature', feature)
+}
+
+/**
+ * One request, as one line: a kind, the call it belongs to, and one named field.
+ *
+ * The named encoders above are wrappers on this, which is the shape the reading
+ * half already has — `landing_request_of` and `release_request_of` in
+ * src-tauri/src/unattended.rs are two wrappers on one `two_strings(line, kind,
+ * field)`. The wrappers exist because the *field name* is part of each request's
+ * meaning and a call site passing `'worktree'` as a string would lose that; the
+ * shared core exists because the framing is not part of it.
+ *
+ * `JSON.stringify` escapes newlines, so nothing a caller passes can split a
+ * request across two lines of a newline-framed channel.
+ */
+function unattendedRequest(
+  kind: string,
+  requestId: string,
+  field: string,
+  value: string,
+): string {
+  return `${JSON.stringify({ kind, requestId, [field]: value })}\n`
 }
 
 /**

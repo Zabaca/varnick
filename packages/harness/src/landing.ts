@@ -40,13 +40,7 @@
  * lets every refusal below be proved with no repository at all.
  */
 
-import {
-  installLifecycleOf,
-  isRootManifest,
-  ROOT_MANIFEST,
-  unattendedLanding,
-  type InstallLifecycle,
-} from './fence.ts'
+import { landingVerdict } from './landing-verdict.ts'
 import {
   liveTreeIsDirty,
   mergeBriefing,
@@ -124,7 +118,24 @@ export async function landWorktree(input: LandWorktreeInput): Promise<LandingAns
     */
     if (await liveTreeIsDirty(git)) return { outcome: 'dirty-live-tree', detail: null }
 
-    const merge = await mergeabilityOf(git, attempt, ref)
+    /*
+      **The commit, resolved once, and everything below is about that commit.**
+
+      A ref name is a moving answer. The agent may write its own Worktree freely
+      and can run git in it from a background `Bash`, so a commit added between
+      the check and the merge would merge paths the predicate never saw — a
+      time-of-check-to-time-of-use gap in the one function whose whole job is
+      that the check binds the use.
+
+      Resolving here is half of the binding. The other half is at the merge,
+      which refuses if the ref has moved off this commit since — see
+      `expectedCommit` in ./merge.ts. Both halves are needed and neither is
+      redundant: this one is what makes the *verdict* be about a fixed tree, and
+      that one is what makes the *merge* be about the same tree.
+    */
+    const commit = (await git(['rev-parse', ref])).trim()
+
+    const merge = await mergeabilityOf(git, attempt, commit)
     if (merge.kind === 'conflicts') {
       return {
         outcome: 'unmergeable',
@@ -139,38 +150,27 @@ export async function landWorktree(input: LandWorktreeInput): Promise<LandingAns
     }
 
     /*
-      What the branch changed, as git reports it, and the three flags are the
-      whole of why this line is not `['diff', '--name-only', ref]`. Each closed a
-      hole that produced a landing for a protected path — measured against real
-      git in ticket 02, for `bun run landable`, and repeated here because *this*
-      is the caller that merges:
-
-      `HEAD...<ref>` is the diff against the merge base rather than against the
-      tip, so work that landed on the live tree since this branch forked is not
-      reported as something this branch changed. It is also the base the merge
-      will actually use.
-
-      `-z` because the default `core.quotePath=true` prints a non-ASCII path with
-      its quotes — `scripts/café.sh` arrives as `"scripts/caf\303\251.sh"`, whose
-      leading `"` matches no entry in `PROTECTED_PATHS`. `-z` emits raw bytes
-      separated by NUL and never quotes, and it removes the other reason to split
-      on newlines, which is that a newline is a legal character in a filename.
-
-      `--no-renames` because rename detection reports **only the destination**:
-      `sandbox-policy.baseline.json -> baseline.json` prints as `baseline.json`,
-      so a branch could move `src-tauri/*` out of the protected tree and land.
-      Without detection the same change is a delete and an add, so both sides are
-      checked — which also refuses a rename *into* a protected path, and should.
+      The gate. Every path it decides on comes out of git — see ./landing-verdict.ts,
+      which is shared with `bun run landable` so the answer before a night starts
+      and the answer at the merge cannot differ.
     */
-    const changedPaths = splitNulTerminated(
-      await git(['diff', '-z', '--no-renames', '--name-only', `HEAD...${ref}`]),
-    )
-
-    const verdict = unattendedLanding({
-      changedPaths,
-      ...(await manifestLifecycle({ git, ref, changedPaths })),
-    })
+    const verdict = await landingVerdict({ git, base: 'HEAD', commit })
     if (!verdict.mayLand) return { outcome: 'refused', detail: verdict.reason }
+
+    /*
+      Asked again, immediately before the write, and this is not the binding —
+      ./merge.ts's `expectedCommit` is. This exists so the *common* case has a
+      sentence the agent can act on: a branch that grew a commit while it was
+      being checked is not a broken machine, it is a race with the agent's own
+      background work, and the answer is to ask again rather than to stop.
+    */
+    const nowAt = (await git(['rev-parse', ref])).trim()
+    if (nowAt !== commit) {
+      return {
+        outcome: 'branch-moved',
+        detail: `${branch} was at ${commit.slice(0, 7)} when it was checked and is at ${nowAt.slice(0, 7)} now, so nothing was merged.`,
+      }
+    }
 
     /*
       The same merge a human's click performs, with the same ports. Nothing about
@@ -178,8 +178,11 @@ export async function landWorktree(input: LandWorktreeInput): Promise<LandingAns
       cleanliness and the branch's mergeability, it refuses to delete a directory
       anything is standing in, and it proves the content landed before it deletes
       anything at all.
+
+      `expectedCommit` is the one thing added, and it is what makes the merge
+      merge the tree the predicate judged.
     */
-    const report = await mergeWorktree(input)
+    const report = await mergeWorktree({ ...input, expectedCommit: commit })
     return {
       outcome: 'landed',
       // Both sentences are ./merge.ts's, and both are true of the agent that
@@ -204,71 +207,6 @@ export async function landWorktree(input: LandWorktreeInput): Promise<LandingAns
     */
     return { outcome: 'no-landing', detail: reasonOf(error) }
   }
-}
-
-/**
- * The root manifest's install lifecycle fields on both sides of the branch, or
- * nothing when the branch does not touch it.
- *
- * **Absence is an argument here.** `unattendedLanding` refuses a manifest change
- * whose fields were not read — so returning `{}` for "could not read it" would
- * turn an unparseable manifest into a landing, and returning `undefined` turns it
- * into `manifest-not-read`, which is the refusal that already exists and already
- * says the right sentence. Both revisions are read the same way for that reason:
- * a manifest that is not there at a revision is `{}` and a manifest that could
- * not be understood is `undefined`.
- *
- * `isRootManifest` rather than `includes(ROOT_MANIFEST)`, because the pure half
- * owns what counts as the root manifest and a string compare here disagreed with
- * it on `./package.json` — see `landing-cli.ts`, which met that first.
- */
-async function manifestLifecycle(input: {
-  git: GitRunner
-  ref: string
-  changedPaths: readonly string[]
-}): Promise<{
-  rootManifestBefore?: InstallLifecycle | undefined
-  rootManifestAfter?: InstallLifecycle | undefined
-}> {
-  if (!input.changedPaths.some(isRootManifest)) return {}
-
-  // The merge base, so "before" is the manifest the branch actually started
-  // from. `HEAD` would compare against a live tree that may have moved on, and
-  // report somebody else's landed lifecycle change as this branch's.
-  const base = (await input.git(['merge-base', 'HEAD', input.ref])).trim()
-  return {
-    rootManifestBefore: await lifecycleAt(input.git, base),
-    rootManifestAfter: await lifecycleAt(input.git, input.ref),
-  }
-}
-
-/** One revision's lifecycle fields, `{}` when it has no manifest, `undefined` when it cannot be read. */
-async function lifecycleAt(git: GitRunner, revision: string): Promise<InstallLifecycle | undefined> {
-  let source: string
-  try {
-    source = await git(['show', `${revision}:${ROOT_MANIFEST}`])
-  } catch {
-    // A revision with no manifest and a git that would not answer are the same
-    // rejection, and they are told apart by what happens next rather than here:
-    // no manifest at the base is `{}`, which is what a branch that *adds* one
-    // starts from, and the fields on the branch side then differ and refuse.
-    return {}
-  }
-
-  try {
-    return installLifecycleOf(source)
-  } catch {
-    // Not read, rather than read as empty. The reason is not forwarded: the
-    // predicate's own `manifest-not-read` sentence says the thing that matters,
-    // and a parser's complaint about a developer's manifest is not an answer
-    // about a branch.
-    return undefined
-  }
-}
-
-/** `-z` terminates every entry, so the last split is an empty string. */
-function splitNulTerminated(output: string): string[] {
-  return output.split('\0').filter((entry) => entry.length > 0)
 }
 
 function reasonOf(error: unknown): string {

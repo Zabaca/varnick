@@ -1948,6 +1948,59 @@ export function interleave(text: string, images: readonly PastedImage[]): Conten
   return blocks
 }
 
+/**
+ * Requests this loop has sent the host and is waiting on, for one kind of ask.
+ *
+ * The three asks — a Preview, a landing, a release — differ in the line they
+ * write and in what they answer when the channel ends. Everything else about
+ * them is the same three-line dance, and the copy that matters is the last one:
+ * a drain that is forgotten leaves a tool call awaiting an answer that can never
+ * arrive, for the life of the session, with nothing on screen to say why.
+ *
+ * `whenTheChannelEnds` is the value every waiter is given when the host has
+ * gone. It is a property of the ask rather than of this helper: a Preview that
+ * did not launch and a landing that never happened are different sentences, and
+ * the landing's must not be one that reads as a decision about the branch.
+ */
+function pendingAsks<Answer>(input: {
+  /** Names the request ids, so a line on the wire says which ask it belongs to. */
+  readonly prefix: string
+  readonly write: (line: string) => void
+  /** The line that goes out. One id, one string, and nothing else. */
+  readonly request: (requestId: string, argument: string) => string
+  readonly whenTheChannelEnds: Answer
+}): {
+  readonly ask: (argument: string) => Promise<Answer>
+  readonly answer: (requestId: string, value: Answer) => void
+  readonly drain: () => void
+} {
+  const waiting = new Map<string, (value: Answer) => void>()
+  let asked = 0
+
+  return {
+    ask: (argument) => {
+      asked += 1
+      const requestId = `${input.prefix}-${asked}`
+      return new Promise<Answer>((resolve) => {
+        waiting.set(requestId, resolve)
+        input.write(input.request(requestId, argument))
+      })
+    },
+    answer: (requestId, value) => {
+      const resolve = waiting.get(requestId)
+      if (resolve === undefined) return
+      waiting.delete(requestId)
+      resolve(value)
+    },
+    drain: () => {
+      for (const [requestId, resolve] of waiting) {
+        waiting.delete(requestId)
+        resolve(input.whenTheChannelEnds)
+      }
+    },
+  }
+}
+
 export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   const { control, messages, session, write } = input
 
@@ -2038,72 +2091,64 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
   }
 
   /*
-    Previews the host has been asked for and has not answered yet.
+    The three things the host is asked for and has not answered yet.
 
-    Keyed by a request id this loop mints, because a Preview is the one thing on
-    this channel with no Turn to name it by — the agent may ask for one in the
-    middle of any Turn, or in the middle of two.
+    Keyed by a request id this loop mints, because these are the only things on
+    this channel with no Turn to name them by — the agent may ask in the middle
+    of any Turn, or in the middle of two.
 
     A pending request is resolved exactly once: by the answer, or by the control
     stream ending. The second is not tidiness. The host is what writes these
     answers, so a host that has gone is an answer that is never coming, and a
     tool call awaiting one would hold the Turn open for the life of a process
     that has stopped listening.
-  */
-  const awaitingPreview = new Map<string, (outcome: PreviewOutcome) => void>()
-  let previewsAsked = 0
 
-  input.previewLaunches?.((worktree: string) => {
-    previewsAsked += 1
-    const requestId = `preview-${previewsAsked}`
-    return new Promise<PreviewOutcome>((resolve) => {
-      awaitingPreview.set(requestId, resolve)
-      // The name, unexamined. Deciding here whether it is a real worktree would
-      // be this process vouching for a directory it is on the wrong side of the
-      // Sandbox from; the host validates it against what git reports, which is
-      // the only list that means anything. See src-tauri/src/preview.rs.
-      write(encodePreviewRequest(requestId, worktree))
-    })
+    One helper rather than three copies, because the copy that matters is the
+    **drain**: forget one and that tool hangs for the rest of the session with
+    nothing on screen to say why. What differs between the three is the line
+    that goes out and the answer given when the channel ends, so those are the
+    arguments and everything else is shared.
+  */
+  const previews = pendingAsks<PreviewOutcome>({
+    prefix: 'preview',
+    write,
+    // The name, unexamined. Deciding here whether it is a real worktree would be
+    // this process vouching for a directory it is on the wrong side of the
+    // Sandbox from; the host validates it against what git reports, which is the
+    // only list that means anything. See src-tauri/src/preview.rs.
+    request: encodePreviewRequest,
+    whenTheChannelEnds: 'no-launch',
   })
 
   /*
-    The other two things the host is asked for, kept the same way and for the
-    same three reasons: no Turn names them, a request is answered exactly once,
-    and a control stream that ends is an answer that is never coming.
-
-    What they are told when that happens is the difference worth reading. A
-    Preview falls back to `no-launch`; these fall back to the outcome that says
-    *the host could not be asked* rather than one that says the branch was
-    refused — because an orchestrator hands a refused branch to a person and
-    stops, and it must not do that on account of a pipe.
+    The two that write the developer's clone. What they answer when the channel
+    ends is the difference worth reading: a Preview falls back to `no-launch`,
+    and these fall back to the outcome that says *the host gave no answer* rather
+    than one that says the branch was refused — because an orchestrator hands a
+    refused branch to a person and stops, and it must not do that on account of a
+    pipe.
   */
-  const awaitingLanding = new Map<string, (answer: LandingAnswer) => void>()
-  let landingsAsked = 0
-
-  input.landingRequests?.((worktree: string) => {
-    landingsAsked += 1
-    const requestId = `landing-${landingsAsked}`
-    return new Promise<LandingAnswer>((resolve) => {
-      awaitingLanding.set(requestId, resolve)
-      // The name, unexamined, exactly as the Preview's is — and here the reason
-      // is stronger: this process could not check what the branch changed if it
-      // wanted to, because the answer has to come from git in the tree it is
-      // being merged into, and that is the other side of the Sandbox.
-      write(encodeLandingRequest(requestId, worktree))
-    })
+  const landings = pendingAsks<LandingAnswer>({
+    prefix: 'landing',
+    write,
+    // The name, unexamined, exactly as the Preview's is — and here the reason is
+    // stronger: this process could not check what the branch changed if it
+    // wanted to, because the answer has to come from git in the tree being
+    // merged into, and that is the other side of the Sandbox.
+    request: encodeLandingRequest,
+    whenTheChannelEnds: { outcome: 'no-landing', detail: null },
   })
 
-  const awaitingRelease = new Map<string, (answer: ReleaseAnswer) => void>()
-  let releasesAsked = 0
-
-  input.releaseRequests?.((feature: string) => {
-    releasesAsked += 1
-    const requestId = `release-${releasesAsked}`
-    return new Promise<ReleaseAnswer>((resolve) => {
-      awaitingRelease.set(requestId, resolve)
-      write(encodeReleaseRequest(requestId, feature))
-    })
+  const releases = pendingAsks<ReleaseAnswer>({
+    prefix: 'release',
+    write,
+    request: encodeReleaseRequest,
+    whenTheChannelEnds: { outcome: 'no-release', detail: null },
   })
+
+  input.previewLaunches?.(previews.ask)
+  input.landingRequests?.(landings.ask)
+  input.releaseRequests?.(releases.ask)
 
   /*
     A compaction, which arrives out of band through the SDK's `PostCompact`
@@ -2205,32 +2250,29 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       input.mergesReported?.(request.briefing, request.whileRunning)
       return
     }
+    /*
+      Answered once and forgotten. A second answer to the same request — a host
+      that wrote twice, or a line replayed — has nothing to resolve, and resolving
+      a promise twice would be a tool call answered by whichever arrived last.
+      That is worst for the landing: the first answer may have said a branch
+      landed, and nothing would tell the two apart.
+    */
     if (request.kind === 'preview-answer') {
-      // Answered once and forgotten. A second answer to the same request — a
-      // host that wrote twice, or a line replayed — has nothing to resolve, and
-      // resolving a promise twice would be a tool call answered by whichever
-      // arrived last rather than by the developer's decision.
-      const waiting = awaitingPreview.get(request.requestId)
-      if (waiting === undefined) return
-      awaitingPreview.delete(request.requestId)
-      waiting(request.outcome)
+      previews.answer(request.requestId, request.outcome)
       return
     }
     if (request.kind === 'landing-answer') {
-      // Answered once and forgotten, like a Preview's — and the second answer
-      // this drops is a worse thing to accept here, because the first one may
-      // have said a branch landed and nothing would tell the two apart.
-      const waiting = awaitingLanding.get(request.requestId)
-      if (waiting === undefined) return
-      awaitingLanding.delete(request.requestId)
-      waiting({ outcome: request.outcome, detail: request.detail ?? null })
+      landings.answer(request.requestId, {
+        outcome: request.outcome,
+        detail: request.detail ?? null,
+      })
       return
     }
     if (request.kind === 'release-answer') {
-      const waiting = awaitingRelease.get(request.requestId)
-      if (waiting === undefined) return
-      awaitingRelease.delete(request.requestId)
-      waiting({ outcome: request.outcome, detail: request.detail ?? null })
+      releases.answer(request.requestId, {
+        outcome: request.outcome,
+        detail: request.detail ?? null,
+      })
       return
     }
     // A stale interrupt from an abandoned Turn must not stop the one that
@@ -2246,27 +2288,9 @@ export async function serveTurns(input: ServeTurnsInput): Promise<void> {
       await readLines(control, handle)
     } finally {
       // The channel is closed, so no answer can arrive on it. Everything still
-      // waiting is told the launch did not happen, which is true and is the one
-      // thing a caller can act on — see `awaitingPreview`.
-      for (const [requestId, waiting] of awaitingPreview) {
-        awaitingPreview.delete(requestId)
-        waiting('no-launch')
-      }
-      /*
-        And the same for the two that write the developer's clone, with the
-        outcome that says the host was not reached. **Never `refused`**: a
-        refusal is a decision about the branch, and a decision nobody made must
-        not be reported as one — an orchestrator reading it would hand finished
-        work to a person and say the Fence stopped it.
-      */
-      for (const [requestId, waiting] of awaitingLanding) {
-        awaitingLanding.delete(requestId)
-        waiting({ outcome: 'no-landing', detail: null })
-      }
-      for (const [requestId, waiting] of awaitingRelease) {
-        awaitingRelease.delete(requestId)
-        waiting({ outcome: 'no-release', detail: null })
-      }
+      // waiting is told so, which is true and is the one thing a caller can act
+      // on — see `pendingAsks`, where each says what it falls back to.
+      for (const pending of [previews, landings, releases]) pending.drain()
     }
   }
 

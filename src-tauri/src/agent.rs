@@ -603,6 +603,16 @@ impl AgentProcess {
                   the agent asked from — the developer would watch their answer
                   stop dead behind a merge of something else.
 
+                  **What a thread does not buy is concurrency in the runtime.**
+                  `HarnessRuntime::call` serialises on one channel, so a landing
+                  or a release still holds every other runtime call — a mirror
+                  save, a worktree listing — for as long as it runs. The thread
+                  keeps *this* pipe moving and nothing else, and the answer to
+                  the rest is that the work is short: a squash merge, and a build
+                  measured well inside `RUNTIME_WAIT`. If either stops being
+                  short, that wait is what breaks first — see `cutPreRelease` in
+                  packages/harness/src/runtime.ts.
+
                   Neither writes anything itself. Both hand the request to
                   unattended.rs, which resolves a name against git's own listing
                   and asks the Harness runtime, where the protected-path

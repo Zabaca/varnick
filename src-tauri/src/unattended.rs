@@ -62,11 +62,12 @@ pub const RELEASE_ANSWER_KIND: &str = "release-answer";
 /// control request whose outcome it does not know, so an answer forwarded with a
 /// tag this build invented would leave a tool call waiting for ever. Anything
 /// not on this list becomes {@link NO_LANDING} on the way past.
-pub const LANDING_OUTCOMES: [&str; 7] = [
+pub const LANDING_OUTCOMES: [&str; 8] = [
     "landed",
     "refused",
     "dirty-live-tree",
     "unmergeable",
+    "branch-moved",
     "unknown-worktree",
     "no-worktrees",
     "no-landing",

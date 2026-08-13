@@ -19,8 +19,7 @@ import {
   encodeLandingRequest,
   encodeReleaseRequest,
   isFeatureSlug,
-  isLandingOutcome,
-  isReleaseOutcome,
+  isOutcome,
   landingOutcomeMessage,
   landingToolResult,
   releaseOutcomeMessage,
@@ -126,19 +125,22 @@ describe('what the agent asks and what it is told', () => {
     // result nobody wrote.
     const said = new Set<string>()
     for (const outcome of LANDING_OUTCOMES) {
-      expect(isLandingOutcome(outcome)).toBe(true)
-      const message = landingOutcomeMessage(outcome)
-      expect(message.length).toBeGreaterThan(20)
-      said.add(message)
+      expect(isOutcome(outcome, LANDING_OUTCOMES)).toBe(true)
+      said.add(landingOutcomeMessage(outcome))
     }
+    // Distinct, which is the real property — a tag that fell through to another
+    // tag's sentence would tell the agent the wrong thing about its own branch,
+    // and a length check would not notice.
     expect(said.size).toBe(LANDING_OUTCOMES.length)
 
-    for (const outcome of RELEASE_OUTCOMES) {
-      expect(isReleaseOutcome(outcome)).toBe(true)
-      expect(releaseOutcomeMessage(outcome).length).toBeGreaterThan(20)
-    }
-    expect(isLandingOutcome('landed?')).toBe(false)
-    expect(isReleaseOutcome('cut?')).toBe(false)
+    const releases = new Set(RELEASE_OUTCOMES.map(releaseOutcomeMessage))
+    expect(releases.size).toBe(RELEASE_OUTCOMES.length)
+
+    // The lists are not each other's: a release tag checked against the landing
+    // list is refused, which is what stops one kind's answer reading as another's.
+    expect(isOutcome('landed?', LANDING_OUTCOMES)).toBe(false)
+    expect(isOutcome('landed', RELEASE_OUTCOMES)).toBe(false)
+    expect(isOutcome('cut', LANDING_OUTCOMES)).toBe(false)
   })
 
   test('whether the branch is in the live tree is a flag rather than prose to interpret', () => {
@@ -157,6 +159,39 @@ describe('what the agent asks and what it is told', () => {
     for (const outcome of RELEASE_OUTCOMES.filter((one) => one !== 'cut')) {
       expect(releaseToolResult({ outcome, detail: null }).cut, outcome).toBe(false)
     }
+  })
+
+  test('an answer that could not be got does not claim nothing happened', () => {
+    /*
+      The host's wait is bounded (`RUNTIME_WAIT`, 90s) and the work behind these
+      two is not instantaneous — a merge, and a release that runs a build. A
+      timeout answers the tag that means *no answer*, and the runtime goes on
+      working: the merge can complete, the release can tag and write its pending
+      record.
+
+      So neither sentence may say nothing happened. The one that did said "so
+      nothing was cut, tagged or announced", and an agent reading that cuts a
+      second time — which is the one way this feature could damage a developer's
+      clone rather than merely fail to help it.
+    */
+    for (const message of [landingOutcomeMessage('no-landing'), releaseOutcomeMessage('no-release')]) {
+      expect(message).toContain('gave no answer')
+      expect(message).not.toContain('Nothing was merged')
+      expect(message).not.toContain('nothing was cut')
+      // And each says what to do instead of assuming.
+      expect(message.toLowerCase()).toMatch(/check|read/)
+    }
+  })
+
+  test('a branch that moved is its own answer, and it is not a refusal', () => {
+    // The agent can add a commit to its own Worktree between the check and the
+    // merge. That is a race with its own background work rather than a decision
+    // about the branch, so it must not read as one — an orchestrator parks a
+    // refused branch and stops, and this one should simply be asked again.
+    const moved = landingToolResult({ outcome: 'branch-moved', detail: null })
+    expect(moved.landed).toBe(false)
+    expect(moved.text).toContain('ask again')
+    expect(moved.text).not.toContain('protected')
   })
 
   test('the refusal reason reaches the agent whole, in words a report can print', () => {

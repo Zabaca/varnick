@@ -107,6 +107,28 @@ export interface MergeWorktreeInput {
    * being a read of the wrong tree and becomes a write to one.
    */
   readonly path: string
+  /**
+   * The commit the caller checked, when something checked one.
+   *
+   * **Absent for the human's merge and present for the agent's**, and the
+   * asymmetry is the whole reason it exists. A person clicks a control beside a
+   * diff of a branch and merges *that branch*, whatever it says now; nothing
+   * about their decision was computed in advance.
+   *
+   * The agent's landing is the opposite: a predicate read what the branch
+   * changed, said it may land, and the merge happens afterwards. In between, the
+   * agent can add a commit — it writes its own Worktree freely and can run git
+   * there from a background `Bash` — and a merge of the ref would then carry
+   * paths nothing checked. That is a time-of-check-to-time-of-use gap in the one
+   * place a gate cannot have one.
+   *
+   * So the caller pins what it judged, and this **refuses** rather than merging
+   * something else. Refusing rather than merging the pinned commit instead is
+   * deliberate: the cleanup deletes the branch with `-D`, so merging an older
+   * commit than the branch holds would force-delete work that never landed. The
+   * safe answer to "this moved" is to do nothing and let the caller ask again.
+   */
+  readonly expectedCommit?: string
 }
 
 /**
@@ -183,6 +205,26 @@ export async function mergeWorktree(input: MergeWorktreeInput): Promise<MergeRep
 
   const { entry, ref } = found
   const branch = shortBranch(entry.branch) ?? ref
+
+  /*
+    Before anything is computed and long before anything is written: is this
+    still the commit the caller checked?
+
+    See {@link MergeWorktreeInput.expectedCommit}. This is the half of the
+    binding that has to be here — a caller can resolve the ref and compare it
+    itself, and that is still a check with a gap after it. Only the process
+    performing the merge can close the gap, by refusing at the last moment it is
+    able to.
+  */
+  if (input.expectedCommit !== undefined) {
+    const at = (await git(['rev-parse', ref])).trim()
+    if (at !== input.expectedCommit) {
+      throw new Error(
+        `${branch} was ${input.expectedCommit} when it was checked and is ${at} now, so varnick will not merge it: what was checked is not what would land.`,
+      )
+    }
+  }
+
   refuseUnmergeable(branch, await mergeabilityOf(git, attempt, ref))
 
   // Read before the merge rather than after: the message is composed from the

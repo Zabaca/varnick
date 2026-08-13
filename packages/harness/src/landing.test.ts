@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { landWorktree } from './landing.ts'
+import { mergeWorktree } from './merge.ts'
 import { PROTECTED_PATHS, ROOT_MANIFEST } from './fence.ts'
 import { readAllowlistFor, sandboxPolicyFor } from './sandbox.ts'
 import type { CwdProbe } from './merge.ts'
@@ -25,6 +26,8 @@ import type { GitAttempt, GitAttemptResult, GitRunner } from './worktrees.ts'
 const CLONE = '/Users/dev/code/varnick'
 const WORKTREE = `${CLONE}/.claude/worktrees/49`
 const REF = 'refs/heads/ticket/49'
+/** The commit the branch is at when it is checked, and still at when it is merged. */
+const COMMIT = '2222222222222222222222222222222222222222'
 const LANDED_TREE = '3333333333333333333333333333333333333333'
 
 const listing = () =>
@@ -34,7 +37,7 @@ const listing = () =>
   ].join('\n\n')}\n`
 
 /** The diff a landing asks for, as one key. The flags are part of the question. */
-const DIFF = `diff -z --no-renames --name-only HEAD...${REF}`
+const DIFF = `diff -z --no-renames --name-only HEAD...${COMMIT}`
 
 /** A `-z` listing: every entry NUL-terminated, including the last. */
 const nulTerminated = (...paths: string[]) => paths.map((path) => `${path}\0`).join('')
@@ -45,18 +48,22 @@ const manifest = (scripts: Record<string, string>) =>
 
 const READS: Record<string, string> = {
   'status --porcelain': '',
+  [`rev-parse ${REF}`]: `${COMMIT}\n`,
   'worktree list --porcelain': listing(),
   [`rev-list --count HEAD..${REF}`]: '2\n',
+  [`rev-list --count ${COMMIT}..HEAD`]: '0\n',
+  // Asked twice by two callers: the gate probes the pinned commit, and
+  // `mergeWorktree` probes the ref it resolved for itself.
   [`rev-list --count ${REF}..HEAD`]: '0\n',
   [DIFF]: nulTerminated('packages/core/src/App.tsx', 'README.md'),
   [`log --format=%s --reverse HEAD..${REF}`]: 'the fix\n',
   'rev-parse --short HEAD': 'a1b2c3d\n',
   'rev-parse HEAD^{tree}': `${LANDED_TREE}\n`,
-  [`merge-base HEAD ${REF}`]: '1111111111111111111111111111111111111111\n',
+  [`merge-base HEAD ${COMMIT}`]: '1111111111111111111111111111111111111111\n',
   [`show 1111111111111111111111111111111111111111:${ROOT_MANIFEST}`]: manifest({
     postinstall: 'sh scripts/use-tracked-git-hooks.sh',
   }),
-  [`show ${REF}:${ROOT_MANIFEST}`]: manifest({
+  [`show ${COMMIT}:${ROOT_MANIFEST}`]: manifest({
     postinstall: 'sh scripts/use-tracked-git-hooks.sh',
   }),
 }
@@ -185,7 +192,7 @@ describe('the tool refuses everything the predicate refuses', () => {
     const dependenciesOnly = await land({
       changed: [ROOT_MANIFEST],
       reads: {
-        [`show ${REF}:${ROOT_MANIFEST}`]: manifest({
+        [`show ${COMMIT}:${ROOT_MANIFEST}`]: manifest({
           postinstall: 'sh scripts/use-tracked-git-hooks.sh',
         }),
       },
@@ -199,7 +206,7 @@ describe('the tool refuses everything the predicate refuses', () => {
     ] as const) {
       const { answer, asked } = await land({
         changed: [ROOT_MANIFEST, 'README.md'],
-        reads: { [`show ${REF}:${ROOT_MANIFEST}`]: manifest(scripts) },
+        reads: { [`show ${COMMIT}:${ROOT_MANIFEST}`]: manifest(scripts) },
       })
       expect(answer.outcome, `a ${what} lifecycle script`).toBe('refused')
       expect(answer.detail).toContain('install time')
@@ -218,12 +225,161 @@ describe('the tool refuses everything the predicate refuses', () => {
     for (const unreadable of ['{ not json', '"a string"', '{"scripts":{"postinstall":42}}']) {
       const { answer, asked } = await land({
         changed: [ROOT_MANIFEST],
-        reads: { [`show ${REF}:${ROOT_MANIFEST}`]: unreadable },
+        reads: { [`show ${COMMIT}:${ROOT_MANIFEST}`]: unreadable },
       })
       expect(answer.outcome, unreadable).toBe('refused')
       expect(answer.detail).toContain('were not read')
       expect(merged(asked)).toBe(false)
     }
+  })
+
+  test('an unreadable manifest refuses even when the base side has no lifecycle scripts', async () => {
+    /*
+      The hole this closed, and it is the one that opens the gate.
+
+      Treating a failed `git show` as "there is no manifest at that revision"
+      makes a failure indistinguishable from an absence, and the two want
+      opposite answers. With the base side holding no lifecycle fields — an
+      ordinary thing for a manifest to be — a failed read on the branch side made
+      both sides `{}`, the diff showed no change, and a branch that **added** a
+      `postinstall` landed unattended.
+
+      It was unreachable in this repository on the day it was written, because
+      `package.json` here has a `postinstall` and the base side therefore had
+      fields. That is the part worth keeping: the hole was closed by a fact about
+      a file's current contents rather than by the code, and one human-merged
+      branch dropping that field would have opened it with nothing failing.
+
+      So the base here has **no** lifecycle scripts, which is the configuration
+      that made it reachable.
+    */
+    const { answer, asked } = await land({
+      changed: [ROOT_MANIFEST],
+      reads: {
+        // A base manifest with nothing that runs at install time.
+        [`show 1111111111111111111111111111111111111111:${ROOT_MANIFEST}`]: manifest({}),
+      },
+      // And a branch side git will not answer for. Withheld rather than made
+      // empty, because an empty answer is a manifest that parsed.
+      withhold: [`show ${COMMIT}:${ROOT_MANIFEST}`],
+    })
+
+    expect(answer.outcome).toBe('refused')
+    expect(answer.detail).toContain('were not read')
+    expect(merged(asked)).toBe(false)
+  })
+
+  test('the same branch, read successfully, refuses for the lifecycle script it adds', async () => {
+    // The control for the test above: same base with no lifecycle fields, same
+    // branch adding a `postinstall`, and this time git answers. It must refuse
+    // by naming the field rather than by failing to read it — otherwise the test
+    // above would pass against an implementation that refuses everything.
+    const { answer, asked } = await land({
+      changed: [ROOT_MANIFEST],
+      reads: {
+        [`show 1111111111111111111111111111111111111111:${ROOT_MANIFEST}`]: manifest({}),
+        [`show ${COMMIT}:${ROOT_MANIFEST}`]: manifest({ postinstall: 'sh scripts/mine.sh' }),
+      },
+    })
+
+    expect(answer.outcome).toBe('refused')
+    expect(answer.detail).toContain('install time')
+    expect(answer.detail).toContain('postinstall')
+    expect(merged(asked)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// What was checked is what lands
+// ---------------------------------------------------------------------------
+
+describe('the commit the predicate judged is the commit that merges', () => {
+  test('a branch that moves between the check and the merge is refused, and nothing is merged', async () => {
+    /*
+      Time-of-check-to-time-of-use, in the one function whose whole job is that
+      the check binds the use.
+
+      The agent may write its own Worktree freely and can run git there from a
+      background `Bash`, so it can add a commit after the predicate has read what
+      the branch changed. A merge of the *ref* would then carry paths nothing
+      checked — including protected ones.
+
+      Here git answers a different SHA the second time it is asked, which is that
+      race. Nothing may be merged.
+    */
+    const moved = '9999999999999999999999999999999999999999'
+    let asks = 0
+    const reads: Record<string, string> = {
+      ...READS,
+      [DIFF]: nulTerminated('packages/core/src/App.tsx'),
+    }
+    const asked: string[] = []
+    const git: GitRunner = async (args) => {
+      const key = args.join(' ')
+      asked.push(key)
+      // The branch grows a commit the moment the verdict is in.
+      if (key === `rev-parse ${REF}`) {
+        asks += 1
+        return asks === 1 ? `${COMMIT}\n` : `${moved}\n`
+      }
+      const answer = reads[key]
+      if (answer === undefined) throw new Error(`git ${key} was not expected`)
+      return answer
+    }
+    const attempt: GitAttempt = async (args) => {
+      asked.push(args[0] === 'commit' ? 'commit' : args.join(' '))
+      return ok()
+    }
+
+    const answer = await landWorktree({
+      git,
+      attempt,
+      holders: nobody,
+      cloneRoot: CLONE,
+      path: WORKTREE,
+    })
+
+    expect(answer.outcome).toBe('branch-moved')
+    expect(merged(asked)).toBe(false)
+    // Distinct from a refusal, because nobody decided anything about this
+    // branch: an orchestrator parks a refusal and stops, and this one is asked
+    // again.
+    expect(answer.outcome).not.toBe('refused')
+  })
+
+  test('the merge itself refuses a moved ref, so the bind does not depend on the caller checking', async () => {
+    /*
+      The half of the binding that has to live at the merge. The check above is
+      still a check with a gap after it — only the code performing the merge can
+      close the gap, by refusing at the last moment it is able to.
+
+      Asserted through `mergeWorktree` directly, with a pin that never matches,
+      because that is the path a future caller would reach without going through
+      the gate at all.
+    */
+    const { git, attempt, asked } = fakeGit()
+    await expect(
+      mergeWorktree({
+        git,
+        attempt,
+        holders: nobody,
+        cloneRoot: CLONE,
+        path: WORKTREE,
+        expectedCommit: '9999999999999999999999999999999999999999',
+      }),
+    ).rejects.toThrow('is not what would land')
+    expect(merged(asked)).toBe(false)
+  })
+
+  test('the predicate is asked about the commit, not about the branch name', async () => {
+    // What makes the pin real rather than decorative: the diff and both manifest
+    // reads name the resolved commit. A diff of `HEAD...refs/heads/x` would be a
+    // verdict about whatever that ref points at when git got round to it.
+    const { asked } = await land({ changed: [ROOT_MANIFEST] })
+    expect(asked).toContain(`diff -z --no-renames --name-only HEAD...${COMMIT}`)
+    expect(asked).toContain(`merge-base HEAD ${COMMIT}`)
+    expect(asked).toContain(`show ${COMMIT}:${ROOT_MANIFEST}`)
+    expect(asked.filter((call) => call.startsWith('diff') && call.includes(REF))).toEqual([])
   })
 })
 
@@ -364,10 +520,10 @@ describe('a landing that cannot be attempted says which of the three it is', () 
 
   test('a branch that conflicts refuses with the files, which is the part it can act on', async () => {
     const { answer, asked } = await land({
-      reads: { ...READS, [`rev-list --count ${REF}..HEAD`]: '3\n' },
+      reads: { ...READS, [`rev-list --count ${COMMIT}..HEAD`]: '3\n' },
       writes: {
         ...WRITES,
-        [`merge-tree --write-tree --name-only HEAD ${REF}`]: {
+        [`merge-tree --write-tree --name-only HEAD ${COMMIT}`]: {
           code: 1,
           stdout: 'atree\npackages/core/src/App.tsx\n\nCONFLICT (content)\n',
           stderr: '',
@@ -381,10 +537,10 @@ describe('a landing that cannot be attempted says which of the three it is', () 
 
   test('a merge git could not judge is unmergeable rather than merged anyway', async () => {
     const { answer, asked } = await land({
-      reads: { ...READS, [`rev-list --count ${REF}..HEAD`]: '3\n' },
+      reads: { ...READS, [`rev-list --count ${COMMIT}..HEAD`]: '3\n' },
       writes: {
         ...WRITES,
-        [`merge-tree --write-tree --name-only HEAD ${REF}`]: {
+        [`merge-tree --write-tree --name-only HEAD ${COMMIT}`]: {
           code: 128,
           stdout: '',
           stderr: 'fatal: not a valid object name',
@@ -405,8 +561,10 @@ describe('a landing that cannot be attempted says which of the three it is', () 
     */
     const { answer, asked } = await land({ withhold: [DIFF] })
     expect(answer.outcome).toBe('no-landing')
-    expect(answer.outcome).not.toBe('refused')
     expect(merged(asked)).toBe(false)
+    // And it carries git's own complaint, so a run report says which question
+    // could not be put rather than "something went wrong".
+    expect(answer.detail).toContain('diff')
   })
 })
 

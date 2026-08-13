@@ -37,8 +37,15 @@ Two Custom Tools beside `launch_preview`:
   asks `unattendedLanding` with those paths and the root manifest's install
   lifecycle fields on both sides, and merges only on permission. Every refusal
   comes back with the rule and the path that caused it.
-- `cut_pre_release(slug)` — a bridge kind routed to the runtime, which spawns
-  `bun run release <slug>`, exactly as ticket 08 routed `promote-release`.
+- `cut_pre_release(slug)` — a bridge kind answered by the runtime, which spawns
+  `bun run release <slug>`. Ticket 08's `promote-release` is the precedent for
+  the shape and this deviates from it in one way worth stating rather than
+  glossing: `promote-release` is on `route_of`, because the renderer sends it
+  when a developer presses a band. Nothing presses this one, so it is
+  **host-internal** — absent from `route_of` entirely, reached only from the
+  agent's own pipe, with `route_of("cut-release") == None` asserted. A call the
+  renderer cannot make is a call a Surface cannot make, and a Surface is
+  Userspace, which the agent writes.
 
 Both make the same trade and it is argued here once: **a write the agent may not
 make happens because the agent asked, and what decides it is a question the agent

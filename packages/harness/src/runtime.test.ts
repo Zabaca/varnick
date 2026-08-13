@@ -708,10 +708,33 @@ describe('the agent’s two asks reach the capability that gates them', () => {
   })
 
   test('both are traced, because both write the developer’s clone', async () => {
-    // The defect the tracing came from was a merge that left nothing to read.
-    // These are the same write asked for by a process nobody is watching.
-    expect(worthTracing('land-worktree')).toBe(true)
-    expect(worthTracing('cut-release')).toBe(true)
+    /*
+      The defect the tracing came from was a merge that left nothing to read.
+      These are the same write, asked for by a process nobody is watching, so
+      the line has to actually appear — `worthTracing` being true by default
+      would pass whether or not anything wrote one.
+    */
+    const lines: string[] = []
+    const caps = capabilities()
+    await answerHarnessLine(
+      call(1, { kind: 'land-worktree', path: '/w/49' }),
+      caps,
+      (written) => lines.push(written),
+      () => 0,
+    )
+    await answerHarnessLine(
+      call(2, { kind: 'cut-release', feature: 'runs' }),
+      caps,
+      (written) => lines.push(written),
+      () => 0,
+    )
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('land-worktree')
+    expect(lines[1]).toContain('cut-release')
+    // And the payload is not in it. These carry a worktree path and a slug, and
+    // the rule for this file is the kind, never the payload.
+    expect(lines[0]).not.toContain('/w/49')
+    expect(lines[1]).not.toContain('runs')
   })
 })
 

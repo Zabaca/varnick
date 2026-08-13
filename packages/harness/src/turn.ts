@@ -46,8 +46,9 @@ import { isPreviewOutcome, type PreviewOutcome } from './preview.ts'
 // module: it imports nothing, reaches no Node built-in, and holds the closed
 // list of outcomes an answer may carry beside the sentences written for them.
 import {
-  isLandingOutcome,
-  isReleaseOutcome,
+  isOutcome,
+  LANDING_OUTCOMES,
+  RELEASE_OUTCOMES,
   type LandingOutcome,
   type ReleaseOutcome,
 } from './unattended.ts'
@@ -248,25 +249,21 @@ export interface ReportMergeRequest {
  * src-tauri/src/unattended.rs sends a detail only for outcomes the *runtime*
  * decided, and never for the ones it decides itself.
  */
-export interface LandingAnswerRequest {
-  readonly kind: 'landing-answer'
-  /** Which `land_worktree` call this answers. */
+export interface UnattendedAnswerRequest<Kind extends string, Outcome extends string> {
+  readonly kind: Kind
+  /** Which call this answers. */
   readonly requestId: string
-  /** One of `LANDING_OUTCOMES` in ./unattended.ts. */
-  readonly outcome: LandingOutcome
+  /** One of the closed list for that kind — see ./unattended.ts. */
+  readonly outcome: Outcome
   /** What the host said about it, or absent. Never the only thing that matters. */
   readonly detail?: string
 }
 
-/** What the host did about a Pre-release the agent asked for. See {@link LandingAnswerRequest}. */
-export interface ReleaseAnswerRequest {
-  readonly kind: 'release-answer'
-  /** Which `cut_pre_release` call this answers. */
-  readonly requestId: string
-  /** One of `RELEASE_OUTCOMES` in ./unattended.ts. */
-  readonly outcome: ReleaseOutcome
-  readonly detail?: string
-}
+/** The host's answer to a `land_worktree` call. */
+export type LandingAnswerRequest = UnattendedAnswerRequest<'landing-answer', LandingOutcome>
+
+/** The host's answer to a `cut_pre_release` call. */
+export type ReleaseAnswerRequest = UnattendedAnswerRequest<'release-answer', ReleaseOutcome>
 
 /**
  * How much detail an answer may carry into the Sandbox.
@@ -461,24 +458,26 @@ export function parseControlRequest(line: string): ControlRequest | null {
   */
   if (kind === 'landing-answer' || kind === 'release-answer') {
     if (typeof requestId !== 'string' || requestId.length === 0) return null
-    const known = kind === 'landing-answer' ? isLandingOutcome(outcome) : isReleaseOutcome(outcome)
+    const known =
+      kind === 'landing-answer'
+        ? isOutcome(outcome, LANDING_OUTCOMES)
+        : isOutcome(outcome, RELEASE_OUTCOMES)
     if (!known) return null
     const said =
       typeof detail === 'string' && detail.trim().length > 0 && detail.length <= MAX_ANSWER_DETAIL
         ? detail
         : undefined
-    // Two branches rather than a cast: the outcome guard narrowed one of two
-    // unions, and which one it narrowed is what `kind` says.
-    if (kind === 'landing-answer') {
-      const answer = outcome as LandingOutcome
-      return said === undefined
-        ? { kind, requestId, outcome: answer }
-        : { kind, requestId, outcome: answer, detail: said }
-    }
-    const answer = outcome as ReleaseOutcome
-    return said === undefined
-      ? { kind, requestId, outcome: answer }
-      : { kind, requestId, outcome: answer, detail: said }
+    /*
+      One cast, and it is the correlation TypeScript cannot carry: `kind` decides
+      which of the two closed lists `outcome` was checked against, and the guard
+      above narrowed `outcome` on that branch and not on this line. Both halves
+      are checked — the kind against two literals, the outcome against the list
+      that kind selects — so what the cast asserts is exactly what was proved two
+      lines up.
+    */
+    return { kind, requestId, outcome, ...(said === undefined ? {} : { detail: said }) } as
+      | LandingAnswerRequest
+      | ReleaseAnswerRequest
   }
 
   /*

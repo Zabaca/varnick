@@ -551,10 +551,19 @@ export function hostCapabilities(input: HostCapabilitiesInput): HarnessCapabilit
       keep in step with a record `packages/core/release.ts` already shapes for
       the window.
 
-      It fits inside the host's 90-second wait with room to spare — the build it
-      runs is a vite build measured at well under a second on this tree — but the
-      wait is the constraint to remember if this ever grows a step that installs
-      or uploads anything.
+      **The host's wait is the thing to watch, and an overrun is not a refusal.**
+      `RUNTIME_WAIT` in src-tauri/src/bridge.rs is 90 seconds and the channel is
+      serialised, so a release that overran would both stall every other runtime
+      call and answer `no-release` — *while going on to finish*, tag, and write
+      its pending record. An agent told "nothing was cut" that then cut again is
+      the one way this feature could damage a clone rather than merely fail to
+      help it, so `releaseOutcomeMessage('no-release')` does not claim nothing
+      happened; it says to read what is pending first.
+
+      It fits with room to spare today — the build it runs is a vite build
+      measured at well under a second on this tree — and that is a measurement
+      rather than a guarantee. A step that installs or uploads anything breaks
+      this first.
     */
     cutPreRelease: async (feature) => {
       if (!isFeatureSlug(feature)) return { outcome: 'not-a-feature', detail: null }
