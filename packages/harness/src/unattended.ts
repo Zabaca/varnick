@@ -279,10 +279,25 @@ export function releaseOutcomeMessage(outcome: ReleaseOutcome): string {
 /**
  * The tool's answer, as the agent reads it.
  *
- * `cut` is the flag rather than "not refused", so the two ways of not cutting
- * stay apart at the one place the agent reads them: a run that reported a
- * pre-release because the tool did not fail would be a run that announced work
- * nobody can accept.
+ * **`cut` has to mean a pre-release exists, not that the call did not fail**, or
+ * a run reports a release on a quiet night: every ticket parked, nothing landed
+ * to announce, the release refusing on purpose — and a report telling the
+ * developer there is a build waiting for them. There are two ways not to cut and
+ * they have to stay apart at the one place the agent reads them.
+ *
+ * ## Why this pair is not generified, when everything beside it is
+ *
+ * One outcome guard takes the list, one request encoder takes the field name,
+ * and both mirror `answer_of` and `two_strings` in src-tauri/src/unattended.rs —
+ * two halves of one protocol should not make opposite choices about the same
+ * check. This function and {@link landingToolResult} are the exception, and they
+ * are the exception on purpose rather than by omission.
+ *
+ * A shared `ok` would be **a claim about the call**. `landed` and `cut` are
+ * claims about the world: a branch is in the live tree, a pre-release exists.
+ * That difference is exactly what the agent acts on, and it is the difference a
+ * generified flag would spend to save four lines. The rule the generification
+ * follows is that framing is shared and *meaning* is not.
  */
 export function releaseToolResult(answer: ReleaseAnswer): {
   readonly cut: boolean
