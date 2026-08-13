@@ -275,3 +275,101 @@ exit 128, so the suite is green because git works.
 **A confined agent can now make a Worktree, commit in it and merge it.** That was
 the precondition for everything else in this feature, and it was missing for the
 whole of the run that built it.
+
+---
+
+## Addendum 2: ticket 18, the sentence the feature was for
+
+`main` `b5f3faa` → `34b6492`. Seven commits, 24 files, +3,070/−101.
+
+After ticket 11 landed, varnick could do the work and none of the landing. The
+spec's central promise —
+
+> **Everything else the agent lands itself**, when the checks are green and a
+> code review comes back with no blockers.
+
+— was **unimplemented**. Ticket 02 built the predicate that answers *may this
+land*; nothing asked it. `unattendedLanding` had one caller, a CLI a human runs.
+Every merge was still a person's, including the ordinary ones, and the agent
+could not cut a release either, because `bun run release` bumps the root manifest
+and `package.json` is in `denyWrite`.
+
+### A second door rather than a wider one
+
+The obvious fix — take `packages/core/**`, `vite.config.*` and `package.json` out
+of `denyWrite` — was rejected, and rejecting it is the design. That list is what
+stops the agent writing Core in the live tree at all; narrow it and the agent
+edits Core directly, on no branch, in no diff. The `PreToolUse` worktree-only
+hook is a convention, not a boundary: it lives in a file the agent can edit and
+it does not see `Bash`.
+
+The agent never needed to write the live tree. It needed the **merge** to happen,
+and the merge already ran unconfined in the runtime past the bridge. So: two
+Custom Tools beside `launch_preview` — `land_worktree` and `cut_pre_release` —
+and `denyWrite` untouched, verified against the *generated policy on main*:
+`packages/core/**`, `package.json` and `vite.config.*` all still denied.
+ADR-0023 records why.
+
+### What review found
+
+**A time-of-check-to-time-of-use gap in the gate.** The predicate diffed
+`HEAD...<ref>` where `ref` was a **ref name**, never resolved; the merge then
+re-resolved it and merged whatever it pointed at *now*. A commit added between
+the two reads merged paths the predicate never saw — and the agent can add one,
+since it writes its own Worktree and can run git there. Fixed by resolving once
+and binding both to that SHA, with the merge **refusing** if the ref moved
+(refusing rather than merging the pin, because the cleanup deletes with `-D` and
+merging an older commit would force-delete work that never landed).
+
+**A manifest read that treated failure as absence.** If `git show` failed on the
+branch side and the base manifest had no lifecycle fields, both read `{}`, the
+diff showed no change, and **an added `postinstall` landed**. The author then
+found something sharper than the finding: the hole was *closed by an accident of
+this repo's file contents* — `package.json` happens to carry a `postinstall`, so
+a branch-side failure read as a removal and refused. One human-merged branch
+dropping that field would have opened it with nothing failing. Safety resting on
+an unrelated fact about a file's current contents is worse than a bug, because
+nothing tests it.
+
+Both blockers reduce to one sentence, now in the ADR: **something the caller
+could not establish, treated as something it established.** One treated an
+unreadable manifest as empty; the other treated a name as a commit.
+
+**A release that could report a lie.** `bun run release` was spawned inside a
+request handler behind a 90s `RUNTIME_WAIT` on a serialised channel, so an
+overrun answered `no-release` while the release *actually completed and tagged* —
+an agent told "nothing was cut" would cut again. The author fixed the tag rather
+than the timing, and fixed `no-landing` too, which had the identical defect and
+which nobody had flagged.
+
+### What makes the tests worth trusting
+
+Three mutation checks, each caught by the test written for it: `lifecycleAt` back
+to `{}` → 23 to 1 fail; the pin dropped → 23 to 13 fail; the merge's
+`expectedCommit` refusal deleted → 23 to 1 fail. And the refusal suite iterates
+`PROTECTED_PATHS` itself, exercising directory entries via a file *inside* them —
+because a real `git diff` names files and never directories, so a literal-match
+implementation would pass a handwritten test and land every real branch.
+
+### The branch refused itself
+
+```
+land-its-own-work may not land unattended.
+  rule:    protected-path
+  subject: packages/harness/src/agent.test.ts
+```
+
+The mechanism proving itself on the change that built it. It landed through a
+human merge, which is the last one this feature needs.
+
+## Where this leaves varnick
+
+A confined agent can now: author in a Worktree with working git, Preview it with
+no dialog, land it when the predicate permits, and cut a pre-release. It still
+cannot write Core in the live tree, land anything Fence, or promote — and
+promotion stays the developer's by design, not by omission.
+
+Final state: `drive` 1269 · `cargo test` 155 · `bun test packages` 910 pass /
+1 skip / 1 fail (ticket 13's environmental probe).
+
+Nine follow-ups filed across the whole run: 11 and 18 closed, 12–17 and 19 open.
