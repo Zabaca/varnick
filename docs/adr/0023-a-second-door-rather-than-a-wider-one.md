@@ -115,6 +115,46 @@ tree; and `HEAD...` because the merge base is what is actually being merged.
 `bun run landable` learned all three, and the caller that *lands* needs them
 more.
 
+## The shape of the failure to look for
+
+Review of the first implementation found two blockers, and they were one bug
+wearing different clothes. Naming the shape is worth more than either fix,
+because the fixes are done and the shape will be back:
+
+> **Something the caller could not establish, treated as something it
+> established.**
+
+One treated a `git show` that failed as a revision with no lifecycle scripts.
+The other treated a ref *name* as the commit being merged. In both, a gap in
+knowledge was written down as knowledge — and in both, the value it was written
+down as was the permissive one, because the permissive value is also the
+*ordinary* one. "No lifecycle scripts" is what an ordinary manifest has. A ref
+name is what an ordinary caller passes.
+
+That is why neither showed up as a wrong answer. The code was not asking a
+question and getting it wrong; it was not asking, and **"did not ask" has the
+same shape as "asked, and the answer was benign"**. A test written against
+either would have to know which of the two it was looking at, and nothing on the
+surface distinguishes them.
+
+Everywhere else in a program, an unknown quietly resolved to a benign default
+degrades a feature. In a gate it opens the thing the module exists to keep shut,
+and it stays open silently, because nothing failed.
+
+So the rule for whatever asks this predicate next: **a value standing for an
+absence and a value standing for a failure must never be the same value.** The
+predicate already keeps it — `manifest-not-read` is a refusal distinct from a
+manifest with no scripts in it, and `isReadablePath` refuses a path it cannot
+normalise rather than reporting it as matching no entry. Both blockers were
+callers being less careful than the thing they were calling.
+
+Its corollary is worth stating too, because it is where the second blocker
+actually lived: **a name is not a value.** Anything resolved late is resolved
+against a world that has moved, and between a gate's check and its use the agent
+is running — it writes its own Worktree and can run git there. A check that
+binds nothing is a check that was performed on a different subject than the one
+that lands.
+
 ## What is still a human's
 
 - **The Fence.** `packages/harness/**`, `src-tauri/**`, `sandbox-policy.json`,
