@@ -134,8 +134,8 @@ landingTest("a branch one commit ahead of a clean Live tree lands and HEAD moves
     if (head !== tip) {
       throw new Error(`the Live tree HEAD is ${head}, not the branch tip ${tip}`);
     }
-    if (snapshot.context.branch !== "feature") {
-      throw new Error(`expected branch "feature" in context, got ${JSON.stringify(snapshot)}`);
+    if (snapshot.context.branch !== "feature" || snapshot.context.head !== tip) {
+      throw new Error(`expected branch "feature" at ${tip} in context, got ${JSON.stringify(snapshot)}`);
     }
   } finally {
     await host.stop();
@@ -207,6 +207,43 @@ landingTest("a branch that does not exist refuses with unknownBranch", async () 
     const head = await git(["rev-parse", "HEAD"], liveTree);
     if (head !== before) {
       throw new Error(`the Live tree moved to ${head} despite the refusal`);
+    }
+  } finally {
+    await host.stop();
+  }
+});
+
+landingTest("nothing but the branch name is read from the Event", async () => {
+  const liveTree = await makeLiveTree();
+  const tip = await commitOnBranch(liveTree, "feature", "one.txt");
+  const decoy = await Deno.makeTempDir({ prefix: "varnick-decoy-" });
+  const host = await startTestHost({ liveTree });
+  try {
+    // Fields the Snapshot happens to have names for, sent by an Event that has
+    // no business setting them. The Host decides everything from the branch
+    // name alone (spec §Machines), so all of these must be ignored.
+    const res = await fetch(`${host.url}/actors/landing/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "LAND",
+        branch: "feature",
+        liveTree: decoy,
+        reason: "dirty",
+        head: "0000000000000000000000000000000000000000",
+      }),
+    });
+    if (res.status !== 200) throw new Error(`LAND: expected 200, got ${res.status}`);
+    await res.body?.cancel();
+
+    const snapshot = await waitForSettled(host.url);
+    if (snapshot.value !== "landed" || snapshot.context.reason !== undefined) {
+      throw new Error(`the Event's extra fields were read: ${JSON.stringify(snapshot)}`);
+    }
+    // The Live tree named at launch is the one that moved, not the decoy.
+    const head = await git(["rev-parse", "HEAD"], liveTree);
+    if (head !== tip || snapshot.context.head !== tip) {
+      throw new Error(`expected HEAD ${tip}, got ${head} / ${JSON.stringify(snapshot.context)}`);
     }
   } finally {
     await host.stop();

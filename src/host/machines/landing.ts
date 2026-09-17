@@ -58,9 +58,9 @@ export const landingMachine = setup({
   id: "landing",
   initial: "idle",
   context: ({ input }) => ({ liveTree: input.liveTree }),
-  // LAND is taken from any settled state: a refusal is retried once the agent
-  // has rebased, and a second branch lands after the first. The two in-flight
-  // states below take no LAND, so a Landing is never interrupted.
+  // LAND is taken from each settled state, and written on each rather than once
+  // on the Machine: an Event a state does not handle is handled by its parent,
+  // so a Machine-level LAND would interrupt a merge already in flight.
   states: {
     idle: { on: { LAND: { guard: "named", target: "checking", actions: "remember" } } },
     checking: {
@@ -91,6 +91,8 @@ export const landingMachine = setup({
         onError: { target: "refused", actions: "refuseWithError" },
       },
     },
+    // A refusal is retried once the agent has rebased, and a second branch
+    // lands after the first.
     refused: { on: { LAND: { guard: "named", target: "checking", actions: "remember" } } },
     landed: { on: { LAND: { guard: "named", target: "checking", actions: "remember" } } },
   },
