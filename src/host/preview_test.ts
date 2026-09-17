@@ -78,10 +78,12 @@ async function waitForPreview(doorUrl: string, branch: string): Promise<PreviewV
   throw new Error(`no Preview of "${branch}" appeared: ${JSON.stringify(last)}`);
 }
 
-function reapPreview(preview: PreviewView | undefined) {
-  if (!preview) return;
+// A process this test left running on the machine: a Preview's Host, or a ttyd
+// that outlived the Host that started it (spec user stories 5 and 6).
+function reap(pid: number | undefined) {
+  if (!pid) return;
   try {
-    Deno.kill(preview.pid, "SIGTERM");
+    Deno.kill(pid, "SIGTERM");
   } catch {
     // already gone
   }
@@ -125,15 +127,9 @@ sessionTest("PREVIEW launches a second Host from the Worktree on its own port", 
       );
     }
   } finally {
-    reapPreview(preview);
+    reap(preview?.pid);
     await host.stop();
-    if (ttydPid) {
-      try {
-        Deno.kill(ttydPid, "SIGTERM");
-      } catch {
-        // already gone
-      }
-    }
+    reap(ttydPid);
     await run("zmx", ["kill", branch, "--force"]);
   }
 });
@@ -193,16 +189,9 @@ sessionTest("a Session opened through a Preview's Door is driven by that Preview
       );
     }
   } finally {
-    reapPreview(preview);
+    reap(preview?.pid);
     await host.stop();
-    for (const pid of ttydPids) {
-      if (!pid) continue;
-      try {
-        Deno.kill(pid, "SIGTERM");
-      } catch {
-        // already gone
-      }
-    }
+    for (const pid of ttydPids) reap(pid);
     await run("zmx", ["kill", branch, "--force"]);
     await run("zmx", ["kill", inPreview, "--force"]);
   }

@@ -182,15 +182,20 @@ async function relaunch(
 }
 
 // A Preview (ADR-0008): the same launch command, run from the branch's
-// Worktree as a separate detached process, on a Door port this Host chooses and
-// hands over in `VARNICK_PORT`. It is not a child — closing the launching Host
-// must not close the window it opened — and it is an ordinary Host in every
-// other way: its own Proxy, its own Secrets file, its own Sessions, and the
-// same zmx sessions as Live because zmx is machine-wide.
+// Worktree as a separate process, on a Door port this Host chooses and hands
+// over in `VARNICK_PORT`. It is not waited on and not stopped when this Host
+// stops — `unref` is the whole of that, and it is what a ttyd gets too; it is
+// still in this Host's process group, so a signal sent to the group reaches it.
+// In every other way it is an ordinary Host: its own Proxy, its own Secrets
+// file out of the Worktree, its own Sessions, and the same zmx sessions as
+// Live because zmx is machine-wide.
 //
 // The port is chosen here rather than by the Preview because the launching
 // Host has to say where it put it, and a process it does not wait on cannot
 // tell it afterwards — the same reason a ttyd's port is written down.
+/** How long a launch may take to answer: a page build and a window. */
+const LAUNCH_TAKES_AT_MOST_MS = 120_000;
+
 async function launchPreview(
   command: string[],
   liveTree: string,
@@ -219,10 +224,10 @@ async function launchPreview(
   }
   preview.unref();
 
-  // A launch builds the page first, so this is a long wait by design. The
-  // process is left alone if it runs out: it may still be coming up, and it is
-  // not this Host's to kill.
-  const deadline = Date.now() + 120_000;
+  // A launch builds the page before it opens a window, so this is a long wait
+  // by design. The process is left alone if it runs out: it may still be coming
+  // up, and it is not this Host's to kill.
+  const deadline = Date.now() + LAUNCH_TAKES_AT_MOST_MS;
   while (Date.now() < deadline) {
     if (await answersNow(port)) return { branch, url, pid: preview.pid };
     await new Promise((resolve) => setTimeout(resolve, 200));

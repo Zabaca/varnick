@@ -194,6 +194,10 @@ function agentEnvironment(
   const env = { ...Deno.env.toObject() };
   delete env.ANTHROPIC_API_KEY;
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  // A Preview was handed its Door port in `VARNICK_PORT` and would otherwise
+  // pass it on: an agent inside a Preview running `deno task dev` would launch
+  // onto the port its own Host is already listening on.
+  delete env.VARNICK_PORT;
 
   return {
     ...env,

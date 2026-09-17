@@ -13,7 +13,12 @@ export interface HostContext {
    * the only thing that tells them apart.
    */
   tree: string;
-  /** The Previews this Host has launched, by branch (ADR-0008). */
+  /**
+   * The Previews this Host has launched, by branch (ADR-0008). Nothing here is
+   * re-checked: a Preview is its own process and may be closed, and an entry
+   * for one that is gone costs a stale link and never a Session. Asking for the
+   * same branch again simply launches another.
+   */
   previews: Record<string, PreviewView>;
   /** Why the last PREVIEW did not produce one. Cleared when another is asked for. */
   previewError?: string;

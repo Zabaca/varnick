@@ -72,9 +72,9 @@ The Preview is an ordinary Host in every other way — its own window, its own
 Proxy, its own Secrets file out of the Worktree, and the same zmx sessions as
 Live, because a Session belongs to the machine and not to a Host. A Session
 opened through the Preview's Door carries that Door in `VARNICK_DOOR`, so an
-agent it starts drives the Preview and not Live. It is not a child of the Host
-that launched it and is not stopped with it; its host code is the agent's, which
-is the point (ADR-0008). Only a branch with a Worktree can be previewed
+agent it starts drives the Preview and not Live. It is not waited on and is not stopped when the
+Host that launched it stops; its host code is the agent's, which is the point
+(ADR-0008). Only a branch with a Worktree can be previewed
 (ADR-0003); anything else is refused, with the reason in the Snapshot.
 
 ## Stack
