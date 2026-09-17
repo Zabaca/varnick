@@ -178,8 +178,16 @@ function ownLaunchCommand(): string[] {
 // actor as an Event, so a rebuilt list arrives the same way a new Session does
 // and there is no second way in (ADR-0006).
 async function seedSessions(sessions: AnyActorRef, liveTree: string): Promise<void> {
-  for (const branch of await discoverSessions(liveTree)) {
-    sessions.send({ type: "ADOPT_SESSION", branch });
+  // A Worktree with a zmx session is a Session still running; one without it is
+  // detached, and is still the agent's work (spec §Rebuild at launch). Both are
+  // handed over, and the child decides which it is from `attached`.
+  for (const found of await discoverSessions(liveTree)) {
+    sessions.send({
+      type: "ADOPT_SESSION",
+      branch: found.branch,
+      worktreePath: found.worktreePath,
+      attached: found.attached,
+    });
   }
 }
 

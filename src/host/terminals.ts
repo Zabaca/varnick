@@ -52,6 +52,14 @@ export async function recordTerminal(
   await writeTerminals(liveTree, { ...terminals, [branch]: terminal });
 }
 
+/** Forget a branch's terminal, once there is no Session left for it to serve. */
+export async function forgetTerminal(liveTree: string, branch: string): Promise<void> {
+  const terminals = await readTerminals(liveTree);
+  if (!(branch in terminals)) return;
+  delete terminals[branch];
+  await writeTerminals(liveTree, terminals);
+}
+
 /** Whether something accepts a connection on a loopback port right now. */
 export async function answersNow(port: number): Promise<boolean> {
   try {
