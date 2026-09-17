@@ -69,7 +69,11 @@ export const hostMachine = setup({
   initial: "running",
   context: ({ input }) => ({ pings: 0, previews: {}, ...input }),
   states: {
+    // `settled` marks the states this Host comes to rest in, so a caller
+    // waiting on a Preview reads a tag rather than a state name (ADR-0010);
+    // `previewError` and `previews` then say which way it went.
     running: {
+      tags: ["settled"],
       on: {
         PING: {
           actions: assign({ pings: ({ context }) => context.pings + 1 }),
@@ -128,6 +132,6 @@ export const hostMachine = setup({
     },
     // The successor never started. This Host has already let go of its Door, so
     // it is of no further use; the reason is in context and on stderr.
-    restartFailed: {},
+    restartFailed: { tags: ["settled"] },
   },
 });

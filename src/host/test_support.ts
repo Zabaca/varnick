@@ -31,6 +31,21 @@ export const MISSING = await (async () => {
   return missing;
 })();
 
+// What a Host needs to launch at all, as against what opening a Session in one
+// needs. The `varnick` command is driven against a Host with no Session in it,
+// so it skips only when git or sops is missing.
+const MISSING_FOR_HOST = MISSING.filter((bin) => bin === "git" || bin === "sops");
+
+export function hostTest(name: string, fn: () => Promise<void>) {
+  Deno.test({
+    name: MISSING_FOR_HOST.length === 0
+      ? name
+      : `${name} (skipped: ${MISSING_FOR_HOST.join(", ")} not installed)`,
+    ignore: MISSING_FOR_HOST.length > 0,
+    fn,
+  });
+}
+
 export function sessionTest(name: string, fn: () => Promise<void>) {
   Deno.test({
     name: MISSING.length === 0 ? name : `${name} (skipped: ${MISSING.join(", ")} not installed)`,
@@ -58,6 +73,11 @@ export async function makeLiveTree(): Promise<string> {
   await run("git", ["config", "user.name", "Test Developer"], tree);
   await run("git", ["config", "user.email", "test@example.com"], tree);
   await Deno.writeTextFile(`${tree}/README.md`, "live tree\n");
+  // The same two paths the real clone ignores: the per-clone machine state the
+  // Host writes (the agent's Claude Code home, the command on its PATH) and the
+  // Worktrees. Without them a Host doing its ordinary work makes the Live tree
+  // dirty, and Landing refuses a tree it dirtied itself.
+  await Deno.writeTextFile(`${tree}/.gitignore`, "/.varnick/\n/.claude/worktrees/\n");
   await run("git", ["add", "."], tree);
   await run("git", ["commit", "-m", "first"], tree);
   return tree;

@@ -62,7 +62,14 @@ export const landingMachine = setup({
   // on the Machine: an Event a state does not handle is handled by its parent,
   // so a Machine-level LAND would interrupt a merge already in flight.
   states: {
-    idle: { on: { LAND: { guard: "named", target: "checking", actions: "remember" } } },
+    // `settled` marks the states a Landing comes to rest in, so a caller
+    // waiting on one — the page, or the agent's `varnick land` — reads a tag
+    // rather than a state name (ADR-0010). Whether it landed or was refused is
+    // then read from context: a refusal is the only thing that sets `reason`.
+    idle: {
+      tags: ["settled"],
+      on: { LAND: { guard: "named", target: "checking", actions: "remember" } },
+    },
     checking: {
       invoke: {
         src: "check",
@@ -93,7 +100,13 @@ export const landingMachine = setup({
     },
     // A refusal is retried once the agent has rebased, and a second branch
     // lands after the first.
-    refused: { on: { LAND: { guard: "named", target: "checking", actions: "remember" } } },
-    landed: { on: { LAND: { guard: "named", target: "checking", actions: "remember" } } },
+    refused: {
+      tags: ["settled"],
+      on: { LAND: { guard: "named", target: "checking", actions: "remember" } },
+    },
+    landed: {
+      tags: ["settled"],
+      on: { LAND: { guard: "named", target: "checking", actions: "remember" } },
+    },
   },
 });
