@@ -53,10 +53,11 @@ async function git(args: string[], cwd: string) {
   }
 }
 
-// git that answers a question rather than doing something: a failure is an
-// answer of "nothing", because every caller here is asking about a tree that
-// may legitimately not be there.
-async function gitOutput(args: string[], cwd: string): Promise<string> {
+// git that answers a question rather than doing something. Whether it answered
+// is kept separate from what it said, because a question that could not be put
+// is not the same as an answer of "nothing" — and here the difference is
+// between reaping a Worktree and refusing to.
+async function gitRead(args: string[], cwd: string): Promise<{ answered: boolean; out: string }> {
   try {
     const { success, stdout } = await new Deno.Command("git", {
       args,
@@ -64,9 +65,9 @@ async function gitOutput(args: string[], cwd: string): Promise<string> {
       stdout: "piped",
       stderr: "null",
     }).output();
-    return success ? new TextDecoder().decode(stdout) : "";
+    return { answered: success, out: new TextDecoder().decode(stdout) };
   } catch {
-    return "";
+    return { answered: false, out: "" };
   }
 }
 
@@ -328,7 +329,14 @@ export interface DiscoveredSession {
 // the Host would have made — `.claude/worktrees/{branch}` — are Sessions, so
 // the Live tree itself and a worktree someone made elsewhere are not adopted.
 export async function discoverSessions(liveTree: string): Promise<DiscoveredSession[]> {
-  const listed = parseWorktreeList(await gitOutput(["worktree", "list", "--porcelain"], liveTree));
+  const worktrees = await gitRead(["worktree", "list", "--porcelain"], liveTree);
+  // An empty answer and an unanswered question look the same in the Snapshot,
+  // and a Host showing no Sessions when there are some is the stale picture
+  // ADR-0007 exists to prevent. So a git that will not answer fails the launch.
+  if (!worktrees.answered) {
+    throw new Error(`git worktree list failed in the Live tree ${liveTree}`);
+  }
+  const listed = parseWorktreeList(worktrees.out);
   const attached = await listZmxSessions();
   const sessions: DiscoveredSession[] = [];
   for (const worktree of listed) {
@@ -385,21 +393,26 @@ async function refusalFor(request: ReapRequest): Promise<string | undefined> {
   if (!request.worktreePath) return undefined;
   if (!await Deno.stat(request.worktreePath).then(() => true, () => false)) return undefined;
 
-  const status = await gitOutput(["status", "--porcelain"], request.worktreePath);
-  if (status.trim().length > 0) {
-    return `the Worktree is dirty: ${status.trim().split("\n").length} uncommitted change(s)`;
+  // Both questions fail closed: work is destroyed by reaping and cannot be got
+  // back, so a check that could not be run refuses rather than waving it
+  // through. `force` is the way past a refusal, including one of these.
+  const status = await gitRead(["status", "--porcelain"], request.worktreePath);
+  if (!status.answered) return "git could not say whether the Worktree is dirty";
+  if (status.out.trim().length > 0) {
+    return `the Worktree is dirty: ${status.out.trim().split("\n").length} uncommitted change(s)`;
   }
 
   // Commits on this branch that no remote has. A Live tree with no remote at
   // all makes every commit unpushed, which is true and is what `force` is for.
-  const unpushed = await gitOutput(
+  const unpushed = await gitRead(
     ["rev-list", "--count", "HEAD", "--not", "--remotes"],
     request.worktreePath,
   );
-  const count = Number(unpushed.trim());
-  if (Number.isFinite(count) && count > 0) {
-    return `the branch has ${count} unpushed commit(s)`;
+  const count = Number(unpushed.out.trim());
+  if (!unpushed.answered || !Number.isInteger(count)) {
+    return "git could not say whether the branch has unpushed commits";
   }
+  if (count > 0) return `the branch has ${count} unpushed commit(s)`;
   return undefined;
 }
 

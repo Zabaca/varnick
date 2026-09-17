@@ -1,9 +1,11 @@
-import { type ActorRefFrom, type AnyActorRef, assign, fromPromise, setup } from "xstate";
+import { type ActorRefFrom, and, type AnyActorRef, assign, fromPromise, setup } from "xstate";
 import {
   adoptSession,
   type DiscoveredSession,
   openSession,
   type OpenedSession,
+  ReapRefused,
+  type ReapRequest,
   reapSession,
   type SessionOptions,
 } from "../sessions.ts";
@@ -22,6 +24,8 @@ export interface SessionView {
   retryable: boolean;
   /** Whether nothing is left of the Session; a tag, likewise. */
   gone: boolean;
+  /** Whether a Reap is something to offer for it; a tag, likewise. */
+  reapable: boolean;
   worktreePath?: string;
   terminalUrl?: string;
   ttydPid?: number;
@@ -56,18 +60,7 @@ const create = fromPromise(
 
 const adopt = fromPromise(({ input }: { input: { branch: string } }) => adoptSession(input.branch));
 
-const remove = fromPromise(
-  ({ input }: {
-    input: {
-      branch: string;
-      liveTree: string;
-      worktreePath?: string;
-      ttydPid?: number;
-      attached: boolean;
-      force: boolean;
-    };
-  }) => reapSession(input),
-);
+const remove = fromPromise(({ input }: { input: ReapRequest }) => reapSession(input));
 
 export interface SessionInput {
   branch: string;
@@ -97,6 +90,10 @@ export const sessionMachine = setup({
     foundAttached: ({ context }) => context.adopt?.attached === true,
     found: ({ context }) => context.adopt !== undefined,
     isAttached: ({ context }) => context.attached,
+    // A Reap the Host declined to do, as against one that broke while doing it.
+    // Only the first is something `force` can get past, so only the first is
+    // offered to the developer as a refusal.
+    wasRefused: ({ event }) => (event as { error?: unknown }).error instanceof ReapRefused,
   },
 }).createMachine({
   id: "session",
@@ -149,17 +146,19 @@ export const sessionMachine = setup({
       },
     },
     running: {
+      tags: ["reapable"],
       entry: assign({ attached: true }),
       on: { REAP: { target: "reaping" } },
     },
     // A Worktree with no zmx session: still the agent's work and still reapable,
     // with nothing left running in it.
     detached: {
+      tags: ["reapable"],
       entry: assign({ attached: false }),
       on: { REAP: { target: "reaping" } },
     },
     reaping: {
-      entry: assign({ refusal: undefined }),
+      entry: assign({ refusal: undefined, error: undefined }),
       invoke: {
         src: "remove",
         input: ({ context, event }) => ({
@@ -171,11 +170,22 @@ export const sessionMachine = setup({
           force: event.type === "REAP" && event.force === true,
         }),
         onDone: { target: "reaped" },
-        // A refusal is not a broken Session: it goes back to being what it was,
-        // carrying the reason it was not taken away.
+        // A refusal is not a broken Session: it goes back to being exactly what
+        // it was, carrying the reason it was not taken away. A Reap that broke
+        // part-way through is a different thing — the terminal and the zmx
+        // session may already be gone — so it settles as detached with an
+        // error, which is not something `force` is offered for.
         onError: [
-          { guard: "isAttached", target: "running", actions: "rememberRefusal" },
-          { target: "detached", actions: "rememberRefusal" },
+          {
+            guard: and(["wasRefused", "isAttached"]),
+            target: "running",
+            actions: "rememberRefusal",
+          },
+          { guard: "wasRefused", target: "detached", actions: "rememberRefusal" },
+          {
+            target: "detached",
+            actions: assign({ error: ({ event }) => messageOf(event) }),
+          },
         ],
       },
     },
@@ -196,6 +206,7 @@ function viewOf(branch: string, actor: SessionActor): SessionView {
     state: String(snapshot.value),
     retryable: snapshot.hasTag("retryable"),
     gone: snapshot.hasTag("gone"),
+    reapable: snapshot.hasTag("reapable"),
     worktreePath: snapshot.context.worktreePath,
     terminalUrl: snapshot.context.terminalUrl,
     ttydPid: snapshot.context.ttydPid,
