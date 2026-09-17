@@ -8,3 +8,6 @@ dist/
 
 # Worktrees the agent works in. Checkouts, not history.
 /.claude/worktrees/
+
+# Local Claude Code settings.
+.claude/settings.local.json
