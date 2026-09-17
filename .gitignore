@@ -1,51 +1,10 @@
-# Dependencies
 node_modules/
-
-# Build output
 dist/
-build/
-target/
-.turbo/
-*.tsbuildinfo
-
-# Test and coverage output
-coverage/
-
-# Environment and secrets — never commit these
-.env
-.env.*
-!.env.example
-
-# Impeccable local-only state (config.json is shared and tracked)
-.impeccable/config.local.json
-.impeccable/sketches/
-
-# OS and editor noise
 .DS_Store
 *.log
 
-# Specs and tickets under .scratch/ are tracked deliberately — see
-# docs/agents/issue-tracker.md. Do not add .scratch/ here.
-
-# The sandbox policy is generated into the clone on first launch and holds
-# absolute paths for one machine. Read it, edit it, do not commit it — the
-# generator in packages/harness/src/sandbox.ts is what a fork changes.
-/sandbox-policy.json
-
-# varnick's own Claude Code configuration directory, created inside the clone
-# on first launch. It is here rather than under ~/.claude because the Sandbox
-# denies writes to the home directory, and it is per-clone machine state that
-# nobody else should inherit — see ADR-0010.
+# Per-clone machine state: the agent's Claude Code home and zmx sockets.
 /.varnick/
-# What the generator produced, recorded beside it so the next launch can tell
-# your edits from a boundary varnick has since strengthened. Per-clone, like
-# the policy, and for the same reason. Do not commit it: a committed baseline
-# would tell every other clone that its own machine's paths were hand-edited.
-/sandbox-policy.baseline.json
 
-# Tauri build artifacts
-src-tauri/target/
-src-tauri/gen/
-
-# Worktrees for parallel ticket agents. Checkouts, not history.
+# Worktrees the agent works in. Checkouts, not history.
 /.claude/worktrees/
