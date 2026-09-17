@@ -9,9 +9,12 @@ export interface Door {
   stop(): Promise<void>;
 }
 
-function toSnapshot(actor: AnyActorRef): { value: unknown; context: unknown } {
+// A Snapshot as it leaves the Host: what state it is in, what it holds, and
+// its tags. The tags are what a caller waiting on a Machine reads, so that
+// waiting does not mean repeating a state name outside the Machine (ADR-0010).
+function toSnapshot(actor: AnyActorRef): { value: unknown; context: unknown; tags: string[] } {
   const snap = actor.getSnapshot();
-  return { value: snap.value, context: snap.context };
+  return { value: snap.value, context: snap.context, tags: [...snap.tags ?? []] };
 }
 
 function json(body: unknown, status = 200): Response {

@@ -209,11 +209,24 @@ sessionTest("the agent runs in its Worktree with the documented environment and 
       GIT_COMMITTER_NAME: "Test Developer",
       GIT_COMMITTER_EMAIL: "test@example.com",
       VARNICK_DOOR: host.url,
+      // The Session's own branch, so `varnick land` and `varnick preview` have
+      // one to mean without being told.
+      VARNICK_BRANCH: branch,
     };
     for (const [name, value] of Object.entries(expected)) {
       if (seen.get(name) !== value) {
         throw new Error(`${name}: expected ${value}, got ${JSON.stringify(seen.get(name))}`);
       }
+    }
+    // `varnick` is on the agent's PATH, and is a command it can run: the
+    // Session is how the agent reaches the Door at all (ADR-0006).
+    const binDir = `${liveTree}/.varnick/bin`;
+    if (!(seen.get("PATH") ?? "").split(":").includes(binDir)) {
+      throw new Error(`expected ${binDir} on PATH, got ${JSON.stringify(seen.get("PATH"))}`);
+    }
+    const varnick = `${binDir}/varnick`;
+    if (!(await Deno.stat(varnick).then((s) => s.isFile, () => false))) {
+      throw new Error(`no ${varnick} for the agent to run`);
     }
     if (dump.includes(FIXTURE_CREDENTIAL)) {
       throw new Error("the real Credential reached the agent's environment");

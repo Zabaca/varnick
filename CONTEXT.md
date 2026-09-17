@@ -69,7 +69,7 @@ An XState machine for one thing whose state can be in flight or fail. Its actor 
 _Avoid_: store, reducer, state (a Machine has states)
 
 **Snapshot**:
-What a Machine's actor looks like right now: state value and context, JSON. The only thing the page ever renders.
+What a Machine's actor looks like right now: state value, context and tags, JSON. The only thing the page ever renders. Tags are how something waiting on a Machine knows it has come to rest without repeating a state name outside it.
 _Avoid_: state, model, view model
 
 **Door**:
@@ -79,3 +79,7 @@ _Avoid_: bridge, bindings, IPC, RPC, control channel
 **Event**:
 One thing sent through the Door to a Machine, the same whether a button, an agent or a test sent it.
 _Avoid_: command, action, message, request
+
+**The varnick command**:
+`varnick`, the command the Host installs on the agent's PATH inside a Session (`.varnick/bin/`). `varnick land`, `varnick preview`, `varnick session new <branch>` and `varnick snapshot <actor>` are Door calls over `VARNICK_DOOR`, defaulting to the Session's own branch — `VARNICK_BRANCH` — where one is implied. It prints the resulting Snapshot as JSON and exits non-zero when varnick refused. It is not a second way in: every one of them is an Event or a Snapshot the page could send or read.
+_Avoid_: CLI tool, MCP tool, agent API, SDK

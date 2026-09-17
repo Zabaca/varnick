@@ -222,12 +222,66 @@ export function agentHome(liveTree: string): string {
   return `${liveTree}/.varnick/claude`;
 }
 
+// The directory the Host puts its own commands on the agent's PATH from: one
+// per clone, beside the agent's Claude Code home and gitignored with it.
+export function agentBinDir(liveTree: string): string {
+  return `${liveTree}/.varnick/bin`;
+}
+
+// Where the `varnick` command's code is. The module beside this one is
+// preferred and the Live tree's copy is the fallback, for the same reason the
+// page directory has two candidates: under `deno desktop` this module loads out
+// of a compiled bundle and its own path may not exist on disk.
+function agentCliPath(liveTree: string): string {
+  for (
+    const candidate of [
+      new URL("../agent/varnick.ts", import.meta.url).pathname,
+      `${liveTree}/src/agent/varnick.ts`,
+    ]
+  ) {
+    try {
+      if (Deno.statSync(candidate).isFile) return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+  throw new Error("the `varnick` command's source is neither beside the Host nor in the Live tree");
+}
+
+// Put `varnick` on the agent's PATH (spec §The varnick command). It is a shim
+// rather than a copy, so the command the agent runs is the landed source and
+// not a snapshot of it taken when some earlier Session opened (ADR-0003).
+//
+// Deno's permissions are named here and nowhere else: the command talks to the
+// Door and reads its own environment, so that is all it is given.
+export async function installAgentBin(liveTree: string): Promise<string> {
+  const dir = agentBinDir(liveTree);
+  await Deno.mkdir(dir, { recursive: true });
+  const path = `${dir}/varnick`;
+  await Deno.writeTextFile(
+    path,
+    [
+      "#!/bin/sh",
+      `exec ${shellQuote(Deno.execPath())} run --quiet --allow-net=127.0.0.1 --allow-env \\`,
+      `  ${shellQuote(agentCliPath(liveTree))} "$@"`,
+      "",
+    ].join("\n"),
+  );
+  await Deno.chmod(path, 0o755);
+  return dir;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 // The environment the agent runs with. Built from the Host's own so git, npm
 // and Claude Code find their tools, then given the Session's own variables.
 // Both credential variables are cleared first: whichever kind the Credential
 // is, the agent carries a placeholder and never the Credential (ADR-0005), and
 // a real one inherited from the developer's shell would defeat that.
 function agentEnvironment(
+  branch: string,
   options: SessionOptions,
   identity: GitIdentity,
 ): Record<string, string> {
@@ -250,6 +304,12 @@ function agentEnvironment(
     GIT_COMMITTER_NAME: identity.name,
     GIT_COMMITTER_EMAIL: identity.email,
     VARNICK_DOOR: options.doorUrl,
+    // This Session's own branch, so `varnick land` and `varnick preview` have
+    // one to mean without the agent having to name it.
+    VARNICK_BRANCH: branch,
+    // `varnick` first, so the command the Host installed is the one found; the
+    // rest of the Host's PATH follows, which is where git and node are.
+    PATH: [agentBinDir(options.liveTree), env.PATH].filter(Boolean).join(":"),
   };
 }
 
@@ -294,10 +354,14 @@ export async function openSession(
   // Settled before anything is made, so a Host with no `claude` fails without
   // having created a Worktree first.
   const command = sessionCommand(options);
-  const environment = agentEnvironment(options, await readGitIdentity(options.liveTree));
+  const environment = agentEnvironment(branch, options, await readGitIdentity(options.liveTree));
   // Claude Code is handed a home that exists (ADR-0009); it is shared by every
   // Session, so the first one to want it is the one that makes it.
   await Deno.mkdir(agentHome(options.liveTree), { recursive: true });
+  // The PATH the agent was just given has to have something on it: `varnick`
+  // is written afresh for every Session, so a landed change to it takes effect
+  // in the next Session opened rather than the next clone (ADR-0003).
+  await installAgentBin(options.liveTree);
 
   const worktreePath = await addWorktree(options.liveTree, branch);
   try {
