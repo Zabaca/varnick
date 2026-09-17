@@ -1,9 +1,47 @@
 // Headless tests that drive a real Host through the Door — HTTP only,
 // never importing a Machine to poke it (ADR-0006, spec Testing Decisions).
-import { startHost } from "./main.ts";
+import { type HostOptions, startHost } from "./main.ts";
 
-Deno.test("GET /actors/host returns the running Snapshot", async () => {
-  const host = await startHost({ headless: true, port: 0 });
+// The fixture Secrets file and the throwaway age key committed beside it, so a
+// launch under test decrypts a Credential without any local setup.
+const FIXTURE_SECRETS = new URL("./testdata/secrets.yaml", import.meta.url).pathname;
+const FIXTURE_AGE_KEY = new URL("./testdata/test-age-key.txt", import.meta.url).pathname;
+const FIXTURE_CREDENTIAL = "sk-ant-api03-test-fixture-not-a-real-key";
+
+// A launch decrypts the Secrets file, so every test here needs sops. Without
+// it they skip with a message rather than failing (spec Testing Decisions).
+const HAS_SOPS = await (async () => {
+  try {
+    return (await new Deno.Command("sops", {
+      args: ["--version"],
+      stdout: "null",
+      stderr: "null",
+    }).output()).success;
+  } catch {
+    return false;
+  }
+})();
+
+function hostTest(name: string, fn: () => Promise<void>) {
+  Deno.test({
+    name: HAS_SOPS ? name : `${name} (skipped: sops is not installed)`,
+    ignore: !HAS_SOPS,
+    fn,
+  });
+}
+
+function startTestHost(options: HostOptions = {}) {
+  return startHost({
+    headless: true,
+    port: 0,
+    secretsFile: FIXTURE_SECRETS,
+    ageKeyFile: FIXTURE_AGE_KEY,
+    ...options,
+  });
+}
+
+hostTest("GET /actors/host returns the running Snapshot", async () => {
+  const host = await startTestHost();
   try {
     const res = await fetch(`${host.url}/actors/host`);
     if (res.status !== 200) throw new Error(`expected 200, got ${res.status}`);
@@ -16,8 +54,8 @@ Deno.test("GET /actors/host returns the running Snapshot", async () => {
   }
 });
 
-Deno.test("POST /actors/host/events processes the Event and returns the Snapshot after it", async () => {
-  const host = await startHost({ headless: true, port: 0 });
+hostTest("POST /actors/host/events processes the Event and returns the Snapshot after it", async () => {
+  const host = await startTestHost();
   try {
     const res = await fetch(`${host.url}/actors/host/events`, {
       method: "POST",
@@ -35,8 +73,8 @@ Deno.test("POST /actors/host/events processes the Event and returns the Snapshot
   }
 });
 
-Deno.test("a Snapshot change reaches /stream tagged with the actor name", async () => {
-  const host = await startHost({ headless: true, port: 0 });
+hostTest("a Snapshot change reaches /stream tagged with the actor name", async () => {
+  const host = await startTestHost();
   try {
     const stream = await fetch(`${host.url}/stream`);
     const reader = stream.body!.pipeThrough(new TextDecoderStream()).getReader();
@@ -71,8 +109,8 @@ Deno.test("a Snapshot change reaches /stream tagged with the actor name", async 
   }
 });
 
-Deno.test("unknown actor names return 404 with a message", async () => {
-  const host = await startHost({ headless: true, port: 0 });
+hostTest("unknown actor names return 404 with a message", async () => {
+  const host = await startTestHost();
   try {
     for (const [path, init] of [
       ["/actors/nosuch", undefined],
@@ -94,8 +132,8 @@ Deno.test("unknown actor names return 404 with a message", async () => {
   }
 });
 
-Deno.test("malformed Events return 400 with a message", async () => {
-  const host = await startHost({ headless: true, port: 0 });
+hostTest("malformed Events return 400 with a message", async () => {
+  const host = await startTestHost();
   try {
     for (const body of ["not json", JSON.stringify({ notype: true }), JSON.stringify({ type: 7 })]) {
       const res = await fetch(`${host.url}/actors/host/events`, {
@@ -108,6 +146,65 @@ Deno.test("malformed Events return 400 with a message", async () => {
       if (typeof parsed.message !== "string" || parsed.message.length === 0) {
         throw new Error(`body ${body}: expected a message, got ${JSON.stringify(parsed)}`);
       }
+    }
+  } finally {
+    await host.stop();
+  }
+});
+
+hostTest("GET /actors/host says the Credential's kind and never its value", async () => {
+  const host = await startTestHost();
+  try {
+    const res = await fetch(`${host.url}/actors/host`);
+    if (res.status !== 200) throw new Error(`expected 200, got ${res.status}`);
+    const body = await res.text();
+    const snapshot = JSON.parse(body);
+    // The fixture's value starts with `sk-ant-api`, so its kind is an API key.
+    if (snapshot.context.credential?.kind !== "apiKey") {
+      throw new Error(`expected kind "apiKey", got ${JSON.stringify(snapshot.context.credential)}`);
+    }
+    if (body.includes(FIXTURE_CREDENTIAL)) {
+      throw new Error("the Credential's value reached the Snapshot");
+    }
+  } finally {
+    await host.stop();
+  }
+});
+
+hostTest("a launch whose Secrets file will not decrypt fails with a message naming it", async () => {
+  // The same fixture, but without the age key that opens it: sops cannot decrypt.
+  let host: Awaited<ReturnType<typeof startTestHost>> | undefined;
+  let thrown: unknown;
+  try {
+    host = await startTestHost({ ageKeyFile: `${await Deno.makeTempDir()}/no-such-key.txt` });
+  } catch (error) {
+    thrown = error;
+  } finally {
+    await host?.stop();
+  }
+
+  if (!(thrown instanceof Error)) {
+    throw new Error(`expected the launch to fail, got ${JSON.stringify(thrown)}`);
+  }
+  if (!thrown.message.includes(FIXTURE_SECRETS)) {
+    throw new Error(`the message does not name the Secrets file: ${thrown.message}`);
+  }
+  if (!thrown.message.toLowerCase().includes("sops")) {
+    throw new Error(`the message does not say sops could not decrypt: ${thrown.message}`);
+  }
+});
+
+hostTest("an OAuth token is reported as one, not as an API key", async () => {
+  // `claude setup-token` issues tokens that start `sk-ant-oat01-`, so the
+  // `sk-ant-` prefix alone does not distinguish a Credential's kind.
+  const host = await startTestHost({
+    secretsFile: new URL("./testdata/secrets-oauth.yaml", import.meta.url).pathname,
+  });
+  try {
+    const res = await fetch(`${host.url}/actors/host`);
+    const snapshot = await res.json();
+    if (snapshot.context.credential?.kind !== "oauthToken") {
+      throw new Error(`expected kind "oauthToken", got ${JSON.stringify(snapshot.context.credential)}`);
     }
   } finally {
     await host.stop();

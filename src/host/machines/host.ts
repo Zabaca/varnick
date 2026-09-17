@@ -1,4 +1,13 @@
 import { assign, setup } from "xstate";
+import type { CredentialKind } from "../secrets.ts";
+
+// What the Snapshot may say about the Credential: its kind, never its value
+// (ADR-0005). The value stays in the Host's memory and reaches only the Proxy.
+export interface HostContext {
+  pings: number;
+  credential: { kind: CredentialKind };
+  proxyUrl: string;
+}
 
 // The host Machine: running, restarting, previewing (spec §Machines).
 // Only `running` has behavior in this ticket; RESTART and PREVIEW arrive
@@ -6,13 +15,14 @@ import { assign, setup } from "xstate";
 // Snapshot change is observable on /stream without leaving `running`.
 export const hostMachine = setup({
   types: {
-    context: {} as { pings: number },
+    context: {} as HostContext,
+    input: {} as { credential: { kind: CredentialKind }; proxyUrl: string },
     events: {} as { type: "PING" },
   },
 }).createMachine({
   id: "host",
   initial: "running",
-  context: { pings: 0 },
+  context: ({ input }) => ({ pings: 0, ...input }),
   states: {
     running: {
       on: {
