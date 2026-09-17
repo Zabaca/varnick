@@ -8,6 +8,7 @@ import {
   makeStubClaude,
   newSession,
   readSessions,
+  recordedEnvironment,
   run,
   sessionTest,
   startTestHost,
@@ -174,6 +175,9 @@ sessionTest("the agent runs in its Worktree with the documented environment and 
     if (view.state !== "running") {
       throw new Error(`expected state "running", got ${JSON.stringify(view)}`);
     }
+    // The fixture Secrets file puts this Host in the Proxy's mode, so there is
+    // a Proxy for the agent to be pointed at.
+    if (!host.proxyUrl) throw new Error("the fixture Secrets file did not start a Proxy");
 
     // The stub writes what it was given the moment it starts; zmx has started
     // it by the time the session is listed, but the write may lag a beat.
@@ -235,6 +239,51 @@ sessionTest("the agent runs in its Worktree with the documented environment and 
     const home = expected.CLAUDE_CONFIG_DIR;
     if (!(await Deno.stat(home).then((s) => s.isDirectory, () => false))) {
       throw new Error(`${home} is not a directory`);
+    }
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
+sessionTest("with no Secrets file the agent is given no credential at all", async () => {
+  // The opt-out (ADR-0005, amended): no Proxy to point at and no placeholder to
+  // carry, so Claude Code `/login`s inside the Session and keeps what it gets
+  // in the agent's home (ADR-0009). All three are named because all three are
+  // set in the `on` mode, and none of them may survive into the `off` one.
+  const liveTree = await makeLiveTree();
+  const record = `${liveTree}/stub-record.txt`;
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const host = await startTestHost({
+    liveTree,
+    secretsFile: `${liveTree}/secrets.yaml`,
+    claudePath: await makeStubClaude(record),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForSettled(host.url, branch);
+    const env = await recordedEnvironment(record);
+
+    for (const name of ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+      if (name in env) {
+        throw new Error(`${name} reached the agent: ${JSON.stringify(env[name])}`);
+      }
+    }
+    // Everything the Session is otherwise made of is unchanged.
+    const expected: Record<string, string> = {
+      CLAUDE_CONFIG_DIR: `${liveTree}/.varnick/claude`,
+      GIT_AUTHOR_NAME: "Test Developer",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test Developer",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+      VARNICK_DOOR: host.url,
+      VARNICK_BRANCH: branch,
+    };
+    for (const [name, value] of Object.entries(expected)) {
+      if (env[name] !== value) {
+        throw new Error(`${name}: expected ${value}, got ${JSON.stringify(env[name])}`);
+      }
     }
   } finally {
     await reap(view, branch);

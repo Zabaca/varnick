@@ -1,16 +1,16 @@
 import { type AnyActorRef, createActor, fromPromise } from "xstate";
 import { hostMachine, type LaunchedPreview } from "./machines/host.ts";
 import { type Door, serveDoor } from "./door.ts";
-import { type Credential, readCredential, type ReadCredentialOptions } from "./secrets.ts";
+import { type Credential, findCredential, type ReadCredentialOptions } from "./secrets.ts";
 import { type Proxy, serveProxy } from "./proxy.ts";
 import { sessionsMachine } from "./machines/sessions.ts";
 import { landingMachine } from "./machines/landing.ts";
-import { discoverSessions, whichClaude } from "./sessions.ts";
+import { discoverSessions, type Proxied, whichClaude } from "./sessions.ts";
 import { answersNow, freePort } from "./terminals.ts";
 import type { Wrap } from "./wrap.ts";
 
 // The Secrets options are the Credential's, unchanged: a launch is where they
-// are supplied, but it is `readCredential` that gives them meaning.
+// are supplied, but it is `findCredential` that gives them meaning.
 export interface HostOptions extends ReadCredentialOptions {
   headless?: boolean;
   port?: number;
@@ -41,26 +41,36 @@ export interface HostOptions extends ReadCredentialOptions {
 }
 
 export interface Host extends Door {
-  /** What goes in the agent's `ANTHROPIC_BASE_URL` (ADR-0005). */
-  proxyUrl: string;
+  /**
+   * What goes in the agent's `ANTHROPIC_BASE_URL` (ADR-0005), or nothing when
+   * there is no Secrets file and so no Proxy to point at.
+   */
+  proxyUrl?: string;
 }
 
-// Start the Host: read the Credential, run the Proxy, create the actors, open
-// the Door. Headless launches (tests) get the same Host with no window. A
-// Secrets file that will not decrypt fails the launch rather than starting a
-// Host that cannot reach Anthropic.
+// Start the Host: find the Credential, run the Proxy if there is one, create
+// the actors, open the Door. Headless launches (tests) get the same Host with
+// no window. A Secrets file that will not decrypt fails the launch rather than
+// starting a Host that cannot reach Anthropic; no Secrets file at all is the
+// opt-out, and the agent logs itself in (ADR-0005, amended).
 export async function startHost(options: HostOptions = {}): Promise<Host> {
-  const credential: Credential = await readCredential({
+  const credential: Credential | undefined = await findCredential({
     secretsFile: options.secretsFile,
     ageKeyFile: options.ageKeyFile,
   });
 
   const liveTree = options.liveTree ?? Deno.cwd();
 
-  const proxy: Proxy = serveProxy(credential, {
-    port: options.proxyPort ?? 0,
-    upstream: options.upstream,
-  });
+  const proxy: Proxy | undefined = credential
+    ? serveProxy(credential, { port: options.proxyPort ?? 0, upstream: options.upstream })
+    : undefined;
+
+  // The Proxy as everything downstream needs it, made once: a Host is in the
+  // `on` mode or the `off` one, and there is no third answer for the Snapshot
+  // and a Session's environment to disagree over.
+  const proxied: Proxied | undefined = credential && proxy
+    ? { url: proxy.url, kind: credential.kind }
+    : undefined;
 
   let door: Door | undefined;
   // Both a Restart and `stop()` release the same two listeners, and a Restart
@@ -71,7 +81,7 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
       try {
         await door?.stop();
       } finally {
-        await proxy.stop();
+        await proxy?.stop();
       }
     })();
     return released;
@@ -99,7 +109,7 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
           ),
         },
       }),
-      { input: { credential: { kind: credential.kind }, proxyUrl: proxy.url, tree: liveTree } },
+      { input: { proxy: proxied, tree: liveTree } },
     );
     actors.set("host", host);
     host.start();
@@ -108,9 +118,8 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
       input: {
         liveTree,
         claudePath: options.claudePath ?? await whichClaude(),
-        proxyUrl: proxy.url,
+        proxy: proxied,
         doorUrl: door.url,
-        credentialKind: credential.kind,
         wrap: options.wrap,
       },
     });
@@ -134,11 +143,11 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
   } catch (error) {
     // A Host that never opened must leave neither its Door nor its Proxy listening.
     await door?.stop();
-    await proxy.stop();
+    await proxy?.stop();
     throw error;
   }
 
-  return { ...door, proxyUrl: proxy.url, stop: release };
+  return { ...door, proxyUrl: proxy?.url, stop: release };
 }
 
 // A Restart (spec §Restart). The successor is launched detached from the Live
@@ -284,5 +293,9 @@ if (import.meta.main) {
   // A Preview is handed its Door port by the Host that launched it; Live takes
   // the one the README names.
   const host = await startHost({ headless, port: Number(Deno.env.get("VARNICK_PORT")) || 4180 });
-  console.log(`varnick Host: Door at ${host.url}, Proxy at ${host.proxyUrl}`);
+  console.log(
+    `varnick Host: Door at ${host.url}, ${
+      host.proxyUrl ? `Proxy at ${host.proxyUrl}` : "Proxy off; the agent logs itself in"
+    }`,
+  );
 }

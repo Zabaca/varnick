@@ -52,9 +52,11 @@ the terminal's URL, and the page shows that terminal in an iframe.
 
 The command the Session runs comes out of `Wrap` (`src/host/wrap.ts`), which in
 v1 returns it unchanged — the one place a kernel sandbox would go (ADR-0004).
-The agent's environment carries the Proxy in `ANTHROPIC_BASE_URL`, a placeholder
-credential, `CLAUDE_CONFIG_DIR` at `.varnick/claude`, your git identity and the
-Door's URL in `VARNICK_DOOR`; the Credential itself is not in it (ADR-0005).
+The agent's environment carries `CLAUDE_CONFIG_DIR` at `.varnick/claude`, your
+git identity and the Door's URL in `VARNICK_DOOR`, and — when there is a
+`secrets.yaml` — the Proxy in `ANTHROPIC_BASE_URL` and a placeholder credential.
+Without one it carries no credential variable at all. Either way the Credential
+itself is not in it (ADR-0005).
 
 A Session outlives the Host by design, so it is not stopped when varnick exits.
 `deno task test` needs `git`, `zmx`, `ttyd` and `sops`; without any of them the

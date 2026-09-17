@@ -26,10 +26,13 @@ interface LandingView {
   error?: string;
 }
 
-// What the `host` Snapshot says about the Previews it has launched (ADR-0008).
+// What the `host` Snapshot says about the Previews it has launched (ADR-0008),
+// and which mode the Secrets file put this Host in (ADR-0005, amended).
 interface HostView {
   previews?: Record<string, { url: string; pid: number }>;
   previewError?: string;
+  proxy?: "on" | "off";
+  credential?: { kind: string };
 }
 
 function hostOf(snapshots: Record<string, Snapshot>): { state: string } & HostView {
@@ -102,6 +105,17 @@ function App() {
       <h1>
         varnick <small>{host.state}</small>
       </h1>
+      {/* Which mode the Host is in, and the Credential's kind when there is
+          one — never its value, which the Snapshot does not carry (ADR-0005). */}
+      {host.proxy
+        ? (
+          <p data-proxy={host.proxy}>
+            {host.proxy === "on"
+              ? `Proxy on: the agent carries a placeholder for your ${host.credential?.kind}`
+              : "Proxy off: no secrets.yaml, so the agent runs /login in its Session"}
+          </p>
+        )
+        : null}
       <NewSession />
       {/* Promotion: the Live Host relaunches onto whatever has landed (spec
           user story 17). The Sessions are not the Host's children and stay. */}

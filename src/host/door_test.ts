@@ -1,6 +1,7 @@
 // Headless tests that drive a real Host through the Door — HTTP only,
 // never importing a Machine to poke it (ADR-0006, spec Testing Decisions).
 import { type HostOptions, startHost } from "./main.ts";
+import { makeLiveTree } from "./test_support.ts";
 
 // The fixture Secrets file and the throwaway age key committed beside it, so a
 // launch under test decrypts a Credential without any local setup.
@@ -159,12 +160,38 @@ hostTest("GET /actors/host says the Credential's kind and never its value", asyn
     if (res.status !== 200) throw new Error(`expected 200, got ${res.status}`);
     const body = await res.text();
     const snapshot = JSON.parse(body);
+    if (snapshot.context.proxy !== "on") {
+      throw new Error(`expected proxy "on", got ${JSON.stringify(snapshot.context.proxy)}`);
+    }
     // The fixture's value starts with `sk-ant-api`, so its kind is an API key.
     if (snapshot.context.credential?.kind !== "apiKey") {
       throw new Error(`expected kind "apiKey", got ${JSON.stringify(snapshot.context.credential)}`);
     }
     if (body.includes(FIXTURE_CREDENTIAL)) {
       throw new Error("the Credential's value reached the Snapshot");
+    }
+  } finally {
+    await host.stop();
+  }
+});
+
+hostTest("a Host launched with no Secrets file runs with the Proxy off", async () => {
+  // A fresh clone, before anyone has written a `secrets.yaml`: the Host reads
+  // nothing, runs no Proxy, and says so in its Snapshot (ADR-0005, amended).
+  const liveTree = await makeLiveTree();
+  const host = await startTestHost({ liveTree, secretsFile: `${liveTree}/secrets.yaml` });
+  try {
+    if (host.proxyUrl !== undefined) {
+      throw new Error(`a Host with no Secrets file ran a Proxy at ${host.proxyUrl}`);
+    }
+    const snapshot = await (await fetch(`${host.url}/actors/host`)).json();
+    if (snapshot.context.proxy !== "off") {
+      throw new Error(`expected proxy "off", got ${JSON.stringify(snapshot.context.proxy)}`);
+    }
+    if (snapshot.context.credential !== undefined) {
+      throw new Error(
+        `expected no Credential, got ${JSON.stringify(snapshot.context.credential)}`,
+      );
     }
   } finally {
     await host.stop();
