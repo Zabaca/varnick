@@ -1,6 +1,7 @@
 import { wrap as identityWrap, type Wrap } from "./wrap.ts";
 import { API_KEY_PLACEHOLDER, OAUTH_TOKEN_PLACEHOLDER } from "./proxy.ts";
 import type { CredentialKind } from "./secrets.ts";
+import { answersNow, readTerminals, recordTerminal } from "./terminals.ts";
 
 // What a Session is made of: a Worktree, a zmx session and a ttyd. This module
 // holds everything that touches the world, including the order the three are
@@ -110,20 +111,15 @@ function freePort(): number {
 }
 
 async function answersOn(port: number): Promise<boolean> {
-  return await pollUntil(async () => {
-    try {
-      (await Deno.connect({ hostname: "127.0.0.1", port })).close();
-      return true;
-    } catch {
-      return false;
-    }
-  }, 10_000);
+  return await pollUntil(() => answersNow(port), 10_000);
 }
 
 // One ttyd per Session, on its own loopback port, attached to the zmx session.
 // It is not a child the Host waits on: a Session outlives the window and the
 // Host (spec user stories 5 and 6), so the process is let go of here.
-async function startTerminal(name: string): Promise<{ url: string; pid: number }> {
+// Because it is let go of, the port is written down (`terminals.ts`) before it
+// is returned: a Host that relaunches has no other way back to this process.
+async function startTerminal(name: string, liveTree: string): Promise<Terminal> {
   const port = freePort();
   const ttyd = new Deno.Command("ttyd", {
     args: ["-W", "-i", loopbackInterface(), "-p", String(port), "zmx", "attach", name],
@@ -141,7 +137,29 @@ async function startTerminal(name: string): Promise<{ url: string; pid: number }
     }
     throw new Error(`ttyd did not answer on 127.0.0.1:${port} for session "${name}"`);
   }
-  return { url: `http://127.0.0.1:${port}`, pid: ttyd.pid };
+  await recordTerminal(liveTree, name, { port, pid: ttyd.pid });
+  return { url: terminalUrl(port), pid: ttyd.pid };
+}
+
+interface Terminal {
+  url: string;
+  pid: number;
+}
+
+function terminalUrl(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+// The terminal for a Session the Host did not open: the recorded one if it
+// still answers, a new one if it does not. A ttyd is not a child of the Host
+// (spec user stories 5 and 6), so surviving one is adopted rather than
+// replaced — replacing it would drop the websocket the window is showing.
+async function adoptOrStartTerminal(branch: string, liveTree: string): Promise<Terminal> {
+  const recorded = (await readTerminals(liveTree))[branch];
+  if (recorded && await answersNow(recorded.port)) {
+    return { url: terminalUrl(recorded.port), pid: recorded.pid };
+  }
+  return await startTerminal(branch, liveTree);
 }
 
 // The developer's git identity, read by the Host so commits made in a Session
@@ -247,7 +265,7 @@ export async function openSession(
   const worktreePath = await addWorktree(options.liveTree, branch);
   try {
     await startZmxSession(branch, command, worktreePath, environment);
-    const terminal = await startTerminal(branch);
+    const terminal = await startTerminal(branch, options.liveTree);
     return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
   } catch (error) {
     try {
@@ -259,4 +277,72 @@ export async function openSession(
     }
     throw error;
   }
+}
+
+// Adopting a Session the Host finds already running: its Worktree and its zmx
+// session were made by an earlier Host and are left exactly as they are. Only
+// the terminal is decided, because only the terminal's port was the Host's to
+// remember (spec §Restart).
+export async function adoptSession(
+  branch: string,
+  options: SessionOptions,
+): Promise<OpenedSession> {
+  const worktreePath = worktreePathFor(options.liveTree, branch);
+  // Adopting is asked for through the Door like anything else (ADR-0006), so
+  // what is being taken over is checked rather than assumed: without both the
+  // Worktree and the zmx session there is no Session here to adopt, and a ttyd
+  // must not be started for one.
+  if (!(await discoverSessions(options.liveTree)).includes(branch)) {
+    throw new Error(`no Session is running on "${branch}" to adopt`);
+  }
+  const terminal = await adoptOrStartTerminal(branch, options.liveTree);
+  return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
+}
+
+// Which branches have a zmx session running right now.
+async function zmxSessions(): Promise<Set<string>> {
+  try {
+    const { success, stdout } = await new Deno.Command("zmx", {
+      args: ["ls", "--short"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (!success) return new Set();
+    return new Set(
+      new TextDecoder().decode(stdout).split("\n").map((line) => line.trim()).filter(Boolean),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+// Which branches have a Worktree under `.claude/worktrees/` in the Live tree.
+async function worktreeBranches(liveTree: string): Promise<string[]> {
+  const { success, stdout } = await new Deno.Command("git", {
+    args: ["worktree", "list", "--porcelain"],
+    cwd: liveTree,
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  if (!success) return [];
+
+  const branches: string[] = [];
+  let path = "";
+  for (const line of new TextDecoder().decode(stdout).split("\n")) {
+    if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
+    if (!line.startsWith("branch refs/heads/")) continue;
+    const branch = line.slice("branch refs/heads/".length);
+    // The Live tree is a worktree too, and it is not a Session; a Session's
+    // Worktree is the one at the path the spec fixes for that branch.
+    if (path === worktreePathFor(liveTree, branch)) branches.push(branch);
+  }
+  return branches;
+}
+
+// The Sessions already running on this machine, rebuilt from git and zmx alone
+// (ADR-0007). A Worktree whose zmx session is gone is not one: nothing is left
+// running for the Host to adopt.
+export async function discoverSessions(liveTree: string): Promise<string[]> {
+  const running = await zmxSessions();
+  return (await worktreeBranches(liveTree)).filter((branch) => running.has(branch));
 }

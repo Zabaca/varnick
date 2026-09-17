@@ -89,6 +89,11 @@ function App() {
         varnick <small>{String(snapshots.host?.value ?? "…")}</small>
       </h1>
       <NewSession />
+      {/* Promotion: the Live Host relaunches onto whatever has landed (spec
+          user story 17). The Sessions are not the Host's children and stay. */}
+      <button type="button" onClick={() => send("host", { type: "RESTART" })}>
+        Restart
+      </button>
 
       <ul style={{ listStyle: "none", padding: 0 }}>
         {sessions.map((session) => (
