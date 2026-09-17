@@ -70,7 +70,9 @@ function App() {
 
   return (
     <main style={{ fontFamily: "system-ui", padding: "1rem" }}>
-      <h1>varnick</h1>
+      <h1>
+        varnick <small>{String(snapshots.host?.value ?? "…")}</small>
+      </h1>
       <NewSession />
 
       <ul style={{ listStyle: "none", padding: 0 }}>

@@ -3,6 +3,7 @@
 // Decisions). Nothing here imports a Machine; the Door is the only way in.
 import { type HostOptions, startHost } from "./main.ts";
 import { API_KEY_PLACEHOLDER } from "./proxy.ts";
+import type { SessionView } from "./machines/sessions.ts";
 
 const FIXTURE_CREDENTIAL = "sk-ant-api03-test-fixture-not-a-real-key";
 const FIXTURE_SECRETS = new URL("./testdata/secrets.yaml", import.meta.url).pathname;
@@ -73,15 +74,6 @@ async function makeStubClaude(recordTo: string): Promise<string> {
   );
   await Deno.chmod(path, 0o755);
   return path;
-}
-
-interface SessionView {
-  branch: string;
-  state: string;
-  worktreePath?: string;
-  terminalUrl?: string;
-  ttydPid?: number;
-  error?: string;
 }
 
 async function readSessions(doorUrl: string): Promise<Record<string, SessionView>> {
@@ -237,6 +229,42 @@ sessionTest("a create that cannot happen lands in failed with the error in conte
   }
 });
 
+sessionTest("a branch whose Session failed can be asked for again", async () => {
+  const liveTree = await makeLiveTree();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  // The branch already exists, so `git worktree add -b` refuses it.
+  await run("git", ["branch", branch], liveTree);
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForSettled(host.url, branch);
+    if (view.state !== "failed") {
+      throw new Error(`expected the first attempt to fail, got ${JSON.stringify(view)}`);
+    }
+
+    // With the cause removed, the same branch opens: a Session that never
+    // existed must not hold its branch hostage.
+    await run("git", ["branch", "-D", branch], liveTree);
+    await newSession(host.url, branch);
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      view = (await readSessions(host.url))[branch];
+      if (view?.state === "running") break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (view?.state !== "running") {
+      throw new Error(`the retry never reached running: ${JSON.stringify(view)}`);
+    }
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
 sessionTest("the agent runs in its Worktree with the documented environment and no Credential", async () => {
   const liveTree = await makeLiveTree();
   const record = `${liveTree}/stub-record.txt`;
@@ -292,6 +320,11 @@ sessionTest("the agent runs in its Worktree with the documented environment and 
     }
     if (dump.includes(FIXTURE_CREDENTIAL)) {
       throw new Error("the real Credential reached the agent's environment");
+    }
+    // The agent home is handed over as a directory that exists (ADR-0009).
+    const home = expected.CLAUDE_CONFIG_DIR;
+    if (!(await Deno.stat(home).then((s) => s.isDirectory, () => false))) {
+      throw new Error(`${home} is not a directory`);
     }
   } finally {
     await reap(view, branch);

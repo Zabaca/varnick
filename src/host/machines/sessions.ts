@@ -1,25 +1,18 @@
-import { assign, fromPromise, sendParent, setup, type ActorRefFrom } from "xstate";
-import {
-  addWorktree,
-  agentEnvironment,
-  readGitIdentity,
-  removeWorktree,
-  sessionCommand,
-  type SessionOptions,
-  startTerminal,
-  startZmxSession,
-} from "../sessions.ts";
+import { type ActorRefFrom, type AnyActorRef, assign, fromPromise, setup } from "xstate";
+import { openSession, type OpenedSession, type SessionOptions } from "../sessions.ts";
 
 // The `sessions` Machine holds the list and spawns one child actor per Session
 // (spec §Machines). A list is not a Machine, so the list itself is context; the
-// states that can be in flight or fail belong to the child.
+// part that can be in flight or fail belongs to the child.
 
-// What the parent knows about one Session. The child's state value is reported
-// up rather than restated here, so a state is still named only in its Machine
-// (ADR-0010), and the page renders this and nothing else.
+// What the parent knows about one Session. `state` is copied from the child's
+// Snapshot rather than restated, so a state is named in its Machine and nowhere
+// else (ADR-0010) — not here, and not in the page, which renders this.
 export interface SessionView {
   branch: string;
   state: string;
+  /** Whether this branch may be opened again; a tag, never a state name. */
+  retryable: boolean;
   worktreePath?: string;
   terminalUrl?: string;
   ttydPid?: number;
@@ -35,46 +28,9 @@ export interface SessionContext {
   error?: string;
 }
 
-// Told to the parent on entering each state, so the parent's context always
-// says what the child says. The state's own name is passed in because a child's
-// snapshot is not yet readable from inside its initial entry action.
-const report = (state: string) =>
-  sendParent(({ context }: { context: SessionContext }) => ({
-    type: "SESSION.REPORT" as const,
-    view: {
-      branch: context.branch,
-      state,
-      worktreePath: context.worktreePath,
-      terminalUrl: context.terminalUrl,
-      ttydPid: context.ttydPid,
-      error: context.error,
-    } satisfies SessionView,
-  }));
-
-// Creating a Session: the Worktree is added, then the zmx session is started
-// with the wrapped command, then a ttyd is attached to it (spec §Sessions).
 const create = fromPromise(
-  async ({ input }: { input: { branch: string; options: SessionOptions } }) => {
-    // The command is settled before anything is made, so a Host with no
-    // `claude` fails without leaving a Worktree behind.
-    const command = sessionCommand(input.options);
-    const environment = agentEnvironment(
-      input.options,
-      await readGitIdentity(input.options.liveTree),
-    );
-
-    const worktreePath = await addWorktree(input.options.liveTree, input.branch);
-    try {
-      await startZmxSession(input.branch, command, worktreePath, environment);
-      const terminal = await startTerminal(input.branch);
-      return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
-    } catch (error) {
-      // A Session that never opened leaves no Worktree; reaping a real one is
-      // its own Event and belongs to the ticket that adds it.
-      await removeWorktree(input.options.liveTree, worktreePath);
-      throw error;
-    }
-  },
+  ({ input }: { input: { branch: string; options: SessionOptions } }): Promise<OpenedSession> =>
+    openSession(input.branch, input.options),
 );
 
 export const sessionMachine = setup({
@@ -89,7 +45,6 @@ export const sessionMachine = setup({
   context: ({ input }) => ({ branch: input.branch, options: input.options }),
   states: {
     creating: {
-      entry: report("creating"),
       invoke: {
         src: "create",
         input: ({ context }) => ({ branch: context.branch, options: context.options }),
@@ -106,13 +61,34 @@ export const sessionMachine = setup({
         },
       },
     },
-    running: { entry: report("running") },
-    failed: { entry: report("failed") },
+    running: {},
+    // Nothing was made, so the branch is free for another try. The tag is what
+    // the parent reads; it never learns this state's name.
+    failed: { tags: ["retryable"] },
   },
 });
 
+type SessionActor = ActorRefFrom<typeof sessionMachine>;
+
+function viewOf(branch: string, actor: SessionActor): SessionView {
+  const snapshot = actor.getSnapshot();
+  return {
+    branch,
+    state: String(snapshot.value),
+    retryable: snapshot.hasTag("retryable"),
+    worktreePath: snapshot.context.worktreePath,
+    terminalUrl: snapshot.context.terminalUrl,
+    ttydPid: snapshot.context.ttydPid,
+    error: snapshot.context.error,
+  };
+}
+
 export interface SessionsContext {
   sessions: Record<string, SessionView>;
+  /** The child actors themselves, so a later Event has something to send to. */
+  children: Record<string, AnyActorRef>;
+  /** Makes each spawned child's id its own, so a retry is not the last one. */
+  opened: number;
   options: SessionOptions;
 }
 
@@ -126,27 +102,45 @@ export const sessionsMachine = setup({
   },
   actors: { session: sessionMachine },
   guards: {
-    // One Session per branch: a repeated NEW_SESSION is not a second Worktree.
-    isNewBranch: ({ context, event }) =>
-      event.type === "NEW_SESSION" && typeof event.branch === "string" &&
-      event.branch.length > 0 && !(event.branch in context.sessions),
+    // One Session per branch — except that a Session which failed made nothing,
+    // so its branch can be asked for again.
+    canOpen: ({ context, event }) => {
+      if (event.type !== "NEW_SESSION") return false;
+      if (typeof event.branch !== "string" || event.branch.trim().length === 0) return false;
+      const existing = context.sessions[event.branch];
+      return !existing || existing.retryable;
+    },
   },
 }).createMachine({
   id: "sessions",
   initial: "ready",
-  context: ({ input }) => ({ sessions: {}, options: input }),
+  context: ({ input }) => ({ sessions: {}, children: {}, opened: 0, options: input }),
   states: {
     ready: {
       on: {
         NEW_SESSION: {
-          guard: "isNewBranch",
-          actions: assign(({ context, event, spawn }) => {
-            spawn("session", {
-              id: `session:${event.branch}`,
-              input: { branch: event.branch, options: context.options },
-            });
-            return context;
-          }),
+          guard: "canOpen",
+          actions: [
+            assign({
+              opened: ({ context }) => context.opened + 1,
+              children: ({ context, event, spawn }) => ({
+                ...context.children,
+                [event.branch]: spawn("session", {
+                  id: `session:${event.branch}:${context.opened}`,
+                  input: { branch: event.branch, options: context.options },
+                }),
+              }),
+            }),
+            // The child's own Snapshot is the only source for its state, so the
+            // parent watches it rather than being told a name.
+            ({ context, event, self }) => {
+              const actor = context.children[event.branch] as SessionActor;
+              const tell = () =>
+                self.send({ type: "SESSION.REPORT", view: viewOf(event.branch, actor) });
+              tell();
+              actor.subscribe(tell);
+            },
+          ],
         },
         "SESSION.REPORT": {
           actions: assign({
@@ -160,5 +154,3 @@ export const sessionsMachine = setup({
     },
   },
 });
-
-export type SessionsActor = ActorRefFrom<typeof sessionsMachine>;
