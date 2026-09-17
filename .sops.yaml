@@ -3,7 +3,7 @@
 creation_rules:
   # The test fixture, encrypted to the throwaway key committed beside it. Never
   # holds a real Credential.
-  - path_regex: src/host/testdata/secrets\.yaml$
+  - path_regex: src/host/testdata/secrets.*\.yaml$
     age: age1st8drx5plcd6k8uykcdpqm4wdtlc39r8h3tgwx4caev0xeudu37sg7exwu
 
   # The real Secrets file. Fill `age` with your own public key from

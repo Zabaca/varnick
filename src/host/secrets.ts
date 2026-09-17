@@ -11,21 +11,38 @@ export interface Credential {
 }
 
 export interface ReadCredentialOptions {
-  /** The Secrets file to decrypt. Defaults to `secrets.yaml` beside the clone. */
+  /** The Secrets file to decrypt. Defaults to the one at the tree's root. */
   secretsFile?: string;
   /** An age key file for sops, for tests that carry their own. */
   ageKeyFile?: string;
 }
 
+// `secrets.yaml` sits at the root of the tree this Host was launched from, so a
+// Preview reads its own Worktree's copy (ADR-0008). Resolving from the module
+// finds it whatever the cwd; under `deno desktop` the module can load out of a
+// compiled bundle whose path is not on disk, and then the cwd is what is left.
+function defaultSecretsFile(): string {
+  const beside = new URL("../../secrets.yaml", import.meta.url).pathname;
+  try {
+    Deno.statSync(beside);
+    return beside;
+  } catch {
+    return `${Deno.cwd()}/secrets.yaml`;
+  }
+}
+
 // The field the Secrets file holds the Credential under.
 const FIELD = "credential";
 
-export function credentialKind(value: string): CredentialKind {
-  return value.startsWith("sk-ant-") ? "apiKey" : "oauthToken";
+// Both kinds start `sk-ant-`: an API key is `sk-ant-api…` and a token from
+// `claude setup-token` is `sk-ant-oat…`. Only the API key's own prefix decides,
+// so a token is never sent as an API key and rejected upstream.
+function credentialKind(value: string): CredentialKind {
+  return value.startsWith("sk-ant-api") ? "apiKey" : "oauthToken";
 }
 
 export async function readCredential(options: ReadCredentialOptions = {}): Promise<Credential> {
-  const secretsFile = options.secretsFile ?? `${Deno.cwd()}/secrets.yaml`;
+  const secretsFile = options.secretsFile ?? defaultSecretsFile();
 
   let output: Deno.CommandOutput;
   try {

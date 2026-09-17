@@ -6,7 +6,7 @@ import { type HostOptions, startHost } from "./main.ts";
 // launch under test decrypts a Credential without any local setup.
 const FIXTURE_SECRETS = new URL("./testdata/secrets.yaml", import.meta.url).pathname;
 const FIXTURE_AGE_KEY = new URL("./testdata/test-age-key.txt", import.meta.url).pathname;
-const FIXTURE_CREDENTIAL = "sk-ant-test-fixture-not-a-real-key";
+const FIXTURE_CREDENTIAL = "sk-ant-api03-test-fixture-not-a-real-key";
 
 // A launch decrypts the Secrets file, so every test here needs sops. Without
 // it they skip with a message rather than failing (spec Testing Decisions).
@@ -159,7 +159,7 @@ hostTest("GET /actors/host says the Credential's kind and never its value", asyn
     if (res.status !== 200) throw new Error(`expected 200, got ${res.status}`);
     const body = await res.text();
     const snapshot = JSON.parse(body);
-    // The fixture's value starts with `sk-ant-`, so its kind is an API key.
+    // The fixture's value starts with `sk-ant-api`, so its kind is an API key.
     if (snapshot.context.credential?.kind !== "apiKey") {
       throw new Error(`expected kind "apiKey", got ${JSON.stringify(snapshot.context.credential)}`);
     }
@@ -191,5 +191,22 @@ hostTest("a launch whose Secrets file will not decrypt fails with a message nami
   }
   if (!thrown.message.toLowerCase().includes("sops")) {
     throw new Error(`the message does not say sops could not decrypt: ${thrown.message}`);
+  }
+});
+
+hostTest("an OAuth token is reported as one, not as an API key", async () => {
+  // `claude setup-token` issues tokens that start `sk-ant-oat01-`, so the
+  // `sk-ant-` prefix alone does not distinguish a Credential's kind.
+  const host = await startTestHost({
+    secretsFile: new URL("./testdata/secrets-oauth.yaml", import.meta.url).pathname,
+  });
+  try {
+    const res = await fetch(`${host.url}/actors/host`);
+    const snapshot = await res.json();
+    if (snapshot.context.credential?.kind !== "oauthToken") {
+      throw new Error(`expected kind "oauthToken", got ${JSON.stringify(snapshot.context.credential)}`);
+    }
+  } finally {
+    await host.stop();
   }
 });

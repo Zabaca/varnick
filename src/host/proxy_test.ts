@@ -103,3 +103,31 @@ Deno.test("a request without the placeholder is refused and never reaches the up
     await upstream.stop();
   }
 });
+
+Deno.test("an unreachable upstream is a 502 that does not carry the Credential", async () => {
+  // A port nothing is listening on: take one and give it straight back.
+  const closed = serveUpstream();
+  const deadUpstream = closed.url;
+  await closed.stop();
+
+  const proxy = serveProxy(
+    { kind: "apiKey", value: "sk-ant-api03-the-real-one" },
+    { port: 0, upstream: deadUpstream },
+  );
+  try {
+    const res = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": API_KEY_PLACEHOLDER },
+    });
+    const body = await res.text();
+    if (res.status !== 502) throw new Error(`expected 502, got ${res.status}: ${body}`);
+    if (body.includes("sk-ant-api03-the-real-one")) {
+      throw new Error("the Credential's value reached the error response");
+    }
+    if (typeof JSON.parse(body).message !== "string") {
+      throw new Error(`expected a message, got ${body}`);
+    }
+  } finally {
+    await proxy.stop();
+  }
+});

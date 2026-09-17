@@ -1,17 +1,15 @@
 import { createActor } from "xstate";
 import { hostMachine } from "./machines/host.ts";
 import { type Door, serveDoor } from "./door.ts";
-import { type Credential, readCredential } from "./secrets.ts";
+import { type Credential, readCredential, type ReadCredentialOptions } from "./secrets.ts";
 import { type Proxy, serveProxy } from "./proxy.ts";
 
-export interface HostOptions {
+// The Secrets options are the Credential's, unchanged: a launch is where they
+// are supplied, but it is `readCredential` that gives them meaning.
+export interface HostOptions extends ReadCredentialOptions {
   headless?: boolean;
   port?: number;
   pageDir?: string;
-  /** The Secrets file to decrypt; defaults to `secrets.yaml` beside the clone. */
-  secretsFile?: string;
-  /** An age key file for sops, for tests that carry their own. */
-  ageKeyFile?: string;
   /** The Proxy's port; 0 chooses one. */
   proxyPort?: number;
   /** Where the Proxy forwards; defaults to api.anthropic.com. */
@@ -38,24 +36,34 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
     upstream: options.upstream,
   });
 
-  const actors = new Map();
-  const host = createActor(hostMachine, {
-    input: { credential: { kind: credential.kind }, proxyUrl: proxy.url },
-  });
-  actors.set("host", host);
-  host.start();
+  let door: Door;
+  try {
+    const actors = new Map();
+    const host = createActor(hostMachine, {
+      input: { credential: { kind: credential.kind }, proxyUrl: proxy.url },
+    });
+    actors.set("host", host);
+    host.start();
 
-  const pageDir = options.headless
-    ? options.pageDir
-    : options.pageDir ?? defaultPageDir();
-  const door = serveDoor(actors, { port: options.port ?? 0, pageDir });
+    const pageDir = options.headless
+      ? options.pageDir
+      : options.pageDir ?? defaultPageDir();
+    door = serveDoor(actors, { port: options.port ?? 0, pageDir });
+  } catch (error) {
+    // A Host that never opened must not leave its Proxy listening.
+    await proxy.stop();
+    throw error;
+  }
 
   return {
     ...door,
     proxyUrl: proxy.url,
     stop: async () => {
-      await door.stop();
-      await proxy.stop();
+      try {
+        await door.stop();
+      } finally {
+        await proxy.stop();
+      }
     },
   };
 }

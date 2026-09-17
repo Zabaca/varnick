@@ -24,14 +24,22 @@ export interface ProxyOptions {
   upstream?: string;
 }
 
-// A request presents the placeholder in `authorization` (as a bearer token) or
-// in `x-api-key`. Either satisfies the check; anything else does not.
-function carriesPlaceholder(headers: Headers): boolean {
+// A request must present a placeholder *as its credential*: in `x-api-key`, or
+// in `authorization` as a bearer token. A placeholder anywhere else is not a
+// credential and does not open the Proxy.
+function presentsPlaceholderCredential(headers: Headers): boolean {
   const presented = [
     headers.get("x-api-key"),
     headers.get("authorization")?.replace(/^Bearer\s+/i, ""),
   ];
-  return presented.some((value) => value !== null && value !== undefined && PLACEHOLDERS.includes(value));
+  return presented.some((value) => typeof value === "string" && PLACEHOLDERS.includes(value));
+}
+
+function refuse(status: number, message: string): Response {
+  return new Response(JSON.stringify({ message }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 export function serveProxy(credential: Credential, options: ProxyOptions = {}): Proxy {
@@ -41,17 +49,16 @@ export function serveProxy(credential: Credential, options: ProxyOptions = {}): 
     // The Host logs the Proxy's URL once; Deno.serve need not log it again.
     { hostname: "127.0.0.1", port: options.port ?? 0, onListen: () => {} },
     async (req) => {
-      if (!carriesPlaceholder(req.headers)) {
-        return new Response(
-          JSON.stringify({ message: "the Proxy forwards only requests carrying the placeholder" }),
-          { status: 401, headers: { "content-type": "application/json" } },
-        );
+      if (!presentsPlaceholderCredential(req.headers)) {
+        return refuse(401, "the Proxy forwards only requests carrying the placeholder");
       }
 
       const incoming = new URL(req.url);
-      const target = new URL(upstream);
-      target.pathname = incoming.pathname;
-      target.search = incoming.search;
+      // Joined, not assigned, so an upstream with a base path keeps it.
+      const target = new URL(
+        `.${incoming.pathname}${incoming.search}`,
+        upstream.endsWith("/") ? upstream : `${upstream}/`,
+      );
 
       const headers = new Headers(req.headers);
       headers.set("host", target.host);
@@ -65,12 +72,18 @@ export function serveProxy(credential: Credential, options: ProxyOptions = {}): 
         headers.set("authorization", `Bearer ${credential.value}`);
       }
 
-      return await fetch(target, {
-        method: req.method,
-        headers,
-        body: req.body,
-        redirect: "manual",
-      });
+      try {
+        return await fetch(target, {
+          method: req.method,
+          headers,
+          body: req.body,
+          redirect: "manual",
+        });
+      } catch {
+        // The cause is never reported back: it is the Host's to log, and an
+        // upstream error must not become a channel the Credential leaks down.
+        return refuse(502, `the Proxy could not reach ${target.origin}`);
+      }
     },
   );
 
