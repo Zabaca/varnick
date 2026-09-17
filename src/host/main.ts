@@ -1,11 +1,17 @@
 import { type AnyActorRef, createActor, fromPromise } from "xstate";
-import { hostMachine } from "./machines/host.ts";
+import { hostMachine, type LaunchedPreview } from "./machines/host.ts";
 import { type Door, serveDoor } from "./door.ts";
 import { type Credential, readCredential, type ReadCredentialOptions } from "./secrets.ts";
 import { type Proxy, serveProxy } from "./proxy.ts";
 import { sessionsMachine } from "./machines/sessions.ts";
 import { landingMachine } from "./machines/landing.ts";
-import { discoverSessions, whichClaude } from "./sessions.ts";
+import {
+  discoverSessions,
+  whichClaude,
+  worktreeBranches,
+  worktreePathFor,
+} from "./sessions.ts";
+import { answersNow, freePort } from "./terminals.ts";
 import type { Wrap } from "./wrap.ts";
 
 // The Secrets options are the Credential's, unchanged: a launch is where they
@@ -29,6 +35,12 @@ export interface HostOptions extends ReadCredentialOptions {
    * own (spec §Restart). A test names one that is not a window.
    */
   launchCommand?: string[];
+  /**
+   * The command a Preview is launched with; defaults to the launch command,
+   * because a Preview is the same command run from a Worktree (ADR-0008). A
+   * test names one that is not a window.
+   */
+  previewCommand?: string[];
   /** How this Host goes away once its successor is launched. */
   exit?: () => void;
 }
@@ -82,11 +94,17 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
 
     const launchCommand = options.launchCommand ?? ownLaunchCommand();
     const exit = options.exit ?? (() => Deno.exit(0));
+    const previewCommand = options.previewCommand ?? launchCommand;
     const host = createActor(
       hostMachine.provide({
-        actors: { relaunch: fromPromise(() => relaunch(launchCommand, liveTree, release, exit)) },
+        actors: {
+          relaunch: fromPromise(() => relaunch(launchCommand, liveTree, release, exit)),
+          launchPreview: fromPromise(({ input }: { input: { branch: string } }) =>
+            launchPreview(previewCommand, liveTree, input.branch)
+          ),
+        },
       }),
-      { input: { credential: { kind: credential.kind }, proxyUrl: proxy.url } },
+      { input: { credential: { kind: credential.kind }, proxyUrl: proxy.url, tree: liveTree } },
     );
     actors.set("host", host);
     host.start();
@@ -163,6 +181,55 @@ async function relaunch(
   exit();
 }
 
+// A Preview (ADR-0008): the same launch command, run from the branch's
+// Worktree as a separate detached process, on a Door port this Host chooses and
+// hands over in `VARNICK_PORT`. It is not a child — closing the launching Host
+// must not close the window it opened — and it is an ordinary Host in every
+// other way: its own Proxy, its own Secrets file, its own Sessions, and the
+// same zmx sessions as Live because zmx is machine-wide.
+//
+// The port is chosen here rather than by the Preview because the launching
+// Host has to say where it put it, and a process it does not wait on cannot
+// tell it afterwards — the same reason a ttyd's port is written down.
+async function launchPreview(
+  command: string[],
+  liveTree: string,
+  branch: string,
+): Promise<LaunchedPreview> {
+  // Only a Worktree is previewed: it is the one place the agent works, and a
+  // Host launched from anywhere else is running code that never was one
+  // (ADR-0003). git is the authority, not a directory at the path.
+  if (!(await worktreeBranches(liveTree)).includes(branch)) {
+    throw new Error(`there is no Worktree for "${branch}" to preview`);
+  }
+  const worktree = worktreePathFor(liveTree, branch);
+
+  const port = freePort();
+  const url = `http://127.0.0.1:${port}`;
+  let preview: Deno.ChildProcess;
+  try {
+    preview = new Deno.Command(command[0], {
+      args: command.slice(1),
+      cwd: worktree,
+      env: { ...Deno.env.toObject(), VARNICK_PORT: String(port) },
+      stdin: "null",
+    }).spawn();
+  } catch (error) {
+    throw new Error(`the Preview could not be launched with ${command.join(" ")}: ${error}`);
+  }
+  preview.unref();
+
+  // A launch builds the page first, so this is a long wait by design. The
+  // process is left alone if it runs out: it may still be coming up, and it is
+  // not this Host's to kill.
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    if (await answersNow(port)) return { branch, url, pid: preview.pid };
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(`the Preview of "${branch}" did not open a Door at ${url}`);
+}
+
 // How Live is launched: `deno task dev`, the one command the README and
 // ADR-0008 name. The task is read from the Live tree's own `deno.json`, so a
 // Restart runs the landed launch command and not a copy of it written here —
@@ -203,6 +270,8 @@ function defaultPageDir(): string | undefined {
 
 if (import.meta.main) {
   const headless = Deno.args.includes("--headless");
-  const host = await startHost({ headless, port: 4180 });
+  // A Preview is handed its Door port by the Host that launched it; Live takes
+  // the one the README names.
+  const host = await startHost({ headless, port: Number(Deno.env.get("VARNICK_PORT")) || 4180 });
   console.log(`varnick Host: Door at ${host.url}, Proxy at ${host.proxyUrl}`);
 }

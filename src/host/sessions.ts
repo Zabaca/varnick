@@ -1,7 +1,7 @@
 import { wrap as identityWrap, type Wrap } from "./wrap.ts";
 import { API_KEY_PLACEHOLDER, OAUTH_TOKEN_PLACEHOLDER } from "./proxy.ts";
 import type { CredentialKind } from "./secrets.ts";
-import { answersNow, readTerminals, recordTerminal } from "./terminals.ts";
+import { answersNow, freePort, readTerminals, recordTerminal } from "./terminals.ts";
 
 // What a Session is made of: a Worktree, a zmx session and a ttyd. This module
 // holds everything that touches the world, including the order the three are
@@ -101,13 +101,6 @@ async function startZmxSession(
 // command is wrapped (ADR-0004, and the spike that proved the shape).
 function loopbackInterface(): string {
   return Deno.build.os === "darwin" ? "lo0" : "lo";
-}
-
-function freePort(): number {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = listener.addr as Deno.NetAddr;
-  listener.close();
-  return port;
 }
 
 async function answersOn(port: number): Promise<boolean> {
@@ -317,7 +310,9 @@ async function zmxSessions(): Promise<Set<string>> {
 }
 
 // Which branches have a Worktree under `.claude/worktrees/` in the Live tree.
-async function worktreeBranches(liveTree: string): Promise<string[]> {
+// git is asked rather than the filesystem: a directory at the path is not a
+// Worktree, and only a Worktree is a place the agent was given (ADR-0003).
+export async function worktreeBranches(liveTree: string): Promise<string[]> {
   const { success, stdout } = await new Deno.Command("git", {
     args: ["worktree", "list", "--porcelain"],
     cwd: liveTree,
