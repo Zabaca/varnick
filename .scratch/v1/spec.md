@@ -99,6 +99,8 @@ A kernel sandbox, an egress allowlist, or the MITM proxy. A signed or distributa
 
 ## Further Notes
 
-Facts from the 2026-09-17 probes: sandbox-runtime 0.0.67 (not used in v1, ADR-0004) and the Agent SDK run under Deno 2.9.6; node-pty does not, which is moot. Deno Desktop opens a window and `Deno.serve` binds to the address the webview navigates to. ttyd and zmx are not yet installed on the development machine.
+Facts from the 2026-09-17 probes: sandbox-runtime 0.0.67 (not used in v1, ADR-0004) and the Agent SDK run under Deno 2.9.6; node-pty does not, which is moot. Deno Desktop opens a window and `Deno.serve` binds to the address the webview navigates to.
+
+ttyd 1.7.7 and zmx 0.8.1 are installed (`brew install ttyd zmx`). The Seatbelt question ADR-0004 left open is answered: it works. `spikes/seatbelt-terminal/probe.ts` puts a Seatbelt-wrapped `bash` in a zmx session with a ttyd attached on a loopback port, and all five of its checks pass on macOS 26.5.1 — ttyd binds, its websocket opens under the `tty` subprotocol and carries the sandboxed shell's PTY output, the session outlives the websocket, a write inside the allowed directory succeeds, and a write outside it fails with `Operation not permitted`. Wrapping only the Session's command is what makes this work: ttyd and the zmx server stay unconfined on the Host, so nothing sandboxed has to bind or accept a socket. A sandbox that instead confined ttyd itself is untested and is not the shape `Wrap` implies. This changes nothing in v1; it is the fact a returning sandbox would need.
 
 Vocabulary is defined in `CONTEXT.md`. ADR-0003 is the rule most of this spec follows from.
