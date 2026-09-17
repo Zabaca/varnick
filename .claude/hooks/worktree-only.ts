@@ -5,8 +5,8 @@
  * This is a `PreToolUse` hook on the structured file tools. It is deliberately
  * not a security boundary and could not be one — it is registered in
  * `.claude/settings.json`, which the agent can edit, and it sees `Bash` not at
- * all, so a shell redirect goes straight past it. The kernel deny list in
- * `sandbox-policy.json` is what actually protects anything.
+ * all, so a shell redirect goes straight past it. Nothing else protects the
+ * live tree either — there is no kernel sandbox in v1 (ADR-0004).
  *
  * What it is for is the other failure, which is the likely one across a long
  * unattended run: the agent writing a file it meant to write, in the tree it
@@ -18,10 +18,26 @@
  * the working directory, because the working directory is exactly the thing in
  * question when the agent has already stepped somewhere unexpected.
  */
+import { statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 /** `<repo>/.claude/hooks/worktree-only.ts` → `<repo>`. */
 const REPO = dirname(dirname(dirname(import.meta.path)))
+
+/**
+ * A linked worktree's `.git` is a file pointing at the real git dir; the live
+ * tree's is a directory. Worktrees live under `.claude/worktrees/` when the
+ * agent makes its own, but not when something else made it one — a Fredrin
+ * ticket worktree is checked out elsewhere entirely, and the rule is satisfied
+ * either way.
+ */
+function isLinkedWorktree(root: string) {
+  try {
+    return statSync(`${root}/.git`).isFile()
+  } catch {
+    return false
+  }
+}
 
 /**
  * Paths in the live tree that are still the agent's to write.
@@ -45,7 +61,7 @@ if (typeof named !== 'string' || named === '') process.exit(0)
 const path = resolve(REPO, named)
 
 const inRepo = path === REPO || path.startsWith(`${REPO}/`)
-const inWorktree = path.includes('/.claude/worktrees/')
+const inWorktree = path.includes('/.claude/worktrees/') || isLinkedWorktree(REPO)
 const exempt = EXEMPT.some((dir) => path.startsWith(`${REPO}/${dir}/`))
 
 // Outside the repository entirely is not this hook's business: the sandbox
