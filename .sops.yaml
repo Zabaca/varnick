@@ -6,7 +6,9 @@ creation_rules:
   - path_regex: src/host/testdata/secrets.*\.yaml$
     age: age1st8drx5plcd6k8uykcdpqm4wdtlc39r8h3tgwx4caev0xeudu37sg7exwu
 
-  # The real Secrets file. Fill `age` with your own public key from
-  # `age-keygen -o ~/.config/sops/age/keys.txt` before running `sops secrets.yaml`.
-  # - path_regex: ^secrets\.yaml$
-  #   age: age1yourkeyhere
+  # The real Secrets file, encrypted to the developer's age identities from
+  # `~/.config/sops/age/keys.txt`; either one decrypts it.
+  - path_regex: ^secrets\.yaml$
+    age: >-
+      age1cq0k9s88fmx7kkaqqvuf290lelyt8gkeglwvsd2r3ezuqyla7aps7x4q2j,
+      age1mkwj9hhvaer3ks5rd0ujzvmzwq56vdwlzruy2pld4zm6r73jl40qg4p343
