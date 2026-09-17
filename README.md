@@ -4,11 +4,13 @@ A desktop window around a coding agent. Developed on macOS; Linux untested.
 
 The agent gets a git worktree, a terminal and no credential. You get a list of sessions, a button that fast-forwards the live tree to a session's branch, and a button that restarts the app onto it. An agent can press the same buttons through a loopback API.
 
-Read [CONTEXT.md](CONTEXT.md) for the words and [docs/adr/](docs/adr/) for why. The previous version, a Tauri app, is on `main` and nothing here inherits from it (ADR-0001).
+Read [CONTEXT.md](CONTEXT.md) for the words and [docs/adr/](docs/adr/) for why. The previous version, a Tauri app, is on `archive` and nothing here inherits from it (ADR-0001).
 
 ## The Credential
 
-varnick will not launch without one. It lives in `secrets.yaml` at the repo
+Optional. Without a `secrets.yaml` the Host injects nothing and you `/login`
+once inside a Session; the token lives in the agent's home under
+`.varnick/claude`. With one, it lives in `secrets.yaml` at the repo
 root, sops-encrypted to your age key and committed; the Host decrypts it at
 launch, holds it in memory, and runs the Proxy that swaps the agent's
 placeholder for it on the way to `api.anthropic.com` (ADR-0005). The agent never
