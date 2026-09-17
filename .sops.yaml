@@ -1,0 +1,12 @@
+# sops creation rules. The Secrets file holds the Credential and nothing else
+# (ADR-0005); `age` is the only key provider.
+creation_rules:
+  # The test fixture, encrypted to the throwaway key committed beside it. Never
+  # holds a real Credential.
+  - path_regex: src/host/testdata/secrets\.yaml$
+    age: age1st8drx5plcd6k8uykcdpqm4wdtlc39r8h3tgwx4caev0xeudu37sg7exwu
+
+  # The real Secrets file. Fill `age` with your own public key from
+  # `age-keygen -o ~/.config/sops/age/keys.txt` before running `sops secrets.yaml`.
+  # - path_regex: ^secrets\.yaml$
+  #   age: age1yourkeyhere
