@@ -1,0 +1,5 @@
+{
+  "tasks": {
+    "probe": "deno run -A probe.ts"
+  }
+}
