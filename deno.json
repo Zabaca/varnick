@@ -1,0 +1,11 @@
+{
+  "tasks": {
+    "build-page": "cd src/page && deno install --allow-scripts && deno run -A npm:vite@^6 build",
+    "dev": "deno task build-page && deno desktop --hmr -A src/host/main.ts",
+    "test": "deno test -A"
+  },
+  "imports": {
+    "xstate": "npm:xstate@^5"
+  },
+  "exclude": ["src/page"]
+}
