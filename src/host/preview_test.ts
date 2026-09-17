@@ -136,7 +136,16 @@ sessionTest("PREVIEW launches a second Host from the Worktree on its own port", 
 
 // The environment the stub `claude` recorded, as the agent actually got it.
 async function recordedEnvironment(path: string): Promise<Record<string, string>> {
-  const text = await Deno.readTextFile(path);
+  // The stub writes the moment it starts, and the Session is listed as running
+  // the moment zmx has started it; the write may lag that by a beat.
+  const deadline = Date.now() + 10_000;
+  let text = "";
+  while (Date.now() < deadline) {
+    text = await Deno.readTextFile(path).catch(() => "");
+    if (text.includes("ARGV=")) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!text.includes("ARGV=")) throw new Error(`the stub never recorded its environment at ${path}`);
   const env: Record<string, string> = {};
   for (const line of text.split("\n")) {
     const at = line.indexOf("=");

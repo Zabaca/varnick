@@ -68,7 +68,10 @@ export async function run(bin: string, args: string[], cwd?: string) {
 // A Live tree to launch a Host against: a git repo with one commit, so
 // `git worktree add` has something to branch from.
 export async function makeLiveTree(): Promise<string> {
-  const tree = await Deno.makeTempDir({ prefix: "varnick-live-" });
+  // Resolved, because macOS hands out `/var/...` for a temp dir and every
+  // child process reports `/private/var/...` as its cwd; the Host records what
+  // the child says, so the fixture must compare against the same spelling.
+  const tree = await Deno.realPath(await Deno.makeTempDir({ prefix: "varnick-live-" }));
   await run("git", ["init", "-b", "main", tree]);
   await run("git", ["config", "user.name", "Test Developer"], tree);
   await run("git", ["config", "user.email", "test@example.com"], tree);
