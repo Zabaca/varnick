@@ -13,6 +13,7 @@ interface SessionView {
   worktreePath?: string;
   terminalUrl?: string;
   error?: string;
+  refusal?: string;
 }
 
 function sessionsOf(snapshots: Record<string, Snapshot>): SessionView[] {
@@ -86,7 +87,28 @@ function App() {
               {session.branch}
             </button>
             <span data-state={session.state}>{session.state}</span>
+            <button
+              type="button"
+              onClick={() => send("sessions", { type: "REAP", branch: session.branch })}
+            >
+              Reap
+            </button>
             {session.error ? <span role="alert">{session.error}</span> : null}
+            {/* A Reap the Host would not do, and the one way through it. */}
+            {session.refusal
+              ? (
+                <>
+                  <span role="alert">{session.refusal}</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      send("sessions", { type: "REAP", branch: session.branch, force: true })}
+                  >
+                    Reap anyway
+                  </button>
+                </>
+              )
+              : null}
           </li>
         ))}
       </ul>

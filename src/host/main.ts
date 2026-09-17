@@ -4,7 +4,7 @@ import { type Door, serveDoor } from "./door.ts";
 import { type Credential, readCredential, type ReadCredentialOptions } from "./secrets.ts";
 import { type Proxy, serveProxy } from "./proxy.ts";
 import { sessionsMachine } from "./machines/sessions.ts";
-import { whichClaude } from "./sessions.ts";
+import { discoverSessions, whichClaude } from "./sessions.ts";
 import type { Wrap } from "./wrap.ts";
 
 // The Secrets options are the Credential's, unchanged: a launch is where they
@@ -62,14 +62,20 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
     actors.set("host", host);
     host.start();
 
+    const liveTree = options.liveTree ?? Deno.cwd();
     const sessions = createActor(sessionsMachine, {
       input: {
-        liveTree: options.liveTree ?? Deno.cwd(),
-        claudePath: options.claudePath ?? await whichClaude(),
-        proxyUrl: proxy.url,
-        doorUrl: door.url,
-        credentialKind: credential.kind,
-        wrap: options.wrap,
+        options: {
+          liveTree,
+          claudePath: options.claudePath ?? await whichClaude(),
+          proxyUrl: proxy.url,
+          doorUrl: door.url,
+          credentialKind: credential.kind,
+          wrap: options.wrap,
+        },
+        // The Host's picture of the world is built here and nowhere else; no
+        // Snapshot is written or restored (ADR-0007).
+        discovered: await discoverSessions(liveTree),
       },
     });
     actors.set("sessions", sessions);

@@ -367,3 +367,238 @@ sessionTest("NEW_SESSION starts a zmx session named by the branch and a ttyd on 
     await host.stop();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Rebuild at launch (ADR-0007): the Host's picture comes from the world, never
+// from a file. These tests prepare the world by hand *before* the Host exists.
+
+// A Worktree made the way the Host would make one, without a Host.
+async function makeWorktreeByHand(liveTree: string, branch: string): Promise<string> {
+  const path = `${liveTree}/.claude/worktrees/${branch}`;
+  const added = await run("git", ["worktree", "add", "-b", branch, path], liveTree);
+  if (!added.success) throw new Error(`git worktree add: ${added.err}`);
+  return path;
+}
+
+// A zmx session made by hand, named by the branch, as the Host would name it.
+async function makeZmxSessionByHand(branch: string, cwd: string): Promise<void> {
+  await new Deno.Command("zmx", {
+    args: ["attach", branch, "sleep", "300"],
+    cwd,
+    stdin: "null",
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await zmxLists(branch)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`zmx never listed a session named "${branch}"`);
+}
+
+// Poll the Snapshot until the named Session reaches a state, so a launch that
+// has to start a ttyd is waited on rather than raced.
+async function waitForState(doorUrl: string, branch: string, state: string): Promise<SessionView> {
+  const deadline = Date.now() + 30_000;
+  let last: SessionView | undefined;
+  while (Date.now() < deadline) {
+    last = (await readSessions(doorUrl))[branch];
+    if (last?.state === state) return last;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Session "${branch}" never reached ${state}: ${JSON.stringify(last)}`);
+}
+
+async function zmxLists(branch: string): Promise<boolean> {
+  return (await run("zmx", ["ls", "--short"])).out.split("\n").map((l) => l.trim())
+    .includes(branch);
+}
+
+async function exists(path: string): Promise<boolean> {
+  return await Deno.stat(path).then(() => true, () => false);
+}
+
+sessionTest("a Worktree with a zmx session made before launch is running; one without is detached", async () => {
+  const liveTree = await makeLiveTree();
+  const attachedBranch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const aloneBranch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+
+  const attachedPath = await makeWorktreeByHand(liveTree, attachedBranch);
+  await makeZmxSessionByHand(attachedBranch, attachedPath);
+  await makeWorktreeByHand(liveTree, aloneBranch);
+
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let attachedView: SessionView | undefined;
+  try {
+    // The spec's two words: a Worktree with a zmx session is running, one
+    // without is detached. Those literals are the expectation, not a lookup.
+    attachedView = await waitForState(host.url, attachedBranch, "running");
+    const aloneView = await waitForState(host.url, aloneBranch, "detached");
+
+    if (attachedView.worktreePath !== attachedPath) {
+      throw new Error(`expected ${attachedPath}, got ${JSON.stringify(attachedView)}`);
+    }
+    if (!attachedView.terminalUrl?.startsWith("http://127.0.0.1:")) {
+      throw new Error(
+        `an adopted running Session needs a terminal, got ${JSON.stringify(attachedView)}`,
+      );
+    }
+    if (aloneView.terminalUrl) {
+      throw new Error(`a detached Session has no terminal: ${JSON.stringify(aloneView)}`);
+    }
+  } finally {
+    await reap(attachedView, attachedBranch);
+    await host.stop();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Reap (spec user stories 19 and 20).
+
+// A Live tree whose commits are on a remote, so a branch made from it has
+// nothing unpushed and Reap has no reason to refuse.
+async function makeLiveTreeWithRemote(): Promise<string> {
+  const tree = await makeLiveTree();
+  const remote = await Deno.makeTempDir({ prefix: "varnick-remote-" });
+  await run("git", ["init", "--bare", remote]);
+  await run("git", ["remote", "add", "origin", remote], tree);
+  const pushed = await run("git", ["push", "-u", "origin", "main"], tree);
+  if (!pushed.success) throw new Error(`git push: ${pushed.err}`);
+  return tree;
+}
+
+async function sendReap(doorUrl: string, branch: string, force?: boolean): Promise<void> {
+  const res = await fetch(`${doorUrl}/actors/sessions/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "REAP", branch, ...(force ? { force: true } : {}) }),
+  });
+  if (res.status !== 200) {
+    throw new Error(`REAP: expected 200, got ${res.status} ${await res.text()}`);
+  }
+  await res.body?.cancel();
+}
+
+async function waitForGone(doorUrl: string, branch: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (!(await readSessions(doorUrl))[branch]) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Session "${branch}" is still in the Snapshot`);
+}
+
+// A Reap that is refused puts the Session back where it was, with the reason.
+async function waitForRefusal(doorUrl: string, branch: string): Promise<SessionView> {
+  const deadline = Date.now() + 30_000;
+  let last: SessionView | undefined;
+  while (Date.now() < deadline) {
+    last = (await readSessions(doorUrl))[branch];
+    if (last?.state === "running" && last.refusal) return last;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`no refusal for "${branch}": ${JSON.stringify(last)}`);
+}
+
+sessionTest("REAP on a clean, pushed branch removes the Worktree, the zmx session and the ttyd", async () => {
+  const liveTree = await makeLiveTreeWithRemote();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForState(host.url, branch, "running");
+    const terminalUrl = view.terminalUrl!;
+
+    await sendReap(host.url, branch);
+    await waitForGone(host.url, branch);
+
+    if (await exists(`${liveTree}/.claude/worktrees/${branch}`)) {
+      throw new Error("the Worktree is still there");
+    }
+    if (await zmxLists(branch)) throw new Error(`zmx still lists "${branch}"`);
+    // The ttyd answered on this URL a moment ago; nothing should now.
+    const stillServing = await fetch(terminalUrl)
+      .then(async (res) => {
+        await res.body?.cancel();
+        return true;
+      }, () => false);
+    if (stillServing) throw new Error(`a ttyd is still serving ${terminalUrl}`);
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
+sessionTest("REAP on a dirty Worktree is refused with a reason, and force proceeds", async () => {
+  const liveTree = await makeLiveTreeWithRemote();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForState(host.url, branch, "running");
+    const worktreePath = `${liveTree}/.claude/worktrees/${branch}`;
+    await Deno.writeTextFile(`${worktreePath}/unsaved.txt`, "the agent's work\n");
+
+    await sendReap(host.url, branch);
+    view = await waitForRefusal(host.url, branch);
+    // The spec's word for this refusal is "dirty"; the reason must say so.
+    if (!view.refusal!.includes("dirty")) {
+      throw new Error(`the refusal does not name the reason: ${view.refusal}`);
+    }
+    if (!(await exists(worktreePath))) throw new Error("a refused Reap removed the Worktree");
+    if (!(await zmxLists(branch))) throw new Error("a refused Reap killed the zmx session");
+
+    // `force` is the way through, and it takes everything with it.
+    await sendReap(host.url, branch, true);
+    await waitForGone(host.url, branch);
+    if (await exists(worktreePath)) throw new Error("a forced Reap left the Worktree");
+    if (await zmxLists(branch)) throw new Error("a forced Reap left the zmx session");
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
+sessionTest("REAP on a branch with unpushed commits is refused with a reason", async () => {
+  const liveTree = await makeLiveTreeWithRemote();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const worktreePath = `${liveTree}/.claude/worktrees/${branch}`;
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForState(host.url, branch, "running");
+    // Committed, so the tree is clean; never pushed, so the work is only here.
+    await Deno.writeTextFile(`${worktreePath}/done.txt`, "finished work\n");
+    await run("git", ["add", "."], worktreePath);
+    const committed = await run("git", ["commit", "-m", "the agent's work"], worktreePath);
+    if (!committed.success) throw new Error(`git commit: ${committed.err}`);
+
+    await sendReap(host.url, branch);
+    view = await waitForRefusal(host.url, branch);
+    // The spec's word for this one is "unpushed".
+    if (!view.refusal!.includes("unpushed")) {
+      throw new Error(`expected an unpushed refusal, got ${JSON.stringify(view)}`);
+    }
+    if (!(await exists(worktreePath))) throw new Error("a refused Reap removed the Worktree");
+  } finally {
+    await reap(view, branch);
+    await run("git", ["worktree", "remove", worktreePath, "--force"], liveTree);
+    await host.stop();
+  }
+});
