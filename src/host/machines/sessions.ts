@@ -1,7 +1,14 @@
-import { type ActorRefFrom, and, type AnyActorRef, assign, fromPromise, setup } from "xstate";
+import {
+  type ActorRefFrom,
+  and,
+  type AnyActorRef,
+  assign,
+  enqueueActions,
+  fromPromise,
+  setup,
+} from "xstate";
 import {
   adoptSession,
-  type DiscoveredSession,
   openSession,
   type OpenedSession,
   ReapRefused,
@@ -58,7 +65,12 @@ const create = fromPromise(
     openSession(input.branch, input.options),
 );
 
-const adopt = fromPromise(({ input }: { input: { branch: string } }) => adoptSession(input.branch));
+// Taking over a Session that is already running: its Worktree and zmx session
+// are left exactly as they are, and only the terminal is decided.
+const adopt = fromPromise(
+  ({ input }: { input: { branch: string; options: SessionOptions } }): Promise<OpenedSession> =>
+    adoptSession(input.branch, input.options),
+);
 
 const remove = fromPromise(({ input }: { input: ReapRequest }) => reapSession(input));
 
@@ -118,7 +130,11 @@ export const sessionMachine = setup({
     creating: {
       invoke: {
         src: "create",
-        input: ({ context }) => ({ branch: context.branch, options: context.options }),
+        input: ({ context }) => ({
+          branch: context.branch,
+          options: context.options,
+          adopt: context.adopt,
+        }),
         onDone: {
           target: "running",
           actions: assign(({ event }) => event.output),
@@ -134,7 +150,7 @@ export const sessionMachine = setup({
     attaching: {
       invoke: {
         src: "adopt",
-        input: ({ context }) => ({ branch: context.branch }),
+        input: ({ context }) => ({ branch: context.branch, options: context.options }),
         onDone: {
           target: "running",
           actions: assign(({ event }) => event.output),
@@ -215,14 +231,6 @@ function viewOf(branch: string, actor: SessionActor): SessionView {
   };
 }
 
-// The child's own Snapshot is the only source for its state, so the parent
-// watches it rather than being told a name (ADR-0010).
-function watch(branch: string, actor: SessionActor, parent: { send(event: never): void }) {
-  const tell = () => parent.send({ type: "SESSION.REPORT", view: viewOf(branch, actor) } as never);
-  tell();
-  actor.subscribe(tell);
-}
-
 export interface SessionsContext {
   sessions: Record<string, SessionView>;
   /** The child actors themselves, so a later Event has something to send to. */
@@ -232,27 +240,54 @@ export interface SessionsContext {
   options: SessionOptions;
 }
 
-/** What a launch hands the Machine: its options and the world it found. */
-export interface SessionsInput {
-  options: SessionOptions;
-  discovered: DiscoveredSession[];
-}
-
 export const sessionsMachine = setup({
   types: {
     context: {} as SessionsContext,
-    input: {} as SessionsInput,
+    input: {} as SessionOptions,
     events: {} as
       | { type: "NEW_SESSION"; branch: string }
       | { type: "REAP"; branch: string; force?: boolean }
+      // Sent for a Session found at launch (spec §Restart, ADR-0007): its
+      // Worktree exists, and `attached` says whether a zmx session does too.
+      | { type: "ADOPT_SESSION"; branch: string; worktreePath: string; attached: boolean }
       | { type: "SESSION.REPORT"; view: SessionView },
   },
   actors: { session: sessionMachine },
+  actions: {
+    // Spawning a child is the same either way; whether it makes the Session or
+    // takes over one that is running is the child's own business.
+    spawnSession: enqueueActions(({ event, enqueue, self }) => {
+      if (event.type !== "NEW_SESSION" && event.type !== "ADOPT_SESSION") return;
+      const branch = event.branch;
+      // What the launch found, or nothing at all for a Session being opened now.
+      const adopt = event.type === "ADOPT_SESSION"
+        ? { worktreePath: event.worktreePath, attached: event.attached }
+        : undefined;
+      enqueue.assign({
+        opened: ({ context }) => context.opened + 1,
+        children: ({ context, spawn }) => ({
+          ...context.children,
+          [branch]: spawn("session", {
+            id: `session:${branch}:${context.opened}`,
+            input: { branch, options: context.options, adopt },
+          }),
+        }),
+      });
+      // The child's own Snapshot is the only source for its state, so the
+      // parent watches it rather than being told a name.
+      enqueue(({ context }) => {
+        const actor = context.children[branch] as SessionActor;
+        const tell = () => self.send({ type: "SESSION.REPORT", view: viewOf(branch, actor) });
+        tell();
+        actor.subscribe(tell);
+      });
+    }),
+  },
   guards: {
     // One Session per branch — except that a Session which failed made nothing,
     // so its branch can be asked for again.
     canOpen: ({ context, event }) => {
-      if (event.type !== "NEW_SESSION") return false;
+      if (event.type !== "NEW_SESSION" && event.type !== "ADOPT_SESSION") return false;
       if (typeof event.branch !== "string" || event.branch.trim().length === 0) return false;
       const existing = context.sessions[event.branch];
       return !existing || existing.retryable;
@@ -261,55 +296,12 @@ export const sessionsMachine = setup({
 }).createMachine({
   id: "sessions",
   initial: "ready",
-  // Nothing is restored from disk; the Sessions a Host starts with are the ones
-  // git and zmx said were there when it launched (ADR-0007).
-  context: ({ input, spawn }) => {
-    const children: Record<string, AnyActorRef> = {};
-    input.discovered.forEach((found, index) => {
-      children[found.branch] = spawn("session", {
-        id: `session:${found.branch}:${index}`,
-        input: {
-          branch: found.branch,
-          options: input.options,
-          adopt: { worktreePath: found.worktreePath, attached: found.attached },
-        },
-      });
-    });
-    return {
-      sessions: {},
-      children,
-      opened: input.discovered.length,
-      options: input.options,
-    };
-  },
+  context: ({ input }) => ({ sessions: {}, children: {}, opened: 0, options: input }),
   states: {
     ready: {
-      // The adopted children are already spawned; this is where the parent
-      // starts listening to them, on the same terms as one it opens itself.
-      entry: ({ context, self }) => {
-        for (const [branch, actor] of Object.entries(context.children)) {
-          watch(branch, actor as SessionActor, self);
-        }
-      },
       on: {
-        NEW_SESSION: {
-          guard: "canOpen",
-          actions: [
-            assign({
-              opened: ({ context }) => context.opened + 1,
-              children: ({ context, event, spawn }) => ({
-                ...context.children,
-                [event.branch]: spawn("session", {
-                  id: `session:${event.branch}:${context.opened}`,
-                  input: { branch: event.branch, options: context.options },
-                }),
-              }),
-            }),
-            ({ context, event, self }) => {
-              watch(event.branch, context.children[event.branch] as SessionActor, self);
-            },
-          ],
-        },
+        NEW_SESSION: { guard: "canOpen", actions: "spawnSession" },
+        ADOPT_SESSION: { guard: "canOpen", actions: "spawnSession" },
         // Reaping is the child's to do or to refuse; the parent only routes.
         REAP: {
           actions: ({ context, event }) => {

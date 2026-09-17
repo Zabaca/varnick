@@ -1,6 +1,7 @@
 import { wrap as identityWrap, type Wrap } from "./wrap.ts";
 import { API_KEY_PLACEHOLDER, OAUTH_TOKEN_PLACEHOLDER } from "./proxy.ts";
 import type { CredentialKind } from "./secrets.ts";
+import { answersNow, forgetTerminal, readTerminals, recordTerminal } from "./terminals.ts";
 
 // What a Session is made of: a Worktree, a zmx session and a ttyd. This module
 // holds everything that touches the world, including the order the three are
@@ -144,20 +145,15 @@ function freePort(): number {
 }
 
 async function answersOn(port: number): Promise<boolean> {
-  return await pollUntil(async () => {
-    try {
-      (await Deno.connect({ hostname: "127.0.0.1", port })).close();
-      return true;
-    } catch {
-      return false;
-    }
-  }, 10_000);
+  return await pollUntil(() => answersNow(port), 10_000);
 }
 
 // One ttyd per Session, on its own loopback port, attached to the zmx session.
 // It is not a child the Host waits on: a Session outlives the window and the
 // Host (spec user stories 5 and 6), so the process is let go of here.
-async function startTerminal(name: string): Promise<{ url: string; pid: number }> {
+// Because it is let go of, the port is written down (`terminals.ts`) before it
+// is returned: a Host that relaunches has no other way back to this process.
+async function startTerminal(name: string, liveTree: string): Promise<Terminal> {
   const port = freePort();
   const ttyd = new Deno.Command("ttyd", {
     args: ["-W", "-i", loopbackInterface(), "-p", String(port), "zmx", "attach", name],
@@ -175,7 +171,29 @@ async function startTerminal(name: string): Promise<{ url: string; pid: number }
     }
     throw new Error(`ttyd did not answer on 127.0.0.1:${port} for session "${name}"`);
   }
-  return { url: `http://127.0.0.1:${port}`, pid: ttyd.pid };
+  await recordTerminal(liveTree, name, { port, pid: ttyd.pid });
+  return { url: terminalUrl(port), pid: ttyd.pid };
+}
+
+interface Terminal {
+  url: string;
+  pid: number;
+}
+
+function terminalUrl(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+// The terminal for a Session the Host did not open: the recorded one if it
+// still answers, a new one if it does not. A ttyd is not a child of the Host
+// (spec user stories 5 and 6), so surviving one is adopted rather than
+// replaced — replacing it would drop the websocket the window is showing.
+async function adoptOrStartTerminal(branch: string, liveTree: string): Promise<Terminal> {
+  const recorded = (await readTerminals(liveTree))[branch];
+  if (recorded && await answersNow(recorded.port)) {
+    return { url: terminalUrl(recorded.port), pid: recorded.pid };
+  }
+  return await startTerminal(branch, liveTree);
 }
 
 // The developer's git identity, read by the Host so commits made in a Session
@@ -281,7 +299,7 @@ export async function openSession(
   const worktreePath = await addWorktree(options.liveTree, branch);
   try {
     await startZmxSession(branch, command, worktreePath, environment);
-    const terminal = await startTerminal(branch);
+    const terminal = await startTerminal(branch, options.liveTree);
     return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
   } catch (error) {
     try {
@@ -351,17 +369,6 @@ export async function discoverSessions(liveTree: string): Promise<DiscoveredSess
     });
   }
   return sessions;
-}
-
-// Adopting a Session found at launch: its Worktree and zmx session are already
-// there, and only the ttyd died with the Host that spawned it, so only the ttyd
-// is made again. Adoption by recorded port is a later ticket's (spec §Restart).
-export async function adoptSession(branch: string): Promise<{
-  terminalUrl: string;
-  ttydPid: number;
-}> {
-  const terminal = await startTerminal(branch);
-  return { terminalUrl: terminal.url, ttydPid: terminal.pid };
 }
 
 export interface ReapRequest {
@@ -444,4 +451,29 @@ export async function reapSession(request: ReapRequest): Promise<void> {
     if (request.force) args.push("--force");
     await git(args, request.liveTree);
   }
+  // The recorded port pointed at the ttyd just killed; leaving it would offer a
+  // relaunched Host a terminal for a Session that no longer exists.
+  await forgetTerminal(request.liveTree, request.branch);
+}
+
+// Adopting a Session the Host finds already running: its Worktree and its zmx
+// session were made by an earlier Host and are left exactly as they are. Only
+// the terminal is decided, because only the terminal's port was the Host's to
+// remember (spec §Restart).
+export async function adoptSession(
+  branch: string,
+  options: SessionOptions,
+): Promise<OpenedSession> {
+  const worktreePath = worktreePathFor(options.liveTree, branch);
+  // Adopting is asked for through the Door like anything else (ADR-0006), so
+  // what is being taken over is checked rather than assumed: without both the
+  // Worktree and the zmx session there is no Session here to adopt, and a ttyd
+  // must not be started for one.
+  const found = (await discoverSessions(options.liveTree))
+    .find((session) => session.branch === branch);
+  if (!found?.attached) {
+    throw new Error(`no Session is running on "${branch}" to adopt`);
+  }
+  const terminal = await adoptOrStartTerminal(branch, options.liveTree);
+  return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
 }
