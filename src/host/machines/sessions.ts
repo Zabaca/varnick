@@ -1,5 +1,17 @@
-import { type ActorRefFrom, type AnyActorRef, assign, fromPromise, setup } from "xstate";
-import { openSession, type OpenedSession, type SessionOptions } from "../sessions.ts";
+import {
+  type ActorRefFrom,
+  type AnyActorRef,
+  assign,
+  enqueueActions,
+  fromPromise,
+  setup,
+} from "xstate";
+import {
+  adoptSession,
+  openSession,
+  type OpenedSession,
+  type SessionOptions,
+} from "../sessions.ts";
 
 // The `sessions` Machine holds the list and spawns one child actor per Session
 // (spec §Machines). A list is not a Machine, so the list itself is context; the
@@ -22,32 +34,49 @@ export interface SessionView {
 export interface SessionContext {
   branch: string;
   options: SessionOptions;
+  /** Whether this Session was already running when the Host launched. */
+  adopt: boolean;
   worktreePath?: string;
   terminalUrl?: string;
   ttydPid?: number;
   error?: string;
 }
 
+// Making a Session and taking over one that is already running differ in what
+// they do to the world, not in what the Machine is waiting for: both end with a
+// Worktree, a zmx session and a terminal, or with an error.
 const create = fromPromise(
-  ({ input }: { input: { branch: string; options: SessionOptions } }): Promise<OpenedSession> =>
-    openSession(input.branch, input.options),
+  (
+    { input }: { input: { branch: string; options: SessionOptions; adopt: boolean } },
+  ): Promise<OpenedSession> =>
+    input.adopt
+      ? adoptSession(input.branch, input.options)
+      : openSession(input.branch, input.options),
 );
 
 export const sessionMachine = setup({
   types: {
     context: {} as SessionContext,
-    input: {} as { branch: string; options: SessionOptions },
+    input: {} as { branch: string; options: SessionOptions; adopt: boolean },
   },
   actors: { create },
 }).createMachine({
   id: "session",
   initial: "creating",
-  context: ({ input }) => ({ branch: input.branch, options: input.options }),
+  context: ({ input }) => ({
+    branch: input.branch,
+    options: input.options,
+    adopt: input.adopt,
+  }),
   states: {
     creating: {
       invoke: {
         src: "create",
-        input: ({ context }) => ({ branch: context.branch, options: context.options }),
+        input: ({ context }) => ({
+          branch: context.branch,
+          options: context.options,
+          adopt: context.adopt,
+        }),
         onDone: {
           target: "running",
           actions: assign(({ event }) => event.output),
@@ -98,14 +127,44 @@ export const sessionsMachine = setup({
     input: {} as SessionOptions,
     events: {} as
       | { type: "NEW_SESSION"; branch: string }
+      // Sent for a Session found already running at launch (spec §Restart):
+      // the Worktree and the zmx session exist, only the terminal is decided.
+      | { type: "ADOPT_SESSION"; branch: string }
       | { type: "SESSION.REPORT"; view: SessionView },
   },
   actors: { session: sessionMachine },
+  actions: {
+    // Spawning a child is the same either way; whether it makes the Session or
+    // takes over one that is running is the child's own business.
+    spawnSession: enqueueActions(({ event, enqueue, self }) => {
+      if (event.type !== "NEW_SESSION" && event.type !== "ADOPT_SESSION") return;
+      const branch = event.branch;
+      const adopt = event.type === "ADOPT_SESSION";
+      enqueue.assign({
+        opened: ({ context }) => context.opened + 1,
+        children: ({ context, spawn }) => ({
+          ...context.children,
+          [branch]: spawn("session", {
+            id: `session:${branch}:${context.opened}`,
+            input: { branch, options: context.options, adopt },
+          }),
+        }),
+      });
+      // The child's own Snapshot is the only source for its state, so the
+      // parent watches it rather than being told a name.
+      enqueue(({ context }) => {
+        const actor = context.children[branch] as SessionActor;
+        const tell = () => self.send({ type: "SESSION.REPORT", view: viewOf(branch, actor) });
+        tell();
+        actor.subscribe(tell);
+      });
+    }),
+  },
   guards: {
     // One Session per branch — except that a Session which failed made nothing,
     // so its branch can be asked for again.
     canOpen: ({ context, event }) => {
-      if (event.type !== "NEW_SESSION") return false;
+      if (event.type !== "NEW_SESSION" && event.type !== "ADOPT_SESSION") return false;
       if (typeof event.branch !== "string" || event.branch.trim().length === 0) return false;
       const existing = context.sessions[event.branch];
       return !existing || existing.retryable;
@@ -118,30 +177,8 @@ export const sessionsMachine = setup({
   states: {
     ready: {
       on: {
-        NEW_SESSION: {
-          guard: "canOpen",
-          actions: [
-            assign({
-              opened: ({ context }) => context.opened + 1,
-              children: ({ context, event, spawn }) => ({
-                ...context.children,
-                [event.branch]: spawn("session", {
-                  id: `session:${event.branch}:${context.opened}`,
-                  input: { branch: event.branch, options: context.options },
-                }),
-              }),
-            }),
-            // The child's own Snapshot is the only source for its state, so the
-            // parent watches it rather than being told a name.
-            ({ context, event, self }) => {
-              const actor = context.children[event.branch] as SessionActor;
-              const tell = () =>
-                self.send({ type: "SESSION.REPORT", view: viewOf(event.branch, actor) });
-              tell();
-              actor.subscribe(tell);
-            },
-          ],
-        },
+        NEW_SESSION: { guard: "canOpen", actions: "spawnSession" },
+        ADOPT_SESSION: { guard: "canOpen", actions: "spawnSession" },
         "SESSION.REPORT": {
           actions: assign({
             sessions: ({ context, event }) => ({
