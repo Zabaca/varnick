@@ -4,6 +4,7 @@ import { type Door, serveDoor } from "./door.ts";
 import { type Credential, readCredential, type ReadCredentialOptions } from "./secrets.ts";
 import { type Proxy, serveProxy } from "./proxy.ts";
 import { sessionsMachine } from "./machines/sessions.ts";
+import { landingMachine } from "./machines/landing.ts";
 import { whichClaude } from "./sessions.ts";
 import type { Wrap } from "./wrap.ts";
 
@@ -62,9 +63,11 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
     actors.set("host", host);
     host.start();
 
+    const liveTree = options.liveTree ?? Deno.cwd();
+
     const sessions = createActor(sessionsMachine, {
       input: {
-        liveTree: options.liveTree ?? Deno.cwd(),
+        liveTree,
         claudePath: options.claudePath ?? await whichClaude(),
         proxyUrl: proxy.url,
         doorUrl: door.url,
@@ -74,6 +77,12 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
     });
     actors.set("sessions", sessions);
     sessions.start();
+
+    // Landing is the only thing that writes the Live tree (ADR-0003), so it is
+    // the only actor given it to write.
+    const landing = createActor(landingMachine, { input: { liveTree } });
+    actors.set("landing", landing);
+    landing.start();
   } catch (error) {
     // A Host that never opened must leave neither its Door nor its Proxy listening.
     await door?.stop();
