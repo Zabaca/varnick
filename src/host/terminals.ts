@@ -60,6 +60,19 @@ export async function forgetTerminal(liveTree: string, branch: string): Promise<
   await writeTerminals(liveTree, terminals);
 }
 
+/**
+ * A loopback port nothing is listening on. Every port the Host hands to another
+ * process — a ttyd's, a Preview's Door — is chosen here: the listener is opened
+ * and closed at once, so the port is free and the process that gets it races
+ * only with the rest of the machine.
+ */
+export function freePort(): number {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const { port } = listener.addr as Deno.NetAddr;
+  listener.close();
+  return port;
+}
+
 /** Whether something accepts a connection on a loopback port right now. */
 export async function answersNow(port: number): Promise<boolean> {
   try {

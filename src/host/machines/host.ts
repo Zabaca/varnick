@@ -7,13 +7,39 @@ export interface HostContext {
   pings: number;
   credential: { kind: CredentialKind };
   proxyUrl: string;
+  /**
+   * The tree this Host runs from: the Live tree, or a Worktree when this Host
+   * is a Preview (ADR-0008). It is how a Preview is told apart from Live, and
+   * the only thing that tells them apart.
+   */
+  tree: string;
+  /**
+   * The Previews this Host has launched, by branch (ADR-0008). Nothing here is
+   * re-checked: a Preview is its own process and may be closed, and an entry
+   * for one that is gone costs a stale link and never a Session. Asking for the
+   * same branch again simply launches another.
+   */
+  previews: Record<string, PreviewView>;
+  /** Why the last PREVIEW did not produce one. Cleared when another is asked for. */
+  previewError?: string;
   /** Why a Restart did not happen; the launch is the only thing that can say. */
   error?: string;
 }
 
-// The host Machine: running, restarting, previewing (spec §Machines). PREVIEW
-// arrives with its own ticket. PING is the no-op Event: it changes context so a
-// Snapshot change is observable on /stream without leaving `running`.
+/** Where a Preview answers, and what to reach for it by. */
+export interface PreviewView {
+  url: string;
+  pid: number;
+}
+
+/** A Preview that came up, carrying the branch it is of. */
+export interface LaunchedPreview extends PreviewView {
+  branch: string;
+}
+
+// The host Machine: running, restarting, previewing (spec §Machines). PING is
+// the no-op Event: it changes context so a Snapshot change is observable on
+// /stream without leaving `running`.
 //
 // `relaunch` is what a Restart is made of — releasing this Host's ports,
 // launching a fresh one from the Live tree and going away — and the launch
@@ -21,18 +47,27 @@ export interface HostContext {
 export const hostMachine = setup({
   types: {
     context: {} as HostContext,
-    input: {} as { credential: { kind: CredentialKind }; proxyUrl: string },
-    events: {} as { type: "PING" } | { type: "RESTART" },
+    input: {} as { credential: { kind: CredentialKind }; proxyUrl: string; tree: string },
+    events: {} as { type: "PING" } | { type: "RESTART" } | { type: "PREVIEW"; branch: string },
   },
   actors: {
     relaunch: fromPromise((): Promise<void> => {
       return Promise.reject(new Error("this Host was launched without a way to relaunch itself"));
     }),
+    // Launching a Preview is the launch's business, for the same reason a
+    // Restart is: only the launch knows the command it was started with.
+    launchPreview: fromPromise(
+      ({ input: _input }: { input: { branch: string } }): Promise<LaunchedPreview> => {
+        return Promise.reject(
+          new Error("this Host was launched without a way to launch a Preview"),
+        );
+      },
+    ),
   },
 }).createMachine({
   id: "host",
   initial: "running",
-  context: ({ input }) => ({ pings: 0, ...input }),
+  context: ({ input }) => ({ pings: 0, previews: {}, ...input }),
   states: {
     running: {
       on: {
@@ -40,6 +75,40 @@ export const hostMachine = setup({
           actions: assign({ pings: ({ context }) => context.pings + 1 }),
         },
         RESTART: { target: "restarting" },
+        // A Preview of a branch already previewed is launched again: the first
+        // may be gone, and this Host persists nothing to know (ADR-0007).
+        PREVIEW: {
+          target: "previewing",
+          actions: assign({ previewError: undefined }),
+        },
+      },
+    },
+    // A Preview is being launched: its process is spawned from the branch's
+    // Worktree and its Door is waited for. A Restart or a second PREVIEW in the
+    // meantime is dropped, because this Host is about to be one of two things
+    // and neither is decided yet.
+    previewing: {
+      invoke: {
+        src: "launchPreview",
+        input: ({ event }) => ({ branch: (event as { branch: string }).branch }),
+        onDone: {
+          target: "running",
+          actions: assign({
+            previews: ({ context, event }) => ({
+              ...context.previews,
+              [event.output.branch]: { url: event.output.url, pid: event.output.pid },
+            }),
+          }),
+        },
+        // A Preview that does not come up costs this Host nothing; the reason
+        // is in context and the Host goes back to being usable.
+        onError: {
+          target: "running",
+          actions: assign({
+            previewError: ({ event }) =>
+              event.error instanceof Error ? event.error.message : String(event.error),
+          }),
+        },
       },
     },
     // The successor is being launched and this Host is on its way out. There is

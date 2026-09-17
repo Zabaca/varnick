@@ -58,6 +58,25 @@ A Session outlives the Host by design, so it is not stopped when varnick exits.
 `deno task test` needs `git`, `zmx`, `ttyd` and `sops`; without any of them the
 Session tests skip and say which is missing.
 
+## Previews
+
+A Preview is a second varnick launched from a Session's Worktree, so a change to
+varnick itself can be tried before it lands (ADR-0008). It is asked for the same
+way everything else is: `POST /actors/host/events` with
+`{"type":"PREVIEW","branch":"some-branch"}`, or the Preview button on the
+Session. The Host chooses a free loopback port, hands it over in `VARNICK_PORT`,
+runs the same launch command with the Worktree as its cwd, and puts the
+Preview's URL in its own Snapshot once that Door answers.
+
+The Preview is an ordinary Host in every other way — its own window, its own
+Proxy, its own Secrets file out of the Worktree, and the same zmx sessions as
+Live, because a Session belongs to the machine and not to a Host. A Session
+opened through the Preview's Door carries that Door in `VARNICK_DOOR`, so an
+agent it starts drives the Preview and not Live. It is not waited on and is not stopped when the
+Host that launched it stops; its host code is the agent's, which is the point
+(ADR-0008). Only a branch with a Worktree can be previewed
+(ADR-0003); anything else is refused, with the reason in the Snapshot.
+
 ## Stack
 
 - Deno 2.9 with `deno desktop`, system webview

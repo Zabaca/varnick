@@ -26,6 +26,17 @@ interface LandingView {
   error?: string;
 }
 
+// What the `host` Snapshot says about the Previews it has launched (ADR-0008).
+interface HostView {
+  previews?: Record<string, { url: string; pid: number }>;
+  previewError?: string;
+}
+
+function hostOf(snapshots: Record<string, Snapshot>): { state: string } & HostView {
+  const host = snapshots.host;
+  return { state: String(host?.value ?? "…"), ...(host?.context as HostView ?? {}) };
+}
+
 function landingOf(snapshots: Record<string, Snapshot>): { state: string } & LandingView {
   const landing = snapshots.landing;
   return { state: String(landing?.value ?? "…"), ...(landing?.context as LandingView ?? {}) };
@@ -81,6 +92,7 @@ function App() {
 
   const sessions = sessionsOf(snapshots);
   const landing = landingOf(snapshots);
+  const host = hostOf(snapshots);
   // A selection that has not been made yet falls to the first Session, so the
   // terminal is there as soon as one is.
   const shown = sessions.find((session) => session.branch === selected) ?? sessions[0];
@@ -88,7 +100,7 @@ function App() {
   return (
     <main style={{ fontFamily: "system-ui", padding: "1rem" }}>
       <h1>
-        varnick <small>{String(snapshots.host?.value ?? "…")}</small>
+        varnick <small>{host.state}</small>
       </h1>
       <NewSession />
       {/* Promotion: the Live Host relaunches onto whatever has landed (spec
@@ -96,6 +108,7 @@ function App() {
       <button type="button" onClick={() => send("host", { type: "RESTART" })}>
         Restart
       </button>
+      {host.previewError ? <span role="alert">{host.previewError}</span> : null}
 
       <ul style={{ listStyle: "none", padding: 0 }}>
         {sessions.map((session) => (
@@ -144,6 +157,23 @@ function App() {
             >
               Land
             </button>
+            {/* A Preview is a second Host launched from this Session's
+                Worktree, in its own window on its own port (ADR-0008). The
+                Event carries the branch; the Host chooses the port and says
+                where it put it. */}
+            <button
+              type="button"
+              onClick={() => send("host", { type: "PREVIEW", branch: session.branch })}
+            >
+              Preview
+            </button>
+            {host.previews?.[session.branch]
+              ? (
+                <a href={host.previews[session.branch].url} target="_blank" rel="noreferrer">
+                  {host.previews[session.branch].url}
+                </a>
+              )
+              : null}
             {landing.branch === session.branch
               ? (
                 <span data-landing={landing.state} title={landing.error}>

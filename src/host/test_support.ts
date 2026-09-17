@@ -75,6 +75,36 @@ export async function makeStubClaude(recordTo: string): Promise<string> {
   return path;
 }
 
+// What a test launches a Preview with, in place of the window `deno task dev`
+// opens. It is a real Host — the same `startHost` a launch calls — taking the
+// port from `VARNICK_PORT` exactly as the real entry point does, and the tree
+// it runs from from its cwd. The fixtures it cannot read from the environment
+// are written into it, because the Worktree it is launched in has no Secrets
+// file of its own.
+export async function makePreviewLauncher(claudePath: string): Promise<string[]> {
+  const path = `${await Deno.makeTempDir({ prefix: "varnick-preview-" })}/launch.ts`;
+  const main = new URL("./main.ts", import.meta.url).href;
+  await Deno.writeTextFile(
+    path,
+    [
+      `import { startHost } from ${JSON.stringify(main)};`,
+      `await startHost({`,
+      `  headless: true,`,
+      `  port: Number(Deno.env.get("VARNICK_PORT")),`,
+      `  secretsFile: ${JSON.stringify(FIXTURE_SECRETS)},`,
+      `  ageKeyFile: ${JSON.stringify(FIXTURE_AGE_KEY)},`,
+      `  claudePath: ${JSON.stringify(claudePath)},`,
+      `});`,
+      ``,
+    ].join("\n"),
+  );
+  // The Worktree a test previews is a bare temp repo with no import map of its
+  // own, unlike a real varnick Worktree; the repo's config is named so the Host
+  // it launches resolves the same dependencies this one did.
+  const config = new URL("../../deno.json", import.meta.url).pathname;
+  return [Deno.execPath(), "run", "-A", "--config", config, path];
+}
+
 export function startTestHost(options: HostOptions) {
   return startHost({
     headless: true,

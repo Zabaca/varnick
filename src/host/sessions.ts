@@ -1,7 +1,13 @@
 import { wrap as identityWrap, type Wrap } from "./wrap.ts";
 import { API_KEY_PLACEHOLDER, OAUTH_TOKEN_PLACEHOLDER } from "./proxy.ts";
 import type { CredentialKind } from "./secrets.ts";
-import { answersNow, forgetTerminal, readTerminals, recordTerminal } from "./terminals.ts";
+import {
+  answersNow,
+  forgetTerminal,
+  freePort,
+  readTerminals,
+  recordTerminal,
+} from "./terminals.ts";
 
 // What a Session is made of: a Worktree, a zmx session and a ttyd. This module
 // holds everything that touches the world, including the order the three are
@@ -137,13 +143,6 @@ function loopbackInterface(): string {
   return Deno.build.os === "darwin" ? "lo0" : "lo";
 }
 
-function freePort(): number {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = listener.addr as Deno.NetAddr;
-  listener.close();
-  return port;
-}
-
 async function answersOn(port: number): Promise<boolean> {
   return await pollUntil(() => answersNow(port), 10_000);
 }
@@ -235,6 +234,10 @@ function agentEnvironment(
   const env = { ...Deno.env.toObject() };
   delete env.ANTHROPIC_API_KEY;
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  // A Preview was handed its Door port in `VARNICK_PORT` and would otherwise
+  // pass it on: an agent inside a Preview running `deno task dev` would launch
+  // onto the port its own Host is already listening on.
+  delete env.VARNICK_PORT;
 
   return {
     ...env,
