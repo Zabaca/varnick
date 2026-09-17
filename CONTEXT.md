@@ -1,6 +1,6 @@
 # varnick — domain model
 
-varnick is a desktop window around a sandboxed coding agent. It gives the agent a worktree, a terminal and no credential, and gives you a button that lands the work.
+varnick is a desktop window around a coding agent. It gives the agent a worktree, a terminal and no credential, and gives you a button that lands the work.
 
 ## Language
 
@@ -30,7 +30,7 @@ _Avoid_: main checkout, repo root, the clone
 
 **Worktree**:
 A git worktree under `.claude/worktrees/`, one per Session, named by its branch. The only place the agent may write.
-_Avoid_: branch (a Worktree has one), checkout, sandbox (that is the enforcement, not the place)
+_Avoid_: branch (a Worktree has one), checkout
 
 **Session**:
 One zmx session holding one terminal running the agent in one Worktree. Outlives the window and the Host; reaped with its Worktree.
@@ -42,9 +42,9 @@ _Avoid_: merge (it is one, but a fast-forward only), collect, sync, promote
 
 ### Confinement
 
-**Sandbox**:
-The kernel restrictions the agent's entire process tree runs under, applied once around the terminal's command. Writes are allowed in the Session's Worktree and temp and nowhere else; the network is open.
-_Avoid_: seatbelt, permissions (Claude Code's prompt layer, which is a second layer and not the boundary)
+**Wrap**:
+The one function that turns the agent's command into the command a Session runs. In v1 it returns the command unchanged; it is the only place a kernel sandbox would go if one returns (ADR-0004).
+_Avoid_: sandbox (there is none), confinement, seatbelt
 
 **Credential**:
 What authenticates the agent to Anthropic. Held by the Host, never by the agent; the agent carries a placeholder.
@@ -55,7 +55,7 @@ The loopback reverse proxy the Host runs, selected in the agent's environment by
 _Avoid_: MITM (a stronger form, not built), gateway
 
 **Secrets file**:
-`secrets.yaml`, sops-encrypted to your age key, committed. Holds the Credential. Readable in every Worktree, decryptable in none, because the age key lives under a denied home.
+`secrets.yaml`, sops-encrypted to your age key, committed. Holds the Credential. Readable in every Worktree; decrypting it needs your age key, which the agent is trusted not to use rather than prevented from using (ADR-0004).
 _Avoid_: vault, keychain, env file
 
 **Agent home**:

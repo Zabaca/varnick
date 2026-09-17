@@ -7,12 +7,12 @@ Five things not obvious from the code:
 - **The agent only works in a Worktree.** The Live tree is written only by Landing, a fast-forward the Host performs. There is no protected-path list because there is nothing in the Live tree to protect (ADR-0003).
 - **The chat is a terminal.** ttyd over a zmx session running `claude`. No Agent SDK, no transcript store of our own (ADR-0002).
 - **Actors live in the Host; the page, the agent and tests all use the Door.** Do not add a binding or `executeJs` call for the page; if the page needs it, an agent needs it too (ADR-0006).
-- **The agent never holds the Credential.** It has a placeholder and a base URL; the Proxy swaps them (ADR-0005).
+- **The agent never holds the Credential.** It has a placeholder and a base URL; the Proxy swaps them (ADR-0005). There is no kernel sandbox in v1; the command a Session runs passes through one function, Wrap, so one can return (ADR-0004).
 - **Nothing is persisted by the Host.** Actors rebuild from git and zmx on launch (ADR-0007).
 
 Machines are XState 5; each ships with a headless test through the Door. No states page, no staged workflow (ADR-0010).
 
-Use `deno task dev` to launch Live. Do not add an egress allowlist without an ADR (ADR-0004).
+Use `deno task dev` to launch Live. Do not add an egress allowlist or a sandbox without an ADR (ADR-0004).
 
 ## Agent skills
 

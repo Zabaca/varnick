@@ -6,4 +6,4 @@ The first varnick was a Tauri app: a Rust host, a React chat over the Claude Age
 
 Considered: keeping Tauri and only replacing the chat; a new repository. Rejected because the Tauri layer was the source of the process split, and because the history is worth keeping in one place even if nothing is carried over.
 
-Consequences: binaries are 40 to 68MB instead of 5MB, and there is no distribution story yet; see ADR-0008. macOS only, stated in the README, since Deno Desktop's webview and the sandbox are both exercised nowhere else.
+Consequences: binaries are 40 to 68MB instead of 5MB, and there is no distribution story yet; see ADR-0008. Developed and run on macOS; Linux is plausible and untested, and the README says so.

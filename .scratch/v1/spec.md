@@ -1,16 +1,16 @@
-# v1: a window around a sandboxed agent
+# v1: a window around an agent
 
 Status: ready-for-agent
 
 ## Problem Statement
 
-I want to hand a coding agent real autonomy on my own machine and still be able to say in one sentence what it can touch. Running `claude` in a terminal gives it my whole home directory and my credentials. The previous varnick confined it, but did so by letting the agent edit the tree the app ran from and then building fence after fence to stop that edit from becoming running code. Every fence was a decision, and the decisions became the work.
+I want to hand a coding agent real autonomy on my own machine and still be able to say in one sentence where its work goes. Running `claude` in a terminal puts its work wherever it happens to be and hands it my credentials. The previous varnick confined it with a kernel sandbox, but did so by letting the agent edit the tree the app ran from and then building fence after fence to stop that edit from becoming running code. Every fence was a decision, and the decisions became the work.
 
 I also want the agent to be able to run varnick with me, or without me: open a session, land a branch, preview a change, restart. Today only a click can do those things.
 
 ## Solution
 
-A macOS window, built with Deno Desktop, that shows a list of Sessions and a terminal. Each Session is a git Worktree, a zmx session and a terminal running `claude`, under a kernel Sandbox that lets it write that Worktree and nothing else, with a placeholder credential the Host's Proxy swaps for the real one. The Live tree is only ever written by Landing, a fast-forward the Host performs on request. Restart promotes what landed. A Preview runs a Worktree's copy of varnick as a separate process.
+A window, built with Deno Desktop, that shows a list of Sessions and a terminal. Each Session is a git Worktree, a zmx session and a terminal running `claude` in that Worktree, with a placeholder credential the Host's Proxy swaps for the real one. There is no kernel sandbox in v1 (ADR-0004). The Live tree is only ever written by Landing, a fast-forward the Host performs on request. Restart promotes what landed. A Preview runs a Worktree's copy of varnick as a separate process.
 
 Everything the window can do is an Event on a Machine whose actor lives in the Host, sent through one loopback API, the Door. The buttons, the agent and the tests all use it.
 
@@ -23,12 +23,12 @@ Everything the window can do is an Event on a Machine whose actor lives in the H
 5. As a developer, I want a Session to survive closing and reopening the window, so that an agent mid-task is not interrupted by my day.
 6. As a developer, I want a Session to survive a Restart of the Host, so that promoting a change does not kill the work in flight.
 7. As a developer, I want scrollback replayed when I reattach, so that I can read what happened while I was away.
-8. As a developer, I want the agent confined to its Worktree and temp for writes, so that the Live tree, my home and every other checkout are untouchable by construction.
+8. As a developer, I want the agent started in its Worktree and told that is where its work goes, so that the Live tree is written only by Landing.
 9. As a developer, I want the agent to have an open network, so that npm, GitHub and documentation work on day one without an allowlist to maintain.
-10. As a developer, I want the agent to never hold my credential, so that an `env` dump or a prompt injection inside the Sandbox yields nothing usable.
+10. As a developer, I want the agent to never hold my credential, so that an `env` dump or a logged configuration yields nothing usable.
 11. As a developer, I want the credential kept in a sops-encrypted file committed to the repo, so that every clone carries it and only my age key opens it.
 12. As a developer, I want the agent to use a Claude Code home inside the clone, so that its skills and settings are shared across Sessions and my own `~/.claude` is never touched.
-13. As a developer, I want git inside the Sandbox to commit under my name and email, so that history is attributable without the agent reading my gitconfig.
+13. As a developer, I want git in a Session to commit under my name and email, so that history is attributable.
 14. As a developer, I want a Land button on a Session, so that the Live tree fast-forwards to its branch with one click.
 15. As a developer, I want Landing refused when the Live tree is dirty, so that my own uncommitted work is never merged over.
 16. As a developer, I want Landing refused when the branch is not a fast-forward, with the reason shown, so that I know to ask the agent to rebase.
@@ -51,13 +51,13 @@ Everything the window can do is an Event on a Machine whose actor lives in the H
 
 ## Implementation Decisions
 
-**Runtime and layout.** One Deno 2.9 project. The Host is the `deno desktop` entry; the page is a Vite React app the Host serves as a static build in Live and under HMR in dev. Modules: host entry, door, machines, sandbox, proxy, secrets, sessions (git plus zmx plus ttyd), page. Nothing runs in the webview except rendering.
+**Runtime and layout.** One Deno 2.9 project. The Host is the `deno desktop` entry; the page is a Vite React app the Host serves as a static build in Live and under HMR in dev. Modules: host entry, door, machines, wrap, proxy, secrets, sessions (git plus zmx plus ttyd), page. Nothing runs in the webview except rendering.
 
 **The Door.** A loopback HTTP API on a port chosen at launch. Actors are addressed by name. Read a Snapshot: `GET /actors/{name}`. Send an Event: `POST /actors/{name}/events` with the Event as JSON, responding with the Snapshot after the Event is processed. Subscribe: `GET /stream`, Server-Sent Events carrying every Snapshot change of every actor, each event tagged with the actor name. Deno Desktop bindings and `executeJs` are not used (ADR-0006).
 
 **Machines.** XState 5, latest. Three actors at launch:
 
-- `sessions`: holds the list and spawns one child actor per Session. A Session child has states for creating, running, reaping, and failed variants of each. Creating means: worktree added, zmx session started with the sandboxed command, ttyd started attached to it. Its context carries branch, worktree path, ttyd URL and the last error.
+- `sessions`: holds the list and spawns one child actor per Session. A Session child has states for creating, running, reaping, and failed variants of each. Creating means: worktree added, zmx session started with the wrapped command, ttyd started attached to it. Its context carries branch, worktree path, ttyd URL and the last error.
 - `landing`: idle, checking, refused with a reason (dirty, notFastForward, unknownBranch), landing, landed. Takes a `LAND` Event carrying a branch name and nothing else; the Host decides everything from that name.
 - `host`: running, restarting, previewing. Takes `RESTART` and `PREVIEW` with a branch name.
 
@@ -65,9 +65,9 @@ A list is not a Machine. A state is named in its Machine and nowhere else (ADR-0
 
 **Rebuild at launch.** `sessions` initial context comes from `git worktree list --porcelain` joined with `zmx ls`. A Worktree with no zmx session is shown as detached and can be reaped or reattached. Nothing is persisted (ADR-0007).
 
-**Sessions.** The Worktree is `.claude/worktrees/{branch}` in the Live tree. The zmx session is named by the branch. The command zmx runs is the Sandbox's wrapped argv for `claude`, with cwd the Worktree. One ttyd per Session, on its own loopback port, running `zmx attach {branch}`; the page shows it in an iframe. Reap is refused for a dirty or unpushed Worktree unless the Event says `force`.
+**Sessions.** The Worktree is `.claude/worktrees/{branch}` in the Live tree. The zmx session is named by the branch. The command zmx runs is Wrap applied to `claude`, with cwd the Worktree. One ttyd per Session, on its own loopback port, running `zmx attach {branch}`; the page shows it in an iframe. Reap is refused for a dirty or unpushed Worktree unless the Event says `force`.
 
-**Sandbox.** `@anthropic-ai/sandbox-runtime`, wrapping the command zmx runs. Allow write: the Worktree and temp. Deny read: home. Network unrestricted. Environment for the agent: `ANTHROPIC_BASE_URL` at the Proxy, `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` set to a placeholder matching the Credential's kind, `CLAUDE_CONFIG_DIR` at `.varnick/claude` in the Live tree, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` from the developer's real gitconfig read by the Host, `GIT_CONFIG_GLOBAL=/dev/null`, `VARNICK_DOOR` set to the Door's URL. The `claude` executable is whatever `which claude` finds on the Host's PATH; a launch option overrides it for tests.
+**Wrap.** One function from the agent's command to the command a Session runs; in v1 the identity. It is the seam a kernel sandbox would occupy (ADR-0004). Environment for the agent: `ANTHROPIC_BASE_URL` at the Proxy, `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` set to a placeholder matching the Credential's kind, `CLAUDE_CONFIG_DIR` at `.varnick/claude` in the Live tree, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` from the developer's gitconfig read by the Host, `VARNICK_DOOR` set to the Door's URL. The `claude` executable is whatever `which claude` finds on the Host's PATH; a launch option overrides it for tests.
 
 **Proxy.** A `Deno.serve` on loopback that forwards to `api.anthropic.com`, replacing the `authorization` or `x-api-key` header carrying the placeholder with the Credential. Any request without the placeholder is refused. No TLS termination, no allowlist.
 
@@ -77,7 +77,7 @@ A list is not a Machine. A state is named in its Machine and nowhere else (ADR-0
 
 **Restart.** The Host spawns a fresh copy of its own launch command from the Live tree, detached, then exits. Sessions are untouched because zmx and ttyd are not children of the Host; ttyd processes are adopted at the next launch by port recorded in a per-clone file under `.varnick/`, or restarted if gone.
 
-**Preview.** The Host spawns the same launch command with cwd the Worktree, detached, with a different Door port. Its host code is unconfined (ADR-0008). Its Sessions are the same zmx sessions; each Session's `VARNICK_DOOR` names the Host that created it.
+**Preview.** The Host spawns the same launch command with cwd the Worktree, detached, with a different Door port. Its host code is the agent's (ADR-0008). Its Sessions are the same zmx sessions; each Session's `VARNICK_DOOR` names the Host that created it.
 
 **Agent command.** A small script the Host puts on the agent's PATH, `varnick`, that turns `varnick land`, `varnick preview`, `varnick session new {branch}`, `varnick snapshot {actor}` into Door calls using `VARNICK_DOOR`.
 
@@ -89,16 +89,16 @@ A good test starts a real Host with no window against a temp git repo with one c
 
 Tested through the Door: creating a Session, reaping and refused reaping, Landing and each refusal, rebuild at launch from a pre-made worktree and zmx session, the agent command against a running Host, the Proxy swapping the placeholder (against a local stub upstream), Secrets decoding with a test age key.
 
-Tests run under `deno test` and require `git`, `zmx`, `ttyd` and `sops` installed; they skip with a clear message otherwise. The Sandbox is exercised for real on macOS with a test asserting a write outside the Worktree fails.
+Tests run under `deno test` and require `git`, `zmx`, `ttyd` and `sops` installed; they skip with a clear message otherwise.
 
 No prior art in this repo; this is the first code on the branch.
 
 ## Out of Scope
 
-An egress allowlist or the MITM proxy. A signed or distributable app. A structured transcript view. Secrets other than the Credential. An MCP wrapper for the agent command. Multiple machines. Linux or Windows. A states page. Hot reload of the Live window on Landing.
+A kernel sandbox, an egress allowlist, or the MITM proxy. A signed or distributable app. A structured transcript view. Secrets other than the Credential. An MCP wrapper for the agent command. Multiple machines. Linux or Windows. A states page. Hot reload of the Live window on Landing.
 
 ## Further Notes
 
-Facts from the 2026-09-17 probes: sandbox-runtime 0.0.67 and the Agent SDK run under Deno 2.9.6; node-pty does not, which is moot. Deno Desktop opens a window and `Deno.serve` binds to the address the webview navigates to. ttyd and zmx are not yet installed on the development machine and whether Seatbelt permits ttyd's websocket on loopback is unverified; the first ticket should prove it.
+Facts from the 2026-09-17 probes: sandbox-runtime 0.0.67 (not used in v1, ADR-0004) and the Agent SDK run under Deno 2.9.6; node-pty does not, which is moot. Deno Desktop opens a window and `Deno.serve` binds to the address the webview navigates to. ttyd and zmx are not yet installed on the development machine.
 
 Vocabulary is defined in `CONTEXT.md`. ADR-0003 is the rule most of this spec follows from.
