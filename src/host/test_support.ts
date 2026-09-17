@@ -3,6 +3,7 @@
 // Nothing here imports a Machine; the Door is the only way in.
 import { type HostOptions, startHost } from "./main.ts";
 import type { SessionView } from "./machines/sessions.ts";
+import { answersNow } from "./terminals.ts";
 
 export const FIXTURE_SECRETS = new URL("./testdata/secrets.yaml", import.meta.url).pathname;
 export const FIXTURE_AGE_KEY = new URL("./testdata/test-age-key.txt", import.meta.url).pathname;
@@ -115,27 +116,7 @@ export async function newSession(doorUrl: string, branch: string): Promise<void>
   await res.body?.cancel();
 }
 
-/** Whether something accepts a connection on a loopback port right now. */
-export async function answers(url: string): Promise<boolean> {
-  try {
-    const conn = await Deno.connect({ hostname: "127.0.0.1", port: Number(new URL(url).port) });
-    conn.close();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// A Session outlives its Host by design (spec user story 5), so a test that
-// made one takes it away itself rather than leaving it on the machine.
-export async function reap(views: (SessionView | undefined)[], branch: string) {
-  for (const view of views) {
-    if (!view?.ttydPid) continue;
-    try {
-      Deno.kill(view.ttydPid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
-  await run("zmx", ["kill", branch, "--force"]);
+/** Whether something accepts a connection on a loopback URL right now. */
+export function answers(url: string): Promise<boolean> {
+  return answersNow(Number(new URL(url).port));
 }

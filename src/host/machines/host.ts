@@ -43,11 +43,11 @@ export const hostMachine = setup({
       },
     },
     // The successor is being launched and this Host is on its way out. There is
-    // no state after it that anyone sees: `relaunch` ends by exiting.
+    // no state after a Restart that works: `relaunch` ends by exiting, so the
+    // only way out of here is the way that failed.
     restarting: {
       invoke: {
         src: "relaunch",
-        onDone: "restarted",
         onError: {
           target: "restartFailed",
           actions: assign({
@@ -57,7 +57,6 @@ export const hostMachine = setup({
         },
       },
     },
-    restarted: {},
     // The successor never started. This Host has already let go of its Door, so
     // it is of no further use; the reason is in context and on stderr.
     restartFailed: {},

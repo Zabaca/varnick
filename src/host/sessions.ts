@@ -111,14 +111,7 @@ function freePort(): number {
 }
 
 async function answersOn(port: number): Promise<boolean> {
-  return await pollUntil(async () => {
-    try {
-      (await Deno.connect({ hostname: "127.0.0.1", port })).close();
-      return true;
-    } catch {
-      return false;
-    }
-  }, 10_000);
+  return await pollUntil(() => answersNow(port), 10_000);
 }
 
 // One ttyd per Session, on its own loopback port, attached to the zmx session.
@@ -295,6 +288,13 @@ export async function adoptSession(
   options: SessionOptions,
 ): Promise<OpenedSession> {
   const worktreePath = worktreePathFor(options.liveTree, branch);
+  // Adopting is asked for through the Door like anything else (ADR-0006), so
+  // what is being taken over is checked rather than assumed: without both the
+  // Worktree and the zmx session there is no Session here to adopt, and a ttyd
+  // must not be started for one.
+  if (!(await discoverSessions(options.liveTree)).includes(branch)) {
+    throw new Error(`no Session is running on "${branch}" to adopt`);
+  }
   const terminal = await adoptOrStartTerminal(branch, options.liveTree);
   return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
 }

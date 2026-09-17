@@ -156,18 +156,15 @@ async function relaunch(
   exit();
 }
 
-// The command this Host was launched with, as well as Deno reports it: the
-// runtime, the `desktop` subcommand ADR-0008 fixes for Live, this module, and
-// whatever arguments the launch carried. A launch option overrides it.
+// How Live is launched: `deno task dev`, the one command the README and
+// ADR-0008 name. The task is read from the Live tree's own `deno.json`, so a
+// Restart runs the landed launch command and not a copy of it written here —
+// including the page build the task does first. `Deno.mainModule` is no help:
+// under `deno desktop` it names a module inside a bundle, not a path to run.
+// A launch option overrides this, which is how a test relaunches into
+// something that is not a window.
 function ownLaunchCommand(): string[] {
-  return [
-    Deno.execPath(),
-    "desktop",
-    "--hmr",
-    "-A",
-    new URL(Deno.mainModule).pathname,
-    ...Deno.args,
-  ];
+  return [Deno.execPath(), "task", "dev"];
 }
 
 // Every Session already running on this machine is handed to the `sessions`

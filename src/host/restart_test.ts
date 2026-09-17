@@ -5,8 +5,6 @@ import {
   makeLiveTree,
   makeStubClaude,
   newSession,
-  reap,
-  readSessions,
   run,
   sessionTest,
   startTestHost,
@@ -14,18 +12,18 @@ import {
 } from "./test_support.ts";
 import type { SessionView } from "./machines/sessions.ts";
 
-// Poll the Snapshot until a Session appears and settles. A Host launched onto
-// an existing Live tree seeds its list after the Door opens, so the branch is
-// not there the instant the launch returns.
-async function waitForAdopted(doorUrl: string, branch: string): Promise<SessionView> {
-  const deadline = Date.now() + 30_000;
-  let last: SessionView | undefined;
-  while (Date.now() < deadline) {
-    last = (await readSessions(doorUrl))[branch];
-    if (last && last.state !== "creating") return last;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+// A Session outlives its Host by design (spec user story 5), and here two Hosts
+// may have reported the same one, so both terminals are taken away.
+async function reap(views: (SessionView | undefined)[], branch: string) {
+  for (const view of views) {
+    if (!view?.ttydPid) continue;
+    try {
+      Deno.kill(view.ttydPid, "SIGTERM");
+    } catch {
+      // already gone
+    }
   }
-  throw new Error(`Session "${branch}" was never adopted: ${JSON.stringify(last)}`);
+  await run("zmx", ["kill", branch, "--force"]);
 }
 
 sessionTest("a Session opened before a relaunch is running with an answering terminal after it", async () => {
@@ -49,7 +47,7 @@ sessionTest("a Session opened before a relaunch is running with an answering ter
   // What a Restart leaves behind: the old Host gone, zmx and ttyd untouched.
   const after = await startTestHost({ liveTree, claudePath });
   try {
-    adopted = await waitForAdopted(after.url, branch);
+    adopted = await waitForSettled(after.url, branch);
     if (adopted.state !== "running") {
       throw new Error(`expected state "running" after the relaunch, got ${JSON.stringify(adopted)}`);
     }
@@ -95,7 +93,7 @@ sessionTest("a ttyd killed before the relaunch is replaced by one that answers",
 
   const after = await startTestHost({ liveTree, claudePath });
   try {
-    adopted = await waitForAdopted(after.url, branch);
+    adopted = await waitForSettled(after.url, branch);
     if (adopted.state !== "running") {
       throw new Error(`expected state "running", got ${JSON.stringify(adopted)}`);
     }
