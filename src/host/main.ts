@@ -5,12 +5,7 @@ import { type Credential, readCredential, type ReadCredentialOptions } from "./s
 import { type Proxy, serveProxy } from "./proxy.ts";
 import { sessionsMachine } from "./machines/sessions.ts";
 import { landingMachine } from "./machines/landing.ts";
-import {
-  discoverSessions,
-  whichClaude,
-  worktreeBranches,
-  worktreePathFor,
-} from "./sessions.ts";
+import { discoverSessions, whichClaude } from "./sessions.ts";
 import { answersNow, freePort } from "./terminals.ts";
 import type { Wrap } from "./wrap.ts";
 
@@ -203,11 +198,14 @@ async function launchPreview(
 ): Promise<LaunchedPreview> {
   // Only a Worktree is previewed: it is the one place the agent works, and a
   // Host launched from anywhere else is running code that never was one
-  // (ADR-0003). git is the authority, not a directory at the path.
-  if (!(await worktreeBranches(liveTree)).includes(branch)) {
+  // (ADR-0003). The Host's own picture of the world is what decides, so a
+  // directory at the path is not enough and a detached Session — a Worktree
+  // with nothing running in it — is still previewable.
+  const found = (await discoverSessions(liveTree)).find((session) => session.branch === branch);
+  if (!found) {
     throw new Error(`there is no Worktree for "${branch}" to preview`);
   }
-  const worktree = worktreePathFor(liveTree, branch);
+  const worktree = found.worktreePath;
 
   const port = freePort();
   const url = `http://127.0.0.1:${port}`;
@@ -250,8 +248,16 @@ function ownLaunchCommand(): string[] {
 // actor as an Event, so a rebuilt list arrives the same way a new Session does
 // and there is no second way in (ADR-0006).
 async function seedSessions(sessions: AnyActorRef, liveTree: string): Promise<void> {
-  for (const branch of await discoverSessions(liveTree)) {
-    sessions.send({ type: "ADOPT_SESSION", branch });
+  // A Worktree with a zmx session is a Session still running; one without it is
+  // detached, and is still the agent's work (spec §Rebuild at launch). Both are
+  // handed over, and the child decides which it is from `attached`.
+  for (const found of await discoverSessions(liveTree)) {
+    sessions.send({
+      type: "ADOPT_SESSION",
+      branch: found.branch,
+      worktreePath: found.worktreePath,
+      attached: found.attached,
+    });
   }
 }
 

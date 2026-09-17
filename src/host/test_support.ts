@@ -122,16 +122,22 @@ export async function readSessions(doorUrl: string): Promise<Record<string, Sess
   return snapshot.context.sessions;
 }
 
-// Poll the Snapshot until the named Session settles out of `creating`.
+// The states a Session is still working in: one being opened, and one being
+// taken over at launch, which is waiting on a terminal.
+const IN_FLIGHT = ["creating", "attaching"];
+
+// Poll the Snapshot until the named Session settles out of those.
 export async function waitForSettled(doorUrl: string, branch: string): Promise<SessionView> {
   const deadline = Date.now() + 30_000;
   let last: SessionView | undefined;
   while (Date.now() < deadline) {
     last = (await readSessions(doorUrl))[branch];
-    if (last && last.state !== "creating") return last;
+    if (last && !IN_FLIGHT.includes(last.state)) return last;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Session "${branch}" never left creating: ${JSON.stringify(last)}`);
+  throw new Error(
+    `Session "${branch}" never left ${IN_FLIGHT.join("/")}: ${JSON.stringify(last)}`,
+  );
 }
 
 export async function newSession(doorUrl: string, branch: string): Promise<void> {

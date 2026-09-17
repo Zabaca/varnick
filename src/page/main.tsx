@@ -10,9 +10,11 @@ type Snapshot = { value: unknown; context: unknown };
 interface SessionView {
   branch: string;
   state: string;
+  reapable: boolean;
   worktreePath?: string;
   terminalUrl?: string;
   error?: string;
+  refusal?: string;
 }
 
 // There is one Landing at a time, and its Snapshot says which branch it is
@@ -119,7 +121,34 @@ function App() {
               {session.branch}
             </button>
             <span data-state={session.state}>{session.state}</span>
+            {/* Offered only where the Session says a Reap is something it
+                would take — a tag it carries, never a state name (ADR-0010). */}
+            {session.reapable
+              ? (
+                <button
+                  type="button"
+                  onClick={() => send("sessions", { type: "REAP", branch: session.branch })}
+                >
+                  Reap
+                </button>
+              )
+              : null}
             {session.error ? <span role="alert">{session.error}</span> : null}
+            {/* A Reap the Host would not do, and the one way through it. */}
+            {session.refusal
+              ? (
+                <>
+                  <span role="alert">{session.refusal}</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      send("sessions", { type: "REAP", branch: session.branch, force: true })}
+                  >
+                    Reap anyway
+                  </button>
+                </>
+              )
+              : null}
             {/* The Event carries the branch name and nothing else; the Host
                 decides the rest (ADR-0003). */}
             <button

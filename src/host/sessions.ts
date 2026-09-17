@@ -1,7 +1,13 @@
 import { wrap as identityWrap, type Wrap } from "./wrap.ts";
 import { API_KEY_PLACEHOLDER, OAUTH_TOKEN_PLACEHOLDER } from "./proxy.ts";
 import type { CredentialKind } from "./secrets.ts";
-import { answersNow, freePort, readTerminals, recordTerminal } from "./terminals.ts";
+import {
+  answersNow,
+  forgetTerminal,
+  freePort,
+  readTerminals,
+  recordTerminal,
+} from "./terminals.ts";
 
 // What a Session is made of: a Worktree, a zmx session and a ttyd. This module
 // holds everything that touches the world, including the order the three are
@@ -54,12 +60,50 @@ async function git(args: string[], cwd: string) {
   }
 }
 
+// git that answers a question rather than doing something. Whether it answered
+// is kept separate from what it said, because a question that could not be put
+// is not the same as an answer of "nothing" — and here the difference is
+// between reaping a Worktree and refusing to.
+async function gitRead(args: string[], cwd: string): Promise<{ answered: boolean; out: string }> {
+  try {
+    const { success, stdout } = await new Deno.Command("git", {
+      args,
+      cwd,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return { answered: success, out: new TextDecoder().decode(stdout) };
+  } catch {
+    return { answered: false, out: "" };
+  }
+}
+
 // The Worktree is created on a new branch, which is what makes a Session's
 // branch its own: the agent works there and nowhere else (ADR-0003).
 async function addWorktree(liveTree: string, branch: string): Promise<string> {
   const path = worktreePathFor(liveTree, branch);
   await git(["worktree", "add", "-b", branch, path], liveTree);
   return path;
+}
+
+// The zmx sessions running on this machine, by name. A zmx that will not
+// answer — no server running yet, most often — means no sessions, not a
+// failure: at launch that reads as every Worktree being detached, which is
+// both true and recoverable.
+async function listZmxSessions(): Promise<Set<string>> {
+  try {
+    const { success, stdout } = await new Deno.Command("zmx", {
+      args: ["ls", "--short"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (!success) return new Set();
+    return new Set(
+      new TextDecoder().decode(stdout).split("\n").map((line) => line.trim()).filter(Boolean),
+    );
+  } catch {
+    return new Set();
+  }
 }
 
 // The zmx session is named by the branch and runs Wrap applied to the agent's
@@ -84,11 +128,7 @@ async function startZmxSession(
 
   // The client's own exit code says nothing about the session, so the session
   // being listed is what is waited for.
-  const listed = await pollUntil(async () => {
-    const { stdout } = await new Deno.Command("zmx", { args: ["ls", "--short"], stdout: "piped" })
-      .output();
-    return new TextDecoder().decode(stdout).split("\n").some((line) => line.trim() === name);
-  }, 10_000);
+  const listed = await pollUntil(async () => (await listZmxSessions()).has(name), 10_000);
 
   if (!listed) {
     throw new Error(
@@ -276,6 +316,149 @@ export async function openSession(
   }
 }
 
+// A Worktree git knows about. `--porcelain` emits one stanza per worktree, of
+// `worktree <path>` then `HEAD <sha>` then `branch <ref>`, blank-line separated.
+interface ListedWorktree {
+  path: string;
+  branch?: string;
+}
+
+function parseWorktreeList(porcelain: string): ListedWorktree[] {
+  const worktrees: ListedWorktree[] = [];
+  let current: ListedWorktree | undefined;
+  for (const line of porcelain.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current = { path: line.slice("worktree ".length) };
+      worktrees.push(current);
+    } else if (line.startsWith("branch refs/heads/") && current) {
+      current.branch = line.slice("branch refs/heads/".length);
+    }
+  }
+  return worktrees;
+}
+
+/** A Session found in the world at launch, before any actor exists. */
+export interface DiscoveredSession {
+  branch: string;
+  worktreePath: string;
+  /** Whether a zmx session named by the branch is running. */
+  attached: boolean;
+}
+
+// The Host's picture at launch: `git worktree list --porcelain` joined with
+// `zmx ls`, and nothing read from disk (ADR-0007). Only worktrees at the path
+// the Host would have made — `.claude/worktrees/{branch}` — are Sessions, so
+// the Live tree itself and a worktree someone made elsewhere are not adopted.
+export async function discoverSessions(liveTree: string): Promise<DiscoveredSession[]> {
+  const worktrees = await gitRead(["worktree", "list", "--porcelain"], liveTree);
+  // An empty answer and an unanswered question look the same in the Snapshot,
+  // and a Host showing no Sessions when there are some is the stale picture
+  // ADR-0007 exists to prevent. So a git that will not answer fails the launch.
+  if (!worktrees.answered) {
+    throw new Error(`git worktree list failed in the Live tree ${liveTree}`);
+  }
+  const listed = parseWorktreeList(worktrees.out);
+  const attached = await listZmxSessions();
+  const sessions: DiscoveredSession[] = [];
+  for (const worktree of listed) {
+    if (!worktree.branch) continue;
+    // Matched by shape rather than by string-equality with `worktreePathFor`,
+    // because git reports the resolved path and the Live tree may be a symlink.
+    if (!worktree.path.endsWith(`/.claude/worktrees/${worktree.branch}`)) continue;
+    sessions.push({
+      branch: worktree.branch,
+      worktreePath: worktree.path,
+      attached: attached.has(worktree.branch),
+    });
+  }
+  return sessions;
+}
+
+export interface ReapRequest {
+  branch: string;
+  liveTree: string;
+  worktreePath?: string;
+  ttydPid?: number;
+  /** Whether there is a zmx session and a ttyd to take away. */
+  attached: boolean;
+  /** Reap anyway, whatever the Worktree still holds. */
+  force: boolean;
+}
+
+// Why a Reap did not happen. Thrown rather than returned, because reaping is
+// invoked as a promise and a refusal is the one thing it can fail with that
+// the developer is meant to read; the Machine puts it in the Snapshot.
+export class ReapRefused extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "ReapRefused";
+  }
+}
+
+// What the Worktree still holds that reaping would destroy: work the developer
+// has not saved, or saved and not sent anywhere. Both are checked before
+// anything is taken away, so a refusal leaves all three in place — git's own
+// `worktree remove` refusal comes too late, after the terminal is already gone.
+async function refusalFor(request: ReapRequest): Promise<string | undefined> {
+  if (!request.worktreePath) return undefined;
+  if (!await Deno.stat(request.worktreePath).then(() => true, () => false)) return undefined;
+
+  // Both questions fail closed: work is destroyed by reaping and cannot be got
+  // back, so a check that could not be run refuses rather than waving it
+  // through. `force` is the way past a refusal, including one of these.
+  const status = await gitRead(["status", "--porcelain"], request.worktreePath);
+  if (!status.answered) return "git could not say whether the Worktree is dirty";
+  if (status.out.trim().length > 0) {
+    return `the Worktree is dirty: ${status.out.trim().split("\n").length} uncommitted change(s)`;
+  }
+
+  // Commits on this branch that no remote has. A Live tree with no remote at
+  // all makes every commit unpushed, which is true and is what `force` is for.
+  const unpushed = await gitRead(
+    ["rev-list", "--count", "HEAD", "--not", "--remotes"],
+    request.worktreePath,
+  );
+  const count = Number(unpushed.out.trim());
+  if (!unpushed.answered || !Number.isInteger(count)) {
+    return "git could not say whether the branch has unpushed commits";
+  }
+  if (count > 0) return `the branch has ${count} unpushed commit(s)`;
+  return undefined;
+}
+
+// Reaping a Session: the ttyd, the zmx session and the Worktree go away
+// together (spec user story 19). Order matters — the terminal is closed before
+// what it is showing, and the Worktree goes last, once nothing is in it.
+export async function reapSession(request: ReapRequest): Promise<void> {
+  if (!request.force) {
+    const refusal = await refusalFor(request);
+    if (refusal) throw new ReapRefused(refusal);
+  }
+
+  if (request.attached && request.ttydPid !== undefined) {
+    try {
+      Deno.kill(request.ttydPid, "SIGTERM");
+    } catch {
+      // A ttyd that is already gone is the state we wanted.
+    }
+  }
+  if (request.attached) {
+    await new Deno.Command("zmx", {
+      args: ["kill", request.branch, "--force"],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+  }
+  if (request.worktreePath) {
+    const args = ["worktree", "remove", request.worktreePath];
+    if (request.force) args.push("--force");
+    await git(args, request.liveTree);
+  }
+  // The recorded port pointed at the ttyd just killed; leaving it would offer a
+  // relaunched Host a terminal for a Session that no longer exists.
+  await forgetTerminal(request.liveTree, request.branch);
+}
+
 // Adopting a Session the Host finds already running: its Worktree and its zmx
 // session were made by an earlier Host and are left exactly as they are. Only
 // the terminal is decided, because only the terminal's port was the Host's to
@@ -289,59 +472,11 @@ export async function adoptSession(
   // what is being taken over is checked rather than assumed: without both the
   // Worktree and the zmx session there is no Session here to adopt, and a ttyd
   // must not be started for one.
-  if (!(await discoverSessions(options.liveTree)).includes(branch)) {
+  const found = (await discoverSessions(options.liveTree))
+    .find((session) => session.branch === branch);
+  if (!found?.attached) {
     throw new Error(`no Session is running on "${branch}" to adopt`);
   }
   const terminal = await adoptOrStartTerminal(branch, options.liveTree);
   return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
-}
-
-// Which branches have a zmx session running right now.
-async function zmxSessions(): Promise<Set<string>> {
-  try {
-    const { success, stdout } = await new Deno.Command("zmx", {
-      args: ["ls", "--short"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-    if (!success) return new Set();
-    return new Set(
-      new TextDecoder().decode(stdout).split("\n").map((line) => line.trim()).filter(Boolean),
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-// Which branches have a Worktree under `.claude/worktrees/` in the Live tree.
-// git is asked rather than the filesystem: a directory at the path is not a
-// Worktree, and only a Worktree is a place the agent was given (ADR-0003).
-export async function worktreeBranches(liveTree: string): Promise<string[]> {
-  const { success, stdout } = await new Deno.Command("git", {
-    args: ["worktree", "list", "--porcelain"],
-    cwd: liveTree,
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  if (!success) return [];
-
-  const branches: string[] = [];
-  let path = "";
-  for (const line of new TextDecoder().decode(stdout).split("\n")) {
-    if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
-    if (!line.startsWith("branch refs/heads/")) continue;
-    const branch = line.slice("branch refs/heads/".length);
-    // The Live tree is a worktree too, and it is not a Session; a Session's
-    // Worktree is the one at the path the spec fixes for that branch.
-    if (path === worktreePathFor(liveTree, branch)) branches.push(branch);
-  }
-  return branches;
-}
-
-// The Sessions already running on this machine, rebuilt from git and zmx alone
-// (ADR-0007). A Worktree whose zmx session is gone is not one: nothing is left
-// running for the Host to adopt.
-export async function discoverSessions(liveTree: string): Promise<string[]> {
-  const running = await zmxSessions();
-  return (await worktreeBranches(liveTree)).filter((branch) => running.has(branch));
 }
