@@ -13,3 +13,17 @@ Five things not obvious from the code:
 Machines are XState 5; each ships with a headless test through the Door. No states page, no staged workflow (ADR-0010).
 
 Use `deno task dev` to launch Live. Do not add an egress allowlist without an ADR (ADR-0004).
+
+## Agent skills
+
+### Issue tracker
+
+Fredrin tickets, never GitHub issues and never markdown files in the repo. A spec is a Goal; work is tickets under it. The operating manual is `docs/agents/issue-tracker.md`. Fredrin's memory folder is `docs/`, declared in the tracked `.fredrin/FREDRIN.md`. Until varnick can develop varnick, Fredrin is how varnick is developed.
+
+### Triage labels
+
+The five canonical roles, used verbatim. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root.
