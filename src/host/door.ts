@@ -79,9 +79,13 @@ export function serveDoor(
         const body = new ReadableStream({
           start(controller) {
             const emit = (actor: string, snapshot: unknown) => {
-              controller.enqueue(encoder.encode(
-                `data: ${JSON.stringify({ actor, snapshot })}\n\n`,
-              ));
+              try {
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ actor, snapshot })}\n\n`,
+                ));
+              } catch {
+                // A change can race a disconnect; a closed stream is not an error.
+              }
             };
             for (const [name, actor] of actors) {
               // The current Snapshot first, so a subscriber starts complete.
