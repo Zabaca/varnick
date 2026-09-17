@@ -6,6 +6,7 @@ import {
   makePreviewLauncher,
   makeStubClaude,
   newSession,
+  recordedEnvironment,
   run,
   sessionTest,
   startTestHost,
@@ -21,6 +22,7 @@ interface HostSnapshot {
   value: unknown;
   context: {
     tree: string;
+    proxy?: string;
     previews?: Record<string, PreviewView>;
     previewError?: string;
   };
@@ -134,25 +136,41 @@ sessionTest("PREVIEW launches a second Host from the Worktree on its own port", 
   }
 });
 
-// The environment the stub `claude` recorded, as the agent actually got it.
-async function recordedEnvironment(path: string): Promise<Record<string, string>> {
-  // The stub writes the moment it starts, and the Session is listed as running
-  // the moment zmx has started it; the write may lag that by a beat.
-  const deadline = Date.now() + 10_000;
-  let text = "";
-  while (Date.now() < deadline) {
-    text = await Deno.readTextFile(path).catch(() => "");
-    if (text.includes("ARGV=")) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+sessionTest("a Preview of a Worktree with no Secrets file runs with the Proxy off", async () => {
+  // A Worktree with no `secrets.yaml` of its own — which is every clone before
+  // one is made — so the Preview launched from it finds none and opens anyway
+  // (ADR-0005, amended; ADR-0008).
+  const liveTree = await makeLiveTree();
+  const claudePath = await makeStubClaude(`${liveTree}/stub-record.txt`);
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+
+  const host = await startTestHost({
+    liveTree,
+    claudePath,
+    previewCommand: await makePreviewLauncher(claudePath, "own"),
+  });
+  let preview: PreviewView | undefined;
+  let ttydPid: number | undefined;
+  try {
+    await newSession(host.url, branch);
+    ttydPid = (await waitForSettled(host.url, branch)).ttydPid;
+
+    await sendHost(host.url, { type: "PREVIEW", branch });
+    preview = await waitForPreview(host.url, branch);
+
+    const snapshot = await readHost(preview.url);
+    if (snapshot.context.proxy !== "off") {
+      throw new Error(
+        `expected the Preview's proxy to be "off", got ${JSON.stringify(snapshot.context.proxy)}`,
+      );
+    }
+  } finally {
+    reap(preview?.pid);
+    await host.stop();
+    reap(ttydPid);
+    await run("zmx", ["kill", branch, "--force"]);
   }
-  if (!text.includes("ARGV=")) throw new Error(`the stub never recorded its environment at ${path}`);
-  const env: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const at = line.indexOf("=");
-    if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
-  }
-  return env;
-}
+});
 
 sessionTest("a Session opened through a Preview's Door is driven by that Preview", async () => {
   const liveTree = await makeLiveTree();

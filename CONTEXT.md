@@ -7,7 +7,7 @@ varnick is a desktop window around a coding agent. It gives the agent a worktree
 ### Instances
 
 **Host**:
-The one Deno process behind a window. It holds the actors, serves the page, owns the Door, runs the Proxy, and spawns everything else.
+The one Deno process behind a window. It holds the actors, serves the page, owns the Door, runs the Proxy if there is a Secrets file, and spawns everything else.
 _Avoid_: backend, server, harness, core
 
 **Live**:
@@ -51,11 +51,11 @@ What authenticates the agent to Anthropic. Held by the Host, never by the agent;
 _Avoid_: token, API key (either may be the Credential's kind), secret
 
 **Proxy**:
-The loopback reverse proxy the Host runs, selected in the agent's environment by `ANTHROPIC_BASE_URL`. It replaces the placeholder with the Credential on the way out.
+The loopback reverse proxy the Host runs when there is a Secrets file, selected in the agent's environment by `ANTHROPIC_BASE_URL`. It replaces the placeholder with the Credential on the way out. Without a Secrets file it does not run, and the agent logs itself in (ADR-0005, amended).
 _Avoid_: MITM (a stronger form, not built), gateway
 
 **Secrets file**:
-`secrets.yaml`, sops-encrypted to your age key, committed. Holds the Credential. Readable in every Worktree; decrypting it needs your age key, which the agent is trusted not to use rather than prevented from using (ADR-0004).
+`secrets.yaml`, sops-encrypted to your age key and committed if you make one. Holds the Credential. Optional: its presence is what turns the Proxy on, and one that is there and will not decrypt stops the launch (ADR-0005, amended). Readable in every Worktree; decrypting it needs your age key, which the agent is trusted not to use rather than prevented from using (ADR-0004).
 _Avoid_: vault, keychain, env file
 
 **Agent home**:

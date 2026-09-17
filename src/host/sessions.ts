@@ -14,6 +14,16 @@ import {
 // made in; the states that order moves through are named in the Machine and
 // nowhere else (ADR-0010).
 
+/**
+ * A Proxy that is running, as everything but the Proxy itself needs it: the URL
+ * to send the agent to and the Credential's kind, which is all the Snapshot may
+ * say of it (ADR-0005). Its absence is the whole of the off mode.
+ */
+export interface Proxied {
+  url: string;
+  kind: CredentialKind;
+}
+
 export interface SessionOptions {
   /** Applied to the agent's command; the identity in v1 (ADR-0004). */
   wrap?: Wrap;
@@ -21,12 +31,15 @@ export interface SessionOptions {
   liveTree: string;
   /** The agent's executable; `which claude` unless a launch overrode it. */
   claudePath: string;
-  /** What goes in the agent's `ANTHROPIC_BASE_URL` (ADR-0005). */
-  proxyUrl: string;
+  /**
+   * The Proxy this Host is running: where it answers, and which placeholder it
+   * takes. Absent when there is no Secrets file, and then the agent is given no
+   * credential at all (ADR-0005, amended). The two travel together because
+   * neither is any use alone.
+   */
+  proxy?: Proxied;
   /** What goes in the agent's `VARNICK_DOOR` (ADR-0006). */
   doorUrl: string;
-  /** Which placeholder the agent carries; never the Credential (ADR-0005). */
-  credentialKind: CredentialKind;
 }
 
 // Everything here waits on another process to reach a state it does not
@@ -288,16 +301,29 @@ function agentEnvironment(
   const env = { ...Deno.env.toObject() };
   delete env.ANTHROPIC_API_KEY;
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  // And the base URL with them: inherited, it would send the agent somewhere
+  // this Host did not choose, and in the off mode there is nowhere to send it.
+  delete env.ANTHROPIC_BASE_URL;
   // A Preview was handed its Door port in `VARNICK_PORT` and would otherwise
   // pass it on: an agent inside a Preview running `deno task dev` would launch
   // onto the port its own Host is already listening on.
   delete env.VARNICK_PORT;
 
+  // With no Proxy there is nothing to point the agent at and no placeholder to
+  // give it, so the three stay deleted and Claude Code `/login`s for itself
+  // (ADR-0005, amended). With one, the Proxy is where the agent goes and the
+  // placeholder its kind calls for is what it presents.
+  const proxied: Record<string, string> = options.proxy
+    ? {
+      ANTHROPIC_BASE_URL: options.proxy.url,
+      [options.proxy.kind === "apiKey" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"]:
+        options.proxy.kind === "apiKey" ? API_KEY_PLACEHOLDER : OAUTH_TOKEN_PLACEHOLDER,
+    }
+    : {};
+
   return {
     ...env,
-    ANTHROPIC_BASE_URL: options.proxyUrl,
-    [options.credentialKind === "apiKey" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"]:
-      options.credentialKind === "apiKey" ? API_KEY_PLACEHOLDER : OAUTH_TOKEN_PLACEHOLDER,
+    ...proxied,
     CLAUDE_CONFIG_DIR: agentHome(options.liveTree),
     GIT_AUTHOR_NAME: identity.name,
     GIT_AUTHOR_EMAIL: identity.email,

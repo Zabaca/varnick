@@ -41,6 +41,19 @@ function credentialKind(value: string): CredentialKind {
   return value.startsWith("sk-ant-api") ? "apiKey" : "oauthToken";
 }
 
+// The Secrets file is optional, and its presence is the whole of the switch
+// (ADR-0005, amended): absent means the Host runs no Proxy and the agent logs
+// itself in. A file that is there and will not open is not an answer, so it is
+// left to `readCredential` to fail the launch over.
+export async function findCredential(
+  options: ReadCredentialOptions = {},
+): Promise<Credential | undefined> {
+  const secretsFile = options.secretsFile ?? defaultSecretsFile();
+  const present = await Deno.stat(secretsFile).then(() => true, () => false);
+  if (!present) return undefined;
+  return await readCredential({ ...options, secretsFile });
+}
+
 export async function readCredential(options: ReadCredentialOptions = {}): Promise<Credential> {
   const secretsFile = options.secretsFile ?? defaultSecretsFile();
 

@@ -104,7 +104,14 @@ export async function makeStubClaude(recordTo: string): Promise<string> {
 // it runs from from its cwd. The fixtures it cannot read from the environment
 // are written into it, because the Worktree it is launched in has no Secrets
 // file of its own.
-export async function makePreviewLauncher(claudePath: string): Promise<string[]> {
+//
+// Which is also the other mode: `"own"` names the Worktree's own `secrets.yaml`
+// — the path a real Preview resolves from its cwd — so the Preview finds none
+// and runs with the Proxy off (ADR-0005, amended).
+export async function makePreviewLauncher(
+  claudePath: string,
+  secrets: "fixture" | "own" = "fixture",
+): Promise<string[]> {
   const path = `${await Deno.makeTempDir({ prefix: "varnick-preview-" })}/launch.ts`;
   const main = new URL("./main.ts", import.meta.url).href;
   await Deno.writeTextFile(
@@ -114,8 +121,12 @@ export async function makePreviewLauncher(claudePath: string): Promise<string[]>
       `await startHost({`,
       `  headless: true,`,
       `  port: Number(Deno.env.get("VARNICK_PORT")),`,
-      `  secretsFile: ${JSON.stringify(FIXTURE_SECRETS)},`,
-      `  ageKeyFile: ${JSON.stringify(FIXTURE_AGE_KEY)},`,
+      ...(secrets === "fixture"
+        ? [
+          `  secretsFile: ${JSON.stringify(FIXTURE_SECRETS)},`,
+          `  ageKeyFile: ${JSON.stringify(FIXTURE_AGE_KEY)},`,
+        ]
+        : [`  secretsFile: \`\${Deno.cwd()}/secrets.yaml\`,`]),
       `  claudePath: ${JSON.stringify(claudePath)},`,
       `});`,
       ``,
@@ -126,6 +137,26 @@ export async function makePreviewLauncher(claudePath: string): Promise<string[]>
   // it launches resolves the same dependencies this one did.
   const config = new URL("../../deno.json", import.meta.url).pathname;
   return [Deno.execPath(), "run", "-A", "--config", config, path];
+}
+
+// The environment the stub `claude` recorded, as the agent actually got it.
+// The stub writes the moment it starts, and a Session is listed as running the
+// moment zmx has started it, so the write may lag that by a beat.
+export async function recordedEnvironment(path: string): Promise<Record<string, string>> {
+  const deadline = Date.now() + 10_000;
+  let text = "";
+  while (Date.now() < deadline) {
+    text = await Deno.readTextFile(path).catch(() => "");
+    if (text.includes("ARGV=")) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!text.includes("ARGV=")) throw new Error(`the stub never recorded its environment at ${path}`);
+  const env: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const at = line.indexOf("=");
+    if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
+  }
+  return env;
 }
 
 export function startTestHost(options: HostOptions) {

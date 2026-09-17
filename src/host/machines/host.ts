@@ -1,12 +1,21 @@
 import { assign, fromPromise, setup } from "xstate";
 import type { CredentialKind } from "../secrets.ts";
+import type { Proxied } from "../sessions.ts";
 
 // What the Snapshot may say about the Credential: its kind, never its value
 // (ADR-0005). The value stays in the Host's memory and reaches only the Proxy.
 export interface HostContext {
   pings: number;
-  credential: { kind: CredentialKind };
-  proxyUrl: string;
+  /**
+   * Which mode the Secrets file put this Host in (ADR-0005, amended): `on` and
+   * there is a Proxy the agent is pointed at, `off` and the agent logs itself
+   * in. It is read off the launch, never sent as an Event.
+   */
+  proxy: "on" | "off";
+  /** Absent in the `off` mode; its kind and never its value in the `on` one. */
+  credential?: { kind: CredentialKind };
+  /** Where the Proxy answers; absent in the `off` mode. */
+  proxyUrl?: string;
   /**
    * The tree this Host runs from: the Live tree, or a Worktree when this Host
    * is a Preview (ADR-0008). It is how a Preview is told apart from Live, and
@@ -47,7 +56,7 @@ export interface LaunchedPreview extends PreviewView {
 export const hostMachine = setup({
   types: {
     context: {} as HostContext,
-    input: {} as { credential: { kind: CredentialKind }; proxyUrl: string; tree: string },
+    input: {} as { proxy?: Proxied; tree: string },
     events: {} as { type: "PING" } | { type: "RESTART" } | { type: "PREVIEW"; branch: string },
   },
   actors: {
@@ -67,7 +76,16 @@ export const hostMachine = setup({
 }).createMachine({
   id: "host",
   initial: "running",
-  context: ({ input }) => ({ pings: 0, previews: {}, ...input }),
+  // The three the Snapshot reports about the Proxy are derived here from the
+  // one value the launch made, so they cannot come to disagree.
+  context: ({ input }) => ({
+    pings: 0,
+    previews: {},
+    tree: input.tree,
+    proxy: input.proxy ? "on" as const : "off" as const,
+    credential: input.proxy ? { kind: input.proxy.kind } : undefined,
+    proxyUrl: input.proxy?.url,
+  }),
   states: {
     // `settled` marks the states this Host comes to rest in, so a caller
     // waiting on a Preview reads a tag rather than a state name (ADR-0010);
