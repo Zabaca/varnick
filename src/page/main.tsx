@@ -15,6 +15,20 @@ interface SessionView {
   error?: string;
 }
 
+// There is one Landing at a time, and its Snapshot says which branch it is
+// about. The page names neither its states nor its reasons (ADR-0010): both are
+// rendered as whatever the Snapshot says.
+interface LandingView {
+  branch?: string;
+  reason?: string;
+  error?: string;
+}
+
+function landingOf(snapshots: Record<string, Snapshot>): { state: string } & LandingView {
+  const landing = snapshots.landing;
+  return { state: String(landing?.value ?? "…"), ...(landing?.context as LandingView ?? {}) };
+}
+
 function sessionsOf(snapshots: Record<string, Snapshot>): SessionView[] {
   const context = snapshots.sessions?.context as { sessions?: Record<string, SessionView> };
   return Object.values(context?.sessions ?? {}).sort((a, b) => a.branch.localeCompare(b.branch));
@@ -64,6 +78,7 @@ function App() {
   }, []);
 
   const sessions = sessionsOf(snapshots);
+  const landing = landingOf(snapshots);
   // A selection that has not been made yet falls to the first Session, so the
   // terminal is there as soon as one is.
   const shown = sessions.find((session) => session.branch === selected) ?? sessions[0];
@@ -92,6 +107,22 @@ function App() {
             </button>
             <span data-state={session.state}>{session.state}</span>
             {session.error ? <span role="alert">{session.error}</span> : null}
+            {/* The Event carries the branch name and nothing else; the Host
+                decides the rest (ADR-0003). */}
+            <button
+              type="button"
+              onClick={() => send("landing", { type: "LAND", branch: session.branch })}
+            >
+              Land
+            </button>
+            {landing.branch === session.branch
+              ? (
+                <span data-landing={landing.state} title={landing.error}>
+                  {landing.state}
+                  {landing.reason ? `: ${landing.reason}` : ""}
+                </span>
+              )
+              : null}
           </li>
         ))}
       </ul>
