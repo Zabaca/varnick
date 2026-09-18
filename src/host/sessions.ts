@@ -588,16 +588,17 @@ export async function adoptSession(
   branch: string,
   options: SessionOptions,
 ): Promise<OpenedSession> {
-  const worktreePath = worktreePathFor(options.liveTree, branch);
   // Adopting is asked for through the Door like anything else (ADR-0006), so
   // what is being taken over is checked rather than assumed: without both the
   // Worktree and the zmx session there is no Session here to adopt, and a ttyd
-  // must not be started for one.
+  // must not be started for one. The Worktree is where git says it is, not
+  // where this Host would have put it: a Preview runs from a Worktree and sees
+  // the same Sessions as Live (ADR-0008), whose Worktrees are not under its tree.
   const found = (await discoverSessions(options.liveTree))
     .find((session) => session.branch === branch);
   if (!found?.attached) {
     throw new Error(`no Session is running on "${branch}" to adopt`);
   }
   const terminal = await adoptOrStartTerminal(branch, options.liveTree);
-  return { worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
+  return { worktreePath: found.worktreePath, terminalUrl: terminal.url, ttydPid: terminal.pid };
 }

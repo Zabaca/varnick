@@ -196,6 +196,18 @@ sessionTest("a Session opened through a Preview's Door is driven by that Preview
     await sendHost(host.url, { type: "PREVIEW", branch });
     preview = await waitForPreview(host.url, branch);
 
+    // The Preview found the Session it was launched from, and says where that
+    // Worktree is: where git has it, not under the Preview's own tree.
+    const adopted = await waitForSettled(preview.url, branch);
+    const worktree = `${liveTree}/.claude/worktrees/${branch}`;
+    if (adopted.state !== "running" || adopted.worktreePath !== worktree) {
+      throw new Error(
+        `expected the Preview to adopt "${branch}" running at ${worktree}, got ${
+          JSON.stringify(adopted)
+        }`,
+      );
+    }
+
     // A Session asked of the Preview, through the Preview's own Door.
     await newSession(preview.url, inPreview);
     const session = await waitForSettled(preview.url, inPreview);

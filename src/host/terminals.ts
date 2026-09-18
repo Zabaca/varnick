@@ -43,21 +43,38 @@ async function writeTerminals(
   await Deno.writeTextFile(path, `${JSON.stringify(terminals, null, 2)}\n`);
 }
 
-export async function recordTerminal(
+// Every change to the file is a read, a change and a write, and at launch one
+// is made per Session found, all at once. Left to interleave they lose entries
+// and tear the file; so within one Host they run one after another.
+let pending: Promise<unknown> = Promise.resolve();
+
+function change(
+  liveTree: string,
+  fn: (terminals: Record<string, RecordedTerminal>) => Record<string, RecordedTerminal> | undefined,
+): Promise<void> {
+  const next = pending.then(async () => {
+    const changed = fn(await readTerminals(liveTree));
+    if (changed) await writeTerminals(liveTree, changed);
+  });
+  pending = next.catch(() => {});
+  return next;
+}
+
+export function recordTerminal(
   liveTree: string,
   branch: string,
   terminal: RecordedTerminal,
 ): Promise<void> {
-  const terminals = await readTerminals(liveTree);
-  await writeTerminals(liveTree, { ...terminals, [branch]: terminal });
+  return change(liveTree, (terminals) => ({ ...terminals, [branch]: terminal }));
 }
 
 /** Forget a branch's terminal, once there is no Session left for it to serve. */
-export async function forgetTerminal(liveTree: string, branch: string): Promise<void> {
-  const terminals = await readTerminals(liveTree);
-  if (!(branch in terminals)) return;
-  delete terminals[branch];
-  await writeTerminals(liveTree, terminals);
+export function forgetTerminal(liveTree: string, branch: string): Promise<void> {
+  return change(liveTree, (terminals) => {
+    if (!(branch in terminals)) return undefined;
+    const { [branch]: _gone, ...rest } = terminals;
+    return rest;
+  });
 }
 
 /**
