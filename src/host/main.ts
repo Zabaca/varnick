@@ -6,7 +6,7 @@ import { type Proxy, serveProxy } from "./proxy.ts";
 import { sessionsMachine } from "./machines/sessions.ts";
 import { landingMachine } from "./machines/landing.ts";
 import { discoverSessions, type Proxied, whichClaude } from "./sessions.ts";
-import { answersNow } from "./terminals.ts";
+import { answersNow, doorFile, readDoor, writeDoorFile } from "./terminals.ts";
 import type { Wrap } from "./wrap.ts";
 
 // The Secrets options are the Credential's, unchanged: a launch is where they
@@ -106,6 +106,7 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
       hostMachine.provide({
         actors: {
           relaunch: fromPromise(() => relaunch(launchCommand, liveTree, release, exit)),
+          quit: fromPromise(() => quit(release, exit)),
           launchPreview: fromPromise(({ input }: { input: { branch: string } }) =>
             launchPreview(previewCommand, liveTree, input.branch)
           ),
@@ -152,6 +153,19 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
   return { ...door, proxyUrl: proxy?.url, stop: release };
 }
 
+// A QUIT (ADR-0008): this Host lets go of its Door and exits, and nothing
+// takes its place. It is how a Preview is closed by the Host that reaps the
+// Worktree it runs from, and it is asked for through the Door like anything
+// else (ADR-0006), so an agent can close a Preview too. The Sessions stay, as
+// they do across a Restart: zmx and ttyd were never this Host's children.
+async function quit(release: () => Promise<void>, exit: () => void): Promise<void> {
+  // The Event's own response is still being written; it goes out before the
+  // Door that is carrying it is taken away.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await release();
+  exit();
+}
+
 // A Restart (spec §Restart). The successor is launched detached from the Live
 // tree, so it is not a child of this Host and nothing it does waits on us;
 // zmx and ttyd were never children either, which is why the Sessions live
@@ -195,22 +209,6 @@ async function relaunch(
   }
 
   exit();
-}
-
-// Where a Host says which port its Door came up on: a file in its own tree,
-// written once the Door is open and removed when it is released. It is how a
-// Preview, a process nobody waits on, tells the Host that launched it where it
-// is — a port cannot be handed in, because under `deno desktop` the runtime
-// binds the Door to a port of its own choosing and ignores the one asked for.
-// It is not persistence of a Machine (ADR-0007): a launch never believes it,
-// it deletes it and waits for a fresh one, then checks that what it names answers.
-export function doorFile(tree: string): string {
-  return `${tree}/.varnick/door`;
-}
-
-async function writeDoorFile(tree: string, url: string): Promise<void> {
-  await Deno.mkdir(`${tree}/.varnick`, { recursive: true });
-  await Deno.writeTextFile(doorFile(tree), `${url}\n`);
 }
 
 // A Preview (ADR-0008): the same launch command, run from the branch's
@@ -261,7 +259,7 @@ async function launchPreview(
   // up, and it is not this Host's to kill.
   const deadline = Date.now() + LAUNCH_TAKES_AT_MOST_MS;
   while (Date.now() < deadline) {
-    const url = (await Deno.readTextFile(doorFile(worktree)).catch(() => "")).trim();
+    const url = await readDoor(worktree);
     if (url && await answersNow(Number(new URL(url).port))) {
       return { branch, url, pid: preview.pid };
     }

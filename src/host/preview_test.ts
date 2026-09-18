@@ -236,6 +236,71 @@ sessionTest("a Session opened through a Preview's Door is driven by that Preview
   }
 });
 
+async function sendReap(doorUrl: string, branch: string): Promise<void> {
+  const res = await fetch(`${doorUrl}/actors/sessions/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "REAP", branch, force: true }),
+  });
+  if (res.status !== 200) throw new Error(`REAP: expected 200, got ${res.status}`);
+  await res.body?.cancel();
+}
+
+async function answers(url: string): Promise<boolean> {
+  try {
+    await (await fetch(`${url}/actors/host`)).body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+sessionTest("reaping a previewed branch closes the Preview before the Worktree goes", async () => {
+  const liveTree = await makeLiveTree();
+  const claudePath = await makeStubClaude(`${liveTree}/stub-record.txt`);
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+
+  const host = await startTestHost({
+    liveTree,
+    claudePath,
+    previewCommand: await makePreviewLauncher(claudePath),
+  });
+  let preview: PreviewView | undefined;
+  try {
+    await newSession(host.url, branch);
+    await waitForSettled(host.url, branch);
+    await sendHost(host.url, { type: "PREVIEW", branch });
+    preview = await waitForPreview(host.url, branch);
+    if (!await answers(preview.url)) throw new Error("the Preview never answered");
+
+    // The branch has commits no remote has, so the Reap is forced.
+    await sendReap(host.url, branch);
+    const deadline = Date.now() + 30_000;
+    let sessions: Record<string, unknown> = {};
+    while (Date.now() < deadline) {
+      sessions = ((await (await fetch(`${host.url}/actors/sessions`)).json()) as {
+        context: { sessions: Record<string, unknown> };
+      }).context.sessions;
+      if (!sessions[branch]) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (sessions[branch]) {
+      throw new Error(`the Session was not reaped: ${JSON.stringify(sessions[branch])}`);
+    }
+    if (await answers(preview.url)) {
+      throw new Error(`the Preview at ${preview.url} is still answering after the Reap`);
+    }
+    const worktree = `${liveTree}/.claude/worktrees/${branch}`;
+    if (await Deno.stat(worktree).then(() => true, () => false)) {
+      throw new Error(`the Worktree ${worktree} is still there after the Reap`);
+    }
+  } finally {
+    reap(preview?.pid);
+    await host.stop();
+    await run("zmx", ["kill", branch, "--force"]);
+  }
+});
+
 sessionTest("PREVIEW of a branch with no Worktree is refused and leaves the Host running", async () => {
   const liveTree = await makeLiveTree();
   // A directory where the Worktree would be, but no Worktree: whatever is in

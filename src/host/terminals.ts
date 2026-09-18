@@ -77,6 +77,29 @@ export function forgetTerminal(liveTree: string, branch: string): Promise<void> 
   });
 }
 
+// Where a Host says which port its Door came up on: a file in its own tree,
+// written once the Door is open and removed when it is released. It is how a
+// Preview, a process nobody waits on, tells the Host that launched it where it
+// is — a port cannot be handed in, because under `deno desktop` the runtime
+// binds the Door to a port of its own choosing and ignores the one asked for —
+// and how a Reap finds the Preview running in the Worktree it is about to
+// remove. It is not persistence of a Machine (ADR-0007): nothing believes it
+// without checking that what it names answers.
+export function doorFile(tree: string): string {
+  return `${tree}/.varnick/door`;
+}
+
+export async function writeDoorFile(tree: string, url: string): Promise<void> {
+  await Deno.mkdir(`${tree}/.varnick`, { recursive: true });
+  await Deno.writeTextFile(doorFile(tree), `${url}\n`);
+}
+
+/** The Door URL a tree's Host wrote down, or nothing if there is no file. */
+export async function readDoor(tree: string): Promise<string | undefined> {
+  const url = (await Deno.readTextFile(doorFile(tree)).catch(() => "")).trim();
+  return url || undefined;
+}
+
 /**
  * A loopback port nothing is listening on. Every port the Host hands to another
  * process — a ttyd's, a Preview's Door — is chosen here: the listener is opened

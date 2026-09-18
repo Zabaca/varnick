@@ -86,7 +86,8 @@ Live, because a Session belongs to the machine and not to a Host. A Session
 opened through the Preview's Door carries that Door in `VARNICK_DOOR`, so an
 agent it starts drives the Preview and not Live. It is not waited on and is not stopped when the
 Host that launched it stops; its host code is the agent's, which is the point
-(ADR-0008). Only a branch with a Worktree can be previewed
+(ADR-0008). It is closed with `{"type":"QUIT"}` at its own Door, and reaping
+the branch it runs from does exactly that before the Worktree is removed. Only a branch with a Worktree can be previewed
 (ADR-0003); anything else is refused, with the reason in the Snapshot.
 
 ## Stack

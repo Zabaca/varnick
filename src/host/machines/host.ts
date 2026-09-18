@@ -57,11 +57,18 @@ export const hostMachine = setup({
   types: {
     context: {} as HostContext,
     input: {} as { proxy?: Proxied; tree: string },
-    events: {} as { type: "PING" } | { type: "RESTART" } | { type: "PREVIEW"; branch: string },
+    events: {} as
+      | { type: "PING" }
+      | { type: "RESTART" }
+      | { type: "QUIT" }
+      | { type: "PREVIEW"; branch: string },
   },
   actors: {
     relaunch: fromPromise((): Promise<void> => {
       return Promise.reject(new Error("this Host was launched without a way to relaunch itself"));
+    }),
+    quit: fromPromise((): Promise<void> => {
+      return Promise.reject(new Error("this Host was launched without a way to quit"));
     }),
     // Launching a Preview is the launch's business, for the same reason a
     // Restart is: only the launch knows the command it was started with.
@@ -97,6 +104,7 @@ export const hostMachine = setup({
           actions: assign({ pings: ({ context }) => context.pings + 1 }),
         },
         RESTART: { target: "restarting" },
+        QUIT: { target: "quitting" },
         // A Preview of a branch already previewed is launched again: the first
         // may be gone, and this Host persists nothing to know (ADR-0007).
         PREVIEW: {
@@ -128,6 +136,20 @@ export const hostMachine = setup({
           target: "running",
           actions: assign({
             previewError: ({ event }) =>
+              event.error instanceof Error ? event.error.message : String(event.error),
+          }),
+        },
+      },
+    },
+    // This Host is on its way out and nothing replaces it: how a Preview is
+    // closed (ADR-0008). Like a Restart, the only way out is the way that failed.
+    quitting: {
+      invoke: {
+        src: "quit",
+        onError: {
+          target: "restartFailed",
+          actions: assign({
+            error: ({ event }) =>
               event.error instanceof Error ? event.error.message : String(event.error),
           }),
         },

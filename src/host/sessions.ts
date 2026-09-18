@@ -6,6 +6,7 @@ import {
   answersNow,
   forgetTerminal,
   freePort,
+  readDoor,
   readTerminals,
   recordTerminal,
 } from "./terminals.ts";
@@ -547,14 +548,39 @@ async function refusalFor(request: ReapRequest): Promise<string | undefined> {
   return undefined;
 }
 
-// Reaping a Session: the ttyd, the zmx session and the Worktree go away
-// together (spec user story 19). Order matters — the terminal is closed before
-// what it is showing, and the Worktree goes last, once nothing is in it.
+// A Host running from the Worktree — a Preview of the branch (ADR-0008) — is
+// asked to QUIT through its own Door, and is waited for, before the tree it
+// runs from is taken away. A Preview that will not go stops the Reap: the
+// Worktree is not removed from under a Host still using it.
+async function quitPreviewIn(worktreePath: string): Promise<void> {
+  const url = await readDoor(worktreePath);
+  if (!url) return;
+  const port = Number(new URL(url).port);
+  if (!await answersNow(port)) return;
+  const res = await fetch(`${url}/actors/host/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "QUIT" }),
+  }).catch(() => undefined);
+  await res?.body?.cancel();
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!await answersNow(port)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`the Preview at ${url} did not quit`);
+}
+
+// Reaping a Session: the Preview in it, the ttyd, the zmx session and the
+// Worktree go away together (spec user story 19). Order matters — the Preview
+// first, since it runs from the tree; then the terminal, before what it is
+// showing; and the Worktree last, once nothing is in it.
 export async function reapSession(request: ReapRequest): Promise<void> {
   if (!request.force) {
     const refusal = await refusalFor(request);
     if (refusal) throw new ReapRefused(refusal);
   }
+  if (request.worktreePath) await quitPreviewIn(request.worktreePath);
 
   if (request.attached && request.ttydPid !== undefined) {
     try {
