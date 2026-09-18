@@ -159,6 +159,24 @@ export async function recordedEnvironment(path: string): Promise<Record<string, 
   return env;
 }
 
+// The Host in these tests runs in this process, so its environment is this
+// process's, and "the shell that launched varnick" is what a test writes here.
+// A name given `undefined` is unset. Restoring is the caller's, in a `finally`:
+// left set, these leak into every later test in the file.
+export function setHostEnvironment(vars: Record<string, string | undefined>): () => void {
+  const before = new Map(Object.keys(vars).map((name) => [name, Deno.env.get(name)]));
+  for (const [name, value] of Object.entries(vars)) {
+    if (value === undefined) Deno.env.delete(name);
+    else Deno.env.set(name, value);
+  }
+  return () => {
+    for (const [name, value] of before) {
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
+  };
+}
+
 export function startTestHost(options: HostOptions) {
   return startHost({
     headless: true,

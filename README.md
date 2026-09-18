@@ -8,9 +8,16 @@ Read [CONTEXT.md](CONTEXT.md) for the words and [docs/adr/](docs/adr/) for why. 
 
 ## The Credential
 
-Optional. Without a `secrets.yaml` the Host injects nothing and you `/login`
-once inside a Session; the token lives in the agent's home under
-`.varnick/claude`. With one, it lives in `secrets.yaml` at the repo
+Optional. Without a `secrets.yaml` the Host injects nothing and a Session
+inherits the credential variables of the shell that launched varnick —
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL`,
+untouched. The setup that serves is a shell that sourced
+`zabaca/claude-mitm-proxy`'s client env: it carries that proxy in `HTTPS_PROXY`
+and its own placeholder in `CLAUDE_CODE_OAUTH_TOKEN`, and the agent reaches
+Anthropic through it exactly as `claude` in that shell would. A shell carrying
+none of them gives the agent none of them, and you `/login` once inside a
+Session; the token lives in the agent's home under `.varnick/claude`. With one,
+the Credential lives in `secrets.yaml` at the repo
 root, sops-encrypted to your age key and committed; the Host decrypts it at
 launch, holds it in memory, and runs the Proxy that swaps the agent's
 placeholder for it on the way to `api.anthropic.com` (ADR-0005). The agent never
@@ -54,9 +61,10 @@ The command the Session runs comes out of `Wrap` (`src/host/wrap.ts`), which in
 v1 returns it unchanged — the one place a kernel sandbox would go (ADR-0004).
 The agent's environment carries `CLAUDE_CONFIG_DIR` at `.varnick/claude`, your
 git identity and the Door's URL in `VARNICK_DOOR`, and — when there is a
-`secrets.yaml` — the Proxy in `ANTHROPIC_BASE_URL` and a placeholder credential.
-Without one it carries no credential variable at all. Either way the Credential
-itself is not in it (ADR-0005).
+`secrets.yaml` — the Proxy in `ANTHROPIC_BASE_URL` and a placeholder credential,
+which replace whatever the launching shell had. Without one those variables are
+passed on as they came. Either way the Credential itself is not in it
+(ADR-0005).
 
 A Session outlives the Host by design, so it is not stopped when varnick exits.
 `deno task test` needs `git`, `zmx`, `ttyd` and `sops`; without any of them the
