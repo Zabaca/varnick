@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { TerminalPane } from "./terminal.tsx";
 
 // The page renders Snapshots from /stream and sends Events to the Door
 // (ADR-0006). It holds no machine, and it names no state: a badge shows
@@ -227,12 +228,16 @@ function App() {
         ))}
       </ul>
 
+      {/* The terminal is the page's own xterm.js on ttyd's socket, so that a
+          key can be mapped on its way out (ADR-0002, amended). Keyed by branch
+          so that switching Sessions starts a terminal over rather than
+          carrying this one's scrollback to another Session's ttyd. */}
       {shown?.terminalUrl
         ? (
-          <iframe
+          <TerminalPane
+            key={shown.branch}
+            url={shown.terminalUrl}
             title={`terminal for ${shown.branch}`}
-            src={shown.terminalUrl}
-            style={{ width: "100%", height: "70vh", border: "1px solid #ccc" }}
           />
         )
         : <p>No terminal yet.</p>}
