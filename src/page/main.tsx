@@ -29,6 +29,8 @@ interface LandingView {
 // What the `host` Snapshot says about the Previews it has launched (ADR-0008),
 // and which mode the Secrets file put this Host in (ADR-0005, amended).
 interface HostView {
+  /** The tree this Host runs from: the Live tree, or a Worktree for a Preview (ADR-0008). */
+  tree?: string;
   previews?: Record<string, { url: string; pid: number }>;
   previewError?: string;
   proxy?: "on" | "off";
@@ -38,6 +40,13 @@ interface HostView {
 function hostOf(snapshots: Record<string, Snapshot>): { state: string } & HostView {
   const host = snapshots.host;
   return { state: String(host?.value ?? "…"), ...(host?.context as HostView ?? {}) };
+}
+
+// Which branch a Host is a Preview of, or nothing for Live. The only thing
+// that tells the two apart is the tree the Host runs from (ADR-0008), and a
+// Worktree is always at `.claude/worktrees/{branch}`.
+function previewOf(tree: string | undefined): string | undefined {
+  return tree?.match(/\/\.claude\/worktrees\/([^/]+)$/)?.[1];
 }
 
 function landingOf(snapshots: Record<string, Snapshot>): { state: string } & LandingView {
@@ -100,10 +109,28 @@ function App() {
   // terminal is there as soon as one is.
   const shown = sessions.find((session) => session.branch === selected) ?? sessions[0];
 
+  // A Preview is told from Live in the window title and the heading, and by a
+  // tinted ground, so two windows side by side are never mistaken (ADR-0008).
+  const preview = previewOf(host.tree);
+  const name = preview ? `varnick preview of ${preview}` : "varnick";
+  useEffect(() => {
+    document.title = name;
+  }, [name]);
+
   return (
-    <main style={{ fontFamily: "system-ui", padding: "1rem" }}>
+    <main
+      data-preview={preview}
+      style={{
+        fontFamily: "system-ui",
+        padding: "1rem",
+        minHeight: "100vh",
+        boxSizing: "border-box",
+        background: preview ? "#fff7e0" : undefined,
+      }}
+    >
       <h1>
-        varnick <small>{host.state}</small>
+        varnick {preview ? <small>preview of <code>{preview}</code></small> : null}{" "}
+        <small>{host.state}</small>
       </h1>
       {/* Which mode the Host is in, and the Credential's kind when there is
           one — never its value, which the Snapshot does not carry (ADR-0005). */}
