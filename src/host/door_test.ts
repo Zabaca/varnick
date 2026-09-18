@@ -237,3 +237,18 @@ hostTest("an OAuth token is reported as one, not as an API key", async () => {
     await host.stop();
   }
 });
+
+hostTest("stop() returns while a /stream subscriber is still connected", async () => {
+  // The page holds `/stream` open for as long as it is shown, and
+  // `Deno.serve`'s shutdown waits for every connection; a Restart that waited
+  // on the page never restarted.
+  const host = await startTestHost({ liveTree: await makeLiveTree() });
+  const res = await fetch(`${host.url}/stream`);
+  const reader = res.body!.getReader();
+  await reader.read(); // the first Snapshot: the subscription is live
+  const stopped = host.stop().then(() => "stopped");
+  const late = new Promise<string>((resolve) => setTimeout(() => resolve("timed out"), 5_000));
+  const outcome = await Promise.race([stopped, late]);
+  reader.cancel().catch(() => {});
+  if (outcome !== "stopped") throw new Error("stop() waited on the open stream");
+});

@@ -1,5 +1,6 @@
 // A Restart must not cost a Session (spec user story 6). Every test here drives
 // a real headless Host through the Door and nothing else (ADR-0006).
+import { denoOnPath } from "./main.ts";
 import {
   answers,
   makeLiveTree,
@@ -168,4 +169,20 @@ sessionTest("RESTART runs the launch command from the Live tree and stops the ol
   } finally {
     if (!exited) await host.stop();
   }
+});
+
+Deno.test("the launch command is the deno on PATH, not the process executable", async () => {
+  // Under `deno desktop`, Deno.execPath() is the webview binary; see denoOnPath.
+  const dir = await Deno.makeTempDir({ prefix: "varnick-path-" });
+  await Deno.writeTextFile(`${dir}/deno`, "#!/bin/sh\necho stub-deno\n");
+  await Deno.chmod(`${dir}/deno`, 0o755);
+  const found = denoOnPath({ PATH: `/nonexistent:${dir}` });
+  if (found !== `${dir}/deno`) throw new Error(`expected ${dir}/deno, got ${found}`);
+  let threw = false;
+  try {
+    denoOnPath({ PATH: "/nonexistent" });
+  } catch {
+    threw = true;
+  }
+  if (!threw) throw new Error("no deno on PATH should be an error, not a guess");
 });

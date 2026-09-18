@@ -323,6 +323,18 @@ function agentEnvironment(
   // pass it on: an agent inside a Preview running `deno task dev` would launch
   // onto the port its own Host is already listening on.
   delete env.VARNICK_PORT;
+  // Claude Code marks the environment of every process it starts, and a Host
+  // launched from inside a Claude Code session — a developer's, or an agent's
+  // own `deno task dev` for a Preview — carries those marks. Passed on, they
+  // make the Session's `claude` believe it is a child of that session: it
+  // stops saving its transcript and warns about it. None of them is
+  // configuration; all are stripped.
+  for (const name of Object.keys(env)) {
+    if (name === "CLAUDECODE" || name === "CLAUDE_PID" || name === "CLAUDE_EFFORT") delete env[name];
+    else if (/^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|EXECPATH|SESSION_ID|FORK_SUBAGENT|MESSAGING_)/.test(name)) {
+      delete env[name];
+    }
+  }
 
   // The credential variables and the base URL are the Proxy's business and only
   // the Proxy's. With one there is a boundary to keep: both kinds go, because a

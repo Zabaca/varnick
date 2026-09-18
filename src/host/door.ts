@@ -49,6 +49,8 @@ export function serveDoor(
   actors: Map<string, AnyActorRef>,
   options: { port: number; pageDir?: string },
 ): Door {
+  // Every open `/stream` subscriber, so `stop` can end them (see below).
+  const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const server = Deno.serve(
     { hostname: "127.0.0.1", port: options.port },
     async (req) => {
@@ -79,8 +81,11 @@ export function serveDoor(
       if (url.pathname === "/stream" && req.method === "GET") {
         const encoder = new TextEncoder();
         const subscriptions: { unsubscribe(): void }[] = [];
+        let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
         const body = new ReadableStream({
           start(controller) {
+            stream = controller;
+            streams.add(controller);
             const emit = (actor: string, snapshot: unknown) => {
               try {
                 controller.enqueue(encoder.encode(
@@ -97,6 +102,7 @@ export function serveDoor(
             }
           },
           cancel() {
+            if (stream) streams.delete(stream);
             for (const sub of subscriptions) sub.unsubscribe();
           },
         });
@@ -129,6 +135,21 @@ export function serveDoor(
   return {
     url: `http://127.0.0.1:${server.addr.port}`,
     port: server.addr.port,
-    stop: () => server.shutdown(),
+    // `shutdown` waits for every open connection to finish, and a subscriber
+    // to `/stream` never finishes on its own: the page holds one open for as
+    // long as it is shown. A Restart that waited on it never restarted, so
+    // the streams are ended first, which is the disconnect the page reconnects
+    // from.
+    stop: async () => {
+      for (const controller of streams) {
+        try {
+          controller.close();
+        } catch {
+          // already closed by a disconnect that raced this
+        }
+      }
+      streams.clear();
+      await server.shutdown();
+    },
   };
 }

@@ -776,3 +776,52 @@ sessionTest("a branch checked out in a Worktree elsewhere is refused with its pa
     await run("git", ["worktree", "remove", "--force", elsewhere], liveTree);
   }
 });
+
+sessionTest("Claude Code's own session markers are not passed on to the agent", async () => {
+  // A Host launched from inside a Claude Code session inherits the marks it
+  // puts on every child; passed on, the Session's `claude` believes it is a
+  // subagent of that session and stops saving its transcript.
+  const liveTree = await makeLiveTree();
+  const record = `${liveTree}/stub-record.txt`;
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const restore = setHostEnvironment({
+    CLAUDECODE: "1",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDE_CODE_ENTRYPOINT: "cli",
+    CLAUDE_CODE_SESSION_ID: "abc",
+    CLAUDE_CODE_MESSAGING_TOKEN: "t",
+    CLAUDE_PID: "1",
+    // Not a marker: configuration the developer may well have set, kept.
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  });
+  const host = await startTestHost({
+    liveTree,
+    secretsFile: `${liveTree}/secrets.yaml`,
+    claudePath: await makeStubClaude(record),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForSettled(host.url, branch);
+    const env = await recordedEnvironment(record);
+    for (
+      const name of [
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_PID",
+      ]
+    ) {
+      if (name in env) throw new Error(`${name} reached the agent as ${JSON.stringify(env[name])}`);
+    }
+    if (env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== "1") {
+      throw new Error("configuration was stripped along with the markers");
+    }
+  } finally {
+    restore();
+    await reap(view, branch);
+    await host.stop();
+  }
+});

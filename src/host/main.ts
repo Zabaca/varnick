@@ -171,12 +171,22 @@ async function relaunch(
   await release();
 
   try {
-    const successor = new Deno.Command(command[0], {
-      args: command.slice(1),
+    // In a process group of its own (`set -m` gives a background job one), so
+    // that whatever takes this Host's group down when it exits — and under
+    // `deno desktop` something does — does not take the successor with it.
+    // Its output goes to a file rather than to a parent that is about to be
+    // gone, and that file is where a Restart that did not come up is read.
+    await Deno.mkdir(`${liveTree}/.varnick`, { recursive: true });
+    const log = `${liveTree}/.varnick/launch.log`;
+    const launcher = new Deno.Command("/bin/sh", {
+      args: ["-c", 'set -m; "$@" </dev/null >>"$0" 2>&1 &', log, ...command],
       cwd: liveTree,
       stdin: "null",
+      stdout: "null",
+      stderr: "null",
     }).spawn();
-    successor.unref();
+    const { success } = await launcher.status;
+    if (!success) throw new Error("the launcher shell did not start the successor");
   } catch (error) {
     console.error(`varnick: the Restart could not launch ${command.join(" ")}: ${error}`);
     throw error;
@@ -250,7 +260,27 @@ async function launchPreview(
 // A launch option overrides this, which is how a test relaunches into
 // something that is not a window.
 function ownLaunchCommand(): string[] {
-  return [Deno.execPath(), "task", "dev"];
+  return [denoOnPath(), "task", "dev"];
+}
+
+// The `deno` a Restart or a Preview launches with. Not `Deno.execPath()`:
+// under `deno desktop` the Host runs inside the webview binary, and that is
+// what execPath names — launched with `task dev` it ignores the arguments,
+// loads the cached runtime, and comes up as a second Host with no page build,
+// no HMR and no parent, which is what a Restart used to produce. The `deno`
+// the developer launched with is on the PATH the Host inherited.
+export function denoOnPath(env: Record<string, string> = Deno.env.toObject()): string {
+  for (const dir of (env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    const candidate = `${dir}/deno`;
+    try {
+      const info = Deno.statSync(candidate);
+      if (info.isFile) return candidate;
+    } catch {
+      // not here
+    }
+  }
+  throw new Error("no `deno` on PATH to relaunch with");
 }
 
 // Every Session already running on this machine is handed to the `sessions`
