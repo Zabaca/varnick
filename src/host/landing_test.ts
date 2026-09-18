@@ -2,6 +2,7 @@
 // repo (ADR-0006, spec Testing Decisions). Nothing here imports a Machine; the
 // Door is the only way in, and the Live tree under test is always a throwaway.
 import { type HostOptions, startHost } from "./main.ts";
+import { makeLiveTree } from "./test_support.ts";
 
 const FIXTURE_SECRETS = new URL("./testdata/secrets.yaml", import.meta.url).pathname;
 const FIXTURE_AGE_KEY = new URL("./testdata/test-age-key.txt", import.meta.url).pathname;
@@ -43,18 +44,6 @@ async function git(args: string[], cwd: string): Promise<string> {
     throw new Error(`git ${args.join(" ")}: ${decoder.decode(stderr).trim()}`);
   }
   return decoder.decode(stdout).trim();
-}
-
-// A Live tree to launch a Host against: a git repo on `main` with one commit.
-async function makeLiveTree(): Promise<string> {
-  const tree = await Deno.makeTempDir({ prefix: "varnick-live-" });
-  await git(["init", "-b", "main", "."], tree);
-  await git(["config", "user.name", "Test Developer"], tree);
-  await git(["config", "user.email", "test@example.com"], tree);
-  await Deno.writeTextFile(`${tree}/README.md`, "live tree\n");
-  await git(["add", "."], tree);
-  await git(["commit", "-m", "first"], tree);
-  return tree;
 }
 
 // A branch one commit ahead of `main`, made without leaving `main` checked out,

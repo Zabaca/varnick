@@ -6,7 +6,7 @@ import { type Proxy, serveProxy } from "./proxy.ts";
 import { sessionsMachine } from "./machines/sessions.ts";
 import { landingMachine } from "./machines/landing.ts";
 import { discoverSessions, type Proxied, whichClaude } from "./sessions.ts";
-import { answersNow, freePort } from "./terminals.ts";
+import { answersNow } from "./terminals.ts";
 import type { Wrap } from "./wrap.ts";
 
 // The Secrets options are the Credential's, unchanged: a launch is where they
@@ -80,6 +80,7 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
     released ??= (async () => {
       try {
         await door?.stop();
+        await Deno.remove(doorFile(liveTree)).catch(() => {});
       } finally {
         await proxy?.stop();
       }
@@ -96,6 +97,7 @@ export async function startHost(options: HostOptions = {}): Promise<Host> {
       ? options.pageDir
       : options.pageDir ?? defaultPageDir();
     door = serveDoor(actors, { port: options.port ?? 0, pageDir });
+    await writeDoorFile(liveTree, door.url);
 
     const launchCommand = options.launchCommand ?? ownLaunchCommand();
     const exit = options.exit ?? (() => Deno.exit(0));
@@ -195,18 +197,33 @@ async function relaunch(
   exit();
 }
 
+// Where a Host says which port its Door came up on: a file in its own tree,
+// written once the Door is open and removed when it is released. It is how a
+// Preview, a process nobody waits on, tells the Host that launched it where it
+// is — a port cannot be handed in, because under `deno desktop` the runtime
+// binds the Door to a port of its own choosing and ignores the one asked for.
+// It is not persistence of a Machine (ADR-0007): a launch never believes it,
+// it deletes it and waits for a fresh one, then checks that what it names answers.
+export function doorFile(tree: string): string {
+  return `${tree}/.varnick/door`;
+}
+
+async function writeDoorFile(tree: string, url: string): Promise<void> {
+  await Deno.mkdir(`${tree}/.varnick`, { recursive: true });
+  await Deno.writeTextFile(doorFile(tree), `${url}\n`);
+}
+
 // A Preview (ADR-0008): the same launch command, run from the branch's
-// Worktree as a separate process, on a Door port this Host chooses and hands
-// over in `VARNICK_PORT`. It is not waited on and not stopped when this Host
-// stops — `unref` is the whole of that, and it is what a ttyd gets too; it is
-// still in this Host's process group, so a signal sent to the group reaches it.
-// In every other way it is an ordinary Host: its own Proxy, its own Secrets
-// file out of the Worktree, its own Sessions, and the same zmx sessions as
-// Live because zmx is machine-wide.
+// Worktree as a separate process. It is not waited on and not stopped when
+// this Host stops — `unref` is the whole of that, and it is what a ttyd gets
+// too; it is still in this Host's process group, so a signal sent to the
+// group reaches it. In every other way it is an ordinary Host: its own Proxy,
+// its own Secrets file out of the Worktree, its own Sessions, and the same zmx
+// sessions as Live because zmx is machine-wide.
 //
-// The port is chosen here rather than by the Preview because the launching
-// Host has to say where it put it, and a process it does not wait on cannot
-// tell it afterwards — the same reason a ttyd's port is written down.
+// Where its Door came up is read from the Worktree's door file, which the
+// Preview writes for exactly this; the file there before the launch is from a
+// Preview that is gone, and is removed so it cannot be mistaken for the new one.
 /** How long a launch may take to answer: a page build and a window. */
 const LAUNCH_TAKES_AT_MOST_MS = 120_000;
 
@@ -226,14 +243,12 @@ async function launchPreview(
   }
   const worktree = found.worktreePath;
 
-  const port = freePort();
-  const url = `http://127.0.0.1:${port}`;
+  await Deno.remove(doorFile(worktree)).catch(() => {});
   let preview: Deno.ChildProcess;
   try {
     preview = new Deno.Command(command[0], {
       args: command.slice(1),
       cwd: worktree,
-      env: { ...Deno.env.toObject(), VARNICK_PORT: String(port) },
       stdin: "null",
     }).spawn();
   } catch (error) {
@@ -246,10 +261,13 @@ async function launchPreview(
   // up, and it is not this Host's to kill.
   const deadline = Date.now() + LAUNCH_TAKES_AT_MOST_MS;
   while (Date.now() < deadline) {
-    if (await answersNow(port)) return { branch, url, pid: preview.pid };
+    const url = (await Deno.readTextFile(doorFile(worktree)).catch(() => "")).trim();
+    if (url && await answersNow(Number(new URL(url).port))) {
+      return { branch, url, pid: preview.pid };
+    }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error(`the Preview of "${branch}" did not open a Door at ${url}`);
+  throw new Error(`the Preview of "${branch}" did not say where its Door is`);
 }
 
 // How Live is launched: `deno task dev`, the one command the README and
@@ -320,9 +338,9 @@ function defaultPageDir(): string | undefined {
 
 if (import.meta.main) {
   const headless = Deno.args.includes("--headless");
-  // A Preview is handed its Door port by the Host that launched it; Live takes
-  // the one the README names.
-  const host = await startHost({ headless, port: Number(Deno.env.get("VARNICK_PORT")) || 4180 });
+  // The port the README names; under `deno desktop` the runtime picks its own
+  // instead, which is why every Host writes down where its Door came up.
+  const host = await startHost({ headless, port: 4180 });
   console.log(
     `varnick Host: Door at ${host.url}, ${
       host.proxyUrl ? `Proxy at ${host.proxyUrl}` : "Proxy off; the agent logs itself in"

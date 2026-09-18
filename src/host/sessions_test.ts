@@ -252,10 +252,6 @@ sessionTest("the agent runs in its Worktree with the documented environment and 
         }`,
       );
     }
-    // A Preview's own Door port is not passed on, in either mode.
-    if (seen.get("VARNICK_PORT") !== undefined) {
-      throw new Error(`VARNICK_PORT reached the agent: ${JSON.stringify(seen.get("VARNICK_PORT"))}`);
-    }
     // The agent home is handed over as a directory that exists (ADR-0009).
     const home = expected.CLAUDE_CONFIG_DIR;
     if (!(await Deno.stat(home).then((s) => s.isDirectory, () => false))) {
@@ -315,10 +311,6 @@ sessionTest("with no Secrets file the agent inherits the launching shell's crede
       throw new Error(
         `ANTHROPIC_BASE_URL reached the agent: ${JSON.stringify(env.ANTHROPIC_BASE_URL)}`,
       );
-    }
-    // A Preview's own Door port is not passed on, in either mode.
-    if ("VARNICK_PORT" in env) {
-      throw new Error(`VARNICK_PORT reached the agent: ${JSON.stringify(env.VARNICK_PORT)}`);
     }
   } finally {
     restore();

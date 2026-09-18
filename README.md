@@ -76,9 +76,9 @@ A Preview is a second varnick launched from a Session's Worktree, so a change to
 varnick itself can be tried before it lands (ADR-0008). It is asked for the same
 way everything else is: `POST /actors/host/events` with
 `{"type":"PREVIEW","branch":"some-branch"}`, or the Preview button on the
-Session. The Host chooses a free loopback port, hands it over in `VARNICK_PORT`,
-runs the same launch command with the Worktree as its cwd, and puts the
-Preview's URL in its own Snapshot once that Door answers.
+Session. The Host runs the same launch command with the Worktree as its cwd,
+reads where the Preview's Door came up from the `.varnick/door` file every Host
+writes in its own tree, and puts that URL in its own Snapshot once it answers.
 
 The Preview is an ordinary Host in every other way — its own window, its own
 Proxy, its own Secrets file out of the Worktree, and the same zmx sessions as

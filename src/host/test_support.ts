@@ -99,9 +99,9 @@ export async function makeStubClaude(recordTo: string): Promise<string> {
 }
 
 // What a test launches a Preview with, in place of the window `deno task dev`
-// opens. It is a real Host — the same `startHost` a launch calls — taking the
-// port from `VARNICK_PORT` exactly as the real entry point does, and the tree
-// it runs from from its cwd. The fixtures it cannot read from the environment
+// opens. It is a real Host — the same `startHost` a launch calls — on a port
+// of its own that it writes down exactly as the real entry point does, and
+// the tree it runs from from its cwd. The fixtures it cannot read from the environment
 // are written into it, because the Worktree it is launched in has no Secrets
 // file of its own.
 //
@@ -120,7 +120,6 @@ export async function makePreviewLauncher(
       `import { startHost } from ${JSON.stringify(main)};`,
       `await startHost({`,
       `  headless: true,`,
-      `  port: Number(Deno.env.get("VARNICK_PORT")),`,
       ...(secrets === "fixture"
         ? [
           `  secretsFile: ${JSON.stringify(FIXTURE_SECRETS)},`,

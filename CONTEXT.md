@@ -15,7 +15,7 @@ The Host that runs the live tree. There is one, and it is what you promote onto 
 _Avoid_: main, production, the app
 
 **Preview**:
-A Host launched from a Worktree as a separate process, so a change to varnick itself can be tried before it lands. Its own window, its own Door, its own port; it sees the same Sessions as Live. The Host that launches it chooses that port and hands it over in `VARNICK_PORT`, then says in its own Snapshot where the Preview answers.
+A Host launched from a Worktree as a separate process, so a change to varnick itself can be tried before it lands. Its own window, its own Door, its own port; it sees the same Sessions as Live. The Preview writes down where its Door came up, as every Host does in its own tree, and the Host that launched it says so in its own Snapshot.
 _Avoid_: dev instance, second instance, varnick-in-varnick
 
 **Restart**:

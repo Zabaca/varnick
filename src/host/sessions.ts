@@ -319,10 +319,6 @@ function agentEnvironment(
   identity: GitIdentity,
 ): Record<string, string> {
   const env = { ...Deno.env.toObject() };
-  // A Preview was handed its Door port in `VARNICK_PORT` and would otherwise
-  // pass it on: an agent inside a Preview running `deno task dev` would launch
-  // onto the port its own Host is already listening on.
-  delete env.VARNICK_PORT;
   // Claude Code marks the environment of every process it starts, and a Host
   // launched from inside a Claude Code session — a developer's, or an agent's
   // own `deno task dev` for a Preview — carries those marks. Passed on, they
