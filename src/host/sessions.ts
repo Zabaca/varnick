@@ -1,3 +1,4 @@
+import { seedAgentHome, trustWorktree } from "./agent_home.ts";
 import { wrap as identityWrap, type Wrap } from "./wrap.ts";
 import { API_KEY_PLACEHOLDER, OAUTH_TOKEN_PLACEHOLDER } from "./proxy.ts";
 import type { CredentialKind } from "./secrets.ts";
@@ -91,12 +92,34 @@ async function gitRead(args: string[], cwd: string): Promise<{ answered: boolean
   }
 }
 
-// The Worktree is created on a new branch, which is what makes a Session's
-// branch its own: the agent works there and nowhere else (ADR-0003).
+// The Worktree is the Session's branch made a place: the agent works there and
+// nowhere else (ADR-0003). A branch that already exists — left by a reaped
+// Session, or made by hand — is opened rather than refused, unless a Worktree
+// somewhere already has it checked out, which git will not allow twice.
 async function addWorktree(liveTree: string, branch: string): Promise<string> {
   const path = worktreePathFor(liveTree, branch);
-  await git(["worktree", "add", "-b", branch, path], liveTree);
+  const exists = await gitRead(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], liveTree);
+  if (!exists.answered) {
+    await git(["worktree", "add", "-b", branch, path], liveTree);
+    return path;
+  }
+  const elsewhere = await worktreeOfBranch(liveTree, branch);
+  if (elsewhere) {
+    throw new Error(`branch '${branch}' is already checked out at ${elsewhere}`);
+  }
+  await git(["worktree", "add", path, branch], liveTree);
   return path;
+}
+
+// The path of the Worktree that has a branch checked out, if any has.
+async function worktreeOfBranch(liveTree: string, branch: string): Promise<string | undefined> {
+  const { out } = await gitRead(["worktree", "list", "--porcelain"], liveTree);
+  let current: string | undefined;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) current = line.slice("worktree ".length);
+    else if (line === `branch refs/heads/${branch}`) return current;
+  }
+  return undefined;
 }
 
 // The zmx sessions running on this machine, by name. A zmx that will not
@@ -380,12 +403,16 @@ export async function openSession(
   // Claude Code is handed a home that exists (ADR-0009); it is shared by every
   // Session, so the first one to want it is the one that makes it.
   await Deno.mkdir(agentHome(options.liveTree), { recursive: true });
+  // And a home that answers Claude Code's first-run questions, so the terminal
+  // opens on the prompt and never on a login screen the token would make moot.
+  await seedAgentHome(agentHome(options.liveTree), options.claudePath);
   // The PATH the agent was just given has to have something on it: `varnick`
   // is written afresh for every Session, so a landed change to it takes effect
   // in the next Session opened rather than the next clone (ADR-0003).
   await installAgentBin(options.liveTree);
 
   const worktreePath = await addWorktree(options.liveTree, branch);
+  await trustWorktree(agentHome(options.liveTree), worktreePath);
   try {
     await startZmxSession(branch, command, worktreePath, environment);
     const terminal = await startTerminal(branch, options.liveTree);

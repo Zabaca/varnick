@@ -134,8 +134,9 @@ sessionTest("a create that cannot happen lands in failed with the error in conte
 sessionTest("a branch whose Session failed can be asked for again", async () => {
   const liveTree = await makeLiveTree();
   const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
-  // The branch already exists, so `git worktree add -b` refuses it.
-  await run("git", ["branch", branch], liveTree);
+  // The branch is checked out in a Worktree elsewhere, which git allows once.
+  const elsewhere = await Deno.realPath(await Deno.makeTempDir({ prefix: "varnick-elsewhere-" }));
+  await run("git", ["worktree", "add", "-b", branch, elsewhere], liveTree);
   const host = await startTestHost({
     liveTree,
     claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
@@ -150,7 +151,7 @@ sessionTest("a branch whose Session failed can be asked for again", async () => 
 
     // With the cause removed, the same branch opens: a Session that never
     // existed must not hold its branch hostage.
-    await run("git", ["branch", "-D", branch], liveTree);
+    await run("git", ["worktree", "remove", "--force", elsewhere], liveTree);
     await newSession(host.url, branch);
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
@@ -648,5 +649,130 @@ sessionTest("REAP on a branch with unpushed commits is refused with a reason", a
     await reap(view, branch);
     await run("git", ["worktree", "remove", worktreePath, "--force"], liveTree);
     await host.stop();
+  }
+});
+
+// Claude Code's config in the agent's home, as the Host seeded it.
+async function agentConfig(liveTree: string): Promise<Record<string, unknown>> {
+  return JSON.parse(await Deno.readTextFile(`${liveTree}/.varnick/claude/.claude.json`));
+}
+
+sessionTest("a Session opens on the prompt: onboarding is seeded and the Worktree is trusted", async () => {
+  const liveTree = await makeLiveTree();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  // Something Claude Code itself would have written there, which seeding must
+  // leave alone: overwriting this file would log the agent out every Session.
+  await Deno.mkdir(`${liveTree}/.varnick/claude`, { recursive: true });
+  await Deno.writeTextFile(
+    `${liveTree}/.varnick/claude/.claude.json`,
+    JSON.stringify({ oauthAccount: { emailAddress: "agent@example.com" } }),
+  );
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForState(host.url, branch, "running");
+
+    const config = await agentConfig(liveTree);
+    if (config.hasCompletedOnboarding !== true) {
+      throw new Error(`onboarding not marked complete: ${JSON.stringify(config)}`);
+    }
+    if (typeof config.lastOnboardingVersion !== "string") {
+      throw new Error(`no onboarding version: ${JSON.stringify(config)}`);
+    }
+    const projects = config.projects as Record<string, Record<string, unknown>>;
+    if (projects?.[view.worktreePath!]?.hasTrustDialogAccepted !== true) {
+      throw new Error(`the Worktree is not trusted: ${JSON.stringify(config)}`);
+    }
+    const account = config.oauthAccount as Record<string, unknown>;
+    if (account?.emailAddress !== "agent@example.com") {
+      throw new Error(`seeding clobbered Claude Code's own state: ${JSON.stringify(config)}`);
+    }
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
+sessionTest("NEW_SESSION opens a branch that already exists, with its commits", async () => {
+  const liveTree = await makeLiveTree();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  // A branch made by hand, one commit ahead, with no Worktree.
+  await run("git", ["branch", branch], liveTree);
+  const scratch = await Deno.makeTempDir({ prefix: "varnick-scratch-" });
+  await run("git", ["worktree", "add", scratch, branch], liveTree);
+  await Deno.writeTextFile(`${scratch}/ahead.txt`, "ahead\n");
+  await run("git", ["add", "ahead.txt"], scratch);
+  await run("git", ["commit", "-q", "-m", "ahead"], scratch);
+  await run("git", ["worktree", "remove", scratch], liveTree);
+
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForSettled(host.url, branch);
+    if (view.state !== "running") {
+      throw new Error(`expected running on an existing branch, got ${JSON.stringify(view)}`);
+    }
+    if (!(await exists(`${view.worktreePath}/ahead.txt`))) {
+      throw new Error("the Worktree does not carry the branch's commit");
+    }
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
+sessionTest("a reaped branch can be opened again", async () => {
+  const liveTree = await makeLiveTreeWithRemote();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForState(host.url, branch, "running");
+    await sendReap(host.url, branch);
+    await waitForGone(host.url, branch);
+
+    await newSession(host.url, branch);
+    view = await waitForSettled(host.url, branch);
+    if (view.state !== "running") {
+      throw new Error(`expected the reaped branch to reopen, got ${JSON.stringify(view)}`);
+    }
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
+sessionTest("a branch checked out in a Worktree elsewhere is refused with its path", async () => {
+  const liveTree = await makeLiveTree();
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  const elsewhere = await Deno.realPath(await Deno.makeTempDir({ prefix: "varnick-elsewhere-" }));
+  await run("git", ["worktree", "add", "-b", branch, elsewhere], liveTree);
+  const host = await startTestHost({
+    liveTree,
+    claudePath: await makeStubClaude(`${liveTree}/stub-record.txt`),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForSettled(host.url, branch);
+    if (view.state !== "failed" || !view.error?.includes(elsewhere)) {
+      throw new Error(`expected failed naming ${elsewhere}, got ${JSON.stringify(view)}`);
+    }
+  } finally {
+    await reap(view, branch);
+    await host.stop();
+    await run("git", ["worktree", "remove", "--force", elsewhere], liveTree);
   }
 });

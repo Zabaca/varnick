@@ -92,7 +92,7 @@ export async function makeStubClaude(recordTo: string): Promise<string> {
   const path = `${await Deno.makeTempDir({ prefix: "varnick-stub-" })}/claude`;
   await Deno.writeTextFile(
     path,
-    `#!/bin/sh\n{ printf 'CWD=%s\\n' "$PWD"; env; printf 'ARGV=%s\\n' "$*"; } > ${recordTo}\nexec sleep 300\n`,
+    `#!/bin/sh\n[ "$1" = --version ] && { echo 0.0.0-stub; exit 0; }\n{ printf 'CWD=%s\\n' "$PWD"; env; printf 'ARGV=%s\\n' "$*"; } > ${recordTo}\nexec sleep 300\n`,
   );
   await Deno.chmod(path, 0o755);
   return path;
