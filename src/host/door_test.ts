@@ -31,12 +31,15 @@ function hostTest(name: string, fn: () => Promise<void>) {
   });
 }
 
-function startTestHost(options: HostOptions = {}) {
-  return startHost({
+// A throwaway Live tree every time: a Host with none runs from the repo
+// itself, adopts the developer's real Sessions and writes in the real tree.
+async function startTestHost(options: HostOptions = {}) {
+  return await startHost({
     headless: true,
     port: 0,
     secretsFile: FIXTURE_SECRETS,
     ageKeyFile: FIXTURE_AGE_KEY,
+    liveTree: await makeLiveTree(),
     ...options,
   });
 }
