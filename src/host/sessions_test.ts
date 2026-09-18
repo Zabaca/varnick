@@ -11,11 +11,15 @@ import {
   recordedEnvironment,
   run,
   sessionTest,
+  setHostEnvironment,
   startTestHost,
   waitForSettled,
 } from "./test_support.ts";
 
 const FIXTURE_CREDENTIAL = "sk-ant-api03-test-fixture-not-a-real-key";
+// Shaped like the credentials a developer's shell would carry, and neither one.
+const INHERITED_OAUTH_TOKEN = "sk-ant-oat01-test-inherited-not-a-real-token";
+const INHERITED_API_KEY = "sk-ant-api03-test-inherited-not-a-real-key";
 
 // A Session outlives its Host by design (spec user story 5), so a test that
 // made one takes it away itself rather than leaving it on the machine.
@@ -167,6 +171,9 @@ sessionTest("the agent runs in its Worktree with the documented environment and 
   const liveTree = await makeLiveTree();
   const record = `${liveTree}/stub-record.txt`;
   const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  // A credential in the launching shell is what this mode exists to keep from
+  // the agent, so the Host is launched carrying one (ADR-0005).
+  const restore = setHostEnvironment({ CLAUDE_CODE_OAUTH_TOKEN: INHERITED_OAUTH_TOKEN });
   const host = await startTestHost({ liveTree, claudePath: await makeStubClaude(record) });
   let view: SessionView | undefined;
   try {
@@ -235,12 +242,85 @@ sessionTest("the agent runs in its Worktree with the documented environment and 
     if (dump.includes(FIXTURE_CREDENTIAL)) {
       throw new Error("the real Credential reached the agent's environment");
     }
+    // Nor did the one the Host was launched with: here the placeholder replaces
+    // it rather than sitting beside it.
+    if (seen.get("CLAUDE_CODE_OAUTH_TOKEN") !== undefined) {
+      throw new Error(
+        `an inherited CLAUDE_CODE_OAUTH_TOKEN reached the agent: ${
+          JSON.stringify(seen.get("CLAUDE_CODE_OAUTH_TOKEN"))
+        }`,
+      );
+    }
+    // A Preview's own Door port is not passed on, in either mode.
+    if (seen.get("VARNICK_PORT") !== undefined) {
+      throw new Error(`VARNICK_PORT reached the agent: ${JSON.stringify(seen.get("VARNICK_PORT"))}`);
+    }
     // The agent home is handed over as a directory that exists (ADR-0009).
     const home = expected.CLAUDE_CONFIG_DIR;
     if (!(await Deno.stat(home).then((s) => s.isDirectory, () => false))) {
       throw new Error(`${home} is not a directory`);
     }
   } finally {
+    restore();
+    await reap(view, branch);
+    await host.stop();
+  }
+});
+
+sessionTest("with no Secrets file the agent inherits the launching shell's credential", async () => {
+  // The case this serves (ADR-0005, second amendment): a shell that sourced
+  // `zabaca/claude-mitm-proxy`'s client env carries that proxy in `HTTPS_PROXY`
+  // and its fleet placeholder in `CLAUDE_CODE_OAUTH_TOKEN`. With varnick's own
+  // Proxy off there is no boundary to keep, and stripping them sent the agent
+  // to the fleet proxy with no credential at all.
+  const liveTree = await makeLiveTree();
+  const record = `${liveTree}/stub-record.txt`;
+  const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  // Both credential variables are set, so a delete left behind on either is
+  // caught; the base URL is the one left unset, so inheriting untouched is
+  // asserted in both directions.
+  const restore = setHostEnvironment({
+    CLAUDE_CODE_OAUTH_TOKEN: "fleet-placeholder",
+    ANTHROPIC_API_KEY: INHERITED_API_KEY,
+    HTTPS_PROXY: "http://127.0.0.1:1",
+    ANTHROPIC_BASE_URL: undefined,
+  });
+  const host = await startTestHost({
+    liveTree,
+    secretsFile: `${liveTree}/secrets.yaml`,
+    claudePath: await makeStubClaude(record),
+  });
+  let view: SessionView | undefined;
+  try {
+    await newSession(host.url, branch);
+    view = await waitForSettled(host.url, branch);
+    const env = await recordedEnvironment(record);
+
+    // The values are the ones written above, not asked of the code that passed
+    // them on.
+    const inherited: Record<string, string> = {
+      CLAUDE_CODE_OAUTH_TOKEN: "fleet-placeholder",
+      ANTHROPIC_API_KEY: INHERITED_API_KEY,
+      HTTPS_PROXY: "http://127.0.0.1:1",
+    };
+    for (const [name, value] of Object.entries(inherited)) {
+      if (env[name] !== value) {
+        throw new Error(`${name}: expected ${value}, got ${JSON.stringify(env[name])}`);
+      }
+    }
+    // Untouched means untouched in both directions: the Host invents no base
+    // URL for a Session it is not proxying.
+    if ("ANTHROPIC_BASE_URL" in env) {
+      throw new Error(
+        `ANTHROPIC_BASE_URL reached the agent: ${JSON.stringify(env.ANTHROPIC_BASE_URL)}`,
+      );
+    }
+    // A Preview's own Door port is not passed on, in either mode.
+    if ("VARNICK_PORT" in env) {
+      throw new Error(`VARNICK_PORT reached the agent: ${JSON.stringify(env.VARNICK_PORT)}`);
+    }
+  } finally {
+    restore();
     await reap(view, branch);
     await host.stop();
   }
@@ -254,6 +334,14 @@ sessionTest("with no Secrets file the agent is given no credential at all", asyn
   const liveTree = await makeLiveTree();
   const record = `${liveTree}/stub-record.txt`;
   const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  // "None of the three" is now a property of the launching environment rather
+  // than of the code, so the test states it instead of inheriting whatever the
+  // developer running the suite happens to have.
+  const restore = setHostEnvironment({
+    ANTHROPIC_BASE_URL: undefined,
+    ANTHROPIC_API_KEY: undefined,
+    CLAUDE_CODE_OAUTH_TOKEN: undefined,
+  });
   const host = await startTestHost({
     liveTree,
     secretsFile: `${liveTree}/secrets.yaml`,
@@ -286,6 +374,7 @@ sessionTest("with no Secrets file the agent is given no credential at all", asyn
       }
     }
   } finally {
+    restore();
     await reap(view, branch);
     await host.stop();
   }

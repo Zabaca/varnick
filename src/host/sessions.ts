@@ -290,40 +290,36 @@ function shellQuote(value: string): string {
 
 // The environment the agent runs with. Built from the Host's own so git, npm
 // and Claude Code find their tools, then given the Session's own variables.
-// Both credential variables are cleared first: whichever kind the Credential
-// is, the agent carries a placeholder and never the Credential (ADR-0005), and
-// a real one inherited from the developer's shell would defeat that.
 function agentEnvironment(
   branch: string,
   options: SessionOptions,
   identity: GitIdentity,
 ): Record<string, string> {
   const env = { ...Deno.env.toObject() };
-  delete env.ANTHROPIC_API_KEY;
-  delete env.CLAUDE_CODE_OAUTH_TOKEN;
-  // And the base URL with them: inherited, it would send the agent somewhere
-  // this Host did not choose, and in the off mode there is nowhere to send it.
-  delete env.ANTHROPIC_BASE_URL;
   // A Preview was handed its Door port in `VARNICK_PORT` and would otherwise
   // pass it on: an agent inside a Preview running `deno task dev` would launch
   // onto the port its own Host is already listening on.
   delete env.VARNICK_PORT;
 
-  // With no Proxy there is nothing to point the agent at and no placeholder to
-  // give it, so the three stay deleted and Claude Code `/login`s for itself
-  // (ADR-0005, amended). With one, the Proxy is where the agent goes and the
-  // placeholder its kind calls for is what it presents.
-  const proxied: Record<string, string> = options.proxy
-    ? {
-      ANTHROPIC_BASE_URL: options.proxy.url,
-      [options.proxy.kind === "apiKey" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"]:
-        options.proxy.kind === "apiKey" ? API_KEY_PLACEHOLDER : OAUTH_TOKEN_PLACEHOLDER,
-    }
-    : {};
+  // The credential variables and the base URL are the Proxy's business and only
+  // the Proxy's. With one there is a boundary to keep: both kinds go, because a
+  // real one inherited from the developer's shell would defeat the placeholder
+  // (ADR-0005), and the base URL goes with them because it would send the agent
+  // somewhere this Host did not choose. Without one there is no boundary to
+  // keep, so this branch does not run and all three reach the agent exactly as
+  // the shell that launched varnick had them: a shell carrying the fleet
+  // proxy's placeholder keeps it, and one carrying nothing gives the agent
+  // nothing and Claude Code `/login`s for itself (ADR-0005, amended).
+  if (options.proxy) {
+    delete env.ANTHROPIC_API_KEY;
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    env.ANTHROPIC_BASE_URL = options.proxy.url;
+    env[options.proxy.kind === "apiKey" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"] =
+      options.proxy.kind === "apiKey" ? API_KEY_PLACEHOLDER : OAUTH_TOKEN_PLACEHOLDER;
+  }
 
   return {
     ...env,
-    ...proxied,
     CLAUDE_CONFIG_DIR: agentHome(options.liveTree),
     GIT_AUTHOR_NAME: identity.name,
     GIT_AUTHOR_EMAIL: identity.email,
