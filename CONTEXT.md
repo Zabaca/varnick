@@ -1,6 +1,6 @@
 # varnick — domain model
 
-varnick is a desktop window around a coding agent. It gives the agent a worktree, a terminal and no credential, and gives you a button that lands the work.
+varnick is a desktop window around a coding agent. It gives the agent a worktree, a terminal and no Credential of yours, and gives you a button that lands the work.
 
 ## Language
 
@@ -47,11 +47,11 @@ The one function that turns the agent's command into the command a Session runs.
 _Avoid_: sandbox (there is none), confinement, seatbelt
 
 **Credential**:
-What authenticates the agent to Anthropic. Held by the Host, never by the agent; the agent carries a placeholder.
+What authenticates the agent to Anthropic. When there is a Secrets file it is held by the Host and never by the agent, which carries a placeholder; with no Secrets file the Host holds none and the Session inherits whatever the launching shell had (ADR-0005, amended).
 _Avoid_: token, API key (either may be the Credential's kind), secret
 
 **Proxy**:
-The loopback reverse proxy the Host runs when there is a Secrets file, selected in the agent's environment by `ANTHROPIC_BASE_URL`. It replaces the placeholder with the Credential on the way out. Without a Secrets file it does not run, and the agent logs itself in (ADR-0005, amended).
+The loopback reverse proxy the Host runs when there is a Secrets file, selected in the agent's environment by `ANTHROPIC_BASE_URL`. It replaces the placeholder with the Credential on the way out. Without a Secrets file it does not run, and the Session takes the credential variables of the shell that launched varnick — or, where that shell had none, the agent logs itself in (ADR-0005, amended).
 _Avoid_: MITM (a stronger form, not built), gateway
 
 **Secrets file**:

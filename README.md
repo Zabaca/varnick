@@ -2,7 +2,7 @@
 
 A desktop window around a coding agent. Developed on macOS; Linux untested.
 
-The agent gets a git worktree, a terminal and no credential. You get a list of sessions, a button that fast-forwards the live tree to a session's branch, and a button that restarts the app onto it. An agent can press the same buttons through a loopback API.
+The agent gets a git worktree, a terminal and no Credential of yours. You get a list of sessions, a button that fast-forwards the live tree to a session's branch, and a button that restarts the app onto it. An agent can press the same buttons through a loopback API.
 
 Read [CONTEXT.md](CONTEXT.md) for the words and [docs/adr/](docs/adr/) for why. The previous version, a Tauri app, is on `archive` and nothing here inherits from it (ADR-0001).
 

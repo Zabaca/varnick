@@ -17,8 +17,9 @@ import {
 } from "./test_support.ts";
 
 const FIXTURE_CREDENTIAL = "sk-ant-api03-test-fixture-not-a-real-key";
-// Shaped like a credential a developer's shell would carry, and not one.
+// Shaped like the credentials a developer's shell would carry, and neither one.
 const INHERITED_OAUTH_TOKEN = "sk-ant-oat01-test-inherited-not-a-real-token";
+const INHERITED_API_KEY = "sk-ant-api03-test-inherited-not-a-real-key";
 
 // A Session outlives its Host by design (spec user story 5), so a test that
 // made one takes it away itself rather than leaving it on the machine.
@@ -275,10 +276,13 @@ sessionTest("with no Secrets file the agent inherits the launching shell's crede
   const liveTree = await makeLiveTree();
   const record = `${liveTree}/stub-record.txt`;
   const branch = `agent-${crypto.randomUUID().slice(0, 8)}`;
+  // Both credential variables are set, so a delete left behind on either is
+  // caught; the base URL is the one left unset, so inheriting untouched is
+  // asserted in both directions.
   const restore = setHostEnvironment({
     CLAUDE_CODE_OAUTH_TOKEN: "fleet-placeholder",
+    ANTHROPIC_API_KEY: INHERITED_API_KEY,
     HTTPS_PROXY: "http://127.0.0.1:1",
-    ANTHROPIC_API_KEY: undefined,
     ANTHROPIC_BASE_URL: undefined,
   });
   const host = await startTestHost({
@@ -296,6 +300,7 @@ sessionTest("with no Secrets file the agent inherits the launching shell's crede
     // them on.
     const inherited: Record<string, string> = {
       CLAUDE_CODE_OAUTH_TOKEN: "fleet-placeholder",
+      ANTHROPIC_API_KEY: INHERITED_API_KEY,
       HTTPS_PROXY: "http://127.0.0.1:1",
     };
     for (const [name, value] of Object.entries(inherited)) {

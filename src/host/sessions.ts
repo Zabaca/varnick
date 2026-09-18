@@ -301,29 +301,25 @@ function agentEnvironment(
   // onto the port its own Host is already listening on.
   delete env.VARNICK_PORT;
 
-  // With a Proxy there is a boundary to keep, so both credential variables go
-  // whichever kind the Credential is — a real one inherited from the
-  // developer's shell would defeat the placeholder (ADR-0005) — and the base
-  // URL with them, which would send the agent somewhere this Host did not
-  // choose. The Proxy is where it goes instead, carrying the placeholder its
-  // kind calls for.
-  const proxied: Record<string, string> = {};
+  // The credential variables and the base URL are the Proxy's business and only
+  // the Proxy's. With one there is a boundary to keep: both kinds go, because a
+  // real one inherited from the developer's shell would defeat the placeholder
+  // (ADR-0005), and the base URL goes with them because it would send the agent
+  // somewhere this Host did not choose. Without one there is no boundary to
+  // keep, so this branch does not run and all three reach the agent exactly as
+  // the shell that launched varnick had them: a shell carrying the fleet
+  // proxy's placeholder keeps it, and one carrying nothing gives the agent
+  // nothing and Claude Code `/login`s for itself (ADR-0005, amended).
   if (options.proxy) {
     delete env.ANTHROPIC_API_KEY;
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
-    delete env.ANTHROPIC_BASE_URL;
-    proxied.ANTHROPIC_BASE_URL = options.proxy.url;
-    proxied[options.proxy.kind === "apiKey" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"] =
+    env.ANTHROPIC_BASE_URL = options.proxy.url;
+    env[options.proxy.kind === "apiKey" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"] =
       options.proxy.kind === "apiKey" ? API_KEY_PLACEHOLDER : OAUTH_TOKEN_PLACEHOLDER;
   }
-  // With no Proxy there is no boundary to keep, so the three are left exactly
-  // as the shell that launched varnick had them: one carrying the fleet proxy's
-  // placeholder keeps it, and one carrying nothing gives the agent nothing and
-  // Claude Code `/login`s for itself (ADR-0005, amended).
 
   return {
     ...env,
-    ...proxied,
     CLAUDE_CONFIG_DIR: agentHome(options.liveTree),
     GIT_AUTHOR_NAME: identity.name,
     GIT_AUTHOR_EMAIL: identity.email,
