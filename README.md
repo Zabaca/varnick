@@ -55,7 +55,9 @@ with `{"type":"NEW_SESSION","branch":"some-branch"}`. The Host adds the Worktree
 at `.claude/worktrees/{branch}`, starts a zmx session of that name running the
 agent with the Worktree as its cwd, and puts a ttyd on its own loopback port
 attached to it. The Session's Snapshot carries the branch, the Worktree path and
-the terminal's URL, and the page shows that terminal in an iframe.
+the terminal's URL, and the page shows that terminal in an xterm.js of its own,
+on ttyd's websocket, so that Shift+Enter can be sent as the newline Claude Code
+expects (ADR-0002, amended).
 
 The command the Session runs comes out of `Wrap` (`src/host/wrap.ts`), which in
 v1 returns it unchanged — the one place a kernel sandbox would go (ADR-0004).

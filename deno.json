@@ -7,5 +7,10 @@
   "imports": {
     "xstate": "npm:xstate@^5"
   },
-  "exclude": ["src/page"]
+  "exclude": [
+    "src/page/node_modules",
+    "src/page/dist",
+    "src/page/main.tsx",
+    "src/page/terminal.tsx"
+  ]
 }

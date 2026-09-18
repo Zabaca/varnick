@@ -2,6 +2,9 @@
   "version": "5",
   "specifiers": {
     "npm:@vitejs/plugin-react@4": "4.7.0_vite@6.4.3",
+    "npm:@xterm/addon-fit@0.10": "0.10.0_@xterm+xterm@5.5.0",
+    "npm:@xterm/addon-web-links@0.11": "0.11.0_@xterm+xterm@5.5.0",
+    "npm:@xterm/xterm@^5.5.0": "5.5.0",
     "npm:react-dom@19": "19.3.0_react@19.3.0",
     "npm:react@19": "19.3.0",
     "npm:vite@6": "6.4.3"
@@ -478,6 +481,21 @@
         "vite"
       ]
     },
+    "@xterm/addon-fit@0.10.0_@xterm+xterm@5.5.0": {
+      "integrity": "sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==",
+      "dependencies": [
+        "@xterm/xterm"
+      ]
+    },
+    "@xterm/addon-web-links@0.11.0_@xterm+xterm@5.5.0": {
+      "integrity": "sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==",
+      "dependencies": [
+        "@xterm/xterm"
+      ]
+    },
+    "@xterm/xterm@5.5.0": {
+      "integrity": "sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A=="
+    },
     "baseline-browser-mapping@2.11.24": {
       "integrity": "sha512-hYrgxie335U08WqICoGqKRzV1HFXv6zdxwJE4ekCb80CM9a0SVVsN4QPwT67RraRo+9h8IATk6uxHJw7QSkdOg==",
       "bin": true
@@ -700,6 +718,9 @@
     "packageJson": {
       "dependencies": [
         "npm:@vitejs/plugin-react@4",
+        "npm:@xterm/addon-fit@0.10",
+        "npm:@xterm/addon-web-links@0.11",
+        "npm:@xterm/xterm@^5.5.0",
         "npm:react-dom@19",
         "npm:react@19",
         "npm:vite@6"
