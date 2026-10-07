@@ -1,0 +1,16 @@
+# xterm.js for the Phone page, kept in the repo so the page never fetches code (ADR 0011). Fetched on a headless host with
+# `bun add @xterm/xterm@^6 @xterm/addon-fit` in a temporary folder and copied back, 2026-10-06: never download on a Mac.
+# The server serves these files, not node_modules. To update: fetch again, copy the same files, replace the lines below
+# (`shasum -a 256 *`), and `bun test` checks them.
+#
+# Provenance, checked 2026-10-06 on a headless host: `npm pack` of each version gave a tarball whose integrity equals the registry's
+# `npm view <package> dist.integrity`, and the files below are byte for byte what those tarballs hold:
+#   @xterm/xterm@6.0.0         sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==
+#   @xterm/addon-fit@0.11.0    sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==
+#
+# sha256                                                            file               package
+b336ec65a086c056d4804b3d4c2347da5663d3f23c3f25be866467bd8857ad59  xterm.mjs          @xterm/xterm@6.0.0
+854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6  xterm.css          @xterm/xterm@6.0.0
+b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd  LICENSE-xterm      @xterm/xterm@6.0.0
+2d87e1bddc73be9111de8beee5370c3bb7aac9c94e18e6f245f02ca741ef1769  addon-fit.mjs      @xterm/addon-fit@0.11.0
+e256f01188af527e4d06d21d06fbf785ae9c50d4b328bf03cbe0ba7f0aa4228f  LICENSE-addon-fit  @xterm/addon-fit@0.11.0

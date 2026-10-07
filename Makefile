@@ -1,0 +1,133 @@
+DB := db/launchy.sqlite
+LABEL := com.zabaca.launchy
+PLIST := $(HOME)/Library/LaunchAgents/$(LABEL).plist
+LOG := $(HOME)/Library/Logs/Launchy.log
+DOMAIN = gui/$(shell id -u)
+
+# MLX's Metal shaders, prebuilt: `swift build` can't compile them without Xcode. Taken from the
+# mlx-metal wheel matching the MLX core inside mlx-swift (pinned in Package.swift); update together.
+MLX_METAL_WHEEL := https://files.pythonhosted.org/packages/f7/ab/ba1952908c5d2a5070cf1cfbfea0161c4751ea62299e2776819810917483/mlx_metal-0.32.2-py3-none-macosx_14_0_arm64.whl
+MLX_METAL_SHA256 := 3825fff379dbc107dd3413e564a06caeaa24819910ec49c0439e454c06a1b9b8
+METALLIB := .build/release/mlx.metallib
+# Named after the wheel, so a new pin fetches again instead of keeping a mismatched metallib.
+METAL_STAMP := .build/release/mlx.metallib.$(MLX_METAL_SHA256)
+
+# zmx keeps pane processes alive across Launchy restarts (ADR 0004). Pinned to one release: a
+# release that changes its IPC protocol can't talk to daemons the previous one started, so bumping
+# this ends running sessions once. Launchy only ever uses the copy next to its binary.
+ZMX_VERSION := 0.8.1
+ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
+ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
+ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
+# Matches Launchy's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
+# matches any process whose arguments mention the path, such as a pane started with a prompt that
+# names it, which would kill a session that should survive.
+LAUNCHY_PROCESS := ^($(shell pwd -P)/)?\.build/release/Launchy$$
+
+SKILL_LINK := $(HOME)/.claude/skills/custom-apps
+SKILL_TARGET := $(CURDIR)/.claude/skills/custom-apps
+
+# The Phone page's server (ADR 0011): Launchy clones this copy next to its binary, as it does zmx, at each launch (the
+# launch snapshot), so edits in a checkout reach a running server only through a build and a restart. The tests and
+# their fixtures stay behind, and a file left unchanged is left alone, so building twice changes nothing.
+PHONE_PAGE_DIR := .build/release/PhonePage
+
+# The line `BuildStamp` reads, written as the last step of `make build` (where-it-breaks, Peers, has the rules).
+BUILD_STAMP := .build/release/build-stamp
+
+.PHONY: build run stop install uninstall skill-link skill-unlink clean phone-page build-stamp
+
+# The metallib goes next to the binary, where MLX looks for it. After swift build, which
+# creates .build/release. Re-signing binds the Info.plist the linker embeds (Package.swift):
+# the linker's own ad-hoc signature leaves it unbound, and macOS needs it bound to find the
+# microphone and system audio usage strings. SwiftPM doesn't relink when only Info.plist
+# changed, so a newer Info.plist removes the binary first.
+build:
+	@[ ! Info.plist -nt .build/release/Launchy ] || rm -f .build/release/Launchy
+	swift build -c release
+	codesign -f -s - -i $(LABEL) .build/release/Launchy
+	@test -f $(METAL_STAMP) || $(MAKE) $(METAL_STAMP)
+	@test -f $(ZMX_STAMP) || $(MAKE) $(ZMX_STAMP)
+	@$(MAKE) --no-print-directory phone-page
+	@$(MAKE) --no-print-directory build-stamp
+
+phone-page:
+	mkdir -p $(PHONE_PAGE_DIR)
+	rsync -a --delete --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/' PhonePage/ $(PHONE_PAGE_DIR)/
+
+# Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
+# untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.
+build-stamp:
+	@if commit=$$(git rev-parse HEAD 2>/dev/null); then \
+	  dirty=0; git diff --quiet HEAD -- || dirty=1; \
+	  branch=$$(git branch --show-current); \
+	  line="commit=$$commit dirty=$$dirty$${branch:+ branch=$$branch} time=$$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
+	  echo "$$line" > $(BUILD_STAMP).tmp && mv -f $(BUILD_STAMP).tmp $(BUILD_STAMP) && echo "stamp: $$line"; \
+	else \
+	  rm -f $(BUILD_STAMP); echo "not a git checkout: no build stamp"; \
+	fi
+
+$(METAL_STAMP):
+	curl -sfL -o .build/mlx-metal.whl $(MLX_METAL_WHEEL)
+	echo "$(MLX_METAL_SHA256)  .build/mlx-metal.whl" | shasum -a 256 -c -
+	unzip -o -j -q .build/mlx-metal.whl mlx/lib/mlx.metallib -d $(dir $@)
+	rm -f .build/mlx-metal.whl .build/release/mlx.metallib.*
+	touch $@
+
+# Moved into place by rename, so daemons still running the old zmx keep their file.
+$(ZMX_STAMP):
+	rm -rf .build/zmx-fetch && mkdir -p .build/zmx-fetch
+	curl -sfL -o .build/zmx-fetch/zmx.tar.gz $(ZMX_URL)
+	echo "$(ZMX_SHA256)  .build/zmx-fetch/zmx.tar.gz" | shasum -a 256 -c -
+	tar -xzf .build/zmx-fetch/zmx.tar.gz -C .build/zmx-fetch zmx
+	mv -f .build/zmx-fetch/zmx .build/release/zmx
+	rm -rf .build/zmx-fetch .build/release/zmx.*
+	touch $@
+
+# The restart runs in its own session so it outlives a Launchy session that ran `make run`.
+run: build
+	nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' scripts/restart.sh $(CURDIR)/$(DB) >/dev/null 2>&1 &
+
+stop:
+	-@pkill -a -f '$(LAUNCHY_PROCESS)' || true
+
+# Start at login via a LaunchAgent that runs this repo's release build (so `make build`
+# updates what the next login starts). Also starts it now, and links the custom-apps skill into
+# the user's skills so agents in any project find it (linked, not copied: one source). The link is
+# made only when the path is free or already ours; anything else there is left alone.
+install: build stop
+	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
+	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' \
+	    -e 's|@DB@|$(CURDIR)/$(DB)|g' -e 's|@LOG@|$(LOG)|g' \
+	    scripts/launchy.plist.in > $(PLIST)
+	plutil -lint $(PLIST)
+	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
+	launchctl bootstrap $(DOMAIN) $(PLIST)
+	@$(MAKE) --no-print-directory skill-link
+
+uninstall:
+	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
+	rm -f $(PLIST)
+	@$(MAKE) --no-print-directory skill-unlink
+
+# "Ours" is a link whose target is the path `skill-link` writes. A dangling link or a file or folder
+# of the user's own is not ours. Neither target fails when it leaves the entry alone.
+skill-link:
+	@if [ ! -e "$(SKILL_LINK)" ] && [ ! -L "$(SKILL_LINK)" ]; then \
+	  mkdir -p "$(dir $(SKILL_LINK))" && ln -sfn "$(SKILL_TARGET)" "$(SKILL_LINK)" && echo "linked $(SKILL_LINK)"; \
+	elif [ "$$(readlink "$(SKILL_LINK)")" = "$(SKILL_TARGET)" ]; then \
+	  echo "$(SKILL_LINK) already links here"; \
+	else \
+	  echo "left $(SKILL_LINK) alone: it is not a link to $(SKILL_TARGET)"; \
+	fi
+
+skill-unlink:
+	@if [ -L "$(SKILL_LINK)" ] && [ "$$(readlink "$(SKILL_LINK)")" = "$(SKILL_TARGET)" ]; then \
+	  rm -f "$(SKILL_LINK)" && echo "removed $(SKILL_LINK)"; \
+	elif [ -e "$(SKILL_LINK)" ] || [ -L "$(SKILL_LINK)" ]; then \
+	  echo "left $(SKILL_LINK) alone: it is not a link to $(SKILL_TARGET)"; \
+	fi
+
+# Leaves db/: it holds history Chrome may have already dropped.
+clean:
+	rm -rf .build

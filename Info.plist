@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded in the binary by the linker (Package.swift) and bound by `make build`'s re-sign. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.zabaca.launchy</string>
+    <key>CFBundleName</key>
+    <string>Launchy</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>While listening is on, Launchy transcribes what you say into today's transcript, on this Mac.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>While listening is on, Launchy transcribes what your Mac plays (calls, videos) into today's transcript, on this Mac.</string>
+</dict>
+</plist>

@@ -1,0 +1,10 @@
+# A role's model can run on a server on the tailnet
+
+Search embeddings and Text generation can each run on an OpenAI-compatible server on the user's tailnet instead of in Launchy's process. The choice is made per Mac and per role in Settings › Models. On this Mac stays the default, so ADRs 0003's and 0012's reasons (nothing to install or keep running) hold for anyone who doesn't choose Server. Launchy keeps what decides a result: the embedding instruction, the texts, the normalization and the model key, and the title prompt and its clean-up. The server only computes. A server for embeddings is used only after its vectors match references shipped in Launchy (cosine 0.99), because mixed vectors would ruin search with no error. Work the user waits on falls back to this Mac's installed model when the server is away, and background work waits for it. We chose this over a cloud provider (only tailnet and loopback addresses are accepted), over sharing vectors between Macs, and over one Mac lending its models to another over the peer link. The first servers are foundry's `foundry-embeddings` on the Ryzen and a chat server beside it. The problem and its options are in `docs/problems/models-run-only-on-this-mac/`.
+
+## Consequences
+
+- With Server chosen, what semantic search reads (session prompts included) and each conversation's first prompt go to that server over the tailnet. Nothing goes to a third party.
+- Launchy depends on services it may not own. A change of embedding model shows as a failed Check, never as wrong vectors; an absent server shows as a fallback or a wait.
+- No new dependency: the requests use URLSession (`ModelServer.post` is the one path, and it follows no redirect). MLX isn't touched on the server path, and a build without `mlx.metallib` can use a server.
+- A server for Text generation has to answer with the title in `message.content` within 24 tokens, which a model that thinks first at the server does not. Launchy reads that as the server not answering, not as a conversation with no title, so it never marks one failed for it.

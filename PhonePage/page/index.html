@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<title>Phone page</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<!--LOOPBACK-->
+<div id="home">
+  <header>
+    <div class="who">
+      <h1 id="host">Loading…</h1>
+      <p id="device"></p>
+    </div>
+    <button id="refresh" type="button">Refresh</button>
+  </header>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <a id="new-session" class="button primary" href="#new">New session</a>
+  <main>
+    <section aria-labelledby="open-heading">
+      <h2 id="open-heading">Open sessions</h2>
+      <div id="sessions" aria-live="polite"></div>
+    </section>
+    <section aria-labelledby="recent-heading">
+      <h2 id="recent-heading">Recent</h2>
+      <div id="recent" aria-live="polite"></div>
+    </section>
+    <section id="hosts-section" aria-labelledby="hosts-heading" hidden>
+      <h2 id="hosts-heading">Other hosts</h2>
+      <p class="hint">Each opens that host's own page, if it serves one.</p>
+      <ul id="hosts"></ul>
+    </section>
+  </main>
+</div>
+
+<div id="new" hidden>
+  <header class="bar">
+    <button id="new-back" type="button" aria-label="Back to sessions">←</button>
+    <div class="who">
+      <h1>New session</h1>
+      <p id="new-host"></p>
+    </div>
+  </header>
+  <div class="new-body">
+    <label class="field-label" for="project-filter">Project</label>
+    <input id="project-filter" type="search" placeholder="Filter projects" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+    <div id="projects" class="projects" role="radiogroup" aria-label="Project"></div>
+    <div id="agents-wrap" hidden>
+      <span class="field-label" id="agent-label">Agent</span>
+      <div id="agents" class="chips" role="group" aria-labelledby="agent-label"></div>
+    </div>
+    <label class="field-label" for="prompt">Prompt</label>
+    <textarea id="prompt" placeholder="What should Claude do? Optional." autocapitalize="sentences"></textarea>
+  </div>
+  <div class="new-foot">
+    <p id="new-status" class="new-status" role="status" hidden></p>
+    <button id="start" type="button" class="primary" disabled>Start</button>
+  </div>
+</div>
+
+<div id="session" hidden>
+  <header class="bar">
+    <button id="back" type="button" aria-label="Back to sessions">←</button>
+    <div class="who">
+      <h1 id="session-title">Session</h1>
+      <p id="session-sub"></p>
+    </div>
+    <button id="end" type="button">End</button>
+  </header>
+
+  <section id="card" class="card" hidden>
+    <p id="card-note" class="card-note" hidden></p>
+    <p id="card-text" class="card-text" role="status"></p>
+    <p id="card-error" class="card-error" hidden></p>
+    <div class="card-actions">
+      <button id="take" type="button" class="primary">Take over</button>
+      <button id="retry" type="button">Try again</button>
+      <button id="leave" type="button">Back to sessions</button>
+    </div>
+  </section>
+
+  <section id="live" aria-label="Live screen" hidden>
+    <div id="live-size"><div id="live-term" aria-hidden="true"></div></div>
+  </section>
+
+  <section id="terminal-view" hidden>
+    <div id="term"></div>
+    <div id="keys" role="toolbar" aria-label="Keys">
+      <button type="button" data-key="esc">Esc</button>
+      <button type="button" data-key="tab">Tab</button>
+      <button type="button" data-key="backtab">⇧Tab</button>
+      <button type="button" data-key="up" aria-label="Up">↑</button>
+      <button type="button" data-key="down" aria-label="Down">↓</button>
+      <button type="button" data-key="left" aria-label="Left">←</button>
+      <button type="button" data-key="right" aria-label="Right">→</button>
+      <button type="button" data-key="interrupt">^C</button>
+      <button type="button" id="ctrl" aria-pressed="false">Ctrl</button>
+      <button type="button" data-key="enter" aria-label="Enter">⏎</button>
+      <button type="button" id="paste">Paste</button>
+    </div>
+    <div id="compose">
+      <textarea id="text" rows="1" placeholder="Compose (sent as paste, then Enter)" aria-label="Message to send" autocapitalize="sentences"></textarea>
+      <button type="button" id="send" class="primary">Send</button>
+    </div>
+  </section>
+</div>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <p id="confirm-text"></p>
+    <div class="card-actions">
+      <button value="cancel">Cancel</button>
+      <button value="end" class="primary danger">End</button>
+    </div>
+  </form>
+</dialog>
+</body>
+</html>

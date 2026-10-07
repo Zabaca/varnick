@@ -1,0 +1,49 @@
+{
+  "CapMap": null,
+  "Node": {
+    "Addresses": [
+      "100.64.0.1/32",
+      "fd7a:115c:a1e0::1/128"
+    ],
+    "AllowedIPs": [
+      "100.64.0.1/32"
+    ],
+    "Cap": 131,
+    "ComputedName": "mac-mini",
+    "ComputedNameWithHost": "mac-mini (Mac-Mini)",
+    "Created": "2024-01-01T00:00:00Z",
+    "DiscoKey": "discokey:REDACTED",
+    "Endpoints": [
+      "192.0.2.1:41641"
+    ],
+    "HomeDERP": 17,
+    "Hostinfo": {
+      "Hostname": "Mac-Mini",
+      "OS": "macOS",
+      "Services": [
+        {
+          "Port": 40885,
+          "Proto": "peerapi4"
+        },
+        {
+          "Port": 38916,
+          "Proto": "peerapi6"
+        }
+      ],
+      "sshHostKeys": []
+    },
+    "ID": 2000000000000001,
+    "Key": "nodekey:REDACTED",
+    "KeyExpiry": "2027-01-01T00:00:00Z",
+    "Name": "mac-mini.example.ts.net.",
+    "Online": true,
+    "StableID": "nEXAMPLE1CNTRL",
+    "User": 70000000000000001
+  },
+  "UserProfile": {
+    "DisplayName": "The User",
+    "ID": 70000000000000001,
+    "LoginName": "user@example.com",
+    "ProfilePicURL": ""
+  }
+}
