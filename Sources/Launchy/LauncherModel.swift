@@ -765,6 +765,23 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    /// `runSearch`'s first two passes for `words` (keyword, then the query's meaning, fused by `fuseAll`), returned instead of
+    /// shown: nothing the panel shows is set, and no relevance filter runs (a spoken request, ADR 0015). Meaning is skipped
+    /// when it isn't available or fails, as in the panel.
+    func searchApart(_ words: String) async throws -> (sessions: [SearchResult], pages: [SearchResult]) {
+        store.refreshIfChanged()
+        let keyword = store.keyword(words, limit: Self.candidateLimit)
+        let sessionKeyword = store.keyword(words, limit: Self.candidateLimit, sessions: true)
+        var semantic: (pages: [(id: Int64, score: Float)], sessions: [(id: Int64, score: Float)]) = ([], [])
+        do {
+            if let (vec, _) = try await embedQuery(words) { semantic = store.semantic(vec, limit: Self.candidateLimit) }
+        } catch {
+            try Task.checkCancellation()
+            NSLog("Launchy: semantic search for a spoken request failed: \(error.logKind)")
+        }
+        return fuseAll(keyword: keyword, sessionKeyword: sessionKeyword, semantic: semantic)
+    }
+
     /// A Mac's, project's or agent's word can resolve after the keystroke, when its list arrives: the sessions
     /// listed are then kept by it.
     private func promptWordsResolved() {

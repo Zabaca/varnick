@@ -26,6 +26,8 @@ final class Listener: ObservableObject {
     }
 
     @Published private(set) var state: State
+    /// Where the mic's results go (Hey Launchy, `SpokenRequests`); called on the main actor.
+    var onMicPhrase: ((MicPhrase) -> Void)?
     /// The running `Capture` (macOS 26 only, so not typed as one).
     private var capture: AnyObject?
     private var starting: Task<Void, Never>?
@@ -94,6 +96,8 @@ final class Listener: ObservableObject {
             if case .starting = state { state = .starting("Downloading the speech model…") }
         case .heardSystemAudio:
             if case .listening = state { state = .listening(systemSilent: false) }
+        case .micPhrase(let phrase):
+            onMicPhrase?(phrase)
         case .devicesChanged(let what):
             restart(after: what)
         case .failed(let why):
@@ -153,6 +157,12 @@ extension Listener.State {
         return false
     }
 
+    /// Listening can't run on this Mac ("Needs macOS 26").
+    var isUnavailable: Bool {
+        if case .unavailable = self { return true }
+        return false
+    }
+
     /// What a click or ↩ does now.
     var action: String {
         switch self {
@@ -203,9 +213,19 @@ struct ListeningError: LocalizedError {
 enum CaptureEvent {
     case downloading
     case heardSystemAudio
+    /// A mic result, volatile or final, unless its audio began while Launchy was speaking (`SpeechSpans`).
+    case micPhrase(MicPhrase)
     /// The mic or output device changed under it ("The microphone changed").
     case devicesChanged(String)
     case failed(String)
+}
+
+/// One mic result: its text and when its audio began and ended. Volatile results come before the final one.
+struct MicPhrase {
+    let text: String
+    let start: Date
+    let end: Date
+    let isFinal: Bool
 }
 
 /// One run of listening: the mic through AVAudioEngine and the Mac's output through a Core
@@ -314,7 +334,7 @@ private final class Capture {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw ListeningError("No microphone") }
-        let feed = try await analyze(.mic, from: format, to: speechFormat, locale)
+        let feed = try await analyze(.mic, from: format, to: speechFormat, locale, contextualStrings: ["Launchy", "Hey Launchy"])
         try Task.checkCancellation()
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in feed(buffer) }
         micTapped = true
@@ -328,7 +348,10 @@ private final class Capture {
     /// default output device.
     private func startSystemAudio(_ speechFormat: AVAudioFormat, _ locale: Locale) async throws {
         let outputUID = try Self.defaultOutputUID()
-        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        // Launchy's own voice and wake sound stay out of the transcript (ADR 0015).
+        let ownProcess = Self.ownProcessObject()
+        if ownProcess == nil { NSLog("Launchy: system audio can't leave Launchy's own process out; its speech may be transcribed") }
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: ownProcess.map { [$0] } ?? [])
         description.uuid = UUID()
         description.muteBehavior = .unmuted
         description.isPrivate = true
@@ -387,7 +410,7 @@ private final class Capture {
     /// One source's SpeechAnalyzer, writing its final results to the transcript. Returns what
     /// the source's audio callback calls with each buffer.
     private func analyze(_ source: TranscriptSource, from input: AVAudioFormat, to format: AVAudioFormat,
-                         _ locale: Locale) async throws -> (AVAudioPCMBuffer) -> Void {
+                         _ locale: Locale, contextualStrings: [String] = []) async throws -> (AVAudioPCMBuffer) -> Void {
         let transcriber = Self.transcriber(locale)
         let detector = Self.detector()
         let analyzer = SpeechAnalyzer(modules: [detector, transcriber])
@@ -396,20 +419,32 @@ private final class Capture {
         guard let converter = AVAudioConverter(from: input, to: format) else {
             throw ListeningError("Can't convert \(source.rawValue) audio for the speech model")
         }
+        if !contextualStrings.isEmpty {
+            // Whether SpeechTranscriber uses them is unverified; a refusal costs nothing.
+            let context = AnalysisContext()
+            context.contextualStrings = [.general: contextualStrings]
+            try? await analyzer.setContext(context)
+        }
         let (inputs, feed) = AsyncStream<AnalyzerInput>.makeStream()
         try await analyzer.start(inputSequence: inputs)
         analyzers.append(analyzer)
         feeds.append(feed)
 
-        // The analyzer's clock starts at the first buffer, which follows within milliseconds.
-        let began = Date()
+        let clock = AudioClock()
         Task.detached { [self] in
             do {
-                for try await result in transcriber.results where result.isFinal {
+                for try await result in transcriber.results {
                     guard writes.load(ordering: .relaxed) else { continue }
-                    let offset = result.range.start.seconds
-                    Transcript.append(source, String(result.text.characters),
-                                      at: offset.isFinite ? began.addingTimeInterval(offset) : Date())
+                    let start = clock.date(at: result.range.start.seconds)
+                    // What the mic heard while Launchy spoke is neither transcribed nor taken for a request. The time compared
+                    // is when its audio began, not when the result arrives: finals come 1 to 2 s late.
+                    if source == .mic, SpeechSpans.shared.covers(start) { continue }
+                    let text = String(result.text.characters)
+                    if source == .mic, !text.isEmpty {
+                        onEvent(.micPhrase(MicPhrase(text: text, start: start, end: clock.date(at: result.range.end.seconds),
+                                                     isFinal: result.isFinal)))
+                    }
+                    if result.isFinal { Transcript.append(source, text, at: start) }
                 }
             } catch is CancellationError {
             } catch {
@@ -439,7 +474,9 @@ private final class Capture {
                 status.pointee = .haveData
                 return pending
             }
-            if out.frameLength > 0 { feed.yield(AnalyzerInput(buffer: out)) }
+            guard out.frameLength > 0 else { return }
+            clock.fed(seconds: Double(out.frameLength) / format.sampleRate)
+            feed.yield(AnalyzerInput(buffer: out))
         }
     }
 
@@ -449,6 +486,18 @@ private final class Capture {
             guard let data = buffer.mData else { return false }
             return UnsafeRawBufferPointer(start: data, count: Int(buffer.mDataByteSize)).contains { $0 != 0 }
         }
+    }
+
+    /// This process as Core Audio knows it, for the tap's excluded list; nil when it has no audio object.
+    private static func ownProcessObject() -> AudioObjectID? {
+        var pid = getpid()
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var object = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
+                                                UInt32(MemoryLayout<pid_t>.size), &pid, &size, &object)
+        return status == noErr && object != kAudioObjectUnknown ? object : nil
     }
 
     private static func defaultOutputUID() throws -> String {
@@ -471,15 +520,42 @@ private final class Capture {
     }
 }
 
+/// Maps a source's analyzer times to the clock. The analyzer counts the samples it was fed, so time zero is re-anchored at
+/// every buffer: now, less everything fed so far. A mic clock that drifts from the Mac's, or a gap in delivery, then moves
+/// the dates of recent audio by next to nothing, and recent audio is what results are about (they arrive 1 to 2 s late).
+/// `SpeechSpans` compares these dates with when Launchy spoke.
+private final class AudioClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var origin: Date?
+    private var total: TimeInterval = 0
+    /// Used before any buffer has arrived; the first one follows within a second.
+    private let created = Date()
+
+    /// A buffer of `seconds` of audio, as the analyzer will count it, has just arrived.
+    func fed(seconds: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        total += seconds
+        origin = Date().addingTimeInterval(-total)
+    }
+
+    func date(at offset: TimeInterval) -> Date {
+        guard offset.isFinite else { return Date() }
+        lock.lock()
+        defer { lock.unlock() }
+        return (origin ?? created).addingTimeInterval(offset)
+    }
+}
+
 /// Where a transcript line came from.
 enum TranscriptSource: String {
     case mic, system
-    /// Launchy itself: a failure to start or keep listening.
+    /// Launchy itself: what it said aloud to a spoken request, or a failure to start or keep listening.
     case launchy
 }
 
 /// What Launchy heard: `transcripts/<yyyy-MM-dd>.md` in Application Support, a new file each
-/// day, one line per final result (`HH:mm:ss [mic] text`, `[system]`, or `[launchy]` for a failure).
+/// day, one line per final result (`HH:mm:ss [mic] text`, `[system]`, or `[launchy]` for what Launchy said or a failure).
 enum Transcript {
     static let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Launchy/transcripts", isDirectory: true)

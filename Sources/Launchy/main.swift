@@ -46,6 +46,8 @@ final class LauncherPanel: NSPanel {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var panel: LauncherPanel!
     var model: LauncherModel!
+    /// Hey Launchy: answers spoken requests heard by Listening.
+    var spoken: SpokenRequests?
     var hotKey: HotKey?
     var pinHotKey: HotKey?
     var listenHotKey: HotKey?
@@ -120,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Settings.storeSkipPermissionsIfAbsent()
         PaneFolder.migrateOldScratchFolder()
         makeModel()
+        spoken = SpokenRequests(model: model)
         model.cleanUpAfterLastRun()
         PeerManager.shared.model = model
         PeerManager.shared.onRemoved = { [weak self] in Task { await self?.syncHistory() } }
@@ -615,6 +618,17 @@ runTextCommand("--title") { text, generator, place in
     var title: String?
     let time = try await ContinuousClock().measure { title = try await SessionTitles.title(forPrompt: text, using: generator) }
     return "\(title ?? "(no title)")  [made on \(place), \(time)]"
+}
+
+// `Launchy --ask <file>` treats the file's text as a spoken request (what follows "Hey Launchy") and prints what each of its three
+// steps did and took, without speaking (see SpokenCommand). Request files are personal: keep them out of the repo.
+if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.arguments.count {
+    MainActor.assumeIsolated {
+        let delegate = AppDelegate()
+        delegate.makeModel()
+        Task { @MainActor in exit(await SpokenCommand.run(file: CommandLine.arguments[i + 1], model: delegate.model)) }
+        RunLoop.main.run()
+    }
 }
 
 // `Launchy --embed-reference` prints the reference vectors from this Mac's model, and `Launchy --embed-check <address> [model]`
