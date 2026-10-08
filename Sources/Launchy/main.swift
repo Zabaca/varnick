@@ -48,8 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var model: LauncherModel!
     var hotKey: HotKey?
     var pinHotKey: HotKey?
+    var listenHotKey: HotKey?
     private static let toggleHotKeyID: UInt32 = 1
     private static let pinHotKeyID: UInt32 = 2
+    private static let listenHotKeyID: UInt32 = 3
     var statusItem: NSStatusItem!
     private var listenItem: NSMenuItem!
     private var pinItem: NSMenuItem!
@@ -269,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let settings = Settings.shared
         hotKey = nil   // unregister first: the new combo may be the same keys
         pinHotKey = nil
+        listenHotKey = nil
         guard settings.recording == nil else { return }
         if let combo = settings.combo(.toggleLauncher) {
             // ⌃Space conflicts with "Select previous input source" if that macOS shortcut is on.
@@ -280,6 +283,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pinHotKey = HotKey(id: Self.pinHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { [weak self] in self?.togglePin() }
         }
         pinItem?.title = "Pin Launchy" + (pinCombo.map { " (\($0.label))" } ?? "")
+        // Unavailable (below macOS 26) is set once in `Listener.init`, so there the key is left unregistered.
+        if case .unavailable = Listener.shared.state {} else if let combo = settings.combo(.toggleListening) {
+            listenHotKey = HotKey(id: Self.listenHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { Listener.shared.toggle() }
+        }
+        showListening(Listener.shared.state)
     }
 
     func applicationWillTerminate(_ note: Notification) {
@@ -304,9 +312,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showListening(_ state: Listener.State) {
         statusItem.button?.image = NSImage(systemSymbolName: state.isListening ? "waveform" : "magnifyingglass",
                                            accessibilityDescription: "Launchy")
-        listenItem.title = state.action.capitalized + (state.note.map { " (\($0))" } ?? "")
+        let available: Bool
+        if case .unavailable = state { available = false } else { available = true }
+        let keySuffix = available ? Settings.shared.combo(.toggleListening).map { " (\($0.label))" } ?? "" : ""
+        listenItem.title = state.action.capitalized + keySuffix + (state.note.map { " (\($0))" } ?? "")
         listenItem.toolTip = state.detail
-        if case .unavailable = state { listenItem.isEnabled = false } else { listenItem.isEnabled = true }
+        listenItem.isEnabled = available
     }
 
     /// A visible panel that isn't key (pinned, behind another app) comes to the front

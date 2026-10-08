@@ -77,7 +77,7 @@ struct KeyCombo: Codable, Equatable {
 }
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-    case toggleLauncher, pinLauncher, settings
+    case toggleLauncher, pinLauncher, toggleListening, settings
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
     case webAddress, webReload
@@ -86,12 +86,13 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 
     /// Registered system-wide, so never matched against keys pressed in the panel.
-    var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher }
+    var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening }
 
     var title: String {
         switch self {
         case .toggleLauncher: "Show / hide Launchy (anywhere)"
         case .pinLauncher: "Pin Launchy (keep open when focus leaves)"
+        case .toggleListening: "Start / stop Listening (anywhere)"
         case .settings: "Settings"
         case .backToSearch: "Back to search / new session"
         case .newTerminalTab: "New terminal tab"
@@ -121,7 +122,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var group: String {
         switch self {
-        case .toggleLauncher, .pinLauncher, .settings: "Launchy"
+        case .toggleLauncher, .pinLauncher, .toggleListening, .settings: "Launchy"
         case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight: "Splits"
         case .webAddress, .webReload: "Web"
@@ -133,6 +134,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .toggleLauncher: KeyCombo(keyCode: kVK_Space, .control)
         case .pinLauncher: KeyCombo(keyCode: kVK_Space, [.control, .shift])
+        case .toggleListening: KeyCombo(keyCode: kVK_ANSI_L, [.control, .option])
         case .settings: KeyCombo(keyCode: kVK_ANSI_Comma, .command)
         case .backToSearch: KeyCombo(keyCode: kVK_ANSI_N, .command)
         case .newTerminalTab: KeyCombo(keyCode: kVK_ANSI_T, [.command, .shift])
