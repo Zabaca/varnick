@@ -12,7 +12,7 @@ public enum Turn: String, Sendable {
     case plan
     /// An MCP server asked for input (elicitation).
     case input
-    /// The turn ended with background agents, workflows or shells still running. Never in the turn file: the reader
+    /// The turn ended with background agents, busy teammates, workflows or shells still running. Never in the turn file: the reader
     /// derives it from the transcript (`PaneFolder.corrected`), and it travels to peers as text like the rest.
     case background
 }

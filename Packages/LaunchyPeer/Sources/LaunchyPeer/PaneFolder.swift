@@ -40,7 +40,7 @@ public enum PaneFolder {
 
     static let turnFileName = ".launchy-turn"
 
-    /// The `Stop` hook's input saved unparsed beside the turn file, which says which background shells were running
+    /// The `Stop` hook's input saved unparsed beside the turn file, which says which background tasks were running
     /// when a turn ended (option 01, Background work).
     static func stopFile(for id: UUID) -> URL {
         url(for: id).appendingPathComponent(stopFileName)
@@ -70,7 +70,7 @@ public enum PaneFolder {
     }
 
     /// Waiting from when the transcript says the user stopped Claude (no hook fires then), and `.background` when
-    /// a waiting turn left agents, workflows or shells running. The file is never rewritten.
+    /// a waiting turn left agents, teammates, workflows or shells running. The file is never rewritten.
     public static func corrected(_ recorded: PaneTurn, for id: UUID, transcriptPath: String?) -> PaneTurn {
         var result = recorded
         guard let transcriptPath else { return result }
@@ -79,32 +79,35 @@ public enum PaneFolder {
             result = PaneTurn(.waiting, since: stopped)
         }
         if result.turn == .waiting {
-            let shells = runningShells(for: id, since: result.since, transcriptPath: transcriptPath)
-            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, shells: shells)
+            let input = stopInput(for: id, since: result.since, transcriptPath: transcriptPath)
+            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input)
             if !work.isEmpty { result = PaneTurn(.background, since: result.since, background: work) }
         }
         return result
     }
 
-    /// The shells the `Stop` input says were running when this turn ended; none if the file is older than the turn
+    /// The tasks the `Stop` input says were running when this turn ended, and when it was saved; none if the file is older than the turn
     /// (an Esc or restart fired no `Stop`) or is another conversation's (`/clear`, `/resume`).
-    static func runningShells(for id: UUID, since: Date, transcriptPath: String) -> Set<String> {
+    static func stopInput(for id: UUID, since: Date, transcriptPath: String) -> StopInput {
         let file = stopFile(for: id)
         guard let saved = modificationDate(file.path), saved >= since - staleWindow,
-              let data = try? Data(contentsOf: file) else { return [] }
+              let data = try? Data(contentsOf: file) else { return StopInput(tasks: [], savedAt: .distantPast) }
         let conversation = URL(fileURLWithPath: transcriptPath).deletingPathExtension().lastPathComponent
-        return runningShells(in: data, conversation: conversation)
+        return StopInput(tasks: runningTasks(in: data, conversation: conversation), savedAt: saved)
     }
 
-    /// `background_tasks` is the session's tasks still running, each `{id, type, status, …}`; a shell, or a Monitor, is
-    /// type "shell" (2.1.292). The input's `session_id` must be `conversation`, the transcript's name.
-    static func runningShells(in data: Data, conversation: String) -> Set<String> {
+    /// `background_tasks` is the session's tasks still running, each `{id, type, status, description, …}`: `shell` (a
+    /// Monitor too, 2.1.292), `subagent`, `teammate` (an agent started with a name; 2.1.295) and `workflow`, which the
+    /// transcript counts instead. The input's `session_id` must be `conversation`, the transcript's name.
+    static func runningTasks(in data: Data, conversation: String) -> [RunningTask] {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               json["session_id"] as? String == conversation,
               let tasks = json["background_tasks"] as? [[String: Any]] else { return [] }
-        return Set(tasks.compactMap { task in
-            task["type"] as? String == "shell" && task["status"] as? String == "running" ? task["id"] as? String : nil
-        })
+        return tasks.compactMap { task in
+            guard task["status"] as? String == "running", let id = task["id"] as? String,
+                  let kind = (task["type"] as? String).flatMap(RunningTask.Kind.init) else { return nil }
+            return RunningTask(id: id, kind: kind, description: task["description"] as? String ?? "")
+        }
     }
 
     public static func modificationDate(_ path: String) -> Date? {
