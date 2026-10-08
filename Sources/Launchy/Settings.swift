@@ -557,7 +557,7 @@ struct SettingsView: View {
                         }
                         case .listening:
                         SettingRow(title: "Hey Launchy",
-                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing. With a TypeSafe key saved, the words you say after \"Hey Launchy\" are sent to TypeSafe to choose where to look; no page, bookmark, session or project names go.") {
+                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing. With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Launchy\" are sent to TypeSafe to choose where to look; no page, bookmark, session or project names go. Otherwise nothing is sent.") {
                             if Listener.shared.state.isUnavailable {
                                 Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if let need = textGenerationNeed {
@@ -618,7 +618,7 @@ struct SettingsView: View {
                         switch settings.relevanceFilter {
                         case .typesafe:
                             SettingRow(title: "TypeSafe",
-                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe.") {
+                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe, and the words you say after \"Hey Launchy\".") {
                                 if settings.typesafeKeyInKeychain {
                                     Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
                                 } else if settings.typesafeKey != nil {
@@ -695,7 +695,7 @@ struct SettingsView: View {
                         }
                         SectionLabel(text: "Keys")
                         SettingRow(title: "TypeSafe",
-                                   detail: "Used by the relevance filter when it runs on TypeSafe, and by Hey Launchy to choose where to look. Kept in the macOS Keychain.") {
+                                   detail: "Used by the relevance filter when it runs on TypeSafe, and then by Hey Launchy to choose where to look. Kept in the macOS Keychain.") {
                             if let error = settings.typesafeKeyError {
                                 Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
                             }

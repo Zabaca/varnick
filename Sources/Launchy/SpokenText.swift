@@ -41,7 +41,7 @@ enum SpokenText {
             /// Bookmarked pages only.
             case bookmarks
             case sessions
-            /// No source to prefer: sessions, then pages. The reply named none Launchy knows, or the request isn't about the user's things.
+            /// No source to prefer: sessions, then pages. The Text generation reply named none Launchy knows.
             case any
         }
         /// Sessions read beside the chosen kind of page: ahead of its pages (a request word names one of the user's projects) or
@@ -109,62 +109,47 @@ enum SpokenText {
 
     // MARK: Step 1 with Jev (ADR 0016)
 
-    /// What TypeSafe's Jev made of a request: how likely each source is the one to look in, and how likely the request is about
-    /// none of the user's things (the weather, a timer).
-    struct Route: Equatable {
-        var history: Double
-        var bookmarks: Double
-        var sessions: Double
-        var other: Double
-    }
-
-    /// At this chance of "other" or more, the request isn't about the user's things. The ones measured locally sat far apart: an
-    /// off-topic request above 0.99, a request for a page or session below 0.1.
-    static let offTopicFrom = 0.5
-    /// At this chance of sessions or more, sessions are read beside the pages of the likelier source.
-    static let alsoSessionsFrom = 0.1
-
-    /// The two answers read out of Jev's reply: the `source` choice's probabilities and the `action` choice's "other". Nil when
-    /// the reply holds no source.
-    static func route(fromResponse data: Data) -> Route? {
-        struct Choice: Decodable { let probabilities: [String: Double] }
-        struct Answers: Decodable { let source: Choice; let action: Choice? }
-        struct Response: Decodable { let answers: Answers }
-        guard let answers = try? JSONDecoder().decode(Response.self, from: data).answers else { return nil }
-        let source = answers.source.probabilities
-        guard source["history"] != nil || source["bookmarks"] != nil || source["sessions"] != nil else { return nil }
-        return Route(history: source["history"] ?? 0, bookmarks: source["bookmarks"] ?? 0, sessions: source["sessions"] ?? 0,
-                     other: answers.action?.probabilities["other"] ?? 0)
-    }
-
-    /// Where Jev's route sends the search. The likeliest source leads; sessions are read too when a search word is the folder name
-    /// of one of the user's Claude sessions (`folders`, lowercased; they never leave this Mac) or when Jev gave them
-    /// `alsoSessionsFrom`. Jev reads a name it has not heard of as a web topic, which is how "what is <a project>" goes astray.
-    /// An off-topic request is still searched, over both kinds of row, and the answer step says plainly when nothing fits.
-    static func plan(for route: Route, request: String, folders: Set<String>) -> Plan {
+    /// Where Jev's route sends the search: the likeliest source leads, and sessions are read too when the request names one of the
+    /// user's session folders or Jev gave them `alsoSessionsFrom`. Jev reads an unfamiliar name as a web topic; the folder check
+    /// (here, never sent) corrects that.
+    static func plan(for route: SpokenRouter.Route, request: String, folders: Set<String>) -> Plan {
         let words = queryWords(from: request)
-        let query = words.isEmpty ? cleaned(request) : words
-        if route.other >= offTopicFrom { return Plan(source: .any, query: query, readable: true) }
         let source: Plan.Source =
             route.sessions >= route.history && route.sessions >= route.bookmarks ? .sessions
             : route.bookmarks > route.history ? .bookmarks : .history
-        var plan = Plan(source: source, query: query, readable: true)
+        var plan = Plan(source: source, query: words.isEmpty ? cleaned(request) : words, readable: true)
         if source != .sessions {
-            if names(query, in: folders) { plan.alsoSessions = .ahead }
-            else if route.sessions >= alsoSessionsFrom { plan.alsoSessions = .behind }
+            if names(request, in: folders) { plan.alsoSessions = .ahead }
+            else if route.sessions >= SpokenRouter.alsoSessionsFrom { plan.alsoSessions = .behind }
         }
         return plan
     }
 
-    /// Whether one of the words is the whole name of one of the `folders`, ignoring case. Names under three letters are too
-    /// likely to be a word.
-    static func names(_ words: String, in folders: Set<String>) -> Bool {
-        words.lowercased().split(whereSeparator: \.isWhitespace).contains { $0.count >= 3 && folders.contains(String($0)) }
+    /// Whether the request holds the words of one of the `folders` (lowercased names) one after another, or the name's words
+    /// joined as one word ("my-app" is "my app" or "myapp"). Case, punctuation and the folder's `-`, `_`, `.` and spaces are
+    /// ignored. A folder of under three letters, or of stop words only, is too likely to be a word.
+    static func names(_ request: String, in folders: Set<String>) -> Bool {
+        let words = tokens(request)
+        guard !words.isEmpty else { return false }
+        let single = Set(words)
+        return folders.contains { folder in
+            let parts = tokens(folder)
+            let joined = parts.joined()
+            guard joined.count >= 3, !parts.allSatisfy(stopWords.contains) else { return false }
+            if single.contains(joined) { return true }
+            return parts.count > 1 && words.indices.contains { start in
+                start + parts.count <= words.count && Array(words[start..<start + parts.count]) == parts
+            }
+        }
     }
 
-    /// The words of a request worth searching for: what is left once the words of asking, finding and remembering, the words that
-    /// name only a kind of thing (page, bookmark, session) or a time, and the small grammatical words are dropped. Measured
-    /// locally this matched Jev's own word-by-word judgments, so Jev is not asked. Possessives lose their "'s".
+    /// Lowercased runs of letters and digits.
+    private static func tokens(_ text: String) -> [String] {
+        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+    }
+
+    /// The words worth searching for: the request without words of asking, remembering, a kind (page, session) or a time, and
+    /// small grammatical words, and without "'s". Measured locally this matched Jev's word-by-word judgments.
     static func queryWords(from request: String) -> String {
         let kept = request.split(whereSeparator: \.isWhitespace).compactMap { raw -> String? in
             var word = cleaned(String(raw).replacingOccurrences(of: "\u{2019}", with: "'"))
@@ -193,7 +178,7 @@ enum SpokenText {
     static let maxPages = 5
     static let maxDescription = 300
 
-    /// How many session rows ride with a plan's pages (`behind`), and how many session rows may lead them (`ahead`).
+    /// The session rows kept behind a plan's pages, which get the rest of `maxPages` when there are fewer pages.
     static let maxSessionsBehind = 2
 
     /// The rows the answer step reads: from the panel's two lists, ranked as the panel ranks them. Sessions read beside pages
@@ -213,8 +198,8 @@ enum SpokenText {
             let leading = sessions.prefix(maxSessions)
             return Array(leading) + kept.prefix(maxPages - leading.count)
         case .behind:
-            let trailing = sessions.prefix(maxSessionsBehind)
-            return Array(kept.prefix(maxPages - trailing.count)) + trailing
+            let pages = kept.prefix(maxPages - maxSessionsBehind)
+            return Array(pages) + sessions.prefix(maxPages - pages.count)
         }
     }
 
@@ -313,6 +298,8 @@ enum SpokenPipeline {
         /// The request was empty: the wake phrase and nothing after it.
         case nothingToSearch
         case nothingFound(words: String)
+        /// Jev found the request to be about none of the user's things: nothing was searched.
+        case offTopic
 
         /// What Launchy says.
         var spoken: String {
@@ -320,6 +307,7 @@ enum SpokenPipeline {
             case .answer(let text): text
             case .nothingToSearch: "Ask me to find a page, a bookmark or a Claude session."
             case .nothingFound(let words): "I found nothing for \(words)."
+            case .offTopic: "I only look up your pages, bookmarks and Claude sessions."
             }
         }
     }
@@ -334,15 +322,12 @@ enum SpokenPipeline {
         /// Who made the plan: "Jev", or where Text generation ran when Jev was not used, and why not.
         var decidedBy = "-"
         /// What Jev said, when it decided; `--ask` prints it.
-        var route: SpokenText.Route?
+        var route: SpokenRouter.Route?
         /// Where Text generation wrote the answer.
         var answeredAt: ModelPlace?
     }
 
-    /// Which decides may run: `--ask` can hold Jev back to try the fallback.
-    enum Decider { case jev, text }
-
-    static func run(_ request: String, on model: LauncherModel, decider: Decider = .jev) async throws -> Run {
+    static func run(_ request: String, on model: LauncherModel) async throws -> Run {
         var textPlaces: [ModelPlace] = []
         func generate(_ prompt: String, _ maxTokens: Int) async throws -> String {
             let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens)
@@ -357,16 +342,24 @@ enum SpokenPipeline {
         let clock = ContinuousClock()
         var began = clock.now
 
-        // Jev when there is a key and it answers in time; otherwise the fallback, Text generation.
+        // Jev only when the relevance filter is set to TypeSafe and a key is saved, and it answers in time; otherwise Text
+        // generation decides and nothing goes to TypeSafe (ADR 0016).
         var jevPlan: SpokenText.Plan?
-        var route: SpokenText.Route?
+        var route: SpokenRouter.Route?
         var decidedBy = "Jev"
-        if decider == .text {
-            decidedBy = "Jev held back"
+        if Settings.shared.activeRelevanceFilter != .typesafe {
+            decidedBy = "relevance filter not on TypeSafe"
         } else if let key = Settings.shared.typesafeKey {
             do {
                 let said = try await SpokenRouter(apiKey: key).route(request)
                 route = said
+                if said.isOffTopic {
+                    var run = Run(plan: SpokenText.Plan(source: .any, query: "", readable: true), rows: [], outcome: .offTopic,
+                                  decide: began.duration(to: clock.now))
+                    run.decidedBy = decidedBy
+                    run.route = said
+                    return run
+                }
                 jevPlan = SpokenText.plan(for: said, request: request, folders: model.store.sessionFolderNames())
             } catch {
                 try Task.checkCancellation()
@@ -415,7 +408,8 @@ enum SpokenPipeline {
 extension Error {
     /// What a log may say of a failure: the kind, never a message that could hold what was said.
     var logKind: String {
-        (self as? ModelServer.Failure)?.errorDescription ?? "\(type(of: self))"
+        if let urlError = self as? URLError { return "URLError \(urlError.code.rawValue)" }
+        return (self as? ModelServer.Failure)?.errorDescription ?? "\(type(of: self))"
     }
 }
 
@@ -426,10 +420,15 @@ extension Double {
 
 /// `Launchy --ask <file>`: the file's text, taken as a request said after "Hey Launchy", through the three steps against the
 /// app's own search and Text generation's choice, without speaking. Prints what each step did and how long it took, to tune the
-/// prompts and the timing constants. Decides with Jev when a TypeSafe key is saved or in the environment; set
-/// `LAUNCHY_ASK_DECIDER=text` to try the fallback. Request files are personal: keep them out of the repo.
+/// prompts and the timing constants. Decides with Jev only when the relevance filter is on TypeSafe with a key; set
+/// `LAUNCHY_EVAL_FILTER` (typesafe, local, off) to choose without writing the settings. Request files are personal: keep them out of the repo.
 @MainActor
 enum SpokenCommand {
+    private static func describe(_ route: SpokenRouter.Route) -> String {
+        let p = { (value: Double) in String(format: "%.2f", value) }
+        return "jev: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), other \(p(route.other))"
+    }
+
     static func run(file: String, model: LauncherModel) async -> Int32 {
         guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
             print("Can't read \(file)")
@@ -437,15 +436,15 @@ enum SpokenCommand {
         }
         let request = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         do {
-            let run = try await SpokenPipeline.run(request, on: model, decider: ProcessInfo.processInfo.environment["LAUNCHY_ASK_DECIDER"] == "text" ? .text : .jev)
+            let run = try await SpokenPipeline.run(request, on: model)
             if run.outcome == .nothingToSearch {
                 print("decide: nothing to search")
+            } else if run.outcome == .offTopic {
+                print("decide: off topic  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
+                if let route = run.route { print(describe(route)) }
             } else {
                 print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.alsoSessions == .no ? "" : ", sessions \(run.plan.alsoSessions)")\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
-                if let route = run.route {
-                    let p = { (value: Double) in String(format: "%.2f", value) }
-                    print("jev: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), other \(p(route.other))")
-                }
+                if let route = run.route { print(describe(route)) }
                 print("read: \(run.rows.count) rows  [\(run.read.seconds.secondsText)]")
                 for (n, row) in run.rows.enumerated() { print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(row.title)") }
             }

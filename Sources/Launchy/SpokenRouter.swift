@@ -1,8 +1,7 @@
 import Foundation
 
-/// Asks TypeSafe (Jev) where a spoken request should look and whether it is about the user's things at all (ADR 0016). The
-/// first step of a spoken request; Text generation decides instead when there is no key or this fails. Only the request's text
-/// goes: never a title, a project name or anything from History, Bookmarks or sessions.
+/// Asks TypeSafe's Jev where a spoken request should look and whether it is about the user's things at all (ADR 0016).
+/// Only the request's text goes, never a title, a project name or a row; Text generation decides when this isn't used or fails.
 struct SpokenRouter {
     let apiKey: String
     /// Pinned: the `jev-latest` alias moves, and the questions below were measured on this one.
@@ -11,6 +10,33 @@ struct SpokenRouter {
 
     /// A decide slower than this is no faster than Gemma's, so it is given up on and Gemma decides.
     static let timeout: TimeInterval = 1.5
+
+    /// How likely each source is the one to look in, and how likely the request is about none of the user's things.
+    struct Route: Equatable {
+        var history: Double
+        var bookmarks: Double
+        var sessions: Double
+        var other: Double
+
+        /// The weather, a timer: the ones measured locally sat far apart, off-topic above 0.99 and real requests below 0.1.
+        var isOffTopic: Bool { other >= SpokenRouter.offTopicFrom }
+    }
+
+    static let offTopicFrom = 0.5
+    /// At this chance of sessions or more, they are read beside the pages of the likelier source.
+    static let alsoSessionsFrom = 0.1
+
+    /// The `source` probabilities and the `action` choice's "other" out of Jev's reply; nil when it holds no source.
+    static func route(fromResponse data: Data) -> Route? {
+        struct Choice: Decodable { let probabilities: [String: Double] }
+        struct Answers: Decodable { let source: Choice; let action: Choice? }
+        struct Response: Decodable { let answers: Answers }
+        guard let answers = try? JSONDecoder().decode(Response.self, from: data).answers else { return nil }
+        let source = answers.source.probabilities
+        guard source["history"] != nil || source["bookmarks"] != nil || source["sessions"] != nil else { return nil }
+        return Route(history: source["history"] ?? 0, bookmarks: source["bookmarks"] ?? 0, sessions: source["sessions"] ?? 0,
+                     other: answers.action?.probabilities["other"] ?? 0)
+    }
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -45,7 +71,7 @@ struct SpokenRouter {
     ]
 
     /// Throws on a network error, a timeout, a status other than 200 or a reply with no source.
-    func route(_ request: String) async throws -> SpokenText.Route {
+    func route(_ request: String) async throws -> Route {
         var req = URLRequest(url: endpoint)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -56,7 +82,7 @@ struct SpokenRouter {
             "questions": Self.questions,
         ])
         let (data, response) = try await Self.session.data(for: req)
-        guard (response as? HTTPURLResponse)?.statusCode == 200, let route = SpokenText.route(fromResponse: data) else {
+        guard (response as? HTTPURLResponse)?.statusCode == 200, let route = Self.route(fromResponse: data) else {
             throw URLError(.badServerResponse)
         }
         return route

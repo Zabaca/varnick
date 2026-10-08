@@ -16,6 +16,10 @@ final class SpokenRequests {
     static let maxSeconds: TimeInterval = 20
     /// How long a request waits, with no new result, before it is taken as said. Speech that goes on (a volatile result) puts it off.
     static let hold: TimeInterval = 1.0
+    /// How long after speech begins its first volatile result shows up, which the wait for a request allows past its end.
+    static let volatileLatency: TimeInterval = 1.0
+    /// How recently volatile speech must have been heard for a final result to be still to come.
+    static let speechSettle: TimeInterval = hold + 1.5
 
     private struct Request {
         var text: String
@@ -113,20 +117,21 @@ final class SpokenRequests {
         phase = .waiting(until: deadline)
         holding?.cancel()
         holding = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+            // Speech that began just before the deadline is only heard as volatile text a moment later.
+            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow) + Self.volatileLatency))
             while !Task.isCancelled, let self, self.speechUnderway(until: deadline) {
-                try? await Task.sleep(for: .seconds(Self.hold + 1.5))
+                try? await Task.sleep(for: .seconds(Self.speechSettle))
             }
             guard !Task.isCancelled else { return }
             self?.waitRanOut()
         }
     }
 
-    /// Speech that began before the wait ended and was heard a moment ago: its final result is yet to come (finals arrive 1 to 2 s
-    /// late), so the wait is not over.
+    /// Speech that began before the deadline and was heard a moment ago: its final result is yet to come (finals arrive 1 to 2 s
+    /// late), so the wait is not over and the final still counts as the request.
     private func speechUnderway(until deadline: Date) -> Bool {
         guard let volatile = lastVolatile else { return false }
-        return volatile.start <= deadline && Date().timeIntervalSince(volatile.arrived) < Self.hold + 1.5
+        return volatile.start <= deadline && Date().timeIntervalSince(volatile.arrived) < Self.speechSettle
     }
 
     private func waitRanOut() {
@@ -136,6 +141,7 @@ final class SpokenRequests {
         let epoch = epoch
         let saying = SpokenPipeline.Outcome.nothingToSearch.spoken
         working = Task { [weak self] in
+            guard !Task.isCancelled else { return }
             self?.record(saying)
             await Speaker.shared.speak(saying)
             guard let self, self.epoch == epoch else { return }
