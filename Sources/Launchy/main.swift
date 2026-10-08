@@ -238,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .newTerminalTab: model.newTerminalTab()
         case .renameTab where inSession: model.beginRename()
         case .endPane where inSession: model.endClaude()
+        case .doneSession where inSession: return model.requestDoneActive()
         case .paste where inSession && model.activeSession.map({ $0.isClaude || $0.isShell }) == true:
             model.activeSession?.paste()
         case .previousTab: model.cycleSession(-1)

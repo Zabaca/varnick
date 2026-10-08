@@ -1671,6 +1671,10 @@ final class LauncherModel: ObservableObject {
             guard let self, let kept = ref else { return }
             self.doneRequested.remove(kept.id)
         }
+        session.onDone = { [weak self] in
+            guard let self, let pane = ref else { return }
+            self.requestDone(pane)
+        }
         session.onNeedsConfirmation = { [weak self] in
             guard let self, let ended = ref, let tab = self.tabs.first(where: { $0.contains(ended) }) else { return }
             self.activate(tab)
@@ -1875,6 +1879,25 @@ final class LauncherModel: ObservableObject {
         guard let pane = tabs.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude }) else { return }
         doneRequested.insert(id)
         pane.end()
+    }
+
+    /// Done in a Claude pane (its Done button, the Mark session done key): as on the board, a working session
+    /// asks first, in the pane, and a second Done ends it.
+    func requestDone(_ session: ClaudeSession) {
+        guard session.isClaude else { return }
+        if session.asksBeforeDone, !session.askingDone {
+            session.askingDone = true
+            return
+        }
+        session.askingDone = false
+        markDone(session.id)
+    }
+
+    /// The Mark session done key: false for a pane that isn't Claude, so the key goes on to it.
+    func requestDoneActive() -> Bool {
+        guard showsTerminal, let session = activeSession, session.isClaude else { return false }
+        requestDone(session)
+        return true
     }
 
     /// Done on a paired Mac's open session that has no pane here: only marked, in Completed with "Still open

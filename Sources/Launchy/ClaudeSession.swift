@@ -145,6 +145,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private var clientEnded = false
     /// Closing the card on the host asked to end the session and is waiting for the answer.
     @Published private(set) var confirmingEnd = false
+    /// Done was pressed in the pane while Claude is mid-turn: the pane asks whether to end the session.
+    @Published var askingDone = false
+    /// Done on it asks first, as on the board: it is mid-turn, unless its pane shows a card, which asks for itself.
+    var asksBeforeDone: Bool { started && awayNote == nil && turn?.turn.isRunning == true }
+    /// Done pressed in the pane (`LauncherModel.requestDone`); also "End it" on its question.
+    var onDone: () -> Void = {}
     /// Called when the pane needs the user's answer, so the model can bring it on screen.
     var onNeedsConfirmation: () -> Void = {}
     /// Called when a close the user asked for won't happen: the question was answered No, the pane was
@@ -303,6 +309,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             Task { @MainActor in
                 self?.checkConversation()
                 self?.checkTurn()
+                if self?.askingDone == true, self?.asksBeforeDone == false { self?.askingDone = false }
                 self?.checkTitle()
                 self?.checkRename()
                 self?.checkExit()
