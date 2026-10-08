@@ -557,7 +557,7 @@ struct SettingsView: View {
                         }
                         case .listening:
                         SettingRow(title: "Hey Launchy",
-                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing.") {
+                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing. With a TypeSafe key saved, the words you say after \"Hey Launchy\" are sent to TypeSafe to choose where to look; no page, bookmark, session or project names go.") {
                             if Listener.shared.state.isUnavailable {
                                 Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if let need = textGenerationNeed {
@@ -695,7 +695,7 @@ struct SettingsView: View {
                         }
                         SectionLabel(text: "Keys")
                         SettingRow(title: "TypeSafe",
-                                   detail: "Used by the relevance filter when it runs on TypeSafe. Kept in the macOS Keychain.") {
+                                   detail: "Used by the relevance filter when it runs on TypeSafe, and by Hey Launchy to choose where to look. Kept in the macOS Keychain.") {
                             if let error = settings.typesafeKeyError {
                                 Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
                             }

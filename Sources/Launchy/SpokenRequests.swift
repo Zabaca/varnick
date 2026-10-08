@@ -215,10 +215,9 @@ final class SpokenRequests {
 
         // For the latency check: where the time went, as durations only.
         func seconds(_ duration: Duration?) -> String { duration?.seconds.secondsText ?? "-" }
-        let place = { (n: Int) in run.map { $0.places.indices.contains(n) ? "\($0.places[n])" : "-" } ?? "-" }
         NSLog("Launchy: spoken request timing: final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
               + "held \(began.timeIntervalSince(request.lastArrived).secondsText), "
-              + "decide \(seconds(run?.decide)) (\(place(0))), read \(seconds(run?.read)), answer \(seconds(run?.respond)) (\(place(1))), "
+              + "decide \(seconds(run?.decide)) (\(run?.decidedBy ?? "-")), read \(seconds(run?.read)), answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
               + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended")
     }
 
