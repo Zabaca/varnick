@@ -280,12 +280,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pinHotKey = HotKey(id: Self.pinHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { [weak self] in self?.togglePin() }
         }
         pinItem?.title = "Pin Launchy" + (pinCombo.map { " (\($0.label))" } ?? "")
-        if let combo = settings.combo(.toggleListening) {
-            // Where Listening is unavailable (below macOS 26) the key does nothing, rather than beeping.
-            listenHotKey = HotKey(id: Self.listenHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) {
-                if case .unavailable = Listener.shared.state { return }
-                Listener.shared.toggle()
-            }
+        // Unavailable (below macOS 26) is set once in `Listener.init`, so there the key is left unregistered.
+        if case .unavailable = Listener.shared.state {} else if let combo = settings.combo(.toggleListening) {
+            listenHotKey = HotKey(id: Self.listenHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { Listener.shared.toggle() }
         }
         showListening(Listener.shared.state)
     }
@@ -312,11 +309,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showListening(_ state: Listener.State) {
         statusItem.button?.image = NSImage(systemSymbolName: state.isListening ? "waveform" : "magnifyingglass",
                                            accessibilityDescription: "Launchy")
-        var key = Settings.shared.combo(.toggleListening).map { " (\($0.label))" } ?? ""
-        if case .unavailable = state { key = "" }   // the key does nothing there
-        listenItem.title = state.action.capitalized + key + (state.note.map { " (\($0))" } ?? "")
+        let available: Bool
+        if case .unavailable = state { available = false } else { available = true }
+        let keySuffix = available ? Settings.shared.combo(.toggleListening).map { " (\($0.label))" } ?? "" : ""
+        listenItem.title = state.action.capitalized + keySuffix + (state.note.map { " (\($0))" } ?? "")
         listenItem.toolTip = state.detail
-        if case .unavailable = state { listenItem.isEnabled = false } else { listenItem.isEnabled = true }
+        listenItem.isEnabled = available
     }
 
     /// A visible panel that isn't key (pinned, behind another app) comes to the front
