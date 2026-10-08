@@ -78,7 +78,7 @@ Launchy's voice must not be heard back as speech:
 
 - On waking, Launchy plays a short system sound.
 - **The request** is the text after the match.
-  - If none follows, Launchy takes the next mic result that starts within the wait limit (8 s).
+  - If none follows, Launchy takes the next mic result that starts within the wait limit (8 s). A wait that ends with nothing said is an empty request: no search, and Launchy says "Ask me to find a page, a bookmark or a Claude session." Speech heard just before the wait ends is waited for, since its final result comes late. A result of only punctuation counts as nothing.
   - Any further mic result that starts within the gap (1.5 s) of the previous one's end is appended, up to the length limit (20 s or 500 characters).
   - The wait, the gap and the limit are named constants, tuned by hand.
 - One request at a time. Mic results heard while a request is decided, read or spoken never wake it or join a request.
@@ -104,8 +104,7 @@ Launchy's voice must not be heard back as speech:
   - If neither can answer, Launchy says "Text generation isn't set up" and stops.
 
 **Reading (step 2)**
-- An empty request (the wake phrase and nothing after it): no search. Launchy says "Ask me to find a page, a bookmark or a Claude session."
-- **Otherwise, the panel's search without the panel.** A method on the launcher model runs the first two passes of the panel's search and returns the sessions and pages:
+- **The panel's search without the panel.** A method on the launcher model runs the first two passes of the panel's search and returns the sessions and pages:
   - keyword for pages and for sessions;
   - the query's embedding, through the same server-or-this-Mac pick;
   - meaning for both;

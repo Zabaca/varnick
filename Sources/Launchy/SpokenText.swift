@@ -22,6 +22,11 @@ enum SpokenText {
         return nil
     }
 
+    /// `text` without the whitespace and punctuation around it: what is left of a request, empty when only a stray "." came.
+    static func cleaned(_ text: String) -> String {
+        text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.:;!?-–—")))
+    }
+
     private static func token(_ word: String) -> String {
         word.lowercased().trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
     }
@@ -55,6 +60,7 @@ enum SpokenText {
         You turn a spoken request into a search. Choose where to look and what to search for.
         Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions: their projects and work).
         Every request is a search, so always choose one source. When unsure what is meant, choose "sessions" or "history" and use the request's own key words.
+        A well-known public thing (a technology, product or site) is "history". A name you don't recognise is probably one of the user's own projects: "sessions".
         Reply with one line of JSON and nothing else: {"source": "...", "query": "..."}
         "query" is 1 to 8 words to search for: the key words of the topic only, without filler such as "find", "that page", "I was reading" or "the one about".
 
@@ -66,8 +72,8 @@ enum SpokenText {
         {"source": "sessions", "query": "reranker"}
         Request: what is Kestrel
         {"source": "sessions", "query": "Kestrel"}
-        Request: are you searching
-        {"source": "history", "query": "searching"}
+        Request: what is MLX
+        {"source": "history", "query": "MLX"}
         Request: tell me about the budget spreadsheet
         {"source": "history", "query": "budget spreadsheet"}
 
@@ -203,7 +209,7 @@ enum SpokenPipeline {
         let underlying: Error
     }
 
-    enum Outcome {
+    enum Outcome: Equatable {
         case answer(String)
         /// The request was empty: the wake phrase and nothing after it.
         case nothingToSearch
@@ -238,7 +244,7 @@ enum SpokenPipeline {
             return reply.text
         }
 
-        guard !request.isEmpty else {
+        guard !SpokenText.cleaned(request).isEmpty else {
             return Run(plan: SpokenText.Plan(source: .any, query: "", readable: false), rows: [], outcome: .nothingToSearch, decide: .zero)
         }
 
@@ -249,6 +255,7 @@ enum SpokenPipeline {
             throw Failure(step: .decide, underlying: error)
         }
         let plan = SpokenText.plan(fromReply: reply, request: request)
+        // Stays the outcome unless rows are found to answer from.
         var run = Run(plan: plan, rows: [], outcome: .nothingFound(words: plan.query), decide: began.duration(to: clock.now))
         run.places = places
 
@@ -257,10 +264,7 @@ enum SpokenPipeline {
         do { found = try await model.searchApart(plan.query) } catch { throw Failure(step: .read, underlying: error) }
         run.rows = SpokenText.rows(for: plan.source, sessions: found.sessions, pages: found.pages)
         run.read = began.duration(to: clock.now)
-        guard !run.rows.isEmpty else {
-            run.outcome = .nothingFound(words: plan.query)
-            return run
-        }
+        guard !run.rows.isEmpty else { return run }
 
         began = clock.now
         let rows = SpokenText.describe(run.rows, macName: { PeerManager.shared.name(of: $0) })
@@ -302,8 +306,10 @@ enum SpokenCommand {
         do {
             let run = try await SpokenPipeline.run(request, on: model)
             let place = { (n: Int) in run.places.indices.contains(n) ? "\(run.places[n])" : "-" }
-            print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(place(0)), \(run.decide.seconds.secondsText)]")
-            if !request.isEmpty {
+            if run.outcome == .nothingToSearch {
+                print("decide: nothing to search")
+            } else {
+                print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(place(0)), \(run.decide.seconds.secondsText)]")
                 print("read: \(run.rows.count) rows  [\(run.read.seconds.secondsText)]")
                 for (n, row) in run.rows.enumerated() { print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(row.title)") }
             }

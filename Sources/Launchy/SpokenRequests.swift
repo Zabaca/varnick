@@ -73,20 +73,21 @@ final class SpokenRequests {
             // A short system sound: the request can follow.
             NSSound(named: "Tink")?.play()
             if rest.isEmpty {
-                phase = .waiting(until: phrase.end.addingTimeInterval(Self.wakeWait))
+                wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
             } else {
                 collect(rest, from: phrase, arrived: now)
             }
         case .waiting(let until):
             if phrase.start > until {
+                holding?.cancel()
                 phase = .idle
                 return hear(phrase)
             }
             guard phrase.isFinal else { return }
             // Saying the wake phrase again before the request is no harm.
             let rest = SpokenText.request(in: phrase.text) ?? phrase.text
-            if rest.isEmpty {
-                phase = .waiting(until: phrase.end.addingTimeInterval(Self.wakeWait))
+            if SpokenText.cleaned(rest).isEmpty {
+                wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
             } else {
                 collect(rest, from: phrase, arrived: now)
             }
@@ -104,6 +105,41 @@ final class SpokenRequests {
             } else {
                 rearm(from: now)
             }
+        }
+    }
+
+    /// The wake phrase came alone: the request may begin until `deadline`. When it doesn't, Launchy says what it can do.
+    private func wait(until deadline: Date) {
+        phase = .waiting(until: deadline)
+        holding?.cancel()
+        holding = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+            while !Task.isCancelled, let self, self.speechUnderway(until: deadline) {
+                try? await Task.sleep(for: .seconds(Self.hold + 1.5))
+            }
+            guard !Task.isCancelled else { return }
+            self?.waitRanOut()
+        }
+    }
+
+    /// Speech that began before the wait ended and was heard a moment ago: its final result is yet to come (finals arrive 1 to 2 s
+    /// late), so the wait is not over.
+    private func speechUnderway(until deadline: Date) -> Bool {
+        guard let volatile = lastVolatile else { return false }
+        return volatile.start <= deadline && Date().timeIntervalSince(volatile.arrived) < Self.hold + 1.5
+    }
+
+    private func waitRanOut() {
+        guard case .waiting = phase else { return }
+        phase = .answering
+        epoch += 1
+        let epoch = epoch
+        let saying = SpokenPipeline.Outcome.nothingToSearch.spoken
+        working = Task { [weak self] in
+            self?.record(saying)
+            await Speaker.shared.speak(saying)
+            guard let self, self.epoch == epoch else { return }
+            self.phase = .idle
         }
     }
 
