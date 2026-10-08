@@ -61,8 +61,8 @@ public enum ClaudeCommand {
         writeCommand(choosing: "", word: turn.rawValue)
     }
 
-    /// `Stop`'s input, which lists the background shells still running, saved as it comes (no jq in a hook's shell) to the
-    /// stop file beside the turn file, by rename. `PaneFolder.runningShells` reads it.
+    /// `Stop`'s input, which lists the background tasks still running, saved as it comes (no jq in a hook's shell) to the
+    /// stop file beside the turn file, by rename. `PaneFolder.runningTasks` reads it.
     static let stopInputCommand =
         #"f="${LAUNCHY_SESSION_FILE%/*}/\#(PaneFolder.stopFileName)"; "#
         + #"[ -n "$LAUNCHY_SESSION_FILE" ] && { cat > "$f.$$" && mv "$f.$$" "$f"; } 2>/dev/null; exit 0"#

@@ -24,10 +24,11 @@ extension Turn {
 }
 
 extension BackgroundWork {
-    /// "1 background shell", "2 background agents", Claude Code's words; several read "1 background agent, 2 shells".
+    /// "1 background shell", "2 background agents", Claude Code's words; several read "1 background agent, 2 teammates, 2 shells".
     /// A paired Mac's reply has no counts: "Background work".
     var text: String {
-        let kinds = [(count: agents, noun: "agent"), (count: workflows, noun: "workflow"), (count: shells, noun: "shell")]
+        let kinds = [(count: agents, noun: "agent"), (count: teammates, noun: "teammate"), (count: workflows, noun: "workflow"),
+                     (count: shells, noun: "shell")]
             .filter { $0.count > 0 }
         let parts = kinds.enumerated().map { index, kind in
             "\(kind.count) " + (index == 0 ? "background " : "") + kind.noun + (kind.count == 1 ? "" : "s")

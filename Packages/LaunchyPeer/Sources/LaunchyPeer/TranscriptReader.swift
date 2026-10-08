@@ -20,19 +20,22 @@ public struct TranscriptSession: Equatable, Sendable {
     public init() {}
 }
 
-/// How many background agents, workflows and shells a turn ended with still running.
+/// How many background agents, teammates, workflows and shells a turn ended with still running. A teammate counts
+/// only while it is busy: Claude Code lists an idle one as running until its team shuts down.
 public struct BackgroundWork: Equatable, Sendable {
     public var agents = 0
+    public var teammates = 0
     public var workflows = 0
     public var shells = 0
 
-    public init(agents: Int = 0, workflows: Int = 0, shells: Int = 0) {
+    public init(agents: Int = 0, teammates: Int = 0, workflows: Int = 0, shells: Int = 0) {
         self.agents = agents
+        self.teammates = teammates
         self.workflows = workflows
         self.shells = shells
     }
 
-    public var isEmpty: Bool { agents == 0 && workflows == 0 && shells == 0 }
+    public var isEmpty: Bool { agents == 0 && teammates == 0 && workflows == 0 && shells == 0 }
 }
 
 /// Claude Code's transcript format is undocumented; this reads the few fields the index needs and
@@ -266,25 +269,41 @@ extension TranscriptReader {
     }
 }
 
-/// Background agents, workflows and shells still running when a turn ended (ADR 0010).
+/// A task the `Stop` input lists as running (`PaneFolder.runningTasks`).
+struct RunningTask: Equatable {
+    enum Kind: String {
+        case shell, subagent, teammate
+    }
+
+    var id: String
+    var kind: Kind
+    var description: String
+}
+
+/// Background agents, teammates, workflows and shells still running when a turn ended (ADR 0010).
 extension TranscriptReader {
     private static let endedStatuses: Set<String> = ["completed", "failed", "killed", "stopped"]
 
-    /// The last `turn_duration` in the 64 KB tail counts pending agents and workflows, less those notified ended after it
-    /// (none if it is older than `since` or before the tail), and `shells`, the Stop input's running ids, less those ended.
-    public static func pendingBackground(path: String, since: Date, shells: Set<String>) -> BackgroundWork {
+    /// Workflows are the last `turn_duration` in the 64 KB tail's `pendingWorkflowCount` (none if it is older than `since`
+    /// or before the tail), less those notified ended after it. Shells, agents and teammates are the Stop input's `tasks`,
+    /// less those notified ended after it; a teammate counts only while it is busy (`busyTeammates`).
+    static func pendingBackground(path: String, since: Date, tasks: [RunningTask]) -> BackgroundWork {
         guard let (tail, startsMidLine) = readTail(path) else { return BackgroundWork() }
-        return pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, shells: shells)
+        var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, tasks: tasks)
+        if !teammates.isEmpty { work.teammates = busyTeammates(path: path, among: teammates) }
+        return work
     }
 
-    static func pendingBackground(tail: Data, startsMidLine: Bool, since: Date, shells: Set<String>) -> BackgroundWork {
+    /// The count without teammates, which need the whole transcript, and the teammates not notified ended.
+    static func pendingBackground(tail: Data, startsMidLine: Bool, since: Date, tasks: [RunningTask])
+        -> (work: BackgroundWork, teammates: [RunningTask]) {
         var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
         if startsMidLine, !lines.isEmpty { lines.removeFirst() }
         let dates = dateParser()
-        var ended = BackgroundWork()
-        // The last turn end's count, once the scan back from the end reaches it. With shells to check, the scan goes on
-        // to collect the ids of every task a notification says ended (a shell, or a Monitor's stream); without, it stops.
-        var counted: BackgroundWork?
+        var endedWorkflows = 0
+        // The last turn end's count, once the scan back from the end reaches it. With tasks to check, the scan goes on
+        // to collect the ids of every task a notification says ended (a shell, an agent, or a Monitor's stream); without, it stops.
+        var workflows: Int?
         var endedTasks = Set<String>()
         // A task that stops with no live children of its own notifies each time, so a single one counts once. A bulk
         // notification never dedupes: counting too many only hides a card in Stopped, too few shows a false Running.
@@ -294,29 +313,31 @@ extension TranscriptReader {
             guard isEnd || line.withUnsafeBytes({ has($0, "\"kind\":\"task-notification\"") || has($0, "\"commandMode\":\"task-notification\"") }),
                   let entry = line.withUnsafeBytes({ object($0) }), entry["isSidechain"] as? Bool != true else { continue }
             if isEnd {
-                guard counted == nil, entry["type"] as? String == "system", entry["subtype"] as? String == "turn_duration" else { continue }
+                guard workflows == nil, entry["type"] as? String == "system", entry["subtype"] as? String == "turn_duration" else { continue }
                 if let at = (entry["timestamp"] as? String).flatMap(dates.date(from:)), at >= since - PaneFolder.staleWindow {
-                    counted = BackgroundWork(agents: max(0, (entry["pendingBackgroundAgentCount"] as? Int ?? 0) - ended.agents),
-                                             workflows: max(0, (entry["pendingWorkflowCount"] as? Int ?? 0) - ended.workflows))
+                    workflows = max(0, (entry["pendingWorkflowCount"] as? Int ?? 0) - endedWorkflows)
                 } else {
-                    counted = BackgroundWork()
+                    workflows = 0
                 }
-                if shells.isEmpty { break }
+                if tasks.isEmpty { break }
                 continue
             }
             guard let (text, midTurn) = notificationText(entry) else { continue }
             let status = between(text, "<status>", "</status>")
             if let status, !endedStatuses.contains(status) { continue }
             let id = between(text, "<task-id>", "</task-id>")
-            if status != nil, let id { endedTasks.insert(id) }
-            guard !midTurn, counted == nil, let summary = between(text, "<summary>", "</summary>"), let work = endedBy(summary: summary) else { continue }
-            if work.agents + work.workflows == 1, let id, !notified.insert(id).inserted { continue }
-            ended.agents += work.agents
-            ended.workflows += work.workflows
+            // An agent that ended and was sent a message runs again under its id, so only an end after the Stop input counts.
+            let at = (entry["timestamp"] as? String).flatMap(dates.date(from:))
+            if status != nil, let id, at.map({ $0 >= since - PaneFolder.staleWindow }) ?? true { endedTasks.insert(id) }
+            guard !midTurn, workflows == nil, let summary = between(text, "<summary>", "</summary>"),
+                  let work = endedBy(summary: summary), work.workflows > 0 else { continue }
+            if work.workflows == 1, let id, !notified.insert(id).inserted { continue }
+            endedWorkflows += work.workflows
         }
-        var work = counted ?? BackgroundWork()
-        work.shells = shells.subtracting(endedTasks).count
-        return work
+        let live = tasks.filter { !endedTasks.contains($0.id) }
+        return (BackgroundWork(agents: live.filter { $0.kind == .subagent }.count, workflows: workflows ?? 0,
+                               shells: live.filter { $0.kind == .shell }.count),
+                live.filter { $0.kind == .teammate })
     }
 
     /// A task notification's text: a user entry, which starts a turn, or an `attachment` (`queued_command`), which is how
@@ -348,5 +369,101 @@ extension TranscriptReader {
         if summary.hasPrefix("Agent \"") || summary.hasPrefix("Background agent") { return BackgroundWork(agents: 1) }
         if summary.hasPrefix("Dynamic workflow") || summary.hasPrefix("Background workflow") { return BackgroundWork(workflows: 1) }
         return nil
+    }
+}
+
+/// Which teammates are busy. The Stop input lists a teammate as running until its team shuts down, idle or not, with a
+/// task id and a description but no name; the lead's transcript has the rest (Claude Code 2.1.295).
+extension TranscriptReader {
+    /// What the transcript says of one named teammate. `busyAt` is when the lead spawned it or last sent it a message,
+    /// `idleAt` when it last told the lead it was idle (the notification's own stamp, since the lead reads it much later).
+    private struct Teammate {
+        var description: String?
+        var busyAt = Date.distantPast
+        var idleAt = Date.distantPast
+
+        var isBusy: Bool { busyAt >= idleAt }
+    }
+
+    /// How many of the running `teammates` are busy. The whole transcript is read, since a spawn is long before a tail. A
+    /// teammate is matched to its name by its description, which is the `description` of the `Agent` call that spawned
+    /// it. One whose spawn isn't in the transcript (a conversation before `/resume`) is matched by number to the names
+    /// that sent an idle notification with no spawn here; any other doubt counts it busy, as one that never says idle is.
+    static func busyTeammates(path: String, among teammates: [RunningTask]) -> Int {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else { return teammates.count }
+        return busyTeammates(in: data, among: teammates)
+    }
+
+    static func busyTeammates(in data: Data, among teammates: [RunningTask]) -> Int {
+        let team = teammateStates(in: data)
+        var busy = 0
+        var unspawned = 0
+        for (description, running) in Dictionary(grouping: teammates, by: \.description) {
+            let named = team.values.filter { $0.description == description }
+            if named.isEmpty {
+                unspawned += running.count
+            } else {
+                busy += named.count == running.count ? named.filter(\.isBusy).count : running.count
+            }
+        }
+        if unspawned > 0 {
+            let idlers = team.values.filter { $0.description == nil && $0.idleAt > .distantPast }
+            busy += idlers.count == unspawned ? idlers.filter(\.isBusy).count : unspawned
+        }
+        return busy
+    }
+
+    private static func teammateStates(in data: Data) -> [String: Teammate] {
+        var team = [String: Teammate]()
+        let dates = dateParser()
+        data.withUnsafeBytes { (all: UnsafeRawBufferPointer) in
+            var start = 0
+            while start < all.count {
+                let newline = memchr(all.baseAddress! + start, 0x0A, all.count - start)
+                let end = newline.map { all.baseAddress!.distance(to: UnsafeRawPointer($0)) } ?? all.count
+                let line = UnsafeRawBufferPointer(rebasing: all[start ..< end])
+                start = end + 1
+
+                if has(line, "\"type\":\"tool_use\""), has(line, "\"name\":\"Agent\"") || has(line, "\"name\":\"SendMessage\"") {
+                    guard let entry = object(line), entry["isSidechain"] as? Bool != true,
+                          let at = (entry["timestamp"] as? String).flatMap(dates.date(from:)),
+                          let blocks = (entry["message"] as? [String: Any])?["content"] as? [[String: Any]] else { continue }
+                    for block in blocks where block["type"] as? String == "tool_use" {
+                        let input = block["input"] as? [String: Any] ?? [:]
+                        switch block["name"] as? String {
+                        case "Agent":
+                            guard let name = input["name"] as? String, !name.isEmpty else { continue }
+                            team[name, default: Teammate()].description = input["description"] as? String
+                            team[name, default: Teammate()].busyAt = max(team[name]?.busyAt ?? at, at)
+                        case "SendMessage":
+                            guard let name = input["to"] as? String else { continue }
+                            team[name, default: Teammate()].busyAt = max(team[name]?.busyAt ?? at, at)
+                        default:
+                            continue
+                        }
+                    }
+                } else if has(line, "idle_notification"), has(line, "<teammate-message ") {
+                    guard let entry = object(line), entry["type"] as? String == "user", entry["isSidechain"] as? Bool != true,
+                          let text = (entry["message"] as? [String: Any])?["content"] as? String else { continue }
+                    for (name, at) in idleNotifications(in: text, dates) {
+                        team[name, default: Teammate()].idleAt = max(team[name]?.idleAt ?? at, at)
+                    }
+                }
+            }
+        }
+        return team
+    }
+
+    /// The `idle_notification` messages in a user entry's text, each `<teammate-message …>` holding one JSON object, with
+    /// the name it names as `from` and the time it carries.
+    private static func idleNotifications(in text: String, _ dates: ISO8601DateFormatter) -> [(name: String, at: Date)] {
+        text.components(separatedBy: "<teammate-message ").dropFirst().compactMap { message in
+            guard let open = message.range(of: ">\n{\"type\":\"idle_notification\""),
+                  let body = message[open.upperBound...].components(separatedBy: "\n</teammate-message>").first,
+                  let json = (try? JSONSerialization.jsonObject(with: Data(("{\"type\":\"idle_notification\"" + body).utf8))) as? [String: Any],
+                  let name = json["from"] as? String, let at = (json["timestamp"] as? String).flatMap(dates.date(from:))
+            else { return nil }
+            return (name, at)
+        }
     }
 }
