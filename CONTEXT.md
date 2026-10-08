@@ -148,5 +148,13 @@ Launchy transcribing the microphone and the Mac's own audio on this Mac, until i
 _Avoid_: Recording, dictation
 
 **Transcript**:
-What Launchy heard while listening: one file per day, a line per finished phrase with its time and source (`mic` or `system`). Not a Claude Code conversation's transcript.
+What Launchy heard while listening: one file per day, a line per finished phrase with its time and source (`mic` or `system`), and a line for each answer Launchy spoke (`launchy`). What the mic hears while Launchy speaks isn't in it. Not a Claude Code conversation's transcript.
 _Avoid_: Log, recording
+
+**Wake phrase**:
+"Hey Launchy" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**.
+_Avoid_: Hotword, trigger
+
+**Spoken request**:
+What the user says after the **Wake phrase**, answered aloud from **History**, **Bookmark**s and **Session**s, and only aloud: nothing is shown or opened.
+_Avoid_: Ask, prompt (a **Prompt** starts a session), command, query
