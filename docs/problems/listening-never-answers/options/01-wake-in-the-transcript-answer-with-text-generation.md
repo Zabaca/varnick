@@ -9,7 +9,7 @@ status: accepted
 
 A new switch, **Hey Launchy**, in Settings › Listening. With it on and Listening running, each final mic phrase is checked for the wake phrase at its start. Launchy plays a short sound when it wakes. The rest of the phrase is the **spoken request**, and if nothing follows, the next phrase is. Then three fixed steps run, the user's 1, 2, 3:
 
-1. **Decide.** One Text generation call turns the request into a source (History, Bookmarks, sessions, or none of them) and a few search words.
+1. **Decide.** One Text generation call turns the request into a source (History, Bookmarks or sessions) and a few search words.
 2. **Read.** Launchy runs the panel's search with those words (keyword and meaning, the same ranking), but apart from the panel: nothing on screen changes. It takes the top rows of the chosen source: their title, site or folder, date and description.
 3. **Respond.** A second Text generation call writes a short answer from those rows. Launchy speaks it.
 
@@ -94,17 +94,17 @@ Launchy's voice must not be heard back as speech:
 
 **Deciding (step 1)**
 - One Text generation call with a fixed prompt, kept in one place as the title prompt is. It asks for one line of JSON:
-  - `source`: `history` (pages, History and Bookmarks together, as the panel searches them), `bookmarks` (bookmarked pages only), `sessions`, or `none`;
+  - `source`: `history` (pages, History and Bookmarks together, as the panel searches them), `bookmarks` (bookmarked pages only), or `sessions`;
   - `query`: 1 to 8 search words, without filler ("find", "that page", "I was reading").
 - Greedy, at most 48 new tokens. The reply is read leniently: the first `{…}` in it.
-- A reply that can't be read falls back to the request's own text as the query, reading sessions and pages both.
+- A reply that can't be read, or that names no source ("none" included), falls back to the request's own text as the query, reading sessions and pages both. Every request is a search: the prompt offers no way to decline.
 - The search words matter: keyword search requires every word to match, so a whole spoken sentence would match nothing by keyword.
 - **Where it runs** is Text generation's choice, picked as work the user waits on: the server unless it is known to have failed, otherwise this Mac's installed model. This is the rule `ModelServerState.place` already applies to searches; titles use the background rule.
   - A server failure rests the server, as a failed search embedding does, and the step runs once more on this Mac's model if installed.
   - If neither can answer, Launchy says "Text generation isn't set up" and stops.
 
 **Reading (step 2)**
-- `none`: no search. Launchy says it can search History, Bookmarks and Claude sessions.
+- An empty request (the wake phrase and nothing after it): no search. Launchy says "Ask me to find a page, a bookmark or a Claude session."
 - **Otherwise, the panel's search without the panel.** A method on the launcher model runs the first two passes of the panel's search and returns the sessions and pages:
   - keyword for pages and for sessions;
   - the query's embedding, through the same server-or-this-Mac pick;

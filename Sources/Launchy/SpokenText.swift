@@ -36,13 +36,12 @@ enum SpokenText {
             /// Bookmarked pages only.
             case bookmarks
             case sessions
-            case none
-            /// The reply couldn't be read: sessions, then pages.
+            /// The reply named no source Launchy knows (or said "none"): sessions, then pages.
             case any
         }
         var source: Source
         var query: String
-        /// The reply held a source Launchy knows; otherwise the request itself is the query.
+        /// The reply held a source Launchy knows; otherwise the request itself is the query, over both kinds of row.
         var readable: Bool
     }
 
@@ -54,7 +53,8 @@ enum SpokenText {
     /// The decide prompt, in one place so it can be tuned with `Launchy --ask`.
     private static let decideTemplate = """
         You turn a spoken request into a search. Choose where to look and what to search for.
-        Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions), "none" (the request is not about finding any of these).
+        Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions: their projects and work).
+        Every request is a search, so always choose one source. When unsure what is meant, choose "sessions" or "history" and use the request's own key words.
         Reply with one line of JSON and nothing else: {"source": "...", "query": "..."}
         "query" is 1 to 8 words to search for: the key words of the topic only, without filler such as "find", "that page", "I was reading" or "the one about".
 
@@ -64,8 +64,12 @@ enum SpokenText {
         {"source": "bookmarks", "query": "Rust lifetimes"}
         Request: what was I doing with Claude on the reranker
         {"source": "sessions", "query": "reranker"}
-        Request: what's the weather like
-        {"source": "none", "query": ""}
+        Request: what is Kestrel
+        {"source": "sessions", "query": "Kestrel"}
+        Request: are you searching
+        {"source": "history", "query": "searching"}
+        Request: tell me about the budget spreadsheet
+        {"source": "history", "query": "budget spreadsheet"}
 
         Request: {request}
         """
@@ -87,11 +91,9 @@ enum SpokenText {
         case "history", "pages": source = .history
         case "bookmarks", "bookmark": source = .bookmarks
         case "sessions", "session": source = .sessions
-        case "none": source = .none
         default: return unreadable
         }
         let words = ((object["query"] as? String) ?? "").split(whereSeparator: \.isWhitespace).prefix(maxQueryWords)
-        guard source != .none else { return Plan(source: .none, query: "", readable: true) }
         return Plan(source: source, query: words.isEmpty ? request : words.joined(separator: " "), readable: true)
     }
 
@@ -108,7 +110,6 @@ enum SpokenText {
         case .history: Array(pages.prefix(maxPages))
         case .bookmarks: Array(pages.filter { $0.source == "bookmark" }.prefix(maxPages))
         case .any: Array((sessions + pages).prefix(maxPages))
-        case .none: []
         }
     }
 
@@ -204,7 +205,7 @@ enum SpokenPipeline {
 
     enum Outcome {
         case answer(String)
-        /// The request is not about History, Bookmarks or sessions.
+        /// The request was empty: the wake phrase and nothing after it.
         case nothingToSearch
         case nothingFound(words: String)
 
@@ -212,7 +213,7 @@ enum SpokenPipeline {
         var spoken: String {
             switch self {
             case .answer(let text): text
-            case .nothingToSearch: "I can search your history, your bookmarks and your Claude sessions."
+            case .nothingToSearch: "Ask me to find a page, a bookmark or a Claude session."
             case .nothingFound(let words): "I found nothing for \(words)."
             }
         }
@@ -237,6 +238,10 @@ enum SpokenPipeline {
             return reply.text
         }
 
+        guard !request.isEmpty else {
+            return Run(plan: SpokenText.Plan(source: .any, query: "", readable: false), rows: [], outcome: .nothingToSearch, decide: .zero)
+        }
+
         let clock = ContinuousClock()
         var began = clock.now
         let reply: String
@@ -244,9 +249,8 @@ enum SpokenPipeline {
             throw Failure(step: .decide, underlying: error)
         }
         let plan = SpokenText.plan(fromReply: reply, request: request)
-        var run = Run(plan: plan, rows: [], outcome: .nothingToSearch, decide: began.duration(to: clock.now))
+        var run = Run(plan: plan, rows: [], outcome: .nothingFound(words: plan.query), decide: began.duration(to: clock.now))
         run.places = places
-        guard plan.source != .none else { return run }
 
         began = clock.now
         let found: (sessions: [SearchResult], pages: [SearchResult])
@@ -299,7 +303,7 @@ enum SpokenCommand {
             let run = try await SpokenPipeline.run(request, on: model)
             let place = { (n: Int) in run.places.indices.contains(n) ? "\(run.places[n])" : "-" }
             print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(place(0)), \(run.decide.seconds.secondsText)]")
-            if run.plan.source != .none {
+            if !request.isEmpty {
                 print("read: \(run.rows.count) rows  [\(run.read.seconds.secondsText)]")
                 for (n, row) in run.rows.enumerated() { print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(row.title)") }
             }
