@@ -79,21 +79,21 @@ public enum PaneFolder {
             result = PaneTurn(.waiting, since: stopped)
         }
         if result.turn == .waiting {
-            let tasks = runningTasks(for: id, since: result.since, transcriptPath: transcriptPath)
-            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, tasks: tasks)
+            let input = stopInput(for: id, since: result.since, transcriptPath: transcriptPath)
+            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input)
             if !work.isEmpty { result = PaneTurn(.background, since: result.since, background: work) }
         }
         return result
     }
 
-    /// The tasks the `Stop` input says were running when this turn ended; none if the file is older than the turn
+    /// The tasks the `Stop` input says were running when this turn ended, and when it was saved; none if the file is older than the turn
     /// (an Esc or restart fired no `Stop`) or is another conversation's (`/clear`, `/resume`).
-    static func runningTasks(for id: UUID, since: Date, transcriptPath: String) -> [RunningTask] {
+    static func stopInput(for id: UUID, since: Date, transcriptPath: String) -> StopInput {
         let file = stopFile(for: id)
         guard let saved = modificationDate(file.path), saved >= since - staleWindow,
-              let data = try? Data(contentsOf: file) else { return [] }
+              let data = try? Data(contentsOf: file) else { return StopInput(tasks: [], savedAt: .distantPast) }
         let conversation = URL(fileURLWithPath: transcriptPath).deletingPathExtension().lastPathComponent
-        return runningTasks(in: data, conversation: conversation)
+        return StopInput(tasks: runningTasks(in: data, conversation: conversation), savedAt: saved)
     }
 
     /// `background_tasks` is the session's tasks still running, each `{id, type, status, description, …}`: `shell` (a
