@@ -106,6 +106,9 @@ final class Speaker {
 private final class SpeechPlayback: @unchecked Sendable {
     /// Longest a speech may take from start to end, however it hangs.
     private static let limit: TimeInterval = 90
+    /// Longest the synthesizer may take to deliver anything. A voice that never calls back is spoken directly instead, and the
+    /// span `SpeechSpans` keeps open meanwhile drops the mic's results.
+    private static let startLimit: TimeInterval = 5
 
     private let lock = NSLock()
     private var engine: AVAudioEngine?
@@ -115,11 +118,18 @@ private final class SpeechPlayback: @unchecked Sendable {
     private var seconds: TimeInterval = 0
     private var rendered = false
     private var done = false
+    private var started = false
     private var waiting: CheckedContinuation<Void, Never>?
     private(set) var firstSound: Date?
 
     init() {
         DispatchQueue.global().asyncAfter(deadline: .now() + Self.limit) { [self] in stop() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.startLimit) { [self] in
+            lock.lock()
+            let silent = !started
+            lock.unlock()
+            if silent { stop() }
+        }
     }
 
     /// A rendered buffer; an empty one ends the rendering.
@@ -128,6 +138,7 @@ private final class SpeechPlayback: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard !done else { return }
+        started = true
         if buffer.frameLength == 0 {
             rendered = true
             // The scheduled sound is over this long after it was all handed over, even if the engine never says so.

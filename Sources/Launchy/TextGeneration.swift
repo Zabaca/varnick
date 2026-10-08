@@ -52,7 +52,7 @@ struct TextGeneration {
             return (try await chosen.writer.generate(prompt, maxTokens: maxTokens), chosen.place)
         } catch {
             guard let failed = chosen.writer as? ServerGenerator, !(error is CancellationError), !Task.isCancelled else { throw error }
-            NSLog("Launchy: text generation server failed a request: \(error.localizedDescription)")
+            NSLog("Launchy: text generation server failed a request: \(error.logKind)")
             server.failed(error, for: failed.target)
             guard let again = pick(), again.place != .server else { throw TextGenerator.Failure.notReady }
             return (try await again.writer.generate(prompt, maxTokens: maxTokens), again.place)

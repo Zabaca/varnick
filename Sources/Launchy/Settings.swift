@@ -554,8 +554,8 @@ struct SettingsView: View {
                         case .listening:
                         SettingRow(title: "Hey Launchy",
                                    detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing.") {
-                            if case .unavailable(let why) = Listener.shared.state {
-                                Text(why).font(.system(size: 12)).foregroundStyle(.orange)
+                            if Listener.shared.state.isUnavailable {
+                                Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if let need = textGenerationNeed {
                                 modelsLink(need)
                             }
@@ -578,7 +578,7 @@ struct SettingsView: View {
                         switch settings.searchEmbeddingsRunOn {
                         case .server:
                             ServerSettingRow(
-                                detail: "Sends your searches, the prompts you type in the panel, and the text of your pages and Claude sessions (titles, sites, descriptions, search terms and prompts, your paired Macs' too) to \(ModelServer.name(of: settings.embeddingServerAddress) ?? "the server below"), over your tailnet.",
+                                detail: "Sends your searches, the words of what you ask out loud with Hey Launchy, the prompts you type in the panel, and the text of your pages and Claude sessions (titles, sites, descriptions, search terms and prompts, your paired Macs' too) to \(ModelServer.name(of: settings.embeddingServerAddress) ?? "the server below"), over your tailnet.",
                                 addressPlaceholder: "http://linux-box:11434", address: $settings.embeddingServerAddress,
                                 model: $settings.embeddingServerModel, server: embeddingServer)
                         case .local:
@@ -658,7 +658,7 @@ struct SettingsView: View {
                         switch settings.textGenerationRunOn {
                         case .server:
                             ServerSettingRow(
-                                detail: "Sends the first prompt of each new Claude session on this Mac (its first \(SessionTitles.promptCharacters.formatted()) characters) to \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below"), over your tailnet, to name it. With Hey Launchy on, it also gets what you ask out loud and the kind, title, site or folder, date and description of the few results it reads.",
+                                detail: "Sends the first prompt of each new Claude session on this Mac (its first \(SessionTitles.promptCharacters.formatted()) characters) to \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below"), over your tailnet, to name it. With Hey Launchy on, it also gets what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too).",
                                 addressPlaceholder: "http://linux-box:8080", address: $settings.textGenerationServerAddress,
                                 model: $settings.textGenerationServerModel, server: textGenerationServer)
                         case .local:

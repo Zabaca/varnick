@@ -777,7 +777,7 @@ final class LauncherModel: ObservableObject {
             if let (vec, _) = try await embedQuery(words) { semantic = store.semantic(vec, limit: Self.candidateLimit) }
         } catch {
             try Task.checkCancellation()
-            NSLog("Launchy: semantic search for a spoken request failed: \(error)")
+            NSLog("Launchy: semantic search for a spoken request failed: \(error.logKind)")
         }
         return fuseAll(keyword: keyword, sessionKeyword: sessionKeyword, semantic: semantic)
     }

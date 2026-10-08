@@ -462,7 +462,6 @@ private final class Capture {
         }
 
         return { buffer in
-            clock.noteBuffer(seconds: Double(buffer.frameLength) / input.sampleRate)
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / input.sampleRate) + 64
             guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return }
             // convert(to:) calls the block before it returns, on this thread.
@@ -475,7 +474,9 @@ private final class Capture {
                 status.pointee = .haveData
                 return pending
             }
-            if out.frameLength > 0 { feed.yield(AnalyzerInput(buffer: out)) }
+            guard out.frameLength > 0 else { return }
+            clock.fed(seconds: Double(out.frameLength) / format.sampleRate)
+            feed.yield(AnalyzerInput(buffer: out))
         }
     }
 
@@ -519,18 +520,23 @@ private final class Capture {
     }
 }
 
-/// Maps a source's analyzer times to the clock. The analyzer counts from the first buffer it was given, so that buffer's
-/// arrival, less its own length, is time zero. `SpeechSpans` compares these dates with when Launchy spoke.
+/// Maps a source's analyzer times to the clock. The analyzer counts the samples it was fed, so time zero is re-anchored at
+/// every buffer: now, less everything fed so far. A mic clock that drifts from the Mac's, or a gap in delivery, then moves
+/// the dates of recent audio by next to nothing, and recent audio is what results are about (they arrive 1 to 2 s late).
+/// `SpeechSpans` compares these dates with when Launchy spoke.
 private final class AudioClock: @unchecked Sendable {
     private let lock = NSLock()
     private var origin: Date?
+    private var total: TimeInterval = 0
     /// Used before any buffer has arrived; the first one follows within a second.
     private let created = Date()
 
-    func noteBuffer(seconds: Double) {
+    /// A buffer of `seconds` of audio, as the analyzer will count it, has just arrived.
+    func fed(seconds: Double) {
         lock.lock()
         defer { lock.unlock() }
-        if origin == nil { origin = Date().addingTimeInterval(-seconds) }
+        total += seconds
+        origin = Date().addingTimeInterval(-total)
     }
 
     func date(at offset: TimeInterval) -> Date {

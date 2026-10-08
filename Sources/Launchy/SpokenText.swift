@@ -2,8 +2,8 @@ import Foundation
 
 /// The pure parts of a spoken request (ADR 0015): hearing the wake phrase, the two prompts and how their replies are read, and
 /// how the rows reach the model. None of it touches the app, so each is a seam for a first test once there is a test target.
-/// The request, the search words, the rows and the answer are never logged.
-enum SpokenRequest {
+/// What may be logged: where-it-breaks.md, Listening and spoken requests.
+enum SpokenText {
     // MARK: The wake phrase
 
     /// What follows "hey launchy" in `text`, or nil when `text` doesn't wake Launchy; empty when nothing follows. "Hey" (or "hay")
@@ -46,6 +46,8 @@ enum SpokenRequest {
         var readable: Bool
     }
 
+    /// The most of a request that is kept and sent anywhere.
+    static let maxRequestCharacters = 500
     static let decideTokens = 48
     static let maxQueryWords = 8
 
@@ -69,7 +71,7 @@ enum SpokenRequest {
         """
 
     static func decidePrompt(for request: String) -> String {
-        decideTemplate.replacingOccurrences(of: "{request}", with: String(request.prefix(500)))
+        decideTemplate.replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
     }
 
     /// The first `{…}` in the reply, read leniently. A reply that can't be read gives the request itself as the query, over both
@@ -125,7 +127,10 @@ enum SpokenRequest {
                 let label = row.isSession ? "Last used" : row.source == "bookmark" ? "Last visited or saved" : "Last visited"
                 lines.append("\(label): " + words(for: date, now: now))
             }
-            var description = oneLine(row.description)
+            // A page's description field also holds its history title, search terms and address: only its own summary goes
+            // (as to TypeSafe). A session's is its prompts.
+            let text = row.isSession ? row.description : Reranker.metaDescription(row.description) ?? ""
+            var description = oneLine(text)
             if description.count > maxDescription { description = String(description.prefix(maxDescription)).trimmingCharacters(in: .whitespaces) + "…" }
             if !description.isEmpty { lines.append((row.isSession ? "Prompts: " : "Description: ") + description) }
             return lines.joined(separator: "\n")
@@ -169,7 +174,7 @@ enum SpokenRequest {
 
     static func answerPrompt(for request: String, rows: String) -> String {
         answerTemplate.replacingOccurrences(of: "{rows}", with: rows)
-            .replacingOccurrences(of: "{request}", with: String(request.prefix(500)))
+            .replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
     }
 
     /// Plain text for the speech: no markdown, one line, the first two sentences. Nil when the reply holds no text.
@@ -186,13 +191,12 @@ enum SpokenRequest {
     }
 }
 
-/// The three fixed steps of a spoken request, apart from the app: what writes text and what searches are passed in, so the
-/// live request and `Launchy --ask` run the same code.
+/// The three fixed steps of a spoken request, run by the live request (`SpokenRequests`) and by `Launchy --ask`.
 @MainActor
 enum SpokenPipeline {
     enum Step: String { case decide, read, respond }
 
-    /// A step that failed; the log names the step and the error's type, never what was said.
+    /// A step that failed; the log names the step and the error's kind.
     struct Failure: Error {
         let step: Step
         let underlying: Error
@@ -215,32 +219,39 @@ enum SpokenPipeline {
     }
 
     struct Run {
-        var plan: SpokenRequest.Plan
+        var plan: SpokenText.Plan
         var rows: [SearchResult]
         var outcome: Outcome
         var decide: Duration
         var read: Duration = .zero
         var respond: Duration = .zero
+        /// Where each Text generation call ran: the decide step's, then the answer step's.
+        var places: [ModelPlace] = []
     }
 
-    typealias Generate = (_ prompt: String, _ maxTokens: Int) async throws -> String
-    typealias Search = (_ words: String) async throws -> (sessions: [SearchResult], pages: [SearchResult])
+    static func run(_ request: String, on model: LauncherModel) async throws -> Run {
+        var places: [ModelPlace] = []
+        func generate(_ prompt: String, _ maxTokens: Int) async throws -> String {
+            let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens)
+            places.append(reply.place)
+            return reply.text
+        }
 
-    static func run(_ request: String, generate: Generate, search: Search, macName: (String) -> String) async throws -> Run {
         let clock = ContinuousClock()
         var began = clock.now
         let reply: String
-        do { reply = try await generate(SpokenRequest.decidePrompt(for: request), SpokenRequest.decideTokens) } catch {
+        do { reply = try await generate(SpokenText.decidePrompt(for: request), SpokenText.decideTokens) } catch {
             throw Failure(step: .decide, underlying: error)
         }
-        let plan = SpokenRequest.plan(fromReply: reply, request: request)
+        let plan = SpokenText.plan(fromReply: reply, request: request)
         var run = Run(plan: plan, rows: [], outcome: .nothingToSearch, decide: began.duration(to: clock.now))
+        run.places = places
         guard plan.source != .none else { return run }
 
         began = clock.now
         let found: (sessions: [SearchResult], pages: [SearchResult])
-        do { found = try await search(plan.query) } catch { throw Failure(step: .read, underlying: error) }
-        run.rows = SpokenRequest.rows(for: plan.source, sessions: found.sessions, pages: found.pages)
+        do { found = try await model.searchApart(plan.query) } catch { throw Failure(step: .read, underlying: error) }
+        run.rows = SpokenText.rows(for: plan.source, sessions: found.sessions, pages: found.pages)
         run.read = began.duration(to: clock.now)
         guard !run.rows.isEmpty else {
             run.outcome = .nothingFound(words: plan.query)
@@ -248,16 +259,29 @@ enum SpokenPipeline {
         }
 
         began = clock.now
-        let rows = SpokenRequest.describe(run.rows, macName: macName)
+        let rows = SpokenText.describe(run.rows, macName: { PeerManager.shared.name(of: $0) })
         do {
-            let text = try await generate(SpokenRequest.answerPrompt(for: request, rows: rows), SpokenRequest.answerTokens)
-            run.outcome = .answer(SpokenRequest.spoken(fromReply: text) ?? "I couldn't answer that.")
+            let text = try await generate(SpokenText.answerPrompt(for: request, rows: rows), SpokenText.answerTokens)
+            run.outcome = .answer(SpokenText.spoken(fromReply: text) ?? "I couldn't answer that.")
         } catch {
             throw Failure(step: .respond, underlying: error)
         }
         run.respond = began.duration(to: clock.now)
+        run.places = places
         return run
     }
+}
+
+extension Error {
+    /// What a log may say of a failure: the kind, never a message that could hold what was said.
+    var logKind: String {
+        (self as? ModelServer.Failure)?.errorDescription ?? "\(type(of: self))"
+    }
+}
+
+extension Double {
+    /// Seconds as logs and `--ask` print them.
+    var secondsText: String { String(format: "%.2f s", self) }
 }
 
 /// `Launchy --ask <file>`: the file's text, taken as a request said after "Hey Launchy", through the three steps against the
@@ -271,25 +295,16 @@ enum SpokenCommand {
             return 1
         }
         let request = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        var places: [ModelPlace] = []
         do {
-            let run = try await SpokenPipeline.run(
-                request,
-                generate: { prompt, tokens in
-                    let reply = try await model.textGeneration.generateNow(prompt, maxTokens: tokens)
-                    places.append(reply.place)
-                    return reply.text
-                },
-                search: { try await model.searchApart($0) },
-                macName: { PeerManager.shared.name(of: $0) })
-            let source = String(describing: run.plan.source)
-            print("decide: \(source), \"\(run.plan.query)\"\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(places.first.map { "\($0)" } ?? "-"), \(format(run.decide))]")
+            let run = try await SpokenPipeline.run(request, on: model)
+            let place = { (n: Int) in run.places.indices.contains(n) ? "\(run.places[n])" : "-" }
+            print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(place(0)), \(run.decide.seconds.secondsText)]")
             if run.plan.source != .none {
-                print("read: \(run.rows.count) rows  [\(format(run.read))]")
+                print("read: \(run.rows.count) rows  [\(run.read.seconds.secondsText)]")
                 for (n, row) in run.rows.enumerated() { print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(row.title)") }
             }
             // Said as is; when no answer was written (nothing to search, nothing found) it is Launchy's own sentence.
-            print("says: \(run.outcome.spoken)  [\(places.count > 1 ? "\(places[1])" : "-"), \(format(run.respond))]")
+            print("says: \(run.outcome.spoken)  [\(place(1)), \(run.respond.seconds.secondsText)]")
             return 0
         } catch let failure as SpokenPipeline.Failure {
             print("Failed at \(failure.step.rawValue): \(failure.underlying.localizedDescription)")
@@ -299,6 +314,4 @@ enum SpokenCommand {
             return 1
         }
     }
-
-    private static func format(_ duration: Duration) -> String { String(format: "%.2f s", duration.seconds) }
 }

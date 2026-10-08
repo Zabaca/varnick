@@ -157,4 +157,4 @@ _Avoid_: Hotword, trigger
 
 **Spoken request**:
 What the user says after the **Wake phrase**, answered aloud from **History**, **Bookmark**s and **Session**s, and only aloud: nothing is shown or opened.
-_Avoid_: Ask, prompt (a **Prompt** starts a session), command, query
+_Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
