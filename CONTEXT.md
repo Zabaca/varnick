@@ -33,7 +33,7 @@ One Claude Code conversation: what `/clear` starts fresh, what `/resume` brings 
 _Avoid_: Conversation, chat
 
 **Turn**:
-What Claude is doing in a **Session** right now: working, waiting for the user's next prompt, waiting in the middle of a turn on a permission dialog, a question, a plan to approve or an MCP server's request, or background (the turn ended with background agents, workflows or shells still running, which start Claude's next turn when they end).
+What Claude is doing in a **Session** right now: working, waiting for the user's next prompt, waiting in the middle of a turn on a permission dialog, a question, a plan to approve or an MCP server's request, or background (the turn ended with background agents, busy teammates, workflows or shells still running, which start Claude's next turn when they end).
 _Avoid_: Status, state, running (a session "runs" while its zmx session is alive)
 
 **Session board**:
