@@ -1,0 +1,304 @@
+import Foundation
+
+/// The pure parts of a spoken request (ADR 0015): hearing the wake phrase, the two prompts and how their replies are read, and
+/// how the rows reach the model. None of it touches the app, so each is a seam for a first test once there is a test target.
+/// The request, the search words, the rows and the answer are never logged.
+enum SpokenRequest {
+    // MARK: The wake phrase
+
+    /// What follows "hey launchy" in `text`, or nil when `text` doesn't wake Launchy; empty when nothing follows. "Hey" (or "hay")
+    /// then a word starting "launch", "lunch" or "lanch" (what the transcriber has made of "Launchy"), beginning within the
+    /// first three words, ignoring case and punctuation. "Hey launch you" reads "you" as the rest of the name.
+    static func request(in text: String) -> String? {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        let tokens = words.map(token)
+        for i in 0..<min(3, max(0, tokens.count - 1)) where tokens[i] == "hey" || tokens[i] == "hay" {
+            guard ["launch", "lunch", "lanch"].contains(where: tokens[i + 1].hasPrefix) else { continue }
+            var rest = i + 2
+            if tokens[i + 1] == "launch", tokens.count > rest, tokens[rest] == "you" { rest += 1 }
+            let request = words[rest...].joined(separator: " ")
+            return String(request.drop { $0.isWhitespace || ",.:;!?-–—".contains($0) })
+        }
+        return nil
+    }
+
+    private static func token(_ word: String) -> String {
+        word.lowercased().trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+    }
+
+    // MARK: Step 1: decide
+
+    /// Where to look and what to look for.
+    struct Plan: Equatable {
+        enum Source: Equatable {
+            /// Pages, History and Bookmarks together, as the panel searches them.
+            case history
+            /// Bookmarked pages only.
+            case bookmarks
+            case sessions
+            case none
+            /// The reply couldn't be read: sessions, then pages.
+            case any
+        }
+        var source: Source
+        var query: String
+        /// The reply held a source Launchy knows; otherwise the request itself is the query.
+        var readable: Bool
+    }
+
+    static let decideTokens = 48
+    static let maxQueryWords = 8
+
+    /// The decide prompt, in one place so it can be tuned with `Launchy --ask`.
+    private static let decideTemplate = """
+        You turn a spoken request into a search. Choose where to look and what to search for.
+        Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions), "none" (the request is not about finding any of these).
+        Reply with one line of JSON and nothing else: {"source": "...", "query": "..."}
+        "query" is 1 to 8 words to search for: the key words of the topic only, without filler such as "find", "that page", "I was reading" or "the one about".
+
+        Request: find the page about MLX shader caching
+        {"source": "history", "query": "MLX shader caching"}
+        Request: which of my bookmarks is about Rust lifetimes
+        {"source": "bookmarks", "query": "Rust lifetimes"}
+        Request: what was I doing with Claude on the reranker
+        {"source": "sessions", "query": "reranker"}
+        Request: what's the weather like
+        {"source": "none", "query": ""}
+
+        Request: {request}
+        """
+
+    static func decidePrompt(for request: String) -> String {
+        decideTemplate.replacingOccurrences(of: "{request}", with: String(request.prefix(500)))
+    }
+
+    /// The first `{…}` in the reply, read leniently. A reply that can't be read gives the request itself as the query, over both
+    /// kinds of row.
+    static func plan(fromReply reply: String, request: String) -> Plan {
+        let unreadable = Plan(source: .any, query: request, readable: false)
+        guard let open = reply.firstIndex(of: "{"), let close = reply[open...].firstIndex(of: "}"),
+              let object = try? JSONSerialization.jsonObject(with: Data(reply[open...close].utf8)) as? [String: Any],
+              let name = (object["source"] as? String)?.lowercased().trimmingCharacters(in: .whitespaces)
+        else { return unreadable }
+        let source: Plan.Source
+        switch name {
+        case "history", "pages": source = .history
+        case "bookmarks", "bookmark": source = .bookmarks
+        case "sessions", "session": source = .sessions
+        case "none": source = .none
+        default: return unreadable
+        }
+        let words = ((object["query"] as? String) ?? "").split(whereSeparator: \.isWhitespace).prefix(maxQueryWords)
+        guard source != .none else { return Plan(source: .none, query: "", readable: true) }
+        return Plan(source: source, query: words.isEmpty ? request : words.joined(separator: " "), readable: true)
+    }
+
+    // MARK: Step 2: read
+
+    static let maxSessions = 3
+    static let maxPages = 5
+    static let maxDescription = 300
+
+    /// The rows the answer step reads: from the panel's two lists, ranked as the panel ranks them.
+    static func rows(for source: Plan.Source, sessions: [SearchResult], pages: [SearchResult]) -> [SearchResult] {
+        switch source {
+        case .sessions: Array(sessions.prefix(maxSessions))
+        case .history: Array(pages.prefix(maxPages))
+        case .bookmarks: Array(pages.filter { $0.source == "bookmark" }.prefix(maxPages))
+        case .any: Array((sessions + pages).prefix(maxPages))
+        case .none: []
+        }
+    }
+
+    /// The rows as the model sees them: the kind, title, site or folder, date in words and description. Never the address:
+    /// addresses are long, read badly aloud and can carry ids. `macName` names the paired Mac a session or page came from.
+    static func describe(_ rows: [SearchResult], now: Date = Date(), macName: (String) -> String) -> String {
+        rows.enumerated().map { number, row in
+            var lines = ["Result \(number + 1)", "Kind: " + (row.isSession ? "Claude session" : row.source == "bookmark" ? "bookmark" : "page"),
+                         "Title: " + oneLine(row.title)]
+            if row.isSession {
+                lines.append("Folder: " + (row.url as NSString).lastPathComponent + (row.host.map { ", on " + macName($0) } ?? ""))
+            } else if let host = URL(string: row.url)?.host() {
+                lines.append("Site: " + (host.hasPrefix("www.") ? String(host.dropFirst(4)) : host))
+            }
+            if let date = row.date {
+                let label = row.isSession ? "Last used" : row.source == "bookmark" ? "Last visited or saved" : "Last visited"
+                lines.append("\(label): " + words(for: date, now: now))
+            }
+            var description = oneLine(row.description)
+            if description.count > maxDescription { description = String(description.prefix(maxDescription)).trimmingCharacters(in: .whitespaces) + "…" }
+            if !description.isEmpty { lines.append((row.isSession ? "Prompts: " : "Description: ") + description) }
+            return lines.joined(separator: "\n")
+        }.joined(separator: "\n\n")
+    }
+
+    private static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// "today", "yesterday", "3 days ago", "5 weeks ago", "4 months ago", "2 years ago".
+    static func words(for date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        switch days {
+        case ..<1: return "today"
+        case 1: return "yesterday"
+        case 2..<14: return "\(days) days ago"
+        case 14..<60: return "\(days / 7) weeks ago"
+        case 60..<365: return "\(days / 30) months ago"
+        case 365..<730: return "about a year ago"
+        default: return "\(days / 365) years ago"
+        }
+    }
+
+    // MARK: Step 3: respond
+
+    static let answerTokens = 96
+    static let maxSentences = 2
+
+    /// The answer prompt, in one place so it can be tuned with `Launchy --ask`.
+    private static let answerTemplate = """
+        You answer a spoken request aloud. The results below come from the user's own browsing history, bookmarks and Claude Code sessions.
+        Reply with one or two short sentences to be spoken: name the page or session that best fits, and say when it was last visited, used or saved. For a page, say what it is about only from its description. If none of the results fits the request, say so plainly instead of guessing.
+        Never read out web addresses or say "result 1". No lists, no markdown.
+
+        Request: {request}
+
+        Results:
+        {rows}
+        """
+
+    static func answerPrompt(for request: String, rows: String) -> String {
+        answerTemplate.replacingOccurrences(of: "{rows}", with: rows)
+            .replacingOccurrences(of: "{request}", with: String(request.prefix(500)))
+    }
+
+    /// Plain text for the speech: no markdown, one line, the first two sentences. Nil when the reply holds no text.
+    static func spoken(fromReply reply: String) -> String? {
+        let plain = oneLine(reply.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "#", with: "")
+            .replacingOccurrences(of: "`", with: ""))
+        var sentences: [String] = []
+        plain.enumerateSubstrings(in: plain.startIndex..., options: .bySentences) { sentence, _, _, stop in
+            if let sentence = sentence?.trimmingCharacters(in: .whitespaces), !sentence.isEmpty { sentences.append(sentence) }
+            if sentences.count >= maxSentences { stop = true }
+        }
+        let text = sentences.joined(separator: " ")
+        return text.isEmpty ? nil : text
+    }
+}
+
+/// The three fixed steps of a spoken request, apart from the app: what writes text and what searches are passed in, so the
+/// live request and `Launchy --ask` run the same code.
+@MainActor
+enum SpokenPipeline {
+    enum Step: String { case decide, read, respond }
+
+    /// A step that failed; the log names the step and the error's type, never what was said.
+    struct Failure: Error {
+        let step: Step
+        let underlying: Error
+    }
+
+    enum Outcome {
+        case answer(String)
+        /// The request is not about History, Bookmarks or sessions.
+        case nothingToSearch
+        case nothingFound(words: String)
+
+        /// What Launchy says.
+        var spoken: String {
+            switch self {
+            case .answer(let text): text
+            case .nothingToSearch: "I can search your history, your bookmarks and your Claude sessions."
+            case .nothingFound(let words): "I found nothing for \(words)."
+            }
+        }
+    }
+
+    struct Run {
+        var plan: SpokenRequest.Plan
+        var rows: [SearchResult]
+        var outcome: Outcome
+        var decide: Duration
+        var read: Duration = .zero
+        var respond: Duration = .zero
+    }
+
+    typealias Generate = (_ prompt: String, _ maxTokens: Int) async throws -> String
+    typealias Search = (_ words: String) async throws -> (sessions: [SearchResult], pages: [SearchResult])
+
+    static func run(_ request: String, generate: Generate, search: Search, macName: (String) -> String) async throws -> Run {
+        let clock = ContinuousClock()
+        var began = clock.now
+        let reply: String
+        do { reply = try await generate(SpokenRequest.decidePrompt(for: request), SpokenRequest.decideTokens) } catch {
+            throw Failure(step: .decide, underlying: error)
+        }
+        let plan = SpokenRequest.plan(fromReply: reply, request: request)
+        var run = Run(plan: plan, rows: [], outcome: .nothingToSearch, decide: began.duration(to: clock.now))
+        guard plan.source != .none else { return run }
+
+        began = clock.now
+        let found: (sessions: [SearchResult], pages: [SearchResult])
+        do { found = try await search(plan.query) } catch { throw Failure(step: .read, underlying: error) }
+        run.rows = SpokenRequest.rows(for: plan.source, sessions: found.sessions, pages: found.pages)
+        run.read = began.duration(to: clock.now)
+        guard !run.rows.isEmpty else {
+            run.outcome = .nothingFound(words: plan.query)
+            return run
+        }
+
+        began = clock.now
+        let rows = SpokenRequest.describe(run.rows, macName: macName)
+        do {
+            let text = try await generate(SpokenRequest.answerPrompt(for: request, rows: rows), SpokenRequest.answerTokens)
+            run.outcome = .answer(SpokenRequest.spoken(fromReply: text) ?? "I couldn't answer that.")
+        } catch {
+            throw Failure(step: .respond, underlying: error)
+        }
+        run.respond = began.duration(to: clock.now)
+        return run
+    }
+}
+
+/// `Launchy --ask <file>`: the file's text, taken as a request said after "Hey Launchy", through the three steps against the
+/// app's own search and Text generation's choice, without speaking. Prints what each step did and how long it took, to tune the
+/// prompts and the timing constants. Request files are personal: keep them out of the repo.
+@MainActor
+enum SpokenCommand {
+    static func run(file: String, model: LauncherModel) async -> Int32 {
+        guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
+            print("Can't read \(file)")
+            return 1
+        }
+        let request = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        var places: [ModelPlace] = []
+        do {
+            let run = try await SpokenPipeline.run(
+                request,
+                generate: { prompt, tokens in
+                    let reply = try await model.textGeneration.generateNow(prompt, maxTokens: tokens)
+                    places.append(reply.place)
+                    return reply.text
+                },
+                search: { try await model.searchApart($0) },
+                macName: { PeerManager.shared.name(of: $0) })
+            let source = String(describing: run.plan.source)
+            print("decide: \(source), \"\(run.plan.query)\"\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(places.first.map { "\($0)" } ?? "-"), \(format(run.decide))]")
+            if run.plan.source != .none {
+                print("read: \(run.rows.count) rows  [\(format(run.read))]")
+                for (n, row) in run.rows.enumerated() { print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(row.title)") }
+            }
+            // Said as is; when no answer was written (nothing to search, nothing found) it is Launchy's own sentence.
+            print("says: \(run.outcome.spoken)  [\(places.count > 1 ? "\(places[1])" : "-"), \(format(run.respond))]")
+            return 0
+        } catch let failure as SpokenPipeline.Failure {
+            print("Failed at \(failure.step.rawValue): \(failure.underlying.localizedDescription)")
+            return 1
+        } catch {
+            print("Failed: \(error.localizedDescription)")
+            return 1
+        }
+    }
+
+    private static func format(_ duration: Duration) -> String { String(format: "%.2f s", duration.seconds) }
+}

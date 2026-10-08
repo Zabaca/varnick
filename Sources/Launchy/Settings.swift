@@ -186,8 +186,10 @@ final class Settings: ObservableObject {
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
-    /// Voice Launchy will speak in (nothing speaks yet); empty is the system voice.
+    /// Voice Launchy speaks in (an `AVSpeechSynthesisVoice` identifier); empty is the system voice.
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
+    /// Answers a mic phrase that starts "Hey Launchy" aloud, while Listening is on (ADR 0015); off until turned on.
+    @Published var heyLaunchy: Bool { didSet { defaults.set(heyLaunchy, forKey: "heyLaunchy") } }
     /// Only changed bindings are stored; nil means deliberately unbound.
     @Published private(set) var overrides: [ShortcutAction: KeyCombo?] { didSet { saveOverrides() } }
     /// Action waiting for its new shortcut; the next key press is captured for it.
@@ -288,6 +290,7 @@ final class Settings: ObservableObject {
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         voice = defaults.string(forKey: "voice") ?? ""
+        heyLaunchy = defaults.bool(forKey: "heyLaunchy")
         sessionTitles = defaults.bool(forKey: "sessionTitles")
         semanticSearch = defaults.object(forKey: "semanticSearch") as? Bool ?? true
         searchEmbeddingsRunOn = defaults.string(forKey: "searchEmbeddingsRunOn").flatMap(ModelRunOn.init) ?? .local
@@ -549,9 +552,18 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.relevanceFilterOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         case .listening:
-                        SettingRow(title: "Voice", detail: "What Launchy will speak in. Nothing speaks yet.") {
-                            Text(settings.voice.isEmpty ? "System default" : settings.voice)
-                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        SettingRow(title: "Hey Launchy",
+                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing.") {
+                            if case .unavailable(let why) = Listener.shared.state {
+                                Text(why).font(.system(size: 12)).foregroundStyle(.orange)
+                            } else if let need = textGenerationNeed {
+                                modelsLink(need)
+                            }
+                            Toggle("", isOn: $settings.heyLaunchy).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                .disabled(!settings.heyLaunchy && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
+                        }
+                        SettingRow(title: "Voice", detail: "What Launchy speaks in.") {
+                            VoicePicker(settings: settings)
                         }
                         case .peers:
                         PeersSettingsView()
@@ -637,7 +649,7 @@ struct SettingsView: View {
                             }
                         }
                         SettingRow(title: "Text generation",
-                                   detail: "Writes short text for Launchy's features, such as session titles.") {
+                                   detail: "Writes short text for Launchy's features, such as session titles and Hey Launchy's answers.") {
                             Picker("", selection: $settings.textGenerationRunOn) {
                                 ForEach(ModelRunOn.allCases) { Text($0.title).tag($0) }
                             }
@@ -646,7 +658,7 @@ struct SettingsView: View {
                         switch settings.textGenerationRunOn {
                         case .server:
                             ServerSettingRow(
-                                detail: "Sends the first prompt of each new Claude session on this Mac (its first \(SessionTitles.promptCharacters.formatted()) characters) to \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below"), over your tailnet, to name it.",
+                                detail: "Sends the first prompt of each new Claude session on this Mac (its first \(SessionTitles.promptCharacters.formatted()) characters) to \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below"), over your tailnet, to name it. With Hey Launchy on, it also gets what you ask out loud and the kind, title, site or folder, date and description of the few results it reads.",
                                 addressPlaceholder: "http://linux-box:8080", address: $settings.textGenerationServerAddress,
                                 model: $settings.textGenerationServerModel, server: textGenerationServer)
                         case .local:
