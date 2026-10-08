@@ -7,9 +7,9 @@ status: proposed
 
 ## Solution
 
-The wake phrase, the request, the panel and the spoken answer are option 01's. The deciding and reading are option 02's tool loop, with the model being Claude through Anthropic's Messages API instead of Gemma.
+The wake phrase, the request, keeping Launchy's own voice out, and the spoken-only answer are option 01's. The deciding and reading are option 02's tool loop, with the model being Claude through Anthropic's Messages API instead of Gemma.
 
-Launchy sends the request with a fixed system prompt and four tools: search history, search bookmarks, search sessions, and read session. Each tool runs in Launchy against the local search store, and each result goes back to Claude. The loop ends when Claude answers, or after four rounds. The answer has option 01's form (the row number, then one or two sentences). Launchy speaks it and selects that row in the panel.
+Launchy sends the request with a fixed system prompt and four tools: search history, search bookmarks, search sessions, and read session. Each tool runs in Launchy against the local search store, and each result goes back to Claude. The loop ends when Claude answers, or after four rounds. The answer has option 01's form, one or two sentences, and Launchy only speaks it.
 
 The tools' results go to Anthropic. That means titles, sites, page descriptions, bookmark folders, session titles and the user's prompts, and Claude's last reply when a session is read.
 
@@ -24,7 +24,7 @@ The tools' results go to Anthropic. That means titles, sites, page descriptions,
   Session prompts and Claude's replies did already go to Anthropic when the session ran, since sessions are Claude Code conversations. History and Bookmarks never have.
 - **A key, a cost and a network.** It needs an Anthropic API key, kept in the Keychain, and a connection to the internet. Each request costs money; see the estimate under Further Notes. Offline, it doesn't answer.
 - **Latency.** Each round is a round trip, and a request takes two to four. Unmeasured, estimated at 3–8 s to the first spoken word, after the transcriber's 1–2 s.
-- **A search apart from the panel,** as in option 02, with the same refactor.
+- **The search is option 01's,** run apart from the panel, as in option 02.
 - **Works on any Mac,** including one without Gemma or a server: nothing runs locally but the search.
 
 ## User Stories
@@ -33,7 +33,7 @@ The tools' results go to Anthropic. That means titles, sites, page descriptions,
 2. As a Launchy user, I want to choose, knowingly, to send my spoken requests and what they find to Claude, and to see in Settings exactly what is sent.
 3. As a Launchy user, I want my API key kept in the Keychain and never logged.
 4. As a Launchy user, I want Launchy to say so when Claude can't be reached, and not hang.
-5. As a Launchy user, I want everything else as in option 01: the wake phrase, the spoken answer, the panel with the named row selected, and nothing opening without ↩.
+5. As a Launchy user, I want everything else as in option 01: the wake phrase, the answer only spoken, and nothing opening.
 
 ## Implementation Decisions
 
@@ -64,7 +64,7 @@ The tools' results go to Anthropic. That means titles, sites, page descriptions,
 - It logs the kind of failure and the status code, never the request, a tool's result, the reply or the key. This mirrors the model server's rules.
 - `where-it-breaks.md` gets a section on what goes to Anthropic and nothing else.
 
-**Panel, speech, transcript, state**
+**Speech, transcript, state**
 - As in option 01. One new Keychain item and the model's name in UserDefaults.
 
 ## Testing Decisions

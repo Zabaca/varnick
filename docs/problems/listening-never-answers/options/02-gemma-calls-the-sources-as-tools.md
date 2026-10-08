@@ -1,13 +1,13 @@
 ---
 problem: listening-never-answers
 title: Gemma on this Mac calls the three sources as tools
-summary: Wake, response and privacy as in option 01, but the steps aren't fixed. This Mac's Gemma 4 E2B runs a short tool loop with four tools: search History, search Bookmarks, search sessions, and read one session, including Claude's last reply. It may search more than once or read a session before it answers. Searches run apart from the panel, which shows the last one at the end. Runs on this Mac only.
+summary: Wake, response and privacy as in option 01, but the steps aren't fixed. This Mac's Gemma 4 E2B runs a short tool loop with four tools: search History, search Bookmarks, search sessions, and read one session, including Claude's last reply. It may search more than once or read a session before it answers. Searches use option 01's search apart from the panel, and the answer is only spoken. Runs on this Mac only.
 status: proposed
 ---
 
 ## Solution
 
-The wake phrase, the request, the spoken answer, the panel and the logging rules are option 01's. What differs is steps 1 and 2: the model drives them instead of Launchy.
+The wake phrase, the request, keeping Launchy's own voice out, the spoken-only answer and the logging rules are option 01's. What differs is steps 1 and 2: the model drives them instead of Launchy.
 
 The request goes to this Mac's Gemma as a chat with four tools:
 
@@ -15,7 +15,7 @@ The request goes to this Mac's Gemma as a chat with four tools:
 - **search sessions** does the same for Claude sessions;
 - **read session** takes the number of a session already returned and gives its prompts plus the start of Claude's last reply, read from its transcript.
 
-The model may call up to three tools, then must answer, in option 01's answer form: the row number, then one or two sentences. Launchy then shows the last search in the panel with that row selected, and speaks the answer.
+The model may call up to three tools, then must answer, in option 01's answer form: one or two sentences, which Launchy speaks. Nothing shows on screen.
 
 The pinned mlx-swift-lm already runs this loop: a chat session takes tool definitions and a dispatcher, and parses Gemma 4's tool-call format. So there is no new package.
 
@@ -25,8 +25,7 @@ The pinned mlx-swift-lm already runs this loop: a chat session takes tool defini
 - **Tool calls by a 2-billion-parameter model are unproven here.** Picking a tool and good arguments is harder than filling in option 01's two fields. A wrong tool call, or one in a malformed format, ends in a weaker answer or none. A spike has to show it works before this is built.
 - **This Mac only.** Text generation on a server speaks one user message, with no tools. Tools over the OpenAI-compatible route need the server's chat template to handle Gemma 4's tool format, which is unverified. With Server chosen, the switch shows that it needs Text generation on this Mac.
 - **Slower and more variable.** Each tool round is another prefill and generation, so a request costs one to three more rounds than option 01's two calls. Estimated warm at 4–7 s to the first spoken word, unmeasured.
-- **A search apart from the panel.** Tools search while the panel is still hidden, several times per request, so the fusion of keyword and meaning has to move out of the launcher model into something both can call. That refactor must leave the panel's ranking exactly as it is.
-- **What the panel shows can differ from what was read.** It shows the last search only. Rows from an earlier search, or a session's reply, aren't on screen.
+- **Several searches per request,** through option 01's search apart from the panel, so nothing on screen changes however many run.
 - **Still private.** Everything runs in Launchy's process. Reading Claude's replies adds nothing that leaves the Mac.
 
 ## User Stories
@@ -34,7 +33,7 @@ The pinned mlx-swift-lm already runs this loop: a chat session takes tool defini
 1. As a Launchy user, I want a request that spans sources answered from all of them, so that I don't have to know where I kept something.
 2. As a Launchy user, I want "what did Claude decide about X" answered from that session's last reply, not only from my prompts.
 3. As a Launchy user, I want Launchy to try other words when the first search finds nothing useful.
-4. As a Launchy user, I want everything else as in option 01: the wake phrase, the spoken answer, the panel with the named row selected, nothing opening without ↩, and nothing leaving this Mac.
+4. As a Launchy user, I want everything else as in option 01: the wake phrase, the answer only spoken, nothing opening, and nothing leaving this Mac.
 
 ## Implementation Decisions
 
@@ -50,7 +49,7 @@ The pinned mlx-swift-lm already runs this loop: a chat session takes tool defini
 - **At most three tool calls.** After the third, the tools are dropped and the model must answer.
   - A call that names no known tool, or has unreadable arguments, counts as a call. It returns a short error the model can see.
   - A turn with no tool call and no text ends the request with "I couldn't answer that".
-- **Tool results** use option 01's row form, numbered across the whole request, so the answer's row number is unique.
+- **Tool results** use option 01's row form, numbered across the whole request, so read session names a session unambiguously.
   - search history: 5 pages.
   - search bookmarks: 5 bookmarked pages.
   - search sessions: 3 sessions.
@@ -61,9 +60,8 @@ The pinned mlx-swift-lm already runs this loop: a chat session takes tool defini
   A paired Mac's session has no transcript here, so it returns its prompts and says the reply is on the other Mac. Reading a transcript happens off the main actor, as title lookups do.
 
 **Searching apart from the panel**
-- The panel's search, minus the parts that are the panel's own, moves into one piece both call: keyword lists, the query's embedding with its server-or-this-Mac pick, rank fusion, the session similarity floor, and open sessions first. Showing results, keeping the selection, and the relevance filter's timing stay the panel's.
+- Tools call option 01's search apart from the panel, which ranks exactly as the panel does and sets nothing on screen.
 - Tools never run the relevance filter. Their candidates go nowhere.
-- After the answer, the panel shows `?` with the last search's words, and selects the named row if that search returned it, else the top row.
 
 **Command line**
 - `Launchy --ask <file>`, as in option 01, also prints each tool call and its arguments.
@@ -74,10 +72,9 @@ The pinned mlx-swift-lm already runs this loop: a chat session takes tool defini
   - the right tool first;
   - usable search words;
   - well-formed calls;
-  - answers that name the right row.
+  - answers about the right row.
 
   If the right tool comes first in fewer than about 25 of 30, this option isn't worth more than option 01.
-- **The refactor:** `--search-eval` on the user's eval terms gives the same MRR and ranks before and after. `--search` output is unchanged for a few queries.
 - **By hand:** option 01's checks, plus a request answered from a session's last reply, and a request whose first search finds nothing.
 
 ## Out of Scope

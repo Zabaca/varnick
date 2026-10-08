@@ -13,7 +13,7 @@ The deciding call can now answer `claude` when the request asks for work rather 
 
 For `claude`, Launchy:
 
-1. brings the panel forward on search, as option 01 does;
+1. brings the panel forward on search and gives it focus, which option 01, speaking only, never does;
 2. types `#project` (when there is one) and the message into the field, so the panel is in its ordinary prompt mode. The project word resolves, or doesn't, as the user's own typing would, and matching sessions list under the prompt line;
 3. says "Ready to start a Claude session in <project>. Press return.", or "… Press return." with no project.
 
@@ -79,6 +79,7 @@ Every other request is answered locally, exactly as in option 01.
 ## Further Notes
 
 - Accept together with option 01, or after it. It can't stand alone.
+- It is the one case where a spoken request brings the panel forward. The user chose speech only for option 01 (2026-10-08), so this needs their say-so on that point too.
 - **Verified in the code:**
   - typed text without a leading `?` or `!` is a prompt;
   - `#word` resolves among projects as it is typed;
