@@ -305,10 +305,8 @@ extension TranscriptReader {
         return work
     }
 
-    /// The count without teammates, which need the rest of the transcript, and the teammates not notified ended.
-    /// An end counts for a shell whenever it came, since a shell never runs again. A subagent that ended and was sent a
-    /// message runs again under its id, so an end counts only after the input was saved (a few seconds before, for the
-    /// clock).
+    /// The count without teammates, which need the rest of the transcript, and the teammates not notified ended. A shell's
+    /// end counts whenever it came; a subagent's only after the input was saved, since a message runs it again.
     static func pendingBackground(tail: Data, startsMidLine: Bool, since: Date, input: StopInput)
         -> (work: BackgroundWork, teammates: [RunningTask]) {
         var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
@@ -353,29 +351,29 @@ extension TranscriptReader {
             if work.workflows == 1, let id, !notified.insert(id).inserted { continue }
             endedWorkflows += work.workflows
         }
+        // A stop names a description, so it removes the tasks with that description only if no more are running than it
+        // names: otherwise it can't be told which was stopped, and showing Running is the cheaper mistake.
+        var stopped = Set<String>()
+        for (description, count) in Dictionary(stoppedByUser.map { ($0, 1) }, uniquingKeysWith: +) {
+            let named = input.tasks.filter { $0.kind != .shell && $0.description == description }
+            if named.count <= count { stopped.formUnion(named.map(\.id)) }
+        }
         let live = input.tasks.filter { task in
-            switch task.kind {
-            case .shell: !ended.contains(task.id)
-            case .subagent, .teammate: !endedSinceSaved.contains(task.id) && !stoppedByUser.contains { stopped(task, by: $0) }
-            }
+            task.kind == .shell ? !ended.contains(task.id) : !endedSinceSaved.contains(task.id) && !stopped.contains(task.id)
         }
         func count(_ kind: RunningTask.Kind) -> Int { live.filter { $0.kind == kind }.count }
         return (BackgroundWork(agents: count(.subagent), workflows: workflows ?? 0, shells: count(.shell)), live.filter { $0.kind == .teammate })
     }
 
-    /// The agents a stop by the user names, as Claude Code words it (2.1.295): `Background agent "…" was stopped by the
-    /// user.`, or `N background agents were stopped by the user: "…", "…".` Each is the agent's description, cut at 50
-    /// characters with "..." when long.
+    /// The descriptions a stop by the user names, as Claude Code words it (2.1.295): `Background agent "…" was stopped
+    /// by the user.`, or `N background agents were stopped by the user: "…", "…".` Each is the task's own description,
+    /// which Claude Code cut at 50 characters and "..." if it made it from the prompt, so it matches whole.
     private static func stoppedDescriptions(in text: String) -> [String] {
         if text.hasPrefix("Background agent \""), text.hasSuffix("\" was stopped by the user.") {
             return [String(text.dropFirst("Background agent \"".count).dropLast("\" was stopped by the user.".count))]
         }
         guard let list = text.range(of: " background agents were stopped by the user: \""), text.hasSuffix("\".") else { return [] }
         return text[list.upperBound...].dropLast(2).components(separatedBy: "\", \"")
-    }
-
-    private static func stopped(_ task: RunningTask, by description: String) -> Bool {
-        description.hasSuffix("...") ? task.description.hasPrefix(description.dropLast(3)) : task.description == description
     }
 
     /// A task notification's text: a user entry, which starts a turn, or an `attachment` (`queued_command`), which is how
@@ -420,11 +418,11 @@ private struct Teammate {
     var isBusy: Bool { busyAt >= idleAt }
 }
 
-/// The teammates of each transcript read so far and how far into it, so a transcript is read once and then only what
-/// was added to it, whoever asks (the app, and both relays on every ask).
+/// The teammates of each transcript read so far and how far into it, so a long-lived process reads a transcript
+/// once and then only what was added to it. A relay is a new process for each ask and reads it whole.
 private final class TeamLedgers: @unchecked Sendable {
     static let shared = TeamLedgers()
-    private static let limit = 8
+    private static let limit = 64
 
     private struct Ledger {
         var offset = 0
