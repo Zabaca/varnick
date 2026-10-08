@@ -169,6 +169,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.model.toggleSettings()
                 return nil
             }
+            // A pane asking whether to end its working session takes esc and ↩ first: they must not reach Claude.
+            if self.model.answerDoneQuestion(event) { return nil }
             // The board takes its keys, and the End session key, before the shortcuts: ⌘W never reaches the tab underneath.
             if self.model.showingBoard, !self.model.showingSettings, self.model.board.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
@@ -238,6 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .newTerminalTab: model.newTerminalTab()
         case .renameTab where inSession: model.beginRename()
         case .endPane where inSession: model.endClaude()
+        case .doneSession where inSession: return model.requestDoneActive()
         case .paste where inSession && model.activeSession.map({ $0.isClaude || $0.isShell }) == true:
             model.activeSession?.paste()
         case .previousTab: model.cycleSession(-1)

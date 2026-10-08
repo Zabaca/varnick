@@ -16,6 +16,13 @@ extension Turn {
         }
     }
 
+    /// Claude is at work, or has agents, workflows or shells that are running and will start its next turn by themselves.
+    var isRunning: Bool { self == .working || self == .background }
+
+    /// Done on a session in this turn asks first, board card and Claude pane alike: it is mid-turn, unless its
+    /// pane shows a card, which asks for itself.
+    static func asksBeforeDone(_ turn: Turn?, showingCard: Bool) -> Bool { turn?.isRunning == true && !showingCard }
+
     /// When a turn began that a host said began `ageSeconds` ago in a reply that came at `reply`; counting
     /// from the reply keeps the two Macs' clocks out of it.
     static func began(ageSeconds: Int?, before reply: Date) -> Date {
@@ -97,11 +104,10 @@ final class SessionBoard: ObservableObject {
             if case .turn(let turn, _) = standing { turn } else { nil }
         }
 
-        /// Claude is at work, or has agents, workflows or shells that are running and will start its next turn by themselves.
-        var inRunningColumn: Bool { turn == .working || turn == .background }
+        var inRunningColumn: Bool { turn?.isRunning == true }
 
-        /// Done on it asks first: it is mid-turn, unless its pane shows a card, which asks for itself.
-        var asksBeforeDone: Bool { inRunningColumn && note == nil && !hasNoPane }
+        /// Done on it asks first (`Turn.asksBeforeDone`); one with no pane here only gets marked.
+        var asksBeforeDone: Bool { Turn.asksBeforeDone(turn, showingCard: note != nil) && !hasNoPane }
 
         var column: Column {
             if case .done = standing { .completed } else { inRunningColumn ? .running : .stopped }
@@ -310,7 +316,7 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Keys
 
-    /// The keys the board takes: ←/→ column, ↑/↓ card, ↩ opens, D and the End session key mark done, esc
+    /// The keys the board takes: ←/→ column, ↑/↓ card, ↩ opens, D, the End session key and the Mark session done key mark done, esc
     /// cancels a question and otherwise closes. A modified ↩ is taken and does nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
@@ -323,7 +329,7 @@ final class SessionBoard: ObservableObject {
         case kVK_DownArrow where plain: selection = Self.moved(selection, in: cards, .down)
         case kVK_ANSI_D where plain: doneSelected()
         default:
-            guard Settings.shared.action(for: event) == .endPane else { return false }
+            guard let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession else { return false }
             doneSelected()   // with no card selected, nothing: the key is still taken, never let through to the tab
         }
         return true
@@ -579,7 +585,9 @@ private struct BoardCardView: View {
             if selected, card.column == .completed || card.isEnded {
                 Text("↩ resumes it in a new tab").font(.system(size: 11)).foregroundStyle(.tertiary)
             }
-            if confirming { confirmation }
+            if confirming {
+                DoneConfirmation(turn: card.turn, done: done, keep: keep).padding(.top, 3)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
@@ -591,26 +599,38 @@ private struct BoardCardView: View {
         .contentShape(Rectangle())
     }
 
-    /// Asked inside a Running card Done was pressed on or dropped on Completed: the pane is mid-turn, so ending it is asked once.
-    private var confirmation: some View {
+    private var turnText: String {
+        let text = card.turnText(at: now)
+        return card.note.map { text + " · " + $0 } ?? text
+    }
+}
+
+/// The question asked before ending a session that is mid-turn: inside a Running card Done was pressed on or
+/// dropped on Completed, and inside a Claude pane Done was pressed in.
+struct DoneConfirmation: View {
+    let turn: Turn?
+    /// End it.
+    let done: () -> Void
+    let keep: () -> Void
+
+    var body: some View {
         let accent = Theme.sourceColor("claude")
-        return VStack(alignment: .leading, spacing: 6) {
-            (Text(card.turn == .background ? "Background work is running. " : "Claude is working. ") + Text("End this session?").bold().foregroundColor(accent))
+        VStack(alignment: .leading, spacing: 6) {
+            (Text(turn == .background ? "Background work is running. " : "Claude is working. ") + Text("End this session?").bold().foregroundColor(accent))
                 .font(.system(size: 11.5))
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 5) {
                 Spacer(minLength: 0)
-                confirmButton("End it", solid: true, action: done)
-                confirmButton("Keep", solid: false, action: keep)
+                button("End it", solid: true, action: done)
+                button("Keep", solid: false, action: keep)
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 7)
         .background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(accent.opacity(0.5), lineWidth: 1))
-        .padding(.top, 3)
     }
 
-    private func confirmButton(_ title: String, solid: Bool, action: @escaping () -> Void) -> some View {
+    private func button(_ title: String, solid: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 11.5, weight: solid ? .semibold : .regular))
@@ -619,11 +639,6 @@ private struct BoardCardView: View {
                 .foregroundStyle(solid ? Theme.onAccent : Color.secondary)
         }
         .buttonStyle(.plain)
-    }
-
-    private var turnText: String {
-        let text = card.turnText(at: now)
-        return card.note.map { text + " · " + $0 } ?? text
     }
 }
 

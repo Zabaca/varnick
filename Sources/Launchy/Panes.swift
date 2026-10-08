@@ -462,14 +462,23 @@ struct TerminalLeaf: View {
                     .allowsHitTesting(false)
             }
         }
-        // Terminals have no bar to put it in: their × shows over the corner while hovered.
+        // Terminals have no bar to put it in: their × shows over the corner while hovered, and a Claude pane's
+        // Done beside it. The question Done asks of a working session stays until it is answered.
         .overlay(alignment: .topTrailing) {
-            if hovering && !session.isWeb && !session.isFile {
-                CloseButton(help: CloseButton.paneHelp) { session.end() }
-                    .padding(2)
-                    .background(Color(nsColor: NSColor(white: 0.18, alpha: 0.95)),
-                                in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            if session.askingDone {
+                DoneConfirmation(turn: session.turn?.turn, done: session.onDone, keep: { session.askingDone = false })
+                    .frame(width: 230)
+                    .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
+            } else if hovering && !session.isWeb && !session.isFile {
+                HStack(spacing: 2) {
+                    if session.isClaude { DoneButton(action: session.onDone) }
+                    CloseButton(help: CloseButton.paneHelp) { session.end() }
+                }
+                .padding(2)
+                .background(Color(nsColor: NSColor(white: 0.18, alpha: 0.95)),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .padding(6)
             }
         }
         .onHover { hovering = $0 }
@@ -637,6 +646,31 @@ struct CloseButton: View {
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .help(help)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Done on a Claude pane: the mouse's Mark session done key.
+struct DoneButton: View {
+    /// Room a bar that runs under the corner leaves for Done and ×.
+    static let reserved: CGFloat = 96
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark").font(.system(size: 8.5, weight: .bold))
+                Text("Done").font(.system(size: 11))
+            }
+            .padding(.horizontal, 5)
+            .frame(height: 16)
+            .background(hovering ? Theme.selection : .clear, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(Settings.shared.combo(.doneSession).map { "Mark session done (\($0.label))" } ?? "Mark session done")
         .onHover { hovering = $0 }
     }
 }
