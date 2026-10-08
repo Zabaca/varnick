@@ -1893,10 +1893,23 @@ final class LauncherModel: ObservableObject {
         markDone(session.id)
     }
 
-    /// The Mark session done key: false for a pane that isn't Claude, so the key goes on to it.
+    /// The Mark session done key. Returns whether the key was used: false when the focused pane isn't Claude, so the key goes on to it.
     func requestDoneActive() -> Bool {
         guard showsTerminal, let session = activeSession, session.isClaude else { return false }
         requestDone(session)
+        return true
+    }
+
+    /// A key pressed while the focused pane asks whether to end its working session: esc keeps it, ↩ ends it, and
+    /// either is used up so it never reaches the terminal. Returns whether the key was used.
+    func answerDoneQuestion(_ event: NSEvent) -> Bool {
+        guard showsTerminal, let session = activeSession, session.askingDone,
+              event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
+        switch Int(event.keyCode) {
+        case kVK_Escape: session.askingDone = false
+        case kVK_Return, kVK_ANSI_KeypadEnter: requestDone(session)
+        default: return false
+        }
         return true
     }
 

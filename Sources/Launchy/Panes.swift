@@ -472,13 +472,13 @@ struct TerminalLeaf: View {
                     .padding(6)
             } else if hovering && !session.isWeb && !session.isFile {
                 HStack(spacing: 2) {
-                    if session.isClaude && session.away == nil { DoneButton(action: session.onDone) }
+                    if session.isClaude { DoneButton(action: session.onDone) }
                     CloseButton(help: CloseButton.paneHelp) { session.end() }
                 }
-                    .padding(2)
-                    .background(Color(nsColor: NSColor(white: 0.18, alpha: 0.95)),
-                                in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .padding(6)
+                .padding(2)
+                .background(Color(nsColor: NSColor(white: 0.18, alpha: 0.95)),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .padding(6)
             }
         }
         .onHover { hovering = $0 }
@@ -652,6 +652,8 @@ struct CloseButton: View {
 
 /// Done on a Claude pane: the mouse's Mark session done key.
 struct DoneButton: View {
+    /// Room a bar that runs under the corner leaves for Done and ×.
+    static let reserved: CGFloat = 96
     let action: () -> Void
     @State private var hovering = false
 

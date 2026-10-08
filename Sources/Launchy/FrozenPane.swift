@@ -341,8 +341,8 @@ struct FrozenPane: View {
         }
         .controlSize(.small)
         .padding(.leading, 10)
-        // Clear of the × a terminal pane shows over its corner while hovered (`TerminalLeaf`).
-        .padding(.trailing, 40)
+        // Clear of the Done and × a terminal pane shows over its corner while hovered (`TerminalLeaf`).
+        .padding(.trailing, DoneButton.reserved)
         .frame(height: Self.barHeight)
         .background(Theme.tileFill)
         .overlay(alignment: .bottom) { Theme.hairline.frame(height: 1) }
