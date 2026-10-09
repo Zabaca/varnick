@@ -2,7 +2,7 @@
 problem: problems-not-on-the-board
 title: A Problems tab on the board, with work links for each session and subagent, made by hooks and /work, from every host
 summary: The board gets a Problems tab, the prototype's variant D, whose columns come from each problem's files. Every Claude pane keeps a work record in its folder (none, a problem or an option), and every subagent can keep its own beside it, with a log of every link made. A hook on file writes links the writer by path, a `/work` skill links it on request, and the builder links itself to its option and ties its branch to it in git. Building is an option with a live link or a tied branch not yet merged. Links reach a paired Mac's board in the relay's replies (protocol 17), and a session that ends keeps its links in its saved record and in the search database. The merge sets `shipped`. Rough effort is six days, in three branches.
-status: proposed
+status: accepted
 ---
 
 ## Solution
