@@ -175,11 +175,18 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Showing
 
-    /// The board is on screen (again): reads every pane's turn now and once a second after, and asks
-    /// zmx once which restored panes still have a session. A pane the user was in is highlighted.
+    /// The board is on screen (again): the tab it shows starts reading. Sessions reads every pane's turn now and once a second
+    /// after, and asks zmx once which restored panes still have a session; a pane the user was in is highlighted. Problems
+    /// reads its own files (`ProblemsBoard.start`) and nothing of Sessions.
     func appear() {
         appeared = true
-        if tab == .problems { problems.start() }
+        switch tab {
+        case .sessions: startSessions()
+        case .problems: problems.start()
+        }
+    }
+
+    private func startSessions() {
         model?.refreshPeersForBoard()
         model?.refreshPeerRecentForBoard()
         refresh()
@@ -193,9 +200,8 @@ final class SessionBoard: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
-                // A hidden panel reads nothing; it is read again when it shows (`LauncherModel.panelDidShow`). Nor does the
-                // Problems tab, which reads for itself.
-                if self.tab == .sessions, Self.panelIsVisible {
+                // A hidden panel reads nothing; it is read again when it shows (`LauncherModel.panelDidShow`).
+                if Self.panelIsVisible {
                     self.model?.refreshPeersForBoard()
                     self.refresh()
                 }
@@ -203,20 +209,27 @@ final class SessionBoard: ObservableObject {
         }
     }
 
+    private func stopSessions() {
+        ticker?.cancel()
+        ticker = nil
+        zmxCheck?.cancel()
+        zmxCheck = nil
+    }
+
     static var panelIsVisible: Bool { NSApp.windows.first(where: { $0 is LauncherPanel })?.isVisible == true }
 
-    /// Tab, ⇧Tab and `!problems`. The Problems tab reads only while it shows; Sessions is read again on returning.
+    /// Tab, ⇧Tab and `!problems`. Each tab reads only while it shows: leaving Sessions stops its tick, and returning reads it all again.
     func show(_ next: Tab) {
         guard next != tab else { return }
         tab = next
         confirming = nil
         guard appeared else { return }
         if next == .problems {
+            stopSessions()
             problems.start()
         } else {
             problems.stop()
-            model?.refreshPeersForBoard()
-            refresh()
+            startSessions()
         }
     }
 
@@ -224,10 +237,7 @@ final class SessionBoard: ObservableObject {
         appeared = false
         problems.reset()
         confirming = nil
-        ticker?.cancel()
-        ticker = nil
-        zmxCheck?.cancel()
-        zmxCheck = nil
+        stopSessions()
         selection = nil
         zmxSessions = nil
     }
@@ -251,7 +261,7 @@ final class SessionBoard: ObservableObject {
     /// Completed sessions. A session whose Mac is no longer paired is hidden, and an ended card whose id already
     /// has a card is skipped.
     func refresh() {
-        guard let model else { return }
+        guard let model, tab == .sessions else { return }
         var next: [Card] = []
         for tab in model.tabs {
             for pane in tab.sessions where pane.isClaude {
@@ -482,12 +492,9 @@ struct SessionBoardView: View {
                 tabButton("Sessions", .sessions)
                 tabButton("Problems", .problems)
                 Spacer()
-                if board.tab == .problems {
-                    EvidenceSwitch(board: board.problems)
-                } else {
-                    ShortcutHint(label: "Done", action: .endPane)
-                }
+                if board.tab == .problems { EvidenceSwitch(board: board.problems) }
                 KeyHint(label: "Open", keys: ["↩"])
+                if board.tab == .sessions { ShortcutHint(label: "Done", action: .endPane) }
                 KeyHint(label: "Switch", keys: ["⇥"])
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
                     .buttonStyle(.plain)

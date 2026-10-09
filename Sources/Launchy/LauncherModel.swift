@@ -980,7 +980,7 @@ final class LauncherModel: ObservableObject {
         case .transcript: openTranscript()
         case .kanban:
             query = ""
-            showBoard()
+            showBoard(.sessions)
         case .problems:
             query = ""
             showBoard(.problems)

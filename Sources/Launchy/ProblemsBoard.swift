@@ -8,6 +8,8 @@ import SwiftUI
 @MainActor
 final class ProblemsBoard: ObservableObject {
     @Published private(set) var cards: [ProblemCard] = []
+    /// What the last read found, before the rules (`ProblemRules.cards`).
+    private var sources: [ProjectProblems] = []
     /// A project's `#name` pill by its folder, filled only when more than one project has problems.
     @Published private(set) var pills: [String: String] = [:]
     /// The first read has come back.
@@ -21,14 +23,23 @@ final class ProblemsBoard: ObservableObject {
 
     private static let interval: Duration = .seconds(5)
     private var reader: Task<Void, Never>?
+    /// The read under way, so a new `start` or `stop` cancels it and reads never stack.
+    private var reading: Task<[ProjectProblems], Never>?
 
     func cards(in column: ProblemColumn) -> [ProblemCard] { cards.filter { $0.column == column } }
 
+    /// What an empty board says, once the first read is back: no project has the folder, or the folders hold no problem.
+    var emptyNote: String? {
+        guard loaded, cards.isEmpty else { return nil }
+        return sources.isEmpty ? "No project has a docs/problems folder" : "docs/problems has no problem.md yet"
+    }
+
     // MARK: Reading
 
-    /// Reads now and every 5 s after, while the panel is on screen. Called again whenever the tab shows, which reads at once.
+    /// Reads now and every 5 s after, while the panel is on screen. Called again whenever the tab shows, which cancels the read
+    /// under way and reads at once.
     func start() {
-        reader?.cancel()
+        stop()
         reader = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -41,6 +52,8 @@ final class ProblemsBoard: ObservableObject {
     func stop() {
         reader?.cancel()
         reader = nil
+        reading?.cancel()
+        reading = nil
     }
 
     /// The board closed: what was opened is forgotten, and the next opening reads again.
@@ -53,16 +66,24 @@ final class ProblemsBoard: ObservableObject {
     private func read() async {
         guard let model else { return }
         let projects = model.projects
-        let found = await Task.detached(priority: .userInitiated) { await ProblemsReader.cards(in: projects.map(\.path)) }.value
-        guard !Task.isCancelled else { return }
-        let several = Set(found.map(\.project)).count > 1
+        let paths = projects.map(\.path)
+        let work = Task.detached(priority: .userInitiated) { await ProblemsReader.read(paths) }
+        reading = work
+        let found = await work.value
+        guard !Task.isCancelled, !work.isCancelled else { return }
+        reading = nil
+        if !loaded { loaded = true }
+        guard found != sources else { return }
+        sources = found
+        let several = found.filter { !$0.problems.isEmpty }.count > 1
         let named = several ? Dictionary(projects.map { ($0.path, model.projectPill($0)) }, uniquingKeysWith: { first, _ in first }) : [:]
         if named != pills { pills = named }
-        if found != cards { cards = found }
-        loaded = true
+        let next = ProblemRules.cards(from: found)
+        if next != cards { cards = next }
         if let selection, !cards.contains(where: { $0.id == selection }) { self.selection = nil }
         if selection == nil { selection = Self.moved(nil, in: cards, .down) }
-        opened.formIntersection(cards.map(\.id))
+        let kept = opened.intersection(cards.map(\.id))
+        if kept != opened { opened = kept }
     }
 
     // MARK: Keys
@@ -108,8 +129,8 @@ struct ProblemsBoardView: View {
     @ObservedObject var board: ProblemsBoard
 
     var body: some View {
-        if board.loaded, board.cards.isEmpty {
-            Text("No project has a docs/problems folder")
+        if let note = board.emptyNote {
+            Text(note)
                 .font(.system(size: 11.5))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -187,7 +208,7 @@ private struct ProblemsColumn: View {
     }
 }
 
-/// Variant D's card: the title, the severity on a Backlog card, and, once opened or with Show evidence, why it is in its column.
+/// A problem's card: the title, the severity on a Backlog card, and, once opened or with Show evidence, why it is in its column.
 private struct ProblemCardView: View {
     let card: ProblemCard
     /// The project's pill, when more than one project has problems.

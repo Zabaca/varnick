@@ -3,7 +3,8 @@ import Foundation
 // The Problems tab's rules (docs/problems/problems-not-on-the-board): which column a problem sits in, and why, from its files and the
 // branches tied to its options. Pure: no disk, no git, so the rules read the same from the board and from `Launchy --problems`.
 
-/// An option's `status` frontmatter (docs/agents/issue-tracker.md). One that is missing or unknown reads as proposed.
+/// An option's `status` frontmatter (docs/agents/issue-tracker.md), in any case. One that is missing or unknown reads as proposed,
+/// and the card says so (`ProblemOption.statusNote`).
 enum OptionStatus: String, Sendable {
     case proposed, accepted, inProgress = "in-progress", shipped, rejected, abandoned
 
@@ -22,6 +23,8 @@ struct ProblemOption: Equatable, Sendable {
     let number: Int
     let title: String
     let status: OptionStatus
+    /// Set when the file's status wasn't read as written, for the card's evidence: it is missing or isn't one of the six.
+    var statusNote: String? = nil
 
     /// "03", as the option file and a branch tie write it.
     var label: String { String(format: "%02d", number) }
@@ -73,6 +76,13 @@ enum ProblemColumn: CaseIterable, Identifiable, Sendable {
     var empty: String { self == .closed ? "Nothing closed" : "None" }
 }
 
+/// What was read of one project: its problems and the branches tied to its options. The rules run over this after the read.
+struct ProjectProblems: Equatable, Sendable {
+    let project: String
+    let problems: [Problem]
+    let ties: [BranchTie]
+}
+
 /// One problem on the board, with why it is in its column.
 struct ProblemCard: Identifiable, Equatable, Sendable {
     /// The project's folder and the problem's slug: two projects can have a problem of one name.
@@ -107,6 +117,11 @@ enum ProblemRules {
 
     /// Why the problem sits in its column, a line each.
     static func evidence(of problem: Problem, ties: [BranchTie]) -> [String] {
+        columnReasons(of: problem, ties: ties)
+            + problem.options.compactMap { option in option.statusNote.map { "Option \(option.label) \($0), read as proposed" } }
+    }
+
+    private static func columnReasons(of problem: Problem, ties: [BranchTie]) -> [String] {
         func said(_ status: OptionStatus) -> [String] {
             problem.options.filter { $0.status == status }.map { "Option \($0.label) \(status.rawValue): \($0.title)" }
         }
@@ -137,6 +152,11 @@ enum ProblemRules {
         ProblemCard(id: project + "#" + problem.slug, project: project, title: problem.title, severity: problem.severity,
                     column: column(of: problem, ties: ties), evidence: evidence(of: problem, ties: ties))
     }
+
+    /// Every card of what the reader found, sorted. Runs on the main actor, after the read.
+    static func cards(from sources: [ProjectProblems]) -> [ProblemCard] {
+        sorted(sources.flatMap { source in source.problems.map { card(for: $0, project: source.project, ties: source.ties) } })
+    }
 }
 
 // MARK: - Parsing
@@ -145,7 +165,7 @@ enum ProblemFiles {
     /// The `key: value` lines between the file's first two `---` lines. The value is everything after the first colon, less one
     /// pair of quotes.
     static func frontmatter(_ text: String) -> [String: String] {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         guard lines.first.map({ $0.trimmingCharacters(in: .whitespaces) }) == "---" else { return [:] }
         var found: [String: String] = [:]
         for line in lines.dropFirst() {
@@ -162,15 +182,17 @@ enum ProblemFiles {
     static func option(file: String, text: String) -> ProblemOption? {
         guard file.hasSuffix(".md"), let number = Int(file.prefix { $0.isNumber }) else { return nil }
         let fields = frontmatter(text)
-        return ProblemOption(number: number, title: fields["title"] ?? file,
-                             status: fields["status"].flatMap(OptionStatus.init(rawValue:)) ?? .proposed)
+        let written = fields["status"] ?? ""
+        let status = OptionStatus(rawValue: written.lowercased())
+        return ProblemOption(number: number, title: fields["title"] ?? file, status: status ?? .proposed,
+                             statusNote: status != nil ? nil : written.isEmpty ? "has no status" : "has unknown status \"\(written)\"")
     }
 
     static func problem(slug: String, text: String, options: [ProblemOption]) -> Problem {
         let fields = frontmatter(text)
         return Problem(slug: slug, title: fields["title"] ?? slug,
-                       severity: fields["severity"].flatMap(Severity.init(rawValue:)) ?? .low,
-                       isClosed: fields["status"] == "closed", options: options.sorted { $0.number < $1.number })
+                       severity: fields["severity"].flatMap { Severity(rawValue: $0.lowercased()) } ?? .low,
+                       isClosed: fields["status"]?.lowercased() == "closed", options: options.sorted { $0.number < $1.number })
     }
 }
 
@@ -181,16 +203,16 @@ enum ProblemsReader {
     /// A project keeps its problems here, in its main checkout.
     static func problemsFolder(of project: String) -> String { project + "/docs/problems" }
 
-    /// The cards of every project in `projects` that has a problems folder.
-    static func cards(in projects: [String]) async -> [ProblemCard] {
-        var cards: [ProblemCard] = []
+    /// What every project in `projects` that has a problems folder holds, and its tied branches (read only when it holds problems).
+    /// Stops at the next project when the task is cancelled.
+    static func read(_ projects: [String]) async -> [ProjectProblems] {
+        var found: [ProjectProblems] = []
         for project in projects where FileManager.default.fileExists(atPath: problemsFolder(of: project)) {
+            if Task.isCancelled { break }
             let problems = problems(in: project)
-            guard !problems.isEmpty else { continue }
-            let ties = await ties(in: project)
-            cards += problems.map { ProblemRules.card(for: $0, project: project, ties: ties) }
+            found.append(ProjectProblems(project: project, problems: problems, ties: problems.isEmpty ? [] : await ties(in: project)))
         }
-        return ProblemRules.sorted(cards)
+        return found
     }
 
     static func problems(in project: String) -> [Problem] {
@@ -230,7 +252,7 @@ enum ProblemsReader {
     /// `Launchy --problems [folder…]`: the columns and each card's evidence, for the given project folders or, with none, the ones
     /// Launchy lists.
     static func report(_ projects: [String]) async -> String {
-        let cards = await cards(in: projects)
+        let cards = ProblemRules.cards(from: await read(projects))
         let several = Set(cards.map(\.project)).count > 1
         var out = ""
         for column in ProblemColumn.allCases {
