@@ -150,7 +150,7 @@ One way of solving a **Problem**, with its trade-offs. A problem can have severa
 _Avoid_: Proposal, solution, spec (an accepted option serves as the spec)
 
 **Work link**:
-The problem, or the option of a problem, that a **Session** or one of its subagents works on, kept as files in the pane's folder: none (the default, and a state of its own), a problem or an option. Made by writing a problem's files, by `/work`, and by the skills that create work; never read from a transcript. A session whose link names an open option makes the problem Building; a link to a shipped option is not live. A session that ends keeps its links in its saved record.
+The problem, or the option of a problem, that a **Session** or one of its subagents works on, kept as files in the pane's folder: none (the default, and a state of its own), a problem or an option. Made by writing a problem's files, by `/work`, and by the skills that create work; never read from a transcript. A session whose link names an open option makes the problem Building; a link to a shipped option is not live. A session that ends keeps its links in its saved record and in the search database's `work_history`. A paired Mac's sessions send theirs with the protocol, and match this Mac's problem by the project's group and name (`group/name`) and the slug.
 _Avoid_: Tag, assignment
 
 ### Listening
