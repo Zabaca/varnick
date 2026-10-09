@@ -26,7 +26,9 @@ ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
 # What the build signs with: a certificate's SHA-1, or - for ad hoc. `build` resolves it once and hands it to the sub-makes.
 SIGN_ID ?= -
 # Which signature the zmx in place carries, so a new identity (or the first one) re-signs it without fetching again.
-ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(if $(filter -,$(SIGN_ID)),adhoc,$(SIGN_ID))
+# Named by the first 8 characters of the SHA-1, never the whole of it: make prints a failed target's name in its "*** [target] Error" line.
+SIGN_SHORT = $(if $(filter -,$(SIGN_ID)),adhoc,$(shell printf '%.8s' '$(SIGN_ID)'))
+ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(SIGN_SHORT)
 # The secure timestamp is left out: only notarization needs it, and it calls Apple on every build.
 ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
 # Matches Launchy's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
@@ -57,9 +59,10 @@ GOOD_COPY := .build/release/Launchy.good
 # scripts/signing-identity.sh chooses; a build that can't choose or sign fails rather than signing ad hoc.
 #
 # A build that fails leaves the last good binary where it was, so a restart never starts a relinked, unsigned one: when the
-# build stamp is no older than the binary (a good build), a clone of the binary is put back if any step fails.
+# build stamp is no older than the binary (a good build), a clone of the binary is put back if any step fails. A build that was
+# interrupted (^C, a kill) left its clone behind: the next build puts it back first, before it takes a new one.
 build:
-	@rm -f $(GOOD_COPY); if [ -f .build/release/Launchy ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Launchy -nt $(BUILD_STAMP) ]; then cp -c .build/release/Launchy $(GOOD_COPY); fi
+	@if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Launchy; echo "restored the build an interrupted one left"; fi; if [ -f .build/release/Launchy ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Launchy -nt $(BUILD_STAMP) ]; then cp -c .build/release/Launchy $(GOOD_COPY); fi
 	@[ ! Info.plist -nt .build/release/Launchy ] || rm -f .build/release/Launchy
 	@$(MAKE) --no-print-directory build-steps || { \
 	  if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Launchy; echo "restored the previous build"; fi; \
@@ -87,6 +90,9 @@ endif
 	@codesign --verify --strict .build/release/Launchy
 
 sign-zmx:
+ifneq ($(SIGN_ID),-)
+	@if [ ! -f $(ZMX_SIGNER_STAMP) ] && [ -f .build/release/zmx.signer.$(SIGN_ID) ]; then mv -f .build/release/zmx.signer.$(SIGN_ID) $(ZMX_SIGNER_STAMP); fi
+endif
 	@test -f $(ZMX_STAMP) || $(MAKE) --no-print-directory $(ZMX_STAMP)
 	@test -f $(ZMX_SIGNER_STAMP) || $(MAKE) --no-print-directory $(ZMX_SIGNER_STAMP)
 
