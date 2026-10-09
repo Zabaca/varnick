@@ -217,14 +217,21 @@ final class SpokenRequests {
         guard !Task.isCancelled else { return }
 
         record(saying)
+        let speaking = Date()
         let first = await Speaker.shared.speak(saying)
 
-        // For the latency check: where the time went, as durations only.
+        // For the latency check: where the time went, as durations, places and kinds only.
         func seconds(_ duration: Duration?) -> String { duration?.seconds.secondsText ?? "-" }
-        NSLog("Launchy: spoken request timing: final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
+        NSLog("Launchy: spoken request timing: said \(request.lastEnd.timeIntervalSince(request.began).secondsText), "
+              + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
               + "held \(began.timeIntervalSince(request.lastArrived).secondsText), "
-              + "decide \(seconds(run?.decide)) (\(run?.decidedBy ?? "-")), read \(seconds(run?.read)), answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
-              + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended")
+              + "decide \(seconds(run?.decide)) (\(run?.decidedBy ?? "-")), "
+              + "search \(seconds(run?.read)) (meaning by \(run?.meaningBy ?? "-")), "
+              + "filter \(seconds(run?.filter)) (\(run?.filteredBy ?? "-")), "
+              + "answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
+              + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "
+              + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended, "
+              + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")
     }
 
     /// Nothing could write the text: no model installed and no server answering.
