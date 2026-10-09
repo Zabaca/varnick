@@ -54,4 +54,7 @@ Nothing is logged but durations and kinds. Settings, the README and SECURITY.md 
   - An unlabelled icon is missed.
 - **The read and the choice run during the hold, as search and filter do (ADR 0017).** A partial request's element descriptions may reach Jev and be discarded.
 - **Changing the screen questions changes the measured thresholds' meaning,** as for the decide step's. So does anything added to what the call carries: that is a privacy change needing this ADR, the README and SECURITY.md amended.
-- Amended by ADR 0021: when the tree lacks the thing, a screenshot of the focused window is read on this Mac by Apple's text recognition, and its short lines go to the same Jev call under the same gate. "No screenshot is taken" now holds only for the tree's step. Screen Recording joins Accessibility in what Launchy asks for.
+- Amended by ADR 0021: when the tree lacks the thing, a screenshot of the focused window is read on this Mac by Apple's text recognition, and its short lines go to the same Jev call under the same gate. "No screenshot is taken" now holds only for the tree's step.
+  - "What a text field holds never goes" no longer holds for that step either: short typed text in a field Launchy can't place may go.
+  - A secure field's frame is now read, on this Mac only.
+  - Screen Recording joins Accessibility in what Launchy asks for.

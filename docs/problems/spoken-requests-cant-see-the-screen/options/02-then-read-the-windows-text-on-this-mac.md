@@ -50,17 +50,21 @@ The image is dropped as soon as the text is read. It is never written to disk, n
 
 **When it runs**
 - After option 01's Jev call gives `present` under 0.5, or the window had no elements.
-- At once, without a choice, when the focused app is Chrome and its web area is empty.
+- At once, without a choice, when the focused app is Chrome and its web area is empty. (Amended 2026-10-09 in review: in Chrome the page's text is read first, from inside the empty web area only. One Jev call then chooses among the toolbar's elements and those lines together.)
 - Never for a request that option 01 answered.
 
 **The capture**
 - The focused window alone, through ScreenCaptureKit's single-window capture, at the display's scale. Launchy's own overlay and panel are excluded.
 - In memory only. It is dropped once the text is read: never written, logged or sent.
+- (Amended 2026-10-09 in review.) The capture and the recognition together give up after 2 s, so a stalled capture can't hold a spoken request. That is a miss, with option 01's answer.
 
 **The recognition**
 - Vision's text recognition at the accurate level, in the transcriber's language, off the main actor.
 - **Kept lines:** at most 6 words and 60 characters, the shape of a label rather than a paragraph, at most 150 in reading order.
 - Each line's box is converted from the image's coordinates to the screen's, through option 01's single conversion.
+- (Amended 2026-10-09, the user's decision.) Typed text is kept out where Launchy can place it, and accepted where it can't. That is [ADR 0021](../../../adr/0021-a-window-whose-tree-lacks-the-thing-is-read-from-a-screenshot-on-this-mac.md), Typed text can go.
+  - **Dropped:** a line whose centre is inside a field the walk met (secure fields included, by frame only) or inside the app's focused entry field. Those fields are shifted to where the window is in the capture.
+  - **May still go:** short typed text in a field Launchy can't place.
 
 **Choosing**
 - Option 01's call, gate and `present` rule, with no Gemma pick.
@@ -98,6 +102,9 @@ The image is dropped as soon as the text is read. It is never written to disk, n
 ## Further Notes
 
 - **Accepted by the user on 2026-10-09,** relayed by the coordinator, as written, after option 01 shipped.
+- **Changed while it was built (2026-10-09):**
+  - **The reviewer:** a 2 s limit on the capture and recognition together, and in Chrome one combined Jev call of the toolbar's elements plus the page's lines inside the web area.
+  - **The user:** short typed text in fields Launchy can't place may go to TypeSafe, with the drops above as mitigations. Recorded in ADR 0021.
 - **Builds on option 01.** It can't stand alone. It also stacks with option 04: text recognition first, Claude only when this finds nothing too.
 - **ADR:** [0021](../../../adr/0021-a-window-whose-tree-lacks-the-thing-is-read-from-a-screenshot-on-this-mac.md). It amends ADR 0019: a screenshot is read on this Mac, never stored or sent; its short lines go to TypeSafe under the same gate; Screen Recording is added.
 - **Verified:** nothing in Launchy captures the screen today. **In the SDK, not tried here:** single-window capture in ScreenCaptureKit (macOS 14), and line-level text recognition with boxes in Vision. **Unverified:** the latency, recognition quality on small UI text at Retina scale, and macOS 26's re-prompts.
