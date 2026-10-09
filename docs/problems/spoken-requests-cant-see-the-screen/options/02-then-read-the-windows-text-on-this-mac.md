@@ -2,7 +2,7 @@
 problem: spoken-requests-cant-see-the-screen
 title: Option 01, then Apple's text recognition on a screenshot of the window, on this Mac, when the tree has nothing that fits
 summary: Option 01 as it stands, plus one fallback. When option 01's Jev call finds the thing isn't among the window's elements, or Chrome hides its page, Launchy captures the focused window alone into memory and runs Apple's on-device text recognition on it. The short lines of text it finds, with their boxes, become a second list for the same Jev call. This reaches Chrome pages, canvas apps and remote desktops without any model looking at an image, and the screenshot never leaves the Mac or reaches the disk. The recognised lines can go to TypeSafe under option 01's gate, and that is more of the window's text than option 01 sends. It needs Screen Recording as well as Accessibility.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -97,6 +97,7 @@ The image is dropped as soon as the text is read. It is never written to disk, n
 
 ## Further Notes
 
-- **Accept with option 01, or after it.** It can't stand alone. It also stacks with option 04: text recognition first, Claude only when this finds nothing too.
-- **ADR:** option 01's, adding that a screenshot of the focused window is read on this Mac, never stored or sent, and that its short lines of text follow the labels' gate.
+- **Accepted by the user on 2026-10-09,** relayed by the coordinator, as written, after option 01 shipped.
+- **Builds on option 01.** It can't stand alone. It also stacks with option 04: text recognition first, Claude only when this finds nothing too.
+- **ADR:** [0021](../../../adr/0021-a-window-whose-tree-lacks-the-thing-is-read-from-a-screenshot-on-this-mac.md). It amends ADR 0019: a screenshot is read on this Mac, never stored or sent; its short lines go to TypeSafe under the same gate; Screen Recording is added.
 - **Verified:** nothing in Launchy captures the screen today. **In the SDK, not tried here:** single-window capture in ScreenCaptureKit (macOS 14), and line-level text recognition with boxes in Vision. **Unverified:** the latency, recognition quality on small UI text at Retina scale, and macOS 26's re-prompts.
