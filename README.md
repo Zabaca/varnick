@@ -43,6 +43,13 @@ Plain `swift build` is not enough. `make build` also re-signs the binary so macO
 (below). Both downloads are checked against SHA-256 digests in the `Makefile`. The first build is slow:
 it resolves and compiles the Swift packages.
 
+**Signing.** The binary and zmx are signed ad hoc, unless the Mac's keychain holds a "Developer ID Application"
+identity: the build then signs with it, with the hardened runtime and one entitlement (audio input), so macOS
+keeps the permissions you give Launchy across rebuilds instead of treating each build as a new app. With two
+or more such identities, or to pick another, copy `Makefile.local.example` to `Makefile.local` (git-ignored) and
+name one. An identity the build found never falls back to ad hoc: if signing with it fails, the build fails.
+The key must be usable by `codesign` without a prompt, since an upgrade from Settings › Peers builds unattended.
+
 `make install` also links this checkout's `custom-apps` skill into `~/.claude/skills/` so Claude Code in
 any project can find it. It links only when nothing is at that path, or when the link there already
 points into this checkout; any other entry is left as it is, and `make uninstall` removes only a link that

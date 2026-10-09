@@ -7,7 +7,9 @@ is and what it needs.
 ## Build and check
 
 - **`make build`** builds, codesigns and fetches the files plain `swift build` lacks. It must finish clean:
-  fix every error and every new warning. The first build resolves packages and is slow.
+  fix every error and every new warning. The first build resolves packages and is slow. It signs ad hoc, or with
+  your Developer ID Application identity if you have one (README, Build and install); no team ID, certificate
+  name or notary credential goes in a tracked file.
 - **`bun test`**, run in `PhonePage/`, tests the Phone page's server and its page.
 - **There is no Swift test target.** Swift changes are checked by `make build` and then by hand in a running
   Launchy; say in your change what you checked and what you didn't.
