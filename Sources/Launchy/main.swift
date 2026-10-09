@@ -516,9 +516,9 @@ if CommandLine.arguments.contains("--sync") {
     }
 }
 
-// `Launchy --hook-settings [--skip-permissions]` prints the `--settings` value claude is started with, to run the hooks' shell by hand.
+// `Launchy --hook-settings` prints the `--settings` value claude is started with, to run the hooks' shell by hand.
 if CommandLine.arguments.contains("--hook-settings") {
-    print(ClaudeCommand.hookSettings(skipPermissions: CommandLine.arguments.contains("--skip-permissions")))
+    print(ClaudeCommand.hookSettings())
     exit(0)
 }
 

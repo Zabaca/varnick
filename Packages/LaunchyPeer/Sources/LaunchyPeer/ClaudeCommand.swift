@@ -12,12 +12,12 @@ public enum ClaudeCommand {
     /// The settings claude is started with (`--settings`), added to the user's own hooks: ADR 0001's SessionStart
     /// hook, the turn hooks of ADR 0010 and the work-link hooks of ADR 0020 (`WorkHooks`). The rules for the entries are in
     /// `docs/agents/where-it-breaks.md`.
-    public static func hookSettings(skipPermissions: Bool) -> String {
+    public static func hookSettings() -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
             .init(matcher: matcher, command: turnCommand(turn))
         }
-        var hooks: [String: [HookSettings.Entry]] = [
+        let hooks: [String: [HookSettings.Entry]] = [
             "SessionStart": [.init(command: #"cat > "$LAUNCHY_SESSION_FILE""#),
                              .init(matcher: "clear", command: clearCommand), turn(.waiting, matcher: "resume"),
                              .init(command: WorkHooks.sessionStart)],
@@ -25,16 +25,16 @@ public enum ClaudeCommand {
             "Stop": [turn(.waiting), .init(command: stopInputCommand)],
             "StopFailure": [turn(.waiting), .init(command: stopInputKeepCommand)],
             "Notification": [turn(.waiting, matcher: "idle_prompt")],
-            "PermissionRequest": [turn(.permission, matcher: "^(?!(\(question)|\(plan))$)"),
+            "PermissionRequest": [.init(matcher: "^(?!(\(question)|\(plan))$)", command: askedCommand),
                                   turn(.question, matcher: question), turn(.plan, matcher: plan)],
             "PreToolUse": [.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink)],
             "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)"),
                             .init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark)],
-            "SubagentStop": [.init(command: WorkHooks.subagentStop)],
+            "PostToolBatch": [.init(command: answeredCommand)],
+            "SubagentStop": [.init(command: answeredCommand), .init(command: WorkHooks.subagentStop)],
             "Elicitation": [turn(.input)],
             "ElicitationResult": [turn(.working)],
         ]
-        if !skipPermissions { hooks["PostToolBatch"] = [turn(.working)] }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         // Plain strings and arrays: encoding can't fail, and a silent fallback would drop every hook.
@@ -42,7 +42,7 @@ public enum ClaudeCommand {
     }
 
     private struct HookSettings: Encodable {
-        var hooks: [String: [Entry]]
+        let hooks: [String: [Entry]]
 
         struct Entry: Encodable {
             var matcher: String?
@@ -65,6 +65,35 @@ public enum ClaudeCommand {
     static func turnCommand(_ turn: Turn) -> String {
         writeCommand(choosing: "", word: turn.rawValue)
     }
+
+    /// `PermissionRequest` for an ordinary tool: writes permission, first keeping the turn file as it is (`cp -p`, so its date
+    /// stays) beside it as `.launchy-turn.before`, unless a dialog is already up, and the asker, `agent_id` or `lead`, as
+    /// `.launchy-turn.owner`. The lead's hooks run for its subagents and teammates too, so a request from one of them marks the
+    /// lead's pane, and answering it has to give the lead's word back, not always working.
+    static let askedCommand =
+        #"f="${LAUNCHY_SESSION_FILE%/*}/\#(PaneFolder.turnFileName)"; [ -n "$LAUNCHY_SESSION_FILE" ] && { inp=$(cat); \#(askerShell) "#
+        + #"[ "$(cat "$f" 2>/dev/null)" = permission ] || { cp -p "$f" "$f.before" || rm -f "$f.before"; }; "#
+        + #"printf '%s' "$o" > "$f.owner.$$" && mv "$f.owner.$$" "$f.owner"; "#
+        + #"[ "$(cat "$f" 2>/dev/null)" = permission ] || { printf permission > "$f.$$" && mv "$f.$$" "$f"; }; } >/dev/null 2>&1; exit 0"#
+
+    /// `PostToolBatch` (and `SubagentStop`): when the one that is marked as asking has its tools resolved, or ends, the turn file
+    /// goes back to what it held before the dialog, date and all (the reader takes the stop file as the turn's only within
+    /// `PaneFolder.staleWindow` of the turn's date), or to working without that copy. The file is left alone when its word is no
+    /// longer permission (a `Stop` has written waiting since), and another agent's batch leaves the mark. Without an asker
+    /// there is nothing to read, so this is one `test` per batch.
+    static let answeredCommand =
+        #"f="${LAUNCHY_SESSION_FILE%/*}/\#(PaneFolder.turnFileName)"; "#
+        + #"[ -n "$LAUNCHY_SESSION_FILE" ] && [ -f "$f.owner" ] && { inp=$(cat); \#(askerShell) "#
+        + #"[ "$o" = "$(cat "$f.owner")" ] && { rm -f "$f.owner"; "#
+        + #"if [ "$(cat "$f" 2>/dev/null)" != permission ]; then rm -f "$f.before"; "#
+        + #"elif [ -f "$f.before" ]; then mv "$f.before" "$f"; "#
+        + #"else printf working > "$f.$$" && mv "$f.$$" "$f"; fi; }; } >/dev/null 2>&1; exit 0"#
+
+    /// Sets `o` to the hook input's `agent_id`, else `lead`. Only the fields before `hook_event_name` are searched: a subagent's
+    /// own are there (2.1.295), and the `tool_input` after it can hold any key.
+    private static let askerShell =
+        #"h=${inp%%\"hook_event_name\"*}; "#
+        + #"o=$(printf '%s' "$h" | grep -oE '[{,]"agent_id":"[A-Za-z0-9_-]+"' | head -n 1 | cut -d'"' -f4); [ -n "$o" ] || o=lead;"#
 
     /// `Stop`'s input, which lists the background tasks still running, saved as it comes (no jq in a hook's shell) to the
     /// stop file beside the turn file, by rename. `PaneFolder.runningTasks` reads it.
@@ -114,7 +143,7 @@ public enum ClaudeCommand {
     /// to exist, since claude exits on an unknown one.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
                                  sessionID: String, prompt: String) -> [String] {
-        ["--settings", hookSettings(skipPermissions: skipPermissions)]
+        ["--settings", hookSettings()]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (agent.map { ["--agent", $0] } ?? [])
             + (conversation.map { ["--resume", $0] }
