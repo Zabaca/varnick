@@ -40,6 +40,7 @@ extension HeadlessPeerHost {
             try FileManager.default.createDirectory(at: PaneFolder.url(for: uuid), withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: PaneFolder.sessionFile(for: uuid))
             PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: record.prompt ?? ""), for: uuid)
+            PaneFolder.clearSubagentWork(for: uuid)
         } catch {
             failed()
             return stateFailure(error)
