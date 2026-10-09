@@ -61,13 +61,12 @@ enum ScreenText {
             try await withCheckedThrowingContinuation { continuation in
                 race.attach(continuation)
                 // Unstructured, since a task group would wait for a capture that never returns.
-                let work = Task {
+                race.hold(Task {
                     do { race.finish(.success(try await read(pid: pid, near: frame))) } catch { race.finish(.failure(error)) }
-                }
+                })
                 Task {
                     try? await Task.sleep(for: limit)
                     race.finish(.failure(Failure.timedOut))
-                    work.cancel()
                 }
             }
         } onCancel: {
@@ -75,11 +74,20 @@ enum ScreenText {
         }
     }
 
-    /// The first result wins.
+    /// The first result wins, and stops the work.
     private final class Race: @unchecked Sendable {
         private let lock = NSLock()
         private var continuation: CheckedContinuation<Recognition, Error>?
         private var result: Result<Recognition, Error>?
+        private var work: Task<Void, Never>?
+
+        func hold(_ work: Task<Void, Never>) {
+            lock.lock()
+            let decided = result != nil
+            if !decided { self.work = work }
+            lock.unlock()
+            if decided { work.cancel() }
+        }
 
         func attach(_ continuation: CheckedContinuation<Recognition, Error>) {
             lock.lock()
@@ -98,10 +106,15 @@ enum ScreenText {
             result = outcome
             let waiting = continuation
             continuation = nil
+            let running = work
+            work = nil
             lock.unlock()
+            running?.cancel()
             waiting?.resume(with: outcome)
         }
     }
+
+    private static let visionQueue = DispatchQueue(label: "com.zabaca.launchy.screen-text", qos: .userInitiated)
 
     /// Only that window is in the image, so Launchy's own panel and arrow are not.
     private static func read(pid: pid_t, near frame: CGRect) async throws -> Recognition {
@@ -131,15 +144,20 @@ enum ScreenText {
         let capture = began.duration(to: clock.now)
 
         began = clock.now
-        let lines = try await Task.detached(priority: .userInitiated) { () -> [Recognised] in
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = [listeningLanguage]
-            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
-            return (request.results ?? []).compactMap { observation in
-                observation.topCandidates(1).first.map { Recognised(text: $0.string, box: observation.boundingBox) }
+        // Vision's perform blocks, so it runs on a queue of its own rather than a shared pool thread.
+        let lines = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Recognised], Error>) in
+            visionQueue.async {
+                continuation.resume(with: Result {
+                    let request = VNRecognizeTextRequest()
+                    request.recognitionLevel = .accurate
+                    request.recognitionLanguages = [listeningLanguage]
+                    try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+                    return (request.results ?? []).compactMap { observation in
+                        observation.topCandidates(1).first.map { Recognised(text: $0.string, box: observation.boundingBox) }
+                    }
+                })
             }
-        }.value
+        }
         return Recognition(lines: lines, window: window, capture: capture, recognise: began.duration(to: clock.now))
     }
 

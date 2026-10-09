@@ -586,12 +586,14 @@ enum SpokenPipeline {
         look.read = reading.duration
         look.candidates = reading.elements.count
 
+        // Where the window was when its picture was taken, which is what a recognised box is relative to.
+        var captured: CGRect?
         func pointed(at element: ScreenElement) -> Run {
-            // Recognised text has no element to read again: the window is, and the box follows it.
+            // Recognised text has no element to read again: the window is, and the box follows it from where it was captured.
             run.outcome = .point(ScreenTarget(reference: element.reference, frame: element.frame, note: ScreenElements.note(for: element),
                                               description: element.description,
                                               window: element.recognised ? reading.window : nil,
-                                              windowFrame: element.recognised ? reading.windowFrame : nil))
+                                              windowFrame: element.recognised ? captured : nil))
             run.screen = look
             return run
         }
@@ -631,6 +633,7 @@ enum SpokenPipeline {
             // The fields and the web area were read where the window was then; it may have moved since.
             let fields = ScreenText.shifted(reading.entryFrames, from: frame, to: recognition.window)
             let area = area.map { ScreenText.shifted([$0], from: frame, to: recognition.window)[0] }
+            captured = recognition.window
             let lines = ScreenText.candidates(from: recognition.lines, in: recognition.window, avoiding: fields, within: area, pointer: pointer)
             look.text = TextLook(capture: recognition.capture, recognise: recognition.recognise, recognised: recognition.lines.count,
                                  candidates: lines.count)
@@ -641,7 +644,9 @@ enum SpokenPipeline {
         // page's lines, each sent once. A Choice takes 255, so the elements give way.
         var list = reading.elements
         if reading.chromeBlind {
-            let page = try await readText(within: reading.emptyWebArea)
+            // Without the page's frame its lines can't be told from the tab titles and the toolbar's.
+            let page = reading.emptyWebArea == nil ? [] : try await readText(within: reading.emptyWebArea)
+            if reading.emptyWebArea == nil { look.text = TextLook(skipped: "no page frame") }
             list = Array(reading.elements.prefix(ScreenElements.maxListed - page.count)) + page
         }
         if !list.isEmpty {

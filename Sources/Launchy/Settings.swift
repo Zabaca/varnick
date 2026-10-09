@@ -589,7 +589,7 @@ struct SettingsView: View {
                                 .disabled(!settings.heyLaunchy && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
                         }
                         SettingRow(title: "Point at the screen",
-                                   detail: "Ask \"Hey Launchy, where's the Allow button\" and Launchy draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Launchy can't place. The permissions also reach panes started without Keep sessions running. See SECURITY.md.") {
+                                   detail: "Ask \"Hey Launchy, where's the Allow button\" and Launchy draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Launchy can't place. A rebuild may need both permissions again. They very likely don't reach sessions kept running in zmx, but may reach panes started without Keep sessions running: see SECURITY.md.") {
                             if !settings.heyLaunchy {
                                 Text("Needs Hey Launchy").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if !screenGateOpen {

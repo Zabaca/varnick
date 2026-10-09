@@ -211,7 +211,7 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   and Screen Recording is granted, a picture of the window alone is also read on this Mac, and its short
   lines of text (at most 6 words and 60 characters each, at most 150) go too, so more of the window's text
   leaves: every short line, such as a message list's subjects and senders or a chat's names. Lines inside a
-  native text field the elements find, and inside the field with focus, are dropped. But a field Launchy
+  text field the elements find (a native one, or a web page's in Safari or an Electron app), and inside the field with focus, are dropped. But a field Launchy
   can't place is not: a Chrome page's, a canvas app's, a remote desktop's or a virtual machine's, one past
   the limits of the read, or one that moved before the picture was taken. So typed text of 6 words or
   fewer there may reach TypeSafe. The picture, the lines' positions and longer lines never leave the Mac.

@@ -26,7 +26,7 @@ enum ScreenReader {
         /// The frames of the text fields, text areas, combo boxes, search fields and secure fields the walk met, and of the field
         /// that has focus: recognised lines inside them are what a person typed and are dropped. Never sent.
         var entryFrames: [CGRect] = []
-        /// The biggest web area with nothing in it, which is where a Chrome page's text is.
+        /// The biggest web area with nothing in it that has a frame, which is where a Chrome page's text is.
         var emptyWebArea: CGRect?
     }
 
@@ -141,13 +141,12 @@ enum ScreenReader {
             return element
         }
         reading.entryFrames += walk.entryFrames
-        reading.chromeBlind = walk.emptyWebArea != nil && bundle.lowercased().contains("chrom")
+        reading.chromeBlind = walk.sawEmptyWebArea && bundle.lowercased().contains("chrom")
         reading.emptyWebArea = walk.emptyWebArea
         reading.duration = began.duration(to: clock.now)
         return reading
     }
 
-    /// The element's frame now, or nil when it is gone. Read again just before the arrow is drawn.
     /// Where `target` is now, off the main actor: its element's frame, or for recognised text its box carried along with a window
     /// that moved. Nil when the element is gone or the window changed size.
     static func currentFrame(of target: ScreenTarget) async -> CGRect? {
@@ -185,6 +184,7 @@ enum ScreenReader {
         var nodes = 0
         /// In tree order: depth first, a parent before its children.
         var elements: [ScreenElement] = []
+        var sawEmptyWebArea = false
         var emptyWebArea: CGRect?
         var entryFrames: [CGRect] = []
         var window = CGRect.infinite
@@ -209,8 +209,8 @@ enum ScreenReader {
             let entry = ScreenReader.isEntry(role: role, subrole: subrole)
             let frame = ScreenReader.frame(of: node.element)
             if role == "AXWebArea", children.isEmpty {
-                let area = frame ?? .zero
-                if emptyWebArea == nil || area.width * area.height > emptyWebArea!.width * emptyWebArea!.height { emptyWebArea = area }
+                sawEmptyWebArea = true
+                if let frame, emptyWebArea == nil || frame.width * frame.height > emptyWebArea!.width * emptyWebArea!.height { emptyWebArea = frame }
             }
             if entry, let frame { entryFrames.append(frame) }
             // Nothing of a secure field is read but where it is (text recognition drops what lies in it, ADR 0021).
