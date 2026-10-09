@@ -18,6 +18,23 @@ Only on a miss of the tree, and only under ADR 0019's gate (Point at the screen 
 
 That is more of the window's text than ADR 0019 sends. It is every short line in the window, not only the text beside a control: a message list's subjects and senders, a document's headings, a chat's names. Never the image, a box, a longer line or the tree's elements a second time. Settings, the README and SECURITY.md say so.
 
+## Typed text can go
+
+The user decided this on 2026-10-09. A picture shows what a person typed as well as what an app wrote, and text recognition can't tell the two apart. So ADR 0019's promise that what a field holds never goes doesn't hold for this step. Launchy drops what it can place:
+- **What is dropped:**
+  - lines whose centre lies inside a field the tree's walk met: text fields, text areas, combo boxes, search fields and secure fields;
+  - lines inside the field that has focus in the app, even when the walk didn't reach it.
+
+  The fields are read where the window was during the walk, and shifted to where the window is in the capture.
+- **What can still go:** typed text of 6 words or fewer, in a field Launchy can't place. That covers:
+  - a Chrome page's fields;
+  - canvas apps, remote desktops and virtual machines;
+  - fields past the walk's limits;
+  - a field that moved within the window after the walk.
+
+  Such text goes with the other lines, under the same gate.
+- **Secure fields' frames are now read,** so that what lies in them is dropped. Only where the field is gets read, never anything in it, and the frame stays on this Mac. ADR 0019 read nothing of a secure field.
+
 ## The permission
 
 Launchy now also needs Screen Recording. Without it the fallback is skipped and the tree's answer stands. The grant follows ADR 0019's rules for Accessibility:
