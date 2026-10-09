@@ -159,14 +159,12 @@ final class LauncherModel: ObservableObject {
     let embeddingServer: ModelServerState
     /// Who writes session titles: this Mac's Gemma or Text generation's model server.
     let textGeneration: TextGeneration
-    /// Picked at each search from Settings; nil turns the relevance filter off: the switch is off, TypeSafe needs
-    /// its key, and On this Mac needs the model installed and not failed.
-    private var reranker: (any RelevanceJudge)? {
-        switch Settings.shared.activeRelevanceFilter {
-        case .typesafe: Settings.shared.typesafeKey.map { Reranker(apiKey: $0) }
-        case .local: localReranker.isReady ? localReranker : nil
-        case nil: nil
-        }
+    /// The ranking behind a `?` search and a spoken request (ADR 0017), built at each use from what Settings and the
+    /// panel's state say now.
+    var search: RelevanceSearch {
+        RelevanceSearch(store: store, localReranker: localReranker,
+                        embedQuery: { [weak self] text in try await self?.embedQuery(text) ?? nil },
+                        openHere: { [weak self] in self?.openHere ?? [] })
     }
     var onDismiss: () -> Void = {}
     /// The panel stays open when focus leaves. In memory only: off at each launch.
@@ -259,21 +257,11 @@ final class LauncherModel: ObservableObject {
     static let searchPrefix = "?"
     static let commandPrefix = "!"
 
-    private static let resultLimit = 40
-    private static let candidateLimit = 60   // per list, before fusion
-    private static let rrfK = 60.0
     private static let debounce: Duration = .milliseconds(120)
-    private static let rerankCandidates = 20
-    private static let sessionsShown = 3
     /// Sessions listed under the prompt line.
     static let promptSessionsShown = 5
     /// How much of a message is matched against sessions, which is how much of a session the embedding reads.
     private static let promptMatchLimit = 1000
-    /// A session matched only by meaning shows when its cosine similarity reaches this, since nearest
-    /// neighbours always exist. Tuned by hand with `Launchy --search`; keyword matches always show.
-    static let sessionSimilarityFloor: Float = 0.48
-    private static let rerankMinQuery = 3
-    static let relevanceThreshold = 0.5
 
     init(store: FavoritesStore, embedder: Embedder, localReranker: LocalReranker, textGenerator: TextGenerator,
          embeddingServer: ModelServerState, textGenerationServer: ModelServerState) {
@@ -699,18 +687,16 @@ final class LauncherModel: ObservableObject {
         }
         wasPrompt = false
         let q = searchText
-        store.refreshIfChanged()
-        let keyword = store.keyword(q, limit: Self.candidateLimit)
-        let sessionKeyword = store.keyword(q, limit: Self.candidateLimit, sessions: true)
+        let search = self.search
+        var ranking = search.keyword(q)
         relevantCount = nil
-        let first = fuseAll(keyword: keyword, sessionKeyword: sessionKeyword, semantic: ([], []))
-        setResults(first.sessions + first.pages, sessions: first.sessions.count, keepSelection: false)
+        setResults(ranking.rows, sessions: ranking.sessions.count, keepSelection: false)
 
         semanticStatus = embedder != nil && !q.isEmpty ? .pending : .off
-        if semanticStatus == .off, !q.isEmpty, keyword.isEmpty, sessionKeyword.isEmpty {
+        if semanticStatus == .off, !q.isEmpty, !ranking.hasKeywordMatches {
             NSLog("Launchy: no results for \"\(q)\", semantic off: store embeddings \(store.hasEmbeddings), model \"\(store.embeddingModel)\", run on \(Settings.shared.activeEmbeddings.runOn.rawValue), this Mac's embedder \(baseEmbedder.state), server \(embeddingServer.status)")
         }
-        let judge = q.count >= Self.rerankMinQuery ? reranker : nil
+        let judge = search.judge(for: q)
         rerankStatus = judge != nil ? .pending : .off
         guard semanticStatus == .pending || rerankStatus == .pending else { return }
 
@@ -721,16 +707,15 @@ final class LauncherModel: ObservableObject {
 
             if self.semanticStatus == .pending {
                 do {
-                    let answer = try await self.embedQuery(q)
+                    let withMeaning = try await search.withMeaning(ranking, for: q)
                     guard !Task.isCancelled else { return }
-                    if let (vec, source) = answer {
-                        let semantic = self.store.semantic(vec, limit: Self.candidateLimit)
-                        let fused = self.fuseAll(keyword: keyword, sessionKeyword: sessionKeyword, semantic: semantic)
-                        self.setResults(fused.sessions + fused.pages, sessions: fused.sessions.count, keepSelection: true)
-                        self.semanticVia = source
+                    if let meaning = withMeaning.meaning {
+                        ranking = withMeaning
+                        self.setResults(ranking.rows, sessions: ranking.sessions.count, keepSelection: true)
+                        self.semanticVia = meaning.source
                         self.semanticStatus = .ok
                         if self.results.isEmpty {
-                            NSLog("Launchy: no results for \"\(q)\": keyword \(keyword.count), semantic \(semantic.pages.count), query dims \(vec.count), store dims \(self.store.dims), embedder \(source)")
+                            NSLog("Launchy: no results for \"\(q)\": keyword \(withMeaning.keywordPages.count), semantic \(meaning.pages), query dims \(meaning.queryDimensions), store dims \(self.store.dims), embedder \(meaning.source)")
                         }
                     } else {
                         // The server failed and this Mac has no model to fall back on: keyword only, with the help saying why.
@@ -747,13 +732,12 @@ final class LauncherModel: ObservableObject {
             // Any keystroke during this wait cancels the task, so no request is sent.
             if judge.pause > .zero { try? await Task.sleep(until: typedAt + judge.pause, clock: .continuous) }
             guard !Task.isCancelled else { return }
-            // Pages only: what's in a session never goes to a reranker.
-            let candidates = Array(self.results.dropFirst(self.sessionCount).prefix(Self.rerankCandidates))
-            guard !candidates.isEmpty else { self.rerankStatus = .off; return }
+            guard !ranking.pages.isEmpty else { self.rerankStatus = .off; return }
             do {
-                let scores = try await judge.relevance(query: q, candidates: candidates)
+                let judged = try await search.filtered(ranking, for: q, by: judge)
                 guard !Task.isCancelled else { return }
-                self.applyRelevance(scores, judged: candidates.count)
+                self.relevantCount = judged.relevantCount
+                self.setResults(judged.rows, sessions: judged.sessions.count, keepSelection: true)
                 self.rerankedBy = judge.backend
                 self.rerankStatus = .ok
             } catch {
@@ -765,21 +749,19 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// `runSearch`'s first two passes for `words` (keyword, then the query's meaning, fused by `fuseAll`), returned instead of
+    /// `runSearch`'s first two passes for `words` (keyword, then the query's meaning), returned instead of
     /// shown: nothing the panel shows is set, and no relevance filter runs (a spoken request, ADR 0015). Meaning is skipped
     /// when it isn't available or fails, as in the panel.
     func searchApart(_ words: String) async throws -> (sessions: [SearchResult], pages: [SearchResult]) {
-        store.refreshIfChanged()
-        let keyword = store.keyword(words, limit: Self.candidateLimit)
-        let sessionKeyword = store.keyword(words, limit: Self.candidateLimit, sessions: true)
-        var semantic: (pages: [(id: Int64, score: Float)], sessions: [(id: Int64, score: Float)]) = ([], [])
+        let search = self.search
+        var ranking = search.keyword(words)
         do {
-            if let (vec, _) = try await embedQuery(words) { semantic = store.semantic(vec, limit: Self.candidateLimit) }
+            ranking = try await search.withMeaning(ranking, for: words)
         } catch {
             try Task.checkCancellation()
             NSLog("Launchy: semantic search for a spoken request failed: \(error.logKind)")
         }
-        return fuseAll(keyword: keyword, sessionKeyword: sessionKeyword, semantic: semantic)
+        return (ranking.sessions, ranking.pages)
     }
 
     /// A Mac's, project's or agent's word can resolve after the keystroke, when its list arrives: the sessions
@@ -802,10 +784,10 @@ final class LauncherModel: ObservableObject {
             let rows = filter.isEmpty ? [] : store.sessionRows(filter, limit: Self.promptSessionsShown, promoted: promoted)
             return setPromptResults(rows.compactMap { store.fetch($0) }, keepSelection: keepSelection)
         }
-        let keyword = store.keyword(message, limit: Self.candidateLimit, filter: filter)
+        let keyword = store.keyword(message, limit: RelevanceSearch.candidateLimit, filter: filter)
         func matches(_ semantic: [(id: Int64, score: Float)]) -> [SearchResult] {
-            fuse(keyword: keyword, semantic: semantic, limit: Self.promptSessionsShown,
-                 semanticOnlyFloor: Self.sessionSimilarityFloor, promoted: promoted)
+            search.fuse(keyword: keyword, semantic: semantic, limit: Self.promptSessionsShown,
+                        semanticOnlyFloor: RelevanceSearch.sessionSimilarityFloor, promoted: promoted)
         }
         setPromptResults(matches([]), keepSelection: keepSelection)
         guard embedder != nil else { return }
@@ -814,7 +796,7 @@ final class LauncherModel: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             // A failure is quiet: the keyword matches stay, and nothing about the message is written anywhere.
             guard let (vec, _) = try? await self.embedQuery(message), !Task.isCancelled else { return }
-            self.setPromptResults(matches(self.store.semanticSessions(vec, limit: Self.candidateLimit, filter: filter)), keepSelection: true)
+            self.setPromptResults(matches(self.store.semanticSessions(vec, limit: RelevanceSearch.candidateLimit, filter: filter)), keepSelection: true)
         }
     }
 
@@ -930,63 +912,6 @@ final class LauncherModel: ObservableObject {
             guard !Task.isCancelled, let self, found != self.projects else { return }
             self.projects = found
         }
-    }
-
-    /// Relevant results move to the top, best first; everything else
-    /// keeps its fused order below. Nothing is dropped, only demoted.
-    private func applyRelevance(_ scores: [Double], judged: Int) {
-        let pages = Array(results.dropFirst(sessionCount))
-        var judgedResults = Array(pages.prefix(judged))
-        for i in judgedResults.indices { judgedResults[i].relevance = scores[i] }
-        let relevant = judgedResults
-            .filter { ($0.relevance ?? 0) >= Self.relevanceThreshold }
-            .sorted { ($0.relevance ?? 0) > ($1.relevance ?? 0) }
-        let rest = judgedResults.filter { ($0.relevance ?? 0) < Self.relevanceThreshold }
-            + pages.dropFirst(judged)
-        relevantCount = relevant.count
-        setResults(Array(results.prefix(sessionCount)) + relevant + rest, sessions: sessionCount, keepSelection: true)
-    }
-
-    /// Pages and sessions are fused apart, so a session never takes a page's place or the reverse.
-    /// Sessions open in a pane on this Mac come first among the matches, so they make the few shown.
-    private func fuseAll(keyword: [(id: Int64, snippet: String, score: Double)],
-                         sessionKeyword: [(id: Int64, snippet: String, score: Double)],
-                         semantic: (pages: [(id: Int64, score: Float)], sessions: [(id: Int64, score: Float)]))
-        -> (sessions: [SearchResult], pages: [SearchResult]) {
-        (fuse(keyword: sessionKeyword, semantic: semantic.sessions, limit: Self.sessionsShown,
-              semanticOnlyFloor: Self.sessionSimilarityFloor, promoted: store.rowIDs(ofSessions: openHere)),
-         fuse(keyword: keyword, semantic: semantic.pages, limit: Self.resultLimit))
-    }
-
-    /// Reciprocal rank fusion: score = Σ 1 / (k + rank). No score normalization needed. A result
-    /// only the semantic list has needs a similarity of `semanticOnlyFloor`; one the keyword list
-    /// also has keeps its semantic rank whatever its similarity. Rows in `promoted` go first.
-    private func fuse(keyword: [(id: Int64, snippet: String, score: Double)],
-                      semantic: [(id: Int64, score: Float)], limit: Int,
-                      semanticOnlyFloor: Float = -1, promoted: Set<Int64> = []) -> [SearchResult] {
-        var fused: [Int64: (score: Double, kind: MatchKind, snippet: String?, similarity: Float?)] = [:]
-        for (rank, k) in keyword.enumerated() {
-            fused[k.id] = (1 / (Self.rrfK + Double(rank + 1)), .keyword, k.snippet, nil)
-        }
-        for (rank, s) in semantic.enumerated() {
-            let add = 1 / (Self.rrfK + Double(rank + 1))
-            if let cur = fused[s.id] {
-                fused[s.id] = (cur.score + add, .both, cur.snippet, s.score)
-            } else if s.score >= semanticOnlyFloor {
-                fused[s.id] = (add, .semantic, nil, s.score)
-            }
-        }
-        let ranked = fused.sorted { $0.value.score > $1.value.score }
-        return (ranked.filter { promoted.contains($0.key) } + ranked.filter { !promoted.contains($0.key) })
-            .prefix(limit)
-            .compactMap { id, v in
-                guard var r = store.fetch(id) else { return nil }
-                if let snip = v.snippet { r = r.with(snippet: snip) }
-                r.match = v.kind
-                r.score = v.score
-                r.similarity = v.similarity
-                return r
-            }
     }
 
     private func setResults(_ new: [SearchResult], sessions: Int, keepSelection: Bool) {
@@ -2330,12 +2255,3 @@ enum Suggestion: Identifiable {
         }
     }
 }
-
-private extension SearchResult {
-    func with(snippet: String) -> SearchResult {
-        SearchResult(id: id, key: key, source: source, title: title, snippet: snippet, description: description,
-                     url: url, tags: tags, createdAt: createdAt, match: match, score: score, similarity: similarity,
-                     relevance: relevance, host: host)
-    }
-}
-
