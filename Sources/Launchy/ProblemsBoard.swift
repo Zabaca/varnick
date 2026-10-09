@@ -103,7 +103,7 @@ final class ProblemsBoard: ObservableObject {
     // MARK: Keys
 
     /// The keys the Problems tab takes: arrows move between cards, ↩ opens one, E shows every card's evidence, esc closes the
-    /// board. D and the End session key are taken and do nothing; anything else goes on.
+    /// board. D, R and the End session, Mark session done and Restart session keys are taken and do nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
         switch Int(event.keyCode) {
@@ -115,8 +115,9 @@ final class ProblemsBoard: ObservableObject {
         case kVK_DownArrow where plain: selection = Self.moved(selection, in: cards, .down)
         case kVK_ANSI_E where plain: showEvidence.toggle()
         case kVK_ANSI_D where plain: break
+        case kVK_ANSI_R where plain: break
         default:
-            guard let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession else { return false }
+            guard let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession || action == .restartSession else { return false }
         }
         return true
     }

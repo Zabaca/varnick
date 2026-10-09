@@ -48,6 +48,12 @@ public enum PaneFolder {
 
     static let stopFileName = ".launchy-stop"
 
+    /// Removed when a pane starts claude again in a running Launchy (a restart): its tasks died with the last run, but a start within
+    /// `staleWindow` of that run's last `Stop` would still read them as this run's.
+    public static func clearStop(for id: UUID) {
+        try? FileManager.default.removeItem(at: stopFile(for: id))
+    }
+
     /// A `turn_duration` entry or the stop file older than the turn's date by more than this isn't that turn's: the
     /// `Stop` entries run together, and the turn file is written just before Claude Code writes the entry.
     static let staleWindow: TimeInterval = 5
