@@ -45,7 +45,7 @@ final class LauncherPanel: NSPanel {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     var panel: LauncherPanel!
     var model: LauncherModel!
     /// Hey Launchy: answers spoken requests heard by Listening.
@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var statusItem: NSStatusItem!
     private var listenItem: NSMenuItem!
     private var pinItem: NSMenuItem!
+    private var restartItem: NSMenuItem!
     var sizeSub: AnyCancellable?
     var settingsSubs: [AnyCancellable] = []
     let embedder = Embedder()
@@ -168,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings.record(event)
                 return nil
             }
-            // The Restart Launchy card takes esc and ↩ before anything under it.
+            // The Restart Launchy card takes every key.
             if self.model.answerRestartKey(event) { return nil }
             if self.model.pendingSplit != nil {
                 self.model.pickerKey(event)
@@ -199,10 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         listenItem = menu.addItem(withTitle: "Start Listening", action: #selector(toggleListening), keyEquivalent: "")
         menu.addItem(withTitle: "Show Transcript", action: #selector(showTranscript), keyEquivalent: "")
         menu.addItem(.separator())
-        // Left out when restart.sh or the database can't be found from where this Launchy runs (`BuildUpgrade.menuRestartAvailable`).
-        if BuildUpgrade.menuRestartAvailable(database: model.store.path) {
-            menu.addItem(withTitle: "Restart Launchy", action: #selector(restartFromMenu), keyEquivalent: "")
-        }
+        restartItem = menu.addItem(withTitle: "Restart Launchy", action: #selector(restartFromMenu), keyEquivalent: "")
+        menu.delegate = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
 
@@ -315,7 +314,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func toggleListening() { Listener.shared.toggle() }
 
-    /// Brings the panel up with the confirmation card: nothing restarts until it is confirmed.
+    /// Hidden when the restart can't work from here (`BuildUpgrade.menuRestartAvailable`), checked as the menu opens.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        restartItem.isHidden = !BuildUpgrade.menuRestartAvailable(database: model.store.path)
+    }
+
+    /// Nothing restarts until the card is confirmed.
     @objc func restartFromMenu() {
         show()
         model.askRestart()

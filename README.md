@@ -63,9 +63,11 @@ which keeps it alive and lets Launchy reconnect after a restart. It is off until
 needs the zmx the build fetches, and Launchy only ever uses the copy next to its binary. A reboot or a
 logout ends the sessions either way.
 
-The menu bar menu's **Restart Launchy** (just above Quit) restarts it without building, as `make run` does, so
-the macOS permission grants a build would void stay. It asks first and lists the panes that would end, if any.
-It is left out when the checkout's `scripts/restart.sh` or the database can't be found from where Launchy runs.
+The menu bar menu's **Restart Launchy** (just above Quit) restarts it without building, with `scripts/restart.sh`, so
+the macOS permission grants a build would void stay. It asks first and lists the panes that would end, if any. If a
+build has run since Launchy started, the restart starts that build and macOS asks for the permissions again; the
+question says so. The item is hidden when the checkout's `scripts/restart.sh` or the database can't be found from
+where Launchy runs, and a restart waits while a build is running.
 
 ## Defaults for a new install
 

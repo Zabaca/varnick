@@ -123,15 +123,8 @@ struct BuildLines: View {
     /// Shown whenever Restart Launchy is pressed, even when nothing ends: the exact panes that end, how many reconnect, and that the Mac stays up.
     private func confirmation(_ report: PeerRestartReport) -> some View {
         let ends = report.ends ?? []
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(BuildText.restartQuestion(name)).font(.system(size: 12, weight: .medium))
-            PaneList(ends: ends, reconnect: report.reconnect)
-            HStack(spacing: 8) {
-                Button("Restart Launchy") { Task { await builds.confirmRestart(id) } }
-                Button("Cancel") { builds.cancelRestart(id) }.keyboardShortcut(.cancelAction)
-            }
-            .controlSize(.small)
-        }
+        return RestartConfirmation(name: name, ends: ends, reconnect: report.reconnect,
+                                   confirm: { Task { await builds.confirmRestart(id) } }, cancel: { builds.cancelRestart(id) })
         .tile()
         .padding(.top, 4)
     }
@@ -212,36 +205,70 @@ extension View {
     }
 }
 
-/// The status menu's Restart Launchy: the confirmation Settings › Peers shows for this Mac (same question, same pane list, same buttons), over
-/// whatever the panel shows. The list is read as the card draws, so Keep sessions running turned on meanwhile is in it.
+/// Restart Launchy's confirmation, for Settings › Peers (a row) and the status menu (`RestartCard`): the question, the panes that end, `notes`
+/// in orange, and the two buttons. A long pane list scrolls past `maxListHeight`.
+struct RestartConfirmation: View {
+    let name: String
+    let ends: [String]
+    let reconnect: Int?
+    var notes: [String] = []
+    var maxListHeight: CGFloat?
+    let confirm: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(BuildText.restartQuestion(name)).font(.system(size: 12, weight: .medium))
+            if let maxListHeight {
+                ViewThatFits(in: .vertical) {
+                    list
+                    ScrollView { list }
+                }
+                .frame(maxHeight: maxListHeight)
+            } else {
+                list
+            }
+            ForEach(notes, id: \.self) { Text($0).font(.system(size: 11.5)).foregroundStyle(.orange) }
+            HStack(spacing: 8) {
+                Button("Restart Launchy", action: confirm)
+                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 6) { PaneList(ends: ends, reconnect: reconnect) }
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The status menu's Restart Launchy, over whatever the panel shows. The list is read as the card draws, so Keep sessions running turned on
+/// meanwhile is in it; the panel is sized for it (`LauncherModel.panelHeight`).
 struct RestartCard: View {
     @ObservedObject var model: LauncherModel
 
     var body: some View {
-        let impact = model.restartImpact()
-        ZStack {
-            Color.black.opacity(0.35)
-            VStack(alignment: .leading, spacing: 6) {
-                if model.restarting {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Restarting Launchy on \(PeerBuilds.shared.name(of: .own))…").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                    }
-                } else {
-                    Text(BuildText.restartQuestion(PeerBuilds.shared.name(of: .own))).font(.system(size: 12, weight: .medium))
-                    PaneList(ends: impact.ends, reconnect: impact.reconnect)
-                    if let note = model.restartNote { Text(note).font(.system(size: 11.5)).foregroundStyle(.orange) }
-                    HStack(spacing: 8) {
-                        Button("Restart Launchy") { model.confirmRestart() }
-                        Button("Cancel") { model.cancelRestart() }
-                    }
-                    .controlSize(.small)
+        let name = PeerBuilds.shared.name(of: .own)
+        VStack(alignment: .leading, spacing: 6) {
+            if model.restarting {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Restarting Launchy on \(name)…").font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
+            } else {
+                let impact = model.restartImpact()
+                RestartConfirmation(name: name, ends: impact.ends, reconnect: impact.reconnect,
+                                    notes: [model.restartBuildNote, model.restartNote].compactMap { $0 },
+                                    maxListHeight: LauncherModel.restartListMaxHeight,
+                                    confirm: { model.confirmRestart() }, cancel: { model.cancelRestart() })
             }
-            .padding(10)
-            .frame(width: 320, alignment: .leading)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .background(Theme.tileFill, in: RoundedRectangle(cornerRadius: 8))
         }
+        .padding(16)
+        .frame(width: 420, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
