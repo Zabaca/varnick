@@ -192,18 +192,19 @@ enum ScreenText {
     private static let bulletGlyphs: Set<Character> = ["•", "·", "‣", "◦", "●", "○", "▪", "■", "□", "▸", "▹", "►", "▻", "›", "»", "‹", "«", "◂"]
 
     /// A recognised line without what an icon or a list left at its ends: bullets and list markers ("•", "-", "1."), a lone symbol
-    /// ("#"), and a lone letter after a lowercase word ("fredrin Y", a glyph read as a letter). "Wi-Fi 6", "Step 2", "Option B" and
-    /// "iPhone X" stay: a digit, or a word with a capital, is part of a label. `text` is already `ScreenElements.cleaned`.
+    /// ("#"), and one capital letter after a lowercase word ("fredrin Y", a glyph read as a letter), once and never again. "Wi-Fi 6",
+    /// "Step 2", "Option B", "iPhone X", "plan b", "100 %" and "Zoom Out −" stay: a digit, a word with a capital, a lowercase letter
+    /// and the signs a label can end in are part of a label. `text` is already `ScreenElements.cleaned`.
     static func withoutDebris(_ text: String) -> String {
         var tokens = text.split(separator: " ").map(String.init)
-        func isSymbol(_ token: String) -> Bool { token != "+" && !token.contains { $0.isLetter || $0.isNumber } }
+        // "+", "%" and "−" mean something anywhere; "-" is a list marker only at the start.
+        func isSymbol(_ token: String, leading: Bool) -> Bool {
+            if ["+", "%", "−"].contains(token) || (token == "-" && !leading) { return false }
+            return !token.contains { $0.isLetter || $0.isNumber }
+        }
         func isNumbering(_ token: String) -> Bool {
             guard let mark = token.last, ".)".contains(mark) else { return false }
             return (1...2).contains(token.count - 1) && token.dropLast().allSatisfy(\.isNumber)
-        }
-        func isLoneLetter(_ token: String, beside neighbour: String) -> Bool {
-            guard token.count == 1, let letter = token.first, letter.isLetter, !"aAI".contains(letter) else { return false }
-            return !neighbour.contains(where: \.isUppercase) && neighbour.contains(where: \.isLowercase)
         }
         func trimGlyphs(_ index: Int, leading: Bool) {
             var token = tokens[index]
@@ -219,12 +220,16 @@ enum ScreenText {
             trimGlyphs(tokens.count - 1, leading: false)
             if tokens.first?.isEmpty == true { tokens.removeFirst(); changed = true; continue }
             if tokens.last?.isEmpty == true { tokens.removeLast(); changed = true; continue }
-            if isSymbol(tokens[0]) || (tokens.count > 1 && (isNumbering(tokens[0]) || isLoneLetter(tokens[0], beside: tokens[1]))) {
+            if isSymbol(tokens[0], leading: true) || (tokens.count > 1 && isNumbering(tokens[0])) {
                 tokens.removeFirst(); changed = true; continue
             }
-            if isSymbol(tokens[tokens.count - 1]) || (tokens.count > 1 && isLoneLetter(tokens[tokens.count - 1], beside: tokens[tokens.count - 2])) {
+            if isSymbol(tokens[tokens.count - 1], leading: false) {
                 tokens.removeLast(); changed = true
             }
+        }
+        if tokens.count >= 2, let letter = tokens.last, letter.count == 1, letter.first?.isUppercase == true, !"AI".contains(letter),
+           case let word = tokens[tokens.count - 2], !word.contains(where: \.isUppercase), word.contains(where: \.isLowercase) {
+            tokens.removeLast()
         }
         return tokens.joined(separator: " ")
     }
@@ -242,8 +247,10 @@ enum ScreenText {
                            pointer: CGPoint) -> [ScreenElement] {
         var kept: [ScreenElement] = []
         for line in recognised {
-            let words = withoutDebris(ScreenElements.cleaned(line.text))
-            guard isLabel(words) else { continue }
+            // Cleaning only shortens: a line too long to be a label as read stays out.
+            let read = ScreenElements.cleaned(line.text)
+            let words = withoutDebris(read)
+            guard isLabel(read), isLabel(words) else { continue }
             let frame = ScreenGeometry.accessibility(normalised: line.box, inWindow: window)
             guard frame.width > 1, frame.height > 1, frame.origin.x.isFinite, frame.origin.y.isFinite else { continue }
             let centre = CGPoint(x: frame.midX, y: frame.midY)
