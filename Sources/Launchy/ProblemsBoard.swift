@@ -17,12 +17,20 @@ final class ProblemsBoard: ObservableObject {
     @Published private(set) var pills: [String: String] = [:]
     /// The first read has come back.
     @Published private(set) var loaded = false
-    @Published var selection: String?
+    @Published var selection: String? {
+        didSet { if selection != oldValue { chipSelection = nil } }
+    }
+    /// The chip selected in the selected card, which is showing all its chips: ↓ moves onto them, ↩ opens that session.
+    @Published private(set) var chipSelection: UUID?
     /// The cards opened to show why they are in their column.
     @Published private(set) var opened: Set<String> = []
     /// Every card shows its evidence (E).
-    @Published var showEvidence = false
+    @Published var showEvidence = false {
+        didSet { settleChip() }
+    }
     weak var model: LauncherModel?
+    /// `SessionBoard.open`, set by the board that owns this tab.
+    var openSession: (UUID) -> Void = { _ in }
 
     private static let interval: Duration = .seconds(5)
     private var reader: Task<Void, Never>?
@@ -98,21 +106,38 @@ final class ProblemsBoard: ObservableObject {
         if selection == nil { selection = Self.moved(nil, in: cards, .down) }
         let kept = opened.intersection(cards.map(\.id))
         if kept != opened { opened = kept }
+        settleChip()
+    }
+
+    private var selectedCard: ProblemCard? { cards.first { $0.id == selection } }
+
+    /// Drops a chip selection whose card is gone, collapsed or no longer lists it.
+    private func settleChip() {
+        guard let chipSelection else { return }
+        if let card = selectedCard, shows(evidenceOf: card.id), card.chips.contains(where: { $0.id == chipSelection }) { return }
+        self.chipSelection = nil
     }
 
     // MARK: Keys
 
-    /// The keys the Problems tab takes: arrows move between cards, ↩ opens one, E shows every card's evidence, esc closes the
-    /// board. D, R and the End session, Mark session done and Restart session keys are taken and do nothing; anything else goes on.
+    /// The Problems tab's keys: arrows move between cards (and, in a card showing its chips, between them), ↩ opens a card or a
+    /// selected chip's session, E shows every card's evidence, esc steps back out of the chips and then closes the board. D, R and
+    /// the End session, Mark session done and Restart session keys are taken and do nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
         switch Int(event.keyCode) {
-        case kVK_Return, kVK_ANSI_KeypadEnter: if plain { toggleSelected() }
-        case kVK_Escape where plain: model?.closeBoard()
+        case kVK_Return, kVK_ANSI_KeypadEnter:
+            if plain { if let chipSelection { openSession(chipSelection) } else { toggleSelected() } }
+        case kVK_Escape where plain:
+            if chipSelection != nil, let selection {
+                if opened.contains(selection) { toggle(selection) } else { chipSelection = nil }
+            } else {
+                model?.closeBoard()
+            }
         case kVK_LeftArrow where plain: selection = Self.moved(selection, in: cards, .left)
         case kVK_RightArrow where plain: selection = Self.moved(selection, in: cards, .right)
-        case kVK_UpArrow where plain: selection = Self.moved(selection, in: cards, .up)
-        case kVK_DownArrow where plain: selection = Self.moved(selection, in: cards, .down)
+        case kVK_UpArrow where plain: if !stepChips(.up) { selection = Self.moved(selection, in: cards, .up) }
+        case kVK_DownArrow where plain: if !stepChips(.down) { selection = Self.moved(selection, in: cards, .down) }
         case kVK_ANSI_E where plain: showEvidence.toggle()
         case kVK_ANSI_D where plain: break
         case kVK_ANSI_R where plain: break
@@ -126,9 +151,29 @@ final class ProblemsBoard: ObservableObject {
         if let selection { toggle(selection) }
     }
 
+    /// False when the arrow isn't for the chips (the card isn't showing them, ↑ on the card, ↓ on the last chip), so it moves the card.
+    private func stepChips(_ direction: SessionBoard.Direction) -> Bool {
+        guard let card = selectedCard, shows(evidenceOf: card.id), !card.chips.isEmpty else { return false }
+        let at = card.chips.firstIndex { $0.id == chipSelection }
+        switch (direction, at) {
+        case (.down, nil): chipSelection = card.chips[0].id
+        case (.down, let at?):
+            guard at + 1 < card.chips.count else { return false }
+            chipSelection = card.chips[at + 1].id
+        case (.up, let at?): chipSelection = at == 0 ? nil : card.chips[at - 1].id
+        default: return false
+        }
+        return true
+    }
+
     func toggle(_ id: String) {
         selection = id
-        if opened.contains(id) { opened.remove(id) } else { opened.insert(id) }
+        if opened.contains(id) {
+            opened.remove(id)
+            chipSelection = nil
+        } else {
+            opened.insert(id)
+        }
     }
 
     func shows(evidenceOf id: String) -> Bool { showEvidence || opened.contains(id) }
@@ -195,7 +240,9 @@ private struct ProblemsColumn: View {
                         }
                         ForEach(cards) { card in
                             ProblemCardView(card: card, pill: board.pills[card.project], selected: board.selection == card.id,
-                                            showsEvidence: board.shows(evidenceOf: card.id))
+                                            showsEvidence: board.shows(evidenceOf: card.id),
+                                            selectedChip: board.selection == card.id ? board.chipSelection : nil,
+                                            open: board.openSession)
                                 .id(card.id)
                                 .onTapGesture { board.toggle(card.id) }
                         }
@@ -206,6 +253,9 @@ private struct ProblemsColumn: View {
                 .scrollIndicators(.never)
                 .onChange(of: board.selection) { _, id in
                     if let id, cards.contains(where: { $0.id == id }) { proxy.scrollTo(id) }
+                }
+                .onChange(of: board.chipSelection) { _, chip in
+                    if let chip, let id = board.selection, cards.contains(where: { $0.id == id }) { proxy.scrollTo(ProblemChips.rowID(id, chip)) }
                 }
             }
         }
@@ -230,6 +280,9 @@ private struct ProblemCardView: View {
     let pill: String?
     let selected: Bool
     let showsEvidence: Bool
+    /// The chip ↓ selected, when this is the selected card.
+    let selectedChip: UUID?
+    let open: (UUID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -242,7 +295,7 @@ private struct ProblemCardView: View {
                 }
             }
             if !card.chips.isEmpty {
-                ProblemChips(chips: card.chips, all: showsEvidence)
+                ProblemChips(cardID: card.id, chips: card.chips, all: showsEvidence, selected: selectedChip, open: open)
             }
             if showsEvidence {
                 VStack(alignment: .leading, spacing: 2) {
@@ -274,22 +327,37 @@ private struct ProblemCardView: View {
 }
 
 /// The sessions that worked on a problem, as chips: the Sessions card's title and a dot for its column. Two and "+3" while closed, every
-/// one once the card is opened (or Show evidence is on); a subagent's type follows the title of the session it worked in.
+/// one on its own row once the card is opened (or Show evidence is on); a subagent's type follows the title of the session it worked in.
+/// A click opens the session; the chip ↓ selected is highlighted.
 private struct ProblemChips: View {
+    let cardID: String
     let chips: [SessionChip]
     let all: Bool
+    let selected: UUID?
+    let open: (UUID) -> Void
     private static let collapsed = 2
+
+    /// A chip's row in the card's scroll view; one session can be a chip of several cards.
+    static func rowID(_ card: String, _ chip: UUID) -> String { card + "#" + chip.uuidString }
 
     var body: some View {
         let shown = all ? chips : Array(chips.prefix(Self.collapsed))
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
-                ForEach(all ? [] : shown) { ProblemChip(chip: $0, showsAgents: false) }
+                ForEach(all ? [] : shown) { chip in
+                    ProblemChip(chip: chip, showsAgents: false, selected: false).onTapGesture { open(chip.id) }
+                }
                 if !all, chips.count > Self.collapsed {
                     Text("+\(chips.count - Self.collapsed)").font(.system(size: 10.5)).foregroundStyle(.secondary)
                 }
             }
-            if all { ForEach(shown) { ProblemChip(chip: $0, showsAgents: true) } }
+            if all {
+                ForEach(shown) { chip in
+                    ProblemChip(chip: chip, showsAgents: true, selected: selected == chip.id)
+                        .id(Self.rowID(cardID, chip.id))
+                        .onTapGesture { open(chip.id) }
+                }
+            }
         }
     }
 }
@@ -297,6 +365,7 @@ private struct ProblemChips: View {
 private struct ProblemChip: View {
     let chip: SessionChip
     let showsAgents: Bool
+    let selected: Bool
 
     var body: some View {
         HStack(spacing: 5) {
@@ -308,7 +377,9 @@ private struct ProblemChip: View {
         }
         .font(.system(size: 10.5))
         .padding(.horizontal, 7).padding(.vertical, 2)
-        .background(Theme.hairline.opacity(0.5), in: Capsule())
+        .background(selected ? Theme.sourceColor("claude").opacity(0.22) : Theme.hairline.opacity(0.5), in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.sourceColor("claude").opacity(selected ? 0.8 : 0), lineWidth: 1))
+        .contentShape(Capsule())
     }
 
     @ViewBuilder private var dot: some View {

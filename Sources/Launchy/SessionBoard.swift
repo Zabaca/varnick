@@ -186,7 +186,10 @@ final class SessionBoard: ObservableObject {
     @Published private(set) var tab = Tab.sessions
     let problems = ProblemsBoard()
     weak var model: LauncherModel? {
-        didSet { problems.model = model }
+        didSet {
+            problems.model = model
+            problems.openSession = { [weak self] in self?.open($0) }
+        }
     }
     /// The board is on screen (between `appear` and `close`).
     private var appeared = false
@@ -555,7 +558,7 @@ struct SessionBoardView: View {
                 tabButton("Problems", .problems)
                 Spacer()
                 if board.tab == .problems { EvidenceSwitch(board: board.problems) }
-                KeyHint(label: "Open", keys: ["↩"])
+                OpenHint(problems: board.problems, onProblems: board.tab == .problems)
                 if board.tab == .sessions {
                     KeyHint(label: "Restart", keys: ["R"])
                     ShortcutHint(label: "", action: .restartSession)
@@ -597,6 +600,16 @@ struct SessionBoardView: View {
                 .foregroundStyle(on ? Color.primary : Color.secondary)
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// ↩'s hint: Open, or Open session while a chip on the Problems tab is selected.
+private struct OpenHint: View {
+    @ObservedObject var problems: ProblemsBoard
+    let onProblems: Bool
+
+    var body: some View {
+        KeyHint(label: onProblems && problems.chipSelection != nil ? "Open session" : "Open", keys: ["↩"])
     }
 }
 

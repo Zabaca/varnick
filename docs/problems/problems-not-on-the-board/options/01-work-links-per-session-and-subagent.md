@@ -42,7 +42,7 @@ A card shows the problem's title, the severity on a Backlog card, and session ch
 - Shipped: each shipped option.
 - Closed: the problem's status, or every option rejected or abandoned.
 
-A problem that a session wrote first also says which session it came out of. **Show evidence**, a switch in the header (E), opens every card. There is no slug, no option chip, no last-touched date and no way to change a status from the board. The arrows move between cards as on Sessions, and D and the End session key are taken and do nothing.
+A problem that a session wrote first also says which session it came out of. **Show evidence**, a switch in the header (E), opens every card. There is no slug, no option chip, no last-touched date and no way to change a status from the board. The arrows move between cards as on Sessions, and D and the End session key are taken and do nothing. (amended 2026-10-09: in a card that shows all its chips, ↓ and ↑ move onto them and between them, ↓ off the last chip moves on to the next card, ↩ or a click on a chip opens that session as the Sessions tab's Open does, and esc steps out of the chips before it closes the board.)
 
 **Which problems.** Every project in Launchy's project list whose main checkout has a problems folder, read from disk as it is now. When more than one project has problems, each card carries its project's pill.
 
@@ -145,7 +145,7 @@ When a Claude pane closes, its log's links are copied into its saved record, so 
 
 - Links from transcripts, merges, tickets or Bash commands.
 - Changing a status from the board.
-- Opening a session from its chip.
+- Opening a session from its chip. (amended 2026-10-09: built, see Solution, Session chips: ↓ onto a chip, ↩ or a click opens it.)
 - The Phone page.
 - Branches pushed from another Mac but not fetched here.
 - Searching sessions by problem: the history is kept for it, nothing reads it yet.
