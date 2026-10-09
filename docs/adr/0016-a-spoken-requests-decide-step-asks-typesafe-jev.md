@@ -31,3 +31,4 @@ No key, the filter not on TypeSafe, a network error, a status other than 200, no
 - The decide step then needs the network. Without it, or on the other filter settings, it costs what it cost before, 1 to 2 s on this Mac.
 - Jev's source probabilities shift a little between runs; a chance of sessions near the floor can fall on either side of it from one run to the next, so the same request may read sessions in one and not the other.
 - The `spoken request timing` log line names who decided and, when Text generation did instead, why Jev was not used. It logs durations and kinds only.
+- Amended by ADR 0017: after the decide step the request is searched and filtered as a typed search is, so with the filter on TypeSafe the search words and the title, site and description of the first 20 pages also go to TypeSafe. "Only the request text" holds for the decide step alone; Jev's call still carries nothing else.

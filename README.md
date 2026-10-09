@@ -180,7 +180,9 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
 - **With a TypeSafe key and the relevance filter on TypeSafe,** it sends each search to TypeSafe's API
   with the title, site and page description of up to 20 results. It does not send full addresses or tags.
   The filter is off by default (above). With Hey Launchy on, it also sends TypeSafe's Jev the text you
-  say after "Hey Launchy", to choose where to look, and nothing else: no titles, names or results.
+  say after "Hey Launchy", to choose where to look, with no titles, names or results. Then the request is
+  searched and filtered as a typed search is, so its search words and the title, site and page description
+  of its first 20 pages go to TypeSafe too. With the filter On this Mac or off, nothing leaves.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere

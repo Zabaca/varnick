@@ -22,7 +22,7 @@ Launchy's voice must not be heard back as speech:
 
 ## Trade-offs
 
-- **Private by construction** (amended by ADR 0016: the request text goes to TypeSafe for the decide step when the relevance filter is on TypeSafe with a key). No new service, key or network path. With Text generation on this Mac nothing leaves it. With a server, the request and the rows' text go to that server, as session prompts already do for Search embeddings on a server (ADR 0014). The relevance filter doesn't run on a spoken request's search, so nothing goes to TypeSafe.
+- **Private by construction** (amended by ADR 0016: the request text goes to TypeSafe for the decide step when the relevance filter is on TypeSafe with a key). No new service, key or network path. With Text generation on this Mac nothing leaves it. With a server, the request and the rows' text go to that server, as session prompts already do for Search embeddings on a server (ADR 0014). The relevance filter doesn't run on a spoken request's search, so nothing goes to TypeSafe. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): it runs wherever Settings › Search says, so with the filter on TypeSafe the search words and the first 20 pages' title, site and description go to TypeSafe.)
 - **Nothing on screen is disturbed.** The panel and the app in front stay as they were, and a false wake costs a sound and a sentence. The flip side: the user only hears the answer. To open the page or session, they bring up the panel and search, or type its name.
 - **A small model, kept on rails.** Gemma 4 E2B only fills in two short replies; Launchy runs the steps. Such a small model can pick the wrong source or poor search words. Since the answer is only heard, a wrong search can't be seen. The answer prompt asks the model to say so when no row fits rather than guess.
 - **Answers only from what a row holds.** Launchy can say which page or session, from where and when, and what the page's own summary or the user's prompts said. It can't say what a page's text says or what Claude replied in a session.
@@ -124,7 +124,7 @@ Launchy's voice must not be heard back as speech:
   - the same fusion, limits, session similarity floor and open-sessions-first.
 
   It sets nothing the panel shows: not the results, the selection, the search statuses or who answered the last semantic search. The panel's own search keeps its code path and behaves exactly as before.
-- No relevance filter: the answer step already judges which of the few rows fit, and the words go nowhere.
+- No relevance filter: the answer step already judges which of the few rows fit, and the words go nowhere. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): the filter runs on a spoken request as on a typed search, and the answer reads the pages it judged relevant when there are any. The answer step could not judge a page that was not among the few rows.)
 - What it reads:
   - `sessions`: the sessions, at most 3;
   - `history`: the top 5 pages;
@@ -157,7 +157,7 @@ Launchy's voice must not be heard back as speech:
 - With Text generation on a server, the request and the rows' text go to that server.
   - The Text generation server row's text in Settings › Models says so, beside the first prompt it sends today.
   - `where-it-breaks.md`'s list of what goes to a model server adds them.
-- Nothing goes to any other service, except the request text to TypeSafe for the decide step (ADR 0016). The relevance filter does not run.
+- Nothing goes to any other service, except the request text to TypeSafe for the decide step (ADR 0016). The relevance filter does not run. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): it runs, and with the filter on TypeSafe the search words and the first 20 pages' title, site and description go to TypeSafe.)
 
 **Command line**
 - `Launchy --ask <file>` treats the file's text as a request after the wake phrase. It runs the three steps against the app's own search without speaking, and prints the source, the search words, the rows' titles, the answer and each step's time.
@@ -183,7 +183,7 @@ Launchy's voice must not be heard back as speech:
   - Say a sentence with "Launchy" in the middle ("I think Launchy is slow"). Nothing wakes.
   - Turn Listening off while Launchy speaks. It stops.
   - With Text generation set to a server that is off, the request is answered by this Mac's model when it is installed.
-  - Launchy's log (Console, process Launchy) holds no request, words, titles or answer.
+  - Launchy's log holds no request, words, titles or answer. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): the log is `~/Library/Logs/Launchy.log`, where `make run` and the LaunchAgent send Launchy's output; the lines are not in Console or `log show`.)
 
 **Hand checks for the builder.** These are unverified. Run them with the user (they speak), and keep figures and anything personal in `.scratch/listening-never-answers/`, never in the repo.
 
@@ -211,7 +211,7 @@ Launchy's voice must not be heard back as speech:
 - Follow-up questions that rely on the last answer ("and the one before that?"). Each request stands alone.
 - Several searches for one request, reading a page's text or a session's replies (options 02 and 03).
 - Dates as filters ("yesterday"). The dates reach the answer, not the search.
-- The relevance filter on a spoken request's search.
+- The relevance filter on a spoken request's search. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): now in scope.)
 - Interrupting the answer by speaking, a stop control other than turning Listening or the switch off, echo cancellation on the mic, and languages other than the transcriber's.
 
 ## Further Notes
@@ -223,7 +223,7 @@ Launchy's voice must not be heard back as speech:
 - **Defaults, not asked of the user:**
   - the `[launchy]` transcript line;
   - dropping mic phrases heard while Launchy speaks;
-  - no relevance filter on spoken searches;
+  - no relevance filter on spoken searches (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): reversed);
   - no stop control beyond turning Listening or the switch off.
 - **Later, if the user wants more than speech:**
   - Show the search in the panel with the answer's row selected, so that ↩ opens it. The answer step would then name its row by number again, and the panel would come forward the way the menu's Show Transcript does.

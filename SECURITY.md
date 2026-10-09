@@ -137,4 +137,5 @@ The Linux installer works from the checkout it runs in, not from `origin`: it bu
   redirect and no system proxy; it does not pin the address between its check and the connection. A
   server can therefore read those texts and the key you give it. Name only a server you run.
 - **TypeSafe.** With a key and the relevance filter on TypeSafe, searches and result descriptions leave the
-  Mac, and so does the text of a spoken request after "Hey Launchy". See the README's Privacy section.
+  Mac, and so do the text of a spoken request after "Hey Launchy" and, as a typed search's, the search
+  words and the title, site and page description of its first 20 pages. See the README's Privacy section.
