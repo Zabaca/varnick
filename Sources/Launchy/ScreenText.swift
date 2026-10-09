@@ -150,6 +150,8 @@ enum ScreenText {
                 continuation.resume(with: Result {
                     let request = VNRecognizeTextRequest()
                     request.recognitionLevel = .accurate
+                    // Measured: the same labels in about two thirds of the time. Labels are not sentences to correct.
+                    request.usesLanguageCorrection = false
                     request.recognitionLanguages = [listeningLanguage]
                     try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
                     return (request.results ?? []).compactMap { observation in
@@ -186,6 +188,47 @@ enum ScreenText {
             && text.contains { $0.isLetter || $0.isNumber }
     }
 
+    /// Bullet glyphs, which are never part of a label: stripped from the ends of a line even when stuck to a word ("•fredrin").
+    private static let bulletGlyphs: Set<Character> = ["•", "·", "‣", "◦", "●", "○", "▪", "■", "□", "▸", "▹", "►", "▻", "›", "»", "‹", "«", "◂"]
+
+    /// A recognised line without what an icon or a list left at its ends: bullets and list markers ("•", "-", "1."), a lone symbol
+    /// ("#"), and a lone letter after a lowercase word ("fredrin Y", a glyph read as a letter). "Wi-Fi 6", "Step 2", "Option B" and
+    /// "iPhone X" stay: a digit, or a word with a capital, is part of a label. `text` is already `ScreenElements.cleaned`.
+    static func withoutDebris(_ text: String) -> String {
+        var tokens = text.split(separator: " ").map(String.init)
+        func isSymbol(_ token: String) -> Bool { token != "+" && !token.contains { $0.isLetter || $0.isNumber } }
+        func isNumbering(_ token: String) -> Bool {
+            guard let mark = token.last, ".)".contains(mark) else { return false }
+            return (1...2).contains(token.count - 1) && token.dropLast().allSatisfy(\.isNumber)
+        }
+        func isLoneLetter(_ token: String, beside neighbour: String) -> Bool {
+            guard token.count == 1, let letter = token.first, letter.isLetter, !"aAI".contains(letter) else { return false }
+            return !neighbour.contains(where: \.isUppercase) && neighbour.contains(where: \.isLowercase)
+        }
+        func trimGlyphs(_ index: Int, leading: Bool) {
+            var token = tokens[index]
+            while let edge = leading ? token.first : token.last, bulletGlyphs.contains(edge) {
+                if leading { token.removeFirst() } else { token.removeLast() }
+            }
+            tokens[index] = token
+        }
+        var changed = true
+        while changed, !tokens.isEmpty {
+            changed = false
+            trimGlyphs(0, leading: true)
+            trimGlyphs(tokens.count - 1, leading: false)
+            if tokens.first?.isEmpty == true { tokens.removeFirst(); changed = true; continue }
+            if tokens.last?.isEmpty == true { tokens.removeLast(); changed = true; continue }
+            if isSymbol(tokens[0]) || (tokens.count > 1 && (isNumbering(tokens[0]) || isLoneLetter(tokens[0], beside: tokens[1]))) {
+                tokens.removeFirst(); changed = true; continue
+            }
+            if isSymbol(tokens[tokens.count - 1]) || (tokens.count > 1 && isLoneLetter(tokens[tokens.count - 1], beside: tokens[tokens.count - 2])) {
+                tokens.removeLast(); changed = true
+            }
+        }
+        return tokens.joined(separator: " ")
+    }
+
     /// `frames` read from a window at `was`, carried to where that window is in the capture at `now`.
     static func shifted(_ frames: [CGRect], from was: CGRect?, to now: CGRect) -> [CGRect] {
         guard let was else { return frames }
@@ -199,7 +242,7 @@ enum ScreenText {
                            pointer: CGPoint) -> [ScreenElement] {
         var kept: [ScreenElement] = []
         for line in recognised {
-            let words = ScreenElements.cleaned(line.text)
+            let words = withoutDebris(ScreenElements.cleaned(line.text))
             guard isLabel(words) else { continue }
             let frame = ScreenGeometry.accessibility(normalised: line.box, inWindow: window)
             guard frame.width > 1, frame.height > 1, frame.origin.x.isFinite, frame.origin.y.isFinite else { continue }
