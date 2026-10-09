@@ -38,7 +38,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   - With the switch off, nothing changes.
 - **A permission, and its reach.**
   - Launchy needs Accessibility. While builds are signed ad hoc, a rebuild may silently stop the grant from applying, until the user removes and re-adds Launchy (unverified; hand check 1). `runs-only-from-a-checkout` option 01 would make the grant stick.
-  - **Sessions in zmx probably don't get the grant.** This is inferred, pending the eval's recheck: they run under zmx, which macOS probably treats as their responsible app. The eval's first check (not trusted in a pane) ran while Launchy had no grant either, so it shows nothing.
+  - **Sessions in zmx very likely don't get the grant.** In the eval, a zmx-hosted shell turned trusted once the user granted zmx alone, with Launchy's switch off. So macOS very likely treats zmx as those sessions' responsible app. Nobody checked the list afterwards, so hand check 2 still measures it.
   - **Panes started outside zmx probably do get it** (Keep sessions running off, or zmx missing), since they are Launchy's own children (unverified; hand check 2). Accessibility lets a process read and drive any app's UI, so a session started with Skip permissions in such a pane could do that without asking. Settings says so plainly, and it is the user's call (open question 1).
   - **The grant stays Launchy's.** zmx is never granted, so that a tool in a pane can't read the screen. If zmx is its sessions' responsible app, a grant to it hands that power to every hosted session. The eval's temporary grant to zmx is the one exception.
 - **ADR 0015's promise changes.** A spoken request can now draw on the screen. It still never opens, clicks, types or moves focus, and a misheard request costs an arrow that goes by itself.
@@ -71,7 +71,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   - that Launchy draws an arrow on the screen;
   - what goes to TypeSafe for each screen request: the window's title, and the labels, kinds and nearby text of its elements;
   - that a rebuild may need the grant again;
-  - that the grant is Launchy's own, that sessions kept running in zmx probably don't get it, and that panes started without Keep sessions running may (hand check 2).
+  - that the grant is Launchy's own, that sessions kept running in zmx very likely don't get it, and that panes started without Keep sessions running may (hand check 2).
 - **With the switch off,** Jev's questions and Gemma's prompt are today's, byte for byte.
 - **Asked without the permission,** Launchy says "I need Accessibility permission to see your screen. It's in Settings, under Listening." It draws nothing.
 
@@ -97,7 +97,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 - **`screen` is taken when it is the likeliest source.** Sessions are never added beside it, and no search runs.
 
 **Looking**
-- **In Launchy's own process,** under Launchy's own grant. The read never goes through a helper, a script or bigarrow run in a pane. Those run under zmx, which would need a grant of its own, and that grant would probably reach every Claude session zmx hosts.
+- **In Launchy's own process,** under Launchy's own grant. The read never goes through a helper, a script or bigarrow run in a pane. Those run under zmx, which would need a grant of its own, and that grant would very likely reach every Claude session zmx hosts.
 - **Off the main actor,** within named limits, tuned by hand: a time budget (1 s), a node limit (3,000), a depth limit (30), and a short timeout per Accessibility call, so a hung app costs only the budget.
 - **Which window.** The focused window of the application that has keyboard focus, as the system-wide Accessibility element reports it. Its sheets and dialogs are inside it, and a system alert that takes focus is its own app. When Launchy itself has focus, the frontmost other app is read; Launchy's own windows are never read.
 - **Electron apps** are asked to build their web content's tree (`AXManualAccessibility`), and the first such request waits a moment. The app keeps that tree until it quits, which costs it some memory. Chrome's refusal is harmless.
@@ -240,7 +240,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 
 - **Open questions, with recommendations:**
   1. **If the grant reaches panes started outside zmx, is that acceptable?**
-     - Keep sessions running is off by default, so on a new install every pane is Launchy's direct child. With it on, sessions run in zmx and probably don't get the grant.
+     - Keep sessions running is off by default, so on a new install every pane is Launchy's direct child. With it on, sessions run in zmx and very likely don't get the grant.
      - Recommended: accept it, with a plain line in the switch's detail and in SECURITY.md naming Keep sessions running.
      - Raise the disclaim change as its own problem rather than block on it.
   2. **Should Gemma point when Jev can't be asked?** That would make the feature work with the filter On this Mac, with nothing leaving, at the eval's measured cost: 72 of 97 right, 24 wrong, and an arrow for 13 of 28 absent things, with no probability to hold it back.
@@ -281,11 +281,13 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   - no responsibility disclaim in Launchy or SwiftTerm;
   - that a pane runs as Launchy's direct child when zmx isn't used;
   - the Choice limit of 255, from TypeSafe's docs.
-- **Observed in the eval:** a zmx pane's processes run under zmx, whose parent is launchd.
+- **Observed in the eval:**
+  - a zmx pane's processes run under zmx, whose parent is launchd;
+  - `AXIsProcessTrusted()` there turned from false to true after the user granted zmx alone, with Launchy's switch off in the user's screenshot. No one checked the list afterwards.
 - **Inferred, not measured:**
   - the tree read's time;
   - the grant lost at a rebuild;
-  - that macOS attributes a zmx pane's processes to zmx, so a Launchy grant doesn't reach them (pending the eval's recheck with zmx granted temporarily, then hand check 2);
+  - that a Launchy grant doesn't reach zmx panes: very likely, from the recheck, and settled by hand check 2;
   - that panes outside zmx do get Launchy's grant;
   - how system prompts expose their buttons;
   - accuracy beyond System Settings, Calculator, TextEdit and Finder;
