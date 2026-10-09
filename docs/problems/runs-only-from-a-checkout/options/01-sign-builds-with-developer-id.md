@@ -2,7 +2,7 @@
 problem: runs-only-from-a-checkout
 title: Sign every build with Developer ID and the hardened runtime, still run from the checkout
 summary: The build signs Launchy and zmx with the user's Developer ID Application identity whenever the keychain has one, with the hardened runtime and an entitlements file that asks only for audio input. Without an identity it signs ad hoc, as today. There is no app bundle, no notarization and no download. Permission grants and Keychain access then follow the team and the bundle id rather than one build's hash, so they should survive rebuilds and ADR 0013 upgrades. Rough effort is a day, most of it checking permissions by hand.
-status: accepted
+status: shipped
 ---
 
 ## Solution

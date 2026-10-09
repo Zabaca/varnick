@@ -1,3 +1,7 @@
+# SIGN_IDENTITY (optional): what to sign with, set here or in the git-ignored Makefile.local; scripts/signing-identity.sh has the rules.
+-include Makefile.local
+export SIGN_IDENTITY
+
 DB := db/launchy.sqlite
 LABEL := com.zabaca.launchy
 PLIST := $(HOME)/Library/LaunchAgents/$(LABEL).plist
@@ -19,6 +23,12 @@ ZMX_VERSION := 0.8.1
 ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
 ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
+# What the build signs with: a certificate's SHA-1, or - for ad hoc. `build` resolves it once and hands it to the sub-makes.
+SIGN_ID ?= -
+# Which signature the zmx in place carries, so a new identity (or the first one) re-signs it without fetching again.
+ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(if $(filter -,$(SIGN_ID)),adhoc,$(SIGN_ID))
+# The secure timestamp is left out: only notarization needs it, and it calls Apple on every build.
+ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
 # Matches Launchy's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
 # names it, which would kill a session that should survive.
@@ -34,22 +44,51 @@ PHONE_PAGE_DIR := .build/release/PhonePage
 
 # The line `BuildStamp` reads, written as the last step of `make build` (where-it-breaks, Peers, has the rules).
 BUILD_STAMP := .build/release/build-stamp
+# The last good binary, kept while a build runs so a failed one can put it back.
+GOOD_COPY := .build/release/Launchy.good
 
-.PHONY: build run stop install uninstall skill-link skill-unlink clean phone-page build-stamp
+.PHONY: build build-steps run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-launchy sign-zmx
 
 # The metallib goes next to the binary, where MLX looks for it. After swift build, which
-# creates .build/release. Re-signing binds the Info.plist the linker embeds (Package.swift):
+# creates .build/release. Signing Launchy binds the Info.plist the linker embeds (Package.swift):
 # the linker's own ad-hoc signature leaves it unbound, and macOS needs it bound to find the
 # microphone and system audio usage strings. SwiftPM doesn't relink when only Info.plist
-# changed, so a newer Info.plist removes the binary first.
+# changed, so a newer Info.plist removes the binary first. Launchy and zmx are signed with the identity
+# scripts/signing-identity.sh chooses; a build that can't choose or sign fails rather than signing ad hoc.
+#
+# A build that fails leaves the last good binary where it was, so a restart never starts a relinked, unsigned one: when the
+# build stamp is no older than the binary (a good build), a clone of the binary is put back if any step fails.
 build:
+	@rm -f $(GOOD_COPY); if [ -f .build/release/Launchy ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Launchy -nt $(BUILD_STAMP) ]; then cp -c .build/release/Launchy $(GOOD_COPY); fi
 	@[ ! Info.plist -nt .build/release/Launchy ] || rm -f .build/release/Launchy
+	@$(MAKE) --no-print-directory build-steps || { \
+	  if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Launchy; echo "restored the previous build"; fi; \
+	  exit 1; }
+	@rm -f $(GOOD_COPY)
+
+build-steps:
 	swift build -c release
-	codesign -f -s - -i $(LABEL) .build/release/Launchy
 	@test -f $(METAL_STAMP) || $(MAKE) $(METAL_STAMP)
-	@test -f $(ZMX_STAMP) || $(MAKE) $(ZMX_STAMP)
+	@id=$$(scripts/signing-identity.sh) || exit 1; \
+	  if [ "$$id" = - ] && [ "$$SIGN_IDENTITY" != - ] && ls .build/release/zmx.signer.* 2>/dev/null | grep -qv 'zmx\.signer\.adhoc$$'; then \
+	    echo "error: signing: this checkout has been signed with an identity, and none is usable now. Fix the keychain, or set SIGN_IDENTITY=- to sign ad hoc on purpose." >&2; exit 1; fi; \
+	  $(MAKE) --no-print-directory sign-launchy sign-zmx SIGN_ID="$$id"
 	@$(MAKE) --no-print-directory phone-page
 	@$(MAKE) --no-print-directory build-stamp
+
+# Without an identity, ad hoc and nothing else, as before. With one: the hardened runtime and the one entitlement in
+# Launchy.entitlements. Either way the signature is verified strictly. The certificate's SHA-1 stays out of the log (@).
+sign-launchy:
+ifeq ($(SIGN_ID),-)
+	codesign -f -s - -i $(LABEL) .build/release/Launchy
+else
+	@codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Launchy.entitlements -i $(LABEL) .build/release/Launchy
+endif
+	@codesign --verify --strict .build/release/Launchy
+
+sign-zmx:
+	@test -f $(ZMX_STAMP) || $(MAKE) --no-print-directory $(ZMX_STAMP)
+	@test -f $(ZMX_SIGNER_STAMP) || $(MAKE) --no-print-directory $(ZMX_SIGNER_STAMP)
 
 phone-page:
 	mkdir -p $(PHONE_PAGE_DIR)
@@ -72,17 +111,32 @@ $(METAL_STAMP):
 	echo "$(MLX_METAL_SHA256)  .build/mlx-metal.whl" | shasum -a 256 -c -
 	unzip -o -j -q .build/mlx-metal.whl mlx/lib/mlx.metallib -d $(dir $@)
 	rm -f .build/mlx-metal.whl .build/release/mlx.metallib.*
-	touch $@
+	@touch $@
 
-# Moved into place by rename, so daemons still running the old zmx keep their file.
+# Signed in the fetch folder and moved into place by rename, so daemons still running the old zmx keep their file
+# (signing it in place would change pages under them). Without an identity it keeps the linker's own signature.
 $(ZMX_STAMP):
 	rm -rf .build/zmx-fetch && mkdir -p .build/zmx-fetch
 	curl -sfL -o .build/zmx-fetch/zmx.tar.gz $(ZMX_URL)
 	echo "$(ZMX_SHA256)  .build/zmx-fetch/zmx.tar.gz" | shasum -a 256 -c -
 	tar -xzf .build/zmx-fetch/zmx.tar.gz -C .build/zmx-fetch zmx
+	@if [ "$(SIGN_ID)" != - ]; then $(ZMX_CODESIGN) .build/zmx-fetch/zmx && codesign --verify --strict .build/zmx-fetch/zmx; fi
 	mv -f .build/zmx-fetch/zmx .build/release/zmx
 	rm -rf .build/zmx-fetch .build/release/zmx.*
-	touch $@
+	@touch $@ $(ZMX_SIGNER_STAMP)
+
+# The same release signed by another identity (or by the first one): its protocol is unchanged, so running sessions
+# survive, unlike a pin bump (ADR 0004). A Mac that has never signed zmx and still has no identity has nothing to do.
+$(ZMX_SIGNER_STAMP):
+	@if [ "$(SIGN_ID)" = - ] && ! ls .build/release/zmx.signer.* >/dev/null 2>&1; then \
+	  echo "zmx: keeps the signature it was fetched with"; \
+	else \
+	  rm -rf .build/zmx-fetch && mkdir -p .build/zmx-fetch && cp .build/release/zmx .build/zmx-fetch/zmx && \
+	  $(ZMX_CODESIGN) .build/zmx-fetch/zmx && codesign --verify --strict .build/zmx-fetch/zmx && \
+	  mv -f .build/zmx-fetch/zmx .build/release/zmx && rm -rf .build/zmx-fetch; \
+	fi
+	rm -f .build/release/zmx.signer.*
+	@touch $@
 
 # The restart runs in its own session so it outlives a Launchy session that ran `make run`.
 run: build

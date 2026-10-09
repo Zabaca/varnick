@@ -141,8 +141,11 @@ and without it that step is skipped.
   app's windows and capture the screen without asking. A grant to zmx or to any other program a pane runs is
   never consulted. Turning the switch off does not revoke the permissions: only taking Launchy out of
   Settings › Privacy & Security › Accessibility and Screen Recording does, if that is not acceptable.
-- **A rebuild may need the permissions given again.** Builds are signed ad hoc, so macOS may not match the
-  grants to the next build (not verified). macOS may also ask again after some weeks whether Launchy may
+- **A rebuild may need the permissions given again, or may not.** Builds are signed ad hoc unless the Mac has a
+  Developer ID Application identity (README, Build and install). An ad-hoc build may not match the grants to the
+  next build (not verified). A signed build should keep them (not verified), and then the grants no longer
+  lapse at a rebuild: they stay with every pane session until you remove Launchy in Settings › Privacy &
+  Security (ADR 0022). macOS may also ask again after some weeks whether Launchy may
   keep recording, and show its capture indicator (not verified).
 - **What leaves the Mac.** Only with the filter on TypeSafe and a key: for a request about the screen, the
   words you said, the title of the window in front and, for up to its first 255 elements, the label, kind,

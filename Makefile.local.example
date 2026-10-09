@@ -1,0 +1,6 @@
+# Copy to Makefile.local (git-ignored) to choose what `make build` signs with. Without a Makefile.local the build signs
+# with the only "Developer ID Application" identity in the keychain, and ad hoc when there is none.
+#
+# A certificate's SHA-1 (`security find-identity -v -p codesigning`), or any part of its name; "-" signs ad hoc on purpose.
+# A name that isn't in the keychain stops the build instead of signing ad hoc.
+SIGN_IDENTITY := 0000000000000000000000000000000000000000
