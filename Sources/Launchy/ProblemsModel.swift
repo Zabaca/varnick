@@ -107,22 +107,21 @@ struct WorkSession: Equatable, Sendable {
         live.contains { $0.link.names(slug, in: repo) } || links.contains { $0.names(slug, in: repo) }
     }
 
-    /// This session as seen from `source`'s project: a foreign link whose `group/name` is the project's takes the project's key, so it
-    /// matches there and in no other project. A local session is returned as it is.
+    /// This session as seen from `source`'s project: a foreign link whose `group/name` is that of the project's checkout (`key`, symlinks
+    /// resolved) takes the project's key, so it matches there. Two local projects with the same last two folders both match. A local
+    /// session is returned as it is.
     func resolved(for source: ProjectProblems) -> WorkSession {
         guard foreign else { return self }
-        let project = PeerWork.project(of: source.project)
+        let project = PeerWork.project(of: source.key)
         func keyed(_ link: WorkLink) -> WorkLink {
             guard link.repo == project else { return link }
             var link = link
             link.repo = source.key
             return link
         }
-        var session = WorkSession(id: id, title: title, column: column, isOpen: isOpen,
-                                  live: live.map { PaneWork.Live(agentID: $0.agentID, agentType: $0.agentType, link: keyed($0.link)) },
-                                  links: links.map(keyed))
-        session.foreign = false
-        return session
+        return WorkSession(id: id, title: title, column: column, isOpen: isOpen,
+                           live: live.map { PaneWork.Live(agentID: $0.agentID, agentType: $0.agentType, link: keyed($0.link)) },
+                           links: links.map(keyed))
     }
 }
 
@@ -383,10 +382,8 @@ enum ProblemsReader {
             entries.append((entry.title, entry))
         }
         for (name, entry) in entries {
-            var session = WorkSession(id: Zmx.paneID(entry.session) ?? UUID(), title: entry.title, column: .running, isOpen: true,
-                                      live: entry.work?.paneWork.live ?? [], links: entry.work?.paneWork.history ?? [])
-            session.foreign = true
-            sessions.append(session)
+            sessions.append(WorkSession(id: Zmx.paneID(entry.session) ?? UUID(), title: entry.title, column: .running, isOpen: true,
+                                        live: entry.work?.paneWork.live ?? [], links: entry.work?.paneWork.history ?? [], foreign: true))
             out += "Session \(name) (open on a paired Mac, \(entry.work == nil ? "no links sent" : "\(entry.work?.links.count ?? 0) links"))\n"
         }
         for (folder, isOpen) in open.map({ ($0, true) }) + ended.map({ ($0, false) }) {

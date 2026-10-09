@@ -1717,11 +1717,13 @@ final class LauncherModel: ObservableObject {
         // The name ⌘⇧R gave a one-pane tab is the card's, as on the running card (`SessionBoard.card(for:in:_:)`).
         if record.isClaude, tab.sessions.count == 1, let name = tab.name { record.title = name }
         // Its links stay with the saved record, so its card keeps its chips (ADR 0020); the log is read here, once, as the pane closes.
-        // A pane on a peer keeps what that host last said, as `group/name` links; the host's own search database holds its history.
+        // A pane on a peer keeps what that host last said; the search database gets this Mac's own at once, and a peer's at the sync.
         if record.isClaude {
             let links = session.isOnPeer ? session.work?.history ?? [] : PaneFolder.work(for: record.id).history
-            if !links.isEmpty { record.workLinks = links }
-            if !links.isEmpty, !session.isOnPeer { HistorySync.recordWork(of: record, links: links, databasePath: store.path) }
+            if !links.isEmpty {
+                record.workLinks = links
+                if !session.isOnPeer { HistorySync.recordWork(of: record, links: links, databasePath: store.path) }
+            }
         }
         let markedDone = doneRequested.remove(session.id) != nil
         // A tab that ends isn't being renamed any more, on screen or not (the board can end a tab under it).

@@ -1,8 +1,7 @@
 import Foundation
 
-// A pane's work links as a host sends them in `status` and `sessions` (ADR 0020, protocol 18), read from the pane's folder the way
-// `PeerTurn` reads the turn. Never a path: a link names its repository as `group/name` (`PeerWork.project(of:)`), which the asking
-// Mac matches to its own project of that group and name.
+// A pane's work links as a host sends them in `status` and `sessions` (ADR 0020, protocol 18), read as `PeerTurn` reads the turn.
+// A link names its repository as `group/name` (`PeerWork.project(of:)`), never a path.
 
 /// One problem or option a pane's session or subagents worked on.
 public struct PeerWorkLink: Codable, Equatable, Sendable {
@@ -50,7 +49,7 @@ public struct PeerWork: Codable, Equatable, Sendable {
     /// The options its records name now, for the asker's Building.
     public var now: [PeerWorkNow]?
 
-    /// A reply carries at most this many links, the oldest: it stays small whatever a long session logged.
+    /// A reply carries at most this many links, the newest, with every link a record names now.
     public static let maxLinks = 64
 
     /// The pane's links from its folder; nil when there are none. Reads a handful of files, as the turn does.
@@ -66,7 +65,10 @@ public struct PeerWork: Codable, Equatable, Sendable {
     public init?(_ work: PaneWork) {
         let history = work.history
         guard !history.isEmpty else { return nil }
-        links = history.prefix(Self.maxLinks).map {
+        let named = Set(work.live.map { Key($0.link) })
+        var kept = Set(history.indices.filter { named.contains(Key(history[$0])) })
+        for index in history.indices.reversed() where kept.count < Self.maxLinks { kept.insert(index) }
+        links = history.indices.filter(kept.contains).map { history[$0] }.map {
             PeerWorkLink(project: Self.project(of: $0.repo), slug: $0.slug, option: $0.number, origin: $0.origin, agents: $0.agents)
         }
         let live = work.live.compactMap { entry in
@@ -76,6 +78,16 @@ public struct PeerWork: Codable, Equatable, Sendable {
             }
         }
         now = live.isEmpty ? nil : live
+    }
+
+    private struct Key: Hashable {
+        let repo: String, slug: String, number: Int?
+
+        init(_ link: WorkLink) {
+            repo = link.repo
+            slug = link.slug
+            number = link.number
+        }
     }
 
     /// The last two folders of a repository's path, as `Project.group` and `Project.name` give them.

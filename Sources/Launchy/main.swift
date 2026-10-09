@@ -527,7 +527,7 @@ if CommandLine.arguments.contains("--hook-settings") {
 // chips and each pane folder's links, for those project folders (main checkouts) or the projects Launchy lists, and exits (to check the rules
 // and the hooks' files without the UI). A pane folder is read for its work files; `--ended` reads it as a pane that has closed; `--sent`
 // reads it as a host would for a paired Mac (printing the `sessions` entry it sends) and shows it as that Mac's open session; `--sent-json`
-// takes such an entry from a file (one line, as a host of any protocol sent it).
+// takes such an entry from a file (one line, as a host sent it, with or without `work`).
 if let i = CommandLine.arguments.firstIndex(of: "--problems") {
     var folders: [String] = [], open: [URL] = [], ended: [URL] = [], sent: [URL] = [], sentJSON: [URL] = []
     var rest = CommandLine.arguments.dropFirst(i + 1)[...]
@@ -548,17 +548,24 @@ if let i = CommandLine.arguments.firstIndex(of: "--problems") {
     }
 }
 
-// `Launchy --work-history <pane folder>` makes LAUNCHY_DB ready (every table, `work_history` included) and writes the pane folder's links
-// into it as one closed session (a made-up id), then exits: to check the table's migration and write against a COPY of the database.
+// `Launchy --work-history <pane folder>` makes the database ready (every table, `work_history` included) and writes the pane folder's links
+// into it as one closed session (a made-up id), then exits: to check the table's migration and write against a COPY of the database. It
+// refuses to run unless LAUNCHY_DB names that copy, so it can never write the live one.
 if let i = CommandLine.arguments.firstIndex(of: "--work-history"), i + 1 < CommandLine.arguments.count {
-    let path = MainActor.assumeIsolated { AppDelegate.databasePath }
+    guard let path = ProcessInfo.processInfo.environment["LAUNCHY_DB"], !path.isEmpty else {
+        print("Set LAUNCHY_DB to a copy of the database: this writes to it")
+        exit(1)
+    }
     do {
         try HistorySync.prepare(at: path)
         let links = PaneFolder.work(in: URL(fileURLWithPath: CommandLine.arguments[i + 1])).history
         let record = SessionRecord(id: UUID(), prompt: "", title: "", directory: "/", startedAt: Date(), lastUsed: Date())
-        try HistorySync.writeWork(of: record, links: links, databasePath: path)
-        print("Wrote \(links.count) link\(links.count == 1 ? "" : "s") for session \(record.id.uuidString.lowercased()) into \(path)")
-        exit(0)
+        Task {
+            await HistorySync.recordWork(of: record, links: links, databasePath: path).value
+            print("Wrote \(links.count) link\(links.count == 1 ? "" : "s") for session \(record.id.uuidString.lowercased()) into \(path)")
+            exit(0)
+        }
+        RunLoop.main.run()
     } catch {
         print("Failed: \(error.localizedDescription)")
         exit(1)

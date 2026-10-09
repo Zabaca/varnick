@@ -1114,8 +1114,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func follow(_ status: PeerSessionStatus) -> Bool {
         guard isClaude, isOnPeer else { return false }
         turn = status.running ? status.turn.map { PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date())) } : nil
-        // Its work links are the host's (ADR 0020); kept after it stops running, so the closing pane saves the last it heard.
-        if status.running { work = status.work?.paneWork }
+        // Its work links are the host's (ADR 0020). Once it isn't running there, the history stays for the closing pane to save and
+        // the live records go, so the card leaves Building.
+        if status.running { work = status.work?.paneWork } else { dropHostLive() }
         guard status.running else { return false }
         var changed = false
         if let reported = status.conversation {
@@ -1135,7 +1136,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     /// The host didn't answer: its last word on the turn is no longer known to hold.
-    func clearHostTurn() { turn = nil }
+    func clearHostTurn() {
+        turn = nil
+        dropHostLive()
+    }
+
+    /// The host's live work records are no longer known to hold; its history is kept.
+    private func dropHostLive() {
+        if let work { self.work = PaneWork(live: [], logged: work.history) }
+    }
 
     /// Runs the exit callback exactly once, whichever path notices first.
     private func finish(_ code: Int32?) {

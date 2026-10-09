@@ -87,7 +87,7 @@ The relay reads a pane's work records and log where it reads the turn, on a Mac 
 
 ### History
 
-When a Claude pane closes, its log's links are copied into its saved record, so ended and Completed cards keep their chips. The history sync copies every saved record's links into a table of its own in the search database, never deleted, so which sessions worked on a problem can be asked after Recent and Completed have dropped them.
+When a Claude pane closes, its log's links are copied into its saved record, so ended and Completed cards keep their chips. The history sync copies every saved record's links into a table of its own in the search database, never deleted, so which sessions worked on a problem can be asked after Recent and Completed have dropped them. (amended 2026-10-09: the table is written when a pane closes, and the history sync copies the saved records' links that were missed, rather than the sync alone; the sync also copies those of the headless host's sessions, which has no search database of its own, and not a paired Mac's, which keeps its own.)
 
 ## Trade-offs
 

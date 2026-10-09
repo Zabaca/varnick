@@ -91,11 +91,12 @@ enum HistorySync {
           session_id TEXT PRIMARY KEY,             -- lowercased, as in sessions
           name       TEXT NOT NULL
         );
-        -- The problems and options each Claude session on this Mac worked on (ADR 0020), copied from its work log when its pane closes and
-        -- from the saved sessions at each sync. Never deleted and never read by search, so which sessions worked on a problem outlives
-        -- Recent, Completed and sessions.json. One row per session and link.
+        -- The problems and options each Claude session on this Mac or a headless host worked on (ADR 0020), written when its pane closes
+        -- and copied from the saved sessions at each sync. Never deleted and never read by search, so which sessions worked on a problem
+        -- outlives Recent, Completed and sessions.json. One row per session and link.
         CREATE TABLE IF NOT EXISTS work_history (
           session_id   TEXT NOT NULL,              -- the pane's id, lowercased
+          host         TEXT NOT NULL DEFAULT '',   -- '' for this Mac; a headless host's peer id, whose links name repo as group/name
           repo         TEXT NOT NULL,              -- the repository's main checkout folder, as the work log names it
           slug         TEXT NOT NULL,              -- the problem
           option       INTEGER NOT NULL DEFAULT 0, -- the option's number; 0: the problem itself
@@ -554,55 +555,60 @@ enum HistorySync {
     // MARK: Work history
 
     private static let upsertWorkSQL = """
-        INSERT INTO work_history (session_id, repo, slug, option, conversation, origin, agents, made, ended)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        INSERT INTO work_history (session_id, host, repo, slug, option, conversation, origin, agents, made, ended)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         ON CONFLICT(session_id, repo, slug, option) DO UPDATE SET
           conversation = CASE WHEN excluded.ended >= ended THEN excluded.conversation ELSE conversation END,
           origin = max(origin, excluded.origin),
-          agents = CASE WHEN length(excluded.agents) > length(agents) THEN excluded.agents ELSE agents END,
+          agents = excluded.agents,
           made = CASE WHEN made = 0 THEN excluded.made ELSE made END,
           ended = max(ended, excluded.ended)
-        WHERE excluded.ended > ended OR origin < excluded.origin OR length(agents) < length(excluded.agents) OR (made = 0 AND excluded.made > 0)
+        WHERE excluded.ended > ended OR origin < excluded.origin OR agents != excluded.agents OR (made = 0 AND excluded.made > 0)
         """
 
-    /// Writes a closed session's links (`SessionRecord.workLinks`) into `work_history`. Off the main actor, one short transaction;
-    /// a failure (the table not made yet, the file busy over 5 s) is logged and the next sync copies the saved record instead.
-    static func recordWork(of record: SessionRecord, links: [WorkLink], databasePath path: String) {
+    /// Writes a closed session's links (`SessionRecord.workLinks`) into `work_history`, off the main actor in one short transaction.
+    /// A failure (no table yet, the file busy over 5 s) is logged and the next sync copies the saved record instead.
+    @discardableResult
+    static func recordWork(of record: SessionRecord, links: [WorkLink], databasePath path: String) -> Task<Void, Never> {
         Task.detached(priority: .utility) {
             do {
-                try writeWork(of: record, links: links, databasePath: path)
+                try storeWork(record, links: links, in: Database(path))
             } catch {
                 NSLog("Launchy: work history not written: \(error.localizedDescription)")
             }
         }
     }
 
-    /// `recordWork` on the calling thread, for `Launchy --work-history`.
-    static func writeWork(of record: SessionRecord, links: [WorkLink], databasePath path: String) throws {
-        try storeWork(record, links: links, in: Database(path))
-    }
-
-    private static func storeWork(_ record: SessionRecord, links: [WorkLink], in archive: Database) throws {
+    /// `host` is '' for this Mac's own sessions. The subagent types are a union with the row's, so a copy of an older record never
+    /// drops one.
+    private static func storeWork(_ record: SessionRecord, links: [WorkLink], host: String = "", in archive: Database) throws {
         guard !links.isEmpty else { return }
         let session = record.id.uuidString.lowercased()
         let conversation = record.conversationID.lowercased()
         let ended = Int64(record.lastUsed.timeIntervalSince1970)
         try archive.transaction {
             for link in links {
-                try archive.run(upsertWorkSQL, [session, link.repo, link.slug, link.number ?? 0, conversation, link.origin == true ? 1 : 0,
-                                                (link.agents ?? []).joined(separator: "\n"), link.at ?? 0, ended])
+                let key: [Any?] = [session, link.repo, link.slug, link.number ?? 0]
+                let held = try archive.rows("SELECT agents FROM work_history WHERE session_id = ? AND repo = ? AND slug = ? AND option = ?", key)
+                    .first.flatMap { $0[0] as? String }?.split(separator: "\n").map(String.init) ?? []
+                let agents = held + (link.agents ?? []).filter { !held.contains($0) }
+                try archive.run(upsertWorkSQL, [session, host, link.repo, link.slug, link.number ?? 0, conversation,
+                                                link.origin == true ? 1 : 0, agents.joined(separator: "\n"), link.at ?? 0, ended])
             }
         }
     }
 
-    /// Copies the links the saved sessions of this Mac keep (`SessionRecord.workLinks` in Recent, Completed and Stopped) that
-    /// `recordWork` hasn't written: a close while the table was busy or missing, or from a build before this table. A `sessions.json`
-    /// that doesn't decode, or a failure, skips it: the history is not what a sync lives or dies by.
+    /// Copies the saved records' links that `recordWork` missed (Recent, Completed, Stopped): this Mac's own, and those of the
+    /// headless host's sessions, which has no history of its own. A paired Mac's are its own sync's. A `sessions.json` that doesn't
+    /// decode, or a failure, skips it.
     private static func syncWork(into archive: Database) {
         guard let state = SessionStore().load() else { return }
-        let records = (state.recent + (state.completed ?? []) + (state.ended ?? [])).filter { $0.isClaude && $0.host == nil }
+        let headless = Set(PeerList.saved().filter { $0.info?.headless == true }.map(\.id))
+        let records = (state.recent + (state.completed ?? []) + (state.ended ?? [])).filter {
+            $0.isClaude && ($0.host == nil || $0.host.map(headless.contains) == true)
+        }
         do {
-            for record in records { if let links = record.workLinks { try storeWork(record, links: links, in: archive) } }
+            for record in records { if let links = record.workLinks { try storeWork(record, links: links, host: record.host ?? "", in: archive) } }
         } catch {
             NSLog("Launchy: work history sync failed: \(error.localizedDescription)")
         }

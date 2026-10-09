@@ -134,10 +134,8 @@ final class SessionBoard: ObservableObject {
 
         /// This card as the Problems tab sees it.
         var workSession: WorkSession {
-            var session = WorkSession(id: id, title: title, column: column, isOpen: isLive, live: isLive ? work?.live ?? [] : [],
-                                      links: work?.history ?? archived)
-            session.foreign = foreign
-            return session
+            WorkSession(id: id, title: title, column: column, isOpen: isLive, live: isLive ? work?.live ?? [] : [],
+                        links: work?.history ?? archived, foreign: foreign)
         }
 
         var mark: String? { turn?.mark }
