@@ -1,6 +1,6 @@
 #!/bin/sh
 # /work: checks its arguments against the repository's problem files and prints the marker line that Launchy's hook after Bash turns
-# into the caller's work record (ADR 0019). It writes no record itself: only the hook input carries a subagent's id. For an option on a
+# into the caller's work record (ADR 0020). It writes no record itself: only the hook input carries a subagent's id. For an option on a
 # branch other than main it also ties the branch in git config (docs/agents/issue-tracker.md).
 
 usage() {
@@ -79,5 +79,9 @@ case "$kind" in
   option) echo "Linked to option $value ($tied)." ;;
 esac
 echo "Launchy writes the record after this command; a session started before the hooks existed records nothing until restarted."
-# The pane id in the marker keeps a document or another pane's output that quotes one from linking anything.
-printf 'LAUNCHY-WORK|%s|%s|%s|%s|\n' "${folder##*/}" "$kind" "$value" "${repo:-/}"
+# The marker carries the pane id and a one-shot nonce: the hook accepts it once, by deleting the nonce's file, so a marker printed again
+# (a transcript read back, a log) links nothing, and another pane's marker is ignored.
+find "$folder" -maxdepth 1 -name '.work-mark.*' -mmin +60 -exec rm -f {} + 2>/dev/null
+nonce=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+: > "$folder/.work-mark.$nonce" || { echo "Could not write to the pane folder." >&2; exit 1; }
+printf 'LAUNCHY-WORK|%s|%s|%s|%s|%s|\n' "${folder##*/}" "$nonce" "$kind" "$value" "${repo:-/}"

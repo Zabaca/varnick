@@ -15,4 +15,4 @@ Run `sh <base directory>/work.sh $ARGUMENTS` with the arguments as given, from t
 
 Report the script's output. A failure names what is wrong (an unknown slug, no such option); fix the argument and run it again.
 
-Writing a file under `docs/problems/<slug>/`, or under `.scratch/<slug>/` of an existing problem, links you to the problem by itself, and never replaces an option link. `docs/adr/0019-*.md` has the rules.
+Writing under a problem's folders links you by itself: `docs/agents/issue-tracker.md` › "Work links" has the rules.

@@ -12,7 +12,7 @@ You implement changes to Launchy and hand back a working build, committed on you
 
 ## Steps
 
-1. If the request points at an option or a ticket, read it and its problem first (layout in `docs/agents/issue-tracker.md`). They are the spec; report anything wrong in them rather than editing them. On a branch other than main, tie it to the option before any other work with `/work option <slug>/<NN>`, as `docs/agents/issue-tracker.md` › "Who sets an option's status" gives.
+1. If the request points at an option or a ticket, read it and its problem first (layout in `docs/agents/issue-tracker.md`). They are the spec; report anything wrong in them rather than editing them. On a branch other than main, tie it to the option before any other work, as `docs/agents/issue-tracker.md` › "Who sets an option's status" gives.
 2. Read the files you'll touch in full, plus their callers. Find the closest **sibling**, the existing feature this change resembles (a pane kind, a shortcut, a Settings row, a launcher row), and copy its shape. If the request is ambiguous in a way that changes the design, ask one question if you can; otherwise pick what matches existing behaviour and say so.
 3. Write the change to `CODING_STANDARDS.md`, test-first when TDD fits (below).
 4. `make build` until it is clean: every error and every new warning fixed. The first build in a fresh worktree resolves packages and fetches the metallib, so it is slow. Re-read `git diff` against `CODING_STANDARDS.md` and `docs/agents/where-it-breaks.md`.
