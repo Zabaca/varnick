@@ -251,8 +251,15 @@ enum SpokenText {
 
     // MARK: Step 3: respond
 
-    static let answerTokens = 144
-    static let maxSentences = 3
+    /// One thing gets one or two sentences, several up to three, with the token budget to match.
+    static let answerTokens = 96
+    static let maxSentences = 2
+    static let severalAnswerTokens = 144
+    static let maxSeveralSentences = 3
+
+    static func answerLimits(for request: String) -> (tokens: Int, sentences: Int) {
+        asksForSeveral(request) ? (severalAnswerTokens, maxSeveralSentences) : (answerTokens, maxSentences)
+    }
 
     /// The answer prompt, in one place so it can be tuned with `Launchy --ask`. The small model follows one instruction better than
     /// a choice between two, so code picks (`asksForSeveral`).
@@ -282,29 +289,36 @@ enum SpokenText {
             .replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
     }
 
-    /// Whether the request asks for several results rather than one: it asks for others or similar ones, or "which"/"what" or
-    /// "all" goes with a plural ("which pages", "all my bookmarks"). "Which of my bookmarks is about X" asks for one.
+    /// Whether the request asks for several results rather than one: "any other pages like X", "similar", "what else", or
+    /// "which"/"what"/"all" with a plural ("which pages", "all my bookmarks"). "The other day" and "which of my bookmarks is
+    /// about X" ask for one. A plain plural is not enough ("the pages I read" is a miss), which costs only a shorter answer.
     static func asksForSeveral(_ request: String) -> Bool {
         let words = tokens(request)
-        if words.contains(where: { ["other", "others", "else", "similar", "alike", "every"].contains($0) }) { return true }
+        if words.contains(where: { ["else", "similar", "alike"].contains($0) }) { return true }
+        let timeWords: Set<String> = ["day", "days", "week", "weeks", "night", "nights", "time", "times", "morning", "month", "months", "year", "years"]
         let plurals: Set<String> = ["pages", "bookmarks", "sessions", "articles", "sites", "links", "things", "ones", "results"]
-        return words.indices.dropLast().contains { i in
+        return words.indices.contains { i in
             switch words[i] {
-            case "which", "what": plurals.contains(words[i + 1])
-            case "all": plurals.contains(words[i + 1]) || ["the", "my", "of"].contains(words[i + 1])
-            default: false
+            case "other", "others":
+                return i > 0 && ["any", "the", "some"].contains(words[i - 1]) && !(i + 1 < words.count && timeWords.contains(words[i + 1]))
+            case "which", "what":
+                return i + 1 < words.count && plurals.contains(words[i + 1])
+            case "all":
+                return i + 1 < words.count && (plurals.contains(words[i + 1]) || ["the", "my", "of"].contains(words[i + 1]))
+            default:
+                return false
             }
         }
     }
 
-    /// Plain text for the speech: no markdown, one line, the first `maxSentences` sentences. Nil when the reply holds no text.
-    static func spoken(fromReply reply: String) -> String? {
+    /// Plain text for the speech: no markdown, one line, the first `sentences` sentences. Nil when the reply holds no text.
+    static func spoken(fromReply reply: String, sentences limit: Int) -> String? {
         let plain = oneLine(reply.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "#", with: "")
             .replacingOccurrences(of: "`", with: ""))
         var sentences: [String] = []
         plain.enumerateSubstrings(in: plain.startIndex..., options: .bySentences) { sentence, _, _, stop in
             if let sentence = sentence?.trimmingCharacters(in: .whitespaces), !sentence.isEmpty { sentences.append(sentence) }
-            if sentences.count >= maxSentences { stop = true }
+            if sentences.count >= limit { stop = true }
         }
         let text = sentences.joined(separator: " ")
         return text.isEmpty ? nil : text
@@ -458,8 +472,9 @@ enum SpokenPipeline {
         began = clock.now
         let rows = SpokenText.describe(run.rows, macName: { PeerManager.shared.name(of: $0) })
         do {
-            let text = try await generate(SpokenText.answerPrompt(for: request, rows: rows), SpokenText.answerTokens)
-            run.outcome = .answer(SpokenText.spoken(fromReply: text) ?? "I couldn't answer that.")
+            let limits = SpokenText.answerLimits(for: request)
+            let text = try await generate(SpokenText.answerPrompt(for: request, rows: rows), limits.tokens)
+            run.outcome = .answer(SpokenText.spoken(fromReply: text, sentences: limits.sentences) ?? "I couldn't answer that.")
             run.answeredAt = textPlaces.last
         } catch {
             throw Failure(step: .respond, underlying: error)
