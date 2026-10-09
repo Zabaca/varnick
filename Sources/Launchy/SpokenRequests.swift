@@ -3,8 +3,8 @@ import Combine
 import Foundation
 
 /// Hey Launchy (ADR 0015): while Listening is on, a mic phrase that starts with the wake phrase becomes a spoken request, which
-/// Launchy answers aloud and nowhere else. Nothing is shown, selected or opened. What may be logged is in where-it-breaks.md,
-/// Listening and spoken requests.
+/// Launchy answers aloud. Nothing is selected or opened, and the one thing shown is the arrow of a request about the screen
+/// (ADR 0019). What may be logged is in where-it-breaks.md, Listening and spoken requests.
 @MainActor
 final class SpokenRequests {
     /// How long after the wake phrase alone the request may begin.
@@ -72,6 +72,7 @@ final class SpokenRequests {
         subs = [
             Settings.shared.$heyLaunchy.dropFirst().sink { [weak self] on in if !on { self?.cancel() } },
             Listener.shared.$state.dropFirst().sink { [weak self] state in if !state.isOn { self?.cancel() } },
+            Settings.shared.$pointAtScreen.dropFirst().sink { on in if !on { ArrowOverlay.shared.hide() } },
         ]
     }
 
@@ -166,6 +167,8 @@ final class SpokenRequests {
 
     /// The request's first words are in; whatever follows within the gap is added.
     private func collect(_ text: String, from phrase: MicPhrase, arrived: Date) {
+        // A new request takes the last one's arrow away at once.
+        ArrowOverlay.shared.hide()
         let request = Request(text: String(text.prefix(SpokenText.maxRequestCharacters)), began: phrase.start, lastEnd: phrase.end,
                               lastArrived: arrived, collecting: arrived)
         phase = .collecting(request)
@@ -244,6 +247,7 @@ final class SpokenRequests {
         epoch += 1
         phase = .idle
         Speaker.shared.stop()
+        ArrowOverlay.shared.hide()
     }
 
     /// Speaks the answer to `request`, now that `hold` has ended, from `speculated` (running still, or done). The answer is written
@@ -252,13 +256,26 @@ final class SpokenRequests {
         let began = Date()
         var waited: TimeInterval?
         var run: SpokenPipeline.Run?
+        var pointing: (frame: CGRect, note: String)?
         let saying: String
         do {
             // Cancelling this task does not cancel the speculative one; `cancel()` does both.
             let found = try await speculated.task.value
             waited = Date().timeIntervalSince(began)
             try Task.checkCancellation()
-            let done = try await SpokenPipeline.respond(found, to: request.text, on: model)
+            var done = try await SpokenPipeline.respond(found, to: request.text, on: model)
+            // The window may have moved during the hold: the frame is read again, and an element that is gone is not pointed at.
+            if case .point(let target) = done.outcome {
+                let frame = await target.reference.map { reference in
+                    Task.detached { ScreenReader.currentFrame(of: reference) }
+                }?.value
+                if let frame, frame.width > 1, frame.height > 1 {
+                    pointing = (frame, target.note)
+                } else {
+                    done.outcome = .screenMiss(.gone)
+                    done.screen?.miss = .gone
+                }
+            }
             run = done
             saying = done.outcome.spoken
         } catch {
@@ -273,7 +290,10 @@ final class SpokenRequests {
 
         record(saying)
         let speaking = Date()
+        // The arrow is up just before the speech starts and stays a while after it ends; never drawn before the hold has ended.
+        if let pointing { ArrowOverlay.shared.show(frame: pointing.frame, note: pointing.note) }
         let first = await Speaker.shared.speak(saying)
+        if pointing != nil, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
 
         // For the latency check: where the time went, as durations, places and kinds only.
         func seconds(_ duration: Duration?) -> String { duration?.seconds.secondsText ?? "-" }
@@ -286,9 +306,17 @@ final class SpokenRequests {
               + "search \(seconds(run?.search)) (meaning by \(run?.meaningBy ?? "-")), "
               + "filter \(seconds(run?.filter)) (\(run?.filteredBy ?? "-")), "
               + "answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
+              + Self.screenTiming(run?.screen)
               + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "
               + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended, "
               + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")
+    }
+
+    /// The screen's part of the timing line, for a request about the screen: durations, a count, who chose and the miss's kind.
+    private static func screenTiming(_ look: SpokenPipeline.ScreenLook?) -> String {
+        guard let look else { return "" }
+        return "screen read \(look.read.seconds.secondsText) (\(look.candidates) candidates), "
+            + "chosen in \(look.choose.seconds.secondsText) by \(look.chosenBy), miss \(look.miss?.logKind ?? "none"), "
     }
 
     /// Nothing could write the text: no model installed and no server answering.
