@@ -107,7 +107,7 @@ repository. The terms are those of each model card at the pinned revision.
 | Model | Used for | Pinned revision | Licence on the card at that revision |
 |---|---|---|---|
 | `mlx-community/Qwen3-Embedding-0.6B-8bit`, an MLX conversion of `Qwen/Qwen3-Embedding-0.6B` | Semantic search | `407ad2329cd30702720aafe83f74a1ba30fdfbca` | `license: apache-2.0` |
-| `mlx-community/gemma-4-e2b-it-4bit`, an MLX conversion of `google/gemma-4-E2B-it` | Titles for sessions | `238767527555cb75a05732a84dff5d6ba0dd6809` | `license: gemma` |
+| `mlx-community/gemma-4-e2b-it-4bit`, an MLX conversion of `google/gemma-4-E2B-it` | Hey Launchy's answers | `238767527555cb75a05732a84dff5d6ba0dd6809` | `license: gemma` |
 
 Notes on the two:
 

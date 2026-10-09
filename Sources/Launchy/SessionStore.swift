@@ -65,8 +65,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// their chips. Optional so older saved records still load; nil when it linked nothing.
     var workLinks: [WorkLink]?
 
-    /// The title made for one conversation (Settings › Claude › Session titles), kept with the pane so it is made
-    /// once. Optional so older saved records still load.
+    /// The /rename name of one conversation, kept with the pane. Optional so older saved records still load; a file saved
+    /// when Launchy generated titles holds more keys in it (`title`, `failed`), which decoding ignores.
     var titleRecord: TitleRecord?
 
     /// The title record, when it is for the conversation the pane is on.
@@ -127,6 +127,37 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var transcriptTitle: String? { TranscriptReader.title(directory: directory, conversation: conversationID) }
 
     private var transcriptPath: String { TranscriptReader.path(directory: directory, conversation: conversationID) }
+}
+
+/// What a pane keeps of a conversation's /rename name (`SessionRecord.titleRecord`), so the card shows it before the
+/// transcript is read, and when the name is further back than the 64 KB tail the pane reads.
+struct TitleRecord: Codable, Equatable {
+    /// The conversation it is for; the pane's next one (after /clear or /resume) has none yet.
+    var conversation: String
+    var name: String?
+    /// Only decoded, from a file saved when Launchy generated titles: a restored pane drops it (`ClaudeSession.init`).
+    var title: String?
+}
+
+/// The names the user gave sessions with ⌘⇧R, for search (`HistorySync.syncNames`): a tab's name names the conversation of its
+/// one pane, as on the board.
+enum SessionNames {
+    /// Conversation (lowercased) to its tab's name, and the conversations a tab holds that none names. Claude panes on this Mac
+    /// only; a tab with several panes names none, as on the board.
+    static func read(_ state: SessionStore.State) -> (named: [String: String], unnamed: Set<String>) {
+        var named: [String: String] = [:], held: Set<String> = []
+        for tab in state.openTabs {
+            let records = tab.layout.records
+            for record in records where record.isClaude && record.host == nil {
+                let conversation = record.conversationID.lowercased()
+                held.insert(conversation)
+                if records.count == 1, let name = tab.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                    named[conversation] = name
+                }
+            }
+        }
+        return (named, held.subtracting(named.keys))
+    }
 }
 
 /// Sessions survive relaunches: open tabs and their splits come back (resumed when opened) and ended

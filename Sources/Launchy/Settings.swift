@@ -203,8 +203,6 @@ final class Settings: ObservableObject {
     @Published private(set) var overrides: [ShortcutAction: KeyCombo?] { didSet { saveOverrides() } }
     /// Action waiting for its new shortcut; the next key press is captured for it.
     @Published var recording: ShortcutAction?
-    /// Names each Claude session from its first prompt with text generation, in place of Claude's own title.
-    @Published var sessionTitles: Bool { didSet { defaults.set(sessionTitles, forKey: "sessionTitles") } }
     /// Whether search also finds by meaning, and whether the minute sync embeds (Settings › Search); on for everyone
     /// who has never touched it. Vectors already stored stay while it is off.
     @Published var semanticSearch: Bool { didSet { defaults.set(semanticSearch, forKey: "semanticSearch") } }
@@ -272,7 +270,7 @@ final class Settings: ObservableObject {
                     model: embeddingServerModel, defaultModel: Self.defaultEmbeddingServerModel)
     }
 
-    /// Where the next title or `--title` text is written, overridden by LAUNCHY_TEXT_GENERATION the same way.
+    /// Where the next text is written, overridden by LAUNCHY_TEXT_GENERATION the same way.
     var activeTextGeneration: ServerChoice {
         Self.choice(env: "LAUNCHY_TEXT_GENERATION", saved: textGenerationRunOn, address: textGenerationServerAddress,
                     model: textGenerationServerModel, defaultModel: ServerGenerator.defaultModel)
@@ -313,7 +311,6 @@ final class Settings: ObservableObject {
         voice = defaults.string(forKey: "voice") ?? ""
         heyLaunchy = defaults.bool(forKey: "heyLaunchy")
         pointAtScreen = defaults.bool(forKey: "pointAtScreen")
-        sessionTitles = defaults.bool(forKey: "sessionTitles")
         semanticSearch = defaults.object(forKey: "semanticSearch") as? Bool ?? true
         searchEmbeddingsRunOn = defaults.string(forKey: "searchEmbeddingsRunOn").flatMap(ModelRunOn.init) ?? .local
         embeddingServerAddress = defaults.string(forKey: "embeddingServer") ?? ""
@@ -544,14 +541,6 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.keepSessionsRunning).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!Zmx.isAvailable)
                         }
-                        SettingRow(title: "Session titles",
-                                   detail: "Names each session on this Mac from its first prompt, in place of Claude's own title. A tab you rename, or a session you name with /rename, keeps its name.") {
-                            if let need = textGenerationNeed {
-                                modelsLink(need)
-                            }
-                            Toggle("", isOn: $settings.sessionTitles).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                .disabled(!settings.sessionTitles && textGenerationNeed != nil)
-                        }
                         SettingRow(title: "Text size", detail: "Terminal font size in points.") {
                             Button { settings.adjustFont(-0.5) } label: { Image(systemName: "minus") }
                             Text(String(format: "%.1f", settings.fontSize))
@@ -703,7 +692,7 @@ struct SettingsView: View {
                             }
                         }
                         SettingRow(title: "Text generation",
-                                   detail: "Writes short text for Launchy's features, such as session titles and Hey Launchy's answers.") {
+                                   detail: "Writes short text for Launchy's features, such as Hey Launchy's answers.") {
                             Picker("", selection: $settings.textGenerationRunOn) {
                                 ForEach(ModelRunOn.allCases) { Text($0.title).tag($0) }
                             }
@@ -712,7 +701,7 @@ struct SettingsView: View {
                         switch settings.textGenerationRunOn {
                         case .server:
                             ServerSettingRow(
-                                detail: "Sends the first prompt of each new Claude session on this Mac (its first \(SessionTitles.promptCharacters.formatted()) characters) to \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below"), over your tailnet, to name it. With Hey Launchy on, it also gets what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too).",
+                                detail: "With Hey Launchy on, \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below") gets, over your tailnet, what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too).",
                                 addressPlaceholder: "http://linux-box:8080", address: $settings.textGenerationServerAddress,
                                 model: $settings.textGenerationServerModel, server: textGenerationServer)
                         case .local:
@@ -841,7 +830,7 @@ struct SettingsView: View {
         }
     }
 
-    /// What Text generation lacks before Session titles can run: this Mac's model installed, or a server that passed its Check.
+    /// What Text generation lacks before it can run: this Mac's model installed, or a server that passed its Check.
     private var textGenerationNeed: String? {
         switch settings.textGenerationRunOn {
         case .local: return modelNeed(ready: textGenerator.isReady, settingUp: textGenerator.state.isDownloading)

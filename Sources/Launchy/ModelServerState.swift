@@ -50,8 +50,6 @@ final class ModelServerState: ObservableObject {
 
     /// Not asked again within this long of not answering, except by a press of Check.
     static let retryAfter: TimeInterval = 60
-    /// What a failed request adds to "Not answering: …" when the role says what then happens.
-    var notAnsweringNote = ""
 
     private let target: @MainActor () -> Target
     private let run: (Target) async -> ServerVerdict
@@ -89,13 +87,6 @@ final class ModelServerState: ObservableObject {
         return passedAt.map { Date().timeIntervalSince($0) < age } ?? false
     }
 
-    /// Asks for a Check for work that waits on the server, when none is under way, the server didn't pass or fail one a
-    /// minute ago, and it isn't blocked.
-    func checkIfDue() {
-        guard !isPassing, status != .checking, !isBlocked, !isResting else { return }
-        check()
-    }
-
     /// A request to `requested` failed. Dropped when the address or model has changed since; a wrong size blocks the
     /// server like a failed Check, and any other failure rests it for a minute.
     func failed(_ error: Error, for requested: Target) {
@@ -103,7 +94,7 @@ final class ModelServerState: ObservableObject {
         let wrongServer = error is ServerEmbedder.WrongSize
         let failure = (error as? ModelServer.Failure) ?? .unreadable
         let text = (error as? ServerEmbedder.WrongSize)?.errorDescription
-            ?? failure.errorDescription! + (failure == .notOnTailnet ? "" : notAnsweringNote)
+            ?? failure.errorDescription!
         record = Record(target: requested, status: .checked(ServerVerdict(kind: wrongServer ? .wrongServer : .notAnswering, text: text)),
                         notAnsweringAt: wrongServer ? nil : Date())
     }
@@ -151,11 +142,9 @@ extension ModelServerState {
 extension ModelServerState {
     /// Text generation's server: the address and model in effect (Settings, or LAUNCHY_TEXT_GENERATION), asked for a word.
     static func forTextGeneration() -> ModelServerState {
-        let state = ModelServerState(
+        ModelServerState(
             target: { .init(address: Settings.shared.activeTextGeneration.address, model: Settings.shared.activeTextGeneration.model) },
             run: { target in await ServerGenerator(address: target.address, model: target.model).check().verdict })
-        state.notAnsweringNote = ". Titles wait until it does."
-        return state
     }
 }
 

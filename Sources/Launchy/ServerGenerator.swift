@@ -1,7 +1,7 @@
 import Foundation
 
 /// Writes short text on a model server's OpenAI-compatible `/v1/chat/completions` instead of in this process (ADR 0014):
-/// one user message, greedy, no streaming. What the text is for (the title prompt, its clean-up) stays Launchy's.
+/// one user message, greedy, no streaming. What the text is for stays the feature's.
 struct ServerGenerator {
     let address: String
     var model = ServerGenerator.defaultModel
@@ -49,7 +49,7 @@ struct ServerGenerator {
 
     // MARK: The Check
 
-    /// What the Check found. It doesn't compare models: a different one only words titles differently, and nothing stored
+    /// What the Check found. It doesn't compare models: a different one only words the text differently, and nothing stored
     /// mixes the way vectors do.
     enum Check: Equatable {
         case answers(roundTrip: Duration, model: String?)
@@ -61,7 +61,7 @@ struct ServerGenerator {
         var summary: String {
             switch self {
             case .answers(let roundTrip, _): String(format: "Answers in %.2f s", roundTrip.seconds)
-            case .notAnswering(let reason): "Not answering: \(reason). Titles wait until it does."
+            case .notAnswering(let reason): "Not answering: \(reason)"
             case .notOnTailnet: "Not on your tailnet"
             }
         }

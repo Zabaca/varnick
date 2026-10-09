@@ -170,7 +170,7 @@ and without it that step is skipped.
   revisions from Hugging Face.
 - **A model server.** With Server chosen for Search embeddings or Text generation, Launchy sends the
   searches and prompts typed, the text it embeds (for a Claude session, its prompts and Claude's last reply
-  to each) and each conversation's first prompt to the server you name, over HTTP or HTTPS. It accepts only an address whose name resolves to the tailnet or this Mac, and follows no
+  to each) to the server you name, over HTTP or HTTPS. It accepts only an address whose name resolves to the tailnet or this Mac, and follows no
   redirect and no system proxy; it does not pin the address between its check and the connection. A
   server can therefore read those texts and the key you give it. Name only a server you run.
 - **TypeSafe.** With a key and the relevance filter on TypeSafe, searches and result descriptions leave the

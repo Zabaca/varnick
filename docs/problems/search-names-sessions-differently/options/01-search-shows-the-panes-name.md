@@ -2,7 +2,8 @@
 problem: search-names-sessions-differently
 title: Search shows the name the pane gave the session, else Claude's title
 summary: Each history sync reads the name every Launchy pane shows for its conversations (the /rename name, else the generated title while Session titles is on) from the saved sessions, and keeps it in the search database after the record is gone. The name becomes the session's title wherever the sync builds a session, so the search row shows it, keyword search matches it, its exchanges are embedded under it, and paired Macs get it in the rows they already read. A session with no name keeps Claude's title. No protocol change.
-status: accepted
+status: rejected
+reason: superseded by option 03 - the user removed Gemma titles, and with names from the transcript only the tab's ⌘⇧R name needs a table
 ---
 
 ## Solution
