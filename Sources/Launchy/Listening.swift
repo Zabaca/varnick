@@ -6,6 +6,9 @@ import Foundation
 import Speech
 import Synchronization
 
+/// The language Listening transcribes in, and screen text recognition reads (ADR 0021).
+let listeningLanguage = "en-US"
+
 /// Listening: the mic and what the Mac plays, transcribed on this Mac (Speech, macOS 26) into
 /// today's transcript. Off at each launch; the menu bar item or `!listen` turns it on.
 @MainActor
@@ -256,7 +259,7 @@ private final class Capture {
     /// Throws with a reason to show, or CancellationError when stopped while starting;
     /// `stop(discarding: true)` then releases whatever had started.
     func start() async throws {
-        let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US"))
+        let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: listeningLanguage))
             ?? Locale(identifier: "en_US")
         let modules: [any SpeechModule] = [Self.detector(), Self.transcriber(locale)]
         if let request = try await AssetInventory.assetInstallationRequest(supporting: modules) {

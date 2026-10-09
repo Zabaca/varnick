@@ -30,6 +30,9 @@ struct ScreenElement: Sendable {
     /// Text or a heading: listed, and the words other elements are described beside.
     var isText = false
     var reference: AXReference?
+    /// A line of text found in a picture of the window, not an element of its tree (ADR 0021): `role` is "text on screen" and the
+    /// frame is the line's box.
+    var recognised = false
 
     /// As the model reads it (the eval's F3): `1 (switch) in Sound, beside "Play sound on startup"`.
     var description: String {
@@ -90,6 +93,8 @@ enum ScreenElements {
     /// Play sound on startup."; for text, its own words ("Here's Wi-Fi."); for the element under the pointer, "That's the Share
     /// button." and the first sentence of its help.
     static func note(for element: ScreenElement) -> String {
+        // Recognised text has no kind to name: its words, quoted ("Here's 'Sign in'.").
+        if element.recognised { return "\(element.underPointer ? "That's" : "Here's") '\(String(element.name.prefix(60)))'." }
         let called: String
         if element.isText, !element.name.isEmpty {
             called = String(element.name.prefix(60))
@@ -133,6 +138,10 @@ struct ScreenTarget: Equatable {
     var note: String
     /// Printed by `Launchy --ask`, never logged.
     var description: String
+    /// For recognised text, which has no element of its own: the window it was read from and that window's frame then, so a window
+    /// that moved during the hold moves the arrow with it (`ScreenGeometry.moved`).
+    var window: AXReference?
+    var windowFrame: CGRect?
 }
 
 /// Why nothing is pointed at. Each is spoken with nothing drawn, and the timing line names its kind.
@@ -184,6 +193,20 @@ enum ScreenGeometry {
 
     static func accessibility(_ point: CGPoint, mainDisplayHeight: CGFloat) -> CGPoint {
         CGPoint(x: point.x, y: mainDisplayHeight - point.y)
+    }
+
+    /// A box text recognition found, as Accessibility frames are: it is normalised (0 to 1) with the origin at the bottom left of the
+    /// image, and the image is of `window`, an Accessibility frame (ADR 0021).
+    static func accessibility(normalised box: CGRect, inWindow window: CGRect) -> CGRect {
+        CGRect(x: window.minX + box.minX * window.width, y: window.minY + (1 - box.maxY) * window.height,
+               width: box.width * window.width, height: box.height * window.height)
+    }
+
+    /// `box` carried along with its window from `was` to `now`; nil when the window changed size, since the box no longer
+    /// means anything.
+    static func moved(_ box: CGRect, from was: CGRect, to now: CGRect) -> CGRect? {
+        guard abs(was.width - now.width) <= 2, abs(was.height - now.height) <= 2 else { return nil }
+        return box.offsetBy(dx: now.minX - was.minX, dy: now.minY - was.minY)
     }
 }
 

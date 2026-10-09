@@ -2,7 +2,8 @@ import Foundation
 
 /// Asks TypeSafe's Jev which element of the focused window a spoken request means (ADR 0019): a `target` choice and a `present`
 /// yes/no over the same list, as the screen-pointing eval measured them (agent-lab 20fb286, arm C, format F3). Under the
-/// TypeSafe gate only; Gemma never points. Goes: the request, the window's title and the element descriptions. Nothing else.
+/// TypeSafe gate only; Gemma never points. Goes: the request, the window's title and the element descriptions. Nothing else. The
+/// same call picks among recognised lines of text when the tree has nothing (ADR 0021), each described as "text on screen".
 struct ScreenPicker {
     let apiKey: String
     var model = SpokenRouter.pinnedModel

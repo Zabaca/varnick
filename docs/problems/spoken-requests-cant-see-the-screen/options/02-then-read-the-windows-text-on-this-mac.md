@@ -2,7 +2,7 @@
 problem: spoken-requests-cant-see-the-screen
 title: Option 01, then Apple's text recognition on a screenshot of the window, on this Mac, when the tree has nothing that fits
 summary: Option 01 as it stands, plus one fallback. When option 01's Jev call finds the thing isn't among the window's elements, or Chrome hides its page, Launchy captures the focused window alone into memory and runs Apple's on-device text recognition on it. The short lines of text it finds, with their boxes, become a second list for the same Jev call. This reaches Chrome pages, canvas apps and remote desktops without any model looking at an image, and the screenshot never leaves the Mac or reaches the disk. The recognised lines can go to TypeSafe under option 01's gate, and that is more of the window's text than option 01 sends. It needs Screen Recording as well as Accessibility.
-status: accepted
+status: shipped
 ---
 
 ## Solution
