@@ -42,7 +42,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// left (so it can still be resumed), and the id of the one it's on now.
     var onConversationChange: (_ left: SessionRecord, _ now: String) -> Void = { _, _ in }
     /// The SwiftUI host currently showing `view`. Only it may (re)claim the view.
-    weak var container: NSView?
+    weak var container: HostContainer?
     private let onExit: (Int32?) -> Void
     private var exitWatch: Timer?
     private var finished = false
@@ -294,6 +294,17 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         watchExit()
     }
 
+    /// Starts a client in the terminal at the container's size, fitted first: no client runs yet, so the
+    /// change costs nothing, and the content may still be at its old size (`HostContainer`).
+    private func launchProcess(executable: String, args: [String], environment: [String], currentDirectory: String) {
+        container?.fitNow()
+        if Self.logsResize {
+            let terminal = view.getTerminal()
+            Self.logResize("\(id) start \(terminal.cols)x\(terminal.rows) cells, view \(view.frame.size)")
+        }
+        view.startProcess(executable: executable, args: args, environment: environment, currentDirectory: currentDirectory)
+    }
+
     /// SwiftTerm's exit notification doesn't always arrive (the child was left as a
     /// zombie and the pane stuck after /exit), so also poll the pid ourselves.
     private func watchExit() {
@@ -332,8 +343,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             environment += Zmx.paneEnvironment
             inZmx = true
         }
-        view.startProcess(executable: executable, args: args, environment: environment,
-                          currentDirectory: directory ?? record.directory)
+        launchProcess(executable: executable, args: args, environment: environment,
+                      currentDirectory: directory ?? record.directory)
     }
 
     // The entry ($1) and the log path ($2) are arguments, outside the script. Output is teed to the
@@ -410,8 +421,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Follows today's transcript as it is written; a restored pane follows the day it starts on.
     private func startTranscript() {
         let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
-        view.startProcess(executable: "/usr/bin/tail", args: ["-n", "200", "-F", Transcript.today().path],
-                          environment: env, currentDirectory: Transcript.directory.path)
+        launchProcess(executable: "/usr/bin/tail", args: ["-n", "200", "-F", Transcript.today().path],
+                      environment: env, currentDirectory: Transcript.directory.path)
     }
 
     private func startClaude() {
@@ -647,8 +658,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             // it may not exist here.
             let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true) + SSHRunner.paneEnvironment
             attachedAt = Date()
-            view.startProcess(executable: command.executable, args: command.arguments, environment: env,
-                              currentDirectory: NSHomeDirectory())
+            launchProcess(executable: command.executable, args: command.arguments, environment: env,
+                          currentDirectory: NSHomeDirectory())
             checkControlAfterAttach()
         }
     }
@@ -1005,7 +1016,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         Task { [weak self] in
             for _ in 0..<20 {
                 guard let self, !self.finished, !self.endedByUser, !self.clientEnded else { return }
-                if self.view.window != nil, self.view.bounds.width > 100, self.view.bounds.height > 100 { break }
+                if let host = self.container, host.window != nil, host.bounds.width > 100, host.bounds.height > 100 { break }
                 try? await Task.sleep(for: .milliseconds(50))
             }
             guard let self, !self.finished, !self.endedByUser, !self.clientEnded else { return }
@@ -1526,7 +1537,14 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         Task { @MainActor in self.finish(exitCode) }
     }
-    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    /// `LAUNCHY_LOG_RESIZE=1` logs the size a client starts with and each change after, which is every size its pty gets.
+    private nonisolated static let logsResize = ProcessInfo.processInfo.environment["LAUNCHY_LOG_RESIZE"] == "1"
+    private nonisolated static func logResize(_ line: String) { NSLog("Launchy: [resize] \(line)") }
+    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        guard Self.logsResize else { return }
+        let points = Thread.isMainThread ? MainActor.assumeIsolated { source.frame.size } : .zero
+        Self.logResize("\(id) \(newCols)x\(newRows) cells, view \(points)")
+    }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         Task { @MainActor in
             let before = self.label
@@ -1575,13 +1593,15 @@ struct TerminalHost: NSViewRepresentable {
     }
 }
 
-/// What `TerminalHost` shows: holds the session's content while it is the session's claimant.
+/// What `TerminalHost` shows: holds the session's content while it is the session's claimant, and sizes it a turn late (where-it-breaks, Sessions and tabs).
 final class HostContainer: NSView {
     weak var session: ClaudeSession?
+    private var fitQueued = false
 
     init(session: ClaudeSession) {
         self.session = session
         super.init(frame: .zero)
+        clipsToBounds = true       // the content may sit at its old size for a turn
     }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }
@@ -1595,15 +1615,45 @@ final class HostContainer: NSView {
         let view = session.content
         guard view.superview !== self else { return }
         view.removeFromSuperview()
-        view.frame = bounds
-        view.autoresizingMask = [.width, .height]
+        view.autoresizingMask = []
+        if hasSize { view.frame = bounds }
         addSubview(view)
+    }
+
+    private var hasSize: Bool { bounds.width > 0 && bounds.height > 0 }
+
+    func fitNow() {
+        guard window != nil, hasSize, let view = session?.content, view.superview === self, view.frame != bounds else { return }
+        view.frame = bounds
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // A window drag fits at once so it doesn't lag.
+        if inLiveResize { return fitNow() }
+        queueFit()
+    }
+
+    /// One queued fit serves every size change before it runs, and reads the size it runs with.
+    private func queueFit() {
+        guard !fitQueued else { return }
+        fitQueued = true
+        DispatchQueue.main.async { [weak self] in
+            self?.fitQueued = false
+            self?.fitNow()
+        }
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        fitNow()
     }
 
     /// SwiftUI can build a second host for the same pane while the first is on screen, then
     /// discard it, leaving the claim with a container that never gets a window.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window != nil { queueFit() }      // a fit queued while out of a window did nothing
         guard window != nil, let session, session.container !== self, session.container?.window == nil else { return }
         session.container = self
         adopt()
