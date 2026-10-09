@@ -48,37 +48,42 @@ public enum PaneFolder {
 
     static let stopFileName = ".launchy-stop"
 
-    /// The conversations the pane has been on after its first, one id a line in the order it reached them, which
-    /// `corrected` appends to as it sees the session file move. The hook's file holds only the latest, and Claude
-    /// Code's transcripts don't name the one before.
+    /// The conversations the pane has been on, one id a line in the order it reached them, which `recordConversation`
+    /// appends to. The hook's file holds only the latest, and Claude Code's transcripts don't name the one before.
     static func conversationsFile(for id: UUID) -> URL {
         url(for: id).appendingPathComponent(conversationsFileName)
     }
 
     static let conversationsFileName = ".launchy-conversations"
 
-    /// The transcripts of the conversations the pane left, oldest first, beside `transcriptPath`'s (a project's
-    /// transcripts share a folder): the pane id's own, which is always its first conversation, then those
-    /// recorded. A teammate outlives its lead's conversation across /clear, a continuation and /resume, so the
-    /// teammate ledger reads these too (`TranscriptReader.busyTeammates`). Records `transcriptPath`'s conversation
-    /// when it is new.
+    /// Appends the conversation of `transcriptPath` to the pane's list when it isn't the last one. `corrected` calls it
+    /// only for a waiting turn, so a conversation that never had a waiting read is missing from the list.
+    static func recordConversation(for id: UUID, transcriptPath: String) {
+        let current = URL(fileURLWithPath: transcriptPath).deletingPathExtension().lastPathComponent
+        // With nothing in the file the pane is on the conversation its id names.
+        guard !current.isEmpty, (recordedConversations(for: id).last ?? id.uuidString.lowercased()) != current else { return }
+        let file = conversationsFile(for: id)
+        let line = Data((current + "\n").utf8)
+        if let handle = try? FileHandle(forWritingTo: file) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
+            try? handle.close()
+        } else {
+            try? line.write(to: file)
+        }
+    }
+
+    private static func recordedConversations(for id: UUID) -> [String] {
+        ((try? String(contentsOf: conversationsFile(for: id), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    /// The transcripts of the conversations the pane left, oldest first, in `transcriptPath`'s folder (a project's
+    /// transcripts share one): the pane id's own, which has none for a pane started by resuming, and those recorded.
+    /// A path with no file is skipped by the reader. The teammate ledger reads these (`TranscriptReader.busyTeammates`).
     static func earlierTranscripts(for id: UUID, transcriptPath: String) -> [String] {
         let current = URL(fileURLWithPath: transcriptPath).deletingPathExtension().lastPathComponent
-        let file = conversationsFile(for: id)
-        let lines = ((try? String(contentsOf: file, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
-        // The first conversation is the one the pane id names; a file with nothing in it means the pane is still on it.
-        if (lines.last ?? id.uuidString.lowercased()) != current, !current.isEmpty {
-            let line = Data((current + "\n").utf8)
-            if let handle = try? FileHandle(forWritingTo: file) {
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: line)
-                try? handle.close()
-            } else {
-                try? line.write(to: file)
-            }
-        }
         var earlier = [String]()
-        for conversation in [id.uuidString.lowercased()] + lines where conversation != current && !earlier.contains(conversation) {
+        for conversation in [id.uuidString.lowercased()] + recordedConversations(for: id) where conversation != current && !earlier.contains(conversation) {
             earlier.append(conversation)
         }
         let folder = URL(fileURLWithPath: transcriptPath).deletingLastPathComponent()
@@ -107,7 +112,8 @@ public enum PaneFolder {
     }
 
     /// Waiting from when the transcript says the user stopped Claude (no hook fires then), and `.background` when
-    /// a waiting turn left agents, teammates, workflows or shells running. The file is never rewritten.
+    /// a waiting turn left agents, teammates, workflows or shells running. The turn file is never rewritten; a waiting turn does add the conversation to the pane's list
+    /// (`recordConversation`).
     public static func corrected(_ recorded: PaneTurn, for id: UUID, transcriptPath: String?) -> PaneTurn {
         var result = recorded
         guard let transcriptPath else { return result }
@@ -117,6 +123,7 @@ public enum PaneFolder {
         }
         if result.turn == .waiting {
             let input = stopInput(for: id, since: result.since, transcriptPath: transcriptPath)
+            recordConversation(for: id, transcriptPath: transcriptPath)
             let earlier = earlierTranscripts(for: id, transcriptPath: transcriptPath)
             let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input, earlier: earlier)
             if !work.isEmpty { result = PaneTurn(.background, since: result.since, background: work) }
