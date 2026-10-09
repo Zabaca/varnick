@@ -2,7 +2,7 @@
 problem: runs-only-from-a-checkout
 title: Sign every build with Developer ID and the hardened runtime, still run from the checkout
 summary: The build signs Launchy and zmx with the user's Developer ID Application identity whenever the keychain has one, with the hardened runtime and an entitlements file that asks only for audio input. Without an identity it signs ad hoc, as today. There is no app bundle, no notarization and no download. Permission grants and Keychain access then follow the team and the bundle id rather than one build's hash, so they should survive rebuilds and ADR 0013 upgrades. Rough effort is a day, most of it checking permissions by hand.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -69,6 +69,10 @@ There is no test target. After `make build` on a Mac with the identity:
 - A peer's hello reaches this Mac's relay, which runs from the snapshot.
 - On a second Mac with the identity, an Upgrade from Settings › Peers builds without a prompt.
 - On a Mac without the identity: `make build` signs ad hoc and everything works as before.
+- (Amended 2026-10-09.) Since this option was written, Launchy also asks for Accessibility (ADR 0019) and Screen Recording (ADR 0021).
+  - After the first signed build, grant both once.
+  - After the next `make build` and restart, Point at the screen still points, and still reads a Chrome page's text, with no prompt.
+  - Neither needs an entitlement.
 
 ## Out of Scope
 
@@ -79,5 +83,9 @@ There is no test target. After `make build` on a Mac with the identity:
 
 ## Further Notes
 
+- **Accepted by the user on 2026-10-09,** relayed by the coordinator.
+- **The identity now exists on this Mac:** a Developer ID Application certificate issued under Apple's Developer ID G2 intermediate, valid to 2031-09-16. Its private key is backed up as "Setting up a Mac" says. The team ID stays out of the repository.
+- **ADR:** [0022](../../../adr/0022-builds-are-signed-with-developer-id-so-macos-knows-launchy-by-team-and-bundle-id.md).
+- **Grants that survive rebuilds reach every pane.** Every pane process is attributed to Launchy (`panes-share-launchys-permissions`). So Accessibility and Screen Recording, once granted, stay with every pane session across rebuilds; until now a rebuild at least stopped them applying. ADR 0022 records it.
 - This option is the first step of options 02 to 04, which sign the dev build the same way, so it can be built first on its own.
 - Grants following the team and bundle id is how macOS treats Developer ID signatures in general. That it holds for each of Launchy's grants is what the checks above confirm.
