@@ -1353,14 +1353,12 @@ final class LauncherModel: ObservableObject {
         loadProjectsForRows()
     }
 
-    /// Reopens an ended session in a new tab, which takes the name ⌘⇧R last gave the conversation, so Recent, the board's cards and search
-    /// all bring it back. One on a paired Mac is resumed there (`resumeOnPeer`).
+    /// Reopens an ended session in a new tab. One on a paired Mac is resumed there (`resumeOnPeer`).
     func resume(_ record: SessionRecord) {
         claudeError = nil
         if let host = record.host { return resumeOnPeer(conversation: record.conversationID, on: host, folder: record.directory,
                                                        title: record.title, agent: record.agent) }
         recent.removeAll { $0.id == record.id }
-        // The ⌘⇧R name belongs to the conversation: the sync kept it in the database when the old tab went (`HistorySync.syncNames`).
         addTab(PaneNode(session: makeSession(record, resuming: true, query: "")), name: store.tabName(ofSession: record.conversationID))
     }
 
@@ -1454,6 +1452,10 @@ final class LauncherModel: ObservableObject {
             let trimmed = name.trimmingCharacters(in: .whitespaces)
             tab.name = trimmed.isEmpty ? nil : trimmed
             saveSessions()
+            // At once, not at the next sync: a tab closed before then would lose the name.
+            if tab.sessions.count == 1, let only = tab.sessions.first, only.isClaude, !only.isOnPeer {
+                HistorySync.keepName(tab.name, ofSession: only.record.conversationID, databasePath: store.path)
+            }
         }
         if activeTab === tab { tab.focus(tab.focused) }
     }
@@ -2148,7 +2150,7 @@ final class LauncherModel: ObservableObject {
         recent.removeAll { $0.conversationID == conversation }
         let session = makeSession(record, resuming: true, query: "")
         session.startedFor = peer
-        tabs.append(makeTab(PaneNode(session: session)))
+        tabs.append(makeTab(PaneNode(session: session), name: store.tabName(ofSession: conversation)))
         saveSessions()
         session.start()
         return await replyOnceRunning(session, in: folder)

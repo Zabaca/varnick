@@ -324,15 +324,10 @@ final class FavoritesStore {
         return agent.isEmpty ? nil : agent
     }
 
-    /// The name ⌘⇧R gave a conversation (lowercased in `session_names`), which outlives its tab. nil when it has none.
+    /// The name ⌘⇧R gave a conversation, which outlives its tab (`session_names`, keyed by the lowercased id).
     func tabName(ofSession id: String) -> String? {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT name FROM session_names WHERE session_id = ?", -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.lowercased(), -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        let name = Self.text(stmt, 0)
-        return name.isEmpty ? nil : name
+        rows("SELECT name FROM session_names WHERE session_id = ?", [id.lowercased()], limit: nil) { Self.text($0, 0) }
+            .first { !$0.isEmpty }
     }
 
     /// The `--agent` a session was started with, from the transcript copy the search row was built
