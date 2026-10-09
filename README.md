@@ -206,13 +206,15 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   TypeSafe and a key), a request that is about the screen also sends TypeSafe the title of the window in
   front and, for each of its first 255 elements, the label, kind and nearby text. That is the window's
   visible text, not only that near its controls: a message list's subjects and senders, an open mail's body in
-  Mail, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. What is typed in a
-  field is never read. None of this goes to a model server. If the elements don't have the thing, and Screen
-  Recording is granted, a picture of the window alone is also read on this Mac, and its short lines of text
-  (at most 6 words and 60 characters each, at most 150) go too, so more of the window's text leaves: every
-  short line, such as a message list's subjects and senders or a chat's names. Lines inside a text field
-  are dropped, but in a Chrome page the fields can't be seen, so something typed there may go. The
-  picture, the lines' positions and longer lines never leave the Mac.
+  Mail, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. The elements never
+  hold what is typed in a field. None of this goes to a model server. If the elements don't have the thing,
+  and Screen Recording is granted, a picture of the window alone is also read on this Mac, and its short
+  lines of text (at most 6 words and 60 characters each, at most 150) go too, so more of the window's text
+  leaves: every short line, such as a message list's subjects and senders or a chat's names. Lines inside a
+  native text field the elements find, and inside the field with focus, are dropped. But a field Launchy
+  can't place is not: a Chrome page's, a canvas app's, a remote desktop's or a virtual machine's, one past
+  the limits of the read, or one that moved before the picture was taken. So typed text of 6 words or
+  fewer there may reach TypeSafe. The picture, the lines' positions and longer lines never leave the Mac.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere

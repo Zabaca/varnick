@@ -150,14 +150,17 @@ and without it that step is skipped.
   words you said, the title of the window in front and, for up to its first 255 elements, the label, kind,
   nearby text and whether it is dimmed. Those are the window's visible text, not only that near its controls:
   a message list's subjects and senders, an open mail's body in Mail, a page's text in Safari, a file's name
-  in a tab, an account's name in a sidebar. What is typed in a field is never read, and a password field is
-  not read at all. None of it goes to a model server. When the elements don't have the thing, and Screen
-  Recording is granted, a picture of the window alone is taken into memory, read for text on this Mac and
-  dropped: it is never written to disk, logged or sent. The text it finds does go, but only lines of at
-  most 6 words and 60 characters, at most 150, with no positions, which is every short line in the window
-  (a message list's subjects and senders, a chat's names). Lines inside a text field or a password field
-  are dropped, but a Chrome page's fields are not in the elements, so text typed there may go. See the
-  README's Privacy section.
+  in a tab, an account's name in a sidebar. The elements never hold what is typed in a field, and a password
+  field is not read at all. None of it goes to a model server. When the elements don't have the thing, and
+  Screen Recording is granted, a picture of the window alone is taken into memory, read for text on this
+  Mac and dropped: it is never written to disk, logged or sent. The text it finds does go, but only lines
+  of at most 6 words and 60 characters, at most 150, with no positions, which is every short line in the
+  window (a message list's subjects and senders, a chat's names). Lines inside a native text or password
+  field the elements find, and inside the field with focus, are dropped. **A field Launchy can't place is
+  not, so typed text of 6 words or fewer there may reach TypeSafe:** a Chrome page's field, one in a canvas
+  app, a remote desktop or a virtual machine, one past the limits of the read, or one that moved before the
+  picture was taken. Do not use this with a password or other secret typed in such a field. See the README's
+  Privacy section and ADR 0021.
 - **The arrow** is drawn by Launchy, cannot take focus or clicks, and goes by itself.
 
 ## Other things Launchy fetches and runs
