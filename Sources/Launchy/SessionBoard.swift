@@ -628,7 +628,7 @@ private struct BoardColumn: View {
                                           done: { board.done(card.id) }, keep: board.keep)
                                 .id(card.id)
                                 .onTapGesture(count: 2) { board.selection = card.id; board.open(card.id) }
-                                .onTapGesture { board.selection = card.id }
+                                .simultaneousGesture(TapGesture().onEnded { board.selection = card.id })
                                 .draggableToCompleted(card)
                         }
                     }

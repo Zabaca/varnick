@@ -450,7 +450,7 @@ struct ResultList: View {
                         ResultRow(result: r, isSelected: i == selection, demoted: isDemoted(i), scoredBy: rerankedBy,
                                   isOpen: r.isSession && openConversations.contains(r.sessionID))
                             .onTapGesture(count: 2) { onOpen(i) }
-                            .onTapGesture { onSelect(i) }
+                            .simultaneousGesture(TapGesture().onEnded { onSelect(i) })
                     }
                 }
                 .padding(8)
