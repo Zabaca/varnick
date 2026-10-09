@@ -1591,7 +1591,6 @@ final class LauncherModel: ObservableObject {
             self.sessionExited(ended, code: code, query: prompt)
         }
         session.onLabelChange = { [weak self] in self?.saveSessions() }
-        session.textGeneration = textGeneration
         // Closed on this Mac, but the host released the session and it runs on: not an ended session, and no ended card.
         session.onReleased = { [weak self] record in
             guard let self else { return }
@@ -1708,6 +1707,8 @@ final class LauncherModel: ObservableObject {
         let tab = tabs[index]
         // Keep it resumable unless it never got a message (shells can't be resumed).
         var record = session.snapshot
+        // The name ⌘⇧R gave a one-pane tab is the card's, as on the running card (`SessionBoard.card(for:in:_:)`).
+        if record.isClaude, tab.sessions.count == 1, let name = tab.name { record.title = name }
         // Its links stay with the saved record, so its card keeps its chips (ADR 0020); the log is read here, once, as the pane closes.
         if record.isClaude, !session.isOnPeer {
             let links = PaneFolder.work(for: record.id).history

@@ -585,7 +585,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--search"), i + 1 < CommandLine
     }
 }
 
-/// `--generate` and `--title` read a file of text, print what `run` returns and exit, following Text generation's choice.
+/// `--generate` reads a file of text, print what `run` returns and exit, following Text generation's choice.
 /// Nothing is downloaded, and a server is asked straight away with no Check.
 func runTextCommand(_ flag: String, serverTimeout: TimeInterval = 10,
                     _ run: @escaping @MainActor (String, any TextGenerating, String) async throws -> String) {
@@ -636,15 +636,6 @@ runTextCommand("--generate", serverTimeout: 60) { text, generator, place in
     var reply = ""
     let generation = try await clock.measure { reply = try await generator.generate(text, maxTokens: 512) }
     return "\(reply)\nmade on \(place): \(times)generation \(generation)"
-}
-
-// `Launchy --title <file>` treats the file's text as a conversation's first prompt and prints the title Session titles would
-// give it, where it was made and the time taken: the app's own cut, request and clean-up (see SessionTitles). Prompt files are
-// personal: keep them out of the repo.
-runTextCommand("--title") { text, generator, place in
-    var title: String?
-    let time = try await ContinuousClock().measure { title = try await SessionTitles.title(forPrompt: text, using: generator) }
-    return "\(title ?? "(no title)")  [made on \(place), \(time)]"
 }
 
 // `Launchy --ask <file>` treats the file's text as a spoken request (what follows "Hey Launchy") and prints what each of its three

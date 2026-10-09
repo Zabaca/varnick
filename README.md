@@ -137,7 +137,7 @@ These download from Hugging Face when you ask (Settings), and run on this Mac wi
 | Model | Used for | Download |
 |---|---|---|
 | Qwen3-Embedding-0.6B (8-bit) | Search by meaning | about 650 MB |
-| Gemma 4 E2B (4-bit) | Titles for sessions | about 3.6 GB |
+| Gemma 4 E2B (4-bit) | Hey Launchy's answers | about 3.6 GB |
 
 Their licences are in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
@@ -189,7 +189,7 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere
   else: the searches you type, the prompts typed in the panel, the text of every page and session it
-  embeds, which for a session includes Claude's last reply to each prompt (the paired Macs' sessions included), and each conversation's first prompt for a title. With
+  embeds, which for a session includes Claude's last reply to each prompt (the paired Macs' sessions included). With
   Hey Launchy on, the words you say after "Hey Launchy" and the request's search words go to the
   embedding server, and the request and the titles, sites, folders and descriptions of the results it reads out
   go to the Text generation server; words said before you finished may be sent and then discarded. A key

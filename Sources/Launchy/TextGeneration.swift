@@ -16,20 +16,6 @@ struct TextGeneration {
     let local: TextGenerator
     let server: ModelServerState
 
-    /// Titles are background work (`ModelServerState.place`): nil makes them wait, and asks a server that isn't passing
-    /// for a Check, at most once a minute while it isn't answering.
-    func writer() -> (any TextGenerating)? {
-        let active = Settings.shared.activeTextGeneration
-        let place = server.place(active.runOn, hasAddress: !active.address.isEmpty, thisMacReady: local.isReady, interactive: false)
-        switch place {
-        case .thisMac?: return local
-        case .server?: return ServerGenerator(address: active.address, model: active.model)
-        default:
-            if active.runOn == .server { server.checkIfDue() }
-            return nil
-        }
-    }
-
     /// One reply for work the user waits on (a spoken request), by the interactive rule of `ModelServerState.place`: a server not
     /// known to have failed, otherwise this Mac's installed model. A server is checked first on its first use in a launch, and
     /// one that fails the Check or the request rests, and the request runs again on this Mac's model. Throws

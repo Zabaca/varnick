@@ -77,12 +77,19 @@ enum HistorySync {
           size         INTEGER NOT NULL,
           session_id   TEXT NOT NULL DEFAULT '',
           directory    TEXT NOT NULL DEFAULT '',   -- the session's folder; empty when it isn't a session
-          title        TEXT NOT NULL DEFAULT '',
+          title        TEXT NOT NULL DEFAULT '',   -- Claude's latest title (`ai-title`)
           agent        TEXT NOT NULL DEFAULT '',
           prompts      TEXT NOT NULL DEFAULT '',   -- record-separator-joined, oldest first
           first_prompt INTEGER NOT NULL DEFAULT 0, -- unix seconds
           last_prompt  INTEGER NOT NULL DEFAULT 0,
-          replies      TEXT                        -- joined as prompts are, one per prompt; NULL: written by a build that kept none
+          replies      TEXT,                       -- joined as prompts are, one per prompt; NULL: written by a build that kept none
+          custom_title TEXT                        -- the last /rename name, '' if none; NULL: written by a build that kept none
+        );
+        -- The name ⌘⇧R gave a conversation's one-pane tab (`SessionNames`), read from the saved sessions at each sync and kept after the
+        -- tab goes. It outranks the transcript's names as the session's title in `sessionEntries`.
+        CREATE TABLE IF NOT EXISTS session_names (
+          session_id TEXT PRIMARY KEY,             -- lowercased, as in sessions
+          name       TEXT NOT NULL
         );
         -- Claude sessions of the paired Macs, as each one's history sync read them and sent them over
         -- (`PeerOp.rows`), so the sync that mirrors this Mac's own transcripts never deletes them.
@@ -221,6 +228,8 @@ enum HistorySync {
         for table in ["sessions", "peer_sessions"] {
             try addColumn("replies TEXT", to: table, in: db)
         }
+        // Likewise NULL custom titles: the next sync reads those transcripts again, for a /rename.
+        try addColumn("custom_title TEXT", to: "sessions", in: db)
     }
 
     /// `definition` is the column's name and then its type, as in CREATE TABLE.
@@ -282,6 +291,7 @@ enum HistorySync {
                 try migrate(archive)
                 try upsertProfiles(into: archive)
                 try syncSessions(into: archive)
+                try syncNames(into: archive)
                 return try toFetch(archive)
             }.value
 
@@ -457,7 +467,9 @@ enum HistorySync {
             return
         }
         var known: [String: (modified: Int64, size: Int64, lacksReplies: Bool)] = [:]
-        for row in try archive.rows("SELECT path, modified, size, replies IS NULL AND directory != '' FROM sessions") {
+        for row in try archive.rows("""
+            SELECT path, modified, size, (replies IS NULL OR custom_title IS NULL) AND directory != '' FROM sessions
+            """) {
             known[row[0] as! String] = (row[1] as? Int64 ?? 0, row[2] as? Int64 ?? 0, row[3] as? Int64 == 1)
         }
         var seen: Set<String> = [], unlisted: Set<String> = []
@@ -484,10 +496,10 @@ enum HistorySync {
                 let s = c.session
                 try archive.run("""
                     INSERT OR REPLACE INTO sessions (path, modified, size, session_id, directory, title, agent, prompts,
-                                                     first_prompt, last_prompt, replies) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                     first_prompt, last_prompt, replies, custom_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, [c.path, c.modified, c.size, c.id, s?.directory ?? "", s?.title ?? "", s?.agent ?? "",
                           s?.prompts.joined(separator: recordSeparator) ?? "", s?.firstPrompt ?? 0, s?.lastPrompt ?? 0,
-                          s?.replies.joined(separator: recordSeparator) ?? ""])
+                          s?.replies.joined(separator: recordSeparator) ?? "", s?.customTitle ?? ""])
             }
             for path in known.keys where !seen.contains(path) && !unlisted.contains(String(path.prefix { $0 != "/" })) {
                 try archive.run("DELETE FROM sessions WHERE path = ?", [path])
@@ -496,11 +508,47 @@ enum HistorySync {
         }
     }
 
-    /// Ends a pass of `syncSessions` with no session row lacking replies: every row the pass could reach was read again, so
-    /// those still NULL (an unreadable transcript, a folder that couldn't be listed) are given none and stop blocking `rows`
-    /// (`peerRows`). They are read again when the transcript changes.
+    /// Ends a pass of `syncSessions` with no session row lacking replies or a /rename name: every row the pass could reach was
+    /// read again, so those still NULL (an unreadable transcript, a folder that couldn't be listed) are given none and stop
+    /// blocking `rows` (`peerRows`). They are read again when the transcript changes.
     private static func settleReplies(_ archive: Database) throws {
-        try archive.exec("UPDATE sessions SET replies = '' WHERE replies IS NULL AND directory != ''")
+        try archive.exec("""
+            UPDATE sessions SET replies = coalesce(replies, ''), custom_title = coalesce(custom_title, '')
+            WHERE (replies IS NULL OR custom_title IS NULL) AND directory != ''
+            """)
+    }
+
+    /// Keeps the name ⌘⇧R gave each conversation's one-pane tab (`SessionNames`): writes the name of every conversation a tab names,
+    /// deletes that of every conversation a tab holds with none now, and keeps the rest, so a name outlives its tab. A
+    /// saved-sessions file that doesn't decode means the names are unknown: nothing is written or deleted. Names are bound as
+    /// parameters and never logged.
+    private static func syncNames(into archive: Database) throws {
+        guard let state = SessionStore().load() else { return }
+        let names = SessionNames.read(state)
+        try archive.transaction {
+            for (id, name) in names.named {
+                try archive.run("""
+                    INSERT INTO session_names (session_id, name) VALUES (?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET name = excluded.name WHERE name != excluded.name
+                    """, [id, name])
+            }
+            for id in names.unnamed { try archive.run("DELETE FROM session_names WHERE session_id = ?", [id]) }
+            try archive.exec("DELETE FROM session_names WHERE session_id NOT IN (SELECT session_id FROM sessions)")
+        }
+    }
+
+    /// Conversation → the name ⌘⇧R gave it. The table is missing from a database no Launchy of this build has prepared, which the
+    /// read-only relay can open beside an older Launchy that hasn't restarted: no names are known then.
+    private static func tabNames(_ archive: Database) throws -> [String: String] {
+        guard try !archive.rows("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_names'").isEmpty else { return [:] }
+        return Dictionary(try archive.rows("SELECT session_id, name FROM session_names").compactMap { row in
+            (row[0] as? String).flatMap { id in (row[1] as? String).map { (id, $0) } }
+        }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Whether `sessions` has `custom_title`: a database an older Launchy made lacks it until that Launchy restarts.
+    private static func hasCustomTitles(_ archive: Database) throws -> Bool {
+        try !archive.rows("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'custom_title'").isEmpty
     }
 
     // MARK: Page descriptions
@@ -738,16 +786,19 @@ enum HistorySync {
     /// own Mac and are not checked here; a conversation this Mac has too keeps this Mac's row, and one
     /// two peers have keeps the newer.
     private static func sessionEntries(_ archive: Database, withPeers: Bool = true) throws -> [String: SessionEntry] {
+        let names = try tabNames(archive)
+        let customTitle = try hasCustomTitles(archive) ? "custom_title" : "NULL"
         var newest: [String: (modified: Int64, entry: SessionEntry)] = [:]
         for row in try archive.rows("""
-            SELECT modified, session_id, directory, title, agent, prompts, first_prompt, last_prompt, replies FROM sessions WHERE directory != ''
+            SELECT modified, session_id, directory, title, agent, prompts, first_prompt, last_prompt, replies, \(customTitle)
+            FROM sessions WHERE directory != ''
             """) {
             let modified = row[0] as? Int64 ?? 0, id = row[1] as! String, directory = row[2] as! String
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue,
                   (newest[id]?.modified ?? .min) < modified else { continue }
-            newest[id] = (modified, sessionEntry(id: id, directory: directory, title: row[3] as? String ?? "", agent: row[4] as? String ?? "",
-                                                 prompts: row[5] as? String ?? "", replies: row[8] as? String, first: row[6] as? Int64 ?? 0,
+            newest[id] = (modified, sessionEntry(id: id, directory: directory, title: ownTitle(tab: names[id], custom: row[9] as? String, claude: row[3] as? String),
+                                                 agent: row[4] as? String ?? "", prompts: row[5] as? String ?? "", replies: row[8] as? String, first: row[6] as? Int64 ?? 0,
                                                  last: row[7] as? Int64 ?? 0, modified: modified, host: nil))
         }
         var entries = Dictionary(uniqueKeysWithValues: newest.values.map { ($0.entry.key, $0.entry) })
@@ -763,6 +814,12 @@ enum HistorySync {
             entries[entry.key] = entry
         }
         return entries
+    }
+
+    /// A session's title on this Mac: the name ⌘⇧R gave it, else its /rename name, else Claude's latest title. The first prompt's
+    /// first line is the fallback when all are empty (`sessionEntry`).
+    private static func ownTitle(tab: String?, custom: String?, claude: String?) -> String {
+        [tab, custom, claude].lazy.compactMap { $0 }.first { !$0.isEmpty } ?? ""
     }
 
     private static func sessionEntry(id: String, directory: String, title: String, agent: String, prompts joined: String,
@@ -949,7 +1006,10 @@ enum HistorySync {
         // such row (`settleReplies`), so this lasts only until the first one after an upgrade, or after a build that kept none
         // wrote a row.
         let hasColumn = try archive.rows("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'replies'").isEmpty == false
-        guard hasColumn, try archive.rows("SELECT 1 FROM sessions WHERE replies IS NULL AND directory != '' LIMIT 1").isEmpty else {
+        // The same for /rename names, once the database has the column; one an older Launchy made (not restarted yet) has none, and
+        // answers with the titles it has.
+        let unread = try hasCustomTitles(archive) ? "replies IS NULL OR custom_title IS NULL" : "replies IS NULL"
+        guard hasColumn, try archive.rows("SELECT 1 FROM sessions WHERE (\(unread)) AND directory != '' LIMIT 1").isEmpty else {
             throw RepliesNotRead()
         }
         let own = try sessionEntries(archive, withPeers: false).values.sorted { $0.key < $1.key }

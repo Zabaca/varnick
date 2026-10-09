@@ -33,16 +33,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private(set) var startedAt = Date()
     /// Called when the label changes, so the model can save it.
     var onLabelChange: () -> Void = {}
-    /// Writes the titles of Settings › Claude › Session titles; set by the model, so a pane without one makes none.
-    var textGeneration: TextGeneration?
-    /// The transcript's date at the last look for the first prompt, and when that was: a look reads the whole file.
-    private var titleStamp: Date?
-    private var titleLookAt = Date.distantPast
-    private var titling = false
     /// The transcript's date at the last search of its tail for a /rename.
     private var renameStamp: Date?
-    private static let titleLookInterval: TimeInterval = 5
-    private var titlesSwitch: AnyCancellable?
     /// The pane was closed in control and its host released the session instead of ending it: it runs on,
     /// so it isn't an ended session for Recent. Called with the pane's record, after the pane is gone.
     var onReleased: (SessionRecord) -> Void = { _ in }
@@ -264,16 +256,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.caretColor = .systemBlue
         if record.isWeb { makeWebView() }
         if let file = record.file { fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize) }
-        // Published before the setting changes, so the label is read on the next turn of the run loop. Turning it
-        // on needs no push: the checks look for a first prompt on their own.
-        if record.isClaude {
-            titlesSwitch = Settings.shared.$sessionTitles.dropFirst().receive(on: RunLoop.main)
-                .sink { [weak self] _ in
-                    guard let self, self.record.currentTitleRecord?.title != nil else { return }
-                    self.objectWillChange.send()
-                    self.onLabelChange()
-                }
-        }
     }
 
     /// Launches claude (or the shell) the first time the session is shown.
@@ -313,7 +295,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                 self?.checkConversation()
                 self?.checkTurn()
                 if self?.askingDone == true, self?.asksBeforeDone == false { self?.askingDone = false }
-                self?.checkTitle()
                 self?.checkRename()
                 self?.checkExit()
                 self?.checkSessionStillRuns()
@@ -1050,7 +1031,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         left.agent = record.agent
         // Recent keeps the title the pane showed for it, and the record so it isn't titled again.
         left.titleRecord = record.currentTitleRecord
-        left.title = left.titleRecord?.shown(titlesOn: Settings.shared.sessionTitles) ?? left.transcriptTitle ?? ""
+        left.title = left.titleRecord?.name ?? left.transcriptTitle ?? ""
         record.titleRecord = nil
         record.conversation = conversation
         onConversationChange(left, record.conversationID)
@@ -1081,65 +1062,16 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         work = stamp == nil ? nil : PaneFolder.work(for: record.id)
     }
 
-    /// Session titles: titles the conversation once from its first prompt, or keeps a /rename name found there.
-    /// A look reads the whole file, so it waits for the transcript's date to change and for 5 s since the last.
-    private func checkTitle() {
-        guard Settings.shared.sessionTitles, started, !finished, !titling, isClaude, !isOnPeer, record.currentTitleRecord == nil,
-              textGeneration?.writer() != nil,
-              let path = currentTranscriptPath(),
-              URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent == record.conversationID,
-              let date = PaneFolder.modificationDate(path), date != titleStamp,
-              Date().timeIntervalSince(titleLookAt) >= Self.titleLookInterval else { return }
-        titleStamp = date
-        titleLookAt = Date()
-        titling = true
-        let conversation = record.conversationID
-        Task { [weak self] in
-            defer { self?.titling = false }
-            guard let found = await Task.detached(priority: .utility, operation: { SessionTitles.look(inTranscript: path) }).value,
-                  let prompt = found.prompt else { return }
-            var made = TitleRecord(conversation: conversation)
-            if let name = found.name {
-                // Named with /rename already (a resumed conversation): the name is kept and nothing is generated.
-                made.name = name
-            } else {
-                // Asked again: the choice may have changed during the look, and the prompt goes only where it is chosen now.
-                guard let generator = self?.textGeneration?.writer() else { return }
-                do {
-                    made.title = try await SessionTitles.title(forPrompt: prompt, using: generator)
-                    made.failed = made.title == nil ? true : nil
-                } catch {
-                    if let local = generator as? TextGenerator {
-                        // Not set up (any more) is no verdict on the conversation: it is asked again once it is.
-                        guard local.isReady else { return }
-                        NSLog("Launchy: session title failed: \(error.localizedDescription)")
-                        made.failed = true
-                    } else {
-                        // A server's failure is never the model's: no mark, and the pane looks again at its next transcript change.
-                        if let server = generator as? ServerGenerator { self?.textGeneration?.server.failed(error, for: server.target) }
-                        return
-                    }
-                }
-            }
-            // Dropped when the pane has ended (Recent holds its copy of the record) or moved to another conversation.
-            guard let self, !self.finished, self.record.conversationID == conversation,
-                  self.record.currentTitleRecord == nil else { return }
-            self.objectWillChange.send()
-            self.record.titleRecord = made
-            self.onLabelChange()
-        }
-    }
-
-    /// A name given with /rename outranks the title record's: searches the transcript's last 64 KB for it each
-    /// time the transcript's date changes, whatever the record holds (a name, a title or a failed mark).
+    /// A name given with /rename outranks Claude's own title: searches the transcript's last 64 KB for it each time the
+    /// transcript's date changes, and keeps it in the title record.
     private func checkRename() {
-        guard started, !finished, isClaude, !isOnPeer, let current = record.currentTitleRecord,
+        guard started, !finished, isClaude, !isOnPeer,
               let path = currentTranscriptPath(), let date = PaneFolder.modificationDate(path), date != renameStamp
         else { return }
         renameStamp = date
-        guard let name = TranscriptReader.customTitle(path: path), !name.isEmpty, name != current.name else { return }
+        guard let name = TranscriptReader.customTitle(path: path), !name.isEmpty, name != record.currentTitleRecord?.name else { return }
         objectWillChange.send()
-        record.titleRecord?.name = name
+        record.titleRecord = TitleRecord(conversation: record.conversationID, name: name)
         onLabelChange()
     }
 
@@ -1221,7 +1153,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         return inZmx || (!started && (isApp ? Zmx.isAvailable : (isClaude || isShell) && Zmx.isEnabled))
     }
 
-    /// Tab / row label: a /rename name or generated title, else Claude's own title, else the saved title, else the prompt.
+    /// Tab / row label: a /rename name, else Claude's own title, else the saved title, else the prompt.
     /// Shells: whatever title the shell sets (often the folder), else "Terminal".
     var label: String {
         if let file = record.file { return (file as NSString).lastPathComponent }
@@ -1236,7 +1168,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             let t = title.trimmingCharacters(in: .whitespaces)
             return t.isEmpty ? "Terminal" : t
         }
-        if let named = record.currentTitleRecord?.shown(titlesOn: Settings.shared.sessionTitles) { return named }
+        if let named = record.currentTitleRecord?.name { return named }
         // Drop the leading status glyph (spinner / ✳) Claude Code puts in the title.
         let t = title.drop { !$0.isLetter && !$0.isNumber }
         if !t.isEmpty { return String(t) }

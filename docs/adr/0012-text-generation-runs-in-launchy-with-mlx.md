@@ -18,3 +18,4 @@ A second spike compared Foundation Models (macOS 26) with Gemma 4 E2B on 31 real
 - A role can later offer a second choice, such as Foundation Models or a cloud provider for text generation, whose key is a row under Keys. The role's consumers don't change.
 - ADRs 0003 and 0006 stay as written.
 - Amended by ADR 0014: Text generation can also run on a server on the tailnet.
+- Amended 2026-10-09, at the user's request: Launchy no longer writes session titles (the Session titles setting, the title prompt and `Launchy --title` are removed). A session is named by its ⌘⇧R tab name, else its /rename name, else Claude's own title (problem `search-names-sessions-differently`, option 03). Text generation stays for Hey Launchy's answers (ADR 0015), so the model and its download are unchanged. The sections above describe the choice of Gemma over Foundation Models for titles, which no longer apply.
