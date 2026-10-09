@@ -15,7 +15,7 @@ The Session titles setting, the title prompt, the title record's generated-title
 
 ## Trade-offs
 
-- **Search follows the board within a minute** (the sync's interval), not at once.
+- **A ⌘⇧R name reaches search at once; a /rename or Claude title at the next sync**, which runs a minute after the last one ends.
 - **Generated titles are gone** from running cards. Saved ended, Recent and Completed cards keep the label they last showed, which may be a generated title, until they leave those lists.
 - **The ⌘⇧R name names a tab with one pane**, as it does on the board; a tab with several panes names none of them. It is kept in search after its tab closes, and removed when a tab with one pane holds that conversation with no name.
 - **A session with a ⌘⇧R name no longer searches by Claude's title**: its words match only where they appear in a prompt.
