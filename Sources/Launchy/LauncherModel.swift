@@ -1353,13 +1353,15 @@ final class LauncherModel: ObservableObject {
         loadProjectsForRows()
     }
 
-    /// Reopens an ended session in a new tab. One on a paired Mac is resumed there (`resumeOnPeer`).
+    /// Reopens an ended session in a new tab, which takes the name ⌘⇧R last gave the conversation, so Recent, the board's cards and search
+    /// all bring it back. One on a paired Mac is resumed there (`resumeOnPeer`).
     func resume(_ record: SessionRecord) {
         claudeError = nil
         if let host = record.host { return resumeOnPeer(conversation: record.conversationID, on: host, folder: record.directory,
                                                        title: record.title, agent: record.agent) }
         recent.removeAll { $0.id == record.id }
-        addTab(PaneNode(session: makeSession(record, resuming: true, query: "")))
+        // The ⌘⇧R name belongs to the conversation: the sync kept it in the database when the old tab went (`HistorySync.syncNames`).
+        addTab(PaneNode(session: makeSession(record, resuming: true, query: "")), name: store.tabName(ofSession: record.conversationID))
     }
 
     /// ↩ on an ended session of a paired Mac, from Recent or from search. If a pane here has the
@@ -1571,8 +1573,8 @@ final class LauncherModel: ObservableObject {
         SessionRecord(id: UUID(), prompt: prompt, title: "", directory: directory, startedAt: Date(), lastUsed: Date())
     }
 
-    private func addTab(_ root: PaneNode, focused: ClaudeSession? = nil, show: Bool = true) {
-        let tab = makeTab(root, focused: focused)
+    private func addTab(_ root: PaneNode, focused: ClaudeSession? = nil, name: String? = nil, show: Bool = true) {
+        let tab = makeTab(root, focused: focused, name: name)
         tabs.append(tab)
         if show { activate(tab) }
         saveSessions()
