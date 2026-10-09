@@ -20,6 +20,12 @@ enum ScreenReader {
         /// A Chrome web area with nothing in it: the page's content is out of reach.
         var chromeBlind = false
         var duration: Duration = .zero
+        /// The window and its frame, which text recognition (ADR 0021) finds its picture by and its boxes follow.
+        var window: AXReference?
+        var windowFrame: CGRect?
+        /// The frames of the text fields, text areas, combo boxes, search fields and secure fields the walk met: recognised lines
+        /// inside them are what a person typed and are dropped. Kept to drop lines locally, never sent.
+        var entryFrames: [CGRect] = []
     }
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
@@ -114,6 +120,8 @@ enum ScreenReader {
             return reading
         }
         reading.windowTitle = String(ScreenElements.cleaned(string(window, kAXTitleAttribute) ?? "").prefix(ScreenElements.maxLabel))
+        reading.window = AXReference(window)
+        reading.windowFrame = frame(of: window)
         var walk = Walk(deadline: deadline)
         walk.run(window: window)
         if clock.now < deadline { walk.markUnderPointer(app: app, pointer: pointer) }
@@ -124,6 +132,7 @@ enum ScreenReader {
             element.beside = ScreenElements.beside(element, among: texts)
             return element
         }
+        reading.entryFrames = walk.entryFrames
         reading.chromeBlind = walk.sawEmptyWebArea && bundle.lowercased().contains("chrom")
         reading.duration = began.duration(to: clock.now)
         return reading
@@ -132,6 +141,16 @@ enum ScreenReader {
     /// The element's frame now, or nil when it is gone. Read again just before the arrow is drawn.
     static func currentFrame(of reference: AXReference) -> CGRect? {
         frame(of: reference.element)
+    }
+
+    /// Where `target` is now, off the main actor: its element's frame, or for recognised text its box carried along with a window
+    /// that moved. Nil when the element is gone or the window changed size.
+    static func currentFrame(of target: ScreenTarget) async -> CGRect? {
+        await Task.detached { () -> CGRect? in
+            if let reference = target.reference { return frame(of: reference.element) }
+            guard let window = target.window, let was = target.windowFrame else { return target.frame }
+            return frame(of: window.element).flatMap { ScreenGeometry.moved(target.frame, from: was, to: $0) }
+        }.value
     }
 
     // MARK: The walk
@@ -162,6 +181,7 @@ enum ScreenReader {
         /// In tree order: depth first, a parent before its children.
         var elements: [ScreenElement] = []
         var sawEmptyWebArea = false
+        var entryFrames: [CGRect] = []
         var window = CGRect.infinite
 
         var outOfBudget: Bool { nodes >= ScreenReader.maxNodes || ContinuousClock.now >= deadline }
@@ -182,10 +202,11 @@ enum ScreenReader {
             let subrole = basics[1] as? String ?? ""
             let children = basics[3] as? [AXUIElement] ?? []
             if role == "AXWebArea", children.isEmpty { sawEmptyWebArea = true }
-            // Nothing of a secure field is read, not even whether it is there.
-            guard subrole != "AXSecureTextField" else { return [] }
             let entry = ScreenReader.isEntry(role: role, subrole: subrole)
             let frame = ScreenReader.frame(of: node.element)
+            if entry, let frame { entryFrames.append(frame) }
+            // Nothing of a secure field is read but where it is (text recognition drops what lies in it, ADR 0021).
+            guard subrole != "AXSecureTextField" else { return [] }
             if node.depth == 0 { window = frame ?? .infinite }
 
             let parts = ScreenReader.labelParts(node.element, readsValue: !entry && (stateRoles.contains(role) || textRoles.contains(role)))

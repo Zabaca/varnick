@@ -470,6 +470,8 @@ struct SettingsView: View {
     @State private var modelServerKeyDraft = ""
     /// Whether Launchy has Accessibility, checked while Settings shows it.
     @State private var accessibilityGranted = ScreenReader.isTrusted
+    /// Whether Launchy has Screen Recording, for the text read from a picture of the window.
+    @State private var screenRecordingGranted = ScreenText.hasAccess
     /// Last section viewed, so Settings reopens where you left it.
     @AppStorage("settingsSection") private var sectionID = SettingsSection.claude.rawValue
 
@@ -587,7 +589,7 @@ struct SettingsView: View {
                                 .disabled(!settings.heyLaunchy && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
                         }
                         SettingRow(title: "Point at the screen",
-                                   detail: "Ask \"Hey Launchy, where's the Allow button\" and Launchy draws a big arrow on it in the window in front, says what it is, and takes the arrow away a few seconds later. It reads that window's elements through macOS Accessibility, on this Mac, and takes no screenshot. It needs the relevance filter on TypeSafe with a key saved: what you say, the window's title, and each element's label, kind and nearby text go to TypeSafe to choose which one you mean. That is the window's visible text, up to 255 elements of it, such as a message list's subjects, an open mail's body or a page's text. What is typed in a field never goes. A rebuild of Launchy may need the Accessibility permission given again. The permission is Launchy's own: sessions kept running in zmx very likely don't get it, but a Claude or terminal pane started without Keep sessions running is Launchy's child and may, so a session started there with Skip permissions could read and drive any app's windows without asking.") {
+                                   detail: "Ask \"Hey Launchy, where's the Allow button\" and Launchy draws an arrow on it in the window in front, says what it is, and removes it later. It reads the window's elements through macOS Accessibility, on this Mac. If the thing isn't among them, or the page is Chrome's, and Screen Recording is granted, it reads a picture of the window with Apple's text recognition, on this Mac too; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key saved: what you say, the window's title and each element's label, kind and nearby text go to TypeSafe to choose one, plus, after a miss, the window's short lines of text. Typed text never goes, except in a Chrome page, whose fields can't be told apart. A rebuild may need both permissions again. They are Launchy's own: sessions kept running in zmx very likely don't get them, but a pane started without Keep sessions running may, so a session there with Skip permissions could read and drive any app without asking.") {
                             if !settings.heyLaunchy {
                                 Text("Needs Hey Launchy").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if !screenGateOpen {
@@ -601,11 +603,18 @@ struct SettingsView: View {
                             if !accessibilityGranted {
                                 Button("Grant…") { askForAccessibility() }
                             }
+                            Text(screenRecordingGranted ? "Screen Recording granted" : "Needs Screen Recording")
+                                .font(.system(size: 12))
+                                .foregroundStyle(screenRecordingGranted ? Color.secondary : Color.orange)
+                            if !screenRecordingGranted {
+                                Button("Grant…") { ScreenText.askForAccess() }
+                            }
                             Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.pointAtScreen && (!settings.heyLaunchy || !screenGateOpen))
                         }
                         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
                             accessibilityGranted = ScreenReader.isTrusted
+                            screenRecordingGranted = ScreenText.hasAccess
                         }
                         SettingRow(title: "Voice", detail: "What Launchy speaks in.") {
                             VoicePicker(settings: settings)
@@ -659,7 +668,7 @@ struct SettingsView: View {
                         switch settings.relevanceFilter {
                         case .typesafe:
                             SettingRow(title: "TypeSafe",
-                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe. A request to Hey Launchy sends the words you say after \"Hey Launchy\" to choose where to look, and then its search words with the top 20 pages the same way. With Point at the screen on, a request about the screen sends the window's title and its controls' names, kinds and nearby text instead.") {
+                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe. A request to Hey Launchy sends the words you say after \"Hey Launchy\" to choose where to look, and then its search words with the top 20 pages the same way. With Point at the screen on, a request about the screen sends the window's title and its controls' names, kinds and nearby text instead, and after a miss the window's short lines of text read from a picture of it.") {
                                 if settings.typesafeKeyInKeychain {
                                     Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
                                 } else if settings.typesafeKey != nil {

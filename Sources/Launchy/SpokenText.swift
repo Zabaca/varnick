@@ -394,6 +394,24 @@ enum SpokenPipeline {
         var chosenBy = "-"
         var pick: ScreenPicker.Pick?
         var miss: ScreenMiss?
+        /// Set once the text of a picture of the window was tried because the tree's step left the thing unfound (ADR 0021).
+        var text: TextLook?
+    }
+
+    /// What reading the window's text did: durations, counts and kinds. The lines and the picture are never logged.
+    struct TextLook {
+        /// Why no text was read: "no Screen Recording", "no window" or "capture failed (code)".
+        var skipped: String?
+        var capture: Duration = .zero
+        var recognise: Duration = .zero
+        /// Lines recognised, and the label-shaped ones outside text fields that went on as candidates.
+        var recognised = 0
+        var candidates = 0
+        var choose: Duration = .zero
+        /// "Jev", or "Jev failed: <kind>".
+        var chosenBy = "-"
+        var pick: ScreenPicker.Pick?
+        var ran: Bool { skipped == nil }
     }
 
     /// What a request may do with the screen: whether Point at the screen is on, and for `--ask --app` the app to read in place of
@@ -564,34 +582,100 @@ enum SpokenPipeline {
         }
         guard let app = screen.app ?? ScreenReader.focusedApplication() else { return missed(.nothingListed) }
 
-        let reading = await ScreenReader.read(app, pointer: ScreenReader.pointer())
+        let pointer = ScreenReader.pointer()
+        let reading = await ScreenReader.read(app, pointer: pointer)
         try Task.checkCancellation()
         look.read = reading.duration
         look.candidates = reading.elements.count
-        let blind: ScreenMiss = reading.chromeBlind ? .chrome : .notPresent
-        guard !reading.elements.isEmpty else { return missed(reading.chromeBlind ? .chrome : .nothingListed) }
 
-        let began = ContinuousClock.now
-        let pick: ScreenPicker.Pick
-        do {
-            pick = try await ScreenPicker(apiKey: key).pick(request, windowTitle: reading.windowTitle, elements: reading.elements)
-        } catch {
+        func pointed(at element: ScreenElement) -> Run {
+            // Recognised text has no element to read again: the window is, and the box follows it.
+            run.outcome = .point(ScreenTarget(reference: element.reference, frame: element.frame, note: ScreenElements.note(for: element),
+                                              description: element.description,
+                                              window: element.recognised ? reading.window : nil,
+                                              windowFrame: element.recognised ? reading.windowFrame : nil))
+            run.screen = look
+            return run
+        }
+
+        // The text of a picture of the window (ADR 0021): nil when it found nothing to point at. Needs Screen Recording; without it
+        // the tree's answer stands.
+        var textTried = false
+        var textFailed = false
+        func fromText() async throws -> Run? {
+            textTried = true
+            var text = TextLook()
+            look.text = text
+            guard ScreenText.hasAccess else {
+                look.text?.skipped = "no Screen Recording"
+                return nil
+            }
+            let recognition: ScreenText.Recognition
+            do {
+                recognition = try await ScreenText.recognise(pid: app.processIdentifier, near: reading.windowFrame)
+            } catch {
+                try Task.checkCancellation()
+                look.text?.skipped = (error as? ScreenText.Failure)?.logKind ?? error.logKind
+                return nil
+            }
+            try Task.checkCancellation()
+            text.capture = recognition.capture
+            text.recognise = recognition.recognise
+            text.recognised = recognition.lines.count
+            let lines = ScreenText.candidates(from: recognition.lines, in: recognition.window, avoiding: reading.entryFrames, pointer: pointer)
+            text.candidates = lines.count
+            look.text = text
+            guard !lines.isEmpty else { return nil }
+
+            let began = ContinuousClock.now
+            do {
+                let pick = try await ScreenPicker(apiKey: key).pick(request, windowTitle: reading.windowTitle, elements: lines)
+                try Task.checkCancellation()
+                text.choose = began.duration(to: .now)
+                text.chosenBy = "Jev"
+                text.pick = pick
+                look.text = text
+                return pick.isConfident ? pointed(at: lines[pick.index]) : nil
+            } catch {
+                try Task.checkCancellation()
+                text.choose = began.duration(to: .now)
+                text.chosenBy = "Jev failed: \(error.logKind)"
+                look.text = text
+                textFailed = true
+                return nil
+            }
+        }
+
+        // Chrome hides its page from the tree: its text is read at once, without a choice among the toolbar's elements first. They
+        // are still chosen from below when the text has nothing.
+        if reading.chromeBlind, let found = try await fromText() { return found }
+        if textFailed { return missed(.jevFailed) }
+
+        if !reading.elements.isEmpty {
+            let began = ContinuousClock.now
+            let pick: ScreenPicker.Pick
+            do {
+                pick = try await ScreenPicker(apiKey: key).pick(request, windowTitle: reading.windowTitle, elements: reading.elements)
+            } catch {
+                try Task.checkCancellation()
+                look.choose = began.duration(to: .now)
+                look.chosenBy = "Jev failed: \(error.logKind)"
+                return missed(.jevFailed)
+            }
             try Task.checkCancellation()
             look.choose = began.duration(to: .now)
-            look.chosenBy = "Jev failed: \(error.logKind)"
-            return missed(.jevFailed)
+            look.chosenBy = "Jev"
+            look.pick = pick
+            if pick.isConfident { return pointed(at: reading.elements[pick.index]) }
         }
-        try Task.checkCancellation()
-        look.choose = began.duration(to: .now)
-        look.chosenBy = "Jev"
-        look.pick = pick
-        guard pick.isConfident else { return missed(blind) }
 
-        let element = reading.elements[pick.index]
-        run.outcome = .point(ScreenTarget(reference: element.reference, frame: element.frame, note: ScreenElements.note(for: element),
-                                          description: element.description))
-        run.screen = look
-        return run
+        // Nothing in the tree fits, or it lists nothing.
+        if !textTried, let found = try await fromText() { return found }
+        if textFailed { return missed(.jevFailed) }
+        // Text was read and the thing is not in it either: Chrome's sentence ("can't see inside pages") would no longer be true.
+        if look.text?.ran == true { return missed(.notPresent) }
+        if reading.elements.isEmpty { return missed(reading.chromeBlind ? .chrome : .nothingListed) }
+        return missed(reading.chromeBlind ? .chrome : .notPresent)
     }
 
     /// Writes the answer from what `prepare` found; a run with no rows to read comes back as it was.
@@ -652,6 +736,22 @@ enum SpokenCommand {
             lines.append("choice: by \(look.chosenBy), present \(p(pick.present)), the element's share \(p(pick.target))  [\(look.choose.seconds.secondsText)]")
         } else {
             lines.append("choice: \(look.chosenBy)  [\(look.choose.seconds.secondsText)]")
+        }
+        if let text = look.text {
+            if let skipped = text.skipped {
+                lines.append("text: not read (\(skipped))")
+            } else {
+                lines.append("text: fallback ran, \(text.recognised) lines recognised, \(text.candidates) kept  [capture \(text.capture.seconds.secondsText), "
+                    + "recognise \(text.recognise.seconds.secondsText)]")
+                if let pick = text.pick {
+                    let p = { (value: Double) in String(format: "%.2f", value) }
+                    lines.append("text choice: by \(text.chosenBy), present \(p(pick.present)), the line's share \(p(pick.target))  [\(text.choose.seconds.secondsText)]")
+                } else if text.candidates > 0 {
+                    lines.append("text choice: \(text.chosenBy)  [\(text.choose.seconds.secondsText)]")
+                }
+            }
+        } else {
+            lines.append("text: fallback not tried")
         }
         if case .point(let target) = outcome { lines.append("pick: \(target.description)") }
         if let miss = look.miss { lines.append("miss: \(miss.logKind)") }

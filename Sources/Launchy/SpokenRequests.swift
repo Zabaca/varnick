@@ -266,9 +266,7 @@ final class SpokenRequests {
             var done = try await SpokenPipeline.respond(found, to: request.text, on: model)
             // The window may have moved during the hold: the frame is read again, and an element that is gone is not pointed at.
             if case .point(let target) = done.outcome {
-                let frame = await target.reference.map { reference in
-                    Task.detached { ScreenReader.currentFrame(of: reference) }
-                }?.value
+                let frame = await ScreenReader.currentFrame(of: target)
                 if let frame, frame.width > 1, frame.height > 1 {
                     pointing = (frame, target.note)
                 } else {
@@ -327,7 +325,17 @@ final class SpokenRequests {
         guard let look else { return "" }
         let present = look.pick.map { $0.isConfident ? "present" : "not present" } ?? "-"
         return "screen read \(look.read.seconds.secondsText) (\(look.candidates) elements), "
-            + "chosen in \(look.choose.seconds.secondsText) by \(look.chosenBy) (\(present)), miss \(look.miss?.logKind ?? "pointed"), "
+            + "chosen in \(look.choose.seconds.secondsText) by \(look.chosenBy) (\(present)), " + textTiming(look.text)
+            + "miss \(look.miss?.logKind ?? "pointed"), "
+    }
+
+    /// The text fallback's part (ADR 0021): whether it ran or why not, the durations and the counts, never the lines.
+    private static func textTiming(_ text: SpokenPipeline.TextLook?) -> String {
+        guard let text else { return "text fallback not tried, " }
+        if let skipped = text.skipped { return "text fallback skipped (\(skipped)), " }
+        let present = text.pick.map { $0.isConfident ? "present" : "not present" } ?? "-"
+        return "text fallback captured in \(text.capture.seconds.secondsText), recognised in \(text.recognise.seconds.secondsText) "
+            + "(\(text.recognised) lines, \(text.candidates) kept), chosen in \(text.choose.seconds.secondsText) by \(text.chosenBy) (\(present)), "
     }
 
     /// Nothing could write the text: no model installed and no server answering.

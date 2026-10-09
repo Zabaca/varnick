@@ -130,26 +130,34 @@ The Linux installer works from the checkout it runs in, not from `origin`: it bu
 
 Settings › Listening › **Point at the screen** (off by default, and available only with Hey Launchy on and the
 relevance filter on TypeSafe with a key) makes Launchy ask macOS for the Accessibility permission, which lets a
-process read and drive any app's windows. Launchy only reads, and only the window in front, when you ask
-about the screen.
+process read and drive any app's windows, and for Screen Recording, which lets it see anything on the
+screen. Launchy only reads, and only the window in front, when you ask about the screen. Screen
+Recording is used only when the window's elements don't have the thing or the window is a Chrome page,
+and without it that step is skipped.
 
-- **The permission is Launchy's own, and it may reach more than Launchy.** macOS gives a process the grants of
+- **The permissions are Launchy's own, and they may reach more than Launchy.** macOS gives a process the grants of
   the app responsible for it. Claude and terminal panes that Launchy starts itself, which is every pane while
-  **Keep sessions running** is off, are Launchy's children and probably get the permission too (not
-  verified here), so a session started there with Skip permissions could read and drive any app's windows
-  without asking. Sessions kept running in zmx very likely do not get it; Launchy never grants zmx anything,
+  **Keep sessions running** is off, are Launchy's children and probably get the permissions too (not
+  verified here), so a session started there with Skip permissions could read and drive any app's windows,
+  and with Screen Recording capture the screen, without asking. Sessions kept running in zmx very likely do not get it; Launchy never grants zmx anything,
   since a grant to zmx would very likely reach every session it hosts. Turning the switch off does not revoke
-  the permission: only taking Launchy out of Settings › Privacy & Security › Accessibility does, if that is
-  not acceptable.
-- **A rebuild may need the permission given again.** Builds are signed ad hoc, so macOS may not match the
-  grant to the next build (not verified).
+  the permissions: only taking Launchy out of Settings › Privacy & Security › Accessibility and Screen
+  Recording does, if that is not acceptable.
+- **A rebuild may need the permissions given again.** Builds are signed ad hoc, so macOS may not match the
+  grants to the next build (not verified). macOS may also ask again after some weeks whether Launchy may
+  keep recording, and show its capture indicator (not verified).
 - **What leaves the Mac.** Only with the filter on TypeSafe and a key: for a request about the screen, the
   words you said, the title of the window in front and, for up to its first 255 elements, the label, kind,
   nearby text and whether it is dimmed. Those are the window's visible text, not only that near its controls:
   a message list's subjects and senders, an open mail's body in Mail, a page's text in Safari, a file's name
   in a tab, an account's name in a sidebar. What is typed in a field is never read, and a password field is
-  not read at all. No screenshot is taken, and none of it goes to a model server. See the README's
-  Privacy section.
+  not read at all. None of it goes to a model server. When the elements don't have the thing, and Screen
+  Recording is granted, a picture of the window alone is taken into memory, read for text on this Mac and
+  dropped: it is never written to disk, logged or sent. The text it finds does go, but only lines of at
+  most 6 words and 60 characters, at most 150, with no positions, which is every short line in the window
+  (a message list's subjects and senders, a chat's names). Lines inside a text field or a password field
+  are dropped, but a Chrome page's fields are not in the elements, so text typed there may go. See the
+  README's Privacy section.
 - **The arrow** is drawn by Launchy, cannot take focus or clicks, and goes by itself.
 
 ## Other things Launchy fetches and runs
@@ -166,4 +174,5 @@ about the screen.
   Mac, and so do the text of a spoken request after "Hey Launchy" and, as a typed search's, the search
   words and the title, site and page description of its first 20 pages. Words said before the request was
   finished may be sent and then discarded. With Point at the screen on, a request about the screen also
-  sends the window's title and its controls' descriptions (above). See the README's Privacy section.
+  sends the window's title and its controls' descriptions, and after a miss its short lines of recognised
+  text (above). See the README's Privacy section.

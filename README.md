@@ -130,12 +130,16 @@ With Hey Launchy on, Settings › Listening › **Point at the screen** lets you
 you ("Hey Launchy, where's the Allow button"). Launchy reads the elements of the window that has focus
 through macOS Accessibility, in its own process, asks TypeSafe's Jev which one you mean, draws a big arrow
 and a sign on it that never takes focus or clicks, says what it is, and takes the arrow away a few seconds
-later. It takes no screenshot. It needs the Accessibility permission, which Settings asks for and shows,
-and the relevance filter on TypeSafe with a key (see Privacy below for what is sent). A rebuild of Launchy
-may need the permission given again. Chrome's page content is not readable; Launchy says so. The
-permission is Launchy's own. Sessions kept running in zmx very likely don't get it, but a Claude or terminal
-pane that Launchy starts itself, which is every pane while Keep sessions running is off, probably does:
-see [`SECURITY.md`](SECURITY.md).
+later. It needs the Accessibility permission, which Settings asks for and shows, and the relevance filter
+on TypeSafe with a key (see Privacy below for what is sent). When the thing isn't among the window's
+elements, or the window is a Chrome page, whose content the elements don't hold, and Screen Recording is
+also granted, Launchy captures that window alone into memory and reads its text with Apple's text
+recognition on this Mac, so a Chrome page, a canvas app or a remote desktop can be pointed into. The
+picture is never written to disk, logged or sent; only the short lines of text it finds go on, as below.
+Without Screen Recording the elements' answer stands, and Launchy says it can't see inside Chrome's pages.
+A rebuild of Launchy may need either permission given again. The permissions are Launchy's own. Sessions
+kept running in zmx very likely don't get them, but a Claude or terminal pane that Launchy starts itself,
+which is every pane while Keep sessions running is off, probably does: see [`SECURITY.md`](SECURITY.md).
 
 ### TypeSafe
 
@@ -203,7 +207,12 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   front and, for each of its first 255 elements, the label, kind and nearby text. That is the window's
   visible text, not only that near its controls: a message list's subjects and senders, an open mail's body in
   Mail, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. What is typed in a
-  field is never read. No screenshot is taken, and none of this goes to a model server.
+  field is never read. None of this goes to a model server. If the elements don't have the thing, and Screen
+  Recording is granted, a picture of the window alone is also read on this Mac, and its short lines of text
+  (at most 6 words and 60 characters each, at most 150) go too, so more of the window's text leaves: every
+  short line, such as a message list's subjects and senders or a chat's names. Lines inside a text field
+  are dropped, but in a Chrome page the fields can't be seen, so something typed there may go. The
+  picture, the lines' positions and longer lines never leave the Mac.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere
