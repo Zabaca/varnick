@@ -557,7 +557,6 @@ struct SessionBoardView: View {
                 tabButton("Sessions", .sessions)
                 tabButton("Problems", .problems)
                 Spacer()
-                if board.tab == .problems { EvidenceSwitch(board: board.problems) }
                 OpenHint(problems: board.problems, onProblems: board.tab == .problems)
                 if board.tab == .sessions {
                     KeyHint(label: "Restart", keys: ["R"])
@@ -610,19 +609,6 @@ private struct OpenHint: View {
 
     var body: some View {
         KeyHint(label: onProblems && problems.chipSelection != nil ? "Open session" : "Open", keys: ["↩"])
-    }
-}
-
-/// The Problems tab's Show evidence switch (E): every card says why it is in its column.
-private struct EvidenceSwitch: View {
-    @ObservedObject var board: ProblemsBoard
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("Show evidence").foregroundStyle(.secondary)
-            Toggle("", isOn: $board.showEvidence).toggleStyle(.switch).controlSize(.mini).labelsHidden()
-            KeyHint(label: "", keys: ["E"])
-        }
     }
 }
 
