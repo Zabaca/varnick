@@ -146,9 +146,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Closing the card on the host asked to end the session and is waiting for the answer.
     @Published private(set) var confirmingEnd = false
     /// Done was pressed in the pane while Claude is mid-turn: the pane asks whether to end the session.
-    @Published var askingDone = false
-    /// The same for Restart (`LauncherModel.requestRestart`); never together with `askingDone`.
-    @Published var askingRestart = false
+    @Published var asking: SessionQuestionKind?
     /// Done on it asks first (`Turn.asksBeforeDone`), and Restart by the same rule; a pane showing a card (`awayNote`) asks for itself.
     var asksBeforeDone: Bool { started && Turn.asksBeforeDone(turn?.turn, showingCard: awayNote != nil) }
     /// Done pressed in the pane (`LauncherModel.requestDone`); also "End it" on its question.
@@ -316,8 +314,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             Task { @MainActor in
                 self?.checkConversation()
                 self?.checkTurn()
-                if self?.askingDone == true, self?.asksBeforeDone == false { self?.askingDone = false }
-                if self?.askingRestart == true, self?.asksBeforeDone == false { self?.askingRestart = false }
+                if self?.asking != nil, self?.asksBeforeDone == false { self?.asking = nil }
                 self?.checkTitle()
                 self?.checkRename()
                 self?.checkExit()
@@ -335,13 +332,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     /// Runs the command in the pane's zmx session when that is on, else directly. zmx runs it
-    /// only when it creates the session; a running one is reconnected to.
+    /// only when it creates the session; a running one is reconnected to. `keepsOrigin`: a session started again (a restart)
+    /// is labelled with its origin even after the peer's control of it is over (`startedFor` is nil), or `hostEnd` would
+    /// release it instead of ending it.
     private func startInTerminal(_ executable: String, _ args: [String], environment: [String],
-                                 directory: String? = nil, alwaysInZmx: Bool = false) {
+                                 directory: String? = nil, alwaysInZmx: Bool = false, keepsOrigin: Bool = false) {
         var executable = executable, args = args, environment = environment
         if alwaysInZmx ? Zmx.isAvailable : Zmx.isEnabled,
            let attach = Zmx.attachCommand(record.id, running: executable, args, control: startedFor,
-                                           origin: startedFor == nil ? nil : record.origin) {
+                                           origin: startedFor == nil && !keepsOrigin ? nil : record.origin) {
             (executable, args) = attach
             environment += Zmx.paneEnvironment
             inZmx = true
@@ -472,15 +471,16 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // A switch the last run reported but never got to read (killed within a poll) is
         // still the pane's conversation; take it before clearing the file.
         checkConversation()
-        try? FileManager.default.removeItem(at: conversationFile)
+        // A restart resumes what claude has written, found where the hook last reported it (a /resume can move the pane to a
+        // conversation stored elsewhere), else where claude keeps it. A conversation with no transcript yet (no message sent) can't
+        // be resumed, so it starts again under its own id, with the prompt only if the pane never moved off its first conversation
+        // (after /clear or /resume the prompt isn't this conversation's). Read before the session file goes.
+        let resumable = restarting ? hasTranscript : resuming
+        let prompt = restarting && record.conversation != nil ? "" : record.prompt
         // The first turn, so a session started again isn't read as its last run's turn (ADR 0010).
-        // A restart resumes what claude has written. A conversation with no transcript yet (no message sent) can't be resumed, so it
-        // starts again under its own id with the prompt it began with.
-        let resumable = restarting
-            ? FileManager.default.fileExists(atPath: TranscriptReader.path(directory: record.directory, conversation: record.conversationID))
-            : resuming
         let conversation = resumable ? record.conversationID : nil
-        PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: record.prompt), for: record.id)
+        try? FileManager.default.removeItem(at: conversationFile)
+        PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: record.id)
         PaneFolder.clearSubagentWork(for: record.id)
         if restarting { PaneFolder.clearStop(for: record.id) }
         // claude exits on an unknown --agent, so a session whose agent file has since gone
@@ -491,7 +491,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: restarting ? record.conversationID : record.id.uuidString.lowercased(),
-                                                 prompt: record.prompt)
+                                                 prompt: prompt)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.
@@ -500,7 +500,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                "LAUNCHY_PROJECT=\(CustomApp.projectRoot(of: record.directory))"]
         // A pane already in zmx stays there whatever the setting says now: a bare claude beside its
         // session would be a second one.
-        startInTerminal(Self.claudeShell, ClaudeCommand.shellArguments(claudeArgs), environment: env, alwaysInZmx: inZmx)
+        startInTerminal(Self.claudeShell, ClaudeCommand.shellArguments(claudeArgs), environment: env, alwaysInZmx: inZmx,
+                        keepsOrigin: restarting)
         // The session just started for a peer is labelled for it, but this pane's client is attached until
         // the peer takes control. If that first attach never comes, nothing may leave both Macs typing: the
         // check lets go of this client once it sees the label names the peer.
@@ -1229,7 +1230,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     // MARK: Restart
 
     /// Restart is under way: the pane's claude is being ended and `finish` ignores its exit, so the pane stays.
-    private(set) var restarting = false
+    @Published private(set) var restarting = false
+    /// Why the last restart didn't happen, shown in the pane for a few seconds; the pane is as it was.
+    @Published private(set) var restartFailure: String?
+    /// When claude was last started again by a restart; `startedAt` stays when the session began.
+    private(set) var restartedAt: Date?
+    /// When the process now running was started, for the quick-death rule (`LauncherModel.sessionExited`).
+    var launchedAt: Date { restartedAt ?? startedAt }
 
     /// Restart works on a Claude pane that runs on this Mac with its client attached. A pane showing a card (another Mac in control,
     /// or the link lost), a session on a peer (its host would have to start it again, `resumeOnHost`), a restored pane not shown yet
@@ -1241,50 +1248,77 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     /// Ends this pane's claude and starts it again in the same pane, resuming its conversation, so it reads the current hook settings.
-    /// A pane in zmx has its zmx session killed first, as closing the pane does (`conclude`), so the new claude starts a session of
-    /// its own. The tab, splits, title and folder stay.
+    /// A pane in zmx has its zmx session killed first, as closing the pane does (`conclude`), and confirmed gone, so the new claude
+    /// starts a session of its own; when that can't be confirmed nothing is started and the pane is as it was (`restartFailure`).
+    /// The tab, splits, title and folder stay.
     func restart() {
         guard canRestart else { return }
         restarting = true
-        askingDone = false
-        askingRestart = false
+        restartFailure = nil
+        asking = nil
         guard inZmx else { return stopClientThenLaunch() }
         let id = record.id
         Task { [weak self] in
-            await Task.detached {
-                Zmx.killNow(id)
-                // The new session takes the old one's name, so it must be gone from zmx's list first.
-                var tries = 0
-                while Zmx.hasSession(id), tries < 20 {
-                    usleep(50_000)
-                    tries += 1
-                }
-            }.value
-            self?.stopClientThenLaunch()
+            let failure = await Task.detached { Zmx.endConfirmed(id) }.value
+            guard let self else { return }
+            if let failure { return self.restartFailed(failure) }
+            self.stopClientThenLaunch()
         }
     }
 
+    /// The restart stopped before it started claude. A pane closed meanwhile is concluded now (`finish` ignored its exit).
+    private func restartFailed(_ reason: String) {
+        restarting = false
+        guard !finished else { return }
+        if endedByUser { return finish(nil) }
+        let message = "Couldn't restart: " + reason
+        restartFailure = message
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            if self?.restartFailure == message { self?.restartFailure = nil }
+        }
+    }
+
+    /// Whether the conversation has a transcript to resume: the file the hook reported if it is this conversation's, else where
+    /// claude keeps it for the pane's folder.
+    private var hasTranscript: Bool {
+        let hooked = currentTranscriptPath().flatMap {
+            URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent == record.conversationID ? $0 : nil
+        }
+        return FileManager.default.fileExists(
+            atPath: hooked ?? TranscriptReader.path(directory: record.directory, conversation: record.conversationID))
+    }
+
     /// Hangs up the client as `endNow` does (SIGKILL if it is still there a second later), waits for it to be gone, then starts claude.
-    /// `view.terminate()` also clears SwiftTerm's `running`, which `startProcess` won't start over.
+    /// `view.terminate()` also clears SwiftTerm's `running`, which `startProcess` won't start over. A client that has already
+    /// exited is left alone: its pid may be reused.
     private func stopClientThenLaunch() {
         let pid = view.process.shellPid
-        if pid > 0 { kill(pid, SIGHUP) }
-        view.terminate()
+        let running = pid > 0 && view.process.running
+        if running {
+            kill(pid, SIGHUP)
+            view.terminate()
+        }
         Task { [weak self] in
-            if pid > 0 {
+            var gone = !running
+            if running {
                 for attempt in 0..<40 {
                     var status: Int32 = 0
                     let r = waitpid(pid, &status, WNOHANG)
-                    if r == pid || (r == -1 && errno == ECHILD) { break }
+                    if r == pid || (r == -1 && errno == ECHILD) {
+                        gone = true
+                        break
+                    }
                     if attempt == 20 { kill(pid, SIGKILL) }
                     try? await Task.sleep(for: .milliseconds(50))
                 }
             }
             guard let self, !self.finished else { return }
+            guard gone else { return self.restartFailed("the old Claude wouldn't exit") }
             self.restarting = false
             // Closed meanwhile: the exit that `finish` ignored is concluded now.
             if self.endedByUser { return self.finish(nil) }
-            self.startedAt = Date()
+            self.restartedAt = Date()
             self.launchClaude(restarting: true)
             self.checkTurn()
             self.checkWork()

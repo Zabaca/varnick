@@ -88,6 +88,25 @@ public enum Zmx {
         Task.detached(priority: .utility) { _ = run(["kill", sessionName(id)]) }
     }
 
+    /// Ends the pane's session and waits until zmx no longer lists it, for a restart that starts a session of the same name. Nil once
+    /// it is gone; otherwise why that couldn't be confirmed: zmx missing, not answering, or still listing it. Every call to zmx has
+    /// a time limit. Blocks, so never on the main thread.
+    public static func endConfirmed(_ id: UUID, within seconds: TimeInterval = 5) -> String? {
+        guard binary != nil else { return "zmx isn't installed next to Launchy" }
+        let name = sessionName(id)
+        let deadline = Date().addingTimeInterval(seconds)
+        var answered = false
+        repeat {
+            _ = run(["kill", name], timeout: max(0.5, deadline.timeIntervalSinceNow))
+            if let listing = run(["ls", "--short"], timeout: max(0.5, deadline.timeIntervalSinceNow)) {
+                if !listing.split(separator: "\n").contains(where: { $0 == name }) { return nil }
+                answered = true
+            }
+            usleep(100_000)
+        } while Date() < deadline
+        return answered ? "zmx still lists the session" : "zmx didn't answer"
+    }
+
     /// Same, waiting for zmx to finish: for Quit, which would otherwise exit first.
     public static func killNow(_ id: UUID) { _ = run(["kill", sessionName(id)]) }
 
@@ -309,7 +328,8 @@ public enum Zmx {
     }
 
     /// Standard output of a zmx command, nil when it failed.
-    private static func run(_ arguments: [String], environment extra: [String: String] = [:]) -> String? {
+    /// `timeout` ends zmx if it hasn't finished by then, and the result is nil.
+    private static func run(_ arguments: [String], environment extra: [String: String] = [:], timeout: TimeInterval? = nil) -> String? {
         guard let binary else { return nil }
         let process = Process()
         process.executableURL = binary
@@ -323,6 +343,9 @@ public enum Zmx {
         let ended = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in ended.signal() }
         do { try process.run() } catch { return nil }
+        if let timeout {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if process.isRunning { process.terminate() } }
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         ended.wait()
         return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil

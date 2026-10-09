@@ -49,7 +49,7 @@ One box inside a tab, showing a session, a terminal, a web page, a **Custom app*
 _Avoid_: Window, view, leaf
 
 **Restart**:
-Ending the Claude process in a pane that runs on this Mac and starting it again in the same pane, resuming the same **Session**, so it picks up the current hooks. The tab, splits, title and folder stay. It asks first when the **Turn** is working or background. A pane showing a **Card**, or a session on a **Peer**, can't restart.
+Ending the Claude process in a pane that runs on this Mac and starting it again in the same pane, resuming the same **Session**, so it picks up the current hooks. The tab, splits, title and folder stay. It asks first when the **Turn** is working or background. A pane showing a **Card**, or a session on a **Peer**, can't restart. Not Restart Launchy (the app quitting and starting again, which ends every pane) and not the peer `restart` request (a **Peer**'s Launchy restarting).
 _Avoid_: Reload, relaunch
 
 **Custom app**:

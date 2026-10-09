@@ -466,21 +466,23 @@ struct TerminalLeaf: View {
         // Terminals have no bar to put it in: their × shows over the corner while hovered, and a Claude pane's
         // Restart and Done beside it. The question Done or Restart asks of a working session stays until it is answered.
         .overlay(alignment: .topTrailing) {
-            if session.askingDone {
-                WorkingSessionQuestion(turn: session.turn?.turn, background: session.turn?.background ?? BackgroundWork(), done: session.onDone, keep: { session.askingDone = false })
+            if let kind = session.asking {
+                WorkingSessionQuestion(kind: kind, turn: session.turn?.turn, background: session.turn?.background ?? BackgroundWork(),
+                                       confirm: kind == .done ? session.onDone : session.onRestart, keep: { session.asking = nil })
                     .frame(width: 230)
                     .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
-            } else if session.askingRestart {
-                WorkingSessionQuestion(kind: .restart, turn: session.turn?.turn, background: session.turn?.background ?? BackgroundWork(),
-                                       done: session.onRestart,
-                                       keep: { session.askingRestart = false })
-                    .frame(width: 230)
+            } else if let failure = session.restartFailure {
+                Text(failure)
+                    .font(.system(size: 11.5))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 8).padding(.vertical, 7)
+                    .frame(width: 230, alignment: .leading)
                     .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
             } else if hovering && !session.isWeb && !session.isFile {
                 HStack(spacing: 2) {
-                    if session.isClaude && session.canRestart { RestartButton(action: session.onRestart) }
+                    if session.canRestart { RestartButton(action: session.onRestart) }
                     if session.isClaude { DoneButton(action: session.onDone) }
                     CloseButton(help: CloseButton.paneHelp) { session.end() }
                 }

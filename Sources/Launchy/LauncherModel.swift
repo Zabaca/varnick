@@ -1738,11 +1738,13 @@ final class LauncherModel: ObservableObject {
         sessionSelection = min(sessionSelection, max(0, tabs.count - 1))
         guard activeTab === tab else { return }   // a background tab ended
 
-        let quick = session.isClaude && session.started && Date().timeIntervalSince(session.startedAt) < 3
+        let quick = session.isClaude && session.started && Date().timeIntervalSince(session.launchedAt) < 3
         if quick && code != 0 {
             // Died on startup: keep the prompt so it can be retried, and say why.
             activeTab = nil
-            claudeError = session.resuming
+            claudeError = session.restartedAt != nil
+                ? "Claude ended right after restarting \"\(session.label)\" (code \(code.map(String.init) ?? "?"))."
+                : session.resuming
                 ? "Couldn't resume \"\(session.label)\" (code \(code.map(String.init) ?? "?"))."
                 : "Claude exited immediately (code \(code.map(String.init) ?? "?")). Is `claude` installed and logged in?"
             query = prompt
@@ -1827,12 +1829,11 @@ final class LauncherModel: ObservableObject {
     /// asks first, in the pane, and a second Done ends it.
     func requestDone(_ session: ClaudeSession) {
         guard session.isClaude else { return }
-        if session.asksBeforeDone, !session.askingDone {
-            session.askingRestart = false
-            session.askingDone = true
+        if session.asksBeforeDone, session.asking != .done {
+            session.asking = .done
             return
         }
-        session.askingDone = false
+        session.asking = nil
         markDone(session.id)
     }
 
@@ -1851,12 +1852,11 @@ final class LauncherModel: ObservableObject {
     /// pane, and a second Restart does it.
     func requestRestart(_ session: ClaudeSession) {
         guard session.canRestart else { return }
-        if session.asksBeforeDone, !session.askingRestart {
-            session.askingDone = false
-            session.askingRestart = true
+        if session.asksBeforeDone, session.asking != .restart {
+            session.asking = .restart
             return
         }
-        session.askingRestart = false
+        session.asking = nil
         session.restart()
     }
 
@@ -1877,14 +1877,12 @@ final class LauncherModel: ObservableObject {
     /// A key pressed while the focused pane asks whether to end or restart its working session: esc keeps it, ↩ does it, and
     /// either is used up so it never reaches the terminal. Returns whether the key was used.
     func answerPaneQuestion(_ event: NSEvent) -> Bool {
-        guard showsTerminal, let session = activeSession, session.askingDone || session.askingRestart,
+        guard showsTerminal, let session = activeSession, let asking = session.asking,
               event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
         switch Int(event.keyCode) {
-        case kVK_Escape:
-            session.askingDone = false
-            session.askingRestart = false
+        case kVK_Escape: session.asking = nil
         case kVK_Return, kVK_ANSI_KeypadEnter:
-            if session.askingDone { requestDone(session) } else { requestRestart(session) }
+            if asking == .done { requestDone(session) } else { requestRestart(session) }
         default: return false
         }
         return true
