@@ -2,7 +2,8 @@
 problem: session-search-sees-only-the-start
 title: Embed a summary with the opening prompts, one vector per session
 summary: The text generator Launchy ships writes a paragraph summing up each session, and the session's one vector becomes its title, folder, summary, then the prompts cut at 1,000 characters as today. No exchanges.
-status: proposed
+status: rejected
+reason: option 01 beats it on short searches and is level on descriptive ones with no language model (about 100 s of embedding against 25 min of Gemma, nothing to regenerate as a session grows); its one advantage, less bias toward long sessions, is what option 02 adds on top of 01
 ---
 
 ## Solution
