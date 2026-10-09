@@ -52,7 +52,7 @@ The image exists in memory only until the request is sent. Launchy never writes 
 - The model's name is stored in UserDefaults. Which model is an open question.
 
 **When it runs**
-- After option 01's choice gives `none`, falls below the threshold, or had no candidates, with the switch on and a key saved.
+- After option 01's Jev call gives `present` under 0.5, or the window had no elements, with the switch on and a key saved.
 - With option 02 accepted, only after option 02 also finds nothing.
 - Never during the hold. It runs only once the request is finished, so a partial request's screenshot is never sent. That is unlike option 01's speculation, and it costs its latency after the hold.
 
@@ -105,5 +105,5 @@ The image exists in memory only until the request is sent. Launchy never writes 
   - names the key.
 
   SECURITY.md and the README say the same.
-- **This is the user's open question:** whether a screenshot may ever leave this Mac. If the answer is no, this option is rejected with that reason.
+- **Whether a screenshot may leave this Mac** was the user's open question. They answered on 2026-10-09 that it may, so this option stays open. Its own switch, off by default, still decides it per user.
 - **Verified:** no Launchy code sends anything to a cloud language model, and there is no Anthropic key in Launchy today. **Unverified:** every latency and cost figure, and how well each model places points on UI screenshots.

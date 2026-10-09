@@ -42,7 +42,7 @@ The image is dropped after the reply. It never leaves the process.
 **Everything not below** is as in option 01, and the capture and permission as in option 02.
 
 **When it runs**
-- After option 01's choice gives `none`, falls below the threshold, or had no candidates, and only with this Mac's Gemma installed.
+- After option 01's Jev call gives `present` under 0.5, or the window had no elements, and only with this Mac's Gemma installed.
 - With option 02 also accepted, after option 02 finds nothing.
 
 **The model**
