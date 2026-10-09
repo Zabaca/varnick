@@ -1608,6 +1608,10 @@ final class LauncherModel: ObservableObject {
             guard let self, let pane = ref else { return }
             self.requestDone(pane)
         }
+        session.onRestart = { [weak self] in
+            guard let self, let pane = ref else { return }
+            self.requestRestart(pane)
+        }
         session.onNeedsConfirmation = { [weak self] in
             guard let self, let ended = ref, let tab = self.tabs.first(where: { $0.contains(ended) }) else { return }
             self.activate(tab)
@@ -1824,11 +1828,43 @@ final class LauncherModel: ObservableObject {
     func requestDone(_ session: ClaudeSession) {
         guard session.isClaude else { return }
         if session.asksBeforeDone, !session.askingDone {
+            session.askingRestart = false
             session.askingDone = true
             return
         }
         session.askingDone = false
         markDone(session.id)
+    }
+
+    /// Restart on a board card or a pane: ends the pane's claude and starts it again in the same pane (`ClaudeSession.restart`).
+    /// Nothing for a pane that can't (`ClaudeSession.canRestart`).
+    func restart(_ id: UUID) {
+        tabs.flatMap(\.sessions).first { $0.id == id && $0.isClaude }?.restart()
+    }
+
+    /// Whether the Claude pane with this id can restart: not a card, not on a paired Mac, not a restored pane not shown yet.
+    func canRestart(_ id: UUID) -> Bool {
+        tabs.flatMap(\.sessions).first { $0.id == id && $0.isClaude }?.canRestart == true
+    }
+
+    /// Restart in a Claude pane (its Restart button, the Restart session key): as Done does, a working session asks first, in the
+    /// pane, and a second Restart does it.
+    func requestRestart(_ session: ClaudeSession) {
+        guard session.canRestart else { return }
+        if session.asksBeforeDone, !session.askingRestart {
+            session.askingDone = false
+            session.askingRestart = true
+            return
+        }
+        session.askingRestart = false
+        session.restart()
+    }
+
+    /// The Restart session key. Returns whether the key was used: false when the focused pane isn't Claude, so the key goes on to it.
+    func requestRestartActive() -> Bool {
+        guard showsTerminal, let session = activeSession, session.isClaude else { return false }
+        requestRestart(session)
+        return true
     }
 
     /// The Mark session done key. Returns whether the key was used: false when the focused pane isn't Claude, so the key goes on to it.
@@ -1838,14 +1874,17 @@ final class LauncherModel: ObservableObject {
         return true
     }
 
-    /// A key pressed while the focused pane asks whether to end its working session: esc keeps it, ↩ ends it, and
+    /// A key pressed while the focused pane asks whether to end or restart its working session: esc keeps it, ↩ does it, and
     /// either is used up so it never reaches the terminal. Returns whether the key was used.
-    func answerDoneQuestion(_ event: NSEvent) -> Bool {
-        guard showsTerminal, let session = activeSession, session.askingDone,
+    func answerPaneQuestion(_ event: NSEvent) -> Bool {
+        guard showsTerminal, let session = activeSession, session.askingDone || session.askingRestart,
               event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
         switch Int(event.keyCode) {
-        case kVK_Escape: session.askingDone = false
-        case kVK_Return, kVK_ANSI_KeypadEnter: requestDone(session)
+        case kVK_Escape:
+            session.askingDone = false
+            session.askingRestart = false
+        case kVK_Return, kVK_ANSI_KeypadEnter:
+            if session.askingDone { requestDone(session) } else { requestRestart(session) }
         default: return false
         }
         return true

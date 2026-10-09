@@ -78,7 +78,7 @@ struct KeyCombo: Codable, Equatable {
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     case toggleLauncher, pinLauncher, toggleListening, settings
-    case backToSearch, newTerminalTab, renameTab, endPane, doneSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
+    case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
     case webAddress, webReload
     case fontBigger, fontSmaller, fontReset
@@ -99,6 +99,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .renameTab: "Rename tab"
         case .endPane: "End session (focused pane)"
         case .doneSession: "Mark session done (focused Claude pane)"
+        case .restartSession: "Restart session (focused Claude pane)"
         case .paste: "Paste text or image"
         case .previousTab: "Previous tab"
         case .nextTab: "Next tab"
@@ -123,7 +124,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     var group: String {
         switch self {
         case .toggleLauncher, .pinLauncher, .toggleListening, .settings: "Launchy"
-        case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard: "Tabs"
+        case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight: "Splits"
         case .webAddress, .webReload: "Web"
         case .fontBigger, .fontSmaller, .fontReset: "Terminal"
@@ -141,6 +142,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .renameTab: KeyCombo(keyCode: kVK_ANSI_R, [.command, .shift])
         case .endPane: KeyCombo(keyCode: kVK_ANSI_W, .command)
         case .doneSession: KeyCombo(keyCode: kVK_ANSI_D, [.command, .shift])
+        case .restartSession: KeyCombo(keyCode: kVK_ANSI_R, [.command, .option])
         case .paste: KeyCombo(keyCode: kVK_ANSI_V, .command)
         case .previousTab: KeyCombo(keyCode: kVK_ANSI_LeftBracket, [.command, .shift])
         case .nextTab: KeyCombo(keyCode: kVK_ANSI_RightBracket, [.command, .shift])

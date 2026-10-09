@@ -1,4 +1,5 @@
 import AppKit
+import LaunchyPeer
 import SwiftUI
 
 enum SplitAxis: String, Codable {
@@ -463,15 +464,23 @@ struct TerminalLeaf: View {
             }
         }
         // Terminals have no bar to put it in: their × shows over the corner while hovered, and a Claude pane's
-        // Done beside it. The question Done asks of a working session stays until it is answered.
+        // Restart and Done beside it. The question Done or Restart asks of a working session stays until it is answered.
         .overlay(alignment: .topTrailing) {
             if session.askingDone {
-                DoneConfirmation(turn: session.turn?.turn, done: session.onDone, keep: { session.askingDone = false })
+                WorkingSessionQuestion(turn: session.turn?.turn, background: session.turn?.background ?? BackgroundWork(), done: session.onDone, keep: { session.askingDone = false })
+                    .frame(width: 230)
+                    .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(6)
+            } else if session.askingRestart {
+                WorkingSessionQuestion(kind: .restart, turn: session.turn?.turn, background: session.turn?.background ?? BackgroundWork(),
+                                       done: session.onRestart,
+                                       keep: { session.askingRestart = false })
                     .frame(width: 230)
                     .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
             } else if hovering && !session.isWeb && !session.isFile {
                 HStack(spacing: 2) {
+                    if session.isClaude && session.canRestart { RestartButton(action: session.onRestart) }
                     if session.isClaude { DoneButton(action: session.onDone) }
                     CloseButton(help: CloseButton.paneHelp) { session.end() }
                 }
@@ -671,6 +680,29 @@ struct DoneButton: View {
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .help(Settings.shared.combo(.doneSession).map { "Mark session done (\($0.label))" } ?? "Mark session done")
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Restart on a Claude pane: the mouse's Restart session key.
+struct RestartButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.clockwise").font(.system(size: 8.5, weight: .bold))
+                Text("Restart").font(.system(size: 11))
+            }
+            .padding(.horizontal, 5)
+            .frame(height: 16)
+            .background(hovering ? Theme.selection : .clear, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(Settings.shared.combo(.restartSession).map { "Restart session, resuming it (\($0.label))" } ?? "Restart session, resuming it")
         .onHover { hovering = $0 }
     }
 }

@@ -172,11 +172,20 @@ final class SessionBoard: ObservableObject {
     /// Cards in tab order; a column is the cards whose `column` it is.
     @Published private(set) var cards: [Card] = []
     @Published var selection: UUID? {
-        didSet { if confirming != selection { confirming = nil } }
+        didSet {
+            if confirming != selection { confirming = nil }
+            if confirmingRestart != selection { confirmingRestart = nil }
+        }
     }
     /// The Running card Done was pressed on, or dropped on Completed, once: it asks inside the card, and a
     /// second Done ends it.
-    @Published private(set) var confirming: UUID?
+    @Published private(set) var confirming: UUID? {
+        didSet { if confirming != nil { confirmingRestart = nil } }
+    }
+    /// The Running card Restart was pressed on once: it asks inside the card, and a second Restart restarts it.
+    @Published private(set) var confirmingRestart: UUID? {
+        didSet { if confirmingRestart != nil { confirming = nil } }
+    }
     @Published private(set) var tab = Tab.sessions
     let problems = ProblemsBoard()
     weak var model: LauncherModel? {
@@ -251,6 +260,7 @@ final class SessionBoard: ObservableObject {
         guard next != tab else { return }
         tab = next
         confirming = nil
+        confirmingRestart = nil
         guard appeared else { return }
         if next == .problems {
             problems.start()
@@ -264,6 +274,7 @@ final class SessionBoard: ObservableObject {
         appeared = false
         problems.reset()
         confirming = nil
+        confirmingRestart = nil
         stopTicker()
         selection = nil
         zmxSessions = nil
@@ -309,6 +320,7 @@ final class SessionBoard: ObservableObject {
                              note: model.stillOpenOn(record).map { "Still open on " + $0 }, model))
         }
         if let confirming, !next.contains(where: { $0.id == confirming && $0.asksBeforeDone }) { self.confirming = nil }
+        if let confirmingRestart, !next.contains(where: { $0.id == confirmingRestart && $0.asksBeforeDone }) { self.confirmingRestart = nil }
         let previous = cards
         if next != cards {
             cards = next
@@ -392,8 +404,8 @@ final class SessionBoard: ObservableObject {
     // MARK: Keys
 
     /// The keys the board takes: Tab and ⇧Tab switch tabs; the Problems tab takes the rest while it shows (`ProblemsBoard.key`). On
-    /// Sessions, ←/→ column, ↑/↓ card, ↩ opens, D, the End session key and the Mark session done key mark done, esc
-    /// cancels a question and otherwise closes. A modified ↩ is taken and does nothing; anything else goes on.
+    /// Sessions, ←/→ column, ↑/↓ card, ↩ opens, D, the End session key and the Mark session done key mark done, R and the
+    /// Restart session key restart, esc cancels a question and otherwise closes. A modified ↩ is taken and does nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(KeyCombo.relevant)
         if Int(event.keyCode) == kVK_Tab, flags.isSubset(of: .shift) {
@@ -404,15 +416,19 @@ final class SessionBoard: ObservableObject {
         let plain = flags.isEmpty
         switch Int(event.keyCode) {
         case kVK_Return, kVK_ANSI_KeypadEnter: if plain { openSelected() }
-        case kVK_Escape where plain: if confirming != nil { confirming = nil } else { model?.closeBoard() }
+        case kVK_Escape where plain:
+            if confirming != nil || confirmingRestart != nil { keep() } else { model?.closeBoard() }
         case kVK_LeftArrow where plain: selection = Self.moved(selection, in: cards, .left)
         case kVK_RightArrow where plain: selection = Self.moved(selection, in: cards, .right)
         case kVK_UpArrow where plain: selection = Self.moved(selection, in: cards, .up)
         case kVK_DownArrow where plain: selection = Self.moved(selection, in: cards, .down)
         case kVK_ANSI_D where plain: doneSelected()
+        case kVK_ANSI_R where plain: restartSelected()
         default:
-            guard let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession else { return false }
-            doneSelected()   // with no card selected, nothing: the key is still taken, never let through to the tab
+            guard let action = Settings.shared.action(for: event),
+                  action == .endPane || action == .doneSession || action == .restartSession else { return false }
+            // With no card selected, nothing: the key is still taken, never let through to the tab.
+            if action == .restartSession { restartSelected() } else { doneSelected() }
         }
         return true
     }
@@ -458,7 +474,28 @@ final class SessionBoard: ObservableObject {
             return
         }
         confirming = nil
+        confirmingRestart = nil
         model?.markDone(id)
+    }
+
+    func restartSelected() {
+        if let selection { restart(selection) }
+    }
+
+    /// Restart on a card (R, the Restart session key) starts its pane's claude again on the same conversation
+    /// (`LauncherModel.restart`); a working card asks first. A card that has no such pane here (ended, Completed, a paired
+    /// Mac's session, a pane showing a card) does nothing.
+    func restart(_ id: UUID) {
+        guard let card = cards.first(where: { $0.id == id }), card.column != .completed, !card.isEnded, !card.hasNoPane,
+              model?.canRestart(id) == true else { return }
+        selection = id
+        confirming = nil
+        if card.asksBeforeDone, confirmingRestart != id {
+            confirmingRestart = id
+            return
+        }
+        confirmingRestart = nil
+        model?.restart(id)
     }
 
     /// A card dropped on Completed. One that asks before Done only shows its question, however many times it
@@ -477,7 +514,10 @@ final class SessionBoard: ObservableObject {
     }
 
     /// Keep: the question on a working card goes away.
-    func keep() { confirming = nil }
+    func keep() {
+        confirming = nil
+        confirmingRestart = nil
+    }
 
     /// The selection after an arrow key: the next card in the column, or the card at the same height in the
     /// next column that has any. Nothing selected starts at the first card.
@@ -527,7 +567,10 @@ struct SessionBoardView: View {
                 Spacer()
                 if board.tab == .problems { EvidenceSwitch(board: board.problems) }
                 KeyHint(label: "Open", keys: ["↩"])
-                if board.tab == .sessions { ShortcutHint(label: "Done", action: .endPane) }
+                if board.tab == .sessions {
+                    KeyHint(label: "Restart", keys: ["R"])
+                    ShortcutHint(label: "Done", action: .endPane)
+                }
                 KeyHint(label: "Switch", keys: ["⇥"])
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
                     .buttonStyle(.plain)
@@ -625,7 +668,8 @@ private struct BoardColumn: View {
                         ForEach(cards) { card in
                             BoardCardView(card: card, now: now, selected: board.selection == card.id,
                                           confirming: board.confirming == card.id,
-                                          done: { board.done(card.id) }, keep: board.keep)
+                                          confirmingRestart: board.confirmingRestart == card.id,
+                                          done: { board.done(card.id) }, restart: { board.restart(card.id) }, keep: board.keep)
                                 .id(card.id)
                                 .onTapGesture(count: 2) { board.selection = card.id; board.open(card.id) }
                                 .onTapGesture { board.selection = card.id }
@@ -667,10 +711,13 @@ private struct BoardCardView: View {
     let card: SessionBoard.Card
     let now: Date
     let selected: Bool
-    /// The card asks whether to end a working session.
+    /// The card asks whether to end a working session, or whether to restart it.
     let confirming: Bool
+    let confirmingRestart: Bool
     /// End it.
     let done: () -> Void
+    /// Restart it.
+    let restart: () -> Void
     let keep: () -> Void
 
     var body: some View {
@@ -703,7 +750,9 @@ private struct BoardCardView: View {
                 Text("↩ resumes it in a new tab").font(.system(size: 11)).foregroundStyle(.tertiary)
             }
             if confirming {
-                DoneConfirmation(turn: card.turn, done: done, keep: keep).padding(.top, 3)
+                WorkingSessionQuestion(turn: card.turn, done: done, keep: keep).padding(.top, 3)
+            } else if confirmingRestart {
+                WorkingSessionQuestion(kind: .restart, turn: card.turn, background: card.background, done: restart, keep: keep).padding(.top, 3)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -711,7 +760,7 @@ private struct BoardCardView: View {
         .padding(.vertical, 8)
         .background(selected ? Theme.selection : Theme.tileFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(confirming ? Theme.sourceColor("claude").opacity(0.6)
+            .strokeBorder(confirming || confirmingRestart ? Theme.sourceColor("claude").opacity(0.6)
                           : selected ? Color.primary.opacity(0.26) : Theme.hairline, lineWidth: 1))
         .contentShape(Rectangle())
     }
@@ -722,23 +771,33 @@ private struct BoardCardView: View {
     }
 }
 
-/// The question asked before ending a session that is mid-turn: inside a Running card Done was pressed on or
-/// dropped on Completed, and inside a Claude pane Done was pressed in.
-struct DoneConfirmation: View {
+/// The question asked before ending or restarting a session that is mid-turn: inside a Running card Done or Restart was
+/// pressed on (or Done dropped on Completed), and inside a Claude pane Done or Restart was pressed in.
+struct WorkingSessionQuestion: View {
+    enum Kind { case done, restart }
+
+    var kind = Kind.done
     let turn: Turn?
-    /// End it.
+    /// What the background turn has running; Restart names it, since it ends it.
+    var background = BackgroundWork()
+    /// End it, or restart it.
     let done: () -> Void
     let keep: () -> Void
+
+    private var lead: String {
+        guard turn == .background else { return "Claude is working. " }
+        return kind == .restart && !background.isEmpty ? "Background work is running (\(background.text)). " : "Background work is running. "
+    }
 
     var body: some View {
         let accent = Theme.sourceColor("claude")
         VStack(alignment: .leading, spacing: 6) {
-            (Text(turn == .background ? "Background work is running. " : "Claude is working. ") + Text("End this session?").bold().foregroundColor(accent))
+            (Text(lead) + Text(kind == .restart ? "Restart this session?" : "End this session?").bold().foregroundColor(accent))
                 .font(.system(size: 11.5))
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 5) {
                 Spacer(minLength: 0)
-                button("End it", solid: true, action: done)
+                button(kind == .restart ? "Restart" : "End it", solid: true, action: done)
                 button("Keep", solid: false, action: keep)
             }
         }

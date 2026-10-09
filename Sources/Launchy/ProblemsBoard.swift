@@ -116,7 +116,7 @@ final class ProblemsBoard: ObservableObject {
         case kVK_ANSI_E where plain: showEvidence.toggle()
         case kVK_ANSI_D where plain: break
         default:
-            guard let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession else { return false }
+            guard let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession || action == .restartSession else { return false }
         }
         return true
     }
