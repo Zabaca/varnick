@@ -101,6 +101,8 @@ final class SessionBoard: ObservableObject {
         var work: PaneWork?
         /// The links an ended or Completed session's saved record keeps.
         var archived: [WorkLink] = []
+        /// The links came from a paired Mac or the headless host (`WorkSession.foreign`).
+        var foreign = false
 
         /// It ended: opening it resumes it, and Done moves it to Completed with no question.
         var isEnded: Bool {
@@ -125,15 +127,17 @@ final class SessionBoard: ObservableObject {
         /// a paired Mac's session. Only such a card's records make an option Building.
         var isLive: Bool {
             switch standing {
-            case .turn, .unknown: !hasNoPane
+            case .turn, .unknown: true
             case .resumes, .done, .ended: false
             }
         }
 
         /// This card as the Problems tab sees it.
         var workSession: WorkSession {
-            WorkSession(id: id, title: title, column: column, isOpen: isLive, live: isLive ? work?.live ?? [] : [],
-                        links: work?.history ?? archived)
+            var session = WorkSession(id: id, title: title, column: column, isOpen: isLive, live: isLive ? work?.live ?? [] : [],
+                                      links: work?.history ?? archived)
+            session.foreign = foreign
+            return session
         }
 
         var mark: String? { turn?.mark }
@@ -359,7 +363,8 @@ final class SessionBoard: ObservableObject {
                     standing: standing,
                     background: pane.turn?.background ?? BackgroundWork(),
                     note: pane.awayNote,
-                    work: pane.work)
+                    work: pane.work,
+                    foreign: pane.isOnPeer)
     }
 
     /// A session open on a paired Mac that no pane here controls. Its turn is the Mac's reply, begun that
@@ -377,7 +382,9 @@ final class SessionBoard: ObservableObject {
                     folder: (row.info.folder as NSString).lastPathComponent,
                     standing: standing,
                     note: row.controlNote,
-                    hasNoPane: true)
+                    hasNoPane: true,
+                    work: row.info.work?.paneWork,
+                    foreign: true)
     }
 
     private func card(for record: SessionRecord, standing: Card.Standing, note: String?, _ model: LauncherModel) -> Card {
@@ -388,7 +395,8 @@ final class SessionBoard: ObservableObject {
              folder: record.folderName,
              standing: standing,
              note: note,
-             archived: record.workLinks ?? [])
+             archived: record.workLinks ?? [],
+             foreign: record.host != nil)
     }
 
     /// Whether a pane not started yet has a zmx session. Before zmx has answered, or when it couldn't be

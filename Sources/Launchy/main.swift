@@ -523,21 +523,25 @@ if CommandLine.arguments.contains("--hook-settings") {
     exit(0)
 }
 
-// `Launchy --problems [--work <pane folder>]… [--ended <pane folder>]… [folder…]` prints the Problems tab's columns, each card's evidence and
+// `Launchy --problems [--work <pane folder>]… [--ended <pane folder>]… [--sent <pane folder>]… [--sent-json <file>]… [folder…]` prints the Problems tab's columns, each card's evidence and
 // chips and each pane folder's links, for those project folders (main checkouts) or the projects Launchy lists, and exits (to check the rules
-// and the hooks' files without the UI). A pane folder is read for its work files; `--ended` reads it as a pane that has closed.
+// and the hooks' files without the UI). A pane folder is read for its work files; `--ended` reads it as a pane that has closed; `--sent`
+// reads it as a host would for a paired Mac (printing the `sessions` entry it sends) and shows it as that Mac's open session; `--sent-json`
+// takes such an entry from a file (one line, as a host of any protocol sent it).
 if let i = CommandLine.arguments.firstIndex(of: "--problems") {
-    var folders: [String] = [], open: [URL] = [], ended: [URL] = []
+    var folders: [String] = [], open: [URL] = [], ended: [URL] = [], sent: [URL] = [], sentJSON: [URL] = []
     var rest = CommandLine.arguments.dropFirst(i + 1)[...]
     while let argument = rest.popFirst() {
         if argument == "--work", let folder = rest.popFirst() { open.append(URL(fileURLWithPath: folder)) }
         else if argument == "--ended", let folder = rest.popFirst() { ended.append(URL(fileURLWithPath: folder)) }
+        else if argument == "--sent", let folder = rest.popFirst() { sent.append(URL(fileURLWithPath: folder)) }
+        else if argument == "--sent-json", let file = rest.popFirst() { sentJSON.append(URL(fileURLWithPath: file)) }
         else if !argument.hasPrefix("--") { folders.append(argument) }
     }
     MainActor.assumeIsolated {
         Task { @MainActor in
             let roots = folders.isEmpty ? Project.scan(roots: Settings.shared.projectFolders).map(\.path) : folders
-            print(await ProblemsReader.report(roots, open: open, ended: ended), terminator: "")
+            print(await ProblemsReader.report(roots, open: open, ended: ended, sent: sent, sentJSON: sentJSON), terminator: "")
             exit(0)
         }
         RunLoop.main.run()

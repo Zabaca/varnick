@@ -99,9 +99,30 @@ struct WorkSession: Equatable, Sendable {
     let live: [PaneWork.Live]
     /// Every link the session made: the log's while the pane is open, the saved record's after.
     let links: [WorkLink]
+    /// The session is on a paired Mac or the headless host, which sent its links with the repository as `group/name`
+    /// (`PeerWork.project(of:)`), not as a folder.
+    var foreign = false
 
     func names(_ slug: String, in repo: String) -> Bool {
         live.contains { $0.link.names(slug, in: repo) } || links.contains { $0.names(slug, in: repo) }
+    }
+
+    /// This session as seen from `source`'s project: a foreign link whose `group/name` is the project's takes the project's key, so it
+    /// matches there and in no other project. A local session is returned as it is.
+    func resolved(for source: ProjectProblems) -> WorkSession {
+        guard foreign else { return self }
+        let project = PeerWork.project(of: source.project)
+        func keyed(_ link: WorkLink) -> WorkLink {
+            guard link.repo == project else { return link }
+            var link = link
+            link.repo = source.key
+            return link
+        }
+        var session = WorkSession(id: id, title: title, column: column, isOpen: isOpen,
+                                  live: live.map { PaneWork.Live(agentID: $0.agentID, agentType: $0.agentType, link: keyed($0.link)) },
+                                  links: links.map(keyed))
+        session.foreign = false
+        return session
     }
 }
 
@@ -244,7 +265,10 @@ enum ProblemRules {
 
     /// Every card of what the reader found and the sessions' links, sorted. Runs on the main actor, after the read.
     static func cards(from sources: [ProjectProblems], sessions: [WorkSession] = []) -> [ProblemCard] {
-        sorted(sources.flatMap { source in source.problems.map { card(for: $0, in: source, sessions: sessions) } })
+        sorted(sources.flatMap { source in
+            let seen = sessions.map { $0.resolved(for: source) }
+            return source.problems.map { card(for: $0, in: source, sessions: seen) }
+        })
     }
 }
 
@@ -342,9 +366,29 @@ enum ProblemsReader {
     /// `Launchy --problems [--work <pane folder>]… [--ended <pane folder>]… [folder…]`: the columns and each card's evidence and chips, for
     /// the given project folders or, with none, the ones Launchy lists. A `--work` folder is read as an open pane's (Running when its turn
     /// file says working), an `--ended` one as a pane that closed with its links kept; their work files are what the hooks wrote.
-    static func report(_ projects: [String], open: [URL] = [], ended: [URL] = []) async -> String {
+    static func report(_ projects: [String], open: [URL] = [], ended: [URL] = [], sent: [URL] = [], sentJSON: [URL] = []) async -> String {
         var sessions: [WorkSession] = []
         var out = ""
+        // A paired Mac's open sessions: each entry goes through the wire (encoded as a host sends it, decoded as this Mac reads it).
+        var entries: [(name: String, entry: PeerOpenSession)] = sent.map { folder in
+            let entry = PeerOpenSession(session: Zmx.sessionName(UUID()), title: "Peer " + folder.lastPathComponent, folder: "/peer/" + folder.lastPathComponent,
+                                        turn: .working, turnAge: 5, work: PeerWork.read(in: folder))
+            let line = PeerJSON.line(entry)
+            out += "Sent by \(folder.lastPathComponent): \(line)\n"
+            return (folder.lastPathComponent, PeerJSON.decode(PeerOpenSession.self, from: line) ?? entry)
+        }
+        for file in sentJSON {
+            let line = (try? String(contentsOf: file, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard let entry = PeerJSON.decode(PeerOpenSession.self, from: line) else { out += "Can't read \(file.lastPathComponent)\n"; continue }
+            entries.append((entry.title, entry))
+        }
+        for (name, entry) in entries {
+            var session = WorkSession(id: Zmx.paneID(entry.session) ?? UUID(), title: entry.title, column: .running, isOpen: true,
+                                      live: entry.work?.paneWork.live ?? [], links: entry.work?.paneWork.history ?? [])
+            session.foreign = true
+            sessions.append(session)
+            out += "Session \(name) (open on a paired Mac, \(entry.work == nil ? "no links sent" : "\(entry.work?.links.count ?? 0) links"))\n"
+        }
         for (folder, isOpen) in open.map({ ($0, true) }) + ended.map({ ($0, false) }) {
             let work = PaneFolder.work(in: folder)
             let turn = (try? String(contentsOf: folder.appendingPathComponent(PaneFolder.turnFileName), encoding: .utf8))

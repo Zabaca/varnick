@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 17
+    public static let version = 18
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -344,13 +344,16 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         get { turnWord.flatMap(Turn.init(rawValue:)) }
         set { turnWord = newValue?.rawValue }
     }
+    /// The problems and options the pane worked on, from its work files on the host (ADR 0020). Nil when it linked nothing, and from a
+    /// build before protocol 18.
+    public var work: PeerWork?
 
     private enum CodingKeys: String, CodingKey {
-        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge
+        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, work
     }
 
     public init(running: Bool, clients: Int? = nil, control: String? = nil, controlName: String? = nil, conversation: String? = nil,
-                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil) {
+                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, work: PeerWork? = nil) {
         self.running = running
         self.clients = clients
         self.control = control
@@ -359,6 +362,7 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         self.title = title
         self.turnWord = turn?.rawValue
         self.turnAge = turnAge
+        self.work = work
     }
 }
 
@@ -385,12 +389,15 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
         set { turnWord = newValue?.rawValue }
     }
 
+    /// The pane's work links, as in `PeerSessionStatus`.
+    public var work: PeerWork?
+
     private enum CodingKeys: String, CodingKey {
-        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge
+        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge, work
     }
 
     public init(session: String, title: String, folder: String, agent: String? = nil, conversation: String? = nil, control: String? = nil,
-                controlName: String? = nil, clients: Int? = nil, turn: Turn? = nil, turnAge: Int? = nil) {
+                controlName: String? = nil, clients: Int? = nil, turn: Turn? = nil, turnAge: Int? = nil, work: PeerWork? = nil) {
         self.session = session
         self.title = title
         self.folder = folder
@@ -401,6 +408,7 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
         self.clients = clients
         self.turnWord = turn?.rawValue
         self.turnAge = turnAge
+        self.work = work
     }
 }
 
