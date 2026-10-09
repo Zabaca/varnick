@@ -135,14 +135,15 @@ struct TitleRecord: Codable, Equatable {
     /// The conversation it is for; the pane's next one (after /clear or /resume) has none yet.
     var conversation: String
     var name: String?
+    /// Only decoded, from a file saved when Launchy generated titles: a restored pane drops it (`ClaudeSession.init`).
+    var title: String?
 }
 
 /// The names the user gave sessions with ⌘⇧R, for search (`HistorySync.syncNames`): a tab's name names the conversation of its
 /// one pane, as on the board.
 enum SessionNames {
-    /// `named` maps each conversation (lowercased, as the transcripts' ids are) to its tab's name; `unnamed` holds the
-    /// conversations a tab holds that no tab names now. Claude panes on this Mac only. A tab with several panes names none of them,
-    /// since the board shows a pane's own label then.
+    /// Conversation (lowercased) to its tab's name, and the conversations a tab holds that none names. Claude panes on this Mac
+    /// only; a tab with several panes names none, as on the board.
     static func read(_ state: SessionStore.State) -> (named: [String: String], unnamed: Set<String>) {
         var named: [String: String] = [:], held: Set<String> = []
         for tab in state.openTabs {

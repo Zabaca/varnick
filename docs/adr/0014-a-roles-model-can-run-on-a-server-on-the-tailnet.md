@@ -7,4 +7,4 @@ Search embeddings and Text generation can each run on an OpenAI-compatible serve
 - With Server chosen, what semantic search reads (session prompts included) goes to that server over the tailnet. Nothing goes to a third party.
 - Launchy depends on services it may not own. A change of embedding model shows as a failed Check, never as wrong vectors; an absent server shows as a fallback or a wait.
 - No new dependency: the requests use URLSession (`ModelServer.post` is the one path, and it follows no redirect). MLX isn't touched on the server path, and a build without `mlx.metallib` can use a server.
-- A server for Text generation has to answer in `message.content` (it was written for a title of 24 tokens; ADR 0012's amendment removed titles), which a model that thinks first at the server does not. Launchy reads that as the server not answering, not as a conversation with no title, so it never marks one failed for it.
+- A server for Text generation has to answer in `message.content`, which a model that thinks first at the server does not. Launchy reads that as the server not answering.

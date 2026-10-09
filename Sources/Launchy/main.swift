@@ -585,11 +585,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--search"), i + 1 < CommandLine
     }
 }
 
-/// `--generate` reads a file of text, print what `run` returns and exit, following Text generation's choice.
+/// `--generate` reads a file of text, prints what `run` returns and exits, following Text generation's choice.
 /// Nothing is downloaded, and a server is asked straight away with no Check.
-func runTextCommand(_ flag: String, serverTimeout: TimeInterval = 10,
-                    _ run: @escaping @MainActor (String, any TextGenerating, String) async throws -> String) {
-    guard let i = CommandLine.arguments.firstIndex(of: flag), i + 1 < CommandLine.arguments.count else { return }
+func runTextCommand(_ run: @escaping @MainActor (String, any TextGenerating, String) async throws -> String) {
+    guard let i = CommandLine.arguments.firstIndex(of: "--generate"), i + 1 < CommandLine.arguments.count else { return }
     MainActor.assumeIsolated {
         Task { @MainActor in
             guard let text = try? String(contentsOfFile: CommandLine.arguments[i + 1], encoding: .utf8) else {
@@ -610,7 +609,7 @@ func runTextCommand(_ flag: String, serverTimeout: TimeInterval = 10,
                     print("Text generation has no server address: set one in Settings › Models, or LAUNCHY_TEXT_GENERATION=<address>")
                     exit(1)
                 }
-                generator = ServerGenerator(address: active.address, model: active.model, timeout: serverTimeout)
+                generator = ServerGenerator(address: active.address, model: active.model, timeout: 60)
                 place = "the server \(name)"
             }
             do {
@@ -627,7 +626,7 @@ func runTextCommand(_ flag: String, serverTimeout: TimeInterval = 10,
 
 // `Launchy --generate <file>` sends the file's text as one user message and prints the reply, where it was made and the times:
 // the load too on this Mac, which a server doesn't have.
-runTextCommand("--generate", serverTimeout: 60) { text, generator, place in
+runTextCommand { text, generator, place in
     let clock = ContinuousClock()
     var times = ""
     if let local = generator as? TextGenerator {

@@ -157,7 +157,7 @@ final class LauncherModel: ObservableObject {
     let textGenerator: TextGenerator
     /// The Check of Search embeddings' model server (Settings › Models).
     let embeddingServer: ModelServerState
-    /// Who writes session titles: this Mac's Gemma or Text generation's model server.
+    /// Who writes text for a spoken request: this Mac's Gemma or Text generation's model server.
     let textGeneration: TextGeneration
     /// The ranking behind a `?` search and a spoken request (ADR 0017), built at each use from what Settings and the
     /// panel's state say now.

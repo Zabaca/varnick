@@ -508,9 +508,8 @@ enum HistorySync {
         }
     }
 
-    /// Ends a pass of `syncSessions` with no session row lacking replies or a /rename name: every row the pass could reach was
-    /// read again, so those still NULL (an unreadable transcript, a folder that couldn't be listed) are given none and stop
-    /// blocking `rows` (`peerRows`). They are read again when the transcript changes.
+    /// Ends a pass of `syncSessions` with no row lacking replies or a /rename name: those still NULL (unreadable, or in a folder
+    /// that couldn't be listed) are given none and stop blocking `rows` (`peerRows`).
     private static func settleReplies(_ archive: Database) throws {
         try archive.exec("""
             UPDATE sessions SET replies = coalesce(replies, ''), custom_title = coalesce(custom_title, '')
@@ -518,10 +517,8 @@ enum HistorySync {
             """)
     }
 
-    /// Keeps the name ⌘⇧R gave each conversation's one-pane tab (`SessionNames`): writes the name of every conversation a tab names,
-    /// deletes that of every conversation a tab holds with none now, and keeps the rest, so a name outlives its tab. A
-    /// saved-sessions file that doesn't decode means the names are unknown: nothing is written or deleted. Names are bound as
-    /// parameters and never logged.
+    /// Keeps the ⌘⇧R names (`SessionNames`): writes those tabs name, deletes those of conversations a tab holds unnamed, keeps the
+    /// rest. A `sessions.json` that doesn't decode skips the step. Names are bound as parameters, never logged.
     private static func syncNames(into archive: Database) throws {
         guard let state = SessionStore().load() else { return }
         let names = SessionNames.read(state)
@@ -546,9 +543,9 @@ enum HistorySync {
         }, uniquingKeysWith: { a, _ in a })
     }
 
-    /// Whether `sessions` has `custom_title`: a database an older Launchy made lacks it until that Launchy restarts.
-    private static func hasCustomTitles(_ archive: Database) throws -> Bool {
-        try !archive.rows("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'custom_title'").isEmpty
+    /// Whether `sessions` has the column: a database an older Launchy made lacks the newer ones until that Launchy restarts.
+    private static func hasSessionColumn(_ name: String, in archive: Database) throws -> Bool {
+        try !archive.rows("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?", [name]).isEmpty
     }
 
     // MARK: Page descriptions
@@ -787,7 +784,7 @@ enum HistorySync {
     /// two peers have keeps the newer.
     private static func sessionEntries(_ archive: Database, withPeers: Bool = true) throws -> [String: SessionEntry] {
         let names = try tabNames(archive)
-        let customTitle = try hasCustomTitles(archive) ? "custom_title" : "NULL"
+        let customTitle = try hasSessionColumn("custom_title", in: archive) ? "custom_title" : "NULL"
         var newest: [String: (modified: Int64, entry: SessionEntry)] = [:]
         for row in try archive.rows("""
             SELECT modified, session_id, directory, title, agent, prompts, first_prompt, last_prompt, replies, \(customTitle)
@@ -1005,10 +1002,10 @@ enum HistorySync {
         // would get them only at its next launch. It keeps what it has and asks again at its next sync. A sync ends with no
         // such row (`settleReplies`), so this lasts only until the first one after an upgrade, or after a build that kept none
         // wrote a row.
-        let hasColumn = try archive.rows("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'replies'").isEmpty == false
+        let hasColumn = try hasSessionColumn("replies", in: archive)
         // The same for /rename names, once the database has the column; one an older Launchy made (not restarted yet) has none, and
         // answers with the titles it has.
-        let unread = try hasCustomTitles(archive) ? "replies IS NULL OR custom_title IS NULL" : "replies IS NULL"
+        let unread = try hasSessionColumn("custom_title", in: archive) ? "replies IS NULL OR custom_title IS NULL" : "replies IS NULL"
         guard hasColumn, try archive.rows("SELECT 1 FROM sessions WHERE (\(unread)) AND directory != '' LIMIT 1").isEmpty else {
             throw RepliesNotRead()
         }

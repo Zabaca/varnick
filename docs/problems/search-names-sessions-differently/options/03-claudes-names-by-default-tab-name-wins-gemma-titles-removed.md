@@ -22,6 +22,7 @@ The Session titles setting, the title prompt, the title record's generated-title
 - **Claude's title can change as a conversation moves on**, so a card's name changes under the user when nothing else names it. The user chose this over generating titles.
 - **The first sync after the upgrade reads every session's transcript again** (to find /rename names), as the one that introduced replies did, and a paired Mac gets the new titles when a transcript next changes or at its next launch.
 - **A paired Mac can lag.** It reads only the rows whose transcript changed since its last read, so a ⌘⇧R name set while the transcript stands still reaches it when the transcript next changes or when it next launches.
+- **Known gaps:** a pane reads a /rename only from the last 64 KB of its transcript, so one further back on a resumed conversation shows only in search. A paired Mac's open card doesn't show this Mac's ⌘⇧R name. After /clear in a named tab, the conversation left behind keeps the tab's name in search beside the new one.
 
 ## User Stories
 

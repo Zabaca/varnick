@@ -256,6 +256,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.caretColor = .systemBlue
         if record.isWeb { makeWebView() }
         if let file = record.file { fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize) }
+        // A title Launchy generated, saved with the pane: Claude's own replaces it, so neither shows nor is saved again.
+        if let generated = record.titleRecord?.title {
+            if record.title == generated { self.record.title = record.transcriptTitle ?? "" }
+            self.record.titleRecord?.title = nil
+        }
     }
 
     /// Launches claude (or the shell) the first time the session is shown.
@@ -1029,7 +1034,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                  startedAt: startedAt, lastUsed: Date())
         left.conversation = record.conversationID
         left.agent = record.agent
-        // Recent keeps the title the pane showed for it, and the record so it isn't titled again.
+        // Recent keeps the name the pane showed for it, and the record.
         left.titleRecord = record.currentTitleRecord
         left.title = left.titleRecord?.name ?? left.transcriptTitle ?? ""
         record.titleRecord = nil
