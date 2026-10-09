@@ -32,6 +32,10 @@ A page's own summary from its `<head>`, fetched once without cookies, so pages b
 One Claude Code conversation: what `/clear` starts fresh, what `/resume` brings back, and what Recent lists. A pane can move from one session to another without closing. The process zmx keeps for a pane is a "zmx session", never just a session.
 _Avoid_: Conversation, chat
 
+**Exchange**:
+One prompt typed in a **Session** and the last text Claude wrote before the next prompt. Session search embeds each one.
+_Avoid_: Turn (what Claude is doing now), chunk (the sync embeds in chunks)
+
 **Turn**:
 What Claude is doing in a **Session** right now: working, waiting for the user's next prompt, waiting in the middle of a turn on a permission dialog, a question, a plan to approve or an MCP server's request, or background (the turn ended with background agents, busy teammates, workflows or shells still running, which start Claude's next turn when they end).
 _Avoid_: Status, state, running (a session "runs" while its zmx session is alive)

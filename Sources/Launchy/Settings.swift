@@ -582,7 +582,7 @@ struct SettingsView: View {
                         switch settings.searchEmbeddingsRunOn {
                         case .server:
                             ServerSettingRow(
-                                detail: "Sends your searches, the words of what you ask out loud with Hey Launchy, the prompts you type in the panel, and the text of your pages and Claude sessions (titles, sites, descriptions, search terms and prompts, your paired Macs' too) to \(ModelServer.name(of: settings.embeddingServerAddress) ?? "the server below"), over your tailnet.",
+                                detail: "Sends your searches, the words of what you ask out loud with Hey Launchy, the prompts you type in the panel, and the text of your pages and Claude sessions (titles, sites, descriptions, search terms and prompts, with Claude's last reply to each, your paired Macs' too) to \(ModelServer.name(of: settings.embeddingServerAddress) ?? "the server below"), over your tailnet.",
                                 addressPlaceholder: "http://linux-box:11434", address: $settings.embeddingServerAddress,
                                 model: $settings.embeddingServerModel, server: embeddingServer)
                         case .local:

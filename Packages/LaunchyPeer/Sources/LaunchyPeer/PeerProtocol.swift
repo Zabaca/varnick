@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 16
+    public static let version = 17
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -405,7 +405,8 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
 }
 
 /// One of the host's Claude sessions as its history sync read it from the transcripts: what a
-/// peer searches. No replies, and no more than the prompts the host's own search holds.
+/// peer searches: its prompts, as its own search holds them, and Claude's last text after each (cut at
+/// `TranscriptReader.maxReply` characters), which the asker embeds and shows nowhere.
 public struct PeerSessionRow: Codable, Equatable, Sendable {
     /// Claude's conversation id, which `claude --resume` takes.
     public var id: String
@@ -414,18 +415,22 @@ public struct PeerSessionRow: Codable, Equatable, Sendable {
     public var title: String
     public var agent: String?
     public var prompts: [String]
+    /// One per prompt, by position; nil for a row its Mac hasn't read with replies.
+    public var replies: [String]?
     /// Unix seconds of the first and last prompt.
     public var first: Int64
     public var last: Int64
     /// When the transcript last changed there, in unix milliseconds.
     public var modified: Int64
 
-    public init(id: String, folder: String, title: String, agent: String? = nil, prompts: [String], first: Int64, last: Int64, modified: Int64) {
+    public init(id: String, folder: String, title: String, agent: String? = nil, prompts: [String], replies: [String]? = nil,
+                first: Int64, last: Int64, modified: Int64) {
         self.id = id
         self.folder = folder
         self.title = title
         self.agent = agent
         self.prompts = prompts
+        self.replies = replies
         self.first = first
         self.last = last
         self.modified = modified

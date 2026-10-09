@@ -43,7 +43,7 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
 
 Between paired Macs, two things are copied to each other, for Recent and search:
 
-- **Your Claude prompts**, with each session's folder, title and agent.
+- **Your Claude prompts**, with each session's folder, title and agent and the last thing Claude wrote after each.
 - **Your browsing-history archive**: full page addresses, titles, the names of your Chrome profiles, visit
   counts and last visits, the terms you searched, and each page's description. It is the sender's whole
   archive, sent in pieces.
@@ -132,8 +132,8 @@ The Linux installer works from the checkout it runs in, not from `origin`: it bu
   in the `Makefile`; the installer does the same for zmx and Bun; the models are downloaded at fixed
   revisions from Hugging Face.
 - **A model server.** With Server chosen for Search embeddings or Text generation, Launchy sends the
-  searches and prompts typed, the text it embeds and each conversation's first prompt to the server you
-  name, over HTTP or HTTPS. It accepts only an address whose name resolves to the tailnet or this Mac, and follows no
+  searches and prompts typed, the text it embeds (for a Claude session, its prompts and Claude's last reply
+  to each) and each conversation's first prompt to the server you name, over HTTP or HTTPS. It accepts only an address whose name resolves to the tailnet or this Mac, and follows no
   redirect and no system proxy; it does not pin the address between its check and the connection. A
   server can therefore read those texts and the key you give it. Name only a server you run.
 - **TypeSafe.** With a key and the relevance filter on TypeSafe, searches and result descriptions leave the

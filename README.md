@@ -166,10 +166,11 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
 - **It reads the History of every Chrome profile** and copies it into a local archive that only grows,
   and mirrors every profile's bookmarks beside it.
 - **It reads every Claude Code transcript under `~/.claude/projects`**, to list your sessions and make your
-  prompts searchable.
+  prompts searchable, and keeps the last thing Claude wrote after each prompt (cut at 1,000 characters),
+  which only the search by meaning reads.
 - **Between Macs you have paired, it copies both your Claude prompts and your browsing history to the other
   Mac**, so that Recent and search find them there. The prompts come with each session's folder, title and
-  agent. The history is that Mac's whole archive: full page addresses, titles, the names of its Chrome
+  agent, and with the last thing Claude wrote after each. The history is that Mac's whole archive: full page addresses, titles, the names of its Chrome
   profiles, visit counts and last visits, the terms you searched, and each page's description. The other
   Mac keeps what it copied until you remove the Mac from the peer list (or that Mac removes this one).
   Only pair a Mac you would show that history to.
@@ -188,7 +189,7 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere
   else: the searches you type, the prompts typed in the panel, the text of every page and session it
-  embeds (the paired Macs' sessions included), and each conversation's first prompt for a title. With
+  embeds, which for a session includes Claude's last reply to each prompt (the paired Macs' sessions included), and each conversation's first prompt for a title. With
   Hey Launchy on, the words you say after "Hey Launchy" and the request's search words go to the
   embedding server, and the request and the titles, sites, folders and descriptions of the results it reads out
   go to the Text generation server; words said before you finished may be sent and then discarded. A key

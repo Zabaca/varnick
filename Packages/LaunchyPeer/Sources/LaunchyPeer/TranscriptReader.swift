@@ -13,6 +13,8 @@ public struct TranscriptSession: Equatable, Sendable {
     public var directory = ""
     /// What the user typed, oldest first, each cut at `maxPrompt` characters.
     public var prompts: [String] = []
+    /// What Claude last wrote in answer to each prompt, by position (empty when it wrote no text), each cut at `maxReply` characters.
+    public var replies: [String] = []
     /// Unix seconds of the first and last prompt.
     public var firstPrompt: Int64 = 0
     public var lastPrompt: Int64 = 0
@@ -44,6 +46,10 @@ public struct BackgroundWork: Equatable, Sendable {
 /// mostly tool output.
 public enum TranscriptReader {
     public static let maxPrompt = 2000
+    /// The most of a reply an exchange can hold (`SessionExchanges`).
+    public static let maxReply = 1000
+    /// Joins a session's prompts, and its replies, in the archive; a prompt can hold any other character.
+    public static let recordSeparator: Character = "\u{1e}"
 
     /// Where Claude Code keeps the conversation's transcript, for a session run in `directory`.
     public static func path(directory: String, conversation: String) -> String {
@@ -68,6 +74,12 @@ public enum TranscriptReader {
         var session = TranscriptSession()
         var directory: String?
         let dates = dateParser()
+        var reply = ""
+        // The next typed prompt, or the end, closes the exchange before it with the last reply seen.
+        func closeExchange() {
+            if session.replies.count < session.prompts.count { session.replies.append(reply) }
+            reply = ""
+        }
 
         data.withUnsafeBytes { (all: UnsafeRawBufferPointer) in
             forEachLine(in: all) { line in
@@ -77,6 +89,7 @@ public enum TranscriptReader {
                           (json["origin"] as? [String: Any])?["kind"] as? String == "human",
                           json["isSidechain"] as? Bool != true,
                           let text = promptText(json["message"]) else { return }
+                    closeExchange()
                     session.prompts.append(text)
                     if let stamp = (json["timestamp"] as? String).flatMap(dates.date(from:)) {
                         let seconds = Int64(stamp.timeIntervalSince1970)
@@ -89,12 +102,16 @@ public enum TranscriptReader {
                 } else if has(line, "\"type\":\"custom-title\""), let json = object(line), json["type"] as? String == "custom-title",
                           let name = json["customTitle"] as? String {
                     session.customTitle = name
+                } else if !session.prompts.isEmpty, has(line, "\"type\":\"assistant\""), has(line, "\"type\":\"text\""),
+                          let text = replyText(object(line)) {
+                    reply = text
                 } else if has(line, "\"type\":\"agent-setting\""), let json = object(line), json["type"] as? String == "agent-setting",
                           let agent = json["agentSetting"] as? String {
                     session.agent = agent
                 }
             }
         }
+        closeExchange()
         guard !session.prompts.isEmpty, let directory else { return nil }
         session.directory = directory
         return session
@@ -116,6 +133,17 @@ public enum TranscriptReader {
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : String(text.prefix(maxPrompt))
+    }
+
+    /// The text blocks of an assistant entry; nil for a subagent's, for one Claude Code wrote itself (its model is
+    /// `<synthetic>`: API errors and the like) and for one with no text, so the reply stays the last text Claude wrote.
+    private static func replyText(_ entry: [String: Any]?) -> String? {
+        guard let entry, entry["type"] as? String == "assistant", entry["isSidechain"] as? Bool != true,
+              let message = entry["message"] as? [String: Any], message["model"] as? String != "<synthetic>",
+              let blocks = message["content"] as? [[String: Any]] else { return nil }
+        let text = blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n")
+            .replacingOccurrences(of: String(recordSeparator), with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : String(text.prefix(maxReply))
     }
 
     private static func between(_ text: String, _ open: String, _ close: String) -> String? {

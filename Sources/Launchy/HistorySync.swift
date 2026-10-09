@@ -23,7 +23,8 @@ enum HistorySync {
     private static let maxTerms = 5
     /// A session with no title from Claude takes its first prompt's first line, cut here.
     private static let sessionTitleLimit = 80
-    private static let sessionEmbedLimit = 1000
+    /// In `meta`, set in the transaction that leaves no session row without `replies`: a Mac answers `rows` only after it (`peerRows`).
+    private static let repliesReadMark = "sessions_replies_read"
 
     // Pages that are noise in a launcher: browser internals, auth flows, search result pages.
     static let skipSchemes = ["chrome:", "chrome-extension:", "about:", "file:", "data:", "blob:", "javascript:"]
@@ -82,7 +83,8 @@ enum HistorySync {
           agent        TEXT NOT NULL DEFAULT '',
           prompts      TEXT NOT NULL DEFAULT '',   -- record-separator-joined, oldest first
           first_prompt INTEGER NOT NULL DEFAULT 0, -- unix seconds
-          last_prompt  INTEGER NOT NULL DEFAULT 0
+          last_prompt  INTEGER NOT NULL DEFAULT 0,
+          replies      TEXT                        -- joined as prompts are, one per prompt; NULL: written by a build that kept none
         );
         -- Claude sessions of the paired Macs, as each one's history sync read them and sent them over
         -- (`PeerOp.rows`), so the sync that mirrors this Mac's own transcripts never deletes them.
@@ -96,6 +98,7 @@ enum HistorySync {
           first_prompt INTEGER NOT NULL DEFAULT 0, -- unix seconds
           last_prompt  INTEGER NOT NULL DEFAULT 0,
           modified     INTEGER NOT NULL DEFAULT 0, -- unix milliseconds, as on that Mac
+          replies      TEXT,                       -- as in sessions; NULL: that Mac sent none
           PRIMARY KEY (peer_id, session_id)
         );
         -- The paired Macs' pages, search terms and descriptions (`PeerOp.pages`). Only removing the Mac deletes them.
@@ -215,6 +218,10 @@ enum HistorySync {
         try addColumn("host TEXT", to: "favorites", in: db)
         for table in ["pages", "search_terms", "page_meta"] {
             try addColumn("changed INTEGER NOT NULL DEFAULT 0", to: table, in: db)
+        }
+        // NULL replies mean a build that kept none: the next sync reads those transcripts again.
+        for table in ["sessions", "peer_sessions"] {
+            try addColumn("replies TEXT", to: table, in: db)
         }
     }
 
@@ -439,18 +446,21 @@ enum HistorySync {
 
     private static let claudeProjects = FileManager.default.homeDirectoryForCurrentUser
         .appending(components: ".claude", "projects")
-    /// Between a session's prompts in the archive; a prompt can hold any other character.
-    private static let promptSeparator = "\u{1e}"
+    /// Between a session's prompts, and its replies, in the archive.
+    private static let promptSeparator = String(TranscriptReader.recordSeparator)
 
-    /// Rereads the transcripts whose modification date or size changed, and drops the rows of those
-    /// that are gone. A folder that can't be listed keeps its rows. Subagent transcripts sit a level
-    /// deeper than the files listed here, so they're left out.
+    /// Rereads the transcripts whose modification date or size changed, and those of sessions whose rows have no replies
+    /// (written by an earlier build), and drops the rows of those that are gone. A folder that can't be listed keeps its
+    /// rows. Subagent transcripts sit a level deeper than the files listed here, so they're left out.
     private static func syncSessions(into archive: Database) throws {
         let fm = FileManager.default
-        guard let folders = try? fm.contentsOfDirectory(atPath: claudeProjects.path) else { return }
-        var known: [String: (modified: Int64, size: Int64)] = [:]
-        for row in try archive.rows("SELECT path, modified, size FROM sessions") {
-            known[row[0] as! String] = (row[1] as? Int64 ?? 0, row[2] as? Int64 ?? 0)
+        guard let folders = try? fm.contentsOfDirectory(atPath: claudeProjects.path) else {
+            try archive.transaction { try markRepliesRead(archive) }
+            return
+        }
+        var known: [String: (modified: Int64, size: Int64, lacksReplies: Bool)] = [:]
+        for row in try archive.rows("SELECT path, modified, size, replies IS NULL AND directory != '' FROM sessions") {
+            known[row[0] as! String] = (row[1] as? Int64 ?? 0, row[2] as? Int64 ?? 0, row[3] as? Int64 == 1)
         }
         var seen: Set<String> = [], unlisted: Set<String> = []
         var changed: [(path: String, id: String, modified: Int64, size: Int64, session: TranscriptSession?)] = []
@@ -464,7 +474,7 @@ enum HistorySync {
                 let path = folder + "/" + file.lastPathComponent
                 let modified = Int64(date.timeIntervalSince1970 * 1000), size = Int64(values.fileSize ?? 0)
                 seen.insert(path)
-                if let old = known[path], old.modified == modified, old.size == size { continue }
+                if let old = known[path], old.modified == modified, old.size == size, !old.lacksReplies { continue }
                 // Stat before the read: a transcript that grows meanwhile is read again next time.
                 guard let data = try? Data(contentsOf: file) else { continue }
                 let session = autoreleasepool { TranscriptReader.read(data, folder: folder) }
@@ -476,14 +486,24 @@ enum HistorySync {
                 let s = c.session
                 try archive.run("""
                     INSERT OR REPLACE INTO sessions (path, modified, size, session_id, directory, title, agent, prompts,
-                                                     first_prompt, last_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                     first_prompt, last_prompt, replies) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, [c.path, c.modified, c.size, c.id, s?.directory ?? "", s?.title ?? "", s?.agent ?? "",
-                          s?.prompts.joined(separator: promptSeparator) ?? "", s?.firstPrompt ?? 0, s?.lastPrompt ?? 0])
+                          s?.prompts.joined(separator: promptSeparator) ?? "", s?.firstPrompt ?? 0, s?.lastPrompt ?? 0,
+                          s?.replies.joined(separator: promptSeparator) ?? ""])
             }
             for path in known.keys where !seen.contains(path) && !unlisted.contains(String(path.prefix { $0 != "/" })) {
                 try archive.run("DELETE FROM sessions WHERE path = ?", [path])
             }
+            try markRepliesRead(archive)
         }
+    }
+
+    /// Once no session row lacks replies, says so in `meta`, in the transaction that wrote the last of them. A transcript that
+    /// couldn't be read this time keeps the mark off.
+    private static func markRepliesRead(_ archive: Database) throws {
+        guard try archive.rows("SELECT EXISTS (SELECT 1 FROM sessions WHERE replies IS NULL AND directory != '')")[0][0] as? Int64 == 0
+        else { return }
+        try archive.run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')", [repliesReadMark])
     }
 
     // MARK: Page descriptions
@@ -702,6 +722,8 @@ enum HistorySync {
     private struct SessionEntry {
         let id, directory, title, agent: String
         let prompts: [String]
+        /// Claude's last text after each prompt, by position; empty where it wrote none or the row was written without replies.
+        let replies: [String]
         /// Unix seconds of the first and last prompt: "last used".
         let first, last: Int64
         /// Unix milliseconds the transcript last changed.
@@ -711,6 +733,7 @@ enum HistorySync {
 
         var key: String { FavoritesStore.sessionKeyPrefix + id }
         var folderName: String { (directory as NSString).lastPathComponent }
+        var exchanges: [String] { SessionExchanges.texts(title: title, folder: folderName, prompts: prompts, replies: replies) }
     }
 
     /// Sessions whose folder is gone are left out: resuming one would fail. Checked at every call, so
@@ -720,25 +743,25 @@ enum HistorySync {
     private static func sessionEntries(_ archive: Database, withPeers: Bool = true) throws -> [String: SessionEntry] {
         var newest: [String: (modified: Int64, entry: SessionEntry)] = [:]
         for row in try archive.rows("""
-            SELECT modified, session_id, directory, title, agent, prompts, first_prompt, last_prompt FROM sessions WHERE directory != ''
+            SELECT modified, session_id, directory, title, agent, prompts, first_prompt, last_prompt, replies FROM sessions WHERE directory != ''
             """) {
             let modified = row[0] as? Int64 ?? 0, id = row[1] as! String, directory = row[2] as! String
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue,
                   (newest[id]?.modified ?? .min) < modified else { continue }
             newest[id] = (modified, sessionEntry(id: id, directory: directory, title: row[3] as? String ?? "", agent: row[4] as? String ?? "",
-                                                 prompts: row[5] as? String ?? "", first: row[6] as? Int64 ?? 0,
+                                                 prompts: row[5] as? String ?? "", replies: row[8] as? String, first: row[6] as? Int64 ?? 0,
                                                  last: row[7] as? Int64 ?? 0, modified: modified, host: nil))
         }
         var entries = Dictionary(uniqueKeysWithValues: newest.values.map { ($0.entry.key, $0.entry) })
         guard withPeers else { return entries }
         for row in try archive.rows("""
-            SELECT modified, session_id, directory, title, agent, prompts, first_prompt, last_prompt, peer_id FROM peer_sessions
+            SELECT modified, session_id, directory, title, agent, prompts, first_prompt, last_prompt, peer_id, replies FROM peer_sessions
             """) {
             let modified = row[0] as? Int64 ?? 0, id = row[1] as! String
             let entry = sessionEntry(id: id, directory: row[2] as! String, title: row[3] as? String ?? "", agent: row[4] as? String ?? "",
-                                     prompts: row[5] as? String ?? "", first: row[6] as? Int64 ?? 0, last: row[7] as? Int64 ?? 0,
-                                     modified: modified, host: row[8] as? String)
+                                     prompts: row[5] as? String ?? "", replies: row[9] as? String, first: row[6] as? Int64 ?? 0,
+                                     last: row[7] as? Int64 ?? 0, modified: modified, host: row[8] as? String)
             if let have = entries[entry.key], have.host == nil || have.modified >= modified { continue }
             entries[entry.key] = entry
         }
@@ -746,17 +769,14 @@ enum HistorySync {
     }
 
     private static func sessionEntry(id: String, directory: String, title: String, agent: String, prompts joined: String,
-                                     first: Int64, last: Int64, modified: Int64, host: String?) -> SessionEntry {
+                                     replies repliesJoined: String?, first: Int64, last: Int64, modified: Int64, host: String?) -> SessionEntry {
         let prompts = joined.components(separatedBy: promptSeparator)
+        // Paired with the prompts by position: a missing reply is empty, and one with no prompt to pair with is dropped.
+        let kept = repliesJoined?.components(separatedBy: promptSeparator) ?? []
+        let replies = (0 ..< prompts.count).map { $0 < kept.count ? kept[$0] : "" }
         let firstLine = prompts[0].split(whereSeparator: \.isNewline).first.map { String($0.prefix(sessionTitleLimit)) } ?? ""
         return SessionEntry(id: id, directory: directory, title: title.isEmpty ? firstLine : title, agent: agent,
-                            prompts: prompts, first: first, last: last, modified: modified, host: host)
-    }
-
-    /// The title, the folder's name, then the opening prompts. Cut short, so once a session is
-    /// long enough its text stops changing and it isn't embedded again on every prompt.
-    private static func embedText(_ e: SessionEntry) -> String {
-        String(([e.title, e.folderName] + e.prompts).joined(separator: "\n").prefix(sessionEmbedLimit))
+                            prompts: prompts, replies: replies, first: first, last: last, modified: modified, host: host)
     }
 
     private static func searchDescription(_ e: SessionEntry) -> String {
@@ -772,21 +792,28 @@ enum HistorySync {
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
-    /// Entries whose text changed since they were embedded, or never were. Drops embeddings
-    /// of entries that are gone (the page's title changed, a session's transcript was deleted);
-    /// session keys count as current, or every session embedding would go on every sync.
+    /// Entries whose text changed since they were embedded, or never were: pages first, then the sessions' exchanges, the
+    /// most recently used sessions first, so a quit or a long first run leaves the sessions in use found. Drops embeddings
+    /// of entries that are gone (the page's title changed, a session's transcript was deleted or it has fewer exchanges);
+    /// every exchange key of every session counts as current, or all of them would go on every sync, and so does a
+    /// session's old single vector until one of its exchanges has a vector (`SessionExchanges.plan`).
     private static func toEmbed(_ archive: Database) throws -> [(key: String, text: String)] {
         var current = try entries(archive).mapValues(embedText)
-        for (key, session) in try sessionEntries(archive) { current[key] = embedText(session) }
         var stored: [String: String] = [:]
         for row in try archive.rows("SELECT key, text FROM entries WHERE embed_model = ?", [Embedder.modelKey]) {
             stored[row[0] as! String] = row[1] as? String
         }
+        let plan = SessionExchanges.plan(try sessionEntries(archive).values.map {
+            SessionExchanges.Listed(key: $0.key, last: $0.last, texts: $0.exchanges)
+        }, stored: stored)
+        current.merge(plan.current) { $1 }
         let gone = try archive.rows("SELECT key FROM entries").compactMap { $0[0] as? String }.filter { current[$0] == nil }
         try archive.transaction {
             for key in gone { try archive.run("DELETE FROM entries WHERE key = ?", [key]) }
         }
-        return current.compactMap { key, text in stored[key] == text ? nil : (key, text) }
+        let exchangeKeys = Set(plan.order)
+        let pages = current.compactMap { key, text in exchangeKeys.contains(key) || stored[key] == text ? nil : (key: key, text: text) }
+        return pages + plan.order.compactMap { key in stored[key] == current[key] ? nil : (key: key, text: current[key]!) }
     }
 
     /// Changes whenever a page is added or revisited, or gains a search term, description or embedding,
@@ -847,10 +874,15 @@ enum HistorySync {
     private static func refreshSearch(in db: Database, signature: String) throws {
         let groups = try entries(db)
         let sessions = try sessionEntries(db)
+        // The exchanges' vectors are the store's to read; a row only needs to know it has some, to drop its old one.
+        let exchangeKeys = "key GLOB '\(FavoritesStore.sessionKeyPrefix)*\(SessionExchanges.separator)[0-9]*'"
         var embeddings: [String: Data] = [:]
-        for row in try db.rows("SELECT key, embedding FROM entries WHERE embed_model = ?", [Embedder.modelKey]) {
+        for row in try db.rows("SELECT key, embedding FROM entries WHERE embed_model = ? AND NOT \(exchangeKeys)", [Embedder.modelKey]) {
             embeddings[row[0] as! String] = row[1] as? Data
         }
+        let retired = Set(try db.rows("SELECT key FROM entries WHERE embed_model = ? AND \(exchangeKeys)", [Embedder.modelKey])
+            .compactMap { ($0[0] as? String).flatMap(SessionExchanges.session(ofExchange:)) })
+        let vectorBytes = try db.rows("SELECT length(embedding) FROM entries WHERE embed_model = ? LIMIT 1", [Embedder.modelKey]).first?[0] as? Int64 ?? 0
         func date(_ seconds: Int64) -> String? {
             seconds > 0 ? FavoritesStore.timestamps.string(from: Date(timeIntervalSince1970: TimeInterval(seconds))) : nil
         }
@@ -887,14 +919,15 @@ enum HistorySync {
                 let tags = [e.folderName, e.agent].filter { !$0.isEmpty }
                     .map { $0.replacingOccurrences(of: " ", with: "_") }.joined(separator: " ")
                 try write(key: key, source: FavoritesStore.sessionSource, url: e.directory, title: e.title, description: searchDescription(e),
-                          tags: tags, shown: date(e.last), embedding: embeddings[key], visits: 0, last: date(e.last), host: e.host)
+                          tags: tags, shown: date(e.last), embedding: retired.contains(key) ? nil : embeddings[key],
+                          visits: 0, last: date(e.last), host: e.host)
             }
             try db.exec("""
                 DELETE FROM favorites_fts WHERE rowid IN
                   (SELECT id FROM favorites WHERE favorite_key NOT IN (SELECT key FROM current_keys));
                 DELETE FROM favorites WHERE favorite_key NOT IN (SELECT key FROM current_keys);
                 """)
-            let dims = embeddings.values.first.map { $0.count / MemoryLayout<Float>.size } ?? 0
+            let dims = Int(vectorBytes) / MemoryLayout<Float>.size
             for (key, value) in [("embedding_model", dims > 0 ? Embedder.modelKey : ""),
                                  ("embedding_dims", String(dims)), ("chrome_signature", signature)] {
                 try db.run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [key, value])
@@ -911,10 +944,15 @@ enum HistorySync {
     /// works with Launchy not running.
     static func peerRows(databasePath path: String, since: Int64?) throws -> (rows: [PeerSessionRow], ids: [String], stamp: Int64) {
         let archive = try Database(path, readOnly: true)
+        // Rows read before this build kept replies would go out without them, and the asker, asking only for later changes,
+        // would get them only at its next launch. It keeps what it has and asks again at its next sync.
+        guard !(try archive.rows("SELECT 1 FROM meta WHERE key = ?", [repliesReadMark])).isEmpty else {
+            throw Database.Failure(message: "its sessions haven't been read with Claude's replies yet; try again in a minute")
+        }
         let own = try sessionEntries(archive, withPeers: false).values.sorted { $0.key < $1.key }
         let rows = own.filter { since == nil || $0.modified >= since! }.map { e in
             PeerSessionRow(id: e.id, folder: e.directory, title: e.title, agent: e.agent.isEmpty ? nil : e.agent, prompts: e.prompts,
-                           first: e.first, last: e.last, modified: e.modified)
+                           replies: e.replies, first: e.first, last: e.last, modified: e.modified)
         }
         return (rows, own.map(\.id), own.map(\.modified).max() ?? 0)
     }
@@ -1147,9 +1185,10 @@ enum HistorySync {
                 for row in answer.rows where UUID(uuidString: row.id) != nil {
                     try archive.run("""
                         INSERT OR REPLACE INTO peer_sessions (peer_id, session_id, directory, title, agent, prompts, first_prompt,
-                                                              last_prompt, modified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                              last_prompt, modified, replies) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, [answer.peer, row.id.lowercased(), row.folder, row.title, row.agent ?? "",
-                              row.prompts.joined(separator: promptSeparator), row.first, row.last, row.modified])
+                              row.prompts.joined(separator: promptSeparator), row.first, row.last, row.modified,
+                              row.replies.map { $0.map { $0.replacingOccurrences(of: promptSeparator, with: "") }.joined(separator: promptSeparator) }])
                 }
                 // The Mac's whole list, so a session it no longer has goes from here too.
                 if let ids = answer.ids {

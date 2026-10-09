@@ -21,8 +21,9 @@ struct RelevanceSearch {
     /// How many pages the filter judges, from the top of the fused ranking.
     static let judgedPages = 20
     static let sessionsShown = 3
-    /// A session matched only by meaning shows when its cosine similarity reaches this, since nearest
-    /// neighbours always exist. Tuned by hand with `Launchy --search`; keyword matches always show.
+    /// A session matched only by meaning shows when its best exchange's cosine similarity reaches this, since nearest
+    /// neighbours always exist. Tuned by hand with `Launchy --search`; keyword matches always show. The best of many
+    /// exchanges runs higher than one vector per session did, so this wants tuning again (ADR 0018).
     static let sessionSimilarityFloor: Float = 0.48
     /// Words shorter than this aren't filtered.
     static let minFilteredLength = 3
