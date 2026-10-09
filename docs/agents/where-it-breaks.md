@@ -24,6 +24,7 @@ Failure modes that come from how Launchy is built: what a change can break even 
 
 **Panel size** (`LauncherModel.panelHeight`, `LauncherView`)
 - The panel is fixed-size, so `panelHeight` must add exactly the rows `searchContent` shows, in every branch: settings, board (fixed, like settings), tab, prompt (the prompt line, then the suggestions or the sessions listed under it), search (`?`), `?` alone (the empty state's height), command, empty field (the session list). A mismatch clips content or leaves a gap. What a query does is its `LauncherModel.Mode`, read from its first character; every branch and key handler switches over it, so none can disagree.
+- A pane's content (terminal, web view, file) takes its container's size one main-queue turn later (`HostContainer.fitNow`), never through an autoresizing mask: every frame change of a terminal is sent to its pty, and Claude with `"tui": "fullscreen"` draws on the alternate screen, which has no scrollback, so a shrink and a grow in one turn (the panel at the board's size, then `placePanel`'s) clips the screen for good and Claude, seeing its old size again, doesn't repaint. A pane that starts a client (`start`, `startWhenHosted`) fits first. `LAUNCHY_LOG_RESIZE=1` logs each grid size sent to a pty, tagged `[resize]`.
 
 **Focus and keys**
 - After a session ends, focusing search has to wait a tick (see `focusSearch`); focus set synchronously is dropped.

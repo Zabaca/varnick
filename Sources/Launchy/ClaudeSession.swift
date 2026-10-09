@@ -42,7 +42,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// left (so it can still be resumed), and the id of the one it's on now.
     var onConversationChange: (_ left: SessionRecord, _ now: String) -> Void = { _, _ in }
     /// The SwiftUI host currently showing `view`. Only it may (re)claim the view.
-    weak var container: NSView?
+    weak var container: HostContainer?
     private let onExit: (Int32?) -> Void
     private var exitWatch: Timer?
     private var finished = false
@@ -1009,6 +1009,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                 try? await Task.sleep(for: .milliseconds(50))
             }
             guard let self, !self.finished, !self.endedByUser, !self.clientEnded else { return }
+            self.container?.fitNow()      // no client runs yet, so a size change costs nothing
             start()
         }
     }
@@ -1526,7 +1527,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         Task { @MainActor in self.finish(exitCode) }
     }
-    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    /// Set `LAUNCHY_LOG_RESIZE=1` to log every grid size sent to the pty, to see what size a pane passes through.
+    private nonisolated static let logsResize = ProcessInfo.processInfo.environment["LAUNCHY_LOG_RESIZE"] == "1"
+    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        guard Self.logsResize else { return }
+        let pixels = Thread.isMainThread ? MainActor.assumeIsolated { source.frame.size } : .zero
+        NSLog("Launchy: [resize] \(id) \(newCols)x\(newRows) cells, view \(Int(pixels.width))x\(Int(pixels.height))")
+    }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         Task { @MainActor in
             let before = self.label
@@ -1562,7 +1569,10 @@ struct TerminalHost: NSViewRepresentable {
         container.adopt()
         // After the update: start() can wait on zmx, and nothing may spin the run loop or publish
         // from inside a view update. Before the focus below, so the pane starts first.
-        DispatchQueue.main.async { session.start() }
+        DispatchQueue.main.async {
+            container.fitNow()
+            session.start()
+        }
         if focused { DispatchQueue.main.async { session.focus() } }
         return container
     }
@@ -1576,12 +1586,20 @@ struct TerminalHost: NSViewRepresentable {
 }
 
 /// What `TerminalHost` shows: holds the session's content while it is the session's claimant.
+///
+/// The content has no autoresizing mask: it takes the container's size one main-queue turn after the
+/// container gets it (`fitNow` is the immediate form). Each frame change of a terminal reaches its pty,
+/// and Claude's alternate screen has no scrollback, so a shrink followed by a grow in one turn (the panel
+/// at the board's size before `placePanel` restores the pane's) clips the screen for good: Claude only
+/// sees its old size again and does not repaint. Deferred, the two collapse into no change at all.
 final class HostContainer: NSView {
     weak var session: ClaudeSession?
+    private var fitQueued = false
 
     init(session: ClaudeSession) {
         self.session = session
         super.init(frame: .zero)
+        clipsToBounds = true       // the content may sit at its old size for a turn
     }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }
@@ -1595,9 +1613,36 @@ final class HostContainer: NSView {
         let view = session.content
         guard view.superview !== self else { return }
         view.removeFromSuperview()
-        view.frame = bounds
-        view.autoresizingMask = [.width, .height]
+        view.autoresizingMask = []
+        if hasSize { view.frame = bounds }
         addSubview(view)
+    }
+
+    private var hasSize: Bool { bounds.width > 0 && bounds.height > 0 }
+
+    /// Gives the content the container's bounds if they differ (never a zero size, never for a view that
+    /// another container has taken since).
+    func fitNow() {
+        guard hasSize, let view = session?.content, view.superview === self, view.frame != bounds else { return }
+        view.frame = bounds
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // A window drag fits at once so it doesn't lag; anything else waits a turn (see above). One
+        // queued fit serves every size change before it runs, and reads the size it runs with.
+        if inLiveResize { return fitNow() }
+        guard !fitQueued else { return }
+        fitQueued = true
+        DispatchQueue.main.async { [weak self] in
+            self?.fitQueued = false
+            self?.fitNow()
+        }
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        fitNow()
     }
 
     /// SwiftUI can build a second host for the same pane while the first is on screen, then
