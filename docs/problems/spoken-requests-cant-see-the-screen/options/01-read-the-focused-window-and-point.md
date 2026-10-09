@@ -2,7 +2,7 @@
 problem: spoken-requests-cant-see-the-screen
 title: Read the focused window's Accessibility tree, let Jev pick the element, and point at it with an arrow
 summary: With a new switch, Point at the screen, a spoken request routed to `screen` is answered from the Accessibility tree of the window that has focus. Launchy describes each visible element by its label, its kind and the text beside it. One Jev call picks the element the request means and says whether it is there at all. A pick Jev finds present gets a big click-through arrow and a sign, drawn by Launchy itself, while Launchy says the sign's note. The eval measured 87 of 97 right, 1 of 28 absent things pointed at, in 0.12 s. No screenshot is taken. Pointing needs the relevance filter on TypeSafe with a key, because Gemma's picks were measured too unreliable to draw. The request and the window's element descriptions go to TypeSafe. Chrome's web pages are out of reach.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -238,7 +238,12 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 
 ## Further Notes
 
-- **Open questions, with recommendations:**
+- **Decided by the user on 2026-10-09,** relayed by the coordinator:
+  - This option, as written.
+  - Open question 2: no. Gemma never points, and the switch can't be turned on without the TypeSafe gate.
+  - Open question 1 wasn't put separately; its recommendation was taken with the acceptance. A plain line goes in the switch's detail and in SECURITY.md, and the disclaim change is its own problem, `panes-share-launchys-permissions`.
+  - A screenshot may leave this Mac, so options 02 to 04 stay proposed.
+- **The open questions, as they were put:**
   1. **If the grant reaches panes started outside zmx, is that acceptable?**
      - Keep sessions running is off by default, so on a new install every pane is Launchy's direct child. With it on, sessions run in zmx and very likely don't get the grant.
      - Recommended: accept it, with a plain line in the switch's detail and in SECURITY.md naming Keep sessions running.
@@ -246,13 +251,8 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   2. **Should Gemma point when Jev can't be asked?** That would make the feature work with the filter On this Mac, with nothing leaving, at the eval's measured cost: 72 of 97 right, 24 wrong, and an arrow for 13 of 28 absent things, with no probability to hold it back.
      - Recommended: no, as the eval recommends. A wrong arrow misleads where silence doesn't, and Gemma stays the routing fallback.
      - If the user wants the feature without TypeSafe, a better route is option 02's or 03's local reading, or a separate spoken-only mode ("I'd look for a button called …") rather than Gemma's arrow.
-- **ADR, on acceptance (0018).**
-  - Spoken requests can point at the screen: Launchy reads the focused window's Accessibility tree, Jev picks the element, and Launchy draws an arrow that never takes focus and ends by itself.
-  - It amends ADR 0015 ("nothing is shown") and ADR 0016: Jev gets the screen's element descriptions and the window's title, under the same gate, and pointing needs that gate.
-  - It adds Accessibility to what Launchy asks for.
-- **Glossary, proposed:**
-  - **Arrow**: what Launchy draws over the screen to point at the thing a **Spoken request** asked about: a big arrow with a sign holding the spoken note, click-through, gone by itself. _Avoid_: highlight, cursor, annotation.
-  - **Spoken request**'s entry changes from "answered aloud from History, Bookmarks and Sessions, and only aloud: nothing is shown or opened" to also answering about the screen with an **Arrow**, still never opening or clicking anything.
+- **ADR:** [0019](../../../adr/0019-a-spoken-request-can-point-at-the-screen.md). It amends ADR 0015 ("nothing is shown") and ADR 0016 (what Jev receives).
+- **Glossary:** **Arrow** added and **Spoken request** changed in `CONTEXT.md`.
 - **`where-it-breaks.md` items this touches:**
   - Listening and spoken requests: the Jev body (anything added is a privacy change needing the ADR, README and SECURITY.md), the pinned model and its thresholds, speculation in `prepare`, and speech only through `Speaker.speak`.
   - Focus and keys: the overlay can never become key, so the panel's `resignKey` rule is untouched.

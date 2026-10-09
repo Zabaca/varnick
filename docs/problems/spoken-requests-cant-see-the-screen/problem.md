@@ -144,11 +144,8 @@ Figures from the user's own screens stay in `.scratch/spoken-requests-cant-see-t
 
 ## Left to decide
 
-- **May a screenshot leave this Mac?** The options are:
-  - none at all (01);
-  - one read on this Mac, by text recognition (02) or by Gemma (03);
-  - one sent to Claude (04).
-- **Who chooses the element.** The eval says Jev, with `present` at 0.5. Gemma picks wrong one time in four and points at absent things, so pointing without TypeSafe means either no pointing or accepting that.
+- **May a screenshot leave this Mac?** Answered by the user on 2026-10-09: yes, it may. Sending one to Claude stays possible, beside reading one on this Mac or taking none.
+- **Who chooses the element.** Answered by the user on 2026-10-09, following the eval: Jev, with `present` at 0.5. Gemma never points, so without TypeSafe nothing is pointed at.
 - **What reaches TypeSafe.** The eval's best result describes each element with the text beside it, so a screen request sends:
   - the window's title;
   - its elements' labels;

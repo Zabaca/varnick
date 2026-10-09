@@ -105,5 +105,5 @@ The image exists in memory only until the request is sent. Launchy never writes 
   - names the key.
 
   SECURITY.md and the README say the same.
-- **This is the user's open question:** whether a screenshot may ever leave this Mac. If the answer is no, this option is rejected with that reason.
+- **Whether a screenshot may leave this Mac** was the user's open question. They answered on 2026-10-09 that it may, so this option stays open. Its own switch, off by default, still decides it per user.
 - **Verified:** no Launchy code sends anything to a cloud language model, and there is no Anthropic key in Launchy today. **Unverified:** every latency and cost figure, and how well each model places points on UI screenshots.
