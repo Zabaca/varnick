@@ -251,13 +251,15 @@ enum SpokenText {
 
     // MARK: Step 3: respond
 
-    static let answerTokens = 96
-    static let maxSentences = 2
+    static let answerTokens = 144
+    static let maxSentences = 3
 
-    /// The answer prompt, in one place so it can be tuned with `Launchy --ask`.
+    /// The answer prompt, in one place so it can be tuned with `Launchy --ask`. The small model follows one instruction better than
+    /// a choice between two, so code picks (`asksForSeveral`).
     private static let answerTemplate = """
         You answer a spoken request aloud. The results below come from the user's own browsing history, bookmarks and Claude Code sessions.
-        Reply with one or two short sentences to be spoken: name the page or session that best fits, and say when it was last visited, used or saved. For a page, say what it is about only from its description. If none of the results fits the request, say so plainly instead of guessing.
+        {instruction}
+        If none of the results fits the request, say so plainly instead of guessing.
         Never read out web addresses or say "result 1". No lists, no markdown.
 
         Request: {request}
@@ -266,12 +268,36 @@ enum SpokenText {
         {rows}
         """
 
+    private static let oneInstruction = """
+        Reply with one or two short sentences: name the result that fits best (the first one, when it fits), and say when it was last visited, used or saved. For a page, say what it is about only from its description.
+        """
+
+    private static let severalInstruction = """
+        The request asks for several results. Reply with up to three short sentences, one for each of up to three results that fit, best first. Each names the result and says when it was last visited, used or saved. Name all three when three fit.
+        """
+
     static func answerPrompt(for request: String, rows: String) -> String {
-        answerTemplate.replacingOccurrences(of: "{rows}", with: rows)
+        answerTemplate.replacingOccurrences(of: "{instruction}", with: asksForSeveral(request) ? severalInstruction : oneInstruction)
+            .replacingOccurrences(of: "{rows}", with: rows)
             .replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
     }
 
-    /// Plain text for the speech: no markdown, one line, the first two sentences. Nil when the reply holds no text.
+    /// Whether the request asks for several results rather than one: it asks for others or similar ones, or "which"/"what" or
+    /// "all" goes with a plural ("which pages", "all my bookmarks"). "Which of my bookmarks is about X" asks for one.
+    static func asksForSeveral(_ request: String) -> Bool {
+        let words = tokens(request)
+        if words.contains(where: { ["other", "others", "else", "similar", "alike", "every"].contains($0) }) { return true }
+        let plurals: Set<String> = ["pages", "bookmarks", "sessions", "articles", "sites", "links", "things", "ones", "results"]
+        return words.indices.dropLast().contains { i in
+            switch words[i] {
+            case "which", "what": plurals.contains(words[i + 1])
+            case "all": plurals.contains(words[i + 1]) || ["the", "my", "of"].contains(words[i + 1])
+            default: false
+            }
+        }
+    }
+
+    /// Plain text for the speech: no markdown, one line, the first `maxSentences` sentences. Nil when the reply holds no text.
     static func spoken(fromReply reply: String) -> String? {
         let plain = oneLine(reply.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "#", with: "")
             .replacingOccurrences(of: "`", with: ""))
