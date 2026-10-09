@@ -2,7 +2,7 @@
 problem: spoken-requests-cant-see-the-screen
 title: When the panel has focus, read it like any other window, then the app behind it
 summary: Option 01 skips Launchy's own process when it picks the window to read. So with the panel open and a session's name on it, "where is Kestrel on my screen" reads the app behind the panel and answers "I can't see that on your screen." This option stops skipping it. With the panel focused, Launchy reads the panel's own Accessibility tree through the same walk and the same Jev `target` and `present` call as any window. If `present` is under 0.5, it reads the frontmost other app as today. Session, project and page names in the panel go to TypeSafe like any window's labels, under the user's principle of 2026-10-09: choosing TypeSafe is consent to send what a TypeSafe feature needs. No registry and no local matching. Three things need checking first: how good the SwiftUI panel's tree is, reading its own process from the detached read, and which window to try first.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -66,6 +66,7 @@ status: proposed
 ## Further Notes
 
 - **Seen 2026-10-09, after option 01 shipped (merge 63807cc).** With the panel open and a session's name on it, a request for that name "on my screen" got "I can't see that on your screen". The request and the name are the user's and are kept locally.
+- **Accepted by the user on 2026-10-09,** relayed by the coordinator, as this simple version.
 - **Rewritten 2026-10-09 at the user's direction,** after the principle that choosing TypeSafe is consent to send what a TypeSafe feature needs.
 - **Considered and dropped: targets from Launchy's own state** (this option's first version).
   - A registry of every pointable view's frame from SwiftUI's layout.
