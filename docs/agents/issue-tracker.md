@@ -40,7 +40,9 @@ The Problems tab on the session board reads these statuses, so they are kept tru
 - `in-progress`: set by hand when work starts that no branch shows yet.
 - `shipped`: set by the merge that finishes the option, in the merge commit itself: `git merge --no-ff --no-commit <branch>`, edit the option's `status` to `shipped`, then `git commit` with the merge message. A merge that leaves the option unfinished sets nothing. The branch's tie says which option it built.
 
-**Branch tie.** A builder's first step, on a branch other than main, is `git config branch.<branch>.launchy-option <problem-slug>/<NN>`. Every worktree shares the config, and deleting the branch drops the entry. The tab shows the option Building while the branch has commits that main lacks, so no `in-progress` is needed.
+**Branch tie.** A builder's first step, on a branch other than main, is `/work option <problem-slug>/<NN>`, which runs `git config branch.<branch>.launchy-option <problem-slug>/<NN>` and links the session or subagent to the option (ADR 0019). Without the skill, run the git command. Every worktree shares the config, and deleting the branch drops the entry. The tab shows the option Building while the branch has commits that main lacks, so no `in-progress` is needed.
+
+**Work links.** Writing a file under `docs/problems/<slug>/`, or under `.scratch/<slug>/` of an existing problem, links the writer to the problem by itself (a hook), so the planner writing `problem.md` and a ticket claim need nothing more. `/work problem <slug>` links work that writes no such file; `/work none` clears. A link to an option replaces only through `/work`.
 
 ## Conventions
 
