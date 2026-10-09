@@ -138,4 +138,5 @@ The Linux installer works from the checkout it runs in, not from `origin`: it bu
   server can therefore read those texts and the key you give it. Name only a server you run.
 - **TypeSafe.** With a key and the relevance filter on TypeSafe, searches and result descriptions leave the
   Mac, and so do the text of a spoken request after "Hey Launchy" and, as a typed search's, the search
-  words and the title, site and page description of its first 20 pages. See the README's Privacy section.
+  words and the title, site and page description of its first 20 pages. Words said before the request was
+  finished may be sent and then discarded. See the README's Privacy section.

@@ -395,10 +395,8 @@ enum SpokenPipeline {
         return reply.text
     }
 
-    /// Decide, search and filter: everything up to the rows to read, with no answer and no speech. A spoken request runs this
-    /// while it waits to be sure the user has finished, and throws `CancellationError` when more speech made it stale (Task
-    /// cancellation reaches Jev's and TypeSafe's requests, the embedding and Text generation); the caller keeps only the result
-    /// for the request's final text. Each model loads once and is shared, so a cancelled run starts no load of its own.
+    /// Decide, search and filter: everything up to the rows to read, with no answer and no speech. Runs while a spoken request
+    /// is still being collected; throws `CancellationError` when more speech cancels it.
     static func prepare(_ request: String, on model: LauncherModel) async throws -> Run {
         var textPlaces: [ModelPlace] = []
 
@@ -546,7 +544,8 @@ enum SpokenCommand {
     /// Runs the first half of the request's words and cancels the run after `seconds`, as a request that goes on does in the app
     /// (`SpokenRequests.speculate`), and says how it ended.
     private static func restart(_ words: [Substring], after seconds: Double, model: LauncherModel) async {
-        let partial = words.prefix(max(1, words.count / 2)).joined(separator: " ")
+        let half = words.prefix(max(1, words.count / 2))
+        let partial = half.joined(separator: " ")
         let began = ContinuousClock.now
         let task = Task { try await SpokenPipeline.prepare(partial, on: model) }
         try? await Task.sleep(for: .seconds(seconds))
@@ -562,7 +561,7 @@ enum SpokenCommand {
         } catch {
             how = "failed: \(error.logKind)"
         }
-        print("restart: first \(min(words.count, max(1, words.count / 2))) of \(words.count) words, cancelled after \(seconds.secondsText), "
+        print("restart: first \(half.count) of \(words.count) words, cancelled after \(seconds.secondsText), "
               + "\(how) [\(began.duration(to: .now).seconds.secondsText) to settle]")
     }
 

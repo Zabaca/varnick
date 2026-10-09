@@ -188,7 +188,10 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere
   else: the searches you type, the prompts typed in the panel, the text of every page and session it
-  embeds (the paired Macs' sessions included), and each conversation's first prompt for a title. A key
+  embeds (the paired Macs' sessions included), and each conversation's first prompt for a title. With
+  Hey Launchy on, the words you say after "Hey Launchy" and the request's search words go to the
+  embedding server, and the request and the titles, sites, folders and descriptions of the results it reads out
+  go to the Text generation server; words said before you finished may be sent and then discarded. A key
   for that server is kept in the Keychain. Nothing goes to a third party.
 - **Peers and the Phone page** talk to the hosts you list, and the Phone page to the devices you list, over
   SSH and Tailscale.
