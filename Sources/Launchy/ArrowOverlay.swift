@@ -1,9 +1,7 @@
 import AppKit
 
-/// The arrow a spoken request points with (ADR 0019): a ring round the element, a thick arrow and a sign holding the note. It is
-/// Launchy's own window, after the overlay recipe of big-arrow-on-the-screen (MIT): one borderless panel over the display that
-/// holds the element, on every Space and over full-screen apps, above Launchy's own floating panel. It never takes focus and
-/// never takes the mouse, so an open panel keeps key and every click goes through. Nothing on it follows a window that moves.
+/// The arrow a spoken request points with (ADR 0019): a ring, a thick arrow and a sign holding the note, in one panel over the
+/// display that holds the element. It never takes focus or the mouse, so an open panel keeps key and clicks go through.
 @MainActor
 final class ArrowOverlay {
     static let shared = ArrowOverlay()
@@ -16,15 +14,15 @@ final class ArrowOverlay {
     private var hiding: Task<Void, Never>?
 
     /// Draws the arrow at `frame` (Accessibility coordinates) with `note` on the sign, over the display holding it, and keeps it
-    /// until `hide`. Shows nothing when the frame is on no display.
+    /// until `hide`. Shows nothing when the frame overlaps no display.
     func show(frame: CGRect, note: String) {
-        hiding?.cancel()
-        let screens = NSScreen.screens
-        guard let main = screens.first else { return }
-        let element = ScreenGeometry.appKit(frame, mainDisplayHeight: main.frame.height)
+        hide()
+        let element = ScreenGeometry.appKit(frame, mainDisplayHeight: ScreenGeometry.mainDisplayHeight)
         let centre = CGPoint(x: element.midX, y: element.midY)
+        let screens = NSScreen.screens
         guard let screen = screens.first(where: { $0.frame.contains(centre) })
-                ?? screens.max(by: { overlap($0.frame, element) < overlap($1.frame, element) }) else { return }
+                ?? screens.max(by: { overlap($0.frame, element) < overlap($1.frame, element) }),
+              screen.frame.contains(centre) || overlap(screen.frame, element) > 0 else { return }
 
         let (panel, view) = made()
         let sign = view.signSize(for: note, within: screen.frame)

@@ -1,8 +1,9 @@
+import AppKit
 import ApplicationServices
 import Foundation
 
-/// The pure parts of pointing at the screen (ADR 0019): what a control is called to the model, the sign's note, the coordinate
-/// conversion and where the arrow and its sign go. None of it touches an app, so each is a seam for a first test.
+// The pure parts of pointing at the screen (ADR 0019): what an element is called to the model, the sign's note, the one
+// coordinate conversion and where the arrow and its sign go. None of it reads an app, so each is a seam for a first test.
 
 /// An element of another app's window, held to read its frame again before the arrow is drawn.
 final class AXReference: @unchecked Sendable, Equatable {
@@ -11,37 +12,30 @@ final class AXReference: @unchecked Sendable, Equatable {
     static func == (a: AXReference, b: AXReference) -> Bool { CFEqual(a.element, b.element) }
 }
 
-/// A control, field, tab or the like in the window in front, with a label and a frame on a display. Frames are as Accessibility
-/// gives them: global, with the origin at the top left of the main display (`ScreenGeometry`).
+/// An element of the focused window with a frame inside it and a label. Frames are Accessibility's (`ScreenGeometry`).
 struct ScreenElement: Sendable {
-    /// As the app words it ("button", "pop up button", "switch").
+    /// As macOS names the kind ("button", "pop up button", "switch").
     var role: String
-    /// Everything the app says of it, one line, at most `ScreenElements.maxLabel` characters: what the model reads.
+    /// Title, description, value, help and placeholder, de-duplicated and cut to `ScreenElements.maxLabel`.
     var label: String
-    /// What the note calls it: its title, else its description, else its placeholder, else the text beside it.
+    /// What the note calls it: title, else description, else placeholder (a text's own words for text); empty when it has none.
     var name: String
     var frame: CGRect
     var enabled = true
     var underPointer = false
-    var inDialog = false
-    /// The named groups it sits in, outermost first.
+    /// The named enclosing groups, outermost first.
     var path: [String] = []
-    /// Which window it was read from, so the text beside it is looked for in the same window.
-    var scope = 0
     var beside: String?
     var help: String?
+    /// Text or a heading: listed, and the words other elements are described beside.
+    var isText = false
     var reference: AXReference?
 
-    /// A row is labelled by the first text inside it, which the walk finds after the row.
-    var isRow = false
-
-    /// One element as the model reads it (format F3 of the screen-pointing eval): the label, the kind in parentheses with its
-    /// markers, the groups it sits in and the text beside it, e.g. `1 (switch), beside "Play sound on startup"`.
+    /// As the model reads it (the eval's F3): `1 (switch) in Sound, beside "Play sound on startup"`.
     var description: String {
         var markers = ""
         if !enabled { markers += ", dimmed" }
         if underPointer { markers += ", under the pointer" }
-        if inDialog { markers += ", in a dialog" }
         var text = "\(label.isEmpty ? "(no label)" : label) (\(role)\(markers))"
         if !path.isEmpty { text += " in " + path.suffix(3).joined(separator: " > ") }
         if let beside { text += ", beside \"\(beside)\"" }
@@ -49,31 +43,23 @@ struct ScreenElement: Sendable {
     }
 }
 
-/// Text read from a window (a label, a heading): never a candidate, only the words beside a control.
-struct ScreenText: Sendable {
-    var label: String
-    var frame: CGRect
-    var path: [String]
-    var scope: Int
-}
-
 enum ScreenElements {
     static let maxLabel = 80
-    static let maxCandidates = 150
+    /// A Choice takes 255 options; a window with more keeps the first 255 in tree order.
+    static let maxListed = 255
 
-    /// The text a person reads as a control's name when its own label is only a value (a switch's "1"): the nearest text in the
-    /// same group on the same row to its left, else the nearest text just above it. As the eval's `beside`.
-    static func beside(_ element: ScreenElement, among texts: [ScreenText]) -> String? {
+    /// The text a person reads as an element's name when its own label is only a state: the nearest text in the same group on the
+    /// same row to its left (within 450 points), else the nearest just above (within 30). As the eval's `beside`.
+    static func beside(_ element: ScreenElement, among texts: [ScreenElement]) -> String? {
+        guard !element.isText else { return nil }
         let frame = element.frame
-        let centreY = frame.midY
         var best: (gap: CGFloat, label: String)?
-        for text in texts where text.scope == element.scope && text.path == element.path {
+        for text in texts where text.path == element.path {
             let t = text.frame
             let gap: CGFloat
-            if abs(t.midY - centreY) <= max(8, frame.height / 2) && t.maxX >= frame.minX - 450 && t.maxX <= frame.minX + 4 {
+            if abs(t.midY - frame.midY) <= max(8, frame.height / 2) && t.maxX >= frame.minX - 450 && t.maxX <= frame.minX + 4 {
                 gap = frame.minX - t.maxX
             } else if frame.minY - t.maxY >= 0 && frame.minY - t.maxY <= 30 && t.minX < frame.maxX && frame.minX < t.maxX {
-                // Above only when nothing is on the row.
                 gap = 1000 + frame.minY - t.maxY
             } else {
                 continue
@@ -83,26 +69,13 @@ enum ScreenElements {
         return best.map { String($0.label.prefix(maxLabel)) }
     }
 
-    /// The elements the model chooses among: duplicates (same role, label and frame) dropped, at most `maxCandidates` kept in walk
-    /// order, the one under the pointer always.
-    static func capped(_ elements: [ScreenElement]) -> [ScreenElement] {
-        var seen = Set<String>()
-        var kept: [ScreenElement] = []
-        for element in elements {
-            let key = "\(element.role)|\(element.label)|\(Int(element.frame.minX)),\(Int(element.frame.minY)),\(Int(element.frame.width)),\(Int(element.frame.height))"
-            guard seen.insert(key).inserted else { continue }
-            if kept.count < maxCandidates || element.underPointer { kept.append(element) }
-        }
-        return kept
-    }
-
-    /// One line of words with the direction marks and object-replacement characters Accessibility leaves in labels removed.
+    /// One line of words, without the direction marks and object-replacement characters Accessibility leaves in labels.
     static func cleaned(_ text: String) -> String {
         let marks: Set<Character> = ["\u{200E}", "\u{200F}", "\u{FFFC}"]
         return text.filter { !marks.contains($0) }.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    /// The parts joined with " / " when they differ, each cut to 120 characters, the whole to `maxLabel`.
+    /// The parts that differ, joined with " / ", each cut to 120 characters and the whole to `maxLabel`.
     static func label(from parts: [String?]) -> String {
         var seen = Set<String>()
         var kept: [String] = []
@@ -113,15 +86,20 @@ enum ScreenElements {
         return String(kept.joined(separator: " / ").prefix(maxLabel))
     }
 
-    // MARK: The note
-
-    /// What Launchy says and the sign shows. "Here's the Allow button.", or for the element under the pointer "That's the Share
-    /// button." and the first sentence of its help.
+    /// What Launchy says and the sign shows: "Here's the Allow button."; for a state with text beside it, "Here's the switch for
+    /// Play sound on startup."; for the element under the pointer, "That's the Share button." and the first sentence of its help.
     static func note(for element: ScreenElement) -> String {
-        let name = String(element.name.prefix(60))
-        var called = name
-        if name.isEmpty { called = element.role }
-        else if !name.lowercased().hasSuffix(element.role.lowercased()) { called = name + " " + element.role }
+        let called: String
+        if !element.name.isEmpty {
+            let name = String(element.name.prefix(60))
+            called = name.lowercased().hasSuffix(element.role.lowercased()) ? name : "\(name) \(element.role)"
+        } else if let beside = element.beside {
+            called = "\(element.role) for \(beside)"
+        } else if !element.label.isEmpty {
+            called = "\(String(element.label.prefix(60))) \(element.role)"
+        } else {
+            called = element.role
+        }
         guard element.underPointer else { return "Here's the \(called)." }
         var note = "That's the \(called)."
         if let help = element.help, let sentence = firstSentence(of: help) { note += " " + sentence }
@@ -137,7 +115,7 @@ enum ScreenElements {
         }
         guard var sentence = first, !sentence.isEmpty else { return nil }
         if sentence.count > 120 { sentence = String(sentence.prefix(120)).trimmingCharacters(in: .whitespaces) + "…" }
-        return sentence.last.map { ".!?…".contains($0) } == true ? sentence : sentence + "."
+        return ".!?…".contains(sentence.last!) ? sentence : sentence + "."
     }
 }
 
@@ -146,53 +124,56 @@ enum ScreenElements {
 /// The element a spoken request points at, with what the sign says.
 struct ScreenTarget: Equatable {
     var reference: AXReference?
-    /// Accessibility coordinates, as read; read again just before the arrow is drawn.
+    /// As read; read again just before the arrow is drawn.
     var frame: CGRect
     var note: String
-    /// For `Launchy --ask`, which prints them; never logged.
-    var role: String
-    var label: String
+    /// Printed by `Launchy --ask`, never logged.
+    var description: String
 }
 
 /// Why nothing is pointed at. Each is spoken with nothing drawn, and the timing line names its kind.
-enum ScreenMiss: String, Equatable {
-    /// No element had a label and a frame, or no app was found to read.
-    case none
-    case belowThreshold
+enum ScreenMiss: Equatable {
+    /// No app, or no element with a label in its window.
+    case nothingListed
+    /// Jev found the thing not to be in the window.
+    case notPresent
     case noPermission
     case chrome
-    /// The element was there when chosen and gone when the arrow was to be drawn.
+    /// Chosen, then gone when the arrow was to be drawn.
     case gone
-    /// Jev did not choose (no key, the filter not on TypeSafe, or it failed): Gemma never points.
-    case unavailable
+    /// Jev did not choose (the gate is closed, or it failed): Gemma never points.
+    case jevFailed
 
     var spoken: String {
         switch self {
-        case .none, .belowThreshold: "I can't see that on your screen."
+        case .nothingListed, .notPresent: "I can't see that on your screen."
         case .noPermission: "I need Accessibility permission to see your screen. It's in Settings, under Listening."
         case .chrome: "I can't see inside pages in Chrome."
         case .gone: "I can't see that on your screen any more."
-        case .unavailable: "I can't look at your screen right now."
+        case .jevFailed: "I can't point at things right now."
         }
     }
 
     var logKind: String {
         switch self {
-        case .none: "none"
-        case .belowThreshold: "below the threshold"
+        case .nothingListed: "nothing listed"
+        case .notPresent: "not present"
         case .noPermission: "no permission"
         case .chrome: "Chrome"
         case .gone: "gone"
-        case .unavailable: "unavailable"
+        case .jevFailed: "Jev failed"
         }
     }
 }
 
 // MARK: Where things are
 
-/// Accessibility frames are global with the origin at the top left of the main display, and Y growing down; AppKit's have it at
+/// Accessibility frames are global with the origin at the top left of the main display and Y growing down; AppKit's have it at
 /// the bottom left of the main display, growing up. This is the one place they are converted.
 enum ScreenGeometry {
+    @MainActor
+    static var mainDisplayHeight: CGFloat { NSScreen.screens.first?.frame.height ?? 0 }
+
     static func appKit(_ frame: CGRect, mainDisplayHeight: CGFloat) -> CGRect {
         CGRect(x: frame.minX, y: mainDisplayHeight - frame.maxY, width: frame.width, height: frame.height)
     }
@@ -210,21 +191,25 @@ struct ArrowLayout: Equatable {
     var tail: CGPoint
     var tip: CGPoint
 
+    enum Side: CaseIterable { case right, left, below, above }
+
     static let ringOutset: CGFloat = 7
     static let arrowLength: CGFloat = 96
     static let margin: CGFloat = 14
 
-    /// The sign goes on the side of the element with the most room, a step away so the arrow shows between them, and is kept on
-    /// the display. It never covers the element unless the element leaves no room on any side.
+    /// The sign goes on the side with the most room, an arrow's length away, and is kept on the display. It covers the element
+    /// only when no side has room.
     static func place(element: CGRect, screen: CGRect, sign size: CGSize) -> ArrowLayout {
         let ring = element.insetBy(dx: -ringOutset, dy: -ringOutset)
-        let room = (
-            right: screen.maxX - ring.maxX - size.width - arrowLength,
-            left: ring.minX - screen.minX - size.width - arrowLength,
-            below: ring.minY - screen.minY - size.height - arrowLength,
-            above: screen.maxY - ring.maxY - size.height - arrowLength)
-        let side = [("right", room.right), ("left", room.left), ("below", room.below), ("above", room.above)]
-            .max { $0.1 < $1.1 }!.0
+        func room(_ side: Side) -> CGFloat {
+            switch side {
+            case .right: screen.maxX - ring.maxX - size.width - arrowLength
+            case .left: ring.minX - screen.minX - size.width - arrowLength
+            case .below: ring.minY - screen.minY - size.height - arrowLength
+            case .above: screen.maxY - ring.maxY - size.height - arrowLength
+            }
+        }
+        let side = Side.allCases.max { room($0) < room($1) }!
         let bounds = screen.insetBy(dx: margin, dy: margin)
         func clamped(_ rect: CGRect) -> CGRect {
             CGRect(x: min(max(rect.minX, bounds.minX), max(bounds.minX, bounds.maxX - rect.width)),
@@ -233,19 +218,19 @@ struct ArrowLayout: Equatable {
         }
         func within(_ v: CGFloat, _ low: CGFloat, _ high: CGFloat) -> CGFloat { min(max(v, low), high) }
         switch side {
-        case "right":
+        case .right:
             let sign = clamped(CGRect(x: ring.maxX + arrowLength, y: ring.midY - size.height / 2, width: size.width, height: size.height))
             return ArrowLayout(ring: ring, sign: sign, tail: CGPoint(x: sign.minX, y: sign.midY),
                                tip: CGPoint(x: ring.maxX, y: within(sign.midY, ring.minY, ring.maxY)))
-        case "left":
+        case .left:
             let sign = clamped(CGRect(x: ring.minX - arrowLength - size.width, y: ring.midY - size.height / 2, width: size.width, height: size.height))
             return ArrowLayout(ring: ring, sign: sign, tail: CGPoint(x: sign.maxX, y: sign.midY),
                                tip: CGPoint(x: ring.minX, y: within(sign.midY, ring.minY, ring.maxY)))
-        case "below":
+        case .below:
             let sign = clamped(CGRect(x: ring.midX - size.width / 2, y: ring.minY - arrowLength - size.height, width: size.width, height: size.height))
             return ArrowLayout(ring: ring, sign: sign, tail: CGPoint(x: sign.midX, y: sign.maxY),
                                tip: CGPoint(x: within(sign.midX, ring.minX, ring.maxX), y: ring.minY))
-        default:
+        case .above:
             let sign = clamped(CGRect(x: ring.midX - size.width / 2, y: ring.maxY + arrowLength, width: size.width, height: size.height))
             return ArrowLayout(ring: ring, sign: sign, tail: CGPoint(x: sign.midX, y: sign.minY),
                                tip: CGPoint(x: within(sign.midX, ring.minX, ring.maxX), y: ring.maxY))

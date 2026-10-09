@@ -127,14 +127,15 @@ the microphone and system audio permissions the first time.
 ### Point at the screen
 
 With Hey Launchy on, Settings › Listening › **Point at the screen** lets you ask about what is in front of
-you ("Hey Launchy, where's the Allow button"). Launchy reads the controls of the window that has focus
+you ("Hey Launchy, where's the Allow button"). Launchy reads the elements of the window that has focus
 through macOS Accessibility, in its own process, asks TypeSafe's Jev which one you mean, draws a big arrow
 and a sign on it that never takes focus or clicks, says what it is, and takes the arrow away a few seconds
 later. It takes no screenshot. It needs the Accessibility permission, which Settings asks for and shows,
 and the relevance filter on TypeSafe with a key (see Privacy below for what is sent). A rebuild of Launchy
 may need the permission given again. Chrome's page content is not readable; Launchy says so. The
-permission is Launchy's own, and it probably also reaches a Claude or terminal pane that Launchy starts
-itself, which is every pane while Keep sessions running is off: see [`SECURITY.md`](SECURITY.md).
+permission is Launchy's own. Sessions kept running in zmx very likely don't get it, but a Claude or terminal
+pane that Launchy starts itself, which is every pane while Keep sessions running is off, probably does:
+see [`SECURITY.md`](SECURITY.md).
 
 ### TypeSafe
 
@@ -199,9 +200,10 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   speaking, words said so far may be sent and then discarded. With the filter On this Mac or off, nothing leaves.
 - **With Point at the screen on** (Settings › Listening, off by default, and only available with the filter on
   TypeSafe and a key), a request that is about the screen also sends TypeSafe the title of the window in
-  front and, for each of its controls, the name, kind and nearby text. That is whatever the window shows
-  there: a mail's subject as a link, a file's name as a row, a contact's name as a button. What is typed in a
-  field is never read. No screenshot is taken, and none of this goes to a model server.
+  front and, for each of its elements, the label, kind and nearby text. That is the window's visible text near
+  its controls: a message list's subjects and senders, a file's name in a tab, the account's name in a
+  sidebar. What is typed in a field is never read. No screenshot is taken, and none of this goes to a model
+  server.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere

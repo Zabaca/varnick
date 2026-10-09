@@ -1,11 +1,8 @@
 import Foundation
 
-/// Asks TypeSafe's Jev which element of the window in front a spoken request means (ADR 0019): one call with a `target` choice
-/// over the elements and a `present` yes/no over the same list, as measured in the screen-pointing eval (agent-lab 20fb286,
-/// shape C, format F3). Under the decide step's gate only (the filter on TypeSafe and a key saved). Gemma never points.
-///
-/// What goes: the request text, the window's title, and each element's label, kind in parentheses (with dimmed, under the pointer,
-/// in a dialog), named groups and the text beside it. Never a field's value, an app's name, a frame or an image.
+/// Asks TypeSafe's Jev which element of the focused window a spoken request means (ADR 0019): a `target` choice and a `present`
+/// yes/no over the same list, as the screen-pointing eval measured them (agent-lab 20fb286, arm C, format F3). Under the
+/// TypeSafe gate only; Gemma never points. Goes: the request, the window's title and the element descriptions. Nothing else.
 struct ScreenPicker {
     let apiKey: String
     var model = SpokenRouter.pinnedModel

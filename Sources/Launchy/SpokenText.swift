@@ -558,18 +558,18 @@ enum SpokenPipeline {
             return run
         }
         guard ScreenReader.isTrusted else { return missed(.noPermission) }
-        guard Settings.shared.activeRelevanceFilter == .typesafe, let key = Settings.shared.typesafeKey else {
-            look.chosenBy = "filter not on TypeSafe or no key"
-            return missed(.unavailable)
+        guard let key = Settings.shared.typesafeGateKey else {
+            look.chosenBy = "gate closed"
+            return missed(.jevFailed)
         }
-        guard let app = screen.app ?? ScreenReader.focusedApplication() else { return missed(.none) }
+        guard let app = screen.app ?? ScreenReader.focusedApplication() else { return missed(.nothingListed) }
 
-        let reading = await ScreenReader.read(app, around: ScreenReader.surroundings())
+        let reading = await ScreenReader.read(app, pointer: ScreenReader.pointer())
         try Task.checkCancellation()
         look.read = reading.duration
         look.candidates = reading.elements.count
-        let blind: ScreenMiss = reading.chromeBlind ? .chrome : .belowThreshold
-        guard !reading.elements.isEmpty else { return missed(reading.chromeBlind ? .chrome : .none) }
+        let blind: ScreenMiss = reading.chromeBlind ? .chrome : .notPresent
+        guard !reading.elements.isEmpty else { return missed(reading.chromeBlind ? .chrome : .nothingListed) }
 
         let began = ContinuousClock.now
         let pick: ScreenPicker.Pick
@@ -579,7 +579,7 @@ enum SpokenPipeline {
             try Task.checkCancellation()
             look.choose = began.duration(to: .now)
             look.chosenBy = "Jev failed: \(error.logKind)"
-            return missed(.unavailable)
+            return missed(.jevFailed)
         }
         try Task.checkCancellation()
         look.choose = began.duration(to: .now)
@@ -589,7 +589,7 @@ enum SpokenPipeline {
 
         let element = reading.elements[pick.index]
         run.outcome = .point(ScreenTarget(reference: element.reference, frame: element.frame, note: ScreenElements.note(for: element),
-                                          role: element.role, label: element.label))
+                                          description: element.description))
         run.screen = look
         return run
     }
@@ -653,7 +653,7 @@ enum SpokenCommand {
         } else {
             lines.append("choice: \(look.chosenBy)  [\(look.choose.seconds.secondsText)]")
         }
-        if case .point(let target) = outcome { lines.append("pick: \(target.role), \(target.label)") }
+        if case .point(let target) = outcome { lines.append("pick: \(target.description)") }
         if let miss = look.miss { lines.append("miss: \(miss.logKind)") }
         return lines
     }

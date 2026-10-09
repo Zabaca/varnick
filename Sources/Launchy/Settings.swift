@@ -251,10 +251,16 @@ final class Settings: ObservableObject {
         }
     }
 
-    /// Whether a spoken request may go to the screen: the switch, Hey Launchy, and the relevance filter on TypeSafe with a key
-    /// saved, since only Jev chooses the element (ADR 0019). When it is false the decide questions have no screen in them.
+    /// The TypeSafe key while the relevance filter is on TypeSafe: the gate of Jev's choice of where to look and of which element to
+    /// point at (ADR 0016, 0019).
+    var typesafeGateKey: String? {
+        activeRelevanceFilter == .typesafe ? typesafeKey : nil
+    }
+
+    /// Whether a spoken request may go to the screen: the switch, Hey Launchy and the gate. When false the decide questions have
+    /// no screen in them, and the switch acts as off.
     var screenPointingOn: Bool {
-        pointAtScreen && heyLaunchy && activeRelevanceFilter == .typesafe && typesafeKey != nil
+        pointAtScreen && heyLaunchy && typesafeGateKey != nil
     }
 
     /// Where the next search or sync embeds. LAUNCHY_EMBEDDINGS overrides the settings in every process, the app included:
@@ -579,11 +585,13 @@ struct SettingsView: View {
                                 .disabled(!settings.heyLaunchy && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
                         }
                         SettingRow(title: "Point at the screen",
-                                   detail: "Ask \"Hey Launchy, where's the Allow button\" and Launchy draws a big arrow on it in the window in front, says what it is, and takes the arrow away a few seconds later. It reads that window's buttons, fields and other controls through macOS Accessibility, on this Mac, and takes no screenshot. It needs the relevance filter on TypeSafe (Settings › Search and Models) with a key saved: what you say, the window's title, and each control's name, kind and nearby text go to TypeSafe to choose which one you mean. What is typed in a field never goes. A rebuild of Launchy may need the Accessibility permission given again. The permission is Launchy's own. A Claude or terminal pane started without Keep sessions running is Launchy's child and probably gets it too, so a session started there with Skip permissions could read and drive any app's windows without asking; sessions kept running in zmx probably don't get it.") {
+                                   detail: "Ask \"Hey Launchy, where's the Allow button\" and Launchy draws a big arrow on it in the window in front, says what it is, and takes the arrow away a few seconds later. It reads that window's elements through macOS Accessibility, on this Mac, and takes no screenshot. It needs the relevance filter on TypeSafe with a key saved: what you say, the window's title, and each element's label, kind and nearby text go to TypeSafe to choose which one you mean. That is the window's visible text near its controls, such as a message list's subjects. What is typed in a field never goes. A rebuild of Launchy may need the Accessibility permission given again. The permission is Launchy's own: sessions kept running in zmx very likely don't get it, but a Claude or terminal pane started without Keep sessions running is Launchy's child and may, so a session started there with Skip permissions could read and drive any app's windows without asking.") {
                             if !settings.heyLaunchy {
                                 Text("Needs Hey Launchy").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if !screenGateOpen {
-                                modelsLink("Needs the filter on TypeSafe")
+                                Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
+                                    .buttonStyle(.link)
+                                    .font(.system(size: 12))
                             }
                             Text(accessibilityGranted ? "Accessibility granted" : "Needs Accessibility")
                                 .font(.system(size: 12))
@@ -853,10 +861,8 @@ struct SettingsView: View {
         }
     }
 
-    /// Point at the screen can be turned on only with the relevance filter on TypeSafe and a key: only Jev chooses the element.
-    private var screenGateOpen: Bool {
-        settings.activeRelevanceFilter == .typesafe && settings.typesafeKey != nil
-    }
+    /// Point at the screen can be turned on only with the gate open: only Jev chooses the element.
+    private var screenGateOpen: Bool { settings.typesafeGateKey != nil }
 
     /// Adds Launchy to the Accessibility list (the system prompt) and opens that pane.
     private func askForAccessibility() {

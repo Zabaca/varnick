@@ -291,9 +291,11 @@ final class SpokenRequests {
         record(saying)
         let speaking = Date()
         // The arrow is up just before the speech starts and stays a while after it ends; never drawn before the hold has ended.
-        if let pointing { ArrowOverlay.shared.show(frame: pointing.frame, note: pointing.note) }
+        // The switch may have been turned off since the request began.
+        let draws = pointing != nil && Settings.shared.screenPointingOn
+        if let pointing, draws { ArrowOverlay.shared.show(frame: pointing.frame, note: pointing.note) }
         let first = await Speaker.shared.speak(saying)
-        if pointing != nil, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
+        if draws, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
 
         // For the latency check: where the time went, as durations, places and kinds only.
         func seconds(_ duration: Duration?) -> String { duration?.seconds.secondsText ?? "-" }
@@ -312,11 +314,13 @@ final class SpokenRequests {
               + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")
     }
 
-    /// The screen's part of the timing line, for a request about the screen: durations, a count, who chose and the miss's kind.
+    /// The screen's part of the timing line: durations, the element count, who chose, whether Jev found the thing present, and the
+    /// miss's kind.
     private static func screenTiming(_ look: SpokenPipeline.ScreenLook?) -> String {
         guard let look else { return "" }
-        return "screen read \(look.read.seconds.secondsText) (\(look.candidates) candidates), "
-            + "chosen in \(look.choose.seconds.secondsText) by \(look.chosenBy), miss \(look.miss?.logKind ?? "none"), "
+        let present = look.pick.map { $0.isConfident ? "present" : "not present" } ?? "-"
+        return "screen read \(look.read.seconds.secondsText) (\(look.candidates) elements), "
+            + "chosen in \(look.choose.seconds.secondsText) by \(look.chosenBy) (\(present)), miss \(look.miss?.logKind ?? "pointed"), "
     }
 
     /// Nothing could write the text: no model installed and no server answering.
