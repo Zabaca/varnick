@@ -26,7 +26,8 @@ The image is dropped as soon as the text is read. It is never written to disk, n
 - **No model reads the image.** Text recognition is Apple's, built into macOS, on this Mac. It adds no dependency and no download.
 - **More of the window's text can reach TypeSafe.** The recognised lines are what the window shows: a mail's subjects and senders, a document's headings, a chat's names. The length cut keeps out paragraphs but not short private lines. Under option 01's gate (the filter on TypeSafe and a key), they go to TypeSafe on a miss. With the gate closed, Gemma chooses on this Mac and nothing leaves. That is more than option 01 sends, and the ADR and Settings say so.
 - **A second permission.**
-  - Screen Recording is granted the way Accessibility is, with the same ad-hoc rebuild problem and probably the same reach into Launchy's panes. A process in a pane could then capture the screen too.
+  - Screen Recording is granted the way Accessibility is, with the same ad-hoc rebuild problem.
+  - Like option 01's grant, it is Launchy's own. The capture runs in Launchy's process, never from a pane, and panes started outside zmx may inherit it (option 01, hand check 2).
   - Recent macOS versions ask again from time to time whether an app may keep recording, and show a capture indicator. Unverified on macOS 26.
 - **Slower on a miss only.** The capture, recognition at the accurate level and a second choice add an estimated 0.5 to 1.5 s, unmeasured, and only after the tree found nothing.
 - **Boxes, not controls.** The arrow rings the text, which may be beside the control it labels: a checkbox's label rather than its box. Close enough to point, not to click.

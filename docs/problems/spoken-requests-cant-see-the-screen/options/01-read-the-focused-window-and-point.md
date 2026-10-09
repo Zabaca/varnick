@@ -27,7 +27,9 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 - **A new kind of data reaches TypeSafe.** With the filter on TypeSafe and a key saved, the roles and labels of the focused window's controls go there with the request. Those labels hold whatever the window shows: a mail's subject as a link, a file's name as a tab, a contact's name as a button. ADR 0016 refused to send rows, and ADR 0017 then sent page rows for the filter. This sends the screen, so it gets its own line in Settings, the README and SECURITY.md, and its own ADR. With the filter On this Mac or off, Gemma chooses and nothing leaves.
 - **A permission, and its reach.**
   - Launchy needs Accessibility. While builds are signed ad hoc, a rebuild may silently stop the grant from applying, until the user removes and re-adds Launchy (unverified; hand check 1). `runs-only-from-a-checkout` option 01 would make the grant stick.
-  - The grant probably reaches every Claude session and shell in Launchy's panes too (unverified; hand check 2). Accessibility lets a process read and drive any app's UI, so a session started with Skip permissions could do that without asking. Settings has to say so plainly, and it is the user's call (open question 1).
+  - **Sessions in zmx don't get the grant.** The eval measured this: a pane under zmx isn't trusted, and macOS attributes it to zmx.
+  - **Panes started outside zmx probably do get it** (Keep sessions running off, or zmx missing), since they are Launchy's own children (unverified; hand check 2). Accessibility lets a process read and drive any app's UI, so a session started with Skip permissions in such a pane could do that without asking. Settings says so plainly, and it is the user's call (open question 1).
+  - **The grant must stay Launchy's.** Granting zmx instead, so that a tool in a pane could read the screen, would hand that power to every hosted session.
 - **ADR 0015's promise changes.** A spoken request can now draw on the screen. It still never opens, clicks, types or moves focus, and a misheard request costs an arrow that goes by itself.
 - **The decide questions change.** Adding `screen` changes Jev's measured `source` and `action` probabilities, so `offTopicFrom` and `alsoSessionsFrom` are re-measured (the eval in the problem). With the switch off, the questions are today's, unchanged.
 - **Latency, estimated.** Jev's decide takes about 0.3 s, the tree read 0.1 to 1 s, and Jev's choice about 0.3 s. With Gemma choosing instead, about 0.5 s more. The draw is instant. Decide, read and choose all run during the hold (ADR 0017), so most of this overlaps the wait for the user to finish.
@@ -53,7 +55,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   - that Launchy draws an arrow on the screen;
   - what goes to TypeSafe, and when;
   - that a rebuild may need the grant again;
-  - that the grant reaches what runs in Launchy's panes, if hand check 2 says so.
+  - that the grant is Launchy's own: sessions kept running in zmx don't get it, and panes started without Keep sessions running may (hand check 2).
 - **With the switch off,** Jev's questions and Gemma's prompt are today's, byte for byte.
 - **Asked without the permission,** Launchy says "I need Accessibility permission to see your screen. It's in Settings, under Listening." It draws nothing.
 
@@ -67,6 +69,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 - `screen` is taken when it is the likeliest source. Sessions are never added beside it, and no search runs.
 
 **Looking**
+- **In Launchy's own process,** under Launchy's own grant. The read never goes through a helper, a script or bigarrow run in a pane. Those run under zmx, which would need a grant of its own, and that grant would reach every Claude session zmx hosts.
 - **Off the main actor,** within named limits, tuned by hand: a time budget (1 s), a node limit (3,000), a depth limit (30), and a short timeout per Accessibility call, so a hung app costs only the budget.
 - **Which app.** The application that has keyboard focus, as the system-wide Accessibility element reports it. A system alert that takes focus is its own app, so it is read. When Launchy itself has focus, the frontmost other app is read; Launchy's own windows are never read.
 - **Walk order.** Breadth first: the focused window (its sheets and dialogs are inside it), then the app's other windows, then the top level of its menu bar.
@@ -166,7 +169,12 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 **Hand checks for the builder.** These are unverified. Run them with the user, and keep anything personal in `.scratch/spoken-requests-cant-see-the-screen/`.
 
 1. **The grant across a rebuild.** Grant Accessibility, then `make build` and restart. Does Settings still show it granted? If not, the detail text says how to re-grant it.
-2. **The grant's reach.** After the grant, run a one-line Accessibility trust check from a terminal pane in Launchy, started after the restart, and from a pane that survived it. If either says trusted, Settings and SECURITY.md say so, and the user decides (open question 1).
+2. **The grant's reach outside zmx.** Panes in zmx are already measured as not trusted. After the grant:
+   - turn Keep sessions running off;
+   - open a terminal pane, which then runs as Launchy's direct child;
+   - run a one-line Accessibility trust check there.
+
+   If it says trusted, Settings and SECURITY.md say so, and the user decides (open question 1).
 3. **System prompts.** Trigger a real permission prompt (a new app asking for the microphone) and ask "where's the Allow button". Is the prompt the app with focus, and does it expose its buttons?
 4. **Latency.** Time about ten requests from the end of speech to the arrow, warm, with Jev and with Gemma choosing. A median well over 4 s goes back to the user.
 
@@ -178,12 +186,16 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 - Apps other than the one with focus ("where's the mute button in Zoom" while another app is in front).
 - Several arrows for one request, an arrow that follows a moving window, and a click to dismiss it.
 - Follow-up requests ("no, the other one"). Each request stands alone, as ADR 0015 says.
-- Disclaiming responsibility for pane processes so that they stop inheriting Launchy's grants. If hand check 2 finds the grant reaches them, that is a problem of its own: it changes what the microphone grant reaches today, too.
+- Running the read from a pane or a helper, and granting zmx anything (see Looking).
+- Keeping panes started outside zmx from inheriting Launchy's grants. If hand check 2 finds they do, that is a problem of its own: it would change what the microphone grant reaches in those panes today, too.
 
 ## Further Notes
 
 - **Open questions, with recommendations:**
-  1. If the grant reaches Launchy's panes, is that acceptable? Recommended: ship with a plain line in Settings and SECURITY.md, and raise the disclaim change as its own problem rather than block on it.
+  1. If the grant reaches panes started outside zmx, is that acceptable?
+     - Keep sessions running is off by default, so on a new install every pane is Launchy's direct child. With it on, sessions run in zmx and don't get the grant.
+     - Recommended: accept it, with a plain line in the switch's detail and in SECURITY.md naming Keep sessions running.
+     - Raise the disclaim change as its own problem rather than block on it.
   2. Should the Jev choice wait for the eval's threshold? Recommended: yes. Build behind the switch with 0.5, and set `pointFrom` from the eval before turning it on.
 - **ADR, on acceptance (0018).** Spoken requests can point at the screen: Launchy reads the focused window's Accessibility tree, and draws an arrow that never takes focus and ends by itself. It amends ADR 0015 ("nothing is shown") and ADR 0016 (Jev gets the screen's labels, under the same gate), and adds Accessibility to what Launchy asks for.
 - **Glossary, proposed:**
@@ -193,7 +205,12 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   - Listening and spoken requests: the Jev body (anything added is a privacy change needing the ADR, README and SECURITY.md), the pinned model and its thresholds, speculation in `prepare`, and speech only through `Speaker.speak`.
   - Search store: what goes to a model server, now also the candidate list.
   - Focus and keys: the overlay can never become key, so the panel's `resignKey` rule is untouched.
-  - New entries: the overlay's level and click-through, the one coordinate conversion, the tree read's limits off the main actor, and what a candidate may never hold.
+  - New entries:
+    - the overlay's level and click-through;
+    - the one coordinate conversion;
+    - the tree read's limits off the main actor;
+    - what a candidate may never hold;
+    - the read staying in Launchy's process, with zmx never granted.
 - **Considered:**
   - **Code matching alone** (bigarrow's exact, prefix and substring match on the request's words). It is private and instant, but "where do I approve this" never matches "Allow", and "what is this" has no words to match.
   - **Reading the tree on every request and asking Jev both questions in one call.** It saves one round trip, but sends the screen's labels for requests that aren't about it.
@@ -203,9 +220,11 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   - `LauncherPanel` and the accessory app;
   - the ad-hoc signature and its code-hash requirement;
   - no responsibility disclaim in Launchy or SwiftTerm;
+  - that a pane runs as Launchy's direct child when zmx isn't used;
   - the Choice limit of 255, from TypeSafe's docs.
+- **Measured in the eval (agent-lab, 2026-10-09):** a pane under zmx isn't trusted for Accessibility, and macOS attributes it to zmx.
 - **Inferred, not measured:**
   - every latency figure;
-  - the grant lost at a rebuild, and its reach into panes;
+  - the grant lost at a rebuild, and its reach into panes outside zmx;
   - how system prompts expose their buttons;
   - bigarrow's claims about Chrome and Electron.

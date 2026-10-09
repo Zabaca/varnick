@@ -53,10 +53,13 @@ All of this was read in the code at 0b9249d, unless it is marked otherwise.
 - The build's designated requirement is its code hash alone: `codesign -d -r-` on the current build prints `cdhash H"…"`. So a privacy grant recorded for one build should not match the next one.
   - This is inferred, not verified: the privacy database can't be read without Full Disk Access.
   - `runs-only-from-a-checkout` already records the same thing for the Keychain prompt (`Keychain.swift:4-5`), and its option 01 (Developer ID signing) would fix it.
-- macOS gives a process the grants of its responsible app.
-  - Launchy starts its panes' processes (zmx, Claude, shells) through SwiftTerm.
-  - Neither Launchy nor SwiftTerm disclaims responsibility for them: no such call is in `Sources/`, `Packages/` or SwiftTerm's checkout.
-  - So a grant to Launchy probably reaches every process in its panes, as a grant to Terminal reaches what runs in Terminal. This is inferred. Option 01 has the hand check.
+- **A grant to Launchy doesn't reach its zmx panes.** macOS gives a process the grants of its responsible app.
+  - With Keep sessions running on, a pane's shell and Claude run under zmx, a daemon whose parent is launchd.
+  - The eval checked this in a pane on the user's Mac on 2026-10-09: the parent chain is the shell, then Claude, then zmx (the copy beside Launchy's binary, parent pid 1). `AXIsProcessTrusted()` there was false, and macOS attributes Accessibility to zmx, not to Launchy.
+- **Two consequences for the feature:**
+  - The Accessibility read has to run in Launchy's own process, under Launchy's own grant.
+  - Anything run from a pane (`bigarrow --element`, a helper script) would need zmx granted instead. That would give every Claude session zmx hosts the power to read and drive any app's UI.
+- **Panes outside zmx are another matter.** With Keep sessions running off, or zmx missing, a pane runs as Launchy's direct child, through SwiftTerm (`ClaudeSession.startInTerminal`). Keep sessions running is off by default (`Settings.swift`), so on a new install that is every pane. Neither Launchy nor SwiftTerm disclaims responsibility for its children: no such call is in `Sources/`, `Packages/` or SwiftTerm's checkout. So those panes probably do get Launchy's grants. This is inferred, and option 01 has the hand check.
 
 **Text generation** (`TextGenerator.swift`; ADR 0012)
 - Gemma 4 E2B (`mlx-community/gemma-4-e2b-it-4bit`, at a pinned revision) is loaded through MLX's language-model factory, which is text only.
@@ -114,4 +117,4 @@ Results: _pending. They go here when they land, with the agent-lab experiment's 
   - one sent to Claude (04).
 - **Who chooses the element, and from what threshold.** The starting point is Jev when the filter is on TypeSafe with a key, and Gemma otherwise. The eval sets the threshold, or argues for another split.
 - **What reaches TypeSafe.** The labels and roles of the controls in the user's front window are a new kind of data for TypeSafe. They aren't History or sessions, but they are whatever the window shows: a mail's subject as a link, a document's name as a tab.
-- **The permission.** Every option needs Accessibility, and options 02 to 04 also need Screen Recording. Each grant goes to a build that the next rebuild may not match, and probably reaches every process in Launchy's panes.
+- **The permission.** Every option needs Accessibility, and options 02 to 04 also need Screen Recording. Each grant goes to a build that the next rebuild may not match. It doesn't reach sessions in zmx, which is measured, but probably reaches panes started outside zmx, which is inferred.
