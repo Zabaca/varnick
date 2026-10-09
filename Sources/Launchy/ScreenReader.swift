@@ -141,6 +141,9 @@ enum ScreenReader {
     private static let skippedSubroles: Set<String> = ["AXIncrementArrow", "AXDecrementArrow", "AXIncrementPage", "AXDecrementPage"]
     private static let windowButtons: Set<String> = ["AXCloseButton", "AXMinimizeButton", "AXZoomButton", "AXFullScreenButton"]
     private static let textRoles: Set<String> = ["AXStaticText", "AXHeading"]
+    /// The roles whose value is their state or choice, the only controls whose value is read (a switch's "1", a pop-up's "Bottom").
+    /// A cell's or any other role's value may be what a person entered.
+    private static let stateRoles: Set<String> = ["AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXSlider", "AXIncrementor", "AXStepper"]
 
     /// Where the person types: neither its value nor anything inside it is read (a draft's text runs are its children).
     private static func isEntry(role: String, subrole: String) -> Bool {
@@ -185,7 +188,7 @@ enum ScreenReader {
             let frame = ScreenReader.frame(of: node.element)
             if node.depth == 0 { window = frame ?? .infinite }
 
-            let parts = ScreenReader.labelParts(node.element, entry: entry)
+            let parts = ScreenReader.labelParts(node.element, readsValue: !entry && (stateRoles.contains(role) || textRoles.contains(role)))
             let label = ScreenElements.label(from: parts)
             if node.depth > 0, !skippedRoles.contains(role), !skippedSubroles.contains(subrole), let frame, frame.width > 1, frame.height > 1,
                window.contains(CGPoint(x: frame.midX, y: frame.midY)), !label.isEmpty || windowButtons.contains(subrole) {
@@ -198,7 +201,8 @@ enum ScreenReader {
                 element.reference = AXReference(node.element)
                 elements.append(element)
             }
-            guard !entry, !skippedRoles.contains(role), node.depth < ScreenReader.maxDepth, !children.isEmpty else { return [] }
+            // The walk goes through layout areas and the like, as the eval's did; only a scroll bar's machinery is left alone.
+            guard !entry, role != "AXScrollBar", node.depth < ScreenReader.maxDepth, !children.isEmpty else { return [] }
             // A named ancestor is a group its contents sit in (`in Sidebar`); the window itself is not one.
             var path = node.path
             if node.depth > 0, let group = parts.lazy.compactMap({ $0 }).map(ScreenElements.cleaned).first(where: { !$0.isEmpty }) {
@@ -207,25 +211,31 @@ enum ScreenReader {
             return children.map { Node(element: $0, depth: node.depth + 1, path: path) }
         }
 
-        /// Marks the listed element under the pointer. Where the pointer is inside a field, the field is what is under it: its
-        /// text is never read.
+        /// Marks the listed element under the pointer: the first listed one within four levels of the hit, or its listed ancestor
+        /// when that one is text. Where the pointer is inside a field, the field is what is under it: its text is never read.
+        /// Gives up when the time is spent.
         mutating func markUnderPointer(app: AXUIElement, pointer: CGPoint) {
             var hit: AXUIElement?
             guard AXUIElementCopyElementAtPosition(app, Float(pointer.x), Float(pointer.y), &hit) == .success, let hit else { return }
             var chain = [hit]
-            while chain.count < 6, let parent = ScreenReader.attribute(chain.last!, kAXParentAttribute).flatMap(ScreenReader.asElement) {
+            while chain.count < 6, ContinuousClock.now < deadline,
+                  let parent = ScreenReader.attribute(chain.last!, kAXParentAttribute).flatMap(ScreenReader.asElement) {
                 chain.append(parent)
             }
-            if let outer = chain.lastIndex(where: { element in
+            var outer: Int?
+            for (index, element) in chain.enumerated() {
+                guard ContinuousClock.now < deadline else { return }
                 let values = ScreenReader.multiple(element, [kAXRoleAttribute, kAXSubroleAttribute])
-                return ScreenReader.isEntry(role: values[0] as? String ?? "", subrole: values[1] as? String ?? "")
-            }) { chain = Array(chain[outer...]) }
-            for candidate in chain.prefix(4) {
-                if let index = elements.firstIndex(where: { $0.reference.map { CFEqual($0.element, candidate) } ?? false }) {
-                    elements[index].underPointer = true
-                    return
-                }
+                if ScreenReader.isEntry(role: values[0] as? String ?? "", subrole: values[1] as? String ?? "") { outer = index }
             }
+            if let outer { chain = Array(chain[outer...]) }
+            let listed = chain.prefix(4).compactMap { candidate in
+                elements.firstIndex { $0.reference.map { CFEqual($0.element, candidate) } ?? false }
+            }
+            guard let first = listed.first else { return }
+            var marked = first
+            if elements[first].isText, let ancestor = listed.first(where: { !elements[$0].isText }) { marked = ancestor }
+            elements[marked].underPointer = true
         }
     }
 
@@ -272,12 +282,12 @@ enum ScreenReader {
         return CGRect(origin: point, size: extent)
     }
 
-    /// Title, description, value, help and placeholder, in that order. The value of a field is never asked for.
-    fileprivate static func labelParts(_ element: AXUIElement, entry: Bool) -> [String?] {
-        let values = multiple(element, entry ? [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXPlaceholderValueAttribute]
-                                             : [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXPlaceholderValueAttribute, kAXValueAttribute])
+    /// Title, description, value, help and placeholder, in that order. The value is asked for only when `readsValue`.
+    fileprivate static func labelParts(_ element: AXUIElement, readsValue: Bool) -> [String?] {
+        let values = multiple(element, readsValue ? [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXPlaceholderValueAttribute, kAXValueAttribute]
+                                                  : [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXPlaceholderValueAttribute])
             .map(stringValue)
-        return [values[0], values[1], entry ? nil : values[4], values[2], values[3]]
+        return [values[0], values[1], readsValue ? values[4] : nil, values[2], values[3]]
     }
 
     /// Title, else description, else placeholder; a text's own words for text. Empty when there is none, as for a switch whose label

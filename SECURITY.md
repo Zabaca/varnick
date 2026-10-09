@@ -144,10 +144,11 @@ about the screen.
 - **A rebuild may need the permission given again.** Builds are signed ad hoc, so macOS may not match the
   grant to the next build (not verified).
 - **What leaves the Mac.** Only with the filter on TypeSafe and a key: for a request about the screen, the
-  words you said, the title of the window in front and each element's label, kind, nearby text and whether it
-  is dimmed. Those are the window's visible text near its controls: a message list's subjects and senders, a
-  file's name in a tab, an account's name in a sidebar. What is typed in a field is never read, and a password
-  field is not read at all. No screenshot is taken, and none of it goes to a model server. See the README's
+  words you said, the title of the window in front and, for up to its first 255 elements, the label, kind,
+  nearby text and whether it is dimmed. Those are the window's visible text, not only that near its controls:
+  a message list's subjects and senders, an open mail's body in Mail, a page's text in Safari, a file's name
+  in a tab, an account's name in a sidebar. What is typed in a field is never read, and a password field is
+  not read at all. No screenshot is taken, and none of it goes to a model server. See the README's
   Privacy section.
 - **The arrow** is drawn by Launchy, cannot take focus or clicks, and goes by itself.
 

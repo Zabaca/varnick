@@ -257,7 +257,7 @@ final class SpokenRequests {
         var waited: TimeInterval?
         var run: SpokenPipeline.Run?
         var pointing: (frame: CGRect, note: String)?
-        let saying: String
+        var saying: String
         do {
             // Cancelling this task does not cancel the speculative one; `cancel()` does both.
             let found = try await speculated.task.value
@@ -288,14 +288,21 @@ final class SpokenRequests {
         }
         guard !Task.isCancelled else { return }
 
+        // The arrow is up just before the speech starts and stays a while after it ends; never drawn before the hold has ended. One
+        // that can't be drawn (the switch was turned off since the request began, or its frame is on no display) is a miss.
+        var drawn = false
+        if let pointing {
+            drawn = Settings.shared.screenPointingOn && ArrowOverlay.shared.show(frame: pointing.frame, note: pointing.note)
+            if !drawn {
+                saying = ScreenMiss.gone.spoken
+                run?.outcome = .screenMiss(.gone)
+                run?.screen?.miss = .gone
+            }
+        }
         record(saying)
         let speaking = Date()
-        // The arrow is up just before the speech starts and stays a while after it ends; never drawn before the hold has ended.
-        // The switch may have been turned off since the request began.
-        let draws = pointing != nil && Settings.shared.screenPointingOn
-        if let pointing, draws { ArrowOverlay.shared.show(frame: pointing.frame, note: pointing.note) }
         let first = await Speaker.shared.speak(saying)
-        if draws, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
+        if drawn, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
 
         // For the latency check: where the time went, as durations, places and kinds only.
         func seconds(_ duration: Duration?) -> String { duration?.seconds.secondsText ?? "-" }

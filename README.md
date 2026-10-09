@@ -200,10 +200,10 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   speaking, words said so far may be sent and then discarded. With the filter On this Mac or off, nothing leaves.
 - **With Point at the screen on** (Settings › Listening, off by default, and only available with the filter on
   TypeSafe and a key), a request that is about the screen also sends TypeSafe the title of the window in
-  front and, for each of its elements, the label, kind and nearby text. That is the window's visible text near
-  its controls: a message list's subjects and senders, a file's name in a tab, the account's name in a
-  sidebar. What is typed in a field is never read. No screenshot is taken, and none of this goes to a model
-  server.
+  front and, for each of its first 255 elements, the label, kind and nearby text. That is the window's
+  visible text, not only that near its controls: a message list's subjects and senders, an open mail's body in
+  Mail, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. What is typed in a
+  field is never read. No screenshot is taken, and none of this goes to a model server.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere

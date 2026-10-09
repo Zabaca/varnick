@@ -3,7 +3,7 @@ import ApplicationServices
 import Foundation
 
 // The pure parts of pointing at the screen (ADR 0019): what an element is called to the model, the sign's note, the one
-// coordinate conversion and where the arrow and its sign go. None of it reads an app, so each is a seam for a first test.
+// coordinate conversion and where the arrow and its sign go.
 
 /// An element of another app's window, held to read its frame again before the arrow is drawn.
 final class AXReference: @unchecked Sendable, Equatable {
@@ -87,10 +87,13 @@ enum ScreenElements {
     }
 
     /// What Launchy says and the sign shows: "Here's the Allow button."; for a state with text beside it, "Here's the switch for
-    /// Play sound on startup."; for the element under the pointer, "That's the Share button." and the first sentence of its help.
+    /// Play sound on startup."; for text, its own words ("Here's Wi-Fi."); for the element under the pointer, "That's the Share
+    /// button." and the first sentence of its help.
     static func note(for element: ScreenElement) -> String {
         let called: String
-        if !element.name.isEmpty {
+        if element.isText, !element.name.isEmpty {
+            called = String(element.name.prefix(60))
+        } else if !element.name.isEmpty {
             let name = String(element.name.prefix(60))
             called = name.lowercased().hasSuffix(element.role.lowercased()) ? name : "\(name) \(element.role)"
         } else if let beside = element.beside {
@@ -100,8 +103,9 @@ enum ScreenElements {
         } else {
             called = element.role
         }
-        guard element.underPointer else { return "Here's the \(called)." }
-        var note = "That's the \(called)."
+        let article = element.isText && !element.name.isEmpty ? "" : "the "
+        guard element.underPointer else { return "Here's \(article)\(called)." }
+        var note = "That's \(article)\(called)."
         if let help = element.help, let sentence = firstSentence(of: help) { note += " " + sentence }
         return note
     }

@@ -14,15 +14,16 @@ final class ArrowOverlay {
     private var hiding: Task<Void, Never>?
 
     /// Draws the arrow at `frame` (Accessibility coordinates) with `note` on the sign, over the display holding it, and keeps it
-    /// until `hide`. Shows nothing when the frame overlaps no display.
-    func show(frame: CGRect, note: String) {
+    /// until `hide`. Shows nothing, and returns false, when the frame overlaps no display.
+    @discardableResult
+    func show(frame: CGRect, note: String) -> Bool {
         hide()
         let element = ScreenGeometry.appKit(frame, mainDisplayHeight: ScreenGeometry.mainDisplayHeight)
         let centre = CGPoint(x: element.midX, y: element.midY)
         let screens = NSScreen.screens
         guard let screen = screens.first(where: { $0.frame.contains(centre) })
                 ?? screens.max(by: { overlap($0.frame, element) < overlap($1.frame, element) }),
-              screen.frame.contains(centre) || overlap(screen.frame, element) > 0 else { return }
+              screen.frame.contains(centre) || overlap(screen.frame, element) > 0 else { return false }
 
         let (panel, view) = made()
         let sign = view.signSize(for: note, within: screen.frame)
@@ -37,6 +38,7 @@ final class ArrowOverlay {
             context.duration = 0.2
             panel.animator().alphaValue = 1
         }
+        return true
     }
 
     /// Removes it at once: a new request, or a switch turned off.
