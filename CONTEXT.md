@@ -164,5 +164,9 @@ _Avoid_: Log, recording
 _Avoid_: Hotword, trigger
 
 **Spoken request**:
-What the user says after the **Wake phrase**, answered aloud from **History**, **Bookmark**s and **Session**s, and only aloud: nothing is shown or opened.
+What the user says after the **Wake phrase**. It is answered aloud from **History**, **Bookmark**s and **Session**s. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
+
+**Arrow**:
+What Launchy draws over the screen to point at the thing a **Spoken request** asked about: a big arrow with a sign holding the note Launchy says aloud. It lets clicks through, never takes focus and goes by itself.
+_Avoid_: Highlight, cursor, annotation, overlay

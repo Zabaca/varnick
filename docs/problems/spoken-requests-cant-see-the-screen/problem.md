@@ -1,9 +1,9 @@
 ---
 title: Hey Launchy can't see or point at what is on the screen
 description: The user wants to ask Hey Launchy about something in front of them ("where's the Allow button", "which one is the save button", "what is this") and have Launchy notice that the request is about the screen, find the thing, point at it with a big arrow and a sign, and say the sign's note aloud. Today a spoken request can only search History, Bookmarks and Claude sessions, and its answer is only heard. Launchy reads nothing of other apps' windows and draws nothing over them.
-impact: A question about the screen gets either the off-topic line ("I only look up your pages, bookmarks and Claude sessions.") or an answer from a History or sessions search that has nothing to do with it. Which of the two happens, and how often, is unmeasured; the eval below counts it. The user is left to hunt for the control themselves, at the moment a pointing hand would help most, in an unfamiliar dialog, a crowded toolbar or a setting buried in a pane.
+impact: A question about the screen gets either the off-topic line ("I only look up your pages, bookmarks and Claude sessions.") or an answer from a History, Bookmarks or sessions search that has nothing to do with it. With today's questions, Jev gave about 1 of 40 made-up screen requests the off-topic line and sent the rest to a search (the eval below). The user is left to hunt for the control themselves, at the moment a pointing hand would help most, in an unfamiliar dialog, a crowded toolbar or a setting buried in a pane.
 severity: low
-evidence: The user's request of 2026-10-09, relayed by the coordinator with the directions below. The code was read on 2026-10-09 at 0b9249d. The reference project big-arrow-on-the-screen (MIT) and TypeSafe's Choice and API docs were also read on 2026-10-09. An eval in agent-lab comparing Jev and Gemma on screen requests is running, and its results are pending (section below).
+evidence: The user's request of 2026-10-09, relayed by the coordinator with the directions below. The code was read on 2026-10-09 at 0b9249d. The reference project big-arrow-on-the-screen (MIT) and TypeSafe's Choice and API docs were also read on 2026-10-09. An eval in agent-lab compared Jev and Gemma on screen requests on 2026-10-09 (section below).
 status: open
 ---
 
@@ -53,12 +53,15 @@ All of this was read in the code at 0b9249d, unless it is marked otherwise.
 - The build's designated requirement is its code hash alone: `codesign -d -r-` on the current build prints `cdhash H"…"`. So a privacy grant recorded for one build should not match the next one.
   - This is inferred, not verified: the privacy database can't be read without Full Disk Access.
   - `runs-only-from-a-checkout` already records the same thing for the Keychain prompt (`Keychain.swift:4-5`), and its option 01 (Developer ID signing) would fix it.
-- **Whether a grant to Launchy reaches its zmx panes is inferred, not measured.** macOS gives a process the grants of its responsible app.
+- **zmx panes are very likely attributed to zmx, not Launchy.** This isn't confirmed. macOS gives a process the grants of its responsible app.
   - **Observed in the eval, in a pane on the user's Mac on 2026-10-09:** with Keep sessions running on, a pane's shell and Claude run under zmx, a daemon whose parent is launchd. The chain is the shell, then Claude, then zmx: the copy beside Launchy's binary, parent pid 1.
   - **The first check proves nothing either way.** `AXIsProcessTrusted()` was false in that pane, but Launchy had no Accessibility grant then either: its switch was off in System Settings. So the result shows nothing about whether a Launchy grant reaches the pane.
-  - **Attributing the pane's processes to zmx** is the eval's inference from zmx's parent pid. The user has granted zmx Accessibility temporarily, so the eval can recheck.
-    - A true result there would show that zmx is the responsible process.
-    - That makes "a Launchy grant doesn't reach zmx panes" likely, but still not measured.
+  - **The recheck.**
+    - The user then granted zmx Accessibility, temporarily, for the eval.
+    - About 20 minutes after the first check, `AXIsProcessTrusted()` turned true in the same zmx-hosted shell, with nothing restarted.
+    - The user's screenshot of System Settings at that moment showed Launchy's Accessibility switch off.
+  - **Not proven.** Nobody checked the list or the privacy database afterwards, so another entry can't be ruled out.
+  - **So it is very likely that macOS attributes a zmx pane's processes to zmx.** "A Launchy grant doesn't reach zmx panes" is strongly implied, but not measured. Option 01's hand check 2 settles both.
 - **The product rule, whatever the recheck finds:**
   - The Accessibility read runs in Launchy's own process, under Launchy's own grant.
   - zmx is never granted. Anything run from a pane (`bigarrow --element`, a helper script) would need that, and if zmx is the responsible process, its grant reaches every Claude session it hosts, with the power to read and drive any app's UI.
@@ -104,24 +107,51 @@ This is MIT-licensed Swift for macOS 14 or newer. What matters here comes from i
   - Chrome's own toolbar is always in the tree.
 - **The permission** goes to the responsible app, which for a command-line tool is the terminal that runs it.
 
-## Measured: Jev and Gemma on screen requests (pending)
+## Measured: Jev and Gemma on screen requests
 
-The `eval` agent started an eval on 2026-10-09 in agent-lab, the user's evaluation repository. It measures two things:
+The `eval` agent ran this on 2026-10-09 in agent-lab, the user's evaluation repository: the screen-pointing experiment, at commit 20fb286.
+- **Setup:**
+  - Jev was the pinned `jev-1.13.0`.
+  - Gemma was the pinned checkpoint, through Python MLX, not Launchy's Swift.
+  - Launchy's questions and prompt were read at 60547d6.
+  - The requests were made up by the experimenter.
+  - The windows were the focused windows of Calculator, TextEdit, Finder and five System Settings panes, cleaned of personal rows.
 
-1. **Routing.** Does a `screen` choice in Jev's `source` question, and in Gemma's decide prompt, catch screen requests without pulling History, Bookmarks and sessions requests away from their sources? And what happens to `action`'s "other"?
-2. **Choosing.** Given a request and a list of Accessibility elements, how often does each model pick the right one? Does Jev's probability separate right picks from wrong ones? That sets the threshold for "I can't see that".
-3. **The pane's responsible process.** `AXIsProcessTrusted()` is rechecked in a pane while zmx holds a temporary grant (Today › Permissions and signing).
+**Routing** (92 requests: 40 about the screen, 31 for the three old sources, 11 confusers, 10 off-topic; Jev over 3 repeats)
+- **With today's questions,** no screen request can go to the screen. About 1 of 40 gets the off-topic line, and the rest are searched.
+- **Adding `screen` to `source`** sends 40 of 40 there, with Jev and with Gemma alike, and leaves the old sources where they were (Jev 28 of 31, before and after).
+- **But Jev's `action` then reads "point at the wifi switch" as off-topic,** with "other" at 0.90 to 0.92 in every repeat, so Launchy would refuse it.
+- **A `point` action before "other",** with "other" naming the screen (the eval's arm J4p), fixes it: none of the 40 screen requests is flagged, and all 10 off-topic ones are.
+- **Off-topic must be read before the source,** since "set a timer" and "send a message" take `screen` as their source. Launchy already reads it first.
+- **Gemma's warm decide takes about 0.17 s, against Jev's 0.11 s.** The 1.77 s measured for ADR 0016 was mostly Gemma loading in a fresh `--ask` process. A spoken request pays that load again after 10 idle minutes.
 
-Results: _pending. They go here when they land, with the agent-lab experiment's name and commit._ Figures from the user's own screens stay in `.scratch/spoken-requests-cant-see-the-screen/`.
+**Choosing** (125 requests over 8 windows: 97 whose target is there, 28 whose target isn't; one Jev call per request)
+
+| With the window's whole visible list (29 to 72 elements), each described by label, kind, groups and the text beside it | right / 97 | wrong / 97 | absent pointed at / 28 | p50 |
+|---|--:|--:|--:|--:|
+| Jev, pointing when its `present` yes-or-no is 0.5 or more | 87 (95 counting the control's own row text) | 10 | 1 | 117 ms |
+| Gemma, numbered list, "0" for none | 72 | 24 | 13 | 105 ms |
+
+- **Jev beats Gemma in every cell,** by 8 to 25 points.
+- **Gemma's reply probability can't say "not there":** it saturates, with AUROC 0.74.
+- **Jev's latency is flat from 10 to 100 elements;** its accuracy falls a little with size.
+- **The text beside an element mattered most:** found in code, it added 10 to 19 points for both models. A switch's own label is only its state ("1"), so without the row's text neither model can tell one switch from the next. The enclosing groups added nothing.
+- **The eval's recommendation:** Jev for choosing, with Gemma as the routing fallback only.
+
+**The pane's responsible process: very likely zmx, not confirmed.** In the same zmx-hosted shell, `AXIsProcessTrusted()` went from false to true about 20 minutes later. Nothing was restarted, it happened right after the user granted zmx, and Launchy's switch was off in the user's screenshot. Details are in Today › Permissions and signing, and option 01's hand check 2 settles it.
+
+Figures from the user's own screens stay in `.scratch/spoken-requests-cant-see-the-screen/`.
 
 ## Left to decide
 
-- **May a screenshot leave this Mac?** The options are:
-  - none at all (01);
-  - one read on this Mac, by text recognition (02) or by Gemma (03);
-  - one sent to Claude (04).
-- **Who chooses the element, and from what threshold.** The starting point is Jev when the filter is on TypeSafe with a key, and Gemma otherwise. The eval sets the threshold, or argues for another split.
-- **What reaches TypeSafe.** The labels and roles of the controls in the user's front window are a new kind of data for TypeSafe. They aren't History or sessions, but they are whatever the window shows: a mail's subject as a link, a document's name as a tab.
+- **May a screenshot leave this Mac?** Answered by the user on 2026-10-09: yes, it may. Sending one to Claude stays possible, beside reading one on this Mac or taking none.
+- **Who chooses the element.** Answered by the user on 2026-10-09, following the eval: Jev, with `present` at 0.5. Gemma never points, so without TypeSafe nothing is pointed at.
+- **What reaches TypeSafe.** The eval's best result describes each element with the text beside it, so a screen request sends:
+  - the window's title;
+  - its elements' labels;
+  - the text near its controls.
+
+  That is a new kind of data for TypeSafe. It isn't History or sessions, but it is whatever the window shows: a mail's subjects in a list, a document's name in a tab, the account's name in a sidebar.
 - **The permission.** Every option needs Accessibility, and options 02 to 04 also need Screen Recording.
   - Each grant goes to a build that the next rebuild may not match.
-  - Its reach into Launchy's panes is inferred both ways: probably not into sessions in zmx (pending the eval's recheck), probably yes into panes started outside zmx.
+  - Its reach into Launchy's panes is unmeasured both ways: very likely not into sessions in zmx (the recheck), probably yes into panes started outside zmx (inferred).
