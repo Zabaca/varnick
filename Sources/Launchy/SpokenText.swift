@@ -382,12 +382,25 @@ enum SpokenPipeline {
     }
 
     static func run(_ request: String, on model: LauncherModel) async throws -> Run {
+        try await respond(prepare(request, on: model), to: request, on: model)
+    }
+
+    /// One reply from Text generation. A cancelled local generation ends early and returns what it had, so a cancel is checked
+    /// for here rather than read as an answer.
+    private static func generate(_ prompt: String, _ maxTokens: Int, on model: LauncherModel,
+                                 places: inout [ModelPlace]) async throws -> String {
+        let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens)
+        try Task.checkCancellation()
+        places.append(reply.place)
+        return reply.text
+    }
+
+    /// Decide, search and filter: everything up to the rows to read, with no answer and no speech. A spoken request runs this
+    /// while it waits to be sure the user has finished, and throws `CancellationError` when more speech made it stale (Task
+    /// cancellation reaches Jev's and TypeSafe's requests, the embedding and Text generation); the caller keeps only the result
+    /// for the request's final text. Each model loads once and is shared, so a cancelled run starts no load of its own.
+    static func prepare(_ request: String, on model: LauncherModel) async throws -> Run {
         var textPlaces: [ModelPlace] = []
-        func generate(_ prompt: String, _ maxTokens: Int) async throws -> String {
-            let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens)
-            textPlaces.append(reply.place)
-            return reply.text
-        }
 
         guard !SpokenText.cleaned(request).isEmpty else {
             return Run(plan: SpokenText.Plan(source: .any, query: "", readable: false), rows: [], outcome: .nothingToSearch, decide: .zero)
@@ -427,7 +440,10 @@ enum SpokenPipeline {
             decided = jevPlan
         } else {
             let reply: String
-            do { reply = try await generate(SpokenText.decidePrompt(for: request), SpokenText.decideTokens) } catch {
+            do {
+                reply = try await generate(SpokenText.decidePrompt(for: request), SpokenText.decideTokens, on: model, places: &textPlaces)
+            } catch {
+                try Task.checkCancellation()
                 throw Failure(step: .decide, underlying: error)
             }
             decided = SpokenText.plan(fromReply: reply, request: request)
@@ -474,22 +490,31 @@ enum SpokenPipeline {
                 }
             }
         }
+        try Task.checkCancellation()
         run.filter = began.duration(to: clock.now)
 
         run.rows = SpokenText.rows(for: decided, sessions: ranking.sessions, pages: ranking.pages, relevant: ranking.relevantCount ?? 0)
+        return run
+    }
+
+    /// Writes the answer from what `prepare` found; a run with no rows to read comes back as it was.
+    static func respond(_ prepared: Run, to request: String, on model: LauncherModel) async throws -> Run {
+        var run = prepared
         guard !run.rows.isEmpty else { return run }
 
-        began = clock.now
+        var textPlaces: [ModelPlace] = []
+        let began = ContinuousClock.now
         let rows = SpokenText.describe(run.rows, macName: { PeerManager.shared.name(of: $0) })
         do {
             let limits = SpokenText.answerLimits(for: request)
-            let text = try await generate(SpokenText.answerPrompt(for: request, rows: rows), limits.tokens)
+            let text = try await generate(SpokenText.answerPrompt(for: request, rows: rows), limits.tokens, on: model, places: &textPlaces)
             run.outcome = .answer(SpokenText.spoken(fromReply: text, sentences: limits.sentences) ?? "I couldn't answer that.")
             run.answeredAt = textPlaces.last
         } catch {
+            try Task.checkCancellation()
             throw Failure(step: .respond, underlying: error)
         }
-        run.respond = began.duration(to: clock.now)
+        run.respond = began.duration(to: ContinuousClock.now)
         return run
     }
 }
@@ -518,12 +543,37 @@ enum SpokenCommand {
         return "jev: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), other \(p(route.other))"
     }
 
-    static func run(file: String, model: LauncherModel) async -> Int32 {
+    /// Runs the first half of the request's words and cancels the run after `seconds`, as a request that goes on does in the app
+    /// (`SpokenRequests.speculate`), and says how it ended.
+    private static func restart(_ words: [Substring], after seconds: Double, model: LauncherModel) async {
+        let partial = words.prefix(max(1, words.count / 2)).joined(separator: " ")
+        let began = ContinuousClock.now
+        let task = Task { try await SpokenPipeline.prepare(partial, on: model) }
+        try? await Task.sleep(for: .seconds(seconds))
+        task.cancel()
+        let how: String
+        do {
+            _ = try await task.value
+            how = "finished before the cancel"
+        } catch is CancellationError {
+            how = "cancelled"
+        } catch let failure as SpokenPipeline.Failure {
+            how = "failed at \(failure.step.rawValue): \(failure.underlying.logKind)"
+        } catch {
+            how = "failed: \(error.logKind)"
+        }
+        print("restart: first \(min(words.count, max(1, words.count / 2))) of \(words.count) words, cancelled after \(seconds.secondsText), "
+              + "\(how) [\(began.duration(to: .now).seconds.secondsText) to settle]")
+    }
+
+    static func run(file: String, restartAfter: Double? = nil, model: LauncherModel) async -> Int32 {
         guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
             print("Can't read \(file)")
             return 1
         }
-        let request = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let words = text.split(whereSeparator: \.isWhitespace)
+        let request = words.joined(separator: " ")
+        if let restartAfter { await restart(words, after: restartAfter, model: model) }
         do {
             let run = try await SpokenPipeline.run(request, on: model)
             if run.outcome == .nothingToSearch {

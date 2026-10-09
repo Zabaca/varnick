@@ -41,8 +41,18 @@ final class SpokenRequests {
         case answering
     }
 
+    /// Decide, search and filter run on the request's text as it stands, from when it last changed, through `hold` (ADR 0017).
+    /// Keyed by that exact text: a result is read only for the request dispatched, so a stale one is never used.
+    private struct Speculation {
+        let text: String
+        let task: Task<SpokenPipeline.Run, Error>
+    }
+
     private let model: LauncherModel
     private var phase = Phase.idle
+    private var speculation: Speculation?
+    /// How many runs this request cancelled and started again, for the timing line.
+    private var restarts = 0
     private var holding: Task<Void, Never>?
     private var working: Task<Void, Never>?
     /// Bumped when a request starts or is cancelled, so a finished one doesn't undo the next.
@@ -104,6 +114,7 @@ final class SpokenRequests {
             request.lastEnd = phrase.end
             request.lastArrived = now
             phase = .collecting(request)
+            speculate(on: request.text)
             if request.text.count >= SpokenText.maxRequestCharacters || phrase.end.timeIntervalSince(request.began) > Self.maxSeconds {
                 dispatch()
             } else {
@@ -151,8 +162,13 @@ final class SpokenRequests {
 
     /// The request's first words are in; whatever follows within the gap is added.
     private func collect(_ text: String, from phrase: MicPhrase, arrived: Date) {
-        phase = .collecting(Request(text: String(text.prefix(SpokenText.maxRequestCharacters)), began: phrase.start, lastEnd: phrase.end,
-                                    lastArrived: arrived, collecting: arrived))
+        let request = Request(text: String(text.prefix(SpokenText.maxRequestCharacters)), began: phrase.start, lastEnd: phrase.end,
+                              lastArrived: arrived, collecting: arrived)
+        phase = .collecting(request)
+        speculation?.task.cancel()
+        speculation = nil
+        restarts = 0
+        speculate(on: request.text)
         // Speech already heard after this result is its continuation: wait from when that was last heard.
         if let volatile = lastVolatile, volatile.start >= phrase.end.addingTimeInterval(-0.05) {
             rearm(from: volatile.arrived)
@@ -176,15 +192,34 @@ final class SpokenRequests {
 
     // MARK: Answering
 
+    /// Starts deciding, searching and filtering for `text` at once, unless that already runs for exactly this text. A run for
+    /// older text is cancelled and its result dropped whenever it ends. Nothing is written or spoken from here.
+    private func speculate(on text: String) {
+        if let current = speculation {
+            guard current.text != text else { return }
+            current.task.cancel()
+            restarts += 1
+        }
+        let model = model
+        speculation = Speculation(text: text, task: Task { try await SpokenPipeline.prepare(text, on: model) })
+    }
+
     private func dispatch() {
         guard case .collecting(let request) = phase else { return }
         holding?.cancel()
+        // The hold ended with the request unchanged since the run began, or else (the length limit) a run starts only now.
+        let reused = speculation?.text == request.text
+        speculate(on: request.text)
+        guard let prepared = speculation?.task else { return }
+        let used = reused ? (restarts == 0 ? "reused" : "restarted \(restarts) times, last reused")
+                          : (restarts == 0 ? "none" : "none, \(restarts) discarded")
         phase = .answering
         epoch += 1
         let epoch = epoch
         working = Task { [weak self] in
-            await self?.answer(request)
+            await self?.answer(request, prepared: prepared, speculation: used)
             guard let self, self.epoch == epoch else { return }
+            self.speculation = nil
             self.phase = .idle
         }
     }
@@ -193,17 +228,26 @@ final class SpokenRequests {
     private func cancel() {
         holding?.cancel()
         working?.cancel()
+        speculation?.task.cancel()
+        speculation = nil
         epoch += 1
         phase = .idle
         Speaker.shared.stop()
     }
 
-    private func answer(_ request: Request) async {
+    /// Speaks the answer to `request`, now that `hold` has ended, from `prepared` (running still, or done). The answer is written
+    /// and spoken only here, never before the user has finished.
+    private func answer(_ request: Request, prepared: Task<SpokenPipeline.Run, Error>, speculation used: String) async {
         let began = Date()
+        var waited: TimeInterval?
         var run: SpokenPipeline.Run?
         let saying: String
         do {
-            let done = try await SpokenPipeline.run(request.text, on: model)
+            // Cancelling this task does not cancel `prepared`; `cancel()` does both.
+            let found = try await prepared.value
+            waited = Date().timeIntervalSince(began)
+            try Task.checkCancellation()
+            let done = try await SpokenPipeline.respond(found, to: request.text, on: model)
             run = done
             saying = done.outcome.spoken
         } catch {
@@ -225,6 +269,7 @@ final class SpokenRequests {
         NSLog("Launchy: spoken request timing: said \(request.lastEnd.timeIntervalSince(request.began).secondsText), "
               + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
               + "held \(began.timeIntervalSince(request.lastArrived).secondsText), "
+              + "speculation \(used) (waited \(waited?.secondsText ?? "-") for it after the hold), "
               + "decide \(seconds(run?.decide)) (\(run?.decidedBy ?? "-")), "
               + "search \(seconds(run?.search)) (meaning by \(run?.meaningBy ?? "-")), "
               + "filter \(seconds(run?.filter)) (\(run?.filteredBy ?? "-")), "
