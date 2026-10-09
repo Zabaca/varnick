@@ -208,15 +208,18 @@ final class FavoritesStore {
 
     // MARK: Semantic
 
-    /// Cosine-ranked ids for a query embedding, best first: pages and sessions each get `limit`.
+    /// Cosine-ranked ids for a query embedding, best first: pages and sessions each get `limit`. A session has several
+    /// vectors (its exchanges, and its old one until they land) and is ranked by its best, before the cut: fusion
+    /// counts every list entry, so a session left in twice would score twice.
     func semantic(_ query: [Float], limit: Int)
         -> (pages: [(id: Int64, score: Float)], sessions: [(id: Int64, score: Float)]) {
         guard let scores = cosines(query) else { return ([], []) }
 
         var pages: [(id: Int64, score: Float)] = [], sessions: [(id: Int64, score: Float)] = []
+        var seen: Set<Int64> = []
         for i in scores.indices.sorted(by: { scores[$0] > scores[$1] }) {
             if matrixIsSession[i] {
-                if sessions.count < limit { sessions.append((matrixIDs[i], scores[i])) }
+                if sessions.count < limit, seen.insert(matrixIDs[i]).inserted { sessions.append((matrixIDs[i], scores[i])) }
             } else if pages.count < limit {
                 pages.append((matrixIDs[i], scores[i]))
             }
@@ -225,12 +228,19 @@ final class FavoritesStore {
         return (pages, sessions)
     }
 
-    /// Cosine-ranked sessions only, those a filter keeps, best first. The filter applies before the cut to `limit`.
+    /// Cosine-ranked sessions only, those a filter keeps, best first, each by its best vector. The filter applies before
+    /// the cut to `limit`.
     func semanticSessions(_ query: [Float], limit: Int, filter: SessionFilter) -> [(id: Int64, score: Float)] {
         guard let scores = cosines(query) else { return [] }
         let kept = filter.isEmpty ? nil : sessionRowIDs(filter)
         let found = scores.indices.filter { matrixIsSession[$0] && kept?.contains(matrixIDs[$0]) != false }
-        return found.sorted { scores[$0] > scores[$1] }.prefix(limit).map { (matrixIDs[$0], scores[$0]) }
+        var seen: Set<Int64> = []
+        var best: [(id: Int64, score: Float)] = []
+        for i in found.sorted(by: { scores[$0] > scores[$1] }) where seen.insert(matrixIDs[i]).inserted {
+            best.append((matrixIDs[i], scores[i]))
+            if best.count == limit { break }
+        }
+        return best
     }
 
     /// The query's cosine similarity to every row of the matrix; nil when there is none to compare to.
@@ -346,6 +356,30 @@ final class FavoritesStore {
             matrix.append(contentsOf: UnsafeBufferPointer(start: floats, count: dims))
             matrixIDs.append(sqlite3_column_int64(stmt, 0))
             matrixIsSession.append(sqlite3_column_int(stmt, 2) != 0)
+        }
+        loadExchangeEmbeddings()
+    }
+
+    /// The session exchanges' vectors, read straight from `entries`, each mapped to its session's row, so a sync's
+    /// committed batch is searchable before its refresh writes the rows. A row can have several: see `semantic`.
+    private func loadExchangeEmbeddings() {
+        guard !embeddingModel.isEmpty else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, """
+            SELECT f.id, e.embedding FROM entries e
+            JOIN favorites f ON f.favorite_key = \(SessionExchanges.sessionKeySQL("e.key"))
+            WHERE \(SessionExchanges.isExchangeKeySQL("e.key")) AND e.embed_model = ?
+            """, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, embeddingModel, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+
+        let rowBytes = dims * MemoryLayout<Float>.size
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard sqlite3_column_bytes(stmt, 1) == rowBytes,
+                  let blob = sqlite3_column_blob(stmt, 1) else { continue }
+            matrix.append(contentsOf: UnsafeBufferPointer(start: blob.bindMemory(to: Float.self, capacity: dims), count: dims))
+            matrixIDs.append(sqlite3_column_int64(stmt, 0))
+            matrixIsSession.append(true)
         }
     }
 

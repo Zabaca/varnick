@@ -116,6 +116,8 @@ struct MacPeerHost: PeerHost {
             reply.ids = found.ids
             reply.stamp = found.stamp
             return reply
+        } catch is HistorySync.RepliesNotRead {
+            return .failure("\(name) hasn't read its sessions with Claude's replies yet")
         } catch {
             return .failure("The search database on \(name) couldn't be read: \(error.localizedDescription)")
         }
