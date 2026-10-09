@@ -73,6 +73,10 @@ There is no test target. After `make build` on a Mac with the identity:
   - After the first signed build, grant both once.
   - After the next `make build` and restart, Point at the screen still points, and still reads a Chrome page's text, with no prompt.
   - Neither needs an entitlement.
+  - **Passed for the two grants, 2026-10-09.**
+    - Launchy was granted both on the signed build b157600.
+    - After merging 8fe2721, `make build` re-signed a new binary. After a restart, with System Settings untouched, both still read true from a pane.
+    - Point at the screen itself, and the microphone, system audio and Keychain checks above, weren't part of this run.
 
 ## Out of Scope
 
@@ -86,6 +90,7 @@ There is no test target. After `make build` on a Mac with the identity:
 - **Accepted by the user on 2026-10-09,** relayed by the coordinator.
 - **The identity now exists on this Mac:** a Developer ID Application certificate issued under Apple's Developer ID G2 intermediate, valid to 2031-09-16. Its private key is backed up as "Setting up a Mac" says. The team ID stays out of the repository.
 - **ADR:** [0022](../../../adr/0022-builds-are-signed-with-developer-id-so-macos-knows-launchy-by-team-and-bundle-id.md).
-- **Grants that survive rebuilds reach every pane.** Every pane process is attributed to Launchy (`panes-share-launchys-permissions`). So Accessibility and Screen Recording, once granted, stay with every pane session across rebuilds; until now a rebuild at least stopped them applying. ADR 0022 records it.
+- **Measured 2026-10-09: Accessibility and Screen Recording survive a rebuild.** They were granted on the signed build b157600 and still held after `make build` of 8fe2721 and a restart, with no visit to System Settings. Testing has the details.
+- **Grants that survive rebuilds reach every pane.** Every pane process is attributed to Launchy (`panes-share-launchys-permissions`). The same run read both grants true from a pane, so once granted they stay with every pane session across rebuilds; until now a rebuild at least stopped them applying. ADR 0022 records it.
 - This option is the first step of options 02 to 04, which sign the dev build the same way, so it can be built first on its own.
 - Grants following the team and bundle id is how macOS treats Developer ID signatures in general. That it holds for each of Launchy's grants is what the checks above confirm.

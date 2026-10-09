@@ -13,7 +13,8 @@ status: open
 - A process was run from a zmx-hosted pane. macOS's privacy service logged its attribution with Launchy (`com.zabaca.launchy`, at its build path) as responsible and the process's own binary as the binary.
 - Accessibility and Screen Recording were then denied only because the Launchy on disk had been rebuilt after the user granted the running build.
 - So a pane's process gets Launchy's grants whenever they match the build, and a grant to zmx or to the process's own binary is never consulted.
-- The effect, a pane process actually trusted, is to be confirmed once Launchy holds a matching grant.
+- **The effect is measured too.** With Launchy granted on a Developer-ID-signed build (ADR 0022), Accessibility and Screen Recording read true from a pane. They still did after `make build` and a restart with System Settings untouched.
+- **So every pane keeps Launchy's screen grants across rebuilds.** A rebuild no longer switches them off.
 
 This replaces two earlier readings:
 - "only panes outside zmx share Launchy's grants; zmx panes are attributed to zmx", from `spoken-requests-cant-see-the-screen`'s eval;

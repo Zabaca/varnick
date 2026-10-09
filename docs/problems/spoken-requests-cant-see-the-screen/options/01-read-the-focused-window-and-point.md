@@ -214,7 +214,13 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 **Hand checks for the builder.** These are unverified. Run them with the user, and keep anything personal in `.scratch/spoken-requests-cant-see-the-screen/`.
 
 1. **The grant across a rebuild.** Grant Accessibility, then `make build` and restart. Does Settings still show it granted? If not, the detail text says how to re-grant it.
-2. **The grant's reach.** The attribution is measured: on 2026-10-09 the privacy service named Launchy as responsible for a zmx-hosted pane's process. What is left is the effect. Grant Launchy, so that the grant matches the build on disk, then run a one-line trust check and `screencapture` from a pane in zmx and from one opened with Keep sessions running off. Both are expected trusted. Settings and SECURITY.md say so, and the fix is `panes-share-launchys-permissions`.
+   - **Failed on ad-hoc builds:** a rebuild stopped the grant applying (2026-10-09).
+   - **Passed once builds were signed with Developer ID** (ADR 0022). Granted on build b157600, Accessibility and Screen Recording still read true after `make build` of 8fe2721 and a restart, with no visit to System Settings.
+2. **The grant's reach.** Measured 2026-10-09, in two steps:
+   - the privacy service named Launchy as responsible for a zmx-hosted pane's process;
+   - with Launchy granted on a signed build, both grants read true from a pane.
+
+   A pane opened with Keep sessions running off is expected the same, and is unchecked. Settings and SECURITY.md say so, and the fix is `panes-share-launchys-permissions`.
 3. **System prompts.** Trigger a real permission prompt (a new app asking for the microphone) and ask "where's the Allow button". Is the prompt the app with focus, and does it expose its buttons?
 4. **Latency.** Time about ten requests from the end of speech to the arrow, warm. A median well over 4 s goes back to the user.
 5. **Sessions beside History.** `alsoSessionsFrom` wasn't re-measured with the new questions. Run `--ask` on the made-up requests that read sessions behind pages, with the switch on and off, and compare.
@@ -286,8 +292,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   - the privacy service's log names Launchy as responsible for a zmx-hosted pane's process.
 - **Inferred, not measured:**
   - the tree read's time;
-  - the grant lost at a rebuild;
-  - that a pane process is trusted once Launchy holds a matching grant (the attribution is measured, the effect isn't);
+  - that a pane opened with Keep sessions running off is trusted too (zmx panes are measured);
   - how system prompts expose their buttons;
   - accuracy beyond System Settings, Calculator, TextEdit and Finder;
   - bigarrow's claims about Chrome and Electron.

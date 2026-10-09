@@ -55,7 +55,7 @@ All of this was read in the code at 0b9249d, unless it is marked otherwise.
   - `runs-only-from-a-checkout` already records the same thing for the Keychain prompt (`Keychain.swift:4-5`), and its option 01 (Developer ID signing) would fix it.
 - **Measured 2026-10-09: macOS attributes every pane process to Launchy, zmx-hosted ones included.**
   - **How:** a process run from a zmx-hosted pane appeared in the privacy service's log (`com.apple.TCC`) with Launchy named as responsible and its own binary as the binary. It was denied only because the Launchy on disk had been rebuilt after the grant. Details are in `sessions-cant-see-or-act-on-the-screen`, Today.
-  - **So a grant to Launchy reaches every session in its panes,** Skip-permissions ones included, and a grant to zmx or to any executable in a pane is never consulted. The effect is to be confirmed once Launchy holds a matching grant.
+  - **So a grant to Launchy reaches every session in its panes,** Skip-permissions ones included, and a grant to zmx or to any executable in a pane is never consulted. The effect is measured too: with Launchy granted on a signed build (ADR 0022), both grants read true from a pane, and still did after a rebuild.
   - **Two earlier readings are wrong:**
     - first, "zmx panes are attributed to zmx", read from the eval's recheck;
     - then, "each process is its own", from macOS's private responsibility lookup, which misled.

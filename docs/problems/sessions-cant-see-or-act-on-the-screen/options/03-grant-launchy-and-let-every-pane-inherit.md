@@ -20,7 +20,7 @@ Launchy keeps the Accessibility and Screen Recording grants Point at the screen 
 - **It defeats any broker.** A pane process holds Accessibility, so it can click Allow in Launchy's prompts and act around options 01, 02 and 04.
 - **Screenshots without bounds.** A session can capture the display, every window and any password shown in clear. All of it can go to Anthropic with the session's context.
 - **It comes with Point at the screen.** Granting Launchy for Hey Launchy grants every session too. Taking the grant away takes Point at the screen with it.
-- **A rebuild drops it, for now.** Grants name one ad-hoc build: the pane's denial on 2026-10-09 came from a rebuild after the grant. That is both a nuisance and, today, the only thing that turns it off.
+- **A rebuild no longer drops it.** With ad-hoc builds, a rebuild after the grant stopped it applying (the pane's denial on 2026-10-09). Builds are now signed with Developer ID (ADR 0022), and both grants were measured to survive a rebuild, read true from a pane. Only the user removing them turns them off.
 
 ## User Stories
 

@@ -41,7 +41,7 @@ Read in the code at ca01eb4 unless marked.
 - **macOS attributes a pane's processes to Launchy,** even under zmx. Measured on 2026-10-09 from the privacy service's own log (`log show` on the `com.apple.TCC` subsystem):
   - The helper was run from a zmx-hosted pane, and the log's attribution named Launchy (`com.zabaca.launchy`, at its build path) as responsible, with the helper as the binary.
   - Accessibility and Screen Recording were denied, since the build on disk no longer matched the grant.
-  - So a grant to zmx or to any executable run in a pane is never consulted, and **a grant to Launchy reaches every pane session**. The attribution is measured; the effect is to be confirmed once Launchy holds a matching grant.
+  - So a grant to zmx or to any executable run in a pane is never consulted, and **a grant to Launchy reaches every pane session**. The attribution is measured, and so is the effect: with Launchy granted on a signed build (ADR 0022), both grants read true from a pane, and still did after a rebuild.
 - **Readings this replaces:**
   - "zmx is responsible" came from `spoken-requests-cant-see-the-screen`'s eval.
   - "Each process is its own" came from macOS's private responsibility lookup (`responsibility_get_pid_responsible_for_pid`), which reported each process in the chain as its own. That lookup misled, and the privacy service's log is what decides.
