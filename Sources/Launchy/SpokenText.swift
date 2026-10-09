@@ -398,6 +398,16 @@ enum SpokenPipeline {
         var miss: ScreenMiss?
         /// Set once the text of a picture of the window was tried (ADR 0021).
         var text: TextLook?
+        /// Set when the panel had focus and was read first.
+        var panel: PanelLook?
+    }
+
+    /// What reading Launchy's own panel first did (spoken-requests-cant-see-the-screen, 05): durations and counts only.
+    struct PanelLook {
+        var read: Duration
+        var candidates: Int
+        /// Jev found the thing in the panel; otherwise the app behind it was read.
+        var pointed = false
     }
 
     /// Durations, counts and kinds of the picture's text. The lines and the picture are never logged.
@@ -564,6 +574,8 @@ enum SpokenPipeline {
 
     /// A request about the screen (ADR 0019): read the controls of the window in front and let Jev pick the one it means. Gemma
     /// never points, so without Jev's gate the request ends in a miss. Nothing is drawn here; the arrow waits for the hold to end.
+    /// With Launchy's panel focused (`ScreenReader.panel`) it is read first, like any window, and when Jev finds nothing there the
+    /// app behind it is read as before.
     private static func lookAtScreen(_ request: String, into prepared: Run, screen: ScreenOptions) async throws -> Run {
         var run = prepared
         var look = ScreenLook()
@@ -578,13 +590,24 @@ enum SpokenPipeline {
             look.chosenBy = "gate closed"
             return missed(.jevFailed)
         }
-        guard let app = screen.app ?? ScreenReader.focusedApplication() else { return missed(.nothingListed) }
-
         let pointer = ScreenReader.pointer()
-        let reading = await ScreenReader.read(app, pointer: pointer)
+        // The panel when it has focus (never for `--ask --app`, which names the window), else the app in front.
+        let panel = screen.app == nil ? ScreenReader.panel() : nil
+        var app: NSRunningApplication
+        var reading: ScreenReader.Reading
+        if let panel {
+            app = panel
+            reading = await ScreenReader.read(panel, pointer: pointer)
+            reading.windowTitle = ScreenReader.panelTitle
+            look.panel = PanelLook(read: reading.duration, candidates: reading.elements.count)
+        } else {
+            guard let other = screen.app ?? ScreenReader.focusedApplication() else { return missed(.nothingListed) }
+            app = other
+            reading = await ScreenReader.read(other, pointer: pointer)
+            look.read = reading.duration
+            look.candidates = reading.elements.count
+        }
         try Task.checkCancellation()
-        look.read = reading.duration
-        look.candidates = reading.elements.count
 
         // Where the window was when its picture was taken, which is what a recognised box is relative to.
         var captured: CGRect?
@@ -638,6 +661,24 @@ enum SpokenPipeline {
             look.text = TextLook(capture: recognition.capture, recognise: recognition.recognise, recognised: recognition.lines.count,
                                  candidates: lines.count)
             return lines
+        }
+
+        // The panel's elements are asked about first, in a call of their own; Jev not finding the thing there reads the app behind.
+        // No text is read from a picture of the panel: a terminal pane's text is not in its tree, and is not asked for.
+        if look.panel != nil {
+            if !reading.elements.isEmpty {
+                guard let pick = try await choose(reading.elements) else { return missed(.jevFailed) }
+                if pick.isConfident {
+                    look.panel?.pointed = true
+                    return pointed(at: reading.elements[pick.index])
+                }
+            }
+            guard let other = ScreenReader.focusedApplication() else { return missed(.notPresent) }
+            app = other
+            reading = await ScreenReader.read(other, pointer: pointer)
+            try Task.checkCancellation()
+            look.read = reading.duration
+            look.candidates = reading.elements.count
         }
 
         // Chrome hides its page from the tree, so its text is read first and one call chooses among the toolbar's elements and the
@@ -721,7 +762,11 @@ enum SpokenCommand {
     }
 
     private static func describe(_ look: SpokenPipeline.ScreenLook, outcome: SpokenPipeline.Outcome) -> [String] {
-        var lines = ["screen: \(look.candidates) elements  [read \(look.read.seconds.secondsText)]"]
+        var lines: [String] = []
+        if let panel = look.panel {
+            lines.append("panel: \(panel.candidates) elements  [read \(panel.read.seconds.secondsText)], \(panel.pointed ? "found there" : "not there, read the app behind")")
+        }
+        lines.append("screen: \(look.candidates) elements  [read \(look.read.seconds.secondsText)]")
         if let pick = look.pick {
             let p = { (value: Double) in String(format: "%.2f", value) }
             lines.append("choice: by \(look.chosenBy), present \(p(pick.present)), the element's share \(p(pick.target))  [\(look.choose.seconds.secondsText)]")

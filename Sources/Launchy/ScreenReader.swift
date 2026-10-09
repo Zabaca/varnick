@@ -34,8 +34,26 @@ enum ScreenReader {
 
     // MARK: Which app
 
-    /// The application with keyboard focus; when that is Launchy (its panel is open), the frontmost other app. Launchy's own
-    /// windows are never read.
+    /// Whether a request about the screen looks in Launchy's own panel before the app behind it, when the panel has focus: it is
+    /// what the person is looking at, and it floats over everything. The cost is one more Jev call (about 0.12 s) for a request
+    /// about the app behind. Set to false to read only the app behind, as option 01 did (spoken-requests-cant-see-the-screen, 05).
+    static let panelFirst = true
+    /// What the panel's window is called to Jev: its own title is empty.
+    static let panelTitle = "Launchy"
+
+    /// Launchy itself, when its panel is the key window, visible and not wholly covered; nil when it is hidden, or pinned behind
+    /// another window, and so not what the person is looking at. The read is the same as any app's (an in-process one: its
+    /// Accessibility requests are answered by the main thread, which the awaiting main actor leaves free).
+    @MainActor
+    static func panel() -> NSRunningApplication? {
+        guard panelFirst, NSApplication.shared.windows.contains(where: { window in
+            window is LauncherPanel && window.isKeyWindow && window.isVisible && window.occlusionState.contains(.visible)
+        }) else { return nil }
+        return NSRunningApplication.current
+    }
+
+    /// The application with keyboard focus, other than Launchy: the app behind the panel when the panel has focus. Launchy's own
+    /// panel is read through `panel()`, never here.
     static func focusedApplication() -> NSRunningApplication? {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         var focused: CFTypeRef?
@@ -58,10 +76,12 @@ enum ScreenReader {
         return nil
     }
 
-    /// A running app by its name, for `Launchy --ask --app`.
+    /// A running app by its name, for `Launchy --ask --app`. Accessory apps count, since the running Launchy is one (the command's
+    /// own process, also named Launchy, does not).
     static func application(named name: String) -> NSRunningApplication? {
         let wanted = name.lowercased()
-        let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy != .prohibited && $0.processIdentifier != ownPID }
         return apps.first { $0.localizedName?.lowercased() == wanted } ?? apps.first { $0.localizedName?.lowercased().contains(wanted) == true }
     }
 

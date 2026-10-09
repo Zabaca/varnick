@@ -148,7 +148,9 @@ you ("Hey Launchy, where's the Allow button"). Launchy reads the elements of the
 through macOS Accessibility, in its own process, asks TypeSafe's Jev which one you mean, draws a big arrow
 and a sign on it that never takes focus or clicks, says what it is, and takes the arrow away a few seconds
 later. It needs the Accessibility permission, which Settings asks for and shows, and the relevance filter
-on TypeSafe with a key (see Privacy below for what is sent). When the thing isn't among the window's
+on TypeSafe with a key (see Privacy below for what is sent). With Launchy's own panel open and in front,
+it looks in the panel first, as in any window, and reads the app behind it only when the thing isn't there;
+a terminal pane's text is not in the panel's elements, so it can't be pointed into. When the thing isn't among the window's
 elements, or the window is a Chrome page, whose content the elements don't hold, and Screen Recording is
 also granted, Launchy captures that window alone into memory and reads its text with Apple's text
 recognition on this Mac, so a Chrome page, a canvas app or a remote desktop can be pointed into. The
@@ -160,8 +162,9 @@ Claude session and shell in its panes gets them too, kept running in zmx or not:
 ### TypeSafe
 
 The relevance filter can run on [TypeSafe](https://www.typesafe.ai)'s API, with your own key (Settings
-saves it in the Keychain, or it is read from `TYPESAFE_API_KEY` in the environment or from `.env`). What
-it sends is under Privacy.
+saves it in the Keychain, or it is read from `TYPESAFE_API_KEY` in the environment or from `.env`). Choosing
+TypeSafe is consent to send what its features need; On this Mac is the choice that keeps everything here.
+What it sends is under Privacy.
 
 ### On-device models
 
@@ -211,6 +214,10 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   description, and stores the description. Those requests go to the sites you visited.
 - **It records the microphone and the Mac's system audio while Listening is on,** and writes what it
   transcribes, on this Mac, to the day's transcript file.
+- **Choosing TypeSafe is consent to send what a feature backed by it needs,** Launchy's own panel and the names
+  of your sessions and projects included, and each new kind of data is listed here and in SECURITY.md. Keeping
+  things private is the relevance filter's **On this Mac** setting: with it, or with the filter off, none of
+  what follows leaves this Mac.
 - **With a TypeSafe key and the relevance filter on TypeSafe,** it sends each search to TypeSafe's API
   with the title, site and page description of up to 20 results. It does not send full addresses or tags.
   The filter is off by default (above). With Hey Launchy on, it also sends TypeSafe's Jev the text you
@@ -223,7 +230,9 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   front and, for each of its first 255 elements, the label, kind and nearby text. That is the window's
   visible text, not only that near its controls: a message list's subjects and senders, an open mail's body in
   Mail, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. The elements never
-  hold what is typed in a field. None of this goes to a model server. If the elements don't have the thing,
+  hold what is typed in a field. None of this goes to a model server. With Launchy's panel open and in front,
+  the panel is such a window too, and is read first: its session titles, folders, projects, Macs' names, page
+  titles and problem titles go the same way. A terminal pane's text is not among them. If the elements don't have the thing,
   and Screen Recording is granted, a picture of the window alone is also read on this Mac, and its short
   lines of text (at most 6 words and 60 characters each, at most 150) go too, so more of the window's text
   leaves: every short line, such as a message list's subjects and senders or a chat's names. Lines inside a

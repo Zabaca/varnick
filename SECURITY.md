@@ -147,12 +147,17 @@ and without it that step is skipped.
   lapse at a rebuild: they stay with every pane session until you remove Launchy in Settings › Privacy &
   Security (ADR 0022). macOS may also ask again after some weeks whether Launchy may
   keep recording, and show its capture indicator (not verified).
-- **What leaves the Mac.** Only with the filter on TypeSafe and a key: for a request about the screen, the
+- **What leaves the Mac.** Choosing TypeSafe is consent to send what a feature backed by it needs, so this
+  list is what the feature needs, not a selection that spares your own names; the way to keep them here is the
+  filter's On this Mac setting. Only with the filter on TypeSafe and a key: for a request about the screen, the
   words you said, the title of the window in front and, for up to its first 255 elements, the label, kind,
   nearby text and whether it is dimmed. Those are the window's visible text, not only that near its controls:
   a message list's subjects and senders, an open mail's body in Mail, a page's text in Safari, a file's name
   in a tab, an account's name in a sidebar. The elements never hold what is typed in a field, and a password
-  field is not read at all. None of it goes to a model server. When the elements don't have the thing, and
+  field is not read at all. With Launchy's panel open and in front it is read first, as any window is, so the
+  names it shows go too: the sessions' titles, folders, projects, agents and paired Macs' names, page
+  titles and sites in a search's results, and problem titles on the board. A terminal pane's text is not
+  among them. None of it goes to a model server. When the elements don't have the thing, and
   Screen Recording is granted, a picture of the window alone is taken into memory, read for text on this
   Mac and dropped: it is never written to disk, logged or sent. The text it finds does go, but only lines
   of at most 6 words and 60 characters, at most 150, with no positions, which is every short line in the
@@ -178,5 +183,5 @@ and without it that step is skipped.
   Mac, and so do the text of a spoken request after "Hey Launchy" and, as a typed search's, the search
   words and the title, site and page description of its first 20 pages. Words said before the request was
   finished may be sent and then discarded. With Point at the screen on, a request about the screen also
-  sends the window's title and its controls' descriptions, and after a miss its short lines of recognised
-  text (above). See the README's Privacy section.
+  sends the window's title and its controls' descriptions, Launchy's own panel's names included when it is in
+  front, and after a miss its short lines of recognised text (above). See the README's Privacy section.
