@@ -516,6 +516,20 @@ if CommandLine.arguments.contains("--sync") {
     }
 }
 
+// `Launchy --problems [folder…]` prints the Problems tab's columns and each card's evidence for those project folders (main checkouts),
+// or for the projects Launchy lists, and exits (to check the rules without the UI).
+if let i = CommandLine.arguments.firstIndex(of: "--problems") {
+    let folders = CommandLine.arguments.dropFirst(i + 1).filter { !$0.hasPrefix("--") }
+    MainActor.assumeIsolated {
+        Task { @MainActor in
+            let roots = folders.isEmpty ? Project.scan(roots: Settings.shared.projectFolders).map(\.path) : Array(folders)
+            print(await ProblemsReader.report(roots), terminator: "")
+            exit(0)
+        }
+        RunLoop.main.run()
+    }
+}
+
 // `Launchy --search "query"` prints the hybrid results of a `?` search for it (it adds the `?`) and exits (debugging / ranking checks).
 if let i = CommandLine.arguments.firstIndex(of: "--search"), i + 1 < CommandLine.arguments.count {
     let query = CommandLine.arguments[i + 1]
