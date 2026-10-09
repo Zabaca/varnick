@@ -21,9 +21,9 @@ public enum ClaudeCommand {
             "SessionStart": [.init(command: #"cat > "$LAUNCHY_SESSION_FILE""#),
                              .init(matcher: "clear", command: clearCommand), turn(.waiting, matcher: "resume"),
                              .init(command: WorkHooks.sessionStart)],
-            "UserPromptSubmit": [.init(command: promptCommand)],
-            "Stop": [turn(.waiting), .init(command: stopInputCommand)],
-            "StopFailure": [turn(.waiting), .init(command: stopInputKeepCommand)],
+            "UserPromptSubmit": [.init(command: promptCommand), .init(command: leadEndedCommand(.working))],
+            "Stop": [turn(.waiting), .init(command: stopInputCommand), .init(command: leadEndedCommand(.waiting))],
+            "StopFailure": [turn(.waiting), .init(command: stopInputKeepCommand), .init(command: leadEndedCommand(.waiting))],
             "Notification": [turn(.waiting, matcher: "idle_prompt")],
             "PermissionRequest": [.init(matcher: "^(?!(\(question)|\(plan))$)", command: askedCommand),
                                   turn(.question, matcher: question), turn(.plan, matcher: plan)],
@@ -42,7 +42,7 @@ public enum ClaudeCommand {
     }
 
     private struct HookSettings: Encodable {
-        let hooks: [String: [Entry]]
+        var hooks: [String: [Entry]]
 
         struct Entry: Encodable {
             var matcher: String?
@@ -66,34 +66,38 @@ public enum ClaudeCommand {
         writeCommand(choosing: "", word: turn.rawValue)
     }
 
-    /// `PermissionRequest` for an ordinary tool: writes permission, first keeping the turn file as it is (`cp -p`, so its date
-    /// stays) beside it as `.launchy-turn.before`, unless a dialog is already up, and the asker, `agent_id` or `lead`, as
-    /// `.launchy-turn.owner`. The lead's hooks run for its subagents and teammates too, so a request from one of them marks the
-    /// lead's pane, and answering it has to give the lead's word back, not always working.
+    /// `PermissionRequest` for an ordinary tool: marks the pane permission and notes the asker, keeping the word to give back.
+    /// The mechanism is in `docs/agents/where-it-breaks.md`.
     static let askedCommand =
         #"f="${LAUNCHY_SESSION_FILE%/*}/\#(PaneFolder.turnFileName)"; [ -n "$LAUNCHY_SESSION_FILE" ] && { inp=$(cat); \#(askerShell) "#
-        + #"[ "$(cat "$f" 2>/dev/null)" = permission ] || { cp -p "$f" "$f.before" || rm -f "$f.before"; }; "#
-        + #"printf '%s' "$o" > "$f.owner.$$" && mv "$f.owner.$$" "$f.owner"; "#
+        + #"[ -d "$f.askers" ] || { [ "$(cat "$f" 2>/dev/null)" = permission ] || { cp -p "$f" "$f.before" || rm -f "$f.before"; }; }; "#
+        + #"mkdir -p "$f.askers" && : > "$f.askers/$asker"; "#
         + #"[ "$(cat "$f" 2>/dev/null)" = permission ] || { printf permission > "$f.$$" && mv "$f.$$" "$f"; }; } >/dev/null 2>&1; exit 0"#
 
-    /// `PostToolBatch` (and `SubagentStop`): when the one that is marked as asking has its tools resolved, or ends, the turn file
-    /// goes back to what it held before the dialog, date and all (the reader takes the stop file as the turn's only within
-    /// `PaneFolder.staleWindow` of the turn's date), or to working without that copy. The file is left alone when its word is no
-    /// longer permission (a `Stop` has written waiting since), and another agent's batch leaves the mark. Without an asker
-    /// there is nothing to read, so this is one `test` per batch.
+    /// `PostToolBatch` and `SubagentStop`: the asker's dialog is answered or its agent gone, and the last asker gives the saved
+    /// word back.
     static let answeredCommand =
         #"f="${LAUNCHY_SESSION_FILE%/*}/\#(PaneFolder.turnFileName)"; "#
-        + #"[ -n "$LAUNCHY_SESSION_FILE" ] && [ -f "$f.owner" ] && { inp=$(cat); \#(askerShell) "#
-        + #"[ "$o" = "$(cat "$f.owner")" ] && { rm -f "$f.owner"; "#
+        + #"[ -n "$LAUNCHY_SESSION_FILE" ] && [ -d "$f.askers" ] && { inp=$(cat); \#(askerShell) "#
+        + #"[ -f "$f.askers/$asker" ] && { rm -f "$f.askers/$asker"; rmdir "$f.askers" 2>/dev/null && { "#
         + #"if [ "$(cat "$f" 2>/dev/null)" != permission ]; then rm -f "$f.before"; "#
         + #"elif [ -f "$f.before" ]; then mv "$f.before" "$f"; "#
-        + #"else printf working > "$f.$$" && mv "$f.$$" "$f"; fi; }; } >/dev/null 2>&1; exit 0"#
+        + #"else printf working > "$f.$$" && mv "$f.$$" "$f"; fi; }; }; } >/dev/null 2>&1; exit 0"#
 
-    /// Sets `o` to the hook input's `agent_id`, else `lead`. Only the fields before `hook_event_name` are searched: a subagent's
-    /// own are there (2.1.295), and the `tool_input` after it can hold any key.
+    /// `Stop`, `StopFailure` and `UserPromptSubmit`: the lead's own dialog can't be open now (a Deny fires no hook), so its mark
+    /// goes; with other askers left, the word to give back is the one just written.
+    static func leadEndedCommand(_ turn: Turn) -> String {
+        #"f="${LAUNCHY_SESSION_FILE%/*}/\#(PaneFolder.turnFileName)"; "#
+            + #"[ -n "$LAUNCHY_SESSION_FILE" ] && [ -d "$f.askers" ] && { rm -f "$f.askers/lead"; "#
+            + #"if rmdir "$f.askers" 2>/dev/null; then rm -f "$f.before"; "#
+            + #"else printf \#(turn.rawValue) > "$f.before.$$" && mv "$f.before.$$" "$f.before"; fi; } >/dev/null 2>&1; exit 0"#
+    }
+
+    /// Sets `asker` to the hook input's `agent_id`, else `lead`. Only the fields before `hook_event_name` are searched: a
+    /// subagent's own are there (2.1.295), and the `tool_input` after it can hold any key.
     private static let askerShell =
         #"h=${inp%%\"hook_event_name\"*}; "#
-        + #"o=$(printf '%s' "$h" | grep -oE '[{,]"agent_id":"[A-Za-z0-9_-]+"' | head -n 1 | cut -d'"' -f4); [ -n "$o" ] || o=lead;"#
+        + #"asker=$(printf '%s' "$h" | grep -oE '[{,]"agent_id":"[A-Za-z0-9_-]+"' | head -n 1 | cut -d'"' -f4); [ -n "$asker" ] || asker=lead;"#
 
     /// `Stop`'s input, which lists the background tasks still running, saved as it comes (no jq in a hook's shell) to the
     /// stop file beside the turn file, by rename. `PaneFolder.runningTasks` reads it.
