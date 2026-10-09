@@ -10,7 +10,8 @@ public enum ClaudeCommand {
     public static let script = #"exec claude "$@""#
 
     /// The settings claude is started with (`--settings`), added to the user's own hooks: ADR 0001's SessionStart
-    /// hook and the turn hooks of ADR 0010. The rules for the turn entries are in `docs/agents/where-it-breaks.md`.
+    /// hook, the turn hooks of ADR 0010 and the work-link hooks of ADR 0020 (`WorkHooks`). The rules for the entries are in
+    /// `docs/agents/where-it-breaks.md`.
     public static func hookSettings(skipPermissions: Bool) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
@@ -18,14 +19,18 @@ public enum ClaudeCommand {
         }
         var hooks: [String: [HookSettings.Entry]] = [
             "SessionStart": [.init(command: #"cat > "$LAUNCHY_SESSION_FILE""#),
-                             .init(matcher: "clear", command: clearCommand), turn(.waiting, matcher: "resume")],
+                             .init(matcher: "clear", command: clearCommand), turn(.waiting, matcher: "resume"),
+                             .init(command: WorkHooks.sessionStart)],
             "UserPromptSubmit": [.init(command: promptCommand)],
             "Stop": [turn(.waiting), .init(command: stopInputCommand)],
             "StopFailure": [turn(.waiting), .init(command: stopInputKeepCommand)],
             "Notification": [turn(.waiting, matcher: "idle_prompt")],
             "PermissionRequest": [turn(.permission, matcher: "^(?!(\(question)|\(plan))$)"),
                                   turn(.question, matcher: question), turn(.plan, matcher: plan)],
-            "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)")],
+            "PreToolUse": [.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink)],
+            "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)"),
+                            .init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark)],
+            "SubagentStop": [.init(command: WorkHooks.subagentStop)],
             "Elicitation": [turn(.input)],
             "ElicitationResult": [turn(.working)],
         ]
