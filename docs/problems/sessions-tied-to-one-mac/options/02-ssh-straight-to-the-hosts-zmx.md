@@ -2,7 +2,8 @@
 problem: sessions-tied-to-one-mac
 title: SSH straight to the host's zmx; zmx labels are the only shared state
 summary: No Launchy-to-Launchy channel. A's relay, run over SSH, creates and attaches the session on B itself, labelled with the Mac in control. B's Launchy finds sessions labelled for another Mac when it lists its zmx sessions, shows them, and spares them in its sweep. Take over, the frozen screen and Recent and search work as in option 01, but every read goes through B's files and zmx rather than B's running Launchy.
-status: proposed
+status: rejected
+reason: Not chosen in ADR 0007. Claude would run from an SSH login, which lacks the GUI session's Keychain login, and the two Launchys would read each other's files.
 ---
 
 ## Solution

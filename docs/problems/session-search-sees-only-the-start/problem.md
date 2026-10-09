@@ -4,7 +4,7 @@ description: Launchy embeds each Claude session as one vector made of its title,
 impact: A search about the later part of a session finds it among the 3 sessions the panel shows about 40% of the time, against about 70% for a search about its start. The longer a session ran, the less of it can be found, so the user goes back to remembering which folder it ran in, or starts over and re-explains what the old session already knew.
 severity: mid
 evidence: An offline eval on 2026-10-08, on a copy of the search database taken that day, with Launchy's ranking reproduced at f210f1f (below). Its scripts, searches and results are kept outside this repository. Code read at c728ee4.
-status: open
+status: closed
 ---
 
 ## Today

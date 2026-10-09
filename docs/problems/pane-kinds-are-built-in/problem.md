@@ -4,7 +4,7 @@ description: The split picker offers Claude, Terminal and Browser and nothing el
 impact: Each new pane tool means changing, rebuilding and restarting Launchy. Every Claude session carries Scratch's system prompt and an extra directory, though here 2 of 36 Claude panes ever built a page. Launchy keeps 275 lines for one tool, most of them process handling (port and pid files, adopting and killing orphaned servers, stopping them at Quit). Scratch is tied to Deno, and the user now prefers Bun for its developer experience.
 severity: mid
 evidence: Measured 2026-10-03 on the user's Mac. Scratch's code is 275 lines, plus its hooks in the pane, the model and Quit. The appended system prompt is about 1,400 characters once its paths are filled in. Launchy's scratch folder holds 36 pane folders, and 2 of them have an index.html. Two `deno run -A npm:vite` servers were running, kept alive across restarts by the zmx setting. `-A` grants Deno every permission, so Deno's sandbox was never in use.
-status: open
+status: closed
 ---
 
 A split (⌃⌘⇧E side by side, ⌃⌘⇧O top and bottom) asks what the new pane holds: Claude, Terminal or Browser, picked with C, T or B. The list is fixed in Launchy's code. A tool the user builds for themselves can only appear there by adding it to Launchy.

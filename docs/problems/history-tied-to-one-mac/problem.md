@@ -4,7 +4,7 @@ description: The user runs Launchy on two paired Macs, the MacBook Air and the M
 impact: The Studio's archive holds 7331 page URLs that the Air's lacks, most of them from a work profile. The Air's archive holds 1682 that the Studio's lacks. To find a page seen on the other Mac, the user has to walk over to that Mac or search the web again.
 severity: mid
 evidence: Measured read-only on 2026-10-05. The Air's search database and Chrome History files were read with sqlite3 (History through a copy, since Chrome locks it). The Studio's were read over `ssh -o BatchMode=yes alex@alexs-macbook-pro` (History with `immutable=1`, which takes no lock). Overlap was compared on hashes of the URLs, so no URL left the Studio. Code read at ace79c3; the search, relay and filter code is unchanged at 2b5f10c.
-status: open
+status: closed
 ---
 
 ## What the user wants

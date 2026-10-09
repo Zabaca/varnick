@@ -2,7 +2,8 @@
 problem: session-turns-not-visible
 title: The board as a tab, with turns reported by hooks
 summary: The board is a pane kind in a tab of its own, as the live transcript is, so it takes the terminal's resizable size, sits in the header with the other tabs, and can share a split with a session. Turns come from hooks as in option 01. It costs a new kind of pane that every check of "is this a Claude pane" has to learn.
-status: proposed
+status: rejected
+reason: Option 01's board in the panel shipped, so a board pane kind, which every check for a Claude pane would have to learn, isn't needed.
 ---
 
 ## Solution

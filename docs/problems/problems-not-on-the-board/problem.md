@@ -4,7 +4,7 @@ description: A repo's problems and options say where each piece of work stands, 
 impact: With many sessions and subagents running at once, across Macs, the user loses track of what is being built and what waits on a decision. Statuses drift unnoticed (twelve options still said accepted after they were built). A link worked out from transcripts after the fact is a guess: the prototype needed weighted tiers and still couldn't tell a session that read a problem from one that worked on it.
 severity: mid
 evidence: The user's decisions of 2026-10-08, relayed by the coordinator. The prototype captured on the local branch `prototype/problems-kanban` at 74ff0cc (never pushed). Code read at c728ee4 (main) on 2026-10-08. Claude Code 2.1.295, installed here, read from the strings in its binary for its hook inputs and events; nothing was run. Option statuses checked against `git log --merges`, the root commit and the code; twelve were set to shipped in 58c1649.
-status: open
+status: closed
 ---
 
 ## What the user wants

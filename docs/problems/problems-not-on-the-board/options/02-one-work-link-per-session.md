@@ -2,7 +2,8 @@
 problem: problems-not-on-the-board
 title: The Problems tab with one work link per session on this Mac; subagents and peers later
 summary: Option 01's Problems tab, column rule, branch ties and shipped rule, with a smaller link. Each Claude pane keeps one work record and a log in its folder, and a subagent's work links its session. The hook on file writes, `/work` (whose script writes the record itself), the builder's first step and the SessionStart line are option 01's. Building is an open session here linked to an option, or a tied branch not yet merged. A session that ends keeps its links in its saved record only. A paired Mac's sessions get no chips, so the protocol stays at 16. Everything it writes keeps its shape under option 01, which can follow. Rough effort is three days, in two branches.
-status: proposed
+status: rejected
+reason: Not chosen in ADR 0020. Option 01 shipped, with links for each subagent and from paired Macs, which this option left for later, so the chips say who did what.
 ---
 
 ## Solution

@@ -2,7 +2,8 @@
 problem: frozen-screen-not-live
 title: Poll the screen while the card is shown, drawn at the controller's grid
 summary: The card fetches the frozen screen about every second while it is on screen, not only when it comes into view. Each snapshot carries the grid the host read from the session's terminal, and the view draws at that grid, scaled to fit the pane. Smallest change; it lags by up to a poll, and every poll pays an SSH session.
-status: proposed
+status: rejected
+reason: Not chosen in ADR 0008. Every poll pays an SSH session, and the host serializes the screen even while Claude is idle. Option 04 shipped instead and sends a frame only when the screen changed.
 ---
 
 ## Solution

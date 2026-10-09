@@ -2,7 +2,8 @@
 problem: relevance-filter-needs-typesafe
 title: Rerank on this Mac with a public MLX reranker
 summary: Option 01's setting and lifecycle, but the model is a public cross-encoder run by mlx-swift-lm's MLXRerankers library and downloaded once like the embedding model. No model code and no personal weights.
-status: proposed
+status: rejected
+reason: It scored below the fused order with no reranking. On 19 of Launchy's fused top-20 searches on 2026-10-02, the best public model reached NDCG@10 0.852 against 0.860 for no reranking.
 ---
 
 ## Solution

@@ -2,7 +2,8 @@
 problem: problems-not-on-the-board
 title: The Problems tab from the files and branch ties alone, with no session links yet
 summary: Option 01's Problems tab, column rule and shipped rule, with no work records, no hooks and no chips. Building is an `in-progress` option, or one whose tied branch has commits not on main; the builder ties its branch in git config with a one-line step of its own. The claude command line and the peer protocol don't change, so nothing needs a restart but this Mac's own build. Options 02 and 01 add the links on top without changing it. Rough effort is a day and a half, in one branch.
-status: proposed
+status: abandoned
+reason: Built as option 01's first branch (merge 6b80690), and option 01 shipped on top of it.
 ---
 
 ## Solution

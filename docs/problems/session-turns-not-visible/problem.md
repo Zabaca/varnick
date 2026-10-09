@@ -4,7 +4,7 @@ description: Claude sessions sit in tabs on this Mac and on paired Macs, and the
 impact: A session that finished its turn waits, unnoticed, until the user happens to cycle to its tab or Mac. Finished sessions either stay open as tabs, crowding the header and the session list, or are closed and lose any mark that they were done. The more sessions run at once, across more Macs, the worse both get.
 severity: mid
 evidence: The user's request of 2026-10-06. Code read at 76150b9 (main). Claude Code 2.1.291, installed here, checked for its hook events and notification types from the strings in its binary; nothing was run. The user's shortcut overrides in UserDefaults are empty, so every shortcut is at its default.
-status: open
+status: closed
 ---
 
 ## What the user wants

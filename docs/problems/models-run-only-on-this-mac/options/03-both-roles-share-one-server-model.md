@@ -1,7 +1,7 @@
 ---
 problem: models-run-only-on-this-mac
 title: Both roles can run on a server, sharing one idea of a model server
-summary: Options 01 and 02 together, designed and documented as one thing. Each role gets "On this Mac | Server" with its own address, since no single server on the Ryzen serves both today. They share one Model server key, one tailnet rule, one way to check, report and log, and one rule for an absent server (a search falls back to this Mac; background work, the sync and titles, waits). One ADR covers both. Embeddings can ship first, against foundry's service as it is; text generation follows once a chat server exists (option 04 or 05).
+summary: Options 01 and 02 together, designed and documented as one thing. Each role gets "On this Mac | Server" with its own address, since no single server on the Ryzen serves both today. They share one Model server key, one tailnet rule, one way to check, report and log, and one rule for an absent server (a search falls back to this Mac; background work, the sync, waits). One ADR covers both. Embeddings can ship first, against foundry's service as it is; text generation follows once a chat server exists (option 04 or 05). Session titles, which it also covered, were removed on 2026-10-09, and Text generation now serves only Hey Launchy (ADR 0012 as amended).
 status: shipped
 ---
 

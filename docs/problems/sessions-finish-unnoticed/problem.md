@@ -86,7 +86,7 @@ Read in 2.1.295's code. These are minified names, so this is a reading of the co
 
 ### Posting a notification from a bare executable
 
-- **What Launchy is.** Launchy is a bare executable, signed ad hoc, with its Info.plist (bundle id `com.zabaca.launchy`) linked into the binary (Package.swift:5-8, 40).
+- **What Launchy is.** Launchy is a bare executable with its Info.plist (bundle id `com.zabaca.launchy`) linked into the binary (Package.swift:5-8, 40). It was signed ad hoc when this was read. Since 2026-10-09 it is signed with Developer ID and the hardened runtime on a Mac that has the identity, and ad hoc otherwise (ADR 0022).
 - **UNUserNotificationCenter** is Apple's API for posting notifications. It works from an app bundle. In a process without one, it is reported to raise an Objective-C exception at first use ("bundleProxyForCurrentProcess is nil"). Unverified for this binary: nothing was run. Swift can't catch that exception, so it would end Launchy.
 - **NSUserNotificationCenter**, the older API, has been deprecated since macOS 11 (SDK header).
 - **`osascript`'s `display notification`** posts under Script Editor's name, and a click opens Script Editor.
@@ -115,6 +115,6 @@ Launchy already covers part of this:
 ## Unverified
 
 - Whether UNUserNotificationCenter can be used from Launchy's bare executable with its linked-in Info.plist, and whether NSUserNotificationCenter still posts on macOS 26 from one.
-- That macOS keeps a notification permission by bundle id across ad-hoc rebuilds. Keychain access isn't kept (Keychain.swift:4-5).
+- That a notification permission survives a signed rebuild. Since ADR 0022 builds are signed with Developer ID, which macOS knows by team and bundle id. Accessibility and Screen Recording were measured to survive one (2026-10-09), and a notification permission is expected to. An ad-hoc build doesn't keep Keychain access (Keychain.swift:4-5).
 - That every `StopFailure` leaves an API-error entry in the transcript.
 - That `auto` sends nothing in a Launchy pane whatever the account's shell startup files set.

@@ -1,7 +1,7 @@
 ---
-title: Launchy runs only from a source checkout, signed ad hoc
-description: Launchy exists only as a bare executable that `make build` leaves in a checkout of its repository, with an ad-hoc signature. To use it, a person clones the repository, installs a Swift toolchain and runs `make`. There is nothing to download and open. The binary's helper files, its database, its restart, its start at login and its upgrades all assume they live in that checkout. The user has an Apple Developer account and wants a signed, notarized Launchy.app that installs like any other Mac app.
-impact: Once the repository is public (repo-not-ready-to-open-source), only people willing to build from source can try Launchy. macOS also treats every build as a new app, because an ad-hoc signature is the hash of one build. Each rebuild can bring back the Keychain prompt for a saved API key, and possibly the microphone and system audio prompts (unverified). The user's history archive, which holds history Chrome may already have dropped, lives inside a working tree, where a `git clean -x` or a deleted checkout would take it.
+title: Launchy runs only from a source checkout
+description: Launchy exists only as a bare executable that `make build` leaves in a checkout of its repository. Since 2026-10-09 it is signed with the user's Developer ID and the hardened runtime when the building Mac has the identity, and ad hoc otherwise (option 01, ADR 0022). To use it, a person clones the repository, installs a Swift toolchain and runs `make`. There is nothing to download and open. The binary's helper files, its database, its restart, its start at login and its upgrades all assume they live in that checkout. The user has an Apple Developer account and wants a signed, notarized Launchy.app that installs like any other Mac app.
+impact: Once the repository is public (repo-not-ready-to-open-source), only people willing to build from source can try Launchy. Anyone building without a Developer ID identity gets an ad-hoc signature, the hash of one build, so macOS treats each of their builds as a new app, and a rebuild can bring back the Keychain prompt and the privacy prompts. On a signed build, Accessibility and Screen Recording grants survive a rebuild (measured 2026-10-09), and the microphone's is expected to (unverified). The user's history archive, which holds history Chrome may already have dropped, lives inside a working tree, where a `git clean -x` or a deleted checkout would take it.
 severity: mid
 evidence: Code and Makefile as of 9595244, read on 2026-10-08. The same day, read-only on this Mac - the running build's signature (`codesign -dv`), the signing identities in the keychain (`security find-identity`), the installed developer tools, the build folder and Launchy's Application Support folder. MLX's metallib lookup and CPU compile path read in the pinned mlx-swift 0.32.3 checkout. Nothing was signed, built or changed.
 status: open
@@ -55,6 +55,8 @@ Line numbers are as of 9595244.
 
 ### Signing and permissions
 
+**Since 2026-10-09** (option 01, ADR 0022), builds are signed with Developer ID and the hardened runtime on a Mac that has the identity, which the user created that day. Launchy now also uses Accessibility (ADR 0019) and Screen Recording (ADR 0021) for Point at the screen, and both grants survived a signed rebuild and restart (measured 2026-10-09). The list below is as read on 2026-10-08.
+
 Verified unless marked.
 
 - **The running build** is signed ad hoc, with identifier `com.zabaca.launchy`, no team, the Info.plist bound and no sealed resources. zmx carries its linker's ad-hoc signature.
@@ -74,7 +76,7 @@ Verified unless marked.
 ### This Mac's tools, 2026-10-08
 
 - The Command Line Tools are selected, with no Xcode. They include `notarytool` and `stapler`. `codesign`, `ditto` and `hdiutil` are present.
-- The keychain holds no valid code signing identity.
+- The keychain holds no valid code signing identity. (The user created a Developer ID Application identity on 2026-10-09, ADR 0022.)
 
 ### Data in the checkout
 
@@ -95,7 +97,7 @@ Verified unless marked.
 
 ## Unverified
 
-- That microphone and system audio grants are lost at each ad-hoc rebuild today, and kept across rebuilds once signed with Developer ID.
+- That microphone and system audio grants are lost at each ad-hoc rebuild, and kept across rebuilds once signed with Developer ID. Accessibility and Screen Recording were measured kept across a signed rebuild on 2026-10-09.
 - Which hardened-runtime entitlements the system audio tap needs beyond audio input, and whether the Speech framework needs any.
 - MLX on the GPU needs no entitlement (inferred). On macOS, mlx-swift 0.32.3 compiles in MLX's CPU compile path, which builds a library at run time and loads it (verified in its source). Library validation would refuse that library. Whether Launchy ever reaches that path is unverified.
 - That `Bundle.main`'s resource folder, for a bare executable, is the executable's own folder.

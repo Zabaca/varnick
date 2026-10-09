@@ -4,7 +4,7 @@ description: A spoken request reads the top five pages of the panel's ranking as
 impact: The user hears a confident answer that names the wrong page, and has to open the panel and type the search to find the right one, which is what Hey Launchy is meant to spare them. Spoken requests tend to describe a page rather than name it, and that is where the filter helps most (on TypeSafe, +0.115 to +0.191 MRR on searches that describe a page without its title's words; see relevance-filter-needs-typesafe).
 severity: mid
 evidence: One spoken request on 2026-10-08, at commit f210f1f with the relevance filter on TypeSafe, that described a programming language by what it is for rather than by name. The five pages read left out the page the user meant, and the answer named another. The same words typed as a `?` search put the meant page among the relevant ones and the named page under "Less relevant". The request and the pages are the user's and are kept locally. Code read on 2026-10-08 at f210f1f.
-status: open
+status: closed
 ---
 
 ## Today

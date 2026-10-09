@@ -23,6 +23,10 @@ The user wants the repository at github.com/Zabaca/launchy made public, so that 
 - Either an orphan branch with one squashed commit, or the history kept and rewritten with git filter-repo. The rewrite would remove paths, replace strings in files and commit messages, and optionally map the author email.
 - Once docs/problems/ is published by default, where private and process docs live.
 
+## Where it stands (2026-10-09)
+
+Option 01's scrub is done, and so is its cutover: origin holds only main, whose root is the squashed commit 253012d. Left: making the repository public, and turning on private vulnerability reporting.
+
 ## Today
 
 ### The repository

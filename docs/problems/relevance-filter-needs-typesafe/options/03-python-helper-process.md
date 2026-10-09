@@ -2,7 +2,8 @@
 problem: relevance-filter-needs-typesafe
 title: Run laya-mlx in a Python helper process
 summary: Option 01's setting, import and row, but the model runs in a long-lived Python process with laya-mlx that Launchy starts and talks to over a pipe. No Swift model code gets written.
-status: proposed
+status: rejected
+reason: Another way to run option 01's checkpoint, and option 01 shipped, running it in Launchy's own process (ADR 0006).
 ---
 
 ## Solution

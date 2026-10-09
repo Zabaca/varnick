@@ -2,7 +2,8 @@
 problem: sessions-tied-to-one-mac
 title: A live view, not a frozen screen, on the Mac not in control
 summary: Builds on option 01 (or 02). The Mac not in control stays attached as a second zmx client and shows the session live, while Launchy sends it no keys. Take over relabels the session, detaches every client, and reattaches the new controller first and the old one second, as a viewer.
-status: proposed
+status: abandoned
+reason: Superseded by frozen-screen-not-live option 04 (ADR 0008), a live view through a reader that never sends the session input, Init or a size.
 ---
 
 ## Solution

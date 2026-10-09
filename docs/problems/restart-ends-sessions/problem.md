@@ -4,7 +4,7 @@ description: Every Claude, terminal and transcript pane runs as a child of Launc
 impact: A long session running several subagents is set back to its last finished turn on every restart, and the lost work costs time and tokens to redo. Developing Launchy restarts it often, so this happens repeatedly, and agents are told to leave restarts to the user because a restart may end the session they run in.
 severity: high
 evidence: Spike on 2026-10-03 (see option 01, Further Notes) showed a process kept in zmx survives `launchctl kickstart -k` and SIGKILL of the parent holding its terminal. CLAUDE.md, under Working here, tells agents to leave restarts to the user for this reason.
-status: open
+status: closed
 ---
 
 Each pane that runs a process (a Claude session, a terminal, the live **Transcript**) is started by SwiftTerm on a pseudo-terminal Launchy owns, so the process is Launchy's child. Launchy stops in several ways, and each one takes every pane's process with it:

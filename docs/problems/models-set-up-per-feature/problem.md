@@ -4,7 +4,7 @@ description: Settings › Search holds the semantic search model's download, the
 impact: Every new model adds another download, status and retry inside whichever feature uses it first, and to set a model up or see why it failed the user has to know which feature owns it. The relevance picker mixes whether the filter is on with who runs it, so turning it off forgets the choice. Without on-device text generation, small writing jobs such as session titles either send the user's prompts to a third party or don't happen.
 severity: low
 evidence: Settings › Search as of f72de39. A spike on 2026-10-06 ran Gemma 4 E2B on Launchy's exact pins (below, as reported; not rerun for this problem). Claude Code's own session titles were counted in the user's transcripts on 2026-10-06 (below; counts only).
-status: open
+status: closed
 ---
 
 ## Today

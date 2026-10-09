@@ -2,7 +2,8 @@
 problem: history-tied-to-one-mac
 title: Ask each paired Mac to search its own pages as the user types
 summary: Nothing is copied. A search is also sent to each paired Mac's running Launchy, which runs its own keyword and semantic search and answers with its top pages. This Mac fuses them with its own.
-status: proposed
+status: rejected
+reason: Option 01 shipped. Each paired Mac's pages are merged and embedded here, so they are found while that Mac is asleep or away, and asking it at query time would add a round trip to every search for no gain.
 ---
 
 ## Solution

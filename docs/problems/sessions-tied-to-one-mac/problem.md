@@ -4,7 +4,7 @@ description: The user runs Launchy on two Macs. A Claude session runs in the zmx
 impact: Moving between the two Macs means leaving work behind. A session started on one Mac can't be continued from the other without going back to it, and a finished conversation can't be found or resumed from the other Mac. Long sessions, whose subagents and background work zmx now keeps alive, stay stuck on the Mac they started on.
 severity: mid
 evidence: The user's request of 2026-10-04 and the decisions recorded below. Code read at 1503840. zmx 0.8.1 read in its tagged source (the README, the client, daemon and IPC code, and the changelog). This Mac's tailnet read with `tailscale status --json` on 2026-10-04. Prior art read in the source of the user's existing browser terminal (its decision record, installer and shared scripts, and glossary). Nothing was run on the other Mac, which isn't reachable from here.
-status: open
+status: closed
 ---
 
 ## What the user wants

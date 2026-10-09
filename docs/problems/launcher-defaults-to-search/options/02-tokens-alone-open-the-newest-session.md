@@ -2,7 +2,8 @@
 problem: launcher-defaults-to-search
 title: Tokens with no message open their newest session
 summary: As option 01, except for one case. When the tokens have no message after them and the list has a session, the highlight starts on the first session instead of the prompt line. `#leeandco` and ↩ then goes back to that project's open or most recent session. ↑ and ↩ starts an empty session there. Once a message is typed, the highlight is on the prompt line as in option 01.
-status: proposed
+status: abandoned
+reason: Option 01 shipped without it, where tokens alone list their sessions for ↓ ↩. Raise it as its own problem if use shows the gap.
 ---
 
 ## Solution

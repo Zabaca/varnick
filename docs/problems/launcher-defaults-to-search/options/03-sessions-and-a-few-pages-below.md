@@ -2,7 +2,8 @@
 problem: launcher-defaults-to-search
 title: Sessions and a few pages below the prompt line
 summary: As option 01, but the list under the prompt line also holds up to 3 pages matched on the message, under a "Pages" label after the sessions. They have no relevance filter and no preview, and ↓ ↩ opens one in the browser. `?` stays the full search, with the preview, the 40 results and the relevance filter.
-status: proposed
+status: abandoned
+reason: Option 01 shipped without it, and a leading ? gives the full search. Raise it as its own problem if use shows the gap.
 ---
 
 ## Solution

@@ -2,7 +2,8 @@
 problem: spoken-answers-skip-the-relevance-filter
 title: The same relevance search, but a spoken request is filtered only On this Mac
 summary: Option 01's module, rows and answer, with one difference. A spoken request runs the relevance filter only when it is set to On this Mac. With the filter on TypeSafe the spoken search stays unfiltered, so ADR 0016's promise holds and only the request text goes to TypeSafe. The case seen, with the filter on TypeSafe, isn't fixed unless the user switches the filter to On this Mac.
-status: proposed
+status: rejected
+reason: The user chose option 01 (ADR 0017). The filter On this Mac measured no gain over no filter on searches that describe a page, which most spoken requests are.
 ---
 
 ## Solution

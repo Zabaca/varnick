@@ -2,7 +2,8 @@
 problem: bookmarks-not-searchable
 title: Bookmarks as their own source
 summary: Bookmarks get their own search rows, one per URL with source `bookmark`, built beside history entries instead of inside them; a page that is both visited and bookmarked shows as two results.
-status: proposed
+status: rejected
+reason: Option 01 shipped instead. There bookmarks join history entries, so a page shows once, where this option shows a page both visited and bookmarked twice.
 ---
 
 ## Solution

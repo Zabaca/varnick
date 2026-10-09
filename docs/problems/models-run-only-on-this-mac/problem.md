@@ -1,7 +1,7 @@
 ---
 title: Every model runs on the Mac that uses it
-description: Search embeddings and Text generation run only inside Launchy, on each Mac. A Mac that can't spare the downloads, the memory or the GPU, such as the MacBook Air, either goes without search by meaning and session titles, or pays for both models itself, including embedding every paired Mac's pages and sessions. Meanwhile the Ryzen already serves the same embedding model on the tailnet, and its card wrote Gemma's titles as fast as the Mac Studio does, and faster for long prompts.
-impact: Each Mac that wants both roles downloads 650 MB and 3.6 GB, holds about 0.65 GB and 2.5 GB while they are loaded, and runs the whole embedding backlog on its own GPU and battery. Each model unloads after 10 idle minutes, so the next search after a pause waits about 1.75 s for the embedder to load again, and the next title waits for Gemma. A Mac that skips the downloads gets keyword-only search and Claude's own titles.
+description: Search embeddings and Text generation run only inside Launchy, on each Mac. A Mac that can't spare the downloads, the memory or the GPU, such as the MacBook Air, either goes without search by meaning and Hey Launchy's spoken answers, or pays for both models itself, including embedding every paired Mac's pages and sessions. Meanwhile the Ryzen already serves the same embedding model on the tailnet, and its card ran Gemma as fast as the Mac Studio does, and faster for long prompts (timed on session titles, which Launchy no longer writes).
+impact: Each Mac that wants both roles downloads 650 MB and 3.6 GB, holds about 0.65 GB and 2.5 GB while they are loaded, and runs the whole embedding backlog on its own GPU and battery. Each model unloads after 10 idle minutes, so the next search after a pause waits about 1.75 s for the embedder to load again, and the next spoken answer waits for Gemma. A Mac that skips the downloads gets keyword-only search and no spoken answers.
 severity: low
 evidence: Measured and read on 2026-10-07 (below), with fixed made-up sentences and counts only, never the user's text. Latency figures for this Mac were measured by the coordinator; the GPU figures come from the spike report of the same day. Neither was rerun for this problem.
 status: open
@@ -16,7 +16,7 @@ status: open
 - What gets embedded is personal. For a page it is the title, the site, the start of the page's description, its bookmark folders and the search terms that led to it. For a session it is the title, the folder name and the user's prompts, up to 1,000 characters. While a prompt is typed in the panel, its first 1,000 characters are embedded to list matching sessions.
 - `where-it-breaks.md` says a session's prompts stay on the user's paired Macs and go to no other service, and that a typed prompt runs only this Mac's embedder.
 
-**Text generation** runs in Launchy's process with MLX (ADR 0012): Gemma 4 E2B, 4-bit, a 3.6 GB download. Its only use is session titles, made from each conversation's first prompt (its first 1,500 characters). Its Settings text says nothing is sent anywhere.
+**Text generation** runs in Launchy's process with MLX (ADR 0012): Gemma 4 E2B, 4-bit, a 3.6 GB download. Its only use is session titles, made from each conversation's first prompt (its first 1,500 characters). Its Settings text says nothing is sent anywhere. (Since then Hey Launchy's answers use it too, and on 2026-10-09 session titles were removed, so those answers are its only use; ADR 0012 as amended.)
 
 **The relevance filter** already runs on TypeSafe or on this Mac. It isn't part of this problem.
 

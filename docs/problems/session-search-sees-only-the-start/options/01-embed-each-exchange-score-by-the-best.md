@@ -2,7 +2,7 @@
 problem: session-search-sees-only-the-start
 title: Embed each exchange of a session, and score the session by its best one
 summary: Each prompt the user typed, with the last text Claude wrote before the next prompt, becomes one exchange, embedded as its own vector under the session's title and folder. A search by meaning scores a session by its best exchange. Keyword search, the search row and what the panel shows stay as they are. Paired Macs send Claude's replies with the prompts they already send, and each Mac embeds the exchanges itself.
-status: accepted
+status: shipped
 ---
 
 ## Solution

@@ -4,7 +4,7 @@ description: The session board names a Claude session as its pane does, by the n
 impact: Looking for an earlier session by the name the user remembers either misses it or turns up a row under an unfamiliar name. A /rename name or a generated title is matched only where its words happen to be in a prompt. The user falls back to searching for what they typed, scanning by folder and date, or starting over. Every session with a generated or /rename name has the mismatch.
 severity: mid
 evidence: Seen on 2026-10-09 in one pane, whose card showed its generated title while search showed Claude's title for the same conversation, two names with no word in common (the names stay out of this file). Reported by the user and relayed by the coordinator, who also relayed the choice between the options. Code read at 716ee79.
-status: open
+status: closed
 ---
 
 ## Today

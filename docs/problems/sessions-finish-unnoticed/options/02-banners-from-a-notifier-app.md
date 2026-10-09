@@ -9,7 +9,7 @@ status: proposed
 
 Option 01's notices, rules and Settings switches stand unchanged. This option adds a banner for each notice.
 
-**First, a check.** A throwaway executable built like Launchy (bare, with an Info.plist linked in, signed ad hoc) asks the notification center for its settings, and nothing more. Whatever it finds, nothing is ever posted from it.
+**First, a check.** A throwaway executable built like Launchy (bare, with an Info.plist linked in, signed with Developer ID and the hardened runtime as Launchy is) asks the notification center for its settings, and nothing more. Whatever it finds, nothing is ever posted from it.
 - If it gets an answer, Launchy posts its notifications itself, in process, and the notifier app below isn't built.
 - If it raises the exception the problem describes, Launchy never touches the notification center, and the notifier app posts for it.
 
@@ -47,12 +47,12 @@ The rest assumes the second outcome, which is the expected one.
 - **Banners on the user's Macs now.** Every runs-only-from-a-checkout option keeps the checkout build bare, so posting from Launchy itself would leave the user's own Macs without banners for as long as they run checkouts. The notifier doesn't wait on that problem.
 - **Banners where cmux has them.** They are on the lock screen, in Notification Center's history, and in Focus filters, and they name the session.
 - **A second executable to build and sign.**
-  - It needs its own Info.plist, a bundle step in the Makefile, and signing in step with Launchy's: ad hoc now, Developer ID if runs-only-from-a-checkout's option 01 is built.
+  - It needs its own Info.plist, a bundle step in the Makefile, and signing in step with Launchy's: Developer ID and the hardened runtime where the building Mac has the identity, else ad hoc (ADR 0022).
   - An Upgrade (ADR 0013) can rebuild the notifier under a running Launchy, so the messages between them have a frozen shape that only gains optional fields.
 - **Messages between processes.** Launchy and the notifier talk through distributed notifications.
   - Any process of the same user can read them, so a session's title passes where other local programs could see it. Those programs can already read Claude Code's transcripts.
   - Any of them could also post a click, which at worst brings a pane on screen.
-- **Permission by bundle id.** macOS is expected to keep the notifier's permission across ad-hoc rebuilds, since the bundle id stays the same. That is unverified, and a rebuild that asks again each time would be a reason to sign with Developer ID first.
+- **Permission across rebuilds.** Signed with Developer ID (ADR 0022), the notifier is known to macOS by team and bundle id, so its permission is expected to survive rebuilds, as Launchy's Accessibility and Screen Recording did (measured 2026-10-09). For notifications this is unverified.
 - **Option 01's own limits stand.** One Mac per session, a peer read every 5 s, and the failed word read from the transcript.
 
 ## User Stories

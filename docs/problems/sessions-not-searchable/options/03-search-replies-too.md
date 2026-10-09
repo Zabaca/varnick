@@ -3,7 +3,7 @@ problem: sessions-not-searchable
 title: Search Claude's replies too
 summary: Index the text of Claude's replies alongside the user's prompts, so a session can be found by something Claude said in it.
 status: rejected
-reason: "Deferred: prompts hold what the user asked, which is what they remember a session by. Replies are 4.3 times the text of prompts here (10.8 million characters against 2.5 million, before tool output), so they would bury the prompts in keyword ranking and multiply what is stored and embedded. Revisit if searching prompts proves not enough."
+reason: "Deferred: prompts hold what the user asked, which is what they remember a session by. Replies are 4.3 times the text of prompts here (10.8 million characters against 2.5 million, before tool output), so they would bury the prompts in keyword ranking and multiply what is stored and embedded. Revisit if searching prompts proves not enough. Partly reversed on 2026-10-09 by ADR 0018, which embeds the last reply of each exchange for search by meaning; replies stay out of keyword search, where this reason still holds."
 ---
 
 ## Solution

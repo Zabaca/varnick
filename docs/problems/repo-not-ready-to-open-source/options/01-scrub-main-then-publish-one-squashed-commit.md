@@ -2,7 +2,7 @@
 problem: repo-not-ready-to-open-source
 title: Scrub main in ordinary tickets, then publish its tree as one squashed commit
 summary: First, ordinary tickets on main, merged and pushed to the still-private origin. They give new installs safe defaults with existing installs unchanged, make Claude panes follow the account's login shell, and leave a user's own skill link alone. They take personal data out of every tracked file, move the proxy's docs out, add a public-repo rule for docs written from now on, and add the licence, notices, README, security note and contributor notes. Last, a full backup of every ref, then an orphan commit holding main's tree, checked as the only thing published. On the user's go, it replaces main on origin by a force-push, the remote prototype branch is deleted, every machine is reset to it, and the repository turns public. Public history starts at that commit.
-status: accepted
+status: in-progress
 ---
 
 ## Solution

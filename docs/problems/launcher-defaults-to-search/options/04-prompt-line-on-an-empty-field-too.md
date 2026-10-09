@@ -2,7 +2,8 @@
 problem: launcher-defaults-to-search
 title: The prompt line on an empty field too
 summary: As option 01, but an empty field also shows the prompt line, saying "Start an interactive session", above today's session list. The highlight starts on the session list's row as it does now, so ↩ still goes back to the tab just left. ↑ reaches the prompt line, and ↩ there starts an interactive session in the default folder.
-status: proposed
+status: abandoned
+reason: Option 01 shipped without it, and an empty field keeps its session list. Raise it as its own problem if use shows the gap.
 ---
 
 ## Solution

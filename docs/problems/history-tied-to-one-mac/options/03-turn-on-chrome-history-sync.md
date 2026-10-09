@@ -2,7 +2,8 @@
 problem: history-tied-to-one-mac
 title: Turn on Chrome's history sync for each account, and build nothing
 summary: Chrome already writes the other devices' visits into each Mac's History for an account that syncs history, and Launchy already reads them. Turning history sync on in Chrome for the other accounts brings their pages over with no change to Launchy.
-status: proposed
+status: abandoned
+reason: Option 01 shipped and brings every paired Mac's pages with no Chrome sync, including the profiles sync can't reach and pages Chrome has expired.
 ---
 
 ## Solution

@@ -2,7 +2,8 @@
 problem: session-turns-not-visible
 title: A board in the panel, with turns read from Claude's terminal title
 summary: The same board as option 01, but the turn comes from the status glyph Claude Code puts at the start of its terminal title, which every pane with a client here already receives. Nothing changes in the claude command line or the peer protocol. Where no client is attached here (tabs not opened since a restart, cards, and sessions open on paired Macs), the turn isn't known.
-status: proposed
+status: rejected
+reason: Not chosen in ADR 0010. Option 01 shipped with turns from hooks, which reach cards and paired Macs too, where the title's glyph is undocumented, known only where a client is attached here, and can't tell dialogs apart.
 ---
 
 ## Solution

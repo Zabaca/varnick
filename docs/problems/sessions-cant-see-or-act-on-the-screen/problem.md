@@ -28,7 +28,7 @@ The coordinator relayed a proposed direction, not a decision: Launchy brokers it
 - each session, those started with Skip permissions included (one is running now);
 - anything those sessions start: the helper, `osascript`, `screencapture`, scripts.
 
-Nothing asks, Launchy shows nothing and records nothing, and any of them can click Allow in a prompt of Launchy's. The pane's denial on 2026-10-09 came only because the Launchy on disk had been rebuilt after the user granted the running build, so the grant no longer matched.
+Nothing asks, Launchy shows nothing and records nothing, and any of them can click Allow in a prompt of Launchy's. The pane's denial on 2026-10-09 came only because the Launchy on disk had been rebuilt after the user granted the running build, so the grant no longer matched. Since builds are signed with Developer ID (ADR 0022), a rebuild no longer ends this state: both grants still applied from a pane after a rebuild and a restart (measured 2026-10-09, 17a9ab6). Only removing Launchy's grants does.
 
 Removing it is by hand, in System Settings › Privacy & Security › Accessibility and Screen & System Audio Recording, and it takes Point at the screen with it.
 

@@ -2,7 +2,8 @@
 problem: sessions-out-of-reach-from-the-phone
 title: One page on one always-on Mac, reaching every host through the relay
 summary: Option 01's server runs on one Mac only, the Mac Studio. It lists the sessions of the Studio and of every paired host in one place, and acts on another host by having the Studio's Launchy send the request over SSH, naming the phone as the controller. A terminal on another host is the Studio's pseudo-terminal running `ssh -t` to that host's relay attach, as a Mac's pane does. One address and one device list. Other hosts need nothing new but to accept a device that a listed peer vouches for. Everything depends on the Studio being up.
-status: proposed
+status: rejected
+reason: Not chosen in ADR 0011. Everything depends on one Mac being up, and a hop through it reaches the other hosts.
 ---
 
 ## Solution

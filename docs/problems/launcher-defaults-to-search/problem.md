@@ -4,7 +4,7 @@ description: Whatever is typed into the panel searches History, bookmarks and se
 impact: Every new session costs an extra keystroke and a mode to remember. A prompt typed without `>` is treated as a search. ↩ opens whatever page or session tops the list, and after a pause the text goes to the relevance filter. On a Mac whose filter runs on TypeSafe, that sends the prompt to TypeSafe.
 severity: low
 evidence: The user's decisions of 2026-10-07, below. The launcher's code was read on 2026-10-07 at d5ee26e. This Mac's relevance filter is set to On this Mac (`defaults read`). A new install's filter is on and set to TypeSafe, and it runs whenever a key is set.
-status: open
+status: closed
 ---
 
 ## Today

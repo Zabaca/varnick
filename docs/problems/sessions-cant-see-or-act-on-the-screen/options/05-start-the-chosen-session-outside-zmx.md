@@ -2,7 +2,8 @@
 problem: sessions-cant-see-or-act-on-the-screen
 title: Start a chosen session outside zmx, as Launchy's own child, so it shares Launchy's grants directly
 summary: Moot since 2026-10-09. macOS attributes every pane process to Launchy, zmx-hosted ones included, so starting a pane outside zmx gives it nothing other panes lack. Recommended: reject. As first written: no broker. The user starts a pane "with screen access", and Launchy runs its claude as a direct child rather than in zmx, the way every pane runs with Keep sessions running off. macOS then very probably gives that session Launchy's Accessibility and Screen Recording, so it uses any tool directly, and zmx stays ungranted for every other session. It was meant to be cheap and per pane. Such a pane has no approval, indicator or record, and it ends when Launchy restarts. It also gets Launchy's microphone and system audio.
-status: proposed
+status: rejected
+reason: macOS attributes every pane process to Launchy, zmx-hosted ones included (measured 2026-10-09, b16ad85), so starting a pane outside zmx gives it nothing other panes lack and narrows nothing.
 ---
 
 ## Solution

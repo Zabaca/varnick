@@ -1,7 +1,7 @@
 ---
 title: Processes in every Launchy pane share Launchy's macOS permissions
 description: macOS attributes the processes in Launchy's panes to Launchy, zmx-hosted ones included, so they get whatever privacy permissions the user gave Launchy. Today that is the microphone and system audio. With Point at the screen granted, it is also Accessibility and Screen Recording: every Claude session, shell and tool in every pane can read and drive any app's UI and capture the screen, without asking.
-impact: Granting Launchy Accessibility for Point at the screen grants it to every Claude session in its panes, including sessions started with Skip permissions, which act without a prompt. They can also click Allow in Launchy's own prompts, so no broker Launchy builds for sessions (`sessions-cant-see-or-act-on-the-screen`) can hold while this stands. On 2026-10-09 the user accepted, with spoken-requests-cant-see-the-screen option 01, a plain line in Settings and SECURITY.md for what was then thought to reach only panes outside zmx.
+impact: Granting Launchy Accessibility for Point at the screen grants it to every Claude session in its panes, including sessions started with Skip permissions, which act without a prompt. They can also click Allow in Launchy's own prompts, so no broker Launchy builds for sessions (`sessions-cant-see-or-act-on-the-screen`) can hold while this stands. Since builds are signed with Developer ID (ADR 0022), the grants survive rebuilds (measured 2026-10-09, 17a9ab6), so the exposure lasts until the user removes Launchy under Privacy & Security, not only until the next build. On 2026-10-09 the user accepted, with spoken-requests-cant-see-the-screen option 01, a plain line in Settings and SECURITY.md, which since 8e430d8 says every pane gets the grants.
 severity: high
 evidence: Raised by spoken-requests-cant-see-the-screen, accepted with its option 01 on 2026-10-09. Measured on 2026-10-09 from a zmx-hosted pane (sessions-cant-see-or-act-on-the-screen, Today). Code read on 2026-10-09 at 4090c28 and ca01eb4.
 status: open
@@ -33,12 +33,7 @@ Why the eval saw a pane turn trusted after only zmx was granted is unexplained.
 - the microphone and system audio, for Listening;
 - Accessibility (ADR 0019) and Screen Recording (ADR 0021), for Point at the screen, once granted.
 
-**What is wrong in the docs now.** These say zmx panes very likely don't get Launchy's grants:
-- SECURITY.md, its Point at the screen section;
-- the Point at the screen detail text in Settings;
-- `docs/agents/where-it-breaks.md`, Pointing at the screen.
-
-The problem docs and ADRs 0019 and 0021 carry dated corrections.
+**The docs.** SECURITY.md, the Point at the screen detail text in Settings and `docs/agents/where-it-breaks.md` say every pane gets Launchy's grants, zmx-hosted ones included (fixed on 2026-10-09 in 8e430d8). The problem docs and ADRs 0019 and 0021 carry dated corrections.
 
 ## Left to decide
 

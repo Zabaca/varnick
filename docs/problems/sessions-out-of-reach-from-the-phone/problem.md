@@ -4,7 +4,7 @@ description: The user's Claude sessions run on their Macs, and soon on a Linux b
 impact: A session waiting on a question or a permission sits idle until the user is back at a Mac. Work can't be started from the phone, so ideas wait as well. The ways the user tried, Termux or an SSH app and Claude Code's Remote Control, are ruled out (below), so today there is no way at all.
 severity: mid
 evidence: The user's request of 2026-10-05. Code read at fd3d8be. Read-only checks on 2026-10-05, on the MacBook Air (`tailscale serve status`, `tailscale funnel status`, `tailscale status`, `tailscale whois` of the phone, the Tailscale variant, and the Bun, ttyd and zmx versions), and over SSH on the Mac Studio and on the Ryzen (the same serve and funnel checks, tools, services, and which user runs tailscaled). Prior art read in the source of the user's existing browser terminal (its decision record, installers and glossary). Nothing was installed, served or started.
-status: open
+status: closed
 ---
 
 ## What the user wants

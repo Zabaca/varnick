@@ -4,7 +4,7 @@ description: While one Mac is in control of a Claude session, the other Mac's pa
 impact: To follow a long task from the other Mac the user hides and shows the pane to fetch it again, or takes over, which moves the keyboard away from the Mac typing into it. A snapshot from a larger grid is harder to read than the session looked.
 severity: mid
 evidence: The user's request of 2026-10-05, with their measurements of the `screen` request. Code read at ace79c3, and at main's 2b5f10c for Release and for opening a peer's session on the card. zmx 0.8.1 read in its tagged source (8bab1f0), ghostty's formatter at the commit zmx pins, and upstream zmx's unreleased changes. Read-only checks on the Mac Studio over SSH on 2026-10-05. Nothing was run against a zmx session.
-status: open
+status: closed
 ---
 
 ## What the user wants

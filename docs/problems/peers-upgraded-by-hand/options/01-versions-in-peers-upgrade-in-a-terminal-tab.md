@@ -2,7 +2,8 @@
 problem: peers-upgraded-by-hand
 title: Builds and protocols in Settings › Peers, and an Upgrade button that runs in a terminal tab
 summary: Settings › Peers shows each machine's build (its commit and protocol, and how far behind it is) against one target, the newest main this Mac holds. A probe sent over SSH outside the relay reads any machine's build, whatever protocol it speaks. A row that is behind gets Upgrade, which opens a terminal tab running that kind of machine's upgrade. For the Ryzen that is the installer. For a Mac peer, the commits are pushed from this Mac, main is fast-forwarded, Launchy is built, and launchd restarts it. For this Mac it is fast-forward, build and the restart `make run` does. Every upgrade refuses a checkout that isn't a clean main, and nothing restarts after a failed build. The protocol doesn't change.
-status: proposed
+status: rejected
+reason: Not built (ADR 0013). Option 03 was built instead, since a Launchy started from an SSH login lacks the GUI session's Keychain, and launchctl there starts a second Launchy beside one make run started.
 ---
 
 ## Solution

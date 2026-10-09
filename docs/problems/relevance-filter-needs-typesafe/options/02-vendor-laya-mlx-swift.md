@@ -2,7 +2,8 @@
 problem: relevance-filter-needs-typesafe
 title: Vendor MstyAI/laya-mlx-swift for the model
 summary: The same as option 01, except that the encoder and decision head come from MstyAI/laya-mlx-swift's sources, copied into Launchy and adapted, because its exact pin on mlx-swift 0.31.6 can't be resolved alongside Launchy's 0.32.3.
-status: proposed
+status: rejected
+reason: Another way to run option 01's checkpoint, and option 01 shipped with our own port (ADR 0006), so there is no package to track.
 ---
 
 ## Solution

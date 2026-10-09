@@ -4,7 +4,7 @@ description: When a change reaches main, each paired machine has to be rebuilt f
 impact: After a protocol bump (11 to 14 across 5 and 6 October), a machine that hasn't been rebuilt can only answer a hello. Sessions, Take over, the live screen, Recent and search rows don't work across it until someone rebuilds it. A change without a bump is less visible still, because a Mac runs the old behaviour and nothing says so. Upgrading by hand can land on a checkout another session is testing on a branch, and the restart ends every pane that isn't kept in zmx.
 severity: mid
 evidence: Code as of 2f86bf5. This Mac's saved peer list, process table and LaunchAgent on 2026-10-06. Git history of the protocol version. ADR 0007 (a session started from an SSH login). The user's report of XProtect killing a Claude process.
-status: open
+status: closed
 ---
 
 ## Today

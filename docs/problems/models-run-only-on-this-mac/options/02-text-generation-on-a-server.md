@@ -1,7 +1,7 @@
 ---
 problem: models-run-only-on-this-mac
 title: Text generation can run on a server, such as a llama.cpp server on the Ryzen
-summary: The Text generation row in Settings › Models gets "On this Mac | Server". With Server, session titles are asked of an OpenAI-compatible chat address on the tailnet, with Launchy's own title prompt and clean-up. A server that doesn't answer is never a verdict on a conversation. Its title waits for the server and Claude's title shows meanwhile. Nothing on the Ryzen serves chat today; foundry's embedding service is not a chat host. So this needs option 04 or 05, or another machine running such a server.
+summary: The Text generation row in Settings › Models gets "On this Mac | Server". With Server, Text generation's requests go to an OpenAI-compatible chat address on the tailnet, with Launchy's own prompts and clean-up. They were session titles when this shipped; since titles were removed on 2026-10-09 they are Hey Launchy's answers (ADR 0012 as amended). Nothing on the Ryzen serves chat today; foundry's embedding service is not a chat host. So this needs option 04 or 05, or another machine running such a server.
 status: shipped
 ---
 

@@ -2,7 +2,7 @@
 problem: search-names-sessions-differently
 title: Claude's names by default, the tab's name wins, Gemma titles removed
 summary: Launchy stops writing session titles. The board and search name a session the same way, in this order - the name given with ⌘⇧R, the name given with /rename, Claude Code's own title, then the first prompt's first line. Both Claude names come from the transcript. Only the ⌘⇧R name, which lives in Launchy's saved tabs alone, is copied into the search database. No protocol change.
-status: accepted
+status: shipped
 ---
 
 ## Solution
