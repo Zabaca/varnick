@@ -1,9 +1,7 @@
 import Foundation
 
-/// The ranking behind a `?` search and behind a spoken request (ADR 0017), in three passes that each take the last ranking and
-/// give the next: `keyword`, `withMeaning`, then `filtered`. It holds the ranking rules (the fusion, the session floor, the 20-page
-/// cut, the threshold, which judge runs) and nothing a caller shows or waits for: no status, no pause, no log. The panel calls
-/// the passes one at a time with its debounce and the judge's own `pause` between them; a spoken request calls them back to back.
+/// The ranking rules of a `?` search and of a spoken request (ADR 0017), as three passes that each take the last ranking and give
+/// the next. It sets no status, waits for nothing and logs nothing; each caller does those its own way.
 @MainActor
 struct RelevanceSearch {
     typealias KeywordMatch = (id: Int64, snippet: String, score: Double)
@@ -37,7 +35,6 @@ struct RelevanceSearch {
         var pages: [SearchResult] = []
         /// After `filtered`: how many of `pages` lead as relevant, best first; the rest keep their fused order below.
         var relevantCount: Int?
-        var judgedBy: RelevanceBackend?
         /// After `withMeaning` when an embedder answered.
         var meaning: Meaning?
         fileprivate(set) var keywordPages: [KeywordMatch] = []
@@ -50,7 +47,6 @@ struct RelevanceSearch {
         }
 
         var hasKeywordMatches: Bool { !keywordPages.isEmpty || !keywordSessions.isEmpty }
-        /// Sessions first, then pages.
         var rows: [SearchResult] { sessions + pages }
     }
 
@@ -72,16 +68,34 @@ struct RelevanceSearch {
         return next
     }
 
-    /// The judge Settings picks for `words`; nil turns the filter off for them: the switch is off, the words are too short,
-    /// TypeSafe has no key, or On this Mac has no model installed or it failed. On this Mac never falls back to TypeSafe.
-    func judge(for words: String) -> (any RelevanceJudge)? {
-        guard words.count >= Self.minFilteredLength else { return nil }
-        switch Settings.shared.activeRelevanceFilter {
-        case .typesafe: return Settings.shared.typesafeKey.map { Reranker(apiKey: $0) }
-        case .local: return localReranker.isReady ? localReranker : nil
-        case nil: return nil
+    /// Why `words` get no judge.
+    enum Unjudged: Error {
+        case off, tooShort, noKey, notReady
+
+        var label: String {
+            switch self {
+            case .off: "off"
+            case .tooShort: "words too short"
+            case .noKey: "no TypeSafe key"
+            case .notReady: "On this Mac not ready"
+            }
         }
     }
+
+    /// The judge Settings picks for `words`, or why there is none. On this Mac never falls back to TypeSafe.
+    func judging(for words: String) -> Result<any RelevanceJudge, Unjudged> {
+        guard let backend = Settings.shared.activeRelevanceFilter else { return .failure(.off) }
+        guard words.count >= Self.minFilteredLength else { return .failure(.tooShort) }
+        switch backend {
+        case .typesafe:
+            guard let key = Settings.shared.typesafeKey else { return .failure(.noKey) }
+            return .success(Reranker(apiKey: key))
+        case .local:
+            return localReranker.isReady ? .success(localReranker) : .failure(.notReady)
+        }
+    }
+
+    func judge(for words: String) -> (any RelevanceJudge)? { try? judging(for: words).get() }
 
     /// 3. The first `judgedPages` pages go to `judge`. Those at `threshold` or more move to the top, best first, and everything
     /// else keeps its fused order below: nothing is dropped, only demoted. Sessions are never judged. Throws what the judge throws,
@@ -98,7 +112,6 @@ struct RelevanceSearch {
         var next = ranking
         next.pages = relevant + rest
         next.relevantCount = relevant.count
-        next.judgedBy = judge.backend
         return next
     }
 

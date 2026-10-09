@@ -226,7 +226,7 @@ final class SpokenRequests {
               + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
               + "held \(began.timeIntervalSince(request.lastArrived).secondsText), "
               + "decide \(seconds(run?.decide)) (\(run?.decidedBy ?? "-")), "
-              + "search \(seconds(run?.read)) (meaning by \(run?.meaningBy ?? "-")), "
+              + "search \(seconds(run?.search)) (meaning by \(run?.meaningBy ?? "-")), "
               + "filter \(seconds(run?.filter)) (\(run?.filteredBy ?? "-")), "
               + "answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
               + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "

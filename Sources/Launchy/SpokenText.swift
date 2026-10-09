@@ -88,6 +88,12 @@ enum SpokenText {
         decideTemplate.replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
     }
 
+    /// What the relevance filter is asked about: the plan's query, or when that is the whole request (an unreadable reply, or one
+    /// without words) the request's key words, so a request's filler never goes to a judge. Empty when no word is left.
+    static func filterWords(for plan: Plan, request: String) -> String {
+        plan.query == request || plan.query == cleaned(request) ? queryWords(from: plan.query) : plan.query
+    }
+
     /// The first `{…}` in the reply, read leniently. A reply that can't be read gives the request itself as the query, over both
     /// kinds of row.
     static func plan(fromReply reply: String, request: String) -> Plan {
@@ -181,10 +187,8 @@ enum SpokenText {
     /// The session rows kept behind a plan's pages, which get the rest of `maxPages` when there are fewer pages.
     static let maxSessionsBehind = 2
 
-    /// The rows the answer step reads: from the panel's two lists, ranked as the panel ranks them. The first `relevant` pages
-    /// were judged relevant by the relevance filter, best first (0 when it judged none or didn't run): when any of them is of the
-    /// chosen kind, only those are read. Sessions read beside pages (`alsoSessions`) get their rows first and the pages fill the
-    /// rest of `maxPages`, so each kind is heard when it has any.
+    /// The rows the answer step reads, ranked as the panel ranks them. The first `relevant` pages were judged relevant: when any is
+    /// of the chosen kind, only those are read. Sessions read beside pages (`alsoSessions`) come first or last, so each kind is heard.
     static func rows(for plan: Plan, sessions: [SearchResult], pages: [SearchResult], relevant: Int) -> [SearchResult] {
         let ofKind: (SearchResult) -> Bool = plan.source == .bookmarks ? { $0.source == "bookmark" } : { _ in true }
         let leading = pages.prefix(max(0, relevant)).filter(ofKind)
@@ -360,7 +364,8 @@ enum SpokenPipeline {
         var rows: [SearchResult]
         var outcome: Outcome
         var decide: Duration
-        var read: Duration = .zero
+        /// The keyword and meaning passes.
+        var search: Duration = .zero
         var respond: Duration = .zero
         /// Who made the plan: "Jev", or where Text generation ran when Jev was not used, and why not.
         var decidedBy = "-"
@@ -368,8 +373,8 @@ enum SpokenPipeline {
         var route: SpokenRouter.Route?
         /// Where Text generation wrote the answer.
         var answeredAt: ModelPlace?
-        /// How long the relevance filter took, and who filtered: "TypeSafe", "On this Mac", "off", "sessions only", "<who> not
-        /// ready", or "<who> failed: <kind>", in which case the pages stay in their fused order.
+        /// How long the relevance filter took, and who filtered or why nobody did ("off", "sessions only", "no TypeSafe key", …);
+        /// "<who> failed: <kind>" leaves the pages in their fused order.
         var filter: Duration = .zero
         var filteredBy = "-"
         /// Who answered the meaning pass of the search: a place, "keyword only", or "failed: <kind>".
@@ -446,23 +451,28 @@ enum SpokenPipeline {
             try Task.checkCancellation()
             run.meaningBy = "failed: \(error.logKind)"
         }
-        run.read = began.duration(to: clock.now)
+        try Task.checkCancellation()
+        run.search = began.duration(to: clock.now)
 
         began = clock.now
+        let filterWords = SpokenText.filterWords(for: decided, request: request)
         if decided.source == .sessions {
             run.filteredBy = "sessions only"
-        } else if let backend = Settings.shared.activeRelevanceFilter {
-            if let judge = search.judge(for: decided.query) {
-                run.filteredBy = backend.title
-                do { ranking = try await search.filtered(ranking, for: decided.query, by: judge) } catch {
-                    try Task.checkCancellation()
-                    run.filteredBy = "\(backend.title) failed: \(error.logKind)"
-                }
-            } else {
-                run.filteredBy = "\(backend.title) not ready"
-            }
         } else {
-            run.filteredBy = "off"
+            switch search.judging(for: filterWords) {
+            case .failure(let why):
+                run.filteredBy = why.label
+            case .success(let judge):
+                if ranking.pages.isEmpty {
+                    run.filteredBy = "no pages"
+                } else {
+                    run.filteredBy = judge.backend.title
+                    do { ranking = try await search.filtered(ranking, for: filterWords, by: judge) } catch {
+                        try Task.checkCancellation()
+                        run.filteredBy = "\(judge.backend.title) failed: \(error.logKind)"
+                    }
+                }
+            }
         }
         run.filter = began.duration(to: clock.now)
 
@@ -524,7 +534,7 @@ enum SpokenCommand {
             } else {
                 print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.alsoSessions == .no ? "" : ", sessions \(run.plan.alsoSessions)")\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
                 if let route = run.route { print(describe(route)) }
-                print("search: meaning by \(run.meaningBy)  [\(run.read.seconds.secondsText)]")
+                print("search: meaning by \(run.meaningBy)  [\(run.search.seconds.secondsText)]")
                 print("filter: \(run.filteredBy)  [\(run.filter.seconds.secondsText)]")
                 print("read: \(run.rows.count) rows")
                 for (n, row) in run.rows.enumerated() {
