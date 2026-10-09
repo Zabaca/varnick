@@ -12,11 +12,29 @@ enum SessionExchanges {
 
     static func key(session: String, position: Int) -> String { session + separator + String(position) }
 
+    // The one rule for an exchange key: a session key (it holds no separator), the separator, then a position of digits only.
+    // The same rule in Swift and in SQL (`isExchangeKeySQL`, `sessionKeySQL`), since the store and the sync read keys in SQL.
+
     /// The session key an exchange key belongs to; nil for any other key.
     static func session(ofExchange key: String) -> String? {
-        guard key.hasPrefix(FavoritesStore.sessionKeyPrefix), let at = key.lastIndex(of: Character(separator)),
-              let position = Int(key[key.index(after: at)...]), position >= 0 else { return nil }
+        guard key.hasPrefix(FavoritesStore.sessionKeyPrefix), let at = key.firstIndex(of: Character(separator)),
+              key[..<at].count > FavoritesStore.sessionKeyPrefix.count else { return nil }
+        let position = key[key.index(after: at)...]
+        guard !position.isEmpty, position.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
         return String(key[..<at])
+    }
+
+    /// SQL true for an exchange key in `column`.
+    static func isExchangeKeySQL(_ column: String) -> String {
+        """
+        (\(column) GLOB '\(FavoritesStore.sessionKeyPrefix)[^\(separator)]*\(separator)[0-9]*' \
+        AND substr(\(column), instr(\(column), '\(separator)') + 1) NOT GLOB '*[^0-9]*')
+        """
+    }
+
+    /// SQL for the session key of the exchange key in `column`.
+    static func sessionKeySQL(_ column: String) -> String {
+        "substr(\(column), 1, instr(\(column), '\(separator)') - 1)"
     }
 
     /// One text per exchange, oldest first: the title, the folder's name, then the prompt and the reply, a line each.

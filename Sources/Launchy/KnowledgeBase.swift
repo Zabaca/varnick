@@ -365,11 +365,10 @@ final class FavoritesStore {
     private func loadExchangeEmbeddings() {
         guard !embeddingModel.isEmpty else { return }
         var stmt: OpaquePointer?
-        let separator = SessionExchanges.separator
         guard sqlite3_prepare_v2(db, """
             SELECT f.id, e.embedding FROM entries e
-            JOIN favorites f ON f.favorite_key = substr(e.key, 1, instr(e.key, '\(separator)') - 1)
-            WHERE e.key GLOB '\(Self.sessionKeyPrefix)*\(separator)[0-9]*' AND e.embed_model = ?
+            JOIN favorites f ON f.favorite_key = \(SessionExchanges.sessionKeySQL("e.key"))
+            WHERE \(SessionExchanges.isExchangeKeySQL("e.key")) AND e.embed_model = ?
             """, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, embeddingModel, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))

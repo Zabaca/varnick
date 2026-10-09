@@ -23,7 +23,7 @@ struct RelevanceSearch {
     static let sessionsShown = 3
     /// A session matched only by meaning shows when its best exchange's cosine similarity reaches this, since nearest
     /// neighbours always exist. Tuned by hand with `Launchy --search`; keyword matches always show. The best of many
-    /// exchanges runs higher than one vector per session did, so this wants tuning again (ADR 0018).
+    /// exchanges runs higher than one vector per session did, so this is being retuned (ADR 0018); the value is a separate decision.
     static let sessionSimilarityFloor: Float = 0.48
     /// Words shorter than this aren't filtered.
     static let minFilteredLength = 3
