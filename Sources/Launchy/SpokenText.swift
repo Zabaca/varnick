@@ -181,22 +181,25 @@ enum SpokenText {
     /// The session rows kept behind a plan's pages, which get the rest of `maxPages` when there are fewer pages.
     static let maxSessionsBehind = 2
 
-    /// The rows the answer step reads: from the panel's two lists, ranked as the panel ranks them. Sessions read beside pages
-    /// (`alsoSessions`) get their rows first and the pages fill the rest of `maxPages`, so each kind is heard when it has any.
-    static func rows(for plan: Plan, sessions: [SearchResult], pages: [SearchResult]) -> [SearchResult] {
-        let kept: [SearchResult]
+    /// The rows the answer step reads: from the panel's two lists, ranked as the panel ranks them. The first `relevant` pages
+    /// were judged relevant by the relevance filter, best first (0 when it judged none or didn't run): when any of them is of the
+    /// chosen kind, only those are read. Sessions read beside pages (`alsoSessions`) get their rows first and the pages fill the
+    /// rest of `maxPages`, so each kind is heard when it has any.
+    static func rows(for plan: Plan, sessions: [SearchResult], pages: [SearchResult], relevant: Int) -> [SearchResult] {
+        let ofKind: (SearchResult) -> Bool = plan.source == .bookmarks ? { $0.source == "bookmark" } : { _ in true }
+        let leading = pages.prefix(max(0, relevant)).filter(ofKind)
+        let kept = leading.isEmpty ? pages.filter(ofKind) : leading
         switch plan.source {
         case .sessions: return Array(sessions.prefix(maxSessions))
-        case .any: return Array((sessions + pages).prefix(maxPages))
-        case .history: kept = pages
-        case .bookmarks: kept = pages.filter { $0.source == "bookmark" }
+        case .any: return Array((sessions + kept).prefix(maxPages))
+        case .history, .bookmarks: break
         }
         switch plan.alsoSessions {
         case .no:
             return Array(kept.prefix(maxPages))
         case .ahead:
-            let leading = sessions.prefix(maxSessions)
-            return Array(leading) + kept.prefix(maxPages - leading.count)
+            let first = sessions.prefix(maxSessions)
+            return Array(first) + kept.prefix(maxPages - first.count)
         case .behind:
             let pages = kept.prefix(maxPages - maxSessionsBehind)
             return Array(pages) + sessions.prefix(maxPages - pages.count)
@@ -325,6 +328,12 @@ enum SpokenPipeline {
         var route: SpokenRouter.Route?
         /// Where Text generation wrote the answer.
         var answeredAt: ModelPlace?
+        /// How long the relevance filter took, and who filtered: "TypeSafe", "On this Mac", "off", "sessions only", "<who> not
+        /// ready", or "<who> failed: <kind>", in which case the pages stay in their fused order.
+        var filter: Duration = .zero
+        var filteredBy = "-"
+        /// Who answered the meaning pass of the search: a place, "keyword only", or "failed: <kind>".
+        var meaningBy = "-"
     }
 
     static func run(_ request: String, on model: LauncherModel) async throws -> Run {
@@ -384,11 +393,40 @@ enum SpokenPipeline {
         run.decidedBy = decidedBy
         run.route = route
 
+        // The panel's passes, back to back since nobody is typing: a pass that fails costs only itself (ADR 0017).
+        let search = model.search
         began = clock.now
-        let found: (sessions: [SearchResult], pages: [SearchResult])
-        do { found = try await model.searchApart(decided.query) } catch { throw Failure(step: .read, underlying: error) }
-        run.rows = SpokenText.rows(for: decided, sessions: found.sessions, pages: found.pages)
+        var ranking = search.keyword(decided.query)
+        run.meaningBy = "keyword only"
+        do {
+            let withMeaning = try await search.withMeaning(ranking, for: decided.query)
+            ranking = withMeaning
+            run.meaningBy = withMeaning.meaning.map { "\($0.source)" } ?? "keyword only"
+        } catch {
+            try Task.checkCancellation()
+            run.meaningBy = "failed: \(error.logKind)"
+        }
         run.read = began.duration(to: clock.now)
+
+        began = clock.now
+        if decided.source == .sessions {
+            run.filteredBy = "sessions only"
+        } else if let backend = Settings.shared.activeRelevanceFilter {
+            if let judge = search.judge(for: decided.query) {
+                run.filteredBy = backend.title
+                do { ranking = try await search.filtered(ranking, for: decided.query, by: judge) } catch {
+                    try Task.checkCancellation()
+                    run.filteredBy = "\(backend.title) failed: \(error.logKind)"
+                }
+            } else {
+                run.filteredBy = "\(backend.title) not ready"
+            }
+        } else {
+            run.filteredBy = "off"
+        }
+        run.filter = began.duration(to: clock.now)
+
+        run.rows = SpokenText.rows(for: decided, sessions: ranking.sessions, pages: ranking.pages, relevant: ranking.relevantCount ?? 0)
         guard !run.rows.isEmpty else { return run }
 
         began = clock.now
@@ -445,8 +483,13 @@ enum SpokenCommand {
             } else {
                 print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.alsoSessions == .no ? "" : ", sessions \(run.plan.alsoSessions)")\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
                 if let route = run.route { print(describe(route)) }
-                print("read: \(run.rows.count) rows  [\(run.read.seconds.secondsText)]")
-                for (n, row) in run.rows.enumerated() { print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(row.title)") }
+                print("search: meaning by \(run.meaningBy)  [\(run.read.seconds.secondsText)]")
+                print("filter: \(run.filteredBy)  [\(run.filter.seconds.secondsText)]")
+                print("read: \(run.rows.count) rows")
+                for (n, row) in run.rows.enumerated() {
+                    let relevance = row.relevance.map { String(format: "%.2f", $0) } ?? "  - "
+                    print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(relevance)  \(row.title)")
+                }
             }
             // Said as is; when no answer was written (nothing to search, nothing found) it is Launchy's own sentence.
             print("says: \(run.outcome.spoken)  [\(run.answeredAt.map { "\($0)" } ?? "-"), \(run.respond.seconds.secondsText)]")

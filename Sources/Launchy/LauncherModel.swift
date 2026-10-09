@@ -749,21 +749,6 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// `runSearch`'s first two passes for `words` (keyword, then the query's meaning), returned instead of
-    /// shown: nothing the panel shows is set, and no relevance filter runs (a spoken request, ADR 0015). Meaning is skipped
-    /// when it isn't available or fails, as in the panel.
-    func searchApart(_ words: String) async throws -> (sessions: [SearchResult], pages: [SearchResult]) {
-        let search = self.search
-        var ranking = search.keyword(words)
-        do {
-            ranking = try await search.withMeaning(ranking, for: words)
-        } catch {
-            try Task.checkCancellation()
-            NSLog("Launchy: semantic search for a spoken request failed: \(error.logKind)")
-        }
-        return (ranking.sessions, ranking.pages)
-    }
-
     /// A Mac's, project's or agent's word can resolve after the keystroke, when its list arrives: the sessions
     /// listed are then kept by it.
     private func promptWordsResolved() {
