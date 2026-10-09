@@ -2,7 +2,7 @@ import Foundation
 import LaunchyPeer
 
 // The Problems tab's rules (docs/problems/problems-not-on-the-board): which column a problem sits in, and why, from its files, the
-// branches tied to its options and the work links of the sessions (ADR 0019). Pure: no disk, no git, so the rules read the same from the
+// branches tied to its options and the work links of the sessions (ADR 0020). Pure: no disk, no git, so the rules read the same from the
 // board and from `Launchy --problems`.
 
 /// An option's `status` frontmatter (docs/agents/issue-tracker.md), in any case. One that is missing or unknown reads as proposed,
@@ -101,7 +101,7 @@ struct WorkSession: Equatable, Sendable {
     let links: [WorkLink]
 
     func names(_ slug: String, in repo: String) -> Bool {
-        live.contains { $0.link.slug == slug && $0.link.repo == repo } || links.contains { $0.slug == slug && $0.repo == repo }
+        live.contains { $0.link.names(slug, in: repo) } || links.contains { $0.names(slug, in: repo) }
     }
 }
 
@@ -126,7 +126,7 @@ struct ProblemCard: Identifiable, Equatable, Sendable {
     var chips: [SessionChip] = []
 }
 
-/// What the sessions' work links say of one problem (ADR 0019).
+/// What the sessions' work links say of one problem (ADR 0020).
 struct ProblemWork: Equatable, Sendable {
     /// An open option a session or subagent of an open pane is linked to. `agentType` is the subagent's, nil for the session.
     struct Live: Equatable, Sendable {
@@ -149,15 +149,17 @@ struct ProblemWork: Equatable, Sendable {
         var work = ProblemWork()
         var chips: [SessionChip] = []
         for session in sessions where session.names(problem.slug, in: key) {
-            var agents: [String] = []
-            for entry in session.live where entry.link.slug == problem.slug && entry.link.repo == key {
+            var agents = session.links.filter { $0.names(problem.slug, in: key) }.flatMap { $0.agents ?? [] }
+            for entry in session.live where entry.link.names(problem.slug, in: key) {
                 if let type = entry.agentType, !agents.contains(type) { agents.append(type) }
                 guard session.isOpen, let number = entry.link.number,
                       let option = problem.options.first(where: { $0.number == number && $0.status.isOpen }) else { continue }
                 work.live.append(Live(option: option, session: session.title, isAgent: entry.agentID != nil, agentType: entry.agentType))
             }
+            var seen = Set<String>()
+            agents = agents.filter { seen.insert($0).inserted }
             chips.append(SessionChip(id: session.id, title: session.title, column: session.column, agents: agents))
-            if session.links.contains(where: { $0.slug == problem.slug && $0.repo == key && $0.origin == true }) {
+            if session.links.contains(where: { $0.names(problem.slug, in: key) && $0.origin == true }) {
                 work.origins.append(session.title)
             }
         }
@@ -345,7 +347,7 @@ enum ProblemsReader {
         var out = ""
         for (folder, isOpen) in open.map({ ($0, true) }) + ended.map({ ($0, false) }) {
             let work = PaneFolder.work(in: folder)
-            let turn = (try? String(contentsOf: folder.appendingPathComponent(".launchy-turn"), encoding: .utf8))
+            let turn = (try? String(contentsOf: folder.appendingPathComponent(PaneFolder.turnFileName), encoding: .utf8))
                 .flatMap { Turn(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             let column: SessionBoard.Column = !isOpen ? .completed : turn?.isRunning == true ? .running : .stopped
             sessions.append(WorkSession(id: UUID(uuidString: folder.lastPathComponent) ?? UUID(), title: folder.lastPathComponent,

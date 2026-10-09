@@ -97,7 +97,7 @@ final class SessionBoard: ObservableObject {
         var note: String?
         /// A paired Mac's open session with no pane here: opening it shows its card, and Done only marks it.
         var hasNoPane = false
-        /// The work links (ADR 0019) the pane here keeps now and has logged; nil for a card with no pane here or none written yet.
+        /// The work links (ADR 0020) the pane here keeps now and has logged; nil for a card with no pane here or none written yet.
         var work: PaneWork?
         /// The links an ended or Completed session's saved record keeps.
         var archived: [WorkLink] = []
@@ -194,9 +194,9 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Showing
 
-    /// The board is on screen (again): the tab it shows starts reading. Sessions reads every pane's turn now and once a second
-    /// after, and asks zmx once which restored panes still have a session; a pane the user was in is highlighted. Problems
-    /// reads its own files (`ProblemsBoard.start`) and nothing of Sessions.
+    /// The board is on screen (again): either tab reads every pane's turn and work log now and once a second after, and asks zmx once which
+    /// restored panes still have a session. Sessions also asks the paired Macs and highlights the pane the user was in; Problems reads its
+    /// own files (`ProblemsBoard.start`) and takes its chips and live links from the cards.
     func appear() {
         appeared = true
         startTicker()

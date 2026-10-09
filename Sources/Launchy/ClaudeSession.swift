@@ -199,7 +199,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// transcript's date then.
     private var recordedTurn: PaneTurn?
     private var transcriptStamp: Date?
-    /// The pane's work links (ADR 0019), read by `checkWork` when its log's date changes; nil until a hook has written one.
+    /// The pane's work links (ADR 0020), read by `checkWork` when its log's date changes; nil until a hook has written one.
     private(set) var work: PaneWork?
     private var workStamp: Date?
     /// `transcript_path` from the session file, read again when that file's date changes.

@@ -1708,7 +1708,7 @@ final class LauncherModel: ObservableObject {
         let tab = tabs[index]
         // Keep it resumable unless it never got a message (shells can't be resumed).
         var record = session.snapshot
-        // Its links stay with the saved record, so its card keeps its chips (ADR 0019); the log is read here, once, as the pane closes.
+        // Its links stay with the saved record, so its card keeps its chips (ADR 0020); the log is read here, once, as the pane closes.
         if record.isClaude, !session.isOnPeer {
             let links = PaneFolder.work(for: record.id).history
             if !links.isEmpty { record.workLinks = links }

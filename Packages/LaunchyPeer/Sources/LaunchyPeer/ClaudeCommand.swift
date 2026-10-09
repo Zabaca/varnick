@@ -10,7 +10,7 @@ public enum ClaudeCommand {
     public static let script = #"exec claude "$@""#
 
     /// The settings claude is started with (`--settings`), added to the user's own hooks: ADR 0001's SessionStart
-    /// hook, the turn hooks of ADR 0010 and the work-link hooks of ADR 0019 (`WorkHooks`). The rules for the entries are in
+    /// hook, the turn hooks of ADR 0010 and the work-link hooks of ADR 0020 (`WorkHooks`). The rules for the entries are in
     /// `docs/agents/where-it-breaks.md`.
     public static func hookSettings(skipPermissions: Bool) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"

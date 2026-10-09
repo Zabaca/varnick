@@ -61,7 +61,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// records still load; nil everywhere else.
     var completedAt: Date?
 
-    /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0019), so ended and Completed cards keep
+    /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
     /// their chips. Optional so older saved records still load; nil when it linked nothing.
     var workLinks: [WorkLink]?
 

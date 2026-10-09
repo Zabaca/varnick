@@ -1,6 +1,6 @@
 import Foundation
 
-// Work links (ADR 0019): which problem or option a Claude pane, and each of its subagents, works on. The hooks of `WorkHooks` and the
+// Work links (ADR 0020): which problem or option a Claude pane, and each of its subagents, works on. The hooks of `WorkHooks` and the
 // `/work` skill write the files; this is the one reader of them, for the app and, later, the relay. Pure parsing apart from `PaneFolder.work`.
 
 /// A pane's, or a subagent's, work record: the file `work` (the session) or `work.<agent id>` (a subagent), written by rename.
@@ -57,6 +57,12 @@ public struct WorkRecord: Equatable, Sendable {
     }
 }
 
+extension WorkLink {
+    fileprivate mutating func addAgent(_ type: String) {
+        if agents?.contains(type) != true { agents = (agents ?? []) + [type] }
+    }
+}
+
 /// One link made, as the log keeps it and a saved session record keeps it as history: a problem, or an option of one (`number`), in a
 /// repository's main checkout. `origin` marks the problem a session created.
 public struct WorkLink: Codable, Equatable, Hashable, Sendable {
@@ -66,17 +72,21 @@ public struct WorkLink: Codable, Equatable, Hashable, Sendable {
     /// When it was first made, seconds since 1970; nil when the log line has no date.
     public var at: Int?
     public var origin: Bool?
+    /// The types of the subagents that made it, so a card still names them after they ended; nil when only the session did.
+    public var agents: [String]?
 
-    public init(slug: String, number: Int?, repo: String, at: Int? = nil, origin: Bool? = nil) {
+    public init(slug: String, number: Int?, repo: String, at: Int? = nil, origin: Bool? = nil, agents: [String]? = nil) {
         self.slug = slug
         self.number = number
         self.repo = repo
         self.at = at
         self.origin = origin
+        self.agents = agents
     }
 
-    enum CodingKeys: String, CodingKey {
-        case slug, number, repo, at, origin
+    /// It names this problem (any option of it) in this repository.
+    public func names(_ slug: String, in repo: String) -> Bool {
+        self.slug == slug && self.repo == repo
     }
 }
 
@@ -128,10 +138,22 @@ public struct PaneWork: Equatable, Sendable {
         self.logged = logged
     }
 
-    /// The links kept with the session when it ends: the log's, plus a record a hook wrote without a log line.
+    /// The links kept with the session when it ends: the log's, plus a record a hook wrote without a log line, with the types of the subagents
+    /// whose records name them.
     public var history: [WorkLink] {
-        var seen = Set(logged.map(Key.init))
-        return logged + live.map(\.link).filter { seen.insert(Key($0)).inserted }
+        var links = logged
+        var index = Dictionary(links.enumerated().map { (Key($0.element), $0.offset) }, uniquingKeysWith: { first, _ in first })
+        for entry in live {
+            var link = entry.link
+            if let type = entry.agentType { link.agents = [type] }
+            guard let at = index[Key(link)] else {
+                index[Key(link)] = links.count
+                links.append(link)
+                continue
+            }
+            if let type = entry.agentType { links[at].addAgent(type) }
+        }
+        return links
     }
 
     private struct Key: Hashable {
@@ -166,8 +188,10 @@ public struct PaneWork: Equatable, Sendable {
             var made = link
             made.at = Int(fields[0])
             made.origin = fields.count >= 7 && fields[6] == "origin" ? true : nil
+            if fields[2] != "-", fields[1] != "-" { made.agents = [String(fields[2])] }
             if let at = index[Key(made)] {
                 if made.origin == true { links[at].origin = true }
+                if let type = made.agents?.first { links[at].addAgent(type) }
             } else {
                 index[Key(made)] = links.count
                 links.append(made)
@@ -227,8 +251,20 @@ extension PaneFolder {
     public static func clearSubagentWork(for id: UUID) {
         let folder = url(for: id)
         let prefix = workFileName + "."
+        var removed = false
         for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(prefix) {
-            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+            removed = ((try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))) != nil) || removed
         }
+        // The log's date is how the app learns a record changed (`ClaudeSession.checkWork`), so a record removed here is logged like
+        // the hook's removal, or the app goes on with the dead subagent's link until the log next changes.
+        guard removed, let handle = (try? FileHandle(forWritingTo: workLogFile(for: id))) ?? createdLog(for: id) else { return }
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data("\(Int(Date().timeIntervalSince1970))\t-\t-\tend\t-\t-\t\n".utf8))
+    }
+
+    private static func createdLog(for id: UUID) -> FileHandle? {
+        FileManager.default.createFile(atPath: workLogFile(for: id).path, contents: nil)
+        return try? FileHandle(forWritingTo: workLogFile(for: id))
     }
 }
