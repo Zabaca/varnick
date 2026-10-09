@@ -1,8 +1,8 @@
 import Foundation
 
 /// A pane's own folder under Launchy's support folder, `panes/<pane id>`. It holds the SessionStart
-/// hook's file (ADR 0001) and the turn file (ADR 0010) for a Claude pane, and stays with the pane across
-/// /clear and /resume.
+/// hook's file (ADR 0001), the turn file (ADR 0010) and the list of its conversations for a Claude pane, and stays
+/// with the pane across /clear and /resume.
 public enum PaneFolder {
     public static func url(for id: UUID) -> URL {
         SupportFolder.url.appendingPathComponent("panes", isDirectory: true)
@@ -54,6 +54,48 @@ public enum PaneFolder {
         try? FileManager.default.removeItem(at: stopFile(for: id))
     }
 
+    /// The conversations the pane has been on, one id a line in the order it reached them, which `recordConversation`
+    /// appends to. The hook's file holds only the latest, and Claude Code's transcripts don't name the one before.
+    static func conversationsFile(for id: UUID) -> URL {
+        url(for: id).appendingPathComponent(conversationsFileName)
+    }
+
+    static let conversationsFileName = ".launchy-conversations"
+
+    /// Appends the conversation of `transcriptPath` to the pane's list when it isn't the last one. `corrected` calls it
+    /// only for a waiting turn, so a conversation that never had a waiting read is missing from the list.
+    static func recordConversation(for id: UUID, transcriptPath: String) {
+        let current = URL(fileURLWithPath: transcriptPath).deletingPathExtension().lastPathComponent
+        // With nothing in the file the pane is on the conversation its id names.
+        guard !current.isEmpty, (recordedConversations(for: id).last ?? id.uuidString.lowercased()) != current else { return }
+        let file = conversationsFile(for: id)
+        let line = Data((current + "\n").utf8)
+        if let handle = try? FileHandle(forWritingTo: file) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
+            try? handle.close()
+        } else {
+            try? line.write(to: file)
+        }
+    }
+
+    private static func recordedConversations(for id: UUID) -> [String] {
+        ((try? String(contentsOf: conversationsFile(for: id), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    /// The transcripts of the conversations the pane left, oldest first, in `transcriptPath`'s folder (a project's
+    /// transcripts share one): the pane id's own, which has none for a pane started by resuming, and those recorded.
+    /// A path with no file is skipped by the reader. The teammate ledger reads these (`TranscriptReader.busyTeammates`).
+    static func earlierTranscripts(for id: UUID, transcriptPath: String) -> [String] {
+        let current = URL(fileURLWithPath: transcriptPath).deletingPathExtension().lastPathComponent
+        var earlier = [String]()
+        for conversation in [id.uuidString.lowercased()] + recordedConversations(for: id) where conversation != current && !earlier.contains(conversation) {
+            earlier.append(conversation)
+        }
+        let folder = URL(fileURLWithPath: transcriptPath).deletingLastPathComponent()
+        return earlier.map { folder.appendingPathComponent($0 + ".jsonl").path }
+    }
+
     /// A `turn_duration` entry or the stop file older than the turn's date by more than this isn't that turn's: the
     /// `Stop` entries run together, and the turn file is written just before Claude Code writes the entry.
     static let staleWindow: TimeInterval = 5
@@ -76,7 +118,8 @@ public enum PaneFolder {
     }
 
     /// Waiting from when the transcript says the user stopped Claude (no hook fires then), and `.background` when
-    /// a waiting turn left agents, teammates, workflows or shells running. The file is never rewritten.
+    /// a waiting turn left agents, teammates, workflows or shells running. The turn file is never rewritten; a waiting turn does add the conversation to the pane's list
+    /// (`recordConversation`).
     public static func corrected(_ recorded: PaneTurn, for id: UUID, transcriptPath: String?) -> PaneTurn {
         var result = recorded
         guard let transcriptPath else { return result }
@@ -86,7 +129,9 @@ public enum PaneFolder {
         }
         if result.turn == .waiting {
             let input = stopInput(for: id, since: result.since, transcriptPath: transcriptPath)
-            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input)
+            recordConversation(for: id, transcriptPath: transcriptPath)
+            let earlier = earlierTranscripts(for: id, transcriptPath: transcriptPath)
+            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input, earlier: earlier)
             if !work.isEmpty { result = PaneTurn(.background, since: result.since, background: work) }
         }
         return result

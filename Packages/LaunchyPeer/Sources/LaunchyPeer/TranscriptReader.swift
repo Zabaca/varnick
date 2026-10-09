@@ -325,11 +325,12 @@ extension TranscriptReader {
 
     /// Workflows are the last `turn_duration` in the 64 KB tail's `pendingWorkflowCount` (none if it is older than `since`
     /// or before the tail), less those notified ended after it. Shells, agents and teammates are the Stop input's tasks,
-    /// less those notified ended in the tail; a teammate counts only while it is busy (`busyTeammates`).
-    static func pendingBackground(path: String, since: Date, input: StopInput) -> BackgroundWork {
+    /// less those notified ended in the tail; a teammate counts only while it is busy (`busyTeammates`), which reads the
+    /// pane's `earlier` conversations too.
+    static func pendingBackground(path: String, since: Date, input: StopInput, earlier: [String]) -> BackgroundWork {
         guard let (tail, startsMidLine) = readTail(path) else { return BackgroundWork() }
         var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, input: input)
-        if !teammates.isEmpty { work.teammates = busyTeammates(path: path, among: teammates) }
+        if !teammates.isEmpty { work.teammates = busyTeammates(path: path, earlier: earlier, among: teammates) }
         return work
     }
 
@@ -461,10 +462,17 @@ private final class TeamLedgers: @unchecked Sendable {
     private let lock = NSLock()
     private var ledgers = [String: Ledger]()
 
-    /// The teammates up to the last complete line now in the file; nil if it can't be read.
-    func team(at path: String) -> [String: Teammate]? {
+    /// The teammates of the transcript at `path`, then of each of the `earlier` ones (oldest first, as given) from the
+    /// newest, whichever can be read; nil if `path` can't be read.
+    func teams(at path: String, earlier: [String]) -> [[String: Teammate]]? {
         lock.lock()
         defer { lock.unlock() }
+        guard let current = read(path) else { return nil }
+        return [current] + earlier.reversed().compactMap { read($0) }
+    }
+
+    /// The teammates up to the last complete line now in the file; nil if it can't be read. The caller holds the lock.
+    private func read(_ path: String) -> [String: Teammate]? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else { return nil }
         var ledger = ledgers[path] ?? Ledger()
         // A transcript only grows; a shorter one is another file.
@@ -485,23 +493,34 @@ private final class TeamLedgers: @unchecked Sendable {
 /// task id and a description but no name; the lead's transcript has the rest (Claude Code 2.1.295).
 extension TranscriptReader {
     /// How many of the running `teammates` are busy: a teammate is matched to its name by its description, which is the
-    /// `description` of the `Agent` call that spawned it. One with no spawn in the transcript (it is from before a
-    /// `/resume`), or whose description names more or fewer spawns than are running, counts busy.
-    static func busyTeammates(path: String, among teammates: [RunningTask]) -> Int {
-        guard let team = TeamLedgers.shared.team(at: path) else { return teammates.count }
-        return busyTeammates(in: team, among: teammates)
+    /// `description` of the `Agent` call that spawned it. The spawn may be in a conversation the pane left, which
+    /// `earlier` names (`PaneFolder.earlierTranscripts`; docs/agents/where-it-breaks.md says why). A description is
+    /// matched against the newest conversation with a spawn carrying it, so an old spawn of a teammate that finished
+    /// doesn't count, while a name's busy and idle times come from all of them: its idle notification may be in a later
+    /// conversation than its spawn. One with no spawn in any, or whose description names more or fewer spawns than are
+    /// running, counts busy.
+    static func busyTeammates(path: String, earlier: [String], among teammates: [RunningTask]) -> Int {
+        guard let teams = TeamLedgers.shared.teams(at: path, earlier: earlier) else { return teammates.count }
+        return busyTeammates(in: teams, among: teammates)
     }
 
     /// The same for transcript text read whole.
     static func busyTeammates(in data: Data, among teammates: [RunningTask]) -> Int {
         var team = [String: Teammate]()
         absorb(data[...], into: &team)
-        return busyTeammates(in: team, among: teammates)
+        return busyTeammates(in: [team], among: teammates)
     }
 
-    private static func busyTeammates(in team: [String: Teammate], among teammates: [RunningTask]) -> Int {
+    /// `teams` are the conversations' teammates, newest first.
+    private static func busyTeammates(in teams: [[String: Teammate]], among teammates: [RunningTask]) -> Int {
         Dictionary(grouping: teammates, by: \.description).reduce(0) { busy, group in
-            let spawned = team.values.filter { $0.description == group.key }
+            let names = teams.first { $0.values.contains { $0.description == group.key } }?
+                .filter { $0.value.description == group.key }.map(\.key) ?? []
+            let spawned = names.map { name in
+                teams.compactMap { $0[name] }.reduce(Teammate()) {
+                    Teammate(description: group.key, busyAt: max($0.busyAt, $1.busyAt), idleAt: max($0.idleAt, $1.idleAt))
+                }
+            }
             return busy + (spawned.count == group.value.count ? spawned.filter(\.isBusy).count : group.value.count)
         }
     }
