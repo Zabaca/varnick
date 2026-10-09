@@ -148,7 +148,12 @@ Figures from the user's own screens stay in `.scratch/spoken-requests-cant-see-t
 
   That is a new kind of data for TypeSafe. It isn't History or sessions, but it is whatever the window shows: a mail's subjects in a list, a document's name in a tab, the account's name in a sidebar.
 - **The permission.** Every option needs Accessibility, and options 02 to 04 also need Screen Recording.
-  - Each grant goes to a build that the next rebuild may not match.
+  - With builds signed with Developer ID (ADR 0022), a grant survives rebuilds (measured 2026-10-09). Ad-hoc builds lost it.
   - Its reach into Launchy's panes:
     - Into every session in its panes, zmx-hosted ones included: the privacy service attributes them to Launchy (measured 2026-10-09).
     - Cutting that is `panes-share-launchys-permissions`.
+- **Pointing on the local path (open, 2026-10-09).** The user's principle is that choosing TypeSafe is consent to send what a TypeSafe feature needs, and that keeping things private is the On this Mac setting. But with the filter On this Mac, nothing points:
+  - Gemma never points (option 01, decided);
+  - Point at the screen can't be turned on without the TypeSafe gate.
+
+  So the private path has no pointing. No fix is proposed.
