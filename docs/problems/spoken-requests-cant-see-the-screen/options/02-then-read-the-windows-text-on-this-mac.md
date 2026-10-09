@@ -27,7 +27,7 @@ The image is dropped as soon as the text is read. It is never written to disk, n
 - **More of the window's text can reach TypeSafe.** The recognised lines are what the window shows: a mail's subjects and senders, a document's headings, a chat's names. The length cut keeps out paragraphs but not short private lines. They go to TypeSafe on a miss, under option 01's gate (the filter on TypeSafe and a key). Option 01 already sends the text beside each control; this sends every short line in the window. The ADR and Settings say so.
 - **A second permission.**
   - Screen Recording is granted the way Accessibility is, with the same ad-hoc rebuild problem.
-  - Like option 01's grant, it is Launchy's own. The capture runs in Launchy's process, never from a pane, and panes started outside zmx may inherit it (option 01, hand check 2).
+  - Like option 01's grant, it is Launchy's own. The capture runs in Launchy's process, never from a pane. Pane processes are checked as themselves (measured for zmx panes on 2026-10-09), but Launchy's own binary run from a shell probably carries the grant (`sessions-cant-see-or-act-on-the-screen`).
   - Recent macOS versions ask again from time to time whether an app may keep recording, and show a capture indicator. Unverified on macOS 26.
 - **Slower on a miss only.** The capture, recognition at the accurate level and a second choice add an estimated 0.5 to 1.5 s, unmeasured, and only after the tree found nothing.
 - **Boxes, not controls.** The arrow rings the text, which may be beside the control it labels: a checkbox's label rather than its box. Close enough to point, not to click.

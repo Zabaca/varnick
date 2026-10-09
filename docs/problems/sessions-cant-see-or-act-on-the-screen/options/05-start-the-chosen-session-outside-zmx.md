@@ -1,21 +1,21 @@
 ---
 problem: sessions-cant-see-or-act-on-the-screen
 title: Start a chosen session outside zmx, as Launchy's own child, so it shares Launchy's grants directly
-summary: No broker. The user starts a pane "with screen access", and Launchy runs its claude as a direct child rather than in zmx, the way every pane runs with Keep sessions running off. macOS then very probably gives that session Launchy's Accessibility and Screen Recording, so it uses any tool directly, and zmx stays ungranted for every other session. It is cheap and per pane, but it depends on an inheritance nobody has measured yet. Such a pane has no approval, indicator or record, and it ends when Launchy restarts. It also gets Launchy's microphone and system audio.
+summary: No broker. The user starts a pane "with screen access", and Launchy runs its claude as a direct child rather than in zmx, the way every pane runs with Keep sessions running off. macOS then very probably gives that session Launchy's Accessibility and Screen Recording, so it uses any tool directly, and zmx stays ungranted for every other session. It is cheap and per pane, but it depends on an inheritance that is now doubtful: measured on 2026-10-09, every process in a zmx pane is its own responsible process, and nothing in Launchy or SwiftTerm explains it, so panes outside zmx may be the same. Such a pane has no approval, indicator or record, and it ends when Launchy restarts. It also gets Launchy's microphone and system audio.
 status: proposed
 ---
 
 ## Solution
 
-A pane can be started with **screen access**, from a pane's menu item that starts it again in place. Launchy runs that pane's claude directly, through SwiftTerm, never in zmx, whatever Keep sessions running says. Its processes are Launchy's descendants, so macOS very probably attributes them to Launchy and gives them Launchy's grants. The session then uses `screencapture`, `osascript`, bigarrow or its own code.
+A pane can be started with **screen access**, from a pane's menu item that starts it again in place. Launchy runs that pane's claude directly, through SwiftTerm, never in zmx, whatever Keep sessions running says. Its processes are Launchy's descendants, The hope is that macOS attributes them to Launchy and gives them Launchy's grants. That is doubtful (Trade-offs). The session then uses `screencapture`, `osascript`, bigarrow or its own code.
 
 ## Trade-offs
 
-- **Per pane, and no broker.** Only that session gets the grants; zmx stays ungranted, so every other session stays without them. Launchy builds a start path and a badge, nothing else.
-- **It rests on an inference.**
-  - That a direct child shares Launchy's grants is unmeasured.
-  - `spoken-requests-cant-see-the-screen` option 01's hand check 2 and `panes-share-launchys-permissions` measure it.
-  - If macOS doesn't pass the grants down, this option does nothing.
+- **Per pane, and no broker.** Only that session would get the grants, and every other session stays without them. Launchy builds a start path and a badge, nothing else.
+- **It rests on an inference that is now doubtful.**
+  - In a zmx pane, every process (zsh, claude, zmx, each command) is its own responsible process, so each executable is checked as itself (the problem's Today).
+  - No responsibility disclaim is in Launchy's or SwiftTerm's sources, or among zmx's imports. So nothing found explains why. If the cause is that Launchy, a bare executable, passes no responsibility to its children, panes outside zmx are self-responsible too, and this option does nothing.
+  - Unmeasured either way. Testing Decisions says what to measure.
 - **Everything, unsupervised, inside that pane.**
   - No approval, refusals, deny list, indicator or record.
   - A Skip-permissions session started this way acts without a prompt.
@@ -39,7 +39,12 @@ A pane can be started with **screen access**, from a pane's menu item that start
 
 ## Testing Decisions
 
-- **The measurement first:** in a pane started this way, after granting Launchy only, `AXIsProcessTrusted()` is true. If it isn't, reject this option.
+- **The measurement first,** with Keep sessions running off so that a new pane is Launchy's child:
+  - `responsibility_get_pid_responsible_for_pid` on the pane's shell and on a command it runs: Launchy's pid, or their own?
+  - The same lookup on Launchy itself.
+  - `AXIsProcessTrusted()` from a freshly compiled binary in that pane, with only Launchy granted.
+
+  Their own pid, or false, rejects this option.
 - **By hand:** the badge shows; `screencapture` of a window works from the pane; a pane without the flag is still refused; restarting Launchy ends the pane, as the item said it would.
 
 ## Out of Scope

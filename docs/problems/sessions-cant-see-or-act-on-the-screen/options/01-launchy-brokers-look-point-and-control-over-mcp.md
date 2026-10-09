@@ -1,7 +1,7 @@
 ---
 problem: sessions-cant-see-or-act-on-the-screen
 title: Launchy brokers look, point, click and type for a session through an MCP server, per pane, with each control action approved in Launchy
-summary: Launchy keeps the grants and acts for the session. Every Claude pane gets a small stdio MCP server, `Launchy --mcp`, which passes tool calls to the running Launchy over its user-only socket. There are four tools. `look` returns a window's elements, optionally with a picture or its recognised text. `point` draws the Arrow. `click` and `type` act on an app. A pane can use them only once the user turns Screen access on for that pane. Each click and type is shown with the Arrow at its target, and waits for the user's Allow in Launchy's own panel, once or for the next 10 minutes. zmx is never granted, and the interim grant is removed. Same-user processes can't be told apart, so the per-pane switch stops accidents, not a determined process; the approval and the missing zmx grant are the real gates.
+summary: Launchy keeps the grants and acts for the session. Every Claude pane gets a small stdio MCP server, `Launchy --mcp`, which passes tool calls to the running Launchy over its user-only socket. There are four tools. `look` returns a window's elements, optionally with a picture or its recognised text. `point` draws the Arrow. `click` and `type` act on an app. A pane can use them only once the user turns Screen access on for that pane. Each click and type is shown with the Arrow at its target, and waits for the user's Allow in Launchy's own panel, once or for the next 10 minutes. The interim helper's grants are removed. Same-user processes can't be told apart, so the per-pane switch stops accidents, not a determined process. The real gates are the approval, and no other executable a pane can run holding Accessibility.
 status: proposed
 ---
 
@@ -23,10 +23,13 @@ status: proposed
 - **The grant stays in one process, behind Launchy's checks.**
   - Launchy decides what a session sees and does, and refuses its own windows.
   - It asks before acting, records what was done, and shows when a session is looking or acting.
-  - zmx stays ungranted, so a session in a pane can't act around the broker: no `osascript`, `screencapture` or synthetic events of its own.
+  - Once the interim helper's grants are removed, no executable a session runs holds the grants, so it can't act around the broker: no `osascript`, `screencapture` or synthetic events of its own. Launchy's own binary is the exception (next).
 - **The approval is the real gate.**
   - The prompt is Launchy's own window, and no process of the user can click it without Accessibility.
-  - So it holds only while zmx, and any pane's other processes, have no grant. This is why the interim zmx grant has to go, and why `click` and `type` refuse Launchy's own windows.
+  - So it holds only while no executable a pane can run holds Accessibility. The interim helper is one; it can click Allow.
+  - **Launchy's own binary is another.** It is the executable Launchy's grants name, so run from a pane it is probably trusted too (the problem's Today). Its command-line modes must never read or act for a caller, and `Launchy --mcp` only forwards.
+  - Without the hardened runtime, a process could probably load its own code into that binary and use its grants anyway. `runs-only-from-a-checkout` option 01 closes that, and this gate is only as strong as it.
+  - Hence: the helper goes, `click` and `type` refuse Launchy's own windows, and the prompt can't be answered by anything Launchy posts.
 - **Per-pane switch: a guard against accidents, not an identity check.**
   - The MCP server sends its pane id, which any process of the user can read from another's environment and send too.
   - Launchy also checks that the caller descends from that pane's zmx session or from that pane, by the socket peer's pid. That makes pretending deliberate, not impossible, since a process of the user can type into another pane.
@@ -50,7 +53,7 @@ status: proposed
 5. As a Launchy user, I want to see when a session is looking at or acting on my screen.
 6. As a Launchy user, I want my password manager's windows never shown to a session.
 7. As a Launchy user, I want a record of what each session looked at and did.
-8. As a Launchy user, I want zmx's grants removed, so that no session acts on the screen without Launchy.
+8. As a Launchy user, I want the interim helper's grants removed, so that no session acts on the screen without Launchy.
 
 ## Implementation Decisions
 
@@ -61,10 +64,10 @@ status: proposed
   - it needs Accessibility, and Screen Recording for pictures and recognised text, shown as ADR 0019 and 0021's rows are;
   - a deny list of apps, starting with Keychain Access and the password managers found installed.
 - **Per pane:** a Screen access item on the pane's menu, and a key on its board card, saved as an optional field on the pane's record. Off for every new pane. A pane with it on shows a badge in the header.
-- **The interim zmx grant.** The MCP server runs inside the pane, under zmx, so it reports with each call whether its own process is trusted for Accessibility or Screen Recording. When it is, zmx holds a grant. Settings and the header badge then warn, and say how to remove it.
+- **Other granted executables.** Launchy can't ask macOS which other executables hold a grant. So Settings says plainly that any other executable with Accessibility, such as the interim helper, can answer the prompt, and says how to remove it.
 
 **The server and the channel**
-- **`Launchy --mcp`** is a stdio MCP server, run by claude. It holds no grant and does nothing itself: each call is one request line on the peer socket, carrying the pane id from its environment, the tool and the arguments, and the reply line is the answer.
+- **`Launchy --mcp`** is a stdio MCP server, run by claude. It is Launchy's binary, so it is probably trusted in the pane, but it has no code path that reads or acts. Each call is one request line on the peer socket, carrying the pane id from its environment, the tool and the arguments, and the reply line is the answer.
 - **The config.** With Screen access on globally, every Claude pane starts with `--mcp-config` naming one file Launchy writes in its Application Support folder. It isn't per pane: Launchy checks the pane at each call.
 - **The socket.** The peer socket gains a `screen` operation, kept apart from the peers' operations. The caller's pid comes from the socket's peer credentials. Launchy walks its parents to the pane's zmx session or the pane's own process and rejects a call whose ancestry doesn't match the pane id it sent.
 - **One action at a time** across all sessions. A second waits for the first, and a call waits at most 60 s for approval before it is answered "not approved".
@@ -110,7 +113,8 @@ status: proposed
   - the refusal rules (Launchy's window, a denied app, a secure field);
   - the request and reply lines;
   - the approval state machine (allow once, allow for 10 minutes, deny, expiry, revoke).
-- **By hand, after a restart,** with zmx's grants removed:
+- **By hand, after a restart,** with the interim helper's grants removed:
+  - From a pane, `Launchy --mcp` and `Launchy --ask --app` are checked for what they can do with Launchy's grants: the problem's measurement.
   - A session without Screen access calls `look` and is told to ask the user.
   - With it on, `look` lists System Settings' controls, and `point` draws the Arrow signed with the session's name.
   - `click` on a switch shows the Arrow and the prompt. Deny leaves it, and Allow toggles it.
@@ -130,7 +134,10 @@ status: proposed
 
 ## Further Notes
 
-- **ADR on acceptance.** Launchy brokers screen access for sessions, zmx is never granted (now without exception), and the per-pane switch is a guard, not an identity. It amends ADR 0019 and 0021's "only for Hey Launchy" reading of the grants.
+- **ADR on acceptance.**
+  - Launchy brokers screen access for sessions, no other executable is granted for them, and the per-pane switch is a guard, not an identity.
+  - Launchy's command-line modes never read or act on another app for a caller. That includes deciding what becomes of `--ask --app`.
+  - It amends ADR 0019 and 0021's "only for Hey Launchy" reading of the grants.
 - **Glossary, proposed:** **Screen access**: what a session is allowed to do on the screen through Launchy (look, point, click, type), turned on per pane. _Avoid_: computer use, remote control.
 - **Unverified:**
   - that an MCP tool result can carry a PNG Claude Code shows to the model as an image;
