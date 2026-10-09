@@ -2,23 +2,19 @@ import AppKit
 import ScreenCaptureKit
 import Vision
 
-/// When the focused window's tree lacks the thing, a picture of that window alone is read for text on this Mac (ADR 0021). The
-/// picture lives in memory only until Vision has read it: never written, logged or sent. The short lines it finds, with their boxes,
-/// become candidates for the same Jev call as the tree's elements. Runs in this process under Launchy's own Screen Recording grant,
-/// never from a pane. What may go to TypeSafe is in where-it-breaks.md, Pointing at the screen.
+/// Text read from a picture of the focused window, on this Mac, when its tree lacks the thing (ADR 0021). The picture stays in
+/// memory until Vision has read it; only the short lines go on. What may reach TypeSafe is in where-it-breaks.md.
 enum ScreenText {
-    // The shape of a label rather than a paragraph, which keeps a document's or a mail's body out of the call.
+    // The shape of a label rather than a paragraph.
     static let maxWords = 6
     static let maxCharacters = 60
     static let maxLines = 150
-    /// The language Listening's transcriber is set to.
-    static let language = "en-US"
-
-    // MARK: The permission
+    /// Capture plus recognition give up after this, so a stalled ScreenCaptureKit can't hold a spoken request.
+    static let limit: Duration = .seconds(2)
 
     static var hasAccess: Bool { CGPreflightScreenCaptureAccess() }
 
-    /// Adds Launchy to the Screen Recording list (the system prompt) and opens that pane. Called only from Settings' Grant button.
+    /// Adds Launchy to the Screen Recording list and opens that pane. Only the Settings Grant button calls it.
     @MainActor
     static func askForAccess() {
         _ = CGRequestScreenCaptureAccess()
@@ -29,7 +25,7 @@ enum ScreenText {
 
     // MARK: Capture and recognition
 
-    /// A line of text Vision found. `box` is normalised with the origin at the bottom left of the image, as Vision gives it.
+    /// `box` is normalised with the origin at the bottom left of the image, as Vision gives it.
     struct Recognised: Sendable {
         var text: String
         var box: CGRect
@@ -43,22 +39,72 @@ enum ScreenText {
         var recognise: Duration
     }
 
-    /// Why no text was read; the timing line names the kind only.
+    /// Why no text was read; logs name the kind only.
     enum Failure: Error {
         case noWindow
+        case timedOut
         case capture(code: Int)
 
         var logKind: String {
             switch self {
             case .noWindow: "no window"
+            case .timedOut: "timed out"
             case .capture(let code): "capture failed (\(code))"
             }
         }
     }
 
-    /// Captures the window of `pid` that is `near` the given Accessibility frame (else its largest), reads its text and drops the
-    /// picture. The caller has checked `hasAccess`. Only that window is in the image, so Launchy's own panel and arrow are not.
-    static func recognise(pid: pid_t, near frame: CGRect?) async throws -> Recognition {
+    /// Reads the text of the window of `pid` that best matches `frame`, within `limit`. The caller has checked `hasAccess`.
+    static func recognise(pid: pid_t, near frame: CGRect) async throws -> Recognition {
+        let race = Race()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                race.attach(continuation)
+                // Unstructured, since a task group would wait for a capture that never returns.
+                let work = Task {
+                    do { race.finish(.success(try await read(pid: pid, near: frame))) } catch { race.finish(.failure(error)) }
+                }
+                Task {
+                    try? await Task.sleep(for: limit)
+                    race.finish(.failure(Failure.timedOut))
+                    work.cancel()
+                }
+            }
+        } onCancel: {
+            race.finish(.failure(CancellationError()))
+        }
+    }
+
+    /// The first result wins.
+    private final class Race: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Recognition, Error>?
+        private var result: Result<Recognition, Error>?
+
+        func attach(_ continuation: CheckedContinuation<Recognition, Error>) {
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(with: result)
+            } else {
+                self.continuation = continuation
+                lock.unlock()
+            }
+        }
+
+        func finish(_ outcome: Result<Recognition, Error>) {
+            lock.lock()
+            guard result == nil else { lock.unlock(); return }
+            result = outcome
+            let waiting = continuation
+            continuation = nil
+            lock.unlock()
+            waiting?.resume(with: outcome)
+        }
+    }
+
+    /// Only that window is in the image, so Launchy's own panel and arrow are not.
+    private static func read(pid: pid_t, near frame: CGRect) async throws -> Recognition {
         let clock = ContinuousClock()
         var began = clock.now
         let image: CGImage
@@ -66,7 +112,7 @@ enum ScreenText {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
             let windows = content.windows.filter { $0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.frame.width > 1 && $0.frame.height > 1 }
-            guard let index = bestWindow(among: windows.map(\.frame), near: frame) else { throw Failure.noWindow }
+            guard let index = bestWindow(among: windows.map { ($0.frame, $0.isActive) }, near: frame) else { throw Failure.noWindow }
             let target = windows[index]
             window = target.frame
             let filter = SCContentFilter(desktopIndependentWindow: target)
@@ -88,7 +134,7 @@ enum ScreenText {
         let lines = try await Task.detached(priority: .userInitiated) { () -> [Recognised] in
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
-            request.recognitionLanguages = [language]
+            request.recognitionLanguages = [listeningLanguage]
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             return (request.results ?? []).compactMap { observation in
                 observation.topCandidates(1).first.map { Recognised(text: $0.string, box: observation.boundingBox) }
@@ -99,31 +145,40 @@ enum ScreenText {
 
     // MARK: Pure parts
 
-    /// The window the focused window's picture is of: the one whose frame overlaps `near` most (at least half, by intersection over
-    /// union), else with no frame to go by the largest.
-    static func bestWindow(among frames: [CGRect], near: CGRect?) -> Int? {
-        guard let near else { return frames.indices.max { frames[$0].width * frames[$0].height < frames[$1].width * frames[$1].height } }
+    /// The window whose frame overlaps `near` most, by intersection over union and at least half. Among windows that overlap alike
+    /// (two with one frame), the active one, then the first listed.
+    static func bestWindow(among windows: [(frame: CGRect, isActive: Bool)], near: CGRect) -> Int? {
         func overlap(_ frame: CGRect) -> CGFloat {
             let shared = frame.intersection(near)
             guard !shared.isNull else { return 0 }
             let both = shared.width * shared.height
             return both / (frame.width * frame.height + near.width * near.height - both)
         }
-        guard let best = frames.indices.max(by: { overlap(frames[$0]) < overlap(frames[$1]) }), overlap(frames[best]) >= 0.5 else { return nil }
-        return best
+        let scored = windows.indices.map { (index: $0, overlap: (overlap(windows[$0].frame) * 100).rounded()) }.filter { $0.overlap >= 50 }
+        return scored.max { a, b in
+            if a.overlap != b.overlap { return a.overlap < b.overlap }
+            if windows[a.index].isActive != windows[b.index].isActive { return !windows[a.index].isActive }
+            return a.index > b.index
+        }?.index
     }
 
-    /// Whether a line is the shape of a label: at most `maxWords` words and `maxCharacters` characters, with a letter or a digit in
-    /// it (a field of dots, a rule or a bullet is not text).
+    /// A label-shaped line: at most `maxWords` words and `maxCharacters` characters, with a letter or a digit (not a field of dots).
     static func isLabel(_ text: String) -> Bool {
         !text.isEmpty && text.count <= maxCharacters && text.split(separator: " ").count <= maxWords
             && text.contains { $0.isLetter || $0.isNumber }
     }
 
-    /// The recognised lines that become candidates, in reading order and at most `maxLines`, each described as "text on screen"
-    /// with its words and framed as Accessibility frames. A line is dropped when it is not label-shaped or its centre lies inside
-    /// one of `fields`, the frames of what a person types in. The line under `pointer` is marked as the element under it.
-    static func candidates(from recognised: [Recognised], in window: CGRect, avoiding fields: [CGRect], pointer: CGPoint) -> [ScreenElement] {
+    /// `frames` read from a window at `was`, carried to where that window is in the capture at `now`.
+    static func shifted(_ frames: [CGRect], from was: CGRect?, to now: CGRect) -> [CGRect] {
+        guard let was else { return frames }
+        return frames.map { ScreenGeometry.moved($0, from: was, to: now) ?? $0 }
+    }
+
+    /// The recognised lines that become candidates, "text on screen" with their words, in reading order, at most `maxLines`. A line
+    /// is dropped when it isn't label-shaped, its centre is inside one of `fields` (what a person typed), or `area` is given and the
+    /// centre is outside it. The line under `pointer` is marked as the element under it.
+    static func candidates(from recognised: [Recognised], in window: CGRect, avoiding fields: [CGRect], within area: CGRect? = nil,
+                           pointer: CGPoint) -> [ScreenElement] {
         var kept: [ScreenElement] = []
         for line in recognised {
             let words = ScreenElements.cleaned(line.text)
@@ -131,7 +186,7 @@ enum ScreenText {
             let frame = ScreenGeometry.accessibility(normalised: line.box, inWindow: window)
             guard frame.width > 1, frame.height > 1, frame.origin.x.isFinite, frame.origin.y.isFinite else { continue }
             let centre = CGPoint(x: frame.midX, y: frame.midY)
-            guard !fields.contains(where: { $0.contains(centre) }) else { continue }
+            guard !fields.contains(where: { $0.contains(centre) }), area?.contains(centre) ?? true else { continue }
             var element = ScreenElement(role: "text on screen", label: words, name: words, frame: frame)
             element.recognised = true
             kept.append(element)

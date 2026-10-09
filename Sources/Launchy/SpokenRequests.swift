@@ -333,9 +333,8 @@ final class SpokenRequests {
     private static func textTiming(_ text: SpokenPipeline.TextLook?) -> String {
         guard let text else { return "text fallback not tried, " }
         if let skipped = text.skipped { return "text fallback skipped (\(skipped)), " }
-        let present = text.pick.map { $0.isConfident ? "present" : "not present" } ?? "-"
         return "text fallback captured in \(text.capture.seconds.secondsText), recognised in \(text.recognise.seconds.secondsText) "
-            + "(\(text.recognised) lines, \(text.candidates) kept), chosen in \(text.choose.seconds.secondsText) by \(text.chosenBy) (\(present)), "
+            + "(\(text.recognised) lines, \(text.candidates) kept), "
     }
 
     /// Nothing could write the text: no model installed and no server answering.
