@@ -97,14 +97,15 @@ enum WorkHooks {
     }
 
     /// At every session start, in a repository that has both an open problem and the `/work` skill: one line for Claude about `/work`, and the
-    /// open problems by slug and title (a problem with no title is left out; a title over 100 characters is cut at a word and ends in "…"). Where there is nothing to say it prints nothing. `find`, not a
-    /// glob: zsh stops a hook whose glob matches nothing.
+    /// open problems by slug and title (a problem with no title is left out; a title over 100 bytes is cut at a word and ends in "…").
+    /// Where there is nothing to say it prints nothing. `find`, not a glob: zsh stops a hook whose glob matches nothing. `awk` runs in
+    /// the C locale: in a UTF-8 one macOS awk aborts when a cut lands inside a character.
     static let sessionStart = #"""
         r="$LAUNCHY_PROJECT"
         { [ -n "$r" ] && [ -f "$r/.claude/skills/work/SKILL.md" ] && [ -d "$r/docs/problems" ]; } 2>/dev/null || exit 0
         list=$(find "$r/docs/problems" -mindepth 2 -maxdepth 2 -name problem.md 2>/dev/null | sort | while IFS= read -r f; do
           s=${f%/problem.md}; s=${s##*/}
-          awk -v s="$s" 'function cut(x,  u){if(length(x)<=100)return x;u=substr(x,1,100);if(substr(x,101,1)!~/[ \t]/&&u~/[ \t]/)sub(/[ \t]+[^ \t]*$/,"",u);sub(/[ ,;:]+$/,"",u);return u "…"} NR==1{if($0!="---")exit;next} $0=="---"{exit} /^title:/{sub(/^title:[ \t]*/,"");t=$0} /^status:/{sub(/^status:[ \t]*/,"");st=$0} END{if(t~/^\042.*\042$/||t~/^\047.*\047$/)t=substr(t,2,length(t)-2);if(t!=""&&st!="closed")printf "- %s: %s\n",s,cut(t)}' "$f"
+          LC_ALL=C awk -v s="$s" 'function cut(x,  u){sub(/^[ \t]+/,"",x);if(length(x)<=100)return x;u=substr(x,1,100);if(substr(x,101,1)!~/[ \t]/){if(u~/[ \t]/)sub(/[ \t]+[^ \t]*$/,"",u);else sub(/[\300-\377][\200-\277]*$/,"",u)}sub(/[ ,;:]+$/,"",u);return u "…"} NR==1{if($0!="---")exit;next} $0=="---"{exit} /^title:/{sub(/^title:[ \t]*/,"");t=$0} /^status:/{sub(/^status:[ \t]*/,"");st=$0} END{if(t~/^\042.*\042$/||t~/^\047.*\047$/)t=substr(t,2,length(t)-2);if(t!=""&&st!="closed")printf "- %s: %s\n",s,cut(t)}' "$f"
         done | head -n 25)
         [ -n "$list" ] || exit 0
         printf '%s\n%s\n' "Launchy work links: this session and its subagents each keep one link to a problem or an option, so the board shows who works on what. Writing under a problem's folders links you to it; \

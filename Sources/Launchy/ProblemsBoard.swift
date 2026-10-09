@@ -20,14 +20,16 @@ final class ProblemsBoard: ObservableObject {
     @Published var selection: String? {
         didSet { if selection != oldValue { chipSelection = nil } }
     }
-    /// The session chip selected in the opened card under `selection`: ↓ moves onto the chips, ↩ opens that session.
+    /// The chip selected in the selected card, which is showing all its chips: ↓ moves onto them, ↩ opens that session.
     @Published private(set) var chipSelection: UUID?
     /// The cards opened to show why they are in their column.
     @Published private(set) var opened: Set<String> = []
     /// Every card shows its evidence (E).
-    @Published var showEvidence = false
+    @Published var showEvidence = false {
+        didSet { settleChip() }
+    }
     weak var model: LauncherModel?
-    /// Opens a session as the Sessions tab's Open does (`SessionBoard.open`); the board that owns this tab sets it.
+    /// `SessionBoard.open`, set by the board that owns this tab.
     var openSession: (UUID) -> Void = { _ in }
 
     private static let interval: Duration = .seconds(5)
@@ -69,7 +71,6 @@ final class ProblemsBoard: ObservableObject {
     func reset() {
         stop()
         selection = nil
-        chipSelection = nil
         opened = []
     }
 
@@ -105,26 +106,34 @@ final class ProblemsBoard: ObservableObject {
         if selection == nil { selection = Self.moved(nil, in: cards, .down) }
         let kept = opened.intersection(cards.map(\.id))
         if kept != opened { opened = kept }
-        if let chipSelection, !(selectedCard.map { opened.contains($0.id) && $0.chips.contains { $0.id == chipSelection } } ?? false) {
-            self.chipSelection = nil
-        }
+        settleChip()
     }
 
     private var selectedCard: ProblemCard? { cards.first { $0.id == selection } }
 
+    /// Drops a chip selection whose card is gone, collapsed or no longer lists it.
+    private func settleChip() {
+        guard let chipSelection else { return }
+        if let card = selectedCard, shows(evidenceOf: card.id), card.chips.contains(where: { $0.id == chipSelection }) { return }
+        self.chipSelection = nil
+    }
+
     // MARK: Keys
 
-    /// The keys the Problems tab takes: arrows move between cards, ↩ opens one, E shows every card's evidence. In an opened card ↓
-    /// moves onto its session chips and between them (↑ back, off the first chip onto the card), ↩ on a chip opens that session, and
-    /// esc leaves the chips and closes the card; otherwise esc closes the board. D, R and the End session, Mark session done and
-    /// Restart session keys are taken and do nothing; anything else goes on.
+    /// The Problems tab's keys: arrows move between cards (and, in a card showing its chips, between them), ↩ opens a card or a
+    /// selected chip's session, E shows every card's evidence, esc steps back out of the chips and then closes the board. D, R and
+    /// the End session, Mark session done and Restart session keys are taken and do nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
         switch Int(event.keyCode) {
         case kVK_Return, kVK_ANSI_KeypadEnter:
             if plain { if let chipSelection { openSession(chipSelection) } else { toggleSelected() } }
         case kVK_Escape where plain:
-            if chipSelection != nil, let selection { toggle(selection) } else { model?.closeBoard() }
+            if chipSelection != nil, let selection {
+                if opened.contains(selection) { toggle(selection) } else { chipSelection = nil }
+            } else {
+                model?.closeBoard()
+            }
         case kVK_LeftArrow where plain: selection = Self.moved(selection, in: cards, .left)
         case kVK_RightArrow where plain: selection = Self.moved(selection, in: cards, .right)
         case kVK_UpArrow where plain: if !stepChips(.up) { selection = Self.moved(selection, in: cards, .up) }
@@ -142,17 +151,16 @@ final class ProblemsBoard: ObservableObject {
         if let selection { toggle(selection) }
     }
 
-    /// ↓ or ↑ inside the opened card under the selection. Only an opened card with chips takes them: ↓ from the card selects the first
-    /// chip and stops at the last, ↑ goes back and off the first chip onto the card. False when the card isn't one of those, or when
-    /// ↑ is on the card itself, so the arrow moves between cards as before.
+    /// False when the arrow isn't for the chips (the card isn't showing them, ↑ on the card, ↓ on the last chip), so it moves the card.
     private func stepChips(_ direction: SessionBoard.Direction) -> Bool {
-        guard let card = selectedCard, opened.contains(card.id), !card.chips.isEmpty else { return false }
+        guard let card = selectedCard, shows(evidenceOf: card.id), !card.chips.isEmpty else { return false }
         let at = card.chips.firstIndex { $0.id == chipSelection }
         switch (direction, at) {
         case (.down, nil): chipSelection = card.chips[0].id
-        case (.down, let at?): chipSelection = card.chips[min(at + 1, card.chips.count - 1)].id
-        case (.up, nil): return false
-        case (_, let at?): chipSelection = at == 0 ? nil : card.chips[at - 1].id
+        case (.down, let at?):
+            guard at + 1 < card.chips.count else { return false }
+            chipSelection = card.chips[at + 1].id
+        case (.up, let at?): chipSelection = at == 0 ? nil : card.chips[at - 1].id
         default: return false
         }
         return true
@@ -272,7 +280,7 @@ private struct ProblemCardView: View {
     let pill: String?
     let selected: Bool
     let showsEvidence: Bool
-    /// The chip ↓ has selected, when this is the selected card.
+    /// The chip ↓ selected, when this is the selected card.
     let selectedChip: UUID?
     let open: (UUID) -> Void
 
@@ -320,7 +328,7 @@ private struct ProblemCardView: View {
 
 /// The sessions that worked on a problem, as chips: the Sessions card's title and a dot for its column. Two and "+3" while closed, every
 /// one on its own row once the card is opened (or Show evidence is on); a subagent's type follows the title of the session it worked in.
-/// A click opens the session, and ↓ in an opened card selects a chip, which is highlighted.
+/// A click opens the session; the chip ↓ selected is highlighted.
 private struct ProblemChips: View {
     let cardID: String
     let chips: [SessionChip]
@@ -369,8 +377,8 @@ private struct ProblemChip: View {
         }
         .font(.system(size: 10.5))
         .padding(.horizontal, 7).padding(.vertical, 2)
-        .background(selected ? Theme.selection : Theme.hairline.opacity(0.5), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(selected ? 0.5 : 0), lineWidth: 1))
+        .background(selected ? Theme.sourceColor("claude").opacity(0.22) : Theme.hairline.opacity(0.5), in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.sourceColor("claude").opacity(selected ? 0.8 : 0), lineWidth: 1))
         .contentShape(Capsule())
     }
 
