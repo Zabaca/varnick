@@ -81,6 +81,9 @@ struct LauncherView: View {
                 Color(nsColor: .windowBackgroundColor).opacity(0.72)
             }
         }
+        .overlay {
+            if model.askingRestart { RestartCard(model: model) }
+        }
         .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)

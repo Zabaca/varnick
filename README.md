@@ -63,6 +63,10 @@ which keeps it alive and lets Launchy reconnect after a restart. It is off until
 needs the zmx the build fetches, and Launchy only ever uses the copy next to its binary. A reboot or a
 logout ends the sessions either way.
 
+The menu bar menu's **Restart Launchy** (just above Quit) restarts it without building, as `make run` does, so
+the macOS permission grants a build would void stay. It asks first and lists the panes that would end, if any.
+It is left out when the checkout's `scripts/restart.sh` or the database can't be found from where Launchy runs.
+
 ## Defaults for a new install
 
 - **Skip permissions is off.** Claude sessions start with Claude's permission checks on. The setting

@@ -36,9 +36,11 @@ final class LauncherPanel: NSPanel {
     /// Floating panels report AXSystemDialog, which window managers like Rectangle move
     /// but won't resize. Present as a standard window so they do both.
     override func accessibilitySubrole() -> NSAccessibility.Subrole? { .standardWindow }
+    /// Runs when the panel hides itself on losing focus.
+    var onHide: (() -> Void)?
     override func resignKey() {
         super.resignKey()
-        if !keepOpen && !pinned { orderOut(nil) }
+        if !keepOpen && !pinned { orderOut(nil); onHide?() }
     }
 }
 
@@ -140,6 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.layer?.cornerCurve = .continuous
         host.layer?.masksToBounds = true
         panel = LauncherPanel(contentView: host)
+        panel.onHide = { [weak self] in self?.model.cancelRestart() }
         panel.delegate = self
         sizeSub = model.objectWillChange
             .receive(on: RunLoop.main)
@@ -165,6 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings.record(event)
                 return nil
             }
+            // The Restart Launchy card takes esc and ↩ before anything under it.
+            if self.model.answerRestartKey(event) { return nil }
             if self.model.pendingSplit != nil {
                 self.model.pickerKey(event)
                 return nil
@@ -194,6 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         listenItem = menu.addItem(withTitle: "Start Listening", action: #selector(toggleListening), keyEquivalent: "")
         menu.addItem(withTitle: "Show Transcript", action: #selector(showTranscript), keyEquivalent: "")
         menu.addItem(.separator())
+        // Left out when restart.sh or the database can't be found from where this Launchy runs (`BuildUpgrade.menuRestartAvailable`).
+        if BuildUpgrade.menuRestartAvailable(database: model.store.path) {
+            menu.addItem(withTitle: "Restart Launchy", action: #selector(restartFromMenu), keyEquivalent: "")
+        }
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
 
@@ -306,6 +315,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func toggleListening() { Listener.shared.toggle() }
 
+    /// Brings the panel up with the confirmation card: nothing restarts until it is confirmed.
+    @objc func restartFromMenu() {
+        show()
+        model.askRestart()
+    }
+
     @objc func showTranscript() {
         model.openTranscript()
         show()
@@ -351,6 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hide() {
         setPinned(false)
         panel.orderOut(nil)
+        model.cancelRestart()
     }
 
     /// Unpinning while the panel isn't key (the user is in another app) hides it, as an

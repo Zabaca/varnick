@@ -211,3 +211,37 @@ extension View {
             .background(Theme.tileFill, in: RoundedRectangle(cornerRadius: 8))
     }
 }
+
+/// The status menu's Restart Launchy: the confirmation Settings › Peers shows for this Mac (same question, same pane list, same buttons), over
+/// whatever the panel shows. The list is read as the card draws, so Keep sessions running turned on meanwhile is in it.
+struct RestartCard: View {
+    @ObservedObject var model: LauncherModel
+
+    var body: some View {
+        let impact = model.restartImpact()
+        ZStack {
+            Color.black.opacity(0.35)
+            VStack(alignment: .leading, spacing: 6) {
+                if model.restarting {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Restarting Launchy on \(PeerBuilds.shared.name(of: .own))…").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(BuildText.restartQuestion(PeerBuilds.shared.name(of: .own))).font(.system(size: 12, weight: .medium))
+                    PaneList(ends: impact.ends, reconnect: impact.reconnect)
+                    if let note = model.restartNote { Text(note).font(.system(size: 11.5)).foregroundStyle(.orange) }
+                    HStack(spacing: 8) {
+                        Button("Restart Launchy") { model.confirmRestart() }
+                        Button("Cancel") { model.cancelRestart() }
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(10)
+            .frame(width: 320, alignment: .leading)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .background(Theme.tileFill, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}

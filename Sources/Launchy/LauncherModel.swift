@@ -1677,6 +1677,51 @@ final class LauncherModel: ObservableObject {
         for session in tabs.flatMap(\.sessions) where session.isApp && session.ownsZmxSession { Zmx.killNow(session.id) }
     }
 
+    // MARK: Restart Launchy (status menu)
+
+    /// The status menu's Restart Launchy was chosen and waits for its confirmation card (`RestartCard`).
+    @Published private(set) var askingRestart = false
+    /// The confirmed restart was sent and Launchy is about to end.
+    @Published private(set) var restarting = false
+    /// Why the last Restart Launchy didn't go ahead.
+    @Published private(set) var restartNote: String?
+
+    func askRestart() {
+        guard !restarting else { return }
+        restartNote = nil
+        askingRestart = true
+    }
+
+    func cancelRestart() {
+        guard !restarting else { return }
+        askingRestart = false
+        restartNote = nil
+    }
+
+    func confirmRestart() {
+        guard askingRestart, !restarting else { return }
+        restarting = true
+        restartNote = nil
+        Task {
+            let refusal = await BuildUpgrade.shared.restartFromMenu(database: store.path)
+            if let refusal { restarting = false; restartNote = refusal; return }
+            // The script stops this Launchy within a few seconds; one still here after that didn't start.
+            try? await Task.sleep(for: .seconds(15))
+            if restarting { restarting = false; restartNote = "The restart didn't start" }
+        }
+    }
+
+    /// Esc and ↩ while the card shows; either is used up. Returns whether the key was used.
+    func answerRestartKey(_ event: NSEvent) -> Bool {
+        guard askingRestart, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
+        switch Int(event.keyCode) {
+        case kVK_Escape: cancelRestart()
+        case kVK_Return, kVK_ANSI_KeypadEnter: confirmRestart()
+        default: return false
+        }
+        return true
+    }
+
     /// What restarting Launchy does to the open panes (the `restart` request's dry run), by what the next launch does (ADR 0004). A started Claude
     /// or terminal pane in zmx survives only with Keep sessions running on now: the launch sweep kills the session of a restored pane
     /// otherwise (`ownsZmxSession`). An app's server survives whatever the setting says, since the restart is a SIGTERM that Launchy

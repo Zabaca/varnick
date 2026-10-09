@@ -373,8 +373,34 @@ final class BuildUpgrade {
         }
     }
 
+    /// Whether the status menu's Restart Launchy can work: a checkout whose `scripts/restart.sh` runs, and the database this Launchy has open
+    /// (what the script passes on as `LAUNCHY_DB`). Launchy started by the LaunchAgent from a checkout that has since moved fails this.
+    static func menuRestartAvailable(database: String) -> Bool {
+        guard let checkout = LaunchSnapshot.checkout else { return false }
+        return FileManager.default.isExecutableFile(atPath: script(in: checkout)) && FileManager.default.fileExists(atPath: database)
+    }
+
+    /// The status menu's Restart Launchy, after its confirmation: the restart `make run` does, with no build and no newer-build check, so a
+    /// macOS permission grant is picked up without a build voiding it. Refused while an upgrade or a `make` in the checkout builds, since the
+    /// binary on disk would be half written. Returns why it didn't start, nil when it did or already had.
+    func restartFromMenu(database: String) async -> String? {
+        guard !restartScheduled else { return nil }
+        let name = MacPeerHost().name
+        guard let checkout = LaunchSnapshot.checkout else { return "Launchy on \(name) isn't running from a checkout of its repository" }
+        guard Self.menuRestartAvailable(database: database) else { return "scripts/restart.sh or the database isn't where this Launchy started" }
+        if isBusy { return "A build is running on \(name)" }
+        if await BuildProcesses.isRunning(in: checkout) { return "A build is running on \(name)" }
+        // The await let a peer's confirmed restart or an upgrade get in first.
+        if restartScheduled { return nil }
+        if isBusy { return "A build is running on \(name)" }
+        scheduleRestart(checkout: checkout, database: database)
+        return nil
+    }
+
+    nonisolated private static func script(in checkout: URL) -> String { checkout.appendingPathComponent("scripts/restart.sh").path }
+
     nonisolated private static func spawnRestart(checkout: URL, database: String) -> Bool {
-        let script = checkout.appendingPathComponent("scripts/restart.sh").path
+        let script = script(in: checkout)
         guard FileManager.default.isExecutableFile(atPath: script) else {
             NSLog("Launchy: the restart didn't start: \(script) isn't there")
             return false
