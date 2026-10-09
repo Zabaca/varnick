@@ -294,6 +294,17 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         watchExit()
     }
 
+    /// Starts a client in the terminal at the container's size, fitted first: no client runs yet, so the
+    /// change costs nothing, and the content may still be at its old size (`HostContainer`).
+    private func launchProcess(executable: String, args: [String], environment: [String], currentDirectory: String) {
+        container?.fitNow()
+        if Self.logsResize {
+            let terminal = view.getTerminal()
+            Self.logResize("\(id) start \(terminal.cols)x\(terminal.rows) cells, view \(view.frame.size)")
+        }
+        view.startProcess(executable: executable, args: args, environment: environment, currentDirectory: currentDirectory)
+    }
+
     /// SwiftTerm's exit notification doesn't always arrive (the child was left as a
     /// zombie and the pane stuck after /exit), so also poll the pid ourselves.
     private func watchExit() {
@@ -332,8 +343,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             environment += Zmx.paneEnvironment
             inZmx = true
         }
-        view.startProcess(executable: executable, args: args, environment: environment,
-                          currentDirectory: directory ?? record.directory)
+        launchProcess(executable: executable, args: args, environment: environment,
+                      currentDirectory: directory ?? record.directory)
     }
 
     // The entry ($1) and the log path ($2) are arguments, outside the script. Output is teed to the
@@ -410,8 +421,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Follows today's transcript as it is written; a restored pane follows the day it starts on.
     private func startTranscript() {
         let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
-        view.startProcess(executable: "/usr/bin/tail", args: ["-n", "200", "-F", Transcript.today().path],
-                          environment: env, currentDirectory: Transcript.directory.path)
+        launchProcess(executable: "/usr/bin/tail", args: ["-n", "200", "-F", Transcript.today().path],
+                      environment: env, currentDirectory: Transcript.directory.path)
     }
 
     private func startClaude() {
@@ -647,8 +658,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             // it may not exist here.
             let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true) + SSHRunner.paneEnvironment
             attachedAt = Date()
-            view.startProcess(executable: command.executable, args: command.arguments, environment: env,
-                              currentDirectory: NSHomeDirectory())
+            launchProcess(executable: command.executable, args: command.arguments, environment: env,
+                          currentDirectory: NSHomeDirectory())
             checkControlAfterAttach()
         }
     }
@@ -1005,11 +1016,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         Task { [weak self] in
             for _ in 0..<20 {
                 guard let self, !self.finished, !self.endedByUser, !self.clientEnded else { return }
-                if self.view.window != nil, self.view.bounds.width > 100, self.view.bounds.height > 100 { break }
+                if let host = self.container, host.window != nil, host.bounds.width > 100, host.bounds.height > 100 { break }
                 try? await Task.sleep(for: .milliseconds(50))
             }
             guard let self, !self.finished, !self.endedByUser, !self.clientEnded else { return }
-            self.container?.fitNow()      // no client runs yet, so a size change costs nothing
             start()
         }
     }
@@ -1527,12 +1537,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         Task { @MainActor in self.finish(exitCode) }
     }
-    /// Set `LAUNCHY_LOG_RESIZE=1` to log every grid size sent to the pty, to see what size a pane passes through.
+    /// `LAUNCHY_LOG_RESIZE=1` logs the size a client starts with and each change after, which is every size its pty gets.
     private nonisolated static let logsResize = ProcessInfo.processInfo.environment["LAUNCHY_LOG_RESIZE"] == "1"
+    private nonisolated static func logResize(_ line: String) { NSLog("Launchy: [resize] \(line)") }
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
         guard Self.logsResize else { return }
-        let pixels = Thread.isMainThread ? MainActor.assumeIsolated { source.frame.size } : .zero
-        NSLog("Launchy: [resize] \(id) \(newCols)x\(newRows) cells, view \(Int(pixels.width))x\(Int(pixels.height))")
+        let points = Thread.isMainThread ? MainActor.assumeIsolated { source.frame.size } : .zero
+        Self.logResize("\(id) \(newCols)x\(newRows) cells, view \(points)")
     }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         Task { @MainActor in
@@ -1569,10 +1580,7 @@ struct TerminalHost: NSViewRepresentable {
         container.adopt()
         // After the update: start() can wait on zmx, and nothing may spin the run loop or publish
         // from inside a view update. Before the focus below, so the pane starts first.
-        DispatchQueue.main.async {
-            container.fitNow()
-            session.start()
-        }
+        DispatchQueue.main.async { session.start() }
         if focused { DispatchQueue.main.async { session.focus() } }
         return container
     }
@@ -1585,13 +1593,7 @@ struct TerminalHost: NSViewRepresentable {
     }
 }
 
-/// What `TerminalHost` shows: holds the session's content while it is the session's claimant.
-///
-/// The content has no autoresizing mask: it takes the container's size one main-queue turn after the
-/// container gets it (`fitNow` is the immediate form). Each frame change of a terminal reaches its pty,
-/// and Claude's alternate screen has no scrollback, so a shrink followed by a grow in one turn (the panel
-/// at the board's size before `placePanel` restores the pane's) clips the screen for good: Claude only
-/// sees its old size again and does not repaint. Deferred, the two collapse into no change at all.
+/// What `TerminalHost` shows: holds the session's content while it is the session's claimant, and sizes it a turn late (where-it-breaks, Sessions and tabs).
 final class HostContainer: NSView {
     weak var session: ClaudeSession?
     private var fitQueued = false
@@ -1620,18 +1622,20 @@ final class HostContainer: NSView {
 
     private var hasSize: Bool { bounds.width > 0 && bounds.height > 0 }
 
-    /// Gives the content the container's bounds if they differ (never a zero size, never for a view that
-    /// another container has taken since).
     func fitNow() {
-        guard hasSize, let view = session?.content, view.superview === self, view.frame != bounds else { return }
+        guard window != nil, hasSize, let view = session?.content, view.superview === self, view.frame != bounds else { return }
         view.frame = bounds
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        // A window drag fits at once so it doesn't lag; anything else waits a turn (see above). One
-        // queued fit serves every size change before it runs, and reads the size it runs with.
+        // A window drag fits at once so it doesn't lag.
         if inLiveResize { return fitNow() }
+        queueFit()
+    }
+
+    /// One queued fit serves every size change before it runs, and reads the size it runs with.
+    private func queueFit() {
         guard !fitQueued else { return }
         fitQueued = true
         DispatchQueue.main.async { [weak self] in
@@ -1649,6 +1653,7 @@ final class HostContainer: NSView {
     /// discard it, leaving the claim with a container that never gets a window.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window != nil { queueFit() }      // a fit queued while out of a window did nothing
         guard window != nil, let session, session.container !== self, session.container?.window == nil else { return }
         session.container = self
         adopt()
