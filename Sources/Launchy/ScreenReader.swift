@@ -76,13 +76,26 @@ enum ScreenReader {
         return nil
     }
 
-    /// A running app by its name, for `Launchy --ask --app`. Accessory apps count, since the running Launchy is one (the command's
-    /// own process, also named Launchy, does not).
+    /// A running app by its name, for `Launchy --ask --app`: a regular app first (its name, else part of it), and an accessory app
+    /// only by its whole name, so a part of a name can't land on a menu-bar helper. The running Launchy is an accessory app; the
+    /// command's own process, also named Launchy, is never found.
     static func application(named name: String) -> NSRunningApplication? {
         let wanted = name.lowercased()
         let ownPID = ProcessInfo.processInfo.processIdentifier
-        let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy != .prohibited && $0.processIdentifier != ownPID }
-        return apps.first { $0.localizedName?.lowercased() == wanted } ?? apps.first { $0.localizedName?.lowercased().contains(wanted) == true }
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.processIdentifier != ownPID }
+        let regular = apps.filter { $0.activationPolicy == .regular }
+        if let app = regular.first(where: { $0.localizedName?.lowercased() == wanted })
+            ?? regular.first(where: { $0.localizedName?.lowercased().contains(wanted) == true }) {
+            return app
+        }
+        return apps.first { $0.activationPolicy == .accessory && $0.localizedName?.lowercased() == wanted }
+    }
+
+    /// Whether the element `target` points at is in Launchy's own process (a panel element).
+    static func isLaunchy(_ target: ScreenTarget) -> Bool {
+        guard let element = target.reference?.element else { return false }
+        var pid: pid_t = 0
+        return AXUIElementGetPid(element, &pid) == .success && pid == ProcessInfo.processInfo.processIdentifier
     }
 
     // MARK: Reading

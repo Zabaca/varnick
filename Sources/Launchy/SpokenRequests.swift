@@ -270,7 +270,9 @@ final class SpokenRequests {
                 let rereading = Date()
                 let frame = await ScreenReader.currentFrame(of: target)
                 reread = Date().timeIntervalSince(rereading)
-                if let frame, frame.width > 1, frame.height > 1 {
+                // A panel element is gone when the panel was hidden, or covered, during the hold: its frame may still read true.
+                let panelGone = ScreenReader.isLaunchy(target) && ScreenReader.panel() == nil
+                if let frame, frame.width > 1, frame.height > 1, !panelGone {
                     pointing = (frame, target.note)
                 } else {
                     done.outcome = .screenMiss(.gone)

@@ -163,7 +163,7 @@ Claude session and shell in its panes gets them too, kept running in zmx or not:
 
 The relevance filter can run on [TypeSafe](https://www.typesafe.ai)'s API, with your own key (Settings
 saves it in the Keychain, or it is read from `TYPESAFE_API_KEY` in the environment or from `.env`). Choosing
-TypeSafe is consent to send what its features need; On this Mac is the choice that keeps everything here.
+TypeSafe is consent to send what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe.
 What it sends is under Privacy.
 
 ### On-device models
@@ -217,7 +217,7 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
 - **Choosing TypeSafe is consent to send what a feature backed by it needs,** Launchy's own panel and the names
   of your sessions and projects included, and each new kind of data is listed here and in SECURITY.md. Keeping
   things private is the relevance filter's **On this Mac** setting: with it, or with the filter off, none of
-  what follows leaves this Mac.
+  the TypeSafe sending below happens.
 - **With a TypeSafe key and the relevance filter on TypeSafe,** it sends each search to TypeSafe's API
   with the title, site and page description of up to 20 results. It does not send full addresses or tags.
   The filter is off by default (above). With Hey Launchy on, it also sends TypeSafe's Jev the text you

@@ -148,8 +148,8 @@ and without it that step is skipped.
   Security (ADR 0022). macOS may also ask again after some weeks whether Launchy may
   keep recording, and show its capture indicator (not verified).
 - **What leaves the Mac.** Choosing TypeSafe is consent to send what a feature backed by it needs, so this
-  list is what the feature needs, not a selection that spares your own names; the way to keep them here is the
-  filter's On this Mac setting. Only with the filter on TypeSafe and a key: for a request about the screen, the
+  list is what the feature needs, not a selection that spares your own names; the way to keep them from TypeSafe is
+  the filter's On this Mac setting. Only with the filter on TypeSafe and a key: for a request about the screen, the
   words you said, the title of the window in front and, for up to its first 255 elements, the label, kind,
   nearby text and whether it is dimmed. Those are the window's visible text, not only that near its controls:
   a message list's subjects and senders, an open mail's body in Mail, a page's text in Safari, a file's name
