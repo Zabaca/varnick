@@ -257,6 +257,7 @@ final class SpokenRequests {
         var waited: TimeInterval?
         var run: SpokenPipeline.Run?
         var pointing: (frame: CGRect, note: String)?
+        var reread: TimeInterval?
         var saying: String
         do {
             // Cancelling this task does not cancel the speculative one; `cancel()` does both.
@@ -266,7 +267,9 @@ final class SpokenRequests {
             var done = try await SpokenPipeline.respond(found, to: request.text, on: model)
             // The window may have moved during the hold: the frame is read again, and an element that is gone is not pointed at.
             if case .point(let target) = done.outcome {
+                let rereading = Date()
                 let frame = await ScreenReader.currentFrame(of: target)
+                reread = Date().timeIntervalSince(rereading)
                 if let frame, frame.width > 1, frame.height > 1 {
                     pointing = (frame, target.note)
                 } else {
@@ -286,11 +289,17 @@ final class SpokenRequests {
         }
         guard !Task.isCancelled else { return }
 
-        // The arrow is up just before the speech starts and stays a while after it ends; never drawn before the hold has ended. One
-        // that can't be drawn (the switch was turned off since the request began, or its frame is on no display) is a miss.
+        // The arrow goes up as soon as the pick is made and its frame re-read, before the speech is rendered (about half a second),
+        // and stays a while after the speech ends; never drawn before the hold has ended. One that can't be drawn (the switch was
+        // turned off since the request began, or its frame is on no display) is a miss.
         var drawn = false
+        var drawing: TimeInterval?
+        var arrowUp: Date?
         if let pointing {
+            let drawBegan = Date()
             drawn = Settings.shared.screenPointingOn && ArrowOverlay.shared.show(frame: pointing.frame, note: pointing.note)
+            arrowUp = Date()
+            drawing = arrowUp?.timeIntervalSince(drawBegan)
             if !drawn {
                 saying = ScreenMiss.gone.spoken
                 run?.outcome = .screenMiss(.gone)
@@ -314,6 +323,9 @@ final class SpokenRequests {
               + "filter \(seconds(run?.filter)) (\(run?.filteredBy ?? "-")), "
               + "answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
               + Self.screenTiming(run?.screen)
+              + Self.arrowTiming(pointed: pointing != nil, reread: reread, drawing: drawing, drawn: drawn,
+                                 upAfterSpeech: arrowUp.map { $0.timeIntervalSince(request.lastEnd) })
+              + "speaking began \(speaking.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
               + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "
               + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended, "
               + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")
@@ -327,6 +339,15 @@ final class SpokenRequests {
         return "screen read \(look.read.seconds.secondsText) (\(look.candidates) elements), "
             + "chosen in \(look.choose.seconds.secondsText) by \(look.chosenBy) (\(present)), " + textTiming(look.text)
             + "miss \(look.miss?.logKind ?? "pointed"), "
+    }
+
+    /// The steps between the pick and the speech, for a request that pointed: the frame re-read, the arrow drawn, and when it was up
+    /// by the clock of the speech's end. Durations and kinds only.
+    private static func arrowTiming(pointed: Bool, reread: TimeInterval?, drawing: TimeInterval?, drawn: Bool,
+                                    upAfterSpeech: TimeInterval?) -> String {
+        guard pointed else { return "" }
+        let up = drawn ? "up \(upAfterSpeech?.secondsText ?? "-") after speech ended" : "not drawn"
+        return "frame re-read \(reread?.secondsText ?? "-"), arrow drawn in \(drawing?.secondsText ?? "-") (\(up)), "
     }
 
     /// The text fallback's part (ADR 0021): whether it ran or why not, the durations and the counts, never the lines.

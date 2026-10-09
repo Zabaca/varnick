@@ -150,6 +150,8 @@ enum ScreenText {
                 continuation.resume(with: Result {
                     let request = VNRecognizeTextRequest()
                     request.recognitionLevel = .accurate
+                    // Measured: the same labels in about two thirds of the time. Labels are not sentences to correct.
+                    request.usesLanguageCorrection = false
                     request.recognitionLanguages = [listeningLanguage]
                     try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
                     return (request.results ?? []).compactMap { observation in
@@ -186,6 +188,52 @@ enum ScreenText {
             && text.contains { $0.isLetter || $0.isNumber }
     }
 
+    /// Bullet glyphs, which are never part of a label: stripped from the ends of a line even when stuck to a word ("•fredrin").
+    private static let bulletGlyphs: Set<Character> = ["•", "·", "‣", "◦", "●", "○", "▪", "■", "□", "▸", "▹", "►", "▻", "›", "»", "‹", "«", "◂"]
+
+    /// A recognised line without what an icon or a list left at its ends: bullets and list markers ("•", "-", "1."), a lone symbol
+    /// ("#"), and one capital letter after a lowercase word ("fredrin Y", a glyph read as a letter), once and never again. "Wi-Fi 6",
+    /// "Step 2", "Option B", "iPhone X", "plan b", "100 %" and "Zoom Out −" stay: a digit, a word with a capital, a lowercase letter
+    /// and the signs a label can end in are part of a label. `text` is already `ScreenElements.cleaned`.
+    static func withoutDebris(_ text: String) -> String {
+        var tokens = text.split(separator: " ").map(String.init)
+        // "+", "%" and "−" mean something anywhere; "-" is a list marker only at the start.
+        func isSymbol(_ token: String, leading: Bool) -> Bool {
+            if ["+", "%", "−"].contains(token) || (token == "-" && !leading) { return false }
+            return !token.contains { $0.isLetter || $0.isNumber }
+        }
+        func isNumbering(_ token: String) -> Bool {
+            guard let mark = token.last, ".)".contains(mark) else { return false }
+            return (1...2).contains(token.count - 1) && token.dropLast().allSatisfy(\.isNumber)
+        }
+        func trimGlyphs(_ index: Int, leading: Bool) {
+            var token = tokens[index]
+            while let edge = leading ? token.first : token.last, bulletGlyphs.contains(edge) {
+                if leading { token.removeFirst() } else { token.removeLast() }
+            }
+            tokens[index] = token
+        }
+        var changed = true
+        while changed, !tokens.isEmpty {
+            changed = false
+            trimGlyphs(0, leading: true)
+            trimGlyphs(tokens.count - 1, leading: false)
+            if tokens.first?.isEmpty == true { tokens.removeFirst(); changed = true; continue }
+            if tokens.last?.isEmpty == true { tokens.removeLast(); changed = true; continue }
+            if isSymbol(tokens[0], leading: true) || (tokens.count > 1 && isNumbering(tokens[0])) {
+                tokens.removeFirst(); changed = true; continue
+            }
+            if isSymbol(tokens[tokens.count - 1], leading: false) {
+                tokens.removeLast(); changed = true
+            }
+        }
+        if tokens.count >= 2, let letter = tokens.last, letter.count == 1, letter.first?.isUppercase == true, !"AI".contains(letter),
+           case let word = tokens[tokens.count - 2], !word.contains(where: \.isUppercase), word.contains(where: \.isLowercase) {
+            tokens.removeLast()
+        }
+        return tokens.joined(separator: " ")
+    }
+
     /// `frames` read from a window at `was`, carried to where that window is in the capture at `now`.
     static func shifted(_ frames: [CGRect], from was: CGRect?, to now: CGRect) -> [CGRect] {
         guard let was else { return frames }
@@ -199,8 +247,10 @@ enum ScreenText {
                            pointer: CGPoint) -> [ScreenElement] {
         var kept: [ScreenElement] = []
         for line in recognised {
-            let words = ScreenElements.cleaned(line.text)
-            guard isLabel(words) else { continue }
+            // Cleaning only shortens: a line too long to be a label as read stays out.
+            let read = ScreenElements.cleaned(line.text)
+            let words = withoutDebris(read)
+            guard isLabel(read), isLabel(words) else { continue }
             let frame = ScreenGeometry.accessibility(normalised: line.box, inWindow: window)
             guard frame.width > 1, frame.height > 1, frame.origin.x.isFinite, frame.origin.y.isFinite else { continue }
             let centre = CGPoint(x: frame.midX, y: frame.midY)
