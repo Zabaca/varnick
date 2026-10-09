@@ -1,7 +1,7 @@
 ---
 problem: listening-never-answers
 title: Wake on the mic's transcript; Launchy searches and Text generation answers aloud
-summary: While Listening is on, a mic phrase that starts with "Hey Launchy" becomes a spoken request. Text generation (this Mac's Gemma, or the tailnet server) picks the source and the search words. Launchy runs the same search the panel runs, without touching the panel, and Text generation writes a one- or two-sentence answer from the top rows. Launchy speaks the answer in the Voice setting, and that is the whole response: the panel isn't shown and nothing opens. Launchy's own voice is kept out of the transcript and can't wake it. Nothing leaves the user's machines.
+summary: While Listening is on, a mic phrase that starts with "Hey Launchy" becomes a spoken request. TypeSafe's Jev picks the source when the relevance filter is on TypeSafe (Text generation, this Mac's Gemma or the tailnet server, does otherwise, and when Jev fails) and Launchy strips the search words. Launchy runs the same search the panel runs, without touching the panel, and Text generation writes a one- or two-sentence answer from the top rows. Launchy speaks the answer in the Voice setting, and that is the whole response: the panel isn't shown and nothing opens. Launchy's own voice is kept out of the transcript and can't wake it. Only the request text leaves the user's machines, to TypeSafe, only for the decide step and only with the relevance filter on TypeSafe.
 status: accepted
 ---
 
@@ -9,11 +9,11 @@ status: accepted
 
 A new switch, **Hey Launchy**, in Settings › Listening. With it on and Listening running, each final mic phrase is checked for the wake phrase at its start. Launchy plays a short sound when it wakes. The rest of the phrase is the **spoken request**, and if nothing follows, the next phrase is. Then three fixed steps run, the user's 1, 2, 3:
 
-1. **Decide.** One Text generation call turns the request into a source (History, Bookmarks, sessions, or none of them) and a few search words.
+1. **Decide.** TypeSafe's Jev turns the request into a source (History, Bookmarks or sessions) when the relevance filter is on TypeSafe; Launchy takes the search words from the request itself. Otherwise Text generation does both (ADR 0016).
 2. **Read.** Launchy runs the panel's search with those words (keyword and meaning, the same ranking), but apart from the panel: nothing on screen changes. It takes the top rows of the chosen source: their title, site or folder, date and description.
 3. **Respond.** A second Text generation call writes a short answer from those rows. Launchy speaks it.
 
-The spoken answer is the whole response. The panel doesn't come forward, focus stays where it was, and nothing opens or starts. Text generation runs wherever Settings › Models says, so the request and the rows stay on this Mac or go to the user's own server on the tailnet, and nowhere else.
+The spoken answer is the whole response. The panel doesn't come forward, focus stays where it was, and nothing opens or starts. Text generation (the answer, and the decide step when Jev can't be asked) runs wherever Settings › Models says, so the rows stay on this Mac or go to the user's own server on the tailnet, and nowhere else. The request text also goes to TypeSafe for the decide step when the relevance filter is on TypeSafe.
 
 Launchy's voice must not be heard back as speech:
 
@@ -22,7 +22,7 @@ Launchy's voice must not be heard back as speech:
 
 ## Trade-offs
 
-- **Private by construction.** No new service, key or network path. With Text generation on this Mac nothing leaves it. With a server, the request and the rows' text go to that server, as session prompts already do for Search embeddings on a server (ADR 0014). The relevance filter doesn't run on a spoken request's search, so nothing goes to TypeSafe.
+- **Private by construction** (amended by ADR 0016: the request text goes to TypeSafe for the decide step when the relevance filter is on TypeSafe with a key). No new service, key or network path. With Text generation on this Mac nothing leaves it. With a server, the request and the rows' text go to that server, as session prompts already do for Search embeddings on a server (ADR 0014). The relevance filter doesn't run on a spoken request's search, so nothing goes to TypeSafe. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): it runs wherever Settings › Search says, so with the filter on TypeSafe the search words and the first 20 pages' title, site and description go to TypeSafe.)
 - **Nothing on screen is disturbed.** The panel and the app in front stay as they were, and a false wake costs a sound and a sentence. The flip side: the user only hears the answer. To open the page or session, they bring up the panel and search, or type its name.
 - **A small model, kept on rails.** Gemma 4 E2B only fills in two short replies; Launchy runs the steps. Such a small model can pick the wrong source or poor search words. Since the answer is only heard, a wrong search can't be seen. The answer prompt asks the model to say so when no row fits rather than guess.
 - **Answers only from what a row holds.** Launchy can say which page or session, from where and when, and what the page's own summary or the user's prompts said. It can't say what a page's text says or what Claude replied in a session.
@@ -78,7 +78,7 @@ Launchy's voice must not be heard back as speech:
 
 - On waking, Launchy plays a short system sound.
 - **The request** is the text after the match.
-  - If none follows, Launchy takes the next mic result that starts within the wait limit (8 s).
+  - If none follows, Launchy takes the next mic result that starts within the wait limit (8 s). A wait that ends with nothing said is an empty request: no search, and Launchy says "Ask me to find a page, a bookmark or a Claude session." Speech heard just before the wait ends is waited for, since its final result comes late. A result of only punctuation counts as nothing.
   - Any further mic result that starts within the gap (1.5 s) of the previous one's end is appended, up to the length limit (20 s or 500 characters).
   - The wait, the gap and the limit are named constants, tuned by hand.
 - One request at a time. Mic results heard while a request is decided, read or spoken never wake it or join a request.
@@ -92,27 +92,39 @@ Launchy's voice must not be heard back as speech:
   - The check uses the result's audio time, not when the result arrives, since finals arrive 1–2 s late.
 - **The answer itself** goes into the transcript once, as a `[launchy]` line (below).
 
-**Deciding (step 1)**
+**Deciding (step 1)** (amended: Jev can decide, [ADR 0016](../../../adr/0016-a-spoken-requests-decide-step-asks-typesafe-jev.md))
+- **When the relevance filter is set to TypeSafe and a key is saved, TypeSafe's Jev decides** (`SpokenRouter`), on a pinned model version. A key alone is not enough: with the filter On this Mac or off, or with no key, Text generation decides and nothing goes to TypeSafe. One call carries the request text and nothing else, with two questions:
+  - `source`, a choice over `history`, `bookmarks` and `sessions`, each with a rubric: bookmarks only when the request says bookmarked or saved; sessions for what the user was doing, fixed, planned or decided, and for a name that isn't a well-known public thing (probably one of their projects);
+  - `action`, a choice over `answer`, `open`, `start` and `other`. Only `other` is read, as the off-topic signal (the weather, a timer). Opening and starting by voice stay out of scope.
+- **Off-topic:** "other" at 0.5 or more is answered at once with "I only look up your pages, bookmarks and Claude sessions.", with no search and no Text generation, and the line goes to the transcript like the other spoken ones. When Text generation decides there is no such signal, and every request is searched.
+- **The search words are not Jev's.** Launchy strips filler in code: words of asking, finding and remembering, words naming only a kind (page, bookmark, session) or a time, and small grammatical words. If nothing is left, the request itself is the query. (Measured locally, this matched Jev's own word-by-word judgments.)
+- **From Jev's probabilities to the rows read:**
+  - the likeliest source leads, as before;
+  - sessions are also read when the request holds the words of one of the user's Claude session folders in order, or the name's words joined (compared here, never sent), and their rows come first; or when Jev gave sessions at least 0.1, and their rows come after the pages;
+  - sessions read beside pages take up to 3 rows ahead, or at least 2 behind, and the pages fill the 5 rows in all (sessions fill what few pages leave), so each kind is heard when it has any.
+- **Fallback to Text generation:** the filter not on TypeSafe, no key, a network error, a status other than 200, no source in the reply or no answer within 1.5 s.
+- Where each decide ran is in the timing log line and in `--ask`, which prints Jev's probabilities. `LAUNCHY_EVAL_FILTER` (typesafe, local, off) chooses the filter for `--ask` without writing the settings.
+
+*The fallback, Text generation as first specified:*
 - One Text generation call with a fixed prompt, kept in one place as the title prompt is. It asks for one line of JSON:
-  - `source`: `history` (pages, History and Bookmarks together, as the panel searches them), `bookmarks` (bookmarked pages only), `sessions`, or `none`;
+  - `source`: `history` (pages, History and Bookmarks together, as the panel searches them), `bookmarks` (bookmarked pages only), or `sessions`;
   - `query`: 1 to 8 search words, without filler ("find", "that page", "I was reading").
 - Greedy, at most 48 new tokens. The reply is read leniently: the first `{…}` in it.
-- A reply that can't be read falls back to the request's own text as the query, reading sessions and pages both.
+- A reply that can't be read, or that names no source ("none" included), falls back to the request's own text as the query, reading sessions and pages both. Every request is a search: the prompt offers no way to decline.
 - The search words matter: keyword search requires every word to match, so a whole spoken sentence would match nothing by keyword.
 - **Where it runs** is Text generation's choice, picked as work the user waits on: the server unless it is known to have failed, otherwise this Mac's installed model. This is the rule `ModelServerState.place` already applies to searches; titles use the background rule.
   - A server failure rests the server, as a failed search embedding does, and the step runs once more on this Mac's model if installed.
   - If neither can answer, Launchy says "Text generation isn't set up" and stops.
 
 **Reading (step 2)**
-- `none`: no search. Launchy says it can search History, Bookmarks and Claude sessions.
-- **Otherwise, the panel's search without the panel.** A method on the launcher model runs the first two passes of the panel's search and returns the sessions and pages:
+- **The panel's search without the panel.** A method on the launcher model runs the first two passes of the panel's search and returns the sessions and pages:
   - keyword for pages and for sessions;
   - the query's embedding, through the same server-or-this-Mac pick;
   - meaning for both;
   - the same fusion, limits, session similarity floor and open-sessions-first.
 
   It sets nothing the panel shows: not the results, the selection, the search statuses or who answered the last semantic search. The panel's own search keeps its code path and behaves exactly as before.
-- No relevance filter: the answer step already judges which of the few rows fit, and the words go nowhere.
+- No relevance filter: the answer step already judges which of the few rows fit, and the words go nowhere. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): the filter runs on a spoken request as on a typed search, and the answer reads the pages it judged relevant when there are any. The answer step could not judge a page that was not among the few rows.)
 - What it reads:
   - `sessions`: the sessions, at most 3;
   - `history`: the top 5 pages;
@@ -145,7 +157,7 @@ Launchy's voice must not be heard back as speech:
 - With Text generation on a server, the request and the rows' text go to that server.
   - The Text generation server row's text in Settings › Models says so, beside the first prompt it sends today.
   - `where-it-breaks.md`'s list of what goes to a model server adds them.
-- Nothing goes to any other service: no relevance filter, no TypeSafe.
+- Nothing goes to any other service, except the request text to TypeSafe for the decide step (ADR 0016). The relevance filter does not run. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): it runs, and with the filter on TypeSafe the search words and the first 20 pages' title, site and description go to TypeSafe.)
 
 **Command line**
 - `Launchy --ask <file>` treats the file's text as a request after the wake phrase. It runs the three steps against the app's own search without speaking, and prints the source, the search words, the rows' titles, the answer and each step's time.
@@ -171,7 +183,7 @@ Launchy's voice must not be heard back as speech:
   - Say a sentence with "Launchy" in the middle ("I think Launchy is slow"). Nothing wakes.
   - Turn Listening off while Launchy speaks. It stops.
   - With Text generation set to a server that is off, the request is answered by this Mac's model when it is installed.
-  - Launchy's log (Console, process Launchy) holds no request, words, titles or answer.
+  - Launchy's log holds no request, words, titles or answer. (amended 2026-10-08 at the user's request, [where-it-breaks](../../../agents/where-it-breaks.md): the log is `~/Library/Logs/Launchy.log`, where `make run` (`scripts/restart.sh`) and the LaunchAgent send Launchy's output; the lines are not in Console or `log show`, see where-it-breaks, Checking by hand.)
 
 **Hand checks for the builder.** These are unverified. Run them with the user (they speak), and keep figures and anything personal in `.scratch/listening-never-answers/`, never in the repo.
 
@@ -199,7 +211,7 @@ Launchy's voice must not be heard back as speech:
 - Follow-up questions that rely on the last answer ("and the one before that?"). Each request stands alone.
 - Several searches for one request, reading a page's text or a session's replies (options 02 and 03).
 - Dates as filters ("yesterday"). The dates reach the answer, not the search.
-- The relevance filter on a spoken request's search.
+- The relevance filter on a spoken request's search. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): now in scope.)
 - Interrupting the answer by speaking, a stop control other than turning Listening or the switch off, echo cancellation on the mic, and languages other than the transcriber's.
 
 ## Further Notes
@@ -211,7 +223,7 @@ Launchy's voice must not be heard back as speech:
 - **Defaults, not asked of the user:**
   - the `[launchy]` transcript line;
   - dropping mic phrases heard while Launchy speaks;
-  - no relevance filter on spoken searches;
+  - no relevance filter on spoken searches (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): reversed);
   - no stop control beyond turning Listening or the switch off.
 - **Later, if the user wants more than speech:**
   - Show the search in the panel with the answer's row selected, so that ↩ opens it. The answer step would then name its row by number again, and the panel would come forward the way the menu's Show Transcript does.

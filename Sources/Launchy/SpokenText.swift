@@ -22,11 +22,16 @@ enum SpokenText {
         return nil
     }
 
+    /// `text` without the whitespace and punctuation around it: what is left of a request, empty when only a stray "." came.
+    static func cleaned(_ text: String) -> String {
+        text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.:;!?-–—")))
+    }
+
     private static func token(_ word: String) -> String {
         word.lowercased().trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
     }
 
-    // MARK: Step 1: decide
+    // MARK: Step 1: decide with Text generation (when Jev is not used)
 
     /// Where to look and what to look for.
     struct Plan: Equatable {
@@ -36,14 +41,17 @@ enum SpokenText {
             /// Bookmarked pages only.
             case bookmarks
             case sessions
-            case none
-            /// The reply couldn't be read: sessions, then pages.
+            /// No source to prefer: sessions, then pages. The Text generation reply named none Launchy knows.
             case any
         }
+        /// Sessions read beside the chosen kind of page: ahead of its pages (a request word names one of the user's projects) or
+        /// behind them (Jev gave sessions some of the weight). Unused when the source is sessions or any.
+        enum AlsoSessions: Equatable { case no, ahead, behind }
         var source: Source
         var query: String
-        /// The reply held a source Launchy knows; otherwise the request itself is the query.
+        /// The reply held a source Launchy knows; otherwise the request itself is the query, over both kinds of row.
         var readable: Bool
+        var alsoSessions = AlsoSessions.no
     }
 
     /// The most of a request that is kept and sent anywhere.
@@ -54,7 +62,9 @@ enum SpokenText {
     /// The decide prompt, in one place so it can be tuned with `Launchy --ask`.
     private static let decideTemplate = """
         You turn a spoken request into a search. Choose where to look and what to search for.
-        Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions), "none" (the request is not about finding any of these).
+        Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions: their projects and work).
+        Every request is a search, so always choose one source. When unsure what is meant, choose "sessions" or "history" and use the request's own key words.
+        A well-known public thing (a technology, product or site) is "history". A name you don't recognise is probably one of the user's own projects: "sessions".
         Reply with one line of JSON and nothing else: {"source": "...", "query": "..."}
         "query" is 1 to 8 words to search for: the key words of the topic only, without filler such as "find", "that page", "I was reading" or "the one about".
 
@@ -64,14 +74,24 @@ enum SpokenText {
         {"source": "bookmarks", "query": "Rust lifetimes"}
         Request: what was I doing with Claude on the reranker
         {"source": "sessions", "query": "reranker"}
-        Request: what's the weather like
-        {"source": "none", "query": ""}
+        Request: what is Kestrel
+        {"source": "sessions", "query": "Kestrel"}
+        Request: what is MLX
+        {"source": "history", "query": "MLX"}
+        Request: tell me about the budget spreadsheet
+        {"source": "history", "query": "budget spreadsheet"}
 
         Request: {request}
         """
 
     static func decidePrompt(for request: String) -> String {
         decideTemplate.replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
+    }
+
+    /// What the relevance filter is asked about: the plan's query, or when that is the whole request (an unreadable reply, or one
+    /// without words) the request's key words, so a request's filler never goes to a judge. Empty when no word is left.
+    static func filterWords(for plan: Plan, request: String) -> String {
+        plan.query == request || plan.query == cleaned(request) ? queryWords(from: plan.query) : plan.query
     }
 
     /// The first `{…}` in the reply, read leniently. A reply that can't be read gives the request itself as the query, over both
@@ -87,13 +107,76 @@ enum SpokenText {
         case "history", "pages": source = .history
         case "bookmarks", "bookmark": source = .bookmarks
         case "sessions", "session": source = .sessions
-        case "none": source = .none
         default: return unreadable
         }
         let words = ((object["query"] as? String) ?? "").split(whereSeparator: \.isWhitespace).prefix(maxQueryWords)
-        guard source != .none else { return Plan(source: .none, query: "", readable: true) }
         return Plan(source: source, query: words.isEmpty ? request : words.joined(separator: " "), readable: true)
     }
+
+    // MARK: Step 1 with Jev (ADR 0016)
+
+    /// Where Jev's route sends the search: the likeliest source leads, and sessions are read too when the request names one of the
+    /// user's session folders or Jev gave them `alsoSessionsFrom`. Jev reads an unfamiliar name as a web topic; the folder check
+    /// (here, never sent) corrects that.
+    static func plan(for route: SpokenRouter.Route, request: String, folders: Set<String>) -> Plan {
+        let words = queryWords(from: request)
+        let source: Plan.Source =
+            route.sessions >= route.history && route.sessions >= route.bookmarks ? .sessions
+            : route.bookmarks > route.history ? .bookmarks : .history
+        var plan = Plan(source: source, query: words.isEmpty ? cleaned(request) : words, readable: true)
+        if source != .sessions {
+            if names(request, in: folders) { plan.alsoSessions = .ahead }
+            else if route.sessions >= SpokenRouter.alsoSessionsFrom { plan.alsoSessions = .behind }
+        }
+        return plan
+    }
+
+    /// Whether the request holds the words of one of the `folders` (lowercased names) one after another, or the name's words
+    /// joined as one word ("my-app" is "my app" or "myapp"). Case, punctuation and the folder's `-`, `_`, `.` and spaces are
+    /// ignored. A folder of under three letters, or of stop words only, is too likely to be a word.
+    static func names(_ request: String, in folders: Set<String>) -> Bool {
+        let words = tokens(request)
+        guard !words.isEmpty else { return false }
+        let single = Set(words)
+        return folders.contains { folder in
+            let parts = tokens(folder)
+            let joined = parts.joined()
+            guard joined.count >= 3, !parts.allSatisfy(stopWords.contains) else { return false }
+            if single.contains(joined) { return true }
+            return parts.count > 1 && words.indices.contains { start in
+                start + parts.count <= words.count && Array(words[start..<start + parts.count]) == parts
+            }
+        }
+    }
+
+    /// Lowercased runs of letters and digits.
+    private static func tokens(_ text: String) -> [String] {
+        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+    }
+
+    /// The words worth searching for: the request without words of asking, remembering, a kind (page, session) or a time, and
+    /// small grammatical words, and without "'s". Measured locally this matched Jev's word-by-word judgments.
+    static func queryWords(from request: String) -> String {
+        let kept = request.split(whereSeparator: \.isWhitespace).compactMap { raw -> String? in
+            var word = cleaned(String(raw).replacingOccurrences(of: "\u{2019}", with: "'"))
+            if word.lowercased().hasSuffix("'s") { word = String(word.dropLast(2)) }
+            guard !word.isEmpty, !stopWords.contains(word.lowercased().replacingOccurrences(of: "'", with: "")) else { return nil }
+            return word
+        }
+        return kept.prefix(maxQueryWords).joined(separator: " ")
+    }
+
+    private static let stopWords: Set<String> = Set("""
+        a an the and or but so if then than as of on in at to for from by with about into off up out over under
+        i me my mine we our you your he she it its they them their this that these those there here
+        is are was were be been am im ive id ill what whats which who whom whose when where why how
+        did do does done have has had can could would should will just also ever again please hey
+        any anything some something one thing things stuff kind sort
+        find found show showed tell told give look looked looking search open start pull bring get got decide decided
+        remember remind recall leave left doing work working worked read reading watched watching visited saw seen like
+        page pages article articles site sites link links bookmark bookmarks bookmarked saved save session sessions claude history
+        today yesterday tomorrow tonight morning afternoon evening night last latest recently recent earlier week month year ago
+        """.split(whereSeparator: \.isWhitespace).map(String.init))
 
     // MARK: Step 2: read
 
@@ -101,14 +184,29 @@ enum SpokenText {
     static let maxPages = 5
     static let maxDescription = 300
 
-    /// The rows the answer step reads: from the panel's two lists, ranked as the panel ranks them.
-    static func rows(for source: Plan.Source, sessions: [SearchResult], pages: [SearchResult]) -> [SearchResult] {
-        switch source {
-        case .sessions: Array(sessions.prefix(maxSessions))
-        case .history: Array(pages.prefix(maxPages))
-        case .bookmarks: Array(pages.filter { $0.source == "bookmark" }.prefix(maxPages))
-        case .any: Array((sessions + pages).prefix(maxPages))
-        case .none: []
+    /// The session rows kept behind a plan's pages, which get the rest of `maxPages` when there are fewer pages.
+    static let maxSessionsBehind = 2
+
+    /// The rows the answer step reads, ranked as the panel ranks them. The first `relevant` pages were judged relevant: when any is
+    /// of the chosen kind, only those are read. Sessions read beside pages (`alsoSessions`) come first or last, so each kind is heard.
+    static func rows(for plan: Plan, sessions: [SearchResult], pages: [SearchResult], relevant: Int) -> [SearchResult] {
+        let ofKind: (SearchResult) -> Bool = plan.source == .bookmarks ? { $0.source == "bookmark" } : { _ in true }
+        let leading = pages.prefix(max(0, relevant)).filter(ofKind)
+        let kept = leading.isEmpty ? pages.filter(ofKind) : leading
+        switch plan.source {
+        case .sessions: return Array(sessions.prefix(maxSessions))
+        case .any: return Array((sessions + kept).prefix(maxPages))
+        case .history, .bookmarks: break
+        }
+        switch plan.alsoSessions {
+        case .no:
+            return Array(kept.prefix(maxPages))
+        case .ahead:
+            let first = sessions.prefix(maxSessions)
+            return Array(first) + kept.prefix(maxPages - first.count)
+        case .behind:
+            let pages = kept.prefix(maxPages - maxSessionsBehind)
+            return Array(pages) + sessions.prefix(maxPages - pages.count)
         }
     }
 
@@ -157,13 +255,22 @@ enum SpokenText {
 
     // MARK: Step 3: respond
 
+    /// One thing gets one or two sentences, several up to three, with the token budget to match.
     static let answerTokens = 96
     static let maxSentences = 2
+    static let severalAnswerTokens = 144
+    static let maxSeveralSentences = 3
 
-    /// The answer prompt, in one place so it can be tuned with `Launchy --ask`.
+    static func answerLimits(for request: String) -> (tokens: Int, sentences: Int) {
+        asksForSeveral(request) ? (severalAnswerTokens, maxSeveralSentences) : (answerTokens, maxSentences)
+    }
+
+    /// The answer prompt, in one place so it can be tuned with `Launchy --ask`. The small model follows one instruction better than
+    /// a choice between two, so code picks (`asksForSeveral`).
     private static let answerTemplate = """
         You answer a spoken request aloud. The results below come from the user's own browsing history, bookmarks and Claude Code sessions.
-        Reply with one or two short sentences to be spoken: name the page or session that best fits, and say when it was last visited, used or saved. For a page, say what it is about only from its description. If none of the results fits the request, say so plainly instead of guessing.
+        {instruction}
+        If none of the results fits the request, say so plainly instead of guessing.
         Never read out web addresses or say "result 1". No lists, no markdown.
 
         Request: {request}
@@ -172,19 +279,50 @@ enum SpokenText {
         {rows}
         """
 
+    private static let oneInstruction = """
+        Reply with one or two short sentences: name the result that fits best (the first one, when it fits), and say when it was last visited, used or saved. For a page, say what it is about only from its description.
+        """
+
+    private static let severalInstruction = """
+        The request asks for several results. Reply with up to three short sentences, one for each of up to three results that fit, best first. Each names the result and says when it was last visited, used or saved. Name all three when three fit.
+        """
+
     static func answerPrompt(for request: String, rows: String) -> String {
-        answerTemplate.replacingOccurrences(of: "{rows}", with: rows)
+        answerTemplate.replacingOccurrences(of: "{instruction}", with: asksForSeveral(request) ? severalInstruction : oneInstruction)
+            .replacingOccurrences(of: "{rows}", with: rows)
             .replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
     }
 
-    /// Plain text for the speech: no markdown, one line, the first two sentences. Nil when the reply holds no text.
-    static func spoken(fromReply reply: String) -> String? {
+    /// Whether the request asks for several results rather than one: "any other pages like X", "similar", "what else", or
+    /// "which"/"what"/"all" with a plural ("which pages", "all my bookmarks"). "The other day" and "which of my bookmarks is
+    /// about X" ask for one. A plain plural is not enough ("the pages I read" is a miss), which costs only a shorter answer.
+    static func asksForSeveral(_ request: String) -> Bool {
+        let words = tokens(request)
+        if words.contains(where: { ["else", "similar", "alike"].contains($0) }) { return true }
+        let timeWords: Set<String> = ["day", "days", "week", "weeks", "night", "nights", "time", "times", "morning", "month", "months", "year", "years"]
+        let plurals: Set<String> = ["pages", "bookmarks", "sessions", "articles", "sites", "links", "things", "ones", "results"]
+        return words.indices.contains { i in
+            switch words[i] {
+            case "other", "others":
+                return i > 0 && ["any", "the", "some"].contains(words[i - 1]) && !(i + 1 < words.count && timeWords.contains(words[i + 1]))
+            case "which", "what":
+                return i + 1 < words.count && plurals.contains(words[i + 1])
+            case "all":
+                return i + 1 < words.count && (plurals.contains(words[i + 1]) || ["the", "my", "of"].contains(words[i + 1]))
+            default:
+                return false
+            }
+        }
+    }
+
+    /// Plain text for the speech: no markdown, one line, the first `sentences` sentences. Nil when the reply holds no text.
+    static func spoken(fromReply reply: String, sentences limit: Int) -> String? {
         let plain = oneLine(reply.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "#", with: "")
             .replacingOccurrences(of: "`", with: ""))
         var sentences: [String] = []
         plain.enumerateSubstrings(in: plain.startIndex..., options: .bySentences) { sentence, _, _, stop in
             if let sentence = sentence?.trimmingCharacters(in: .whitespaces), !sentence.isEmpty { sentences.append(sentence) }
-            if sentences.count >= maxSentences { stop = true }
+            if sentences.count >= limit { stop = true }
         }
         let text = sentences.joined(separator: " ")
         return text.isEmpty ? nil : text
@@ -202,18 +340,21 @@ enum SpokenPipeline {
         let underlying: Error
     }
 
-    enum Outcome {
+    enum Outcome: Equatable {
         case answer(String)
-        /// The request is not about History, Bookmarks or sessions.
+        /// The request was empty: the wake phrase and nothing after it.
         case nothingToSearch
         case nothingFound(words: String)
+        /// Jev found the request to be about none of the user's things: nothing was searched.
+        case offTopic
 
         /// What Launchy says.
         var spoken: String {
             switch self {
             case .answer(let text): text
-            case .nothingToSearch: "I can search your history, your bookmarks and your Claude sessions."
+            case .nothingToSearch: "Ask me to find a page, a bookmark or a Claude session."
             case .nothingFound(let words): "I found nothing for \(words)."
+            case .offTopic: "I only look up your pages, bookmarks and Claude sessions."
             }
         }
     }
@@ -223,51 +364,132 @@ enum SpokenPipeline {
         var rows: [SearchResult]
         var outcome: Outcome
         var decide: Duration
-        var read: Duration = .zero
+        /// The keyword and meaning passes.
+        var search: Duration = .zero
         var respond: Duration = .zero
-        /// Where each Text generation call ran: the decide step's, then the answer step's.
-        var places: [ModelPlace] = []
+        /// Who made the plan: "Jev", or where Text generation ran when Jev was not used, and why not.
+        var decidedBy = "-"
+        /// What Jev said, when it decided; `--ask` prints it.
+        var route: SpokenRouter.Route?
+        /// Where Text generation wrote the answer.
+        var answeredAt: ModelPlace?
+        /// How long the relevance filter took, and who filtered or why nobody did ("off", "sessions only", "no TypeSafe key", …);
+        /// "<who> failed: <kind>" leaves the pages in their fused order.
+        var filter: Duration = .zero
+        var filteredBy = "-"
+        /// Who answered the meaning pass of the search: a place, "keyword only", or "failed: <kind>".
+        var meaningBy = "-"
     }
 
     static func run(_ request: String, on model: LauncherModel) async throws -> Run {
-        var places: [ModelPlace] = []
+        var textPlaces: [ModelPlace] = []
         func generate(_ prompt: String, _ maxTokens: Int) async throws -> String {
             let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens)
-            places.append(reply.place)
+            textPlaces.append(reply.place)
             return reply.text
+        }
+
+        guard !SpokenText.cleaned(request).isEmpty else {
+            return Run(plan: SpokenText.Plan(source: .any, query: "", readable: false), rows: [], outcome: .nothingToSearch, decide: .zero)
         }
 
         let clock = ContinuousClock()
         var began = clock.now
-        let reply: String
-        do { reply = try await generate(SpokenText.decidePrompt(for: request), SpokenText.decideTokens) } catch {
-            throw Failure(step: .decide, underlying: error)
+
+        // Jev only when the relevance filter is set to TypeSafe and a key is saved, and it answers in time; otherwise Text
+        // generation decides and nothing goes to TypeSafe (ADR 0016).
+        var jevPlan: SpokenText.Plan?
+        var route: SpokenRouter.Route?
+        var decidedBy = "Jev"
+        if Settings.shared.activeRelevanceFilter != .typesafe {
+            decidedBy = "relevance filter not on TypeSafe"
+        } else if let key = Settings.shared.typesafeKey {
+            do {
+                let said = try await SpokenRouter(apiKey: key).route(request)
+                route = said
+                if said.isOffTopic {
+                    var run = Run(plan: SpokenText.Plan(source: .any, query: "", readable: true), rows: [], outcome: .offTopic,
+                                  decide: began.duration(to: clock.now))
+                    run.decidedBy = decidedBy
+                    run.route = said
+                    return run
+                }
+                jevPlan = SpokenText.plan(for: said, request: request, folders: model.store.sessionFolderNames())
+            } catch {
+                try Task.checkCancellation()
+                decidedBy = "Jev failed: \(error.logKind)"
+            }
+        } else {
+            decidedBy = "no TypeSafe key"
         }
-        let plan = SpokenText.plan(fromReply: reply, request: request)
-        var run = Run(plan: plan, rows: [], outcome: .nothingToSearch, decide: began.duration(to: clock.now))
-        run.places = places
-        guard plan.source != .none else { return run }
+        let decided: SpokenText.Plan
+        if let jevPlan {
+            decided = jevPlan
+        } else {
+            let reply: String
+            do { reply = try await generate(SpokenText.decidePrompt(for: request), SpokenText.decideTokens) } catch {
+                throw Failure(step: .decide, underlying: error)
+            }
+            decided = SpokenText.plan(fromReply: reply, request: request)
+            decidedBy = "\(textPlaces.first.map { "\($0)" } ?? "-") (\(decidedBy))"
+        }
+        // Stays the outcome unless rows are found to answer from.
+        var run = Run(plan: decided, rows: [], outcome: .nothingFound(words: decided.query), decide: began.duration(to: clock.now))
+        run.decidedBy = decidedBy
+        run.route = route
+
+        // The panel's passes, back to back since nobody is typing: a pass that fails costs only itself (ADR 0017).
+        let search = model.search
+        began = clock.now
+        var ranking = search.keyword(decided.query)
+        run.meaningBy = "keyword only"
+        do {
+            let withMeaning = try await search.withMeaning(ranking, for: decided.query)
+            ranking = withMeaning
+            run.meaningBy = withMeaning.meaning.map { "\($0.source)" } ?? "keyword only"
+        } catch {
+            try Task.checkCancellation()
+            run.meaningBy = "failed: \(error.logKind)"
+        }
+        try Task.checkCancellation()
+        run.search = began.duration(to: clock.now)
 
         began = clock.now
-        let found: (sessions: [SearchResult], pages: [SearchResult])
-        do { found = try await model.searchApart(plan.query) } catch { throw Failure(step: .read, underlying: error) }
-        run.rows = SpokenText.rows(for: plan.source, sessions: found.sessions, pages: found.pages)
-        run.read = began.duration(to: clock.now)
-        guard !run.rows.isEmpty else {
-            run.outcome = .nothingFound(words: plan.query)
-            return run
+        let filterWords = SpokenText.filterWords(for: decided, request: request)
+        if decided.source == .sessions {
+            run.filteredBy = "sessions only"
+        } else {
+            switch search.judging(for: filterWords) {
+            case .failure(let why):
+                run.filteredBy = why.label
+            case .success(let judge):
+                if ranking.pages.isEmpty {
+                    run.filteredBy = "no pages"
+                } else {
+                    run.filteredBy = judge.backend.title
+                    do { ranking = try await search.filtered(ranking, for: filterWords, by: judge) } catch {
+                        try Task.checkCancellation()
+                        run.filteredBy = "\(judge.backend.title) failed: \(error.logKind)"
+                    }
+                }
+            }
         }
+        run.filter = began.duration(to: clock.now)
+
+        run.rows = SpokenText.rows(for: decided, sessions: ranking.sessions, pages: ranking.pages, relevant: ranking.relevantCount ?? 0)
+        guard !run.rows.isEmpty else { return run }
 
         began = clock.now
         let rows = SpokenText.describe(run.rows, macName: { PeerManager.shared.name(of: $0) })
         do {
-            let text = try await generate(SpokenText.answerPrompt(for: request, rows: rows), SpokenText.answerTokens)
-            run.outcome = .answer(SpokenText.spoken(fromReply: text) ?? "I couldn't answer that.")
+            let limits = SpokenText.answerLimits(for: request)
+            let text = try await generate(SpokenText.answerPrompt(for: request, rows: rows), limits.tokens)
+            run.outcome = .answer(SpokenText.spoken(fromReply: text, sentences: limits.sentences) ?? "I couldn't answer that.")
+            run.answeredAt = textPlaces.last
         } catch {
             throw Failure(step: .respond, underlying: error)
         }
         run.respond = began.duration(to: clock.now)
-        run.places = places
         return run
     }
 }
@@ -275,7 +497,8 @@ enum SpokenPipeline {
 extension Error {
     /// What a log may say of a failure: the kind, never a message that could hold what was said.
     var logKind: String {
-        (self as? ModelServer.Failure)?.errorDescription ?? "\(type(of: self))"
+        if let urlError = self as? URLError { return "URLError \(urlError.code.rawValue)" }
+        return (self as? ModelServer.Failure)?.errorDescription ?? "\(type(of: self))"
     }
 }
 
@@ -286,9 +509,15 @@ extension Double {
 
 /// `Launchy --ask <file>`: the file's text, taken as a request said after "Hey Launchy", through the three steps against the
 /// app's own search and Text generation's choice, without speaking. Prints what each step did and how long it took, to tune the
-/// prompts and the timing constants. Request files are personal: keep them out of the repo.
+/// prompts and the timing constants. Decides with Jev only when the relevance filter is on TypeSafe with a key; set
+/// `LAUNCHY_EVAL_FILTER` (typesafe, local, off) to choose without writing the settings. Request files are personal: keep them out of the repo.
 @MainActor
 enum SpokenCommand {
+    private static func describe(_ route: SpokenRouter.Route) -> String {
+        let p = { (value: Double) in String(format: "%.2f", value) }
+        return "jev: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), other \(p(route.other))"
+    }
+
     static func run(file: String, model: LauncherModel) async -> Int32 {
         guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
             print("Can't read \(file)")
@@ -297,14 +526,24 @@ enum SpokenCommand {
         let request = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         do {
             let run = try await SpokenPipeline.run(request, on: model)
-            let place = { (n: Int) in run.places.indices.contains(n) ? "\(run.places[n])" : "-" }
-            print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(place(0)), \(run.decide.seconds.secondsText)]")
-            if run.plan.source != .none {
-                print("read: \(run.rows.count) rows  [\(run.read.seconds.secondsText)]")
-                for (n, row) in run.rows.enumerated() { print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(row.title)") }
+            if run.outcome == .nothingToSearch {
+                print("decide: nothing to search")
+            } else if run.outcome == .offTopic {
+                print("decide: off topic  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
+                if let route = run.route { print(describe(route)) }
+            } else {
+                print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.alsoSessions == .no ? "" : ", sessions \(run.plan.alsoSessions)")\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
+                if let route = run.route { print(describe(route)) }
+                print("search: meaning by \(run.meaningBy)  [\(run.search.seconds.secondsText)]")
+                print("filter: \(run.filteredBy)  [\(run.filter.seconds.secondsText)]")
+                print("read: \(run.rows.count) rows")
+                for (n, row) in run.rows.enumerated() {
+                    let relevance = row.relevance.map { String(format: "%.2f", $0) } ?? "  - "
+                    print("  \(n + 1). \(row.isSession ? "session" : row.source)  \(relevance)  \(row.title)")
+                }
             }
             // Said as is; when no answer was written (nothing to search, nothing found) it is Launchy's own sentence.
-            print("says: \(run.outcome.spoken)  [\(place(1)), \(run.respond.seconds.secondsText)]")
+            print("says: \(run.outcome.spoken)  [\(run.answeredAt.map { "\($0)" } ?? "-"), \(run.respond.seconds.secondsText)]")
             return 0
         } catch let failure as SpokenPipeline.Failure {
             print("Failed at \(failure.step.rawValue): \(failure.underlying.localizedDescription)")

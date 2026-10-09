@@ -20,7 +20,7 @@ What was typed into a search engine before clicking through to a page of **Histo
 _Avoid_: Keyword, query (the query is what's typed into Launchy)
 
 **Relevance filter**:
-Search's last pass: a model judges which of the top 20 pages match what the search is after and moves them to the top, leaving the rest below in their order. Runs on TypeSafe or on this Mac.
+Search's last pass: a model judges which of the top 20 pages match what the search is after and moves them to the top, leaving the rest below in their order. Runs on TypeSafe or on this Mac, for a **Spoken request** as for a typed search; a Claude session is never judged.
 _Avoid_: Reranker (in the UI), Jev
 
 **Page description**:

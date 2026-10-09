@@ -16,6 +16,10 @@ final class SpokenRequests {
     static let maxSeconds: TimeInterval = 20
     /// How long a request waits, with no new result, before it is taken as said. Speech that goes on (a volatile result) puts it off.
     static let hold: TimeInterval = 1.0
+    /// How long after speech begins its first volatile result shows up, which the wait for a request allows past its end.
+    static let volatileLatency: TimeInterval = 1.0
+    /// How recently volatile speech must have been heard for a final result to be still to come.
+    static let speechSettle: TimeInterval = hold + 1.5
 
     private struct Request {
         var text: String
@@ -73,20 +77,21 @@ final class SpokenRequests {
             // A short system sound: the request can follow.
             NSSound(named: "Tink")?.play()
             if rest.isEmpty {
-                phase = .waiting(until: phrase.end.addingTimeInterval(Self.wakeWait))
+                wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
             } else {
                 collect(rest, from: phrase, arrived: now)
             }
         case .waiting(let until):
             if phrase.start > until {
+                holding?.cancel()
                 phase = .idle
                 return hear(phrase)
             }
             guard phrase.isFinal else { return }
             // Saying the wake phrase again before the request is no harm.
             let rest = SpokenText.request(in: phrase.text) ?? phrase.text
-            if rest.isEmpty {
-                phase = .waiting(until: phrase.end.addingTimeInterval(Self.wakeWait))
+            if SpokenText.cleaned(rest).isEmpty {
+                wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
             } else {
                 collect(rest, from: phrase, arrived: now)
             }
@@ -104,6 +109,43 @@ final class SpokenRequests {
             } else {
                 rearm(from: now)
             }
+        }
+    }
+
+    /// The wake phrase came alone: the request may begin until `deadline`. When it doesn't, Launchy says what it can do.
+    private func wait(until deadline: Date) {
+        phase = .waiting(until: deadline)
+        holding?.cancel()
+        holding = Task { [weak self] in
+            // Speech that began just before the deadline is only heard as volatile text a moment later.
+            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow) + Self.volatileLatency))
+            while !Task.isCancelled, let self, self.speechUnderway(until: deadline) {
+                try? await Task.sleep(for: .seconds(Self.speechSettle))
+            }
+            guard !Task.isCancelled else { return }
+            self?.waitRanOut()
+        }
+    }
+
+    /// Speech that began before the deadline and was heard a moment ago: its final result is yet to come (finals arrive 1 to 2 s
+    /// late), so the wait is not over and the final still counts as the request.
+    private func speechUnderway(until deadline: Date) -> Bool {
+        guard let volatile = lastVolatile else { return false }
+        return volatile.start <= deadline && Date().timeIntervalSince(volatile.arrived) < Self.speechSettle
+    }
+
+    private func waitRanOut() {
+        guard case .waiting = phase else { return }
+        phase = .answering
+        epoch += 1
+        let epoch = epoch
+        let saying = SpokenPipeline.Outcome.nothingToSearch.spoken
+        working = Task { [weak self] in
+            guard !Task.isCancelled else { return }
+            self?.record(saying)
+            await Speaker.shared.speak(saying)
+            guard let self, self.epoch == epoch else { return }
+            self.phase = .idle
         }
     }
 
@@ -175,15 +217,21 @@ final class SpokenRequests {
         guard !Task.isCancelled else { return }
 
         record(saying)
+        let speaking = Date()
         let first = await Speaker.shared.speak(saying)
 
-        // For the latency check: where the time went, as durations only.
+        // For the latency check: where the time went, as durations, places and kinds only.
         func seconds(_ duration: Duration?) -> String { duration?.seconds.secondsText ?? "-" }
-        let place = { (n: Int) in run.map { $0.places.indices.contains(n) ? "\($0.places[n])" : "-" } ?? "-" }
-        NSLog("Launchy: spoken request timing: final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
+        NSLog("Launchy: spoken request timing: said \(request.lastEnd.timeIntervalSince(request.began).secondsText), "
+              + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
               + "held \(began.timeIntervalSince(request.lastArrived).secondsText), "
-              + "decide \(seconds(run?.decide)) (\(place(0))), read \(seconds(run?.read)), answer \(seconds(run?.respond)) (\(place(1))), "
-              + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended")
+              + "decide \(seconds(run?.decide)) (\(run?.decidedBy ?? "-")), "
+              + "search \(seconds(run?.search)) (meaning by \(run?.meaningBy ?? "-")), "
+              + "filter \(seconds(run?.filter)) (\(run?.filteredBy ?? "-")), "
+              + "answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
+              + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "
+              + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended, "
+              + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")
     }
 
     /// Nothing could write the text: no model installed and no server answering.

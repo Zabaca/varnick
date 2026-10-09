@@ -557,7 +557,7 @@ struct SettingsView: View {
                         }
                         case .listening:
                         SettingRow(title: "Hey Launchy",
-                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing.") {
+                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing. With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Launchy\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match; no session or project names go. With the filter On this Mac or off, nothing is sent.") {
                             if Listener.shared.state.isUnavailable {
                                 Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if let need = textGenerationNeed {
@@ -609,7 +609,7 @@ struct SettingsView: View {
                         }
                         }
                         SettingRow(title: "Relevance filter",
-                                   detail: "Judges which of the top 20 results of a ? search match what it is after.") {
+                                   detail: "Judges which of the top 20 results of a ? search, or of a request to Hey Launchy, match what it is after.") {
                             Picker("", selection: $settings.relevanceFilter) {
                                 ForEach(RelevanceBackend.allCases) { Text($0.title).tag($0) }
                             }
@@ -618,7 +618,7 @@ struct SettingsView: View {
                         switch settings.relevanceFilter {
                         case .typesafe:
                             SettingRow(title: "TypeSafe",
-                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe.") {
+                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe. A request to Hey Launchy sends the words you say after \"Hey Launchy\" to choose where to look, and then its search words with the top 20 pages the same way.") {
                                 if settings.typesafeKeyInKeychain {
                                     Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
                                 } else if settings.typesafeKey != nil {
@@ -695,7 +695,7 @@ struct SettingsView: View {
                         }
                         SectionLabel(text: "Keys")
                         SettingRow(title: "TypeSafe",
-                                   detail: "Used by the relevance filter when it runs on TypeSafe. Kept in the macOS Keychain.") {
+                                   detail: "Used by the relevance filter when it runs on TypeSafe, for searches and for Hey Launchy, which also uses it to choose where to look. Kept in the macOS Keychain.") {
                             if let error = settings.typesafeKeyError {
                                 Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
                             }

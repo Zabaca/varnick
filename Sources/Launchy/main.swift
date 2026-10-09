@@ -545,9 +545,9 @@ if let i = CommandLine.arguments.firstIndex(of: "--search"), i + 1 < CommandLine
                 }
                 // Every session's similarity, floor or not, to tune the floor by.
                 if let (vector, _) = try? await m.embedQuery(query.trimmingCharacters(in: .whitespaces)) {
-                    print("sessions by meaning, floor \(LauncherModel.sessionSimilarityFloor):")
+                    print("sessions by meaning, floor \(RelevanceSearch.sessionSimilarityFloor):")
                     for s in m.store.semantic(vector, limit: 5).sessions {
-                        print(String(format: "    %.3f %@ %@", s.score, s.score >= LauncherModel.sessionSimilarityFloor ? "shown" : "     ",
+                        print(String(format: "    %.3f %@ %@", s.score, s.score >= RelevanceSearch.sessionSimilarityFloor ? "shown" : "     ",
                                      m.store.fetch(s.id)?.title ?? ""))
                     }
                 }

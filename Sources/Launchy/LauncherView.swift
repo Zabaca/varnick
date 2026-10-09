@@ -514,7 +514,7 @@ struct ResultRow: View {
             Spacer(minLength: 0)
             if let mac = result.host.map({ PeerManager.shared.name(of: $0) }) { WordBadge(text: mac) }
             if isOpen { WordBadge(text: "open") }
-            if let rel = result.relevance, rel >= LauncherModel.relevanceThreshold {
+            if let rel = result.relevance, rel >= RelevanceSearch.threshold {
                 Circle().fill(Color.green.opacity(0.8)).frame(width: 6, height: 6)
                     .help((scoredBy ?? .typesafe).scoreHelp(rel))
             } else if result.match != .keyword {
@@ -656,7 +656,7 @@ struct PreviewPane: View {
                 if let rel = result.relevance {
                     Text("·").foregroundStyle(.quaternary)
                     Text("\(Int(rel * 100))% relevant")
-                        .foregroundStyle(rel >= LauncherModel.relevanceThreshold ? Color.green : Color.secondary)
+                        .foregroundStyle(rel >= RelevanceSearch.threshold ? Color.green : Color.secondary)
                 } else if result.match != .keyword {
                     Text("·").foregroundStyle(.quaternary)
                     Label("semantic", systemImage: "sparkles").labelStyle(.titleAndIcon)

@@ -284,6 +284,13 @@ final class FavoritesStore {
         Set(sessionRows(filter, limit: nil, promoted: []))
     }
 
+    /// The folder names of all the sessions, this Mac's and the paired Macs', lowercased: the projects the user has worked on with
+    /// Claude. A spoken request is compared with them here and they go nowhere (ADR 0016).
+    func sessionFolderNames() -> Set<String> {
+        let sql = "SELECT DISTINCT url FROM favorites WHERE source = '\(Self.sessionSource)' LIMIT ?"
+        return Set(rows(sql, [], limit: nil) { ((Self.text($0, 0) as NSString).lastPathComponent).lowercased() })
+    }
+
     /// The sessions a filter keeps, with no words to match: the `promoted` rows first, then the most recently used.
     func sessionRows(_ filter: SessionFilter, limit: Int?, promoted: Set<Int64>) -> [Int64] {
         let kept = Self.clauses(filter)
