@@ -463,12 +463,17 @@ struct SettingsView: View {
     @ObservedObject var embeddingServer: ModelServerState
     @ObservedObject var textGenerationServer: ModelServerState
     let close: () -> Void
+    /// Opens the Restart Launchy card (`LauncherModel.askRestart`): a restart without a build.
+    let askRestart: () -> Void
     @State private var typesafeKeyDraft = ""
     @State private var modelServerKeyDraft = ""
     /// Whether Launchy has Accessibility, checked while Settings shows it.
     @State private var accessibilityGranted = ScreenReader.isTrusted
     /// Whether Launchy has Screen Recording, for the text read from a picture of the window.
     @State private var screenRecordingGranted = ScreenText.hasAccess
+    /// Grant was pressed in this process (`ScreenText.grantAsked`), and Launchy's binary was shown in Finder (`binaryRevealed`).
+    @State private var screenGrantAsked = ScreenText.grantAsked
+    @State private var screenBinaryRevealed = ScreenText.binaryRevealed
     /// Last section viewed, so Settings reopens where you left it.
     @AppStorage("settingsSection") private var sectionID = SettingsSection.claude.rawValue
 
@@ -592,11 +597,31 @@ struct SettingsView: View {
                             if !accessibilityGranted {
                                 Button("Grant…") { askForAccessibility() }
                             }
-                            Text(screenRecordingGranted ? "Screen Recording granted" : "Needs Screen Recording")
-                                .font(.system(size: 12))
-                                .foregroundStyle(screenRecordingGranted ? Color.secondary : Color.orange)
-                            if !screenRecordingGranted {
-                                Button("Grant…") { ScreenText.askForAccess() }
+                            VStack(alignment: .trailing, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(screenRecordingGranted ? "Screen Recording granted" : "Needs Screen Recording")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(screenRecordingGranted ? Color.secondary : Color.orange)
+                                    if !screenRecordingGranted {
+                                        Button("Grant…") {
+                                            ScreenText.askForAccess()
+                                            screenGrantAsked = true
+                                        }
+                                        if screenGrantAsked {
+                                            Button("Restart Launchy") { askRestart() }
+                                        }
+                                    }
+                                }
+                                if !screenRecordingGranted, screenGrantAsked {
+                                    Group {
+                                        if screenBinaryRevealed {
+                                            Text("Drag Launchy into the list, or use + and pick it")
+                                        }
+                                        Text("After switching it on, restart Launchy")
+                                    }
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(.secondary)
+                                }
                             }
                             Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.pointAtScreen && (!settings.heyLaunchy || !screenGateOpen))
@@ -604,6 +629,8 @@ struct SettingsView: View {
                         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
                             accessibilityGranted = ScreenReader.isTrusted
                             screenRecordingGranted = ScreenText.hasAccess
+                            screenGrantAsked = ScreenText.grantAsked
+                            screenBinaryRevealed = ScreenText.binaryRevealed
                         }
                         SettingRow(title: "Voice", detail: "What Launchy speaks in.") {
                             VoicePicker(settings: settings)

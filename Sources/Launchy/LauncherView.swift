@@ -62,7 +62,8 @@ struct LauncherView: View {
         Group {
             if model.showingSettings {
                 SettingsView(embedder: model.baseEmbedder, localReranker: model.localReranker, textGenerator: model.textGenerator,
-                             embeddingServer: model.embeddingServer, textGenerationServer: model.textGeneration.server) { model.toggleSettings() }
+                             embeddingServer: model.embeddingServer, textGenerationServer: model.textGeneration.server,
+                             close: { model.toggleSettings() }, askRestart: { model.askRestart() })
             } else if model.showingBoard {
                 SessionBoardView(board: model.board) { model.closeBoard() }
             } else if let tab = model.activeTab {

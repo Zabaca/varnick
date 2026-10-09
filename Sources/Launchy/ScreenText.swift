@@ -14,12 +14,61 @@ enum ScreenText {
 
     static var hasAccess: Bool { CGPreflightScreenCaptureAccess() }
 
-    /// Adds Launchy to the Screen Recording list and opens that pane. Only the Settings Grant button calls it.
+    /// How long the Grant button waits for the system prompt's ScreenCaptureKit call before it opens the pane anyway.
+    static let promptWait: Duration = .seconds(5)
+    /// The Grant button was pressed in this process. A grant switched on afterwards applies only after a restart and preflight can't tell
+    /// that from "not granted", so Settings offers Restart Launchy from then on.
+    @MainActor private(set) static var grantAsked = false
+    /// Launchy's binary was shown in Finder because the list still lacked it (Settings says to drag it in).
+    @MainActor private(set) static var binaryRevealed = false
+
+    /// The Settings Grant button, the only place that asks macOS for Screen Recording, in this order. macOS answers
+    /// `CGRequestScreenCaptureAccess` silently after the first time and may answer ScreenCaptureKit "declined" at once, so each step may do
+    /// nothing: (a) the request; (b) one `SCShareableContent` call, which on a Mac never asked shows the prompt and lists the app; (c) the
+    /// pane; (d) with the grant still missing, Launchy's binary selected in Finder, to drag into the list or pick with +.
     @MainActor
     static func askForAccess() {
+        grantAsked = true
         _ = CGRequestScreenCaptureAccess()
-        if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-            NSWorkspace.shared.open(pane)
+        Task { @MainActor in
+            await requestListing()
+            if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                NSWorkspace.shared.open(pane)
+            }
+            guard !hasAccess, let binary = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return }
+            binaryRevealed = true
+            NSWorkspace.shared.activateFileViewerSelecting([binary])
+        }
+    }
+
+    /// Returns when the call has answered or after `promptWait`, whichever is first; the call goes on either way.
+    private static func requestListing() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let gate = Gate(continuation)
+            Task {
+                _ = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+                gate.open()
+            }
+            Task {
+                try? await Task.sleep(for: promptWait)
+                gate.open()
+            }
+        }
+    }
+
+    /// Resumes its continuation once, for whichever of two tasks gets there first.
+    private final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Never>?
+
+        init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+
+        func open() {
+            lock.lock()
+            let waiting = continuation
+            continuation = nil
+            lock.unlock()
+            waiting?.resume()
         }
     }
 
