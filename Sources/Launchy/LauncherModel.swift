@@ -1359,7 +1359,7 @@ final class LauncherModel: ObservableObject {
         if let host = record.host { return resumeOnPeer(conversation: record.conversationID, on: host, folder: record.directory,
                                                        title: record.title, agent: record.agent) }
         recent.removeAll { $0.id == record.id }
-        addTab(PaneNode(session: makeSession(record, resuming: true, query: "")))
+        addTab(PaneNode(session: makeSession(record, resuming: true, query: "")), name: store.tabName(ofSession: record.conversationID))
     }
 
     /// ↩ on an ended session of a paired Mac, from Recent or from search. If a pane here has the
@@ -1452,6 +1452,10 @@ final class LauncherModel: ObservableObject {
             let trimmed = name.trimmingCharacters(in: .whitespaces)
             tab.name = trimmed.isEmpty ? nil : trimmed
             saveSessions()
+            // At once, not at the next sync: a tab closed before then would lose the name.
+            if tab.sessions.count == 1, let only = tab.sessions.first, only.isClaude, !only.isOnPeer {
+                HistorySync.keepName(tab.name, ofSession: only.record.conversationID, databasePath: store.path)
+            }
         }
         if activeTab === tab { tab.focus(tab.focused) }
     }
@@ -1571,8 +1575,8 @@ final class LauncherModel: ObservableObject {
         SessionRecord(id: UUID(), prompt: prompt, title: "", directory: directory, startedAt: Date(), lastUsed: Date())
     }
 
-    private func addTab(_ root: PaneNode, focused: ClaudeSession? = nil, show: Bool = true) {
-        let tab = makeTab(root, focused: focused)
+    private func addTab(_ root: PaneNode, focused: ClaudeSession? = nil, name: String? = nil, show: Bool = true) {
+        let tab = makeTab(root, focused: focused, name: name)
         tabs.append(tab)
         if show { activate(tab) }
         saveSessions()
@@ -2146,7 +2150,7 @@ final class LauncherModel: ObservableObject {
         recent.removeAll { $0.conversationID == conversation }
         let session = makeSession(record, resuming: true, query: "")
         session.startedFor = peer
-        tabs.append(makeTab(PaneNode(session: session)))
+        tabs.append(makeTab(PaneNode(session: session), name: store.tabName(ofSession: conversation)))
         saveSessions()
         session.start()
         return await replyOnceRunning(session, in: folder)

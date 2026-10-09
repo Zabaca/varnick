@@ -15,14 +15,14 @@ The Session titles setting, the title prompt, the title record's generated-title
 
 ## Trade-offs
 
-- **Search follows the board within a minute** (the sync's interval), not at once.
+- **A ⌘⇧R name reaches search at once; a /rename or Claude title at the next sync**, which runs a minute after the last one ends.
 - **Generated titles are gone** from running cards. Saved ended, Recent and Completed cards keep the label they last showed, which may be a generated title, until they leave those lists.
-- **The ⌘⇧R name names a tab with one pane**, as it does on the board; a tab with several panes names none of them. It is kept in search after its tab closes, and removed when a tab holds that conversation with no name.
+- **The ⌘⇧R name names a tab with one pane**, as it does on the board; a tab with several panes names none of them. It is kept in search after its tab closes, and removed when a tab with one pane holds that conversation with no name.
 - **A session with a ⌘⇧R name no longer searches by Claude's title**: its words match only where they appear in a prompt.
 - **Claude's title can change as a conversation moves on**, so a card's name changes under the user when nothing else names it. The user chose this over generating titles.
 - **The first sync after the upgrade reads every session's transcript again** (to find /rename names), as the one that introduced replies did, and a paired Mac gets the new titles when a transcript next changes or at its next launch.
 - **A paired Mac can lag.** It reads only the rows whose transcript changed since its last read, so a ⌘⇧R name set while the transcript stands still reaches it when the transcript next changes or when it next launches.
-- **Known gaps:** a pane reads a /rename only from the last 64 KB of its transcript, so one further back on a resumed conversation shows only in search. A paired Mac's open card doesn't show this Mac's ⌘⇧R name. After /clear in a named tab, the conversation left behind keeps the tab's name in search beside the new one.
+- **Known gaps:** a pane reads a /rename only from the last 64 KB of its transcript, so one further back on a resumed conversation shows only in search. A paired Mac's open card doesn't show this Mac's ⌘⇧R name. After /clear in a named tab, the conversation left behind keeps the tab's name in search beside the new one, and resuming it names its new tab the same. A session resumed by `claude --resume` typed in a terminal pane isn't seen by Launchy; /resume inside a Claude pane keeps the tab's name.
 
 ## User Stories
 
@@ -40,7 +40,7 @@ The Session titles setting, the title prompt, the title record's generated-title
 
 **Search**
 - The sessions table gains the last /rename name; rows written before it are read again once. Claude's title stays where it is.
-- A new table holds the ⌘⇧R name by conversation (lowercased). Each sync, after the transcripts are read and in one transaction, writes the name of every conversation a single-pane tab on this Mac names, deletes the row of every conversation a tab holds with no name, and deletes rows whose conversation has no transcript row. A conversation no tab holds keeps its row. A saved-sessions file that doesn't decode skips the step.
+- A new table holds the ⌘⇧R name by conversation (lowercased). Each sync, after the transcripts are read and in one transaction, writes the name of every conversation a single-pane tab on this Mac names, deletes the row of every conversation a single-pane tab holds with no name, and deletes rows whose conversation has no transcript row. A conversation no tab holds, or only a tab with several panes holds, keeps its row. A saved-sessions file that doesn't decode skips the step.
 - `sessionEntries` picks the title for this Mac's sessions: table name, else /rename name, else Claude's title, else the first line. The relay opens the database read-only beside a Launchy that may not have restarted, so it checks that the table and the column exist.
 - Names are bound as parameters and never logged.
 

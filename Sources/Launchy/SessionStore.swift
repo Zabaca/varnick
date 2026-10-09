@@ -142,18 +142,18 @@ struct TitleRecord: Codable, Equatable {
 /// The names the user gave sessions with ⌘⇧R, for search (`HistorySync.syncNames`): a tab's name names the conversation of its
 /// one pane, as on the board.
 enum SessionNames {
-    /// Conversation (lowercased) to its tab's name, and the conversations a tab holds that none names. Claude panes on this Mac
-    /// only; a tab with several panes names none, as on the board.
+    /// Conversation (lowercased) to its tab's name, and the conversations a one-pane tab holds that none names. Claude panes on this
+    /// Mac only; a tab with several panes names none, as on the board, and leaves its panes' names as they are.
     static func read(_ state: SessionStore.State) -> (named: [String: String], unnamed: Set<String>) {
         var named: [String: String] = [:], held: Set<String> = []
         for tab in state.openTabs {
             let records = tab.layout.records
-            for record in records where record.isClaude && record.host == nil {
-                let conversation = record.conversationID.lowercased()
+            guard records.count == 1, let record = records.first, record.isClaude, record.host == nil else { continue }
+            let conversation = record.conversationID.lowercased()
+            if let name = tab.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                named[conversation] = name
+            } else {
                 held.insert(conversation)
-                if records.count == 1, let name = tab.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
-                    named[conversation] = name
-                }
             }
         }
         return (named, held.subtracting(named.keys))

@@ -523,14 +523,27 @@ enum HistorySync {
         guard let state = SessionStore().load() else { return }
         let names = SessionNames.read(state)
         try archive.transaction {
-            for (id, name) in names.named {
-                try archive.run("""
-                    INSERT INTO session_names (session_id, name) VALUES (?, ?)
-                    ON CONFLICT(session_id) DO UPDATE SET name = excluded.name WHERE name != excluded.name
-                    """, [id, name])
-            }
+            for (id, name) in names.named { try writeName(name, ofSession: id, in: archive) }
             for id in names.unnamed { try archive.run("DELETE FROM session_names WHERE session_id = ?", [id]) }
             try archive.exec("DELETE FROM session_names WHERE session_id NOT IN (SELECT session_id FROM sessions)")
+        }
+    }
+
+    private static func writeName(_ name: String, ofSession id: String, in archive: Database) throws {
+        try archive.run("""
+            INSERT INTO session_names (session_id, name) VALUES (?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET name = excluded.name WHERE name != excluded.name
+            """, [id, name])
+    }
+
+    /// Writes the ⌘⇧R name of a conversation (nil deletes it) when it is given rather than at the next sync, so a tab closed
+    /// before then keeps it. Off the main thread, since the sync may hold the database.
+    static func keepName(_ name: String?, ofSession id: String, databasePath path: String) {
+        let id = id.lowercased()
+        Task.detached(priority: .utility) {
+            guard let archive = try? Database(path) else { return }
+            if let name { try? writeName(name, ofSession: id, in: archive) }
+            else { _ = try? archive.run("DELETE FROM session_names WHERE session_id = ?", [id]) }
         }
     }
 

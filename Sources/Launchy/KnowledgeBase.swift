@@ -324,6 +324,12 @@ final class FavoritesStore {
         return agent.isEmpty ? nil : agent
     }
 
+    /// The name ⌘⇧R gave a conversation, which outlives its tab (`session_names`, keyed by the lowercased id).
+    func tabName(ofSession id: String) -> String? {
+        rows("SELECT name FROM session_names WHERE session_id = ?", [id.lowercased()], limit: nil) { Self.text($0, 0) }
+            .first { !$0.isEmpty }
+    }
+
     /// The `--agent` a session was started with, from the transcript copy the search row was built
     /// from, which is the one in `directory`.
     func agent(ofSession id: String, directory: String) -> String? {
