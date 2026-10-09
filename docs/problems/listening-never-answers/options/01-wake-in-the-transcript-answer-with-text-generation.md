@@ -183,7 +183,7 @@ Launchy's voice must not be heard back as speech:
   - Say a sentence with "Launchy" in the middle ("I think Launchy is slow"). Nothing wakes.
   - Turn Listening off while Launchy speaks. It stops.
   - With Text generation set to a server that is off, the request is answered by this Mac's model when it is installed.
-  - Launchy's log holds no request, words, titles or answer. (amended 2026-10-08 at the user's request, [ADR 0017](../../../adr/0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): the log is `~/Library/Logs/Launchy.log`, where `make run` and the LaunchAgent send Launchy's output; the lines are not in Console or `log show`.)
+  - Launchy's log holds no request, words, titles or answer. (amended 2026-10-08 at the user's request, [where-it-breaks](../../../agents/where-it-breaks.md): the log is `~/Library/Logs/Launchy.log`, where `make run` (`scripts/restart.sh`) and the LaunchAgent send Launchy's output; the lines are not in Console or `log show`, see where-it-breaks, Checking by hand.)
 
 **Hand checks for the builder.** These are unverified. Run them with the user (they speak), and keep figures and anything personal in `.scratch/listening-never-answers/`, never in the repo.
 
