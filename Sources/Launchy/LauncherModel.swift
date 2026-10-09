@@ -243,6 +243,10 @@ final class LauncherModel: ObservableObject {
     static let claudeHeaderHeight: CGFloat = 36
     static let claudeTerminalHeight: CGFloat = 540
     static let settingsHeight: CGFloat = 600
+    /// The Restart Launchy card with an empty pane list (`RestartCard`), its margin and both notes; the list adds `restartListLineHeight` a line, up to `restartListMaxHeight`.
+    static let restartCardHeight: CGFloat = 250
+    static let restartListLineHeight: CGFloat = 16
+    static let restartListMaxHeight: CGFloat = 110
     static let boardHeight: CGFloat = 600
     static let sessionRowHeight: CGFloat = 44
     static let sessionHeaderHeight: CGFloat = 30
@@ -287,6 +291,13 @@ final class LauncherModel: ObservableObject {
         if showingSettings { return Self.settingsHeight }
         if showingBoard { return Self.boardHeight }
         if activeTab != nil { return Self.claudeHeaderHeight + 1 + Self.claudeTerminalHeight }
+        // The card needs more than a bare search field or a short list has.
+        guard askingRestart else { return searchPanelHeight }
+        let lines = CGFloat(restartImpact().ends.count + 1)
+        return max(searchPanelHeight, Self.restartCardHeight + min(lines * Self.restartListLineHeight, Self.restartListMaxHeight))
+    }
+
+    private var searchPanelHeight: CGFloat {
         switch mode {
         case .prompt:
             let prompt = Self.searchHeight + 1 + Self.promptHeight
@@ -1678,6 +1689,63 @@ final class LauncherModel: ObservableObject {
     func stopAppServers() {
         guard !Settings.shared.keepSessionsRunning else { return }
         for session in tabs.flatMap(\.sessions) where session.isApp && session.ownsZmxSession { Zmx.killNow(session.id) }
+    }
+
+    // MARK: Restart Launchy (status menu)
+
+    /// The status menu's Restart Launchy was chosen and waits for its confirmation card (`RestartCard`).
+    @Published private(set) var askingRestart = false
+    /// The confirmed restart is being started; Launchy is about to end.
+    @Published private(set) var restarting = false
+    /// Why the last Restart Launchy didn't go ahead.
+    @Published private(set) var restartNote: String?
+    /// A newer build on disk, which the restart would start (`BuildUpgrade.newerBuildNote`); read when the card opens.
+    @Published private(set) var restartBuildNote: String?
+    private var restartTask: Task<Void, Never>?
+
+    func askRestart() {
+        guard !restarting else { return }
+        restartNote = nil
+        restartBuildNote = BuildUpgrade.shared.newerBuildNote()
+        askingRestart = true
+    }
+
+    /// Esc, Cancel and the panel hiding: closes the card, and a restart not yet started is dropped.
+    func cancelRestart() {
+        restartTask?.cancel()
+        restartTask = nil
+        restarting = false
+        askingRestart = false
+        restartNote = nil
+    }
+
+    func confirmRestart() {
+        guard askingRestart, !restarting else { return }
+        restarting = true
+        restartNote = nil
+        restartTask = Task {
+            let refusal = await BuildUpgrade.shared.restartFromMenu(database: store.path)
+            guard !Task.isCancelled else { return }
+            if let refusal { restarting = false; restartNote = refusal; return }
+            // The script ends this Launchy within a few seconds; one still here after that didn't get it.
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            restarting = false
+            restartNote = "The restart didn't happen"
+        }
+    }
+
+    /// Every key while the card shows is used up: esc cancels, ↩ confirms, the rest never reach a pane or a shortcut.
+    func answerRestartKey(_ event: NSEvent) -> Bool {
+        guard askingRestart else { return false }
+        if event.modifierFlags.intersection(KeyCombo.relevant).isEmpty {
+            switch Int(event.keyCode) {
+            case kVK_Escape: cancelRestart()
+            case kVK_Return, kVK_ANSI_KeypadEnter: confirmRestart()
+            default: break
+            }
+        }
+        return true
     }
 
     /// What restarting Launchy does to the open panes (the `restart` request's dry run), by what the next launch does (ADR 0004). A started Claude

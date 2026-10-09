@@ -336,7 +336,7 @@ final class BuildUpgrade {
         await resolve()
         report.refusal = await restartRefusal()
         // The awaits above let another request begin an upgrade or schedule a restart: look again, with nothing awaited before scheduling.
-        if report.refusal == nil, isBusy { report.refusal = "A build is running on \(MacPeerHost().name)" }
+        if report.refusal == nil, isBusy { report.refusal = busyMessage }
         if restartScheduled {
             report.restarting = true
             return report
@@ -350,17 +350,38 @@ final class BuildUpgrade {
 
     /// A restart is offered only when a newer successful build waits that was made from main with no uncommitted change, and nothing builds.
     private func restartRefusal() async -> String? {
-        let name = MacPeerHost().name
-        guard let checkout = LaunchSnapshot.checkout else { return "Launchy on \(name) isn't running from a checkout of its repository" }
-        if isBusy { return "A build is running on \(name)" }
+        guard let checkout = LaunchSnapshot.checkout else { return "Launchy on \(MacPeerHost().name) isn't running from a checkout of its repository" }
+        if let busy = await busyRefusal(in: checkout) { return busy }
+        return newerBuildRefusal(in: checkout)
+    }
+
+    private var busyMessage: String { "A build is running on \(MacPeerHost().name)" }
+
+    /// An upgrade, or a `make` or SwiftPM process in the checkout, is building.
+    private func busyRefusal(in checkout: URL) async -> String? {
+        if isBusy { return busyMessage }
+        return await BuildProcesses.isRunning(in: checkout) ? busyMessage : nil
+    }
+
+    /// The build on disk, when it isn't the one this Launchy runs.
+    private func newerBuild(in checkout: URL) -> BuildStamp? {
         let running = self.running
-        if await BuildProcesses.isRunning(in: checkout) { return "A build is running on \(name)" }
-        guard let latest = LaunchSnapshot.latestStamp(in: checkout), !(running.map(latest.isSameBuild(as:)) ?? false) else {
-            return "No newer build is waiting on \(name)"
-        }
+        guard let latest = LaunchSnapshot.latestStamp(in: checkout), !(running.map(latest.isSameBuild(as:)) ?? false) else { return nil }
+        return latest
+    }
+
+    private func newerBuildRefusal(in checkout: URL) -> String? {
+        let name = MacPeerHost().name
+        guard let latest = newerBuild(in: checkout) else { return "No newer build is waiting on \(name)" }
         if latest.dirty { return "The build waiting on \(name) was made with uncommitted changes" }
         if latest.branch != "main" { return "The build waiting on \(name) wasn't made on main" }
         return nil
+    }
+
+    /// For the menu's confirmation: a restart starts whatever build is on disk, and a new build asks for macOS permissions again.
+    func newerBuildNote() -> String? {
+        guard let checkout = LaunchSnapshot.checkout, let latest = newerBuild(in: checkout) else { return nil }
+        return "A newer build is waiting (\(latest.short)); restarting starts it and macOS will ask for permissions again."
     }
 
     /// After the reply: the detached restart `make run` does (`scripts/restart.sh` in a session of its own), which ends this Launchy and starts the
@@ -373,8 +394,34 @@ final class BuildUpgrade {
         }
     }
 
+    /// Whether the status menu's Restart Launchy can work: `scripts/restart.sh` in the checkout, and the database this Launchy has open.
+    static func menuRestartAvailable(database: String) -> Bool {
+        guard let checkout = LaunchSnapshot.checkout else { return false }
+        return FileManager.default.isExecutableFile(atPath: script(in: checkout)) && FileManager.default.fileExists(atPath: database)
+    }
+
+    /// The restart after the menu's confirmation, started at once: no build, no newer-build check. Returns why it didn't start, nil when it did.
+    func restartFromMenu(database: String) async -> String? {
+        guard !restartScheduled else { return nil }
+        guard let checkout = LaunchSnapshot.checkout, Self.menuRestartAvailable(database: database) else {
+            return "scripts/restart.sh or the database isn't where this Launchy started"
+        }
+        if let busy = await busyRefusal(in: checkout) { return busy }
+        // The await let the user hide the panel, and a peer's restart or an upgrade get in first.
+        if Task.isCancelled || restartScheduled { return nil }
+        if isBusy { return busyMessage }
+        restartScheduled = true
+        guard Self.spawnRestart(checkout: checkout, database: database) else {
+            restartScheduled = false
+            return "The restart didn't start (see ~/Library/Logs/Launchy.log)"
+        }
+        return nil
+    }
+
+    nonisolated private static func script(in checkout: URL) -> String { checkout.appendingPathComponent("scripts/restart.sh").path }
+
     nonisolated private static func spawnRestart(checkout: URL, database: String) -> Bool {
-        let script = checkout.appendingPathComponent("scripts/restart.sh").path
+        let script = script(in: checkout)
         guard FileManager.default.isExecutableFile(atPath: script) else {
             NSLog("Launchy: the restart didn't start: \(script) isn't there")
             return false

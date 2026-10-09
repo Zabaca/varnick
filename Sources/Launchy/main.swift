@@ -36,14 +36,16 @@ final class LauncherPanel: NSPanel {
     /// Floating panels report AXSystemDialog, which window managers like Rectangle move
     /// but won't resize. Present as a standard window so they do both.
     override func accessibilitySubrole() -> NSAccessibility.Subrole? { .standardWindow }
+    /// Runs when the panel hides itself on losing focus.
+    var onHide: (() -> Void)?
     override func resignKey() {
         super.resignKey()
-        if !keepOpen && !pinned { orderOut(nil) }
+        if !keepOpen && !pinned { orderOut(nil); onHide?() }
     }
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     var panel: LauncherPanel!
     var model: LauncherModel!
     /// Hey Launchy: answers spoken requests heard by Listening.
@@ -57,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var statusItem: NSStatusItem!
     private var listenItem: NSMenuItem!
     private var pinItem: NSMenuItem!
+    private var restartItem: NSMenuItem!
     var sizeSub: AnyCancellable?
     var settingsSubs: [AnyCancellable] = []
     let embedder = Embedder()
@@ -140,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.layer?.cornerCurve = .continuous
         host.layer?.masksToBounds = true
         panel = LauncherPanel(contentView: host)
+        panel.onHide = { [weak self] in self?.model.cancelRestart() }
         panel.delegate = self
         sizeSub = model.objectWillChange
             .receive(on: RunLoop.main)
@@ -165,6 +169,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings.record(event)
                 return nil
             }
+            // The Restart Launchy card takes every key.
+            if self.model.answerRestartKey(event) { return nil }
             if self.model.pendingSplit != nil {
                 self.model.pickerKey(event)
                 return nil
@@ -194,6 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         listenItem = menu.addItem(withTitle: "Start Listening", action: #selector(toggleListening), keyEquivalent: "")
         menu.addItem(withTitle: "Show Transcript", action: #selector(showTranscript), keyEquivalent: "")
         menu.addItem(.separator())
+        restartItem = menu.addItem(withTitle: "Restart Launchy", action: #selector(restartFromMenu), keyEquivalent: "")
+        menu.delegate = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
 
@@ -306,6 +314,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func toggleListening() { Listener.shared.toggle() }
 
+    /// Hidden when the restart can't work from here (`BuildUpgrade.menuRestartAvailable`), checked as the menu opens.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        restartItem.isHidden = !BuildUpgrade.menuRestartAvailable(database: model.store.path)
+    }
+
+    /// Nothing restarts until the card is confirmed.
+    @objc func restartFromMenu() {
+        show()
+        model.askRestart()
+    }
+
     @objc func showTranscript() {
         model.openTranscript()
         show()
@@ -351,6 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hide() {
         setPinned(false)
         panel.orderOut(nil)
+        model.cancelRestart()
     }
 
     /// Unpinning while the panel isn't key (the user is in another app) hides it, as an
