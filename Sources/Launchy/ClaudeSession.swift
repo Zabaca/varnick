@@ -199,6 +199,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// transcript's date then.
     private var recordedTurn: PaneTurn?
     private var transcriptStamp: Date?
+    /// The pane's work links (ADR 0020), read by `checkWork` when its log's date changes; nil until a hook has written one.
+    private(set) var work: PaneWork?
+    private var workStamp: Date?
     /// `transcript_path` from the session file, read again when that file's date changes.
     private var transcriptPath: (path: String, sessionFileDate: Date?)?
     /// App panes: the app this pane runs, set when the pane is made from the picker.
@@ -466,6 +469,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // The first turn, so a session started again isn't read as its last run's turn (ADR 0010).
         let conversation = resuming ? record.conversationID : nil
         PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: record.prompt), for: record.id)
+        PaneFolder.clearSubagentWork(for: record.id)
         // claude exits on an unknown --agent, so a session whose agent file has since gone
         // resumes without it.
         let agent = record.agent.flatMap { name in
@@ -1065,6 +1069,16 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         recordedTurn = recorded
         transcriptStamp = transcriptDate
         turn = PaneFolder.corrected(recorded, for: record.id, transcriptPath: transcriptPath)
+    }
+
+    /// Reads the work records and the log when the log's date changes: every hook that changes a record appends to it, so otherwise this
+    /// is one stat a second per pane (the board's tick). A peer's files are on its host.
+    func checkWork() {
+        guard isClaude, !isOnPeer else { return }
+        let stamp = PaneFolder.modificationDate(PaneFolder.workLogFile(for: record.id).path)
+        guard stamp != workStamp else { return }
+        workStamp = stamp
+        work = stamp == nil ? nil : PaneFolder.work(for: record.id)
     }
 
     /// Session titles: titles the conversation once from its first prompt, or keeps a /rename name found there.

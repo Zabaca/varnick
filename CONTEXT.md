@@ -41,7 +41,7 @@ What Claude is doing in a **Session** right now: working, waiting for the user's
 _Avoid_: Status, state, running (a session "runs" while its zmx session is alive)
 
 **Session board**:
-The panel's view of the Claude panes on this Mac and the sessions open on paired Macs, each as a **board card** in one of three columns by **Turn**: Running (working or background), Stopped (everything else, marked when Claude waits on the user mid-turn, and below the live cards the **ended cards** of sessions whose pane closed without Done, or that a paired Mac's Recent says closed there after this Mac listed them open, kept until the user marks them done or opens them) and Completed (reached only by Done: on a live card it closes the pane, on a paired Mac's session it only marks it and nothing ends there, and on an ended card it just moves it). It replaces the panel's content as Settings does. Beside Sessions it has a Problems tab: a card per problem of the projects that keep `docs/problems`, in Backlog, Decided, Building, Shipped or Closed by what the problem and option files say and the branches tied to options, not by **Turn**.
+The panel's view of the Claude panes on this Mac and the sessions open on paired Macs, each as a **board card** in one of three columns by **Turn**: Running (working or background), Stopped (everything else, marked when Claude waits on the user mid-turn, and below the live cards the **ended cards** of sessions whose pane closed without Done, or that a paired Mac's Recent says closed there after this Mac listed them open, kept until the user marks them done or opens them) and Completed (reached only by Done: on a live card it closes the pane, on a paired Mac's session it only marks it and nothing ends there, and on an ended card it just moves it). It replaces the panel's content as Settings does. Beside Sessions it has a Problems tab: a card per problem of the projects that keep `docs/problems`, in Backlog, Decided, Building, Shipped or Closed by what the problem and option files say, the branches tied to options and the **Work links** of live sessions, not by **Turn**, with a chip for each session that worked on it.
 _Avoid_: Kanban (the command's name), dashboard; "card" alone, which is a pane's **Card**
 
 **Pane**:
@@ -144,6 +144,10 @@ _Avoid_: Bug, feature request, ticket
 **Option**:
 One way of solving a **Problem**, with its trade-offs. A problem can have several live at once; each carries its own status, and a rejected one keeps its reason.
 _Avoid_: Proposal, solution, spec (an accepted option serves as the spec)
+
+**Work link**:
+The problem, or the option of a problem, that a **Session** or one of its subagents works on, kept as files in the pane's folder: none (the default, and a state of its own), a problem or an option. Made by writing a problem's files, by `/work`, and by the skills that create work; never read from a transcript. A session whose link names an open option makes the problem Building; a link to a shipped option is not live. A session that ends keeps its links in its saved record.
+_Avoid_: Tag, assignment
 
 ### Listening
 

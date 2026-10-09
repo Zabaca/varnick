@@ -38,7 +38,7 @@ public enum PaneFolder {
         url(for: id).appendingPathComponent(turnFileName)
     }
 
-    static let turnFileName = ".launchy-turn"
+    public static let turnFileName = ".launchy-turn"
 
     /// The `Stop` hook's input saved unparsed beside the turn file, which says which background tasks were running
     /// when a turn ended (option 01, Background work).

@@ -516,14 +516,27 @@ if CommandLine.arguments.contains("--sync") {
     }
 }
 
-// `Launchy --problems [folder…]` prints the Problems tab's columns and each card's evidence for those project folders (main checkouts),
-// or for the projects Launchy lists, and exits (to check the rules without the UI).
+// `Launchy --hook-settings [--skip-permissions]` prints the `--settings` value claude is started with, to run the hooks' shell by hand.
+if CommandLine.arguments.contains("--hook-settings") {
+    print(ClaudeCommand.hookSettings(skipPermissions: CommandLine.arguments.contains("--skip-permissions")))
+    exit(0)
+}
+
+// `Launchy --problems [--work <pane folder>]… [--ended <pane folder>]… [folder…]` prints the Problems tab's columns, each card's evidence and
+// chips and each pane folder's links, for those project folders (main checkouts) or the projects Launchy lists, and exits (to check the rules
+// and the hooks' files without the UI). A pane folder is read for its work files; `--ended` reads it as a pane that has closed.
 if let i = CommandLine.arguments.firstIndex(of: "--problems") {
-    let folders = CommandLine.arguments.dropFirst(i + 1).filter { !$0.hasPrefix("--") }
+    var folders: [String] = [], open: [URL] = [], ended: [URL] = []
+    var rest = CommandLine.arguments.dropFirst(i + 1)[...]
+    while let argument = rest.popFirst() {
+        if argument == "--work", let folder = rest.popFirst() { open.append(URL(fileURLWithPath: folder)) }
+        else if argument == "--ended", let folder = rest.popFirst() { ended.append(URL(fileURLWithPath: folder)) }
+        else if !argument.hasPrefix("--") { folders.append(argument) }
+    }
     MainActor.assumeIsolated {
         Task { @MainActor in
-            let roots = folders.isEmpty ? Project.scan(roots: Settings.shared.projectFolders).map(\.path) : Array(folders)
-            print(await ProblemsReader.report(roots), terminator: "")
+            let roots = folders.isEmpty ? Project.scan(roots: Settings.shared.projectFolders).map(\.path) : folders
+            print(await ProblemsReader.report(roots, open: open, ended: ended), terminator: "")
             exit(0)
         }
         RunLoop.main.run()
