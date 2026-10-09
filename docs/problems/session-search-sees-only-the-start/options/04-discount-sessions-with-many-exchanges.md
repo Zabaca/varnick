@@ -2,7 +2,8 @@
 problem: session-search-sees-only-the-start
 title: Discount a session's best exchange by how many exchanges it has
 summary: On top of option 01, a session's score is its best exchange's similarity less a small amount that grows with the logarithm of its exchange count, so a long session needs a closer match to outrank a short one. No summary and no language model; the size of the discount is chosen on the eval set before it ships.
-status: proposed
+status: rejected
+reason: measured on the session-search eval, it moves rank from long sessions to short ones with no net gain (fused MRR +0.006 [-0.014, +0.025] on descriptive searches, +0.004 on short ones); option 02 is the add-on that reduces the long-session bias
 ---
 
 ## Solution
