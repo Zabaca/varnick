@@ -1,8 +1,8 @@
 import Foundation
 
 /// A pane's own folder under Launchy's support folder, `panes/<pane id>`. It holds the SessionStart
-/// hook's file (ADR 0001) and the turn file (ADR 0010) for a Claude pane, and stays with the pane across
-/// /clear and /resume.
+/// hook's file (ADR 0001), the turn file (ADR 0010) and the list of its conversations for a Claude pane, and stays
+/// with the pane across /clear and /resume.
 public enum PaneFolder {
     public static func url(for id: UUID) -> URL {
         SupportFolder.url.appendingPathComponent("panes", isDirectory: true)
@@ -48,6 +48,43 @@ public enum PaneFolder {
 
     static let stopFileName = ".launchy-stop"
 
+    /// The conversations the pane has been on after its first, one id a line in the order it reached them, which
+    /// `corrected` appends to as it sees the session file move. The hook's file holds only the latest, and Claude
+    /// Code's transcripts don't name the one before.
+    static func conversationsFile(for id: UUID) -> URL {
+        url(for: id).appendingPathComponent(conversationsFileName)
+    }
+
+    static let conversationsFileName = ".launchy-conversations"
+
+    /// The transcripts of the conversations the pane left, oldest first, beside `transcriptPath`'s (a project's
+    /// transcripts share a folder): the pane id's own, which is always its first conversation, then those
+    /// recorded. A teammate outlives its lead's conversation across /clear, a continuation and /resume, so the
+    /// teammate ledger reads these too (`TranscriptReader.busyTeammates`). Records `transcriptPath`'s conversation
+    /// when it is new.
+    static func earlierTranscripts(for id: UUID, transcriptPath: String) -> [String] {
+        let current = URL(fileURLWithPath: transcriptPath).deletingPathExtension().lastPathComponent
+        let file = conversationsFile(for: id)
+        let lines = ((try? String(contentsOf: file, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+        // The first conversation is the one the pane id names; a file with nothing in it means the pane is still on it.
+        if (lines.last ?? id.uuidString.lowercased()) != current, !current.isEmpty {
+            let line = Data((current + "\n").utf8)
+            if let handle = try? FileHandle(forWritingTo: file) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: line)
+                try? handle.close()
+            } else {
+                try? line.write(to: file)
+            }
+        }
+        var earlier = [String]()
+        for conversation in [id.uuidString.lowercased()] + lines where conversation != current && !earlier.contains(conversation) {
+            earlier.append(conversation)
+        }
+        let folder = URL(fileURLWithPath: transcriptPath).deletingLastPathComponent()
+        return earlier.map { folder.appendingPathComponent($0 + ".jsonl").path }
+    }
+
     /// A `turn_duration` entry or the stop file older than the turn's date by more than this isn't that turn's: the
     /// `Stop` entries run together, and the turn file is written just before Claude Code writes the entry.
     static let staleWindow: TimeInterval = 5
@@ -80,7 +117,8 @@ public enum PaneFolder {
         }
         if result.turn == .waiting {
             let input = stopInput(for: id, since: result.since, transcriptPath: transcriptPath)
-            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input)
+            let earlier = earlierTranscripts(for: id, transcriptPath: transcriptPath)
+            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input, earlier: earlier)
             if !work.isEmpty { result = PaneTurn(.background, since: result.since, background: work) }
         }
         return result

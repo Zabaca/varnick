@@ -325,11 +325,12 @@ extension TranscriptReader {
 
     /// Workflows are the last `turn_duration` in the 64 KB tail's `pendingWorkflowCount` (none if it is older than `since`
     /// or before the tail), less those notified ended after it. Shells, agents and teammates are the Stop input's tasks,
-    /// less those notified ended in the tail; a teammate counts only while it is busy (`busyTeammates`).
-    static func pendingBackground(path: String, since: Date, input: StopInput) -> BackgroundWork {
+    /// less those notified ended in the tail; a teammate counts only while it is busy (`busyTeammates`), which reads the
+    /// pane's `earlier` conversations too.
+    static func pendingBackground(path: String, since: Date, input: StopInput, earlier: [String] = []) -> BackgroundWork {
         guard let (tail, startsMidLine) = readTail(path) else { return BackgroundWork() }
         var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, input: input)
-        if !teammates.isEmpty { work.teammates = busyTeammates(path: path, among: teammates) }
+        if !teammates.isEmpty { work.teammates = busyTeammates(path: path, earlier: earlier, among: teammates) }
         return work
     }
 
@@ -461,10 +462,24 @@ private final class TeamLedgers: @unchecked Sendable {
     private let lock = NSLock()
     private var ledgers = [String: Ledger]()
 
-    /// The teammates up to the last complete line now in the file; nil if it can't be read.
-    func team(at path: String) -> [String: Teammate]? {
+    /// The teammates of the transcript at `path` and of the `earlier` ones, whichever can be read, as one team; nil if
+    /// `path` can't be read.
+    func team(at path: String, earlier: [String]) -> [String: Teammate]? {
         lock.lock()
         defer { lock.unlock() }
+        guard var team = read(path) else { return nil }
+        for path in earlier.reversed() {
+            guard let before = read(path) else { continue }
+            team = team.merging(before) { later, before in
+                Teammate(description: later.description ?? before.description,
+                         busyAt: max(later.busyAt, before.busyAt), idleAt: max(later.idleAt, before.idleAt))
+            }
+        }
+        return team
+    }
+
+    /// The teammates up to the last complete line now in the file; nil if it can't be read. The caller holds the lock.
+    private func read(_ path: String) -> [String: Teammate]? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else { return nil }
         var ledger = ledgers[path] ?? Ledger()
         // A transcript only grows; a shorter one is another file.
@@ -485,10 +500,12 @@ private final class TeamLedgers: @unchecked Sendable {
 /// task id and a description but no name; the lead's transcript has the rest (Claude Code 2.1.295).
 extension TranscriptReader {
     /// How many of the running `teammates` are busy: a teammate is matched to its name by its description, which is the
-    /// `description` of the `Agent` call that spawned it. One with no spawn in the transcript (it is from before a
-    /// `/resume`), or whose description names more or fewer spawns than are running, counts busy.
-    static func busyTeammates(path: String, among teammates: [RunningTask]) -> Int {
-        guard let team = TeamLedgers.shared.team(at: path) else { return teammates.count }
+    /// `description` of the `Agent` call that spawned it. A teammate outlives its lead's conversation across /clear, a
+    /// continuation and /resume, so the spawn may be in a conversation the pane left: `earlier` are the transcripts of
+    /// those (`PaneFolder.earlierTranscripts`), read with the current one, so a later idle notification in either applies.
+    /// One with no spawn in any of them, or whose description names more or fewer spawns than are running, counts busy.
+    static func busyTeammates(path: String, earlier: [String] = [], among teammates: [RunningTask]) -> Int {
+        guard let team = TeamLedgers.shared.team(at: path, earlier: earlier) else { return teammates.count }
         return busyTeammates(in: team, among: teammates)
     }
 
