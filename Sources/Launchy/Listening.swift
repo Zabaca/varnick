@@ -334,7 +334,7 @@ private final class Capture {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw ListeningError("No microphone") }
-        let feed = try await analyze(.mic, from: format, to: speechFormat, locale, contextualStrings: ["Launchy", "Hey Launchy"])
+        let feed = try await analyze(.mic, from: format, to: speechFormat, locale, contextualStrings: ["Launchy", "Hey Launchy", "Jev", "TypeSafe"])
         try Task.checkCancellation()
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in feed(buffer) }
         micTapped = true
