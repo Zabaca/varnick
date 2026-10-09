@@ -53,20 +53,15 @@ All of this was read in the code at 0b9249d, unless it is marked otherwise.
 - The build's designated requirement is its code hash alone: `codesign -d -r-` on the current build prints `cdhash H"…"`. So a privacy grant recorded for one build should not match the next one.
   - This is inferred, not verified: the privacy database can't be read without Full Disk Access.
   - `runs-only-from-a-checkout` already records the same thing for the Keychain prompt (`Keychain.swift:4-5`), and its option 01 (Developer ID signing) would fix it.
-- **zmx panes are very likely attributed to zmx, not Launchy.** This isn't confirmed. macOS gives a process the grants of its responsible app.
-  - **Observed in the eval, in a pane on the user's Mac on 2026-10-09:** with Keep sessions running on, a pane's shell and Claude run under zmx, a daemon whose parent is launchd. The chain is the shell, then Claude, then zmx: the copy beside Launchy's binary, parent pid 1.
-  - **The first check proves nothing either way.** `AXIsProcessTrusted()` was false in that pane, but Launchy had no Accessibility grant then either: its switch was off in System Settings. So the result shows nothing about whether a Launchy grant reaches the pane.
-  - **The recheck.**
-    - The user then granted zmx Accessibility, temporarily, for the eval.
-    - About 20 minutes after the first check, `AXIsProcessTrusted()` turned true in the same zmx-hosted shell, with nothing restarted.
-    - The user's screenshot of System Settings at that moment showed Launchy's Accessibility switch off.
-  - **Not proven.** Nobody checked the list or the privacy database afterwards, so another entry can't be ruled out.
-  - **So it is very likely that macOS attributes a zmx pane's processes to zmx.** "A Launchy grant doesn't reach zmx panes" is strongly implied, but not measured. Option 01's hand check 2 settles both.
-- **The product rule, whatever the recheck finds:**
-  - The Accessibility read runs in Launchy's own process, under Launchy's own grant.
-  - zmx is never granted. Anything run from a pane (`bigarrow --element`, a helper script) would need that, and if zmx is the responsible process, its grant reaches every Claude session it hosts, with the power to read and drive any app's UI.
-  - The eval's temporary grant to zmx is the one exception, made for the recheck.
-- **Panes outside zmx are another matter.** With Keep sessions running off, or zmx missing, a pane runs as Launchy's direct child, through SwiftTerm (`ClaudeSession.startInTerminal`). Keep sessions running is off by default (`Settings.swift`), so on a new install that is every pane. Neither Launchy nor SwiftTerm disclaims responsibility for its children: no such call is in `Sources/`, `Packages/` or SwiftTerm's checkout. So those panes probably do get Launchy's grants. This is inferred, and option 01 has the hand check.
+- **Measured 2026-10-09: macOS attributes every pane process to Launchy, zmx-hosted ones included.**
+  - **How:** a process run from a zmx-hosted pane appeared in the privacy service's log (`com.apple.TCC`) with Launchy named as responsible and its own binary as the binary. It was denied only because the Launchy on disk had been rebuilt after the grant. Details are in `sessions-cant-see-or-act-on-the-screen`, Today.
+  - **So a grant to Launchy reaches every session in its panes,** Skip-permissions ones included, and a grant to zmx or to any executable in a pane is never consulted. The effect is to be confirmed once Launchy holds a matching grant.
+  - **Two earlier readings are wrong:**
+    - first, "zmx panes are attributed to zmx", read from the eval's recheck;
+    - then, "each process is its own", from macOS's private responsibility lookup, which misled.
+  - **Unexplained:** why the eval's recheck turned true about 20 minutes later in the same shell, after the user granted zmx alone, with Launchy's switch off in a screenshot.
+  - **The fix is `panes-share-launchys-permissions`,** now severity high.
+- **The product rule stands:** the Accessibility read runs in Launchy's own process, under Launchy's own grant. zmx is never granted, though a grant to it isn't consulted.
 
 **Text generation** (`TextGenerator.swift`; ADR 0012)
 - Gemma 4 E2B (`mlx-community/gemma-4-e2b-it-4bit`, at a pinned revision) is loaded through MLX's language-model factory, which is text only.
@@ -105,7 +100,7 @@ This is MIT-licensed Swift for macOS 14 or newer. What matters here comes from i
   - Electron apps build their web content's tree only when asked to (`AXManualAccessibility`).
   - Chrome refuses that request and the older attribute too. It exposes a page's content only when started with `--force-renderer-accessibility` or while VoiceOver runs; its authors verified this on 2026-10-08.
   - Chrome's own toolbar is always in the tree.
-- **The permission** goes to the responsible app, which for a command-line tool is the terminal that runs it.
+- **The permission** goes to the responsible app, which for a command-line tool is the terminal that runs it. A Launchy pane's processes were later measured to be attributed to Launchy (Today › Permissions and signing).
 
 ## Measured: Jev and Gemma on screen requests
 
@@ -138,7 +133,7 @@ The `eval` agent ran this on 2026-10-09 in agent-lab, the user's evaluation repo
 - **The text beside an element mattered most:** found in code, it added 10 to 19 points for both models. A switch's own label is only its state ("1"), so without the row's text neither model can tell one switch from the next. The enclosing groups added nothing.
 - **The eval's recommendation:** Jev for choosing, with Gemma as the routing fallback only.
 
-**The pane's responsible process: very likely zmx, not confirmed.** In the same zmx-hosted shell, `AXIsProcessTrusted()` went from false to true about 20 minutes later. Nothing was restarted, it happened right after the user granted zmx, and Launchy's switch was off in the user's screenshot. Details are in Today › Permissions and signing, and option 01's hand check 2 settles it.
+**The pane's responsible process: Launchy (corrected 2026-10-09).** The eval saw `AXIsProcessTrusted()` go from false to true in a zmx-hosted shell after the user granted zmx, and read it as zmx being responsible. The privacy service's log later named Launchy as responsible for a zmx-hosted pane's process. Why the eval's check turned true is unexplained (Today › Permissions and signing).
 
 Figures from the user's own screens stay in `.scratch/spoken-requests-cant-see-the-screen/`.
 
@@ -154,4 +149,6 @@ Figures from the user's own screens stay in `.scratch/spoken-requests-cant-see-t
   That is a new kind of data for TypeSafe. It isn't History or sessions, but it is whatever the window shows: a mail's subjects in a list, a document's name in a tab, the account's name in a sidebar.
 - **The permission.** Every option needs Accessibility, and options 02 to 04 also need Screen Recording.
   - Each grant goes to a build that the next rebuild may not match.
-  - Its reach into Launchy's panes is unmeasured both ways: very likely not into sessions in zmx (the recheck), probably yes into panes started outside zmx (inferred).
+  - Its reach into Launchy's panes:
+    - Into every session in its panes, zmx-hosted ones included: the privacy service attributes them to Launchy (measured 2026-10-09).
+    - Cutting that is `panes-share-launchys-permissions`.

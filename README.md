@@ -45,10 +45,14 @@ it resolves and compiles the Swift packages.
 
 **Signing.** The binary and zmx are signed ad hoc, unless the Mac's keychain holds a "Developer ID Application"
 identity: the build then signs with it, with the hardened runtime and one entitlement (audio input), so macOS
-keeps the permissions you give Launchy across rebuilds instead of treating each build as a new app. With two
-or more such identities, or to pick another, copy `Makefile.local.example` to `Makefile.local` (git-ignored) and
-name one. An identity the build found never falls back to ad hoc: if signing with it fails, the build fails.
-The key must be usable by `codesign` without a prompt, since an upgrade from Settings › Peers builds unattended.
+should keep the permissions you give Launchy across rebuilds instead of treating each build as a new app (to be
+confirmed by hand; see ADR 0022 and SECURITY.md). With two or more such identities, or to pick another, copy
+`Makefile.local.example` to `Makefile.local` (git-ignored) and name one. A build never falls back to ad hoc
+behind your back: if an identity was found and signing with it fails, the build fails; so does one named in
+`Makefile.local` that isn't in the keychain, one that has expired or become invalid, a checkout that has signed
+before finding none, and a `security find-identity` that itself fails. Set `SIGN_IDENTITY=-` to sign ad hoc on
+purpose. A failed build puts the last good binary back. The key must be usable by `codesign` without a prompt,
+since an upgrade from Settings › Peers builds unattended.
 
 `make install` also links this checkout's `custom-apps` skill into `~/.claude/skills/` so Claude Code in
 any project can find it. It links only when nothing is at that path, or when the link there already
@@ -150,9 +154,8 @@ also granted, Launchy captures that window alone into memory and reads its text 
 recognition on this Mac, so a Chrome page, a canvas app or a remote desktop can be pointed into. The
 picture is never written to disk, logged or sent; only the short lines of text it finds go on, as below.
 Without Screen Recording the elements' answer stands, and Launchy says it can't see inside Chrome's pages.
-A rebuild of Launchy may need either permission given again. The permissions are Launchy's own. Sessions
-kept running in zmx very likely don't get them, but a Claude or terminal pane that Launchy starts itself,
-which is every pane while Keep sessions running is off, probably does: see [`SECURITY.md`](SECURITY.md).
+A rebuild of Launchy may need either permission given again. The permissions are Launchy's, and every
+Claude session and shell in its panes gets them too, kept running in zmx or not: see [`SECURITY.md`](SECURITY.md).
 
 ### TypeSafe
 

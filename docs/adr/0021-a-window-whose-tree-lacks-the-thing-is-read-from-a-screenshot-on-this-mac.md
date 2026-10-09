@@ -40,7 +40,7 @@ The user decided this on 2026-10-09. A picture shows what a person typed as well
 Launchy now also needs Screen Recording. Without it the fallback is skipped and the tree's answer stands. The grant follows ADR 0019's rules for Accessibility:
 - The capture runs only in Launchy's process, never from a pane, and zmx is never granted.
 - While builds are signed ad hoc, a rebuild may stop the grant from applying.
-- Panes started outside zmx probably share it (`panes-share-launchys-permissions`).
+- Panes started outside zmx probably share it (`panes-share-launchys-permissions`). (Superseded: see the correction of 2026-10-09 in ADR 0019, which holds for this grant too. Every pane process, zmx-hosted ones included, is attributed to Launchy, so every session in its panes can capture the screen while Launchy holds Screen Recording.)
 
 ## Considered Options
 
