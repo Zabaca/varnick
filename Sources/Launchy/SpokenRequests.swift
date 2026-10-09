@@ -270,7 +270,9 @@ final class SpokenRequests {
                 let rereading = Date()
                 let frame = await ScreenReader.currentFrame(of: target)
                 reread = Date().timeIntervalSince(rereading)
-                if let frame, frame.width > 1, frame.height > 1 {
+                // A panel element is gone when the panel was hidden, or covered, during the hold: its frame may still read true.
+                let panelGone = ScreenReader.isLaunchy(target) && ScreenReader.panel() == nil
+                if let frame, frame.width > 1, frame.height > 1, !panelGone {
                     pointing = (frame, target.note)
                 } else {
                     done.outcome = .screenMiss(.gone)
@@ -336,7 +338,11 @@ final class SpokenRequests {
     private static func screenTiming(_ look: SpokenPipeline.ScreenLook?) -> String {
         guard let look else { return "" }
         let present = look.pick.map { $0.isConfident ? "present" : "not present" } ?? "-"
-        return "screen read \(look.read.seconds.secondsText) (\(look.candidates) elements), "
+        let panel = look.panel.map {
+            "panel read \($0.read.seconds.secondsText) (\($0.candidates) elements, \($0.pointed ? "pointed" : "fell through")), "
+        } ?? ""
+        let behind = look.panel?.pointed == true ? "" : "screen read \(look.read.seconds.secondsText) (\(look.candidates) elements), "
+        return panel + behind
             + "chosen in \(look.choose.seconds.secondsText) by \(look.chosenBy) (\(present)), " + textTiming(look.text)
             + "miss \(look.miss?.logKind ?? "pointed"), "
     }
