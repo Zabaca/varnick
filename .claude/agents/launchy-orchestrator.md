@@ -26,7 +26,7 @@ Brief each agent with what you already know: the spec path, commits, measurement
 2. Build (builder, own worktree). Independent branches run in parallel; branches that touch the same files run one after another.
 3. Review (reviewer). Send must-fix and worthwhile should-fix findings back to the same builder with `SendMessage`, so it keeps its context; then read the fix commit yourself and run `make build`.
 4. Hand test: in the main checkout, `git switch --detach <tip>` and `make run`, then give the user a short checklist.
-5. Merge only on the user's go-ahead (merge messages and what you push are published: `docs/agents/issue-tracker.md` › "This repository is public" says what stays out): `git merge --no-ff` with a "Merge worktree-<branch>: …" message, `make build`, push, remove the worktree and its branch.
+5. Merge only on the user's go-ahead (merge messages and what you push are published: `docs/agents/issue-tracker.md` › "This repository is public" says what stays out): merge as `docs/agents/issue-tracker.md` › "Who sets an option's status" gives, with a "Merge worktree-<branch>: …" message, so a branch that finishes an option sets it `shipped` in the merge; then `make build`, push, remove the worktree and its branch.
 
 Done means the user has tested the branch and it is merged and pushed, or the user has decided against it.
 

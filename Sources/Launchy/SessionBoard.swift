@@ -46,8 +46,11 @@ extension BackgroundWork {
 
 /// The session board (ADR 0010): this Mac's Claude panes and the paired Macs' open sessions in three columns
 /// by turn, and the sessions marked done. Opened by ⌘⇧B and `!kanban` through `LauncherModel.showBoard`, which shows it in place of the panel's content like Settings.
+/// Beside Sessions it has a Problems tab (`ProblemsBoard`, `!problems`); ⌘⇧B opens whichever was shown last.
 @MainActor
 final class SessionBoard: ObservableObject {
+    enum Tab { case sessions, problems }
+
     enum Column: CaseIterable, Identifiable {
         case running, stopped, completed
 
@@ -155,7 +158,13 @@ final class SessionBoard: ObservableObject {
     /// The Running card Done was pressed on, or dropped on Completed, once: it asks inside the card, and a
     /// second Done ends it.
     @Published private(set) var confirming: UUID?
-    weak var model: LauncherModel?
+    @Published private(set) var tab = Tab.sessions
+    let problems = ProblemsBoard()
+    weak var model: LauncherModel? {
+        didSet { problems.model = model }
+    }
+    /// The board is on screen (between `appear` and `close`).
+    private var appeared = false
 
     /// The zmx sessions listed when the board opened; nil until zmx answers, or if it couldn't be asked.
     private var zmxSessions: Set<String>?
@@ -166,9 +175,18 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Showing
 
-    /// The board is on screen (again): reads every pane's turn now and once a second after, and asks
-    /// zmx once which restored panes still have a session. A pane the user was in is highlighted.
+    /// The board is on screen (again): the tab it shows starts reading. Sessions reads every pane's turn now and once a second
+    /// after, and asks zmx once which restored panes still have a session; a pane the user was in is highlighted. Problems
+    /// reads its own files (`ProblemsBoard.start`) and nothing of Sessions.
     func appear() {
+        appeared = true
+        switch tab {
+        case .sessions: startSessions()
+        case .problems: problems.start()
+        }
+    }
+
+    private func startSessions() {
         model?.refreshPeersForBoard()
         model?.refreshPeerRecentForBoard()
         refresh()
@@ -183,7 +201,7 @@ final class SessionBoard: ObservableObject {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
                 // A hidden panel reads nothing; it is read again when it shows (`LauncherModel.panelDidShow`).
-                if NSApp.windows.first(where: { $0 is LauncherPanel })?.isVisible == true {
+                if Self.panelIsVisible {
                     self.model?.refreshPeersForBoard()
                     self.refresh()
                 }
@@ -191,12 +209,35 @@ final class SessionBoard: ObservableObject {
         }
     }
 
-    func close() {
-        confirming = nil
+    private func stopSessions() {
         ticker?.cancel()
         ticker = nil
         zmxCheck?.cancel()
         zmxCheck = nil
+    }
+
+    static var panelIsVisible: Bool { NSApp.windows.first(where: { $0 is LauncherPanel })?.isVisible == true }
+
+    /// Tab, ⇧Tab and `!problems`. Each tab reads only while it shows: leaving Sessions stops its tick, and returning reads it all again.
+    func show(_ next: Tab) {
+        guard next != tab else { return }
+        tab = next
+        confirming = nil
+        guard appeared else { return }
+        if next == .problems {
+            stopSessions()
+            problems.start()
+        } else {
+            problems.stop()
+            startSessions()
+        }
+    }
+
+    func close() {
+        appeared = false
+        problems.reset()
+        confirming = nil
+        stopSessions()
         selection = nil
         zmxSessions = nil
     }
@@ -220,7 +261,7 @@ final class SessionBoard: ObservableObject {
     /// Completed sessions. A session whose Mac is no longer paired is hidden, and an ended card whose id already
     /// has a card is skipped.
     func refresh() {
-        guard let model else { return }
+        guard let model, tab == .sessions else { return }
         var next: [Card] = []
         for tab in model.tabs {
             for pane in tab.sessions where pane.isClaude {
@@ -317,10 +358,17 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Keys
 
-    /// The keys the board takes: ←/→ column, ↑/↓ card, ↩ opens, D, the End session key and the Mark session done key mark done, esc
+    /// The keys the board takes: Tab and ⇧Tab switch tabs; the Problems tab takes the rest while it shows (`ProblemsBoard.key`). On
+    /// Sessions, ←/→ column, ↑/↓ card, ↩ opens, D, the End session key and the Mark session done key mark done, esc
     /// cancels a question and otherwise closes. A modified ↩ is taken and does nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
-        let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
+        let flags = event.modifierFlags.intersection(KeyCombo.relevant)
+        if Int(event.keyCode) == kVK_Tab, flags.isSubset(of: .shift) {
+            show(tab == .sessions ? .problems : .sessions)
+            return true
+        }
+        if tab == .problems { return problems.key(event) }
+        let plain = flags.isEmpty
         switch Int(event.keyCode) {
         case kVK_Return, kVK_ANSI_KeypadEnter: if plain { openSelected() }
         case kVK_Escape where plain: if confirming != nil { confirming = nil } else { model?.closeBoard() }
@@ -401,11 +449,15 @@ final class SessionBoard: ObservableObject {
     /// The selection after an arrow key: the next card in the column, or the card at the same height in the
     /// next column that has any. Nothing selected starts at the first card.
     static func moved(_ selection: UUID?, in cards: [Card], _ direction: Direction) -> UUID? {
-        let lists = Column.allCases.map { column in cards.filter { $0.column == column } }
+        moved(selection, lists: Column.allCases.map { column in cards.filter { $0.column == column }.map(\.id) }, direction)
+    }
+
+    /// `moved` over each column's ids, left to right; the Problems tab moves the same way.
+    static func moved<ID: Equatable>(_ selection: ID?, lists: [[ID]], _ direction: Direction) -> ID? {
         guard let selection, let at = lists.indices.lazy.compactMap({ c in
-            lists[c].firstIndex { $0.id == selection }.map { (column: c, row: $0) }
+            lists[c].firstIndex { $0 == selection }.map { (column: c, row: $0) }
         }).first else {
-            return lists.first { !$0.isEmpty }?.first?.id
+            return lists.first { !$0.isEmpty }?.first
         }
         var (column, row) = at
         switch direction {
@@ -423,7 +475,7 @@ final class SessionBoard: ObservableObject {
                 next += step
             }
         }
-        return lists[column][row].id
+        return lists[column][row]
     }
 }
 
@@ -437,10 +489,13 @@ struct SessionBoardView: View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 Image(systemName: "rectangle.split.3x1").foregroundStyle(.secondary)
-                Text("Session board").font(.system(size: 15, weight: .semibold))
+                tabButton("Sessions", .sessions)
+                tabButton("Problems", .problems)
                 Spacer()
+                if board.tab == .problems { EvidenceSwitch(board: board.problems) }
                 KeyHint(label: "Open", keys: ["↩"])
-                ShortcutHint(label: "Done", action: .endPane)
+                if board.tab == .sessions { ShortcutHint(label: "Done", action: .endPane) }
+                KeyHint(label: "Switch", keys: ["⇥"])
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
                     .buttonStyle(.plain)
             }
@@ -450,16 +505,44 @@ struct SessionBoardView: View {
             .background(WindowDragArea())
             Theme.hairline.frame(height: 1)
 
-            // The times count from the clock, so they redraw each second without the board publishing.
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                HStack(alignment: .top, spacing: 8) {
-                    ForEach(SessionBoard.Column.allCases) { column in
-                        BoardColumn(board: board, column: column, now: context.date)
+            switch board.tab {
+            case .sessions:
+                // The times count from the clock, so they redraw each second without the board publishing.
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(SessionBoard.Column.allCases) { column in
+                            BoardColumn(board: board, column: column, now: context.date)
+                        }
                     }
+                    .padding(6)
                 }
-                .padding(6)
+                .frame(maxHeight: .infinity, alignment: .top)
+            case .problems:
+                ProblemsBoardView(board: board.problems)
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    private func tabButton(_ title: String, _ tab: SessionBoard.Tab) -> some View {
+        let on = board.tab == tab
+        return Button { board.show(tab) } label: {
+            Text(title)
+                .font(.system(size: 15, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? Color.primary : Color.secondary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The Problems tab's Show evidence switch (E): every card says why it is in its column.
+private struct EvidenceSwitch: View {
+    @ObservedObject var board: ProblemsBoard
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Show evidence").foregroundStyle(.secondary)
+            Toggle("", isOn: $board.showEvidence).toggleStyle(.switch).controlSize(.mini).labelsHidden()
+            KeyHint(label: "", keys: ["E"])
         }
     }
 }

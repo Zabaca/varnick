@@ -32,6 +32,16 @@ Several options can be live on one problem at once. The link runs from option to
 
 An accepted option is the spec: when work starts, its tickets go under `.scratch/<problem-slug>/issues/` (below). An option with an architectural consequence also gets a `docs/adr/` entry once accepted; link to it rather than repeating it.
 
+### Who sets an option's status
+
+The Problems tab on the session board reads these statuses, so they are kept true:
+
+- `proposed`, `accepted`, `rejected`, `abandoned`: the user's choice; the planner writes it.
+- `in-progress`: set by hand when work starts that no branch shows yet.
+- `shipped`: set by the merge that finishes the option, in the merge commit itself: `git merge --no-ff --no-commit <branch>`, edit the option's `status` to `shipped`, then `git commit` with the merge message. A merge that leaves the option unfinished sets nothing. The branch's tie says which option it built.
+
+**Branch tie.** A builder's first step, on a branch other than main, is `git config branch.<branch>.launchy-option <problem-slug>/<NN>`. Every worktree shares the config, and deleting the branch drops the entry. The tab shows the option Building while the branch has commits that main lacks, so no `in-progress` is needed.
+
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`; use the problem slug when the work comes from a problem

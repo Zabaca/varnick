@@ -459,6 +459,9 @@ final class LauncherModel: ObservableObject {
 
     private func token(for project: Project) -> String { token(for: project, among: activeProjects) }
 
+    /// A project's `#name` word among this Mac's, as a pill on the Problems tab.
+    func projectPill(_ project: Project) -> String { token(for: project, among: projects) }
+
     private func token(for project: Project, among projects: [Project]) -> String {
         let shared = projects.contains { $0.name == project.name && $0.path != project.path }
         return "#" + (shared ? "\(project.group)/\(project.name)" : project.name)
@@ -977,7 +980,10 @@ final class LauncherModel: ObservableObject {
         case .transcript: openTranscript()
         case .kanban:
             query = ""
-            showBoard()
+            showBoard(.sessions)
+        case .problems:
+            query = ""
+            showBoard(.problems)
         }
     }
 
@@ -1963,8 +1969,10 @@ final class LauncherModel: ObservableObject {
         if showingBoard { closeBoard() } else { showBoard() }
     }
 
-    func showBoard() {
+    /// `tab` is the one to show (`!problems`); nil leaves the board on the tab it showed last.
+    func showBoard(_ tab: SessionBoard.Tab? = nil) {
         pendingSplit = nil
+        if let tab { board.show(tab) }
         guard !showingBoard else { return }
         showingBoard = true
         board.appear()
@@ -2180,7 +2188,7 @@ final class LauncherModel: ObservableObject {
 
 /// A `!` command; its name is what's typed after `!`. Run by `LauncherModel.runCommand`.
 enum LauncherCommand: String, CaseIterable, Identifiable {
-    case listen, transcript, kanban
+    case listen, transcript, kanban, problems
 
     var id: String { rawValue }
 
@@ -2188,7 +2196,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     var names: [String] {
         switch self {
         case .kanban: [rawValue, "tabs"]
-        case .listen, .transcript: [rawValue]
+        case .listen, .transcript, .problems: [rawValue]
         }
     }
 
@@ -2197,6 +2205,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .listen: "waveform"
         case .transcript: "text.alignleft"
         case .kanban: "rectangle.split.3x1"
+        case .problems: "tray.full"
         }
     }
 
@@ -2206,6 +2215,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .listen: Listener.shared.state.action
         case .transcript: "Show transcript"
         case .kanban: "Show session board"
+        case .problems: "Show problems board"
         }
     }
 
@@ -2214,6 +2224,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .listen: Listener.shared.state.detail
         case .transcript: "Today's transcript in a tab, following new lines"
         case .kanban: "Claude sessions by turn: Running, Stopped, Completed (also !tabs)"
+        case .problems: "Problems by stage: Backlog, Decided, Building, Shipped, Closed"
         }
     }
 
@@ -2221,7 +2232,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     @MainActor var needsAttention: Bool {
         switch self {
         case .listen: Listener.shared.state.needsAttention
-        case .transcript, .kanban: false
+        case .transcript, .kanban, .problems: false
         }
     }
 }
