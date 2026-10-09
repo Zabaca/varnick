@@ -193,7 +193,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// transcript's date then.
     private var recordedTurn: PaneTurn?
     private var transcriptStamp: Date?
-    /// The pane's work links (ADR 0020), read by `checkWork` when its log's date changes; nil until a hook has written one.
+    /// The pane's work links (ADR 0020), read by `checkWork` when its log's date changes; nil until a hook has written one. For a pane on a
+    /// peer, the host's, from its `status` (`follow`).
     private(set) var work: PaneWork?
     private var workStamp: Date?
     /// `transcript_path` from the session file, read again when that file's date changes.
@@ -1113,6 +1114,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func follow(_ status: PeerSessionStatus) -> Bool {
         guard isClaude, isOnPeer else { return false }
         turn = status.running ? status.turn.map { PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date())) } : nil
+        // Its work links are the host's (ADR 0020). Once it isn't running there, the history stays for the closing pane to save and
+        // the live records go, so the card leaves Building.
+        if status.running { work = status.work?.paneWork } else { dropHostLive() }
         guard status.running else { return false }
         var changed = false
         if let reported = status.conversation {
@@ -1132,7 +1136,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     /// The host didn't answer: its last word on the turn is no longer known to hold.
-    func clearHostTurn() { turn = nil }
+    func clearHostTurn() {
+        turn = nil
+        dropHostLive()
+    }
+
+    /// The host's live work records are no longer known to hold; its history is kept.
+    private func dropHostLive() {
+        if let work { self.work = PaneWork(live: [], logged: work.history) }
+    }
 
     /// Runs the exit callback exactly once, whichever path notices first.
     private func finish(_ code: Int32?) {

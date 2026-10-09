@@ -178,6 +178,7 @@ extension HeadlessPeerHost {
             let reported = PaneFolder.reportedConversation(for: uuid)
             status.conversation = reported ?? record.conversation
             if let found = PeerTurn.read(for: uuid) { (status.turn, status.turnAge) = (found.turn, found.age) }
+            status.work = PeerWork.read(for: uuid)
             statuses[Zmx.sessionName(uuid)] = status
             if let reported, reported != record.conversation { _ = try? state.update(record.id) { $0.conversation = reported } }
         }
@@ -201,7 +202,7 @@ extension HeadlessPeerHost {
             let found = PeerTurn.read(for: uuid)
             return PeerOpenSession(session: session, title: title, folder: folder, agent: record.agent,
                                    conversation: conversation == record.id ? nil : conversation, control: status.control, clients: status.clients,
-                                   turn: found?.turn, turnAge: found?.age)
+                                   turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: uuid))
         }
         return reply
     }

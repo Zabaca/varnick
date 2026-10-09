@@ -169,7 +169,10 @@ public enum PeerRelay {
         reply.open = open.map { session in
             var session = session
             session.controlName = names.name(of: session.control)
-            if let device, !Zmx.sameID(session.control, device) { session.control = nil }
+            if let device {
+                if !Zmx.sameID(session.control, device) { session.control = nil }
+                session.work = nil
+            }
             return session
         }
         return reply
@@ -301,6 +304,7 @@ public enum PeerRelay {
     private static func hiding(_ status: PeerSessionStatus, from device: String) -> PeerSessionStatus {
         var status = status
         if !Zmx.sameID(status.control, device) { status.control = nil }
+        status.work = nil   // the page doesn't show work links (ADR 0020)
         return status
     }
 

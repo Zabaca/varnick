@@ -592,6 +592,8 @@ final class LauncherModel: ObservableObject {
             record.agent = info.agent
             record.conversation = info.conversation
             record.host = peer.id
+            // The links it was listed with, so the ended card it becomes keeps them (`endRememberedSessions`).
+            record.workLinks = info.work?.paneWork.history
             return record
         }
 
@@ -1215,7 +1217,7 @@ final class LauncherModel: ObservableObject {
             if let at = remembered.firstIndex(where: { $0.id == new.id }) {
                 let old = remembered[at]
                 changed = changed || old.host != new.host || old.title != new.title || old.directory != new.directory
-                    || old.agent != new.agent || old.conversation != new.conversation
+                    || old.agent != new.agent || old.conversation != new.conversation || old.workLinks != new.workLinks
                     || new.lastUsed.timeIntervalSince(rememberedSaved[new.id] ?? .distantPast) > Self.rememberedResaveAfter
                 remembered[at] = new
             } else {
@@ -1242,6 +1244,7 @@ final class LauncherModel: ObservableObject {
             record.agent = entry.agent
             record.host = host
             record.conversation = record.conversation(reportedAs: entry.conversation)
+            record.workLinks = old.workLinks
             Self.put(record, first: &ended, limit: .max, byConversation: false)
             ended.sort { $0.lastUsed > $1.lastUsed }
             remembered.removeAll { $0.id == old.id }
@@ -1718,9 +1721,13 @@ final class LauncherModel: ObservableObject {
         // The name ⌘⇧R gave a one-pane tab is the card's, as on the running card (`SessionBoard.card(for:in:_:)`).
         if record.isClaude, tab.sessions.count == 1, let name = tab.name { record.title = name }
         // Its links stay with the saved record, so its card keeps its chips (ADR 0020); the log is read here, once, as the pane closes.
-        if record.isClaude, !session.isOnPeer {
-            let links = PaneFolder.work(for: record.id).history
-            if !links.isEmpty { record.workLinks = links }
+        // A pane on a peer keeps what that host last said; the search database gets this Mac's own at once, and a peer's at the sync.
+        if record.isClaude {
+            let links = session.isOnPeer ? session.work?.history ?? [] : PaneFolder.work(for: record.id).history
+            if !links.isEmpty {
+                record.workLinks = links
+                if !session.isOnPeer { HistorySync.recordWork(of: record, links: links, databasePath: store.path) }
+            }
         }
         let markedDone = doneRequested.remove(session.id) != nil
         // A tab that ends isn't being renamed any more, on screen or not (the board can end a tab under it).

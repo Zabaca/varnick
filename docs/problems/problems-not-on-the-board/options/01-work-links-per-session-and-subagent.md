@@ -2,7 +2,7 @@
 problem: problems-not-on-the-board
 title: A Problems tab on the board, with work links for each session and subagent, made by hooks and /work, from every host
 summary: The board gets a Problems tab, the prototype's variant D, whose columns come from each problem's files. Every Claude pane keeps a work record in its folder (none, a problem or an option), and every subagent can keep its own beside it, with a log of every link made. A hook on file writes links the writer by path, a `/work` skill links it on request, and the builder links itself to its option and ties its branch to it in git. Building is an option with a live link or a tied branch not yet merged. Links reach a paired Mac's board in the relay's replies (protocol 17), and a session that ends keeps its links in its saved record and in the search database. The merge sets `shipped`. Rough effort is six days, in three branches.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -87,7 +87,7 @@ The relay reads a pane's work records and log where it reads the turn, on a Mac 
 
 ### History
 
-When a Claude pane closes, its log's links are copied into its saved record, so ended and Completed cards keep their chips. The history sync copies every saved record's links into a table of its own in the search database, never deleted, so which sessions worked on a problem can be asked after Recent and Completed have dropped them.
+When a Claude pane closes, its log's links are copied into its saved record, so ended and Completed cards keep their chips. The history sync copies every saved record's links into a table of its own in the search database, never deleted, so which sessions worked on a problem can be asked after Recent and Completed have dropped them. (amended 2026-10-09: the table is written when a pane closes, and the history sync copies the saved records' links that were missed, rather than the sync alone; the sync also copies those of the headless host's sessions, which has no search database of its own, and not a paired Mac's, which keeps its own.)
 
 ## Trade-offs
 
