@@ -42,7 +42,7 @@ A card shows the problem's title, the severity on a Backlog card, and session ch
 - Shipped: each shipped option.
 - Closed: the problem's status, or every option rejected or abandoned.
 
-A problem that a session wrote first also says which session it came out of. **Show evidence**, a switch in the header (E), opens every card. There is no slug, no option chip, no last-touched date and no way to change a status from the board. The arrows move between cards as on Sessions, and D and the End session key are taken and do nothing. (amended 2026-10-09: in a card that shows all its chips, ↓ and ↑ move onto them and between them, ↓ off the last chip moves on to the next card, ↩ or a click on a chip opens that session as the Sessions tab's Open does, and esc steps out of the chips before it closes the board.)
+A problem that a session wrote first also says which session it came out of. There is no slug, no option chip, no last-touched date and no way to change a status from the board. The arrows move between cards as on Sessions, and D and the End session key are taken and do nothing. (amended 2026-10-09: in a card that shows all its chips, ↓ and ↑ move onto them and between them, ↓ off the last chip moves on to the next card, ↩ or a click on a chip opens that session as the Sessions tab's Open does, and esc steps out of the chips before it closes the board. Also amended 2026-10-09: there is no Show evidence switch and no E key, which the board takes and does nothing with; evidence and every chip show only in a card opened with ↩ or a click, so chips are reachable only in an opened card, and esc on a chip collapses the card.)
 
 **Which problems.** Every project in Launchy's project list whose main checkout has a problems folder, read from disk as it is now. When more than one project has problems, each card carries its project's pill.
 
@@ -107,7 +107,7 @@ When a Claude pane closes, its log's links are copied into its saved record, so 
 2. As the user, I want Backlog sorted by severity, so that the worst open problems come first.
 3. As the user, I want a problem in Building only while something is really being built, so that the column means work in progress.
 4. As the user, I want to open a card and read why it is in its column, so that I can trust the board.
-5. As the user, I want Show evidence to open every card at once, so that I can review the whole board.
+5. (dropped 2026-10-09: no Show evidence switch; cards open one at a time.)
 6. As the user, I want each problem to show the sessions that worked on it, live first, so that I can find them.
 7. As the user, I want a discovery session to stay unlinked until it writes a problem, and then link by itself, so that I never have to remember to.
 8. As the user, I want to link a session to a problem or an option myself with `/work`, so that work that writes no file is counted too.
