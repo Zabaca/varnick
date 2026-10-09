@@ -194,6 +194,9 @@ final class Settings: ObservableObject {
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
     /// Answers a mic phrase that starts "Hey Launchy" aloud, while Listening is on (ADR 0015); off until turned on.
     @Published var heyLaunchy: Bool { didSet { defaults.set(heyLaunchy, forKey: "heyLaunchy") } }
+    /// Lets a spoken request point at the screen: Launchy reads the focused window's controls and draws an arrow (ADR 0019); off
+    /// until turned on. `screenPointingOn` says whether its other conditions hold too.
+    @Published var pointAtScreen: Bool { didSet { defaults.set(pointAtScreen, forKey: "pointAtScreen") } }
     /// Only changed bindings are stored; nil means deliberately unbound.
     @Published private(set) var overrides: [ShortcutAction: KeyCombo?] { didSet { saveOverrides() } }
     /// Action waiting for its new shortcut; the next key press is captured for it.
@@ -248,6 +251,18 @@ final class Settings: ObservableObject {
         }
     }
 
+    /// The TypeSafe key while the relevance filter is on TypeSafe: the gate of Jev's choice of where to look and of which element to
+    /// point at (ADR 0016, 0019).
+    var typesafeGateKey: String? {
+        activeRelevanceFilter == .typesafe ? typesafeKey : nil
+    }
+
+    /// Whether a spoken request may go to the screen: the switch, Hey Launchy and the gate. When false the decide questions have
+    /// no screen in them, and the switch acts as off.
+    var screenPointingOn: Bool {
+        pointAtScreen && heyLaunchy && typesafeGateKey != nil
+    }
+
     /// Where the next search or sync embeds. LAUNCHY_EMBEDDINGS overrides the settings in every process, the app included:
     /// `local`, `server` (the saved address), or an address (`http…`), which is that server with the saved model.
     var activeEmbeddings: ServerChoice {
@@ -295,6 +310,7 @@ final class Settings: ObservableObject {
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         voice = defaults.string(forKey: "voice") ?? ""
         heyLaunchy = defaults.bool(forKey: "heyLaunchy")
+        pointAtScreen = defaults.bool(forKey: "pointAtScreen")
         sessionTitles = defaults.bool(forKey: "sessionTitles")
         semanticSearch = defaults.object(forKey: "semanticSearch") as? Bool ?? true
         searchEmbeddingsRunOn = defaults.string(forKey: "searchEmbeddingsRunOn").flatMap(ModelRunOn.init) ?? .local
@@ -450,6 +466,8 @@ struct SettingsView: View {
     let close: () -> Void
     @State private var typesafeKeyDraft = ""
     @State private var modelServerKeyDraft = ""
+    /// Whether Launchy has Accessibility, checked while Settings shows it.
+    @State private var accessibilityGranted = ScreenReader.isTrusted
     /// Last section viewed, so Settings reopens where you left it.
     @AppStorage("settingsSection") private var sectionID = SettingsSection.claude.rawValue
 
@@ -557,7 +575,7 @@ struct SettingsView: View {
                         }
                         case .listening:
                         SettingRow(title: "Hey Launchy",
-                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and shows or opens nothing. With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Launchy\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match; no session or project names go. With the filter On this Mac or off, nothing is sent.") {
+                                   detail: "While Listening is on, say \"Hey Launchy\" and ask for a page, a bookmark or a Claude session. Launchy answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Launchy\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match; no session or project names go. With the filter On this Mac or off, nothing is sent.") {
                             if Listener.shared.state.isUnavailable {
                                 Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if let need = textGenerationNeed {
@@ -565,6 +583,27 @@ struct SettingsView: View {
                             }
                             Toggle("", isOn: $settings.heyLaunchy).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.heyLaunchy && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
+                        }
+                        SettingRow(title: "Point at the screen",
+                                   detail: "Ask \"Hey Launchy, where's the Allow button\" and Launchy draws a big arrow on it in the window in front, says what it is, and takes the arrow away a few seconds later. It reads that window's elements through macOS Accessibility, on this Mac, and takes no screenshot. It needs the relevance filter on TypeSafe with a key saved: what you say, the window's title, and each element's label, kind and nearby text go to TypeSafe to choose which one you mean. That is the window's visible text, up to 255 elements of it, such as a message list's subjects, an open mail's body or a page's text. What is typed in a field never goes. A rebuild of Launchy may need the Accessibility permission given again. The permission is Launchy's own: sessions kept running in zmx very likely don't get it, but a Claude or terminal pane started without Keep sessions running is Launchy's child and may, so a session started there with Skip permissions could read and drive any app's windows without asking.") {
+                            if !settings.heyLaunchy {
+                                Text("Needs Hey Launchy").font(.system(size: 12)).foregroundStyle(.orange)
+                            } else if !screenGateOpen {
+                                Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
+                                    .buttonStyle(.link)
+                                    .font(.system(size: 12))
+                            }
+                            Text(accessibilityGranted ? "Accessibility granted" : "Needs Accessibility")
+                                .font(.system(size: 12))
+                                .foregroundStyle(accessibilityGranted ? Color.secondary : Color.orange)
+                            if !accessibilityGranted {
+                                Button("Grant…") { askForAccessibility() }
+                            }
+                            Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                .disabled(!settings.pointAtScreen && (!settings.heyLaunchy || !screenGateOpen))
+                        }
+                        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+                            accessibilityGranted = ScreenReader.isTrusted
                         }
                         SettingRow(title: "Voice", detail: "What Launchy speaks in.") {
                             VoicePicker(settings: settings)
@@ -618,7 +657,7 @@ struct SettingsView: View {
                         switch settings.relevanceFilter {
                         case .typesafe:
                             SettingRow(title: "TypeSafe",
-                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe. A request to Hey Launchy sends the words you say after \"Hey Launchy\" to choose where to look, and then its search words with the top 20 pages the same way.") {
+                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe. A request to Hey Launchy sends the words you say after \"Hey Launchy\" to choose where to look, and then its search words with the top 20 pages the same way. With Point at the screen on, a request about the screen sends the window's title and its controls' names, kinds and nearby text instead.") {
                                 if settings.typesafeKeyInKeychain {
                                     Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
                                 } else if settings.typesafeKey != nil {
@@ -819,6 +858,17 @@ struct SettingsView: View {
         switch settings.relevanceFilter {
         case .typesafe: settings.typesafeKey == nil ? "Needs a key" : nil
         case .local: modelNeed(ready: localReranker.isReady, settingUp: localReranker.state == .importing)
+        }
+    }
+
+    /// Point at the screen can be turned on only with the gate open: only Jev chooses the element.
+    private var screenGateOpen: Bool { settings.typesafeGateKey != nil }
+
+    /// Adds Launchy to the Accessibility list (the system prompt) and opens that pane.
+    private func askForAccessibility() {
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(pane)
         }
     }
 

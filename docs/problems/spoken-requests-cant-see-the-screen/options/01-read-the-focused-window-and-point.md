@@ -2,7 +2,7 @@
 problem: spoken-requests-cant-see-the-screen
 title: Read the focused window's Accessibility tree, let Jev pick the element, and point at it with an arrow
 summary: With a new switch, Point at the screen, a spoken request routed to `screen` is answered from the Accessibility tree of the window that has focus. Launchy describes each visible element by its label, its kind and the text beside it. One Jev call picks the element the request means and says whether it is there at all. A pick Jev finds present gets a big click-through arrow and a sign, drawn by Launchy itself, while Launchy says the sign's note. The eval measured 87 of 97 right, 1 of 28 absent things pointed at, in 0.12 s. No screenshot is taken. Pointing needs the relevance filter on TypeSafe with a key, because Gemma's picks were measured too unreliable to draw. The request and the window's element descriptions go to TypeSafe. Chrome's web pages are out of reach.
-status: accepted
+status: shipped
 ---
 
 ## Solution

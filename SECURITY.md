@@ -126,6 +126,32 @@ refuses one whose `main` has commits `origin/main` lacks while `origin/main` has
 The Linux installer works from the checkout it runs in, not from `origin`: it builds the committed
 `Packages/LaunchyPeer` as it is at that checkout's `HEAD`, on the host.
 
+## Point at the screen
+
+Settings › Listening › **Point at the screen** (off by default, and available only with Hey Launchy on and the
+relevance filter on TypeSafe with a key) makes Launchy ask macOS for the Accessibility permission, which lets a
+process read and drive any app's windows. Launchy only reads, and only the window in front, when you ask
+about the screen.
+
+- **The permission is Launchy's own, and it may reach more than Launchy.** macOS gives a process the grants of
+  the app responsible for it. Claude and terminal panes that Launchy starts itself, which is every pane while
+  **Keep sessions running** is off, are Launchy's children and probably get the permission too (not
+  verified here), so a session started there with Skip permissions could read and drive any app's windows
+  without asking. Sessions kept running in zmx very likely do not get it; Launchy never grants zmx anything,
+  since a grant to zmx would very likely reach every session it hosts. Turning the switch off does not revoke
+  the permission: only taking Launchy out of Settings › Privacy & Security › Accessibility does, if that is
+  not acceptable.
+- **A rebuild may need the permission given again.** Builds are signed ad hoc, so macOS may not match the
+  grant to the next build (not verified).
+- **What leaves the Mac.** Only with the filter on TypeSafe and a key: for a request about the screen, the
+  words you said, the title of the window in front and, for up to its first 255 elements, the label, kind,
+  nearby text and whether it is dimmed. Those are the window's visible text, not only that near its controls:
+  a message list's subjects and senders, an open mail's body in Mail, a page's text in Safari, a file's name
+  in a tab, an account's name in a sidebar. What is typed in a field is never read, and a password field is
+  not read at all. No screenshot is taken, and none of it goes to a model server. See the README's
+  Privacy section.
+- **The arrow** is drawn by Launchy, cannot take focus or clicks, and goes by itself.
+
 ## Other things Launchy fetches and runs
 
 - **Downloads are pinned and checked.** The build checks the Metal shaders and zmx against SHA-256 digests
@@ -139,4 +165,5 @@ The Linux installer works from the checkout it runs in, not from `origin`: it bu
 - **TypeSafe.** With a key and the relevance filter on TypeSafe, searches and result descriptions leave the
   Mac, and so do the text of a spoken request after "Hey Launchy" and, as a typed search's, the search
   words and the title, site and page description of its first 20 pages. Words said before the request was
-  finished may be sent and then discarded. See the README's Privacy section.
+  finished may be sent and then discarded. With Point at the screen on, a request about the screen also
+  sends the window's title and its controls' descriptions (above). See the README's Privacy section.

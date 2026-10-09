@@ -70,7 +70,7 @@ logout ends the sessions either way.
   runs tools without asking. See [`SECURITY.md`](SECURITY.md).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See Privacy below for what turning it on sends.
-- **Keep sessions running** is off (above), and so are Listening and the Phone page.
+- **Keep sessions running** is off (above), and so are Listening, Point at the screen and the Phone page.
 - **`make install` leaves a skill link it didn't make alone** (above).
 
 A Mac that ran an earlier Launchy keeps what it stored. One that has Launchy's sessions file but never
@@ -123,6 +123,19 @@ that does and does not protect, including a mode in which any program on the Mac
 Listening transcribes your microphone and what the Mac plays, on this Mac, into a text file for the day
 (`Launchy/transcripts/` under Application Support). It is off at each launch and needs macOS 26. macOS asks for
 the microphone and system audio permissions the first time.
+
+### Point at the screen
+
+With Hey Launchy on, Settings › Listening › **Point at the screen** lets you ask about what is in front of
+you ("Hey Launchy, where's the Allow button"). Launchy reads the elements of the window that has focus
+through macOS Accessibility, in its own process, asks TypeSafe's Jev which one you mean, draws a big arrow
+and a sign on it that never takes focus or clicks, says what it is, and takes the arrow away a few seconds
+later. It takes no screenshot. It needs the Accessibility permission, which Settings asks for and shows,
+and the relevance filter on TypeSafe with a key (see Privacy below for what is sent). A rebuild of Launchy
+may need the permission given again. Chrome's page content is not readable; Launchy says so. The
+permission is Launchy's own. Sessions kept running in zmx very likely don't get it, but a Claude or terminal
+pane that Launchy starts itself, which is every pane while Keep sessions running is off, probably does:
+see [`SECURITY.md`](SECURITY.md).
 
 ### TypeSafe
 
@@ -185,6 +198,12 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   searched and filtered as a typed search is, so its search words and the title, site and page description
   of its first 20 pages go to TypeSafe too. This starts before you have quite finished, so if you go on
   speaking, words said so far may be sent and then discarded. With the filter On this Mac or off, nothing leaves.
+- **With Point at the screen on** (Settings › Listening, off by default, and only available with the filter on
+  TypeSafe and a key), a request that is about the screen also sends TypeSafe the title of the window in
+  front and, for each of its first 255 elements, the label, kind and nearby text. That is the window's
+  visible text, not only that near its controls: a message list's subjects and senders, an open mail's body in
+  Mail, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. What is typed in a
+  field is never read. No screenshot is taken, and none of this goes to a model server.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere

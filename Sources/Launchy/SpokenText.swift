@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The pure parts of a spoken request (ADR 0015): hearing the wake phrase, the two prompts and how their replies are read, and
@@ -41,6 +42,8 @@ enum SpokenText {
             /// Bookmarked pages only.
             case bookmarks
             case sessions
+            /// The window in front: nothing is searched, the focused window's controls are read and one is pointed at (ADR 0019).
+            case screen
             /// No source to prefer: sessions, then pages. The Text generation reply named none Launchy knows.
             case any
         }
@@ -62,7 +65,7 @@ enum SpokenText {
     /// The decide prompt, in one place so it can be tuned with `Launchy --ask`.
     private static let decideTemplate = """
         You turn a spoken request into a search. Choose where to look and what to search for.
-        Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions: their projects and work).
+        Sources: "history" (pages the user visited or bookmarked), "bookmarks" (only pages the user saved on purpose), "sessions" (the user's past Claude Code sessions: their projects and work){screenSource}.
         Every request is a search, so always choose one source. When unsure what is meant, choose "sessions" or "history" and use the request's own key words.
         A well-known public thing (a technology, product or site) is "history". A name you don't recognise is probably one of the user's own projects: "sessions".
         Reply with one line of JSON and nothing else: {"source": "...", "query": "..."}
@@ -79,13 +82,21 @@ enum SpokenText {
         Request: what is MLX
         {"source": "history", "query": "MLX"}
         Request: tell me about the budget spreadsheet
-        {"source": "history", "query": "budget spreadsheet"}
+        {"source": "history", "query": "budget spreadsheet"}{screenExample}
 
         Request: {request}
         """
 
-    static func decidePrompt(for request: String) -> String {
-        decideTemplate.replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
+    /// What Point at the screen adds, word for word as measured: arm G4 of the screen-pointing eval (agent-lab 20fb286).
+    private static let screenSource = ", \"screen\" (the window on the user's screen right now: a button, field, switch or icon they ask where it is, which one to press or what it is)"
+    private static let screenExample = "\nRequest: where is the export option on this screen\n{\"source\": \"screen\", \"query\": \"export option\"}"
+
+    /// `screen` offers the screen as a source (Point at the screen on); off, the prompt is the one without it.
+    static func decidePrompt(for request: String, screen: Bool = false) -> String {
+        decideTemplate
+            .replacingOccurrences(of: "{screenSource}", with: screen ? screenSource : "")
+            .replacingOccurrences(of: "{screenExample}", with: screen ? screenExample : "")
+            .replacingOccurrences(of: "{request}", with: String(request.prefix(maxRequestCharacters)))
     }
 
     /// What the relevance filter is asked about: the plan's query, or when that is the whole request (an unreadable reply, or one
@@ -96,7 +107,7 @@ enum SpokenText {
 
     /// The first `{…}` in the reply, read leniently. A reply that can't be read gives the request itself as the query, over both
     /// kinds of row.
-    static func plan(fromReply reply: String, request: String) -> Plan {
+    static func plan(fromReply reply: String, request: String, screen: Bool = false) -> Plan {
         let unreadable = Plan(source: .any, query: request, readable: false)
         guard let open = reply.firstIndex(of: "{"), let close = reply[open...].firstIndex(of: "}"),
               let object = try? JSONSerialization.jsonObject(with: Data(reply[open...close].utf8)) as? [String: Any],
@@ -107,6 +118,8 @@ enum SpokenText {
         case "history", "pages": source = .history
         case "bookmarks", "bookmark": source = .bookmarks
         case "sessions", "session": source = .sessions
+        // Only when the prompt offered it: a reply naming the screen to a prompt that didn't is unreadable.
+        case "screen" where screen: return Plan(source: .screen, query: "", readable: true)
         default: return unreadable
         }
         let words = ((object["query"] as? String) ?? "").split(whereSeparator: \.isWhitespace).prefix(maxQueryWords)
@@ -119,6 +132,10 @@ enum SpokenText {
     /// user's session folders or Jev gave them `alsoSessionsFrom`. Jev reads an unfamiliar name as a web topic; the folder check
     /// (here, never sent) corrects that.
     static func plan(for route: SpokenRouter.Route, request: String, folders: Set<String>) -> Plan {
+        // The screen leads only when it is the likeliest source; no search runs and sessions are not added beside it.
+        if route.screen > max(route.history, route.bookmarks, route.sessions) {
+            return Plan(source: .screen, query: "", readable: true)
+        }
         let words = queryWords(from: request)
         let source: Plan.Source =
             route.sessions >= route.history && route.sessions >= route.bookmarks ? .sessions
@@ -196,6 +213,7 @@ enum SpokenText {
         switch plan.source {
         case .sessions: return Array(sessions.prefix(maxSessions))
         case .any: return Array((sessions + kept).prefix(maxPages))
+        case .screen: return []
         case .history, .bookmarks: break
         }
         switch plan.alsoSessions {
@@ -345,8 +363,12 @@ enum SpokenPipeline {
         /// The request was empty: the wake phrase and nothing after it.
         case nothingToSearch
         case nothingFound(words: String)
-        /// Jev found the request to be about none of the user's things: nothing was searched.
-        case offTopic
+        /// Jev found the request to be about none of the user's things: nothing was searched. `screen`: Point at the screen was on,
+        /// so the screen is one of the things.
+        case offTopic(screen: Bool)
+        /// The request is about the screen and an element is to be pointed at (ADR 0019); its note is what is said.
+        case point(ScreenTarget)
+        case screenMiss(ScreenMiss)
 
         /// What Launchy says.
         var spoken: String {
@@ -354,9 +376,32 @@ enum SpokenPipeline {
             case .answer(let text): text
             case .nothingToSearch: "Ask me to find a page, a bookmark or a Claude session."
             case .nothingFound(let words): "I found nothing for \(words)."
-            case .offTopic: "I only look up your pages, bookmarks and Claude sessions."
+            case .offTopic(let screen):
+                screen ? "I only look up your pages, bookmarks, Claude sessions and what's on your screen."
+                    : "I only look up your pages, bookmarks and Claude sessions."
+            case .point(let target): target.note
+            case .screenMiss(let miss): miss.spoken
             }
         }
+    }
+
+    /// What reading the screen did, for the timing line and `--ask`. The labels and the pick are never logged.
+    struct ScreenLook {
+        var read: Duration = .zero
+        var candidates = 0
+        var choose: Duration = .zero
+        /// "Jev", or why nobody chose.
+        var chosenBy = "-"
+        var pick: ScreenPicker.Pick?
+        var miss: ScreenMiss?
+    }
+
+    /// What a request may do with the screen: whether Point at the screen is on, and for `--ask --app` the app to read in place of
+    /// the one with focus (which is the terminal).
+    @MainActor
+    struct ScreenOptions {
+        var on = Settings.shared.screenPointingOn
+        var app: NSRunningApplication?
     }
 
     struct Run {
@@ -369,6 +414,8 @@ enum SpokenPipeline {
         var respond: Duration = .zero
         /// Who made the plan: "Jev", or where Text generation ran when Jev was not used, and why not.
         var decidedBy = "-"
+        /// Set when the request was about the screen.
+        var screen: ScreenLook?
         /// What Jev said, when it decided; `--ask` prints it.
         var route: SpokenRouter.Route?
         /// Where Text generation wrote the answer.
@@ -381,8 +428,8 @@ enum SpokenPipeline {
         var meaningBy = "-"
     }
 
-    static func run(_ request: String, on model: LauncherModel) async throws -> Run {
-        try await respond(prepare(request, on: model), to: request, on: model)
+    static func run(_ request: String, on model: LauncherModel, screen: ScreenOptions? = nil) async throws -> Run {
+        try await respond(prepare(request, on: model, screen: screen), to: request, on: model)
     }
 
     /// One reply from Text generation. A cancelled local generation ends early and returns what it had, so a cancel is checked
@@ -397,7 +444,8 @@ enum SpokenPipeline {
 
     /// Decide, search and filter: everything up to the rows to read, with no answer and no speech. Runs while a spoken request
     /// is still being collected; throws `CancellationError` when more speech cancels it.
-    static func prepare(_ request: String, on model: LauncherModel) async throws -> Run {
+    static func prepare(_ request: String, on model: LauncherModel, screen: ScreenOptions? = nil) async throws -> Run {
+        let screen = screen ?? ScreenOptions()
         var textPlaces: [ModelPlace] = []
 
         guard !SpokenText.cleaned(request).isEmpty else {
@@ -416,10 +464,10 @@ enum SpokenPipeline {
             decidedBy = "relevance filter not on TypeSafe"
         } else if let key = Settings.shared.typesafeKey {
             do {
-                let said = try await SpokenRouter(apiKey: key).route(request)
+                let said = try await SpokenRouter(apiKey: key).route(request, screen: screen.on)
                 route = said
                 if said.isOffTopic {
-                    var run = Run(plan: SpokenText.Plan(source: .any, query: "", readable: true), rows: [], outcome: .offTopic,
+                    var run = Run(plan: SpokenText.Plan(source: .any, query: "", readable: true), rows: [], outcome: .offTopic(screen: screen.on),
                                   decide: began.duration(to: clock.now))
                     run.decidedBy = decidedBy
                     run.route = said
@@ -439,18 +487,21 @@ enum SpokenPipeline {
         } else {
             let reply: String
             do {
-                reply = try await generate(SpokenText.decidePrompt(for: request), SpokenText.decideTokens, on: model, places: &textPlaces)
+                reply = try await generate(SpokenText.decidePrompt(for: request, screen: screen.on), SpokenText.decideTokens, on: model, places: &textPlaces)
             } catch {
                 try Task.checkCancellation()
                 throw Failure(step: .decide, underlying: error)
             }
-            decided = SpokenText.plan(fromReply: reply, request: request)
+            decided = SpokenText.plan(fromReply: reply, request: request, screen: screen.on)
             decidedBy = "\(textPlaces.first.map { "\($0)" } ?? "-") (\(decidedBy))"
         }
         // Stays the outcome unless rows are found to answer from.
         var run = Run(plan: decided, rows: [], outcome: .nothingFound(words: decided.query), decide: began.duration(to: clock.now))
         run.decidedBy = decidedBy
         run.route = route
+
+        // The window in front is read, not searched: no keyword or meaning pass and no filter run.
+        if decided.source == .screen { return try await lookAtScreen(request, into: run, screen: screen) }
 
         // The panel's passes, back to back since nobody is typing: a pass that fails costs only itself (ADR 0017).
         let search = model.search
@@ -495,6 +546,54 @@ enum SpokenPipeline {
         return run
     }
 
+    /// A request about the screen (ADR 0019): read the controls of the window in front and let Jev pick the one it means. Gemma
+    /// never points, so without Jev's gate the request ends in a miss. Nothing is drawn here; the arrow waits for the hold to end.
+    private static func lookAtScreen(_ request: String, into prepared: Run, screen: ScreenOptions) async throws -> Run {
+        var run = prepared
+        var look = ScreenLook()
+        func missed(_ miss: ScreenMiss) -> Run {
+            look.miss = miss
+            run.screen = look
+            run.outcome = .screenMiss(miss)
+            return run
+        }
+        guard ScreenReader.isTrusted else { return missed(.noPermission) }
+        guard let key = Settings.shared.typesafeGateKey else {
+            look.chosenBy = "gate closed"
+            return missed(.jevFailed)
+        }
+        guard let app = screen.app ?? ScreenReader.focusedApplication() else { return missed(.nothingListed) }
+
+        let reading = await ScreenReader.read(app, pointer: ScreenReader.pointer())
+        try Task.checkCancellation()
+        look.read = reading.duration
+        look.candidates = reading.elements.count
+        let blind: ScreenMiss = reading.chromeBlind ? .chrome : .notPresent
+        guard !reading.elements.isEmpty else { return missed(reading.chromeBlind ? .chrome : .nothingListed) }
+
+        let began = ContinuousClock.now
+        let pick: ScreenPicker.Pick
+        do {
+            pick = try await ScreenPicker(apiKey: key).pick(request, windowTitle: reading.windowTitle, elements: reading.elements)
+        } catch {
+            try Task.checkCancellation()
+            look.choose = began.duration(to: .now)
+            look.chosenBy = "Jev failed: \(error.logKind)"
+            return missed(.jevFailed)
+        }
+        try Task.checkCancellation()
+        look.choose = began.duration(to: .now)
+        look.chosenBy = "Jev"
+        look.pick = pick
+        guard pick.isConfident else { return missed(blind) }
+
+        let element = reading.elements[pick.index]
+        run.outcome = .point(ScreenTarget(reference: element.reference, frame: element.frame, note: ScreenElements.note(for: element),
+                                          description: element.description))
+        run.screen = look
+        return run
+    }
+
     /// Writes the answer from what `prepare` found; a run with no rows to read comes back as it was.
     static func respond(_ prepared: Run, to request: String, on model: LauncherModel) async throws -> Run {
         var run = prepared
@@ -534,11 +633,29 @@ extension Double {
 /// app's own search and Text generation's choice, without speaking. Prints what each step did and how long it took, to tune the
 /// prompts and the timing constants. Decides with Jev only when the relevance filter is on TypeSafe with a key; set
 /// `LAUNCHY_EVAL_FILTER` (typesafe, local, off) to choose without writing the settings. Request files are personal: keep them out of the repo.
+///
+/// `--app <name>` asks the screen questions and reads that app's focused window for a request about the screen, in place of the app
+/// with focus (the terminal), and prints the candidates counted, the pick, who chose and each step's time; it draws nothing.
+/// `--draw` also shows the arrow for 8 s, to check placement.
 @MainActor
 enum SpokenCommand {
     private static func describe(_ route: SpokenRouter.Route) -> String {
         let p = { (value: Double) in String(format: "%.2f", value) }
-        return "jev: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), other \(p(route.other))"
+        return "jev: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), "
+            + "screen \(p(route.screen)), other \(p(route.other))"
+    }
+
+    private static func describe(_ look: SpokenPipeline.ScreenLook, outcome: SpokenPipeline.Outcome) -> [String] {
+        var lines = ["screen: \(look.candidates) candidates  [read \(look.read.seconds.secondsText)]"]
+        if let pick = look.pick {
+            let p = { (value: Double) in String(format: "%.2f", value) }
+            lines.append("choice: by \(look.chosenBy), present \(p(pick.present)), the element's share \(p(pick.target))  [\(look.choose.seconds.secondsText)]")
+        } else {
+            lines.append("choice: \(look.chosenBy)  [\(look.choose.seconds.secondsText)]")
+        }
+        if case .point(let target) = outcome { lines.append("pick: \(target.description)") }
+        if let miss = look.miss { lines.append("miss: \(miss.logKind)") }
+        return lines
     }
 
     /// Runs the first half of the request's words and cancels the run after `seconds`, as a request that goes on does in the app
@@ -565,21 +682,40 @@ enum SpokenCommand {
               + "\(how) [\(began.duration(to: .now).seconds.secondsText) to settle]")
     }
 
-    static func run(file: String, restartAfter: Double? = nil, model: LauncherModel) async -> Int32 {
+    /// `app` is the name given to `--app`; `draw` is `--draw`.
+    static func run(file: String, restartAfter: Double? = nil, app: String? = nil, draw: Bool = false, model: LauncherModel) async -> Int32 {
         guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
             print("Can't read \(file)")
             return 1
+        }
+        var screen = SpokenPipeline.ScreenOptions()
+        if let app {
+            guard let running = ScreenReader.application(named: app) else {
+                print("No running app named \(app)")
+                return 1
+            }
+            screen = SpokenPipeline.ScreenOptions(on: true, app: running)
         }
         let words = text.split(whereSeparator: \.isWhitespace)
         let request = words.joined(separator: " ")
         if let restartAfter { await restart(words, after: restartAfter, model: model) }
         do {
-            let run = try await SpokenPipeline.run(request, on: model)
+            let run = try await SpokenPipeline.run(request, on: model, screen: screen)
             if run.outcome == .nothingToSearch {
                 print("decide: nothing to search")
-            } else if run.outcome == .offTopic {
+            } else if case .offTopic = run.outcome {
                 print("decide: off topic  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
                 if let route = run.route { print(describe(route)) }
+            } else if let look = run.screen {
+                print("decide: screen  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
+                if let route = run.route { print(describe(route)) }
+                describe(look, outcome: run.outcome).forEach { print($0) }
+                if draw, case .point(let target) = run.outcome {
+                    NSApplication.shared.setActivationPolicy(.accessory)
+                    ArrowOverlay.shared.show(frame: target.frame, note: target.note)
+                    try? await Task.sleep(for: .seconds(ArrowOverlay.lingers))
+                    ArrowOverlay.shared.hide()
+                }
             } else {
                 print("decide: \(run.plan.source), \"\(run.plan.query)\"\(run.plan.alsoSessions == .no ? "" : ", sessions \(run.plan.alsoSessions)")\(run.plan.readable ? "" : " (reply unreadable: the request itself)")  [\(run.decidedBy), \(run.decide.seconds.secondsText)]")
                 if let route = run.route { print(describe(route)) }
