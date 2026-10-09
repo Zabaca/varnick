@@ -52,7 +52,7 @@ The image exists in memory only until the request is sent. Launchy never writes 
 - The model's name is stored in UserDefaults. Which model is an open question.
 
 **When it runs**
-- After option 01's choice gives `none`, falls below the threshold, or had no candidates, with the switch on and a key saved.
+- After option 01's Jev call gives `present` under 0.5, or the window had no elements, with the switch on and a key saved.
 - With option 02 accepted, only after option 02 also finds nothing.
 - Never during the hold. It runs only once the request is finished, so a partial request's screenshot is never sent. That is unlike option 01's speculation, and it costs its latency after the hold.
 

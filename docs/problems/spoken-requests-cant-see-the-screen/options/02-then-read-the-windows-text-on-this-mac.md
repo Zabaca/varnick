@@ -1,7 +1,7 @@
 ---
 problem: spoken-requests-cant-see-the-screen
 title: Option 01, then Apple's text recognition on a screenshot of the window, on this Mac, when the tree has nothing that fits
-summary: Option 01 as it stands, plus one fallback. When the Accessibility tree yields nothing the chooser accepts, or Chrome hides its page, Launchy captures the focused window alone into memory and runs Apple's on-device text recognition on it. The short lines of text it finds, with their boxes, become a second list of candidates for the same Jev-or-Gemma choice. This reaches Chrome pages, canvas apps and remote desktops without any model looking at an image, and the screenshot never leaves the Mac or reaches the disk. The recognised lines can go to TypeSafe under option 01's gate, and that is more of the window's text than option 01 sends. It needs Screen Recording as well as Accessibility.
+summary: Option 01 as it stands, plus one fallback. When option 01's Jev call finds the thing isn't among the window's elements, or Chrome hides its page, Launchy captures the focused window alone into memory and runs Apple's on-device text recognition on it. The short lines of text it finds, with their boxes, become a second list for the same Jev call. This reaches Chrome pages, canvas apps and remote desktops without any model looking at an image, and the screenshot never leaves the Mac or reaches the disk. The recognised lines can go to TypeSafe under option 01's gate, and that is more of the window's text than option 01 sends. It needs Screen Recording as well as Accessibility.
 status: proposed
 ---
 
@@ -12,7 +12,7 @@ Everything in option 01 holds. This option adds one step after option 01's choic
 1. Launchy captures the focused window alone, not the display, so other windows and the desktop aren't in the image. The capture stays in memory.
 2. Apple's Vision text recognition reads the window and returns each line of text with its box.
 3. Lines short enough to be a label (a button's, a link's, a tab's) become candidates, described as "text on screen" with their words.
-4. They go to option 01's choice, Jev or Gemma under the same gate, with the same `none` and threshold. A confident pick is pointed at, with the arrow ringing the text's box.
+4. They go to option 01's Jev call, under the same gate, with `present` deciding as there. A pick Jev finds present is pointed at, with the arrow ringing the text's box.
 
 The image is dropped as soon as the text is read. It is never written to disk, never logged and never sent.
 
@@ -24,7 +24,7 @@ The image is dropped as soon as the text is read. It is never written to disk, n
   - Controls an app forgot to label, when they carry visible text.
 - **It still misses icons.** A gear, a trash can or a share symbol has no text, so it is found only through option 01's tree.
 - **No model reads the image.** Text recognition is Apple's, built into macOS, on this Mac. It adds no dependency and no download.
-- **More of the window's text can reach TypeSafe.** The recognised lines are what the window shows: a mail's subjects and senders, a document's headings, a chat's names. The length cut keeps out paragraphs but not short private lines. Under option 01's gate (the filter on TypeSafe and a key), they go to TypeSafe on a miss. With the gate closed, Gemma chooses on this Mac and nothing leaves. That is more than option 01 sends, and the ADR and Settings say so.
+- **More of the window's text can reach TypeSafe.** The recognised lines are what the window shows: a mail's subjects and senders, a document's headings, a chat's names. The length cut keeps out paragraphs but not short private lines. They go to TypeSafe on a miss, under option 01's gate (the filter on TypeSafe and a key). Option 01 already sends the text beside each control; this sends every short line in the window. The ADR and Settings say so.
 - **A second permission.**
   - Screen Recording is granted the way Accessibility is, with the same ad-hoc rebuild problem.
   - Like option 01's grant, it is Launchy's own. The capture runs in Launchy's process, never from a pane, and panes started outside zmx may inherit it (option 01, hand check 2).
@@ -49,7 +49,7 @@ The image is dropped as soon as the text is read. It is never written to disk, n
 - The detail text adds that a picture of the window is read on this Mac when the window's controls don't have it, and which recognised text may go to TypeSafe.
 
 **When it runs**
-- After option 01's choice gives `none`, falls below the threshold, or had no candidates.
+- After option 01's Jev call gives `present` under 0.5, or the window had no elements.
 - At once, without a choice, when the focused app is Chrome and its web area is empty.
 - Never for a request that option 01 answered.
 
@@ -63,8 +63,9 @@ The image is dropped as soon as the text is read. It is never written to disk, n
 - Each line's box is converted from the image's coordinates to the screen's, through option 01's single conversion.
 
 **Choosing**
-- Option 01's question, gate, `none`, threshold and Gemma fallback.
-- The candidates are the kept lines, each described as "text on screen" and its words. The tree's candidates, already refused, aren't sent again.
+- Option 01's call, gate and `present` rule, with no Gemma pick.
+- The list is the kept lines, each described as "text on screen" and its words. The tree's elements, already refused, aren't sent again.
+- Unmeasured: the eval measured Accessibility lists only. Check recognised lines with `--ask --app` on Chrome pages before relying on option 01's figures here.
 - What goes to TypeSafe adds these lines, under the gate.
 
 **Pointing and the note**
