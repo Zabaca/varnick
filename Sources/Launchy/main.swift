@@ -621,12 +621,17 @@ runTextCommand("--title") { text, generator, place in
 }
 
 // `Launchy --ask <file>` treats the file's text as a spoken request (what follows "Hey Launchy") and prints what each of its three
-// steps did and took, without speaking (see SpokenCommand). Request files are personal: keep them out of the repo.
+// steps did and took, without speaking (see SpokenCommand). `--restart-after <seconds>` first runs the request's first half and
+// cancels it after that long, as more speech does in the app. Request files are personal: keep them out of the repo.
 if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.arguments.count {
     MainActor.assumeIsolated {
         let delegate = AppDelegate()
         delegate.makeModel()
-        Task { @MainActor in exit(await SpokenCommand.run(file: CommandLine.arguments[i + 1], model: delegate.model)) }
+        let restartAfter = CommandLine.arguments.firstIndex(of: "--restart-after")
+            .flatMap { $0 + 1 < CommandLine.arguments.count ? Double(CommandLine.arguments[$0 + 1]) : nil }
+        Task { @MainActor in
+            exit(await SpokenCommand.run(file: CommandLine.arguments[i + 1], restartAfter: restartAfter, model: delegate.model))
+        }
         RunLoop.main.run()
     }
 }

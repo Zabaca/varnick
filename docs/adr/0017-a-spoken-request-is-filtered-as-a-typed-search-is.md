@@ -30,3 +30,4 @@ When the filter judged any page of the chosen kind relevant, only those pages ar
 - A change to the panel's passes now reaches Hey Launchy without being copied by hand. The panel must behave as it did: `--search-eval` and `--search` before and after.
 - The wording of the answer prompt is tuned for a small model and brittle: a one-clause change flipped answers to requests that nothing fits and to requests for several. Re-check with `--ask` after touching it.
 - Amends ADR 0015 and ADR 0016.
+- Decide, search and filter start when the request's last final result arrives and run through the wait that ends it (`SpokenRequests.hold`); only the answer and the speech wait for the end. More speech cancels the run and starts another on the new text, so a partial request may be sent to Jev, and its search words and pages to TypeSafe, and then discarded. It is the same data as an unhurried request sends, for text that was not the whole request.
