@@ -135,14 +135,12 @@ screen. Launchy only reads, and only the window in front, when you ask about the
 Recording is used only when the window's elements don't have the thing or the window is a Chrome page,
 and without it that step is skipped.
 
-- **The permissions are Launchy's own, and they may reach more than Launchy.** macOS gives a process the grants of
-  the app responsible for it. Claude and terminal panes that Launchy starts itself, which is every pane while
-  **Keep sessions running** is off, are Launchy's children and probably get the permissions too (not
-  verified here), so a session started there with Skip permissions could read and drive any app's windows,
-  and with Screen Recording capture the screen, without asking. Sessions kept running in zmx very likely do not get it; Launchy never grants zmx anything,
-  since a grant to zmx would very likely reach every session it hosts. Turning the switch off does not revoke
-  the permissions: only taking Launchy out of Settings › Privacy & Security › Accessibility and Screen
-  Recording does, if that is not acceptable.
+- **The permissions reach every pane.** macOS attributes every process in Launchy's panes to Launchy, sessions
+  kept running in zmx included (seen in macOS's privacy log), so every Claude session and shell there gets
+  Launchy's Accessibility and Screen Recording. A session started with Skip permissions can read and drive any
+  app's windows and capture the screen without asking. A grant to zmx or to any other program a pane runs is
+  never consulted. Turning the switch off does not revoke the permissions: only taking Launchy out of
+  Settings › Privacy & Security › Accessibility and Screen Recording does, if that is not acceptable.
 - **A rebuild may need the permissions given again.** Builds are signed ad hoc, so macOS may not match the
   grants to the next build (not verified). macOS may also ask again after some weeks whether Launchy may
   keep recording, and show its capture indicator (not verified).

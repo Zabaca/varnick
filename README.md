@@ -143,9 +143,8 @@ also granted, Launchy captures that window alone into memory and reads its text 
 recognition on this Mac, so a Chrome page, a canvas app or a remote desktop can be pointed into. The
 picture is never written to disk, logged or sent; only the short lines of text it finds go on, as below.
 Without Screen Recording the elements' answer stands, and Launchy says it can't see inside Chrome's pages.
-A rebuild of Launchy may need either permission given again. The permissions are Launchy's own. Sessions
-kept running in zmx very likely don't get them, but a Claude or terminal pane that Launchy starts itself,
-which is every pane while Keep sessions running is off, probably does: see [`SECURITY.md`](SECURITY.md).
+A rebuild of Launchy may need either permission given again. The permissions are Launchy's, and every
+Claude session and shell in its panes gets them too, kept running in zmx or not: see [`SECURITY.md`](SECURITY.md).
 
 ### TypeSafe
 
