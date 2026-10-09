@@ -1721,6 +1721,7 @@ final class LauncherModel: ObservableObject {
         if record.isClaude {
             let links = session.isOnPeer ? session.work?.history ?? [] : PaneFolder.work(for: record.id).history
             if !links.isEmpty { record.workLinks = links }
+            if !links.isEmpty, !session.isOnPeer { HistorySync.recordWork(of: record, links: links, databasePath: store.path) }
         }
         let markedDone = doneRequested.remove(session.id) != nil
         // A tab that ends isn't being renamed any more, on screen or not (the board can end a tab under it).

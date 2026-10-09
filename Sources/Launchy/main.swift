@@ -548,6 +548,23 @@ if let i = CommandLine.arguments.firstIndex(of: "--problems") {
     }
 }
 
+// `Launchy --work-history <pane folder>` makes LAUNCHY_DB ready (every table, `work_history` included) and writes the pane folder's links
+// into it as one closed session (a made-up id), then exits: to check the table's migration and write against a COPY of the database.
+if let i = CommandLine.arguments.firstIndex(of: "--work-history"), i + 1 < CommandLine.arguments.count {
+    let path = MainActor.assumeIsolated { AppDelegate.databasePath }
+    do {
+        try HistorySync.prepare(at: path)
+        let links = PaneFolder.work(in: URL(fileURLWithPath: CommandLine.arguments[i + 1])).history
+        let record = SessionRecord(id: UUID(), prompt: "", title: "", directory: "/", startedAt: Date(), lastUsed: Date())
+        try HistorySync.writeWork(of: record, links: links, databasePath: path)
+        print("Wrote \(links.count) link\(links.count == 1 ? "" : "s") for session \(record.id.uuidString.lowercased()) into \(path)")
+        exit(0)
+    } catch {
+        print("Failed: \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
 // `Launchy --search "query"` prints the hybrid results of a `?` search for it (it adds the `?`) and exits (debugging / ranking checks).
 if let i = CommandLine.arguments.firstIndex(of: "--search"), i + 1 < CommandLine.arguments.count {
     let query = CommandLine.arguments[i + 1]
