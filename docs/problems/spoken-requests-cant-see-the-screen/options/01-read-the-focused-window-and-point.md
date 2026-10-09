@@ -149,7 +149,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
 
   The sign goes on the side with the most room and never covers the element. It is one colour with a white edge and a shadow, sized to read from a step back, and it fades in.
 - **Coordinates.** Accessibility frames are global with a top-left origin, and AppKit's have a bottom-left one from the main display. They are converted in one place.
-- **How long it shows.** From just before the speech starts until 8 s after it ends (a named constant). A new spoken request, or turning Point at the screen, Hey Launchy or Listening off, removes it at once. Nothing on it is clickable, and it doesn't follow a window that moves.
+- **How long it shows.** From just before the speech starts (amended 2026-10-09: ahead of the sound, see Further Notes) until 8 s after it ends (a named constant). A new spoken request, or turning Point at the screen, Hey Launchy or Listening off, removes it at once. Nothing on it is clickable, and it doesn't follow a window that moves.
 - **Whose code.** It is Launchy's own, after bigarrow's overlay recipe. Any code copied from bigarrow keeps its MIT notice.
 
 **The note**
@@ -251,6 +251,7 @@ Nothing is clicked, opened or focused. The panel, when it is open, stays as it w
   2. **Should Gemma point when Jev can't be asked?** That would make the feature work with the filter On this Mac, with nothing leaving, at the eval's measured cost: 72 of 97 right, 24 wrong, and an arrow for 13 of 28 absent things, with no probability to hold it back.
      - Recommended: no, as the eval recommends. A wrong arrow misleads where silence doesn't, and Gemma stays the routing fallback.
      - If the user wants the feature without TypeSafe, a better route is option 02's or 03's local reading, or a separate spoken-only mode ("I'd look for a button called …") rather than Gemma's arrow.
+- **When the arrow goes up (2026-10-09).** The arrow goes up once the pick's frame is re-read, before the speech is rendered. So it comes ahead of the sound, by roughly the render time: about 0.7 s in the first test. This is unverified until the timing line's "up … after speech ended" is measured.
 - **ADR:** [0019](../../../adr/0019-a-spoken-request-can-point-at-the-screen.md). It amends ADR 0015 ("nothing is shown") and ADR 0016 (what Jev receives).
 - **Glossary:** **Arrow** added and **Spoken request** changed in `CONTEXT.md`.
 - **`where-it-breaks.md` items this touches:**
