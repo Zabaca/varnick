@@ -1,21 +1,18 @@
 ---
 problem: sessions-cant-see-or-act-on-the-screen
 title: Start a chosen session outside zmx, as Launchy's own child, so it shares Launchy's grants directly
-summary: No broker. The user starts a pane "with screen access", and Launchy runs its claude as a direct child rather than in zmx, the way every pane runs with Keep sessions running off. macOS then very probably gives that session Launchy's Accessibility and Screen Recording, so it uses any tool directly, and zmx stays ungranted for every other session. It is cheap and per pane, but it depends on an inheritance that is now doubtful: measured on 2026-10-09, every process in a zmx pane is its own responsible process, and nothing in Launchy or SwiftTerm explains it, so panes outside zmx may be the same. Such a pane has no approval, indicator or record, and it ends when Launchy restarts. It also gets Launchy's microphone and system audio.
+summary: Moot since 2026-10-09. macOS attributes every pane process to Launchy, zmx-hosted ones included, so starting a pane outside zmx gives it nothing other panes lack. Recommended: reject. As first written: no broker. The user starts a pane "with screen access", and Launchy runs its claude as a direct child rather than in zmx, the way every pane runs with Keep sessions running off. macOS then very probably gives that session Launchy's Accessibility and Screen Recording, so it uses any tool directly, and zmx stays ungranted for every other session. It was meant to be cheap and per pane. Such a pane has no approval, indicator or record, and it ends when Launchy restarts. It also gets Launchy's microphone and system audio.
 status: proposed
 ---
 
 ## Solution
 
-A pane can be started with **screen access**, from a pane's menu item that starts it again in place. Launchy runs that pane's claude directly, through SwiftTerm, never in zmx, whatever Keep sessions running says. Its processes are Launchy's descendants, The hope is that macOS attributes them to Launchy and gives them Launchy's grants. That is doubtful (Trade-offs). The session then uses `screencapture`, `osascript`, bigarrow or its own code.
+A pane can be started with **screen access**, from a pane's menu item that starts it again in place. Launchy runs that pane's claude directly, through SwiftTerm, never in zmx, whatever Keep sessions running says. Its processes are Launchy's descendants, so macOS attributes them to Launchy and gives them Launchy's grants. So does every zmx pane (Trade-offs). The session then uses `screencapture`, `osascript`, bigarrow or its own code.
 
 ## Trade-offs
 
-- **Per pane, and no broker.** Only that session would get the grants, and every other session stays without them. Launchy builds a start path and a badge, nothing else.
-- **It rests on an inference that is now doubtful.**
-  - In a zmx pane, every process (zsh, claude, zmx, each command) is its own responsible process, so each executable is checked as itself (the problem's Today).
-  - No responsibility disclaim is in Launchy's or SwiftTerm's sources, or among zmx's imports. So nothing found explains why. If the cause is that Launchy, a bare executable, passes no responsibility to its children, panes outside zmx are self-responsible too, and this option does nothing.
-  - Unmeasured either way. Testing Decisions says what to measure.
+- **Moot: it isn't per pane.** macOS's privacy service attributes a zmx-hosted pane's process to Launchy too (measured from its log on 2026-10-09, the problem's Today). Every pane already gets Launchy's grants, and this option adds nothing but a pane that ends at every restart.
+- **What would make it per pane** is the reverse: start every other pane so that macOS doesn't hold Launchy responsible, and leave the chosen one as it is. That is `panes-share-launchys-permissions`' fix with an exception, and it belongs there.
 - **Everything, unsupervised, inside that pane.**
   - No approval, refusals, deny list, indicator or record.
   - A Skip-permissions session started this way acts without a prompt.
@@ -39,12 +36,7 @@ A pane can be started with **screen access**, from a pane's menu item that start
 
 ## Testing Decisions
 
-- **The measurement first,** with Keep sessions running off so that a new pane is Launchy's child:
-  - `responsibility_get_pid_responsible_for_pid` on the pane's shell and on a command it runs: Launchy's pid, or their own?
-  - The same lookup on Launchy itself.
-  - `AXIsProcessTrusted()` from a freshly compiled binary in that pane, with only Launchy granted.
-
-  Their own pid, or false, rejects this option.
+- **Already measured** for zmx panes: the privacy service's log names Launchy as responsible. The private responsibility lookup, tried first, misled. For a pane outside zmx, the same log entry would show the same, which is inferred.
 - **By hand:** the badge shows; `screencapture` of a window works from the pane; a pane without the flag is still refused; restarting Launchy ends the pane, as the item said it would.
 
 ## Out of Scope
@@ -53,5 +45,6 @@ Any check on what the session does. Options 01 and 02 have them.
 
 ## Further Notes
 
-- **Recommended only as a stopgap better than option 03,** until option 01 or 02 ships. It narrows the grant to the panes the user picks, at the cost of those panes ending at every restart.
+- **Recommended: reject, as moot.** Its reason: every pane already gets Launchy's grants (measured 2026-10-09), so starting one outside zmx narrows nothing. A per-pane exception to the pane fix is `panes-share-launchys-permissions`' to design.
+- **First written** as "a stopgap better than option 03", while the measurements of 2026-10-09 still read each process as its own.
 - **ADR, on acceptance:** that Launchy deliberately starts some panes outside zmx so that they share its grants. It conflicts with any fix `panes-share-launchys-permissions` makes.

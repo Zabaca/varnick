@@ -34,8 +34,8 @@ Nothing is logged but durations and kinds. Settings, the README and SECURITY.md 
 ## The permission stays Launchy's
 
 - **Launchy needs Accessibility.** While builds are signed ad hoc, a rebuild may stop the grant from applying (`runs-only-from-a-checkout`).
-- **The read runs only in Launchy's process.** zmx is never granted Accessibility. A Claude session's processes run under zmx, which macOS very likely treats as their responsible app, so a grant to zmx would let every hosted session read and drive any app's UI. (Wrong; see the correction of 2026-10-09 below.)
-- **Panes started without zmx are a gap.** They run as Launchy's direct children, and probably share its grant (doubtful since the correction of 2026-10-09 below). With Keep sessions running off, the default, that is every pane. The user accepted this with a plain line in the switch's detail and in SECURITY.md, and the fix is a problem of its own: `panes-share-launchys-permissions`.
+- **The read runs only in Launchy's process.** zmx is never granted Accessibility. A Claude session's processes run under zmx, which macOS very likely treats as their responsible app, so a grant to zmx would let every hosted session read and drive any app's UI. (Wrong: see the correction of 2026-10-09 below. Pane processes are attributed to Launchy.)
+- **Panes started without zmx are a gap.** They run as Launchy's direct children, and probably share its grant (every pane does, zmx-hosted ones included: see the correction of 2026-10-09 below). With Keep sessions running off, the default, that is every pane. The user accepted this with a plain line in the switch's detail and in SECURITY.md, and the fix is a problem of its own: `panes-share-launchys-permissions`.
 
 ## Considered Options
 
@@ -58,8 +58,8 @@ Nothing is logged but durations and kinds. Settings, the README and SECURITY.md 
   - "What a text field holds never goes" no longer holds for that step either: short typed text in a field Launchy can't place may go.
   - A secure field's frame is now read, on this Mac only.
   - Screen Recording joins Accessibility in what Launchy asks for.
-- **Corrected 2026-10-09: macOS checks each executable in a pane as itself.**
-  - **Measured** from a session in a zmx pane: every process in its chain (zsh, claude, zmx, each command) is its own responsible process, and with zmx granted, a fresh binary there wasn't trusted. So a grant to zmx reaches no session, and "The permission stays Launchy's" rests on Launchy's own process, not on zmx being ungranted.
-  - **Doubtful:** panes started without zmx sharing Launchy's grant.
-  - **Inferred:** Launchy's own binary, run from any shell, carries its grants. Without the hardened runtime, a process could probably load code into it.
-  - Details and what to measure are in `docs/problems/sessions-cant-see-or-act-on-the-screen/problem.md`.
+- **Corrected 2026-10-09: macOS attributes every pane process to Launchy, zmx-hosted ones included.**
+  - **Measured** from a zmx-hosted pane: the privacy service's log named Launchy as responsible for a process run there.
+  - So Launchy's Accessibility, and Screen Recording (ADR 0021), reach every session in its panes, Skip-permissions ones included, whenever they match the build. A grant to zmx is never consulted.
+  - "zmx very likely treated as responsible" and "panes outside zmx probably share it" are both superseded: all panes share it. The eval's recheck that suggested zmx is unexplained.
+  - The fix is `docs/problems/panes-share-launchys-permissions/`, and the details are in `docs/problems/sessions-cant-see-or-act-on-the-screen/problem.md`.

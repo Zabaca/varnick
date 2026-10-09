@@ -1,7 +1,7 @@
 ---
 problem: sessions-cant-see-or-act-on-the-screen
 title: Option 01's broker as a command line, `launchy-screen`, for any agent in a pane
-summary: The same broker, verbs, per-pane switch, approval, refusals, indicator and record as option 01, reached through a command instead of an MCP server. `launchy-screen look`, `point`, `click` and `type`, run from a pane's shell, send one line on the user-only socket and print the reply as JSON. A picture is written to a file in the pane's folder, and the path is printed. It works for any agent or script in a pane, and needs no `--mcp-config` or session restart. But Claude reaches it through Bash, so Claude Code's only gate is its Bash prompt, which a Skip-permissions session never shows. Launchy's approval still stands for click and type.
+summary: The same broker, verbs, per-pane switch, approval, refusals, indicator and record as option 01, reached through a command instead of an MCP server. `launchy-screen look`, `point`, `click` and `type`, run from a pane's shell, send one line on the user-only socket and print the reply as JSON. A picture is written to a file in the pane's folder, and the path is printed. It works for any agent or script in a pane, and needs no `--mcp-config` or session restart. But Claude reaches it through Bash, so Claude Code's only gate is its Bash prompt, which a Skip-permissions session never shows. Launchy's approval still stands for click and type. Like option 01, it needs pane processes to stop getting Launchy's grants first (`panes-share-launchys-permissions`).
 status: proposed
 ---
 
