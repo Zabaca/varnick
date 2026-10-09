@@ -2,7 +2,7 @@
 problem: session-turns-not-visible
 title: A board in the panel, with turns reported by hooks
 summary: The board replaces the panel's content the way Settings does, toggled by ⌘⇧B, `!kanban` or `!tabs`. Claude reports each turn's start and end through hooks Launchy adds beside its SessionStart hook, as one word in a file in the pane's folder. The app reads that file for this Mac's panes, started or not, and the relay reads it for a paired Mac, which sends it in its `sessions` and `status` replies (protocol 12). A session waiting on the user in mid-turn is in Stopped with a mark saying why: a permission dialog, a question from Claude, a plan to approve or an MCP server's request. Done closes the pane the way ⌘W does and keeps the session in a Completed list in the saved state.
-status: accepted
+status: shipped
 ---
 
 ## Solution

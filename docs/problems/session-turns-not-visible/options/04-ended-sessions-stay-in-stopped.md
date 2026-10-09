@@ -2,7 +2,7 @@
 problem: session-turns-not-visible
 title: Sessions that end stay in Stopped until marked done
 summary: Option 01's board with one change. A Claude session whose pane closes without Done (End session in its tab, closing the tab, `/exit`, claude exiting) stays in Stopped as an ended card, below the live cards. It leaves only when the user marks it done (it moves to Completed) or opens or resumes it. There is no cap, and the cards are kept in `sessions.json`. A paired Mac's session that this Mac listed open and that ends there does the same, with its ^host pill. This Mac remembers the sessions it listed. When their Mac answers without one, this Mac looks for its pane id in that Mac's Recent, whose entries gain their session (a protocol bump). A Mac that stops answering ends nothing.
-status: accepted
+status: shipped
 ---
 
 ## Solution

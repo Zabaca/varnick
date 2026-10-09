@@ -2,7 +2,7 @@
 problem: launcher-defaults-to-search
 title: The prompt line by default, with matching sessions below it
 summary: Typed text is a prompt. Today's ask row shows under the field with the highlight on it, so ↩ starts the session, here or on the `^host` Mac. Below it, up to 5 matching sessions are listed, this Mac's open ones first, and ↓ ↩ opens one. Resolved `^host`, `#project` and `@agent` words, in any order, filter that list; with no text after them it shows their sessions newest first, and ↩ still starts an empty session there. A leading `?` is today's search unchanged, `!` is today's commands, and an empty field is today's session list. `>` means nothing any more. Prompts never reach the relevance filter or a log.
-status: accepted
+status: shipped
 ---
 
 ## Solution

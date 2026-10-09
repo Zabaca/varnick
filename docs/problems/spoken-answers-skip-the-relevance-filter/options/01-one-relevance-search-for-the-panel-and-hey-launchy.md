@@ -2,7 +2,7 @@
 problem: spoken-answers-skip-the-relevance-filter
 title: One relevance search that the panel and Hey Launchy both call
 summary: The panel's ranking (keyword, meaning, then the relevance filter over the first 20 pages) moves into one module that returns ranked rows with the filter's verdicts and shows nothing. The panel calls its passes one at a time and keeps its pauses, statuses and selection; a spoken request calls them back to back and reads only the pages judged relevant when there are any. The filter runs where Settings › Search says, for a spoken request as for a typed one, so on TypeSafe a spoken request's search words and its first 20 pages' titles, sites and descriptions now go to TypeSafe, which ADR 0016 ruled out. The answer names up to three results when the request asks for several.
-status: accepted
+status: shipped
 ---
 
 ## Solution

@@ -2,7 +2,7 @@
 problem: frozen-screen-not-live
 title: Push changed screens from the host over one long-lived channel
 summary: While a card is shown, the host's relay watches the session's zmx socket for output. Whenever something changed, it sends a fresh snapshot with its grid, at most five a second. Every frame is a whole picture at the controller's grid, so nothing garbles and nothing is sent while Claude is idle. It is near live rather than smooth, and sends more bytes than a raw stream while Claude works.
-status: accepted
+status: shipped
 ---
 
 ## Solution

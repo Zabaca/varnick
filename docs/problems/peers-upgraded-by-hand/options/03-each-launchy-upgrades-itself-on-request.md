@@ -2,7 +2,7 @@
 problem: peers-upgraded-by-hand
 title: Each Launchy upgrades itself when a paired Mac asks, through requests answered whatever the protocol
 summary: Two new requests, upgrade and restart, are read before the version check, so a Mac on any protocol from 15 on can be asked. Upgrade makes the Mac's own running Launchy fetch origin/main from GitHub, fast-forward its main checkout and build, nothing more. The row then says "Built · restart Launchy to update". Restart Launchy is a separate button, pressed when the user chooses, which first lists the panes it would end. A failed build leaves the old build running and shows the error. While a build waits for its restart, the relay and the Phone page server keep running the old build's files, so each Mac stays on one protocol. The Ryzen is upgraded in one step, with the installer run from this Mac at origin/main. Upgrade all builds everywhere, the other machines first and this Mac last, and skips and reports any machine that refuses. Restart all restarts Launchy on every Mac with a new build waiting, this Mac last, after one confirmation listing each Mac's panes.
-status: accepted
+status: shipped
 ---
 
 ## Solution

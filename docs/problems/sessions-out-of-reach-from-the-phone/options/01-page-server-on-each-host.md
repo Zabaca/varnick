@@ -2,7 +2,7 @@
 problem: sessions-out-of-reach-from-the-phone
 title: A small page server on each host, in front of that host's own relay
 summary: Each host runs a Bun server, the phone page, on a Unix socket only the user can open, published on port 8444 of its MagicDNS name with `tailscale serve`, tailnet only. The page lists the host's sessions and Recent, starts and resumes sessions, shows the live view and carries the terminal, and does all of it through the host's own relay, run locally in the phone's name. The phone is a device in a new list beside the peers. It is identified by its tailnet node, has an id for the control and origin labels, and is never contacted. Launchy runs the server on a Mac, and a systemd user unit runs it on Linux.
-status: accepted
+status: shipped
 ---
 
 ## Solution

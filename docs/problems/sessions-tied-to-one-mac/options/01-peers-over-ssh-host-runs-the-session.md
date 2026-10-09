@@ -2,7 +2,7 @@
 problem: sessions-tied-to-one-mac
 title: Launchy peers over SSH; the host's Launchy runs each session
 summary: Each Launchy reaches the other's running Launchy through a relay it runs over SSH. A session always runs on its host, started there by the host's own Launchy, which keeps a pane for every session it runs. The Mac in control is attached through `ssh -t` to the host's zmx; the other shows a frozen screen with Take over, which relabels the session and detaches its clients. Recent and search pull the other Mac's session rows over the same channel.
-status: accepted
+status: shipped
 ---
 
 ## Solution

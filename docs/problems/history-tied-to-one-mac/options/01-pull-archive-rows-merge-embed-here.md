@@ -2,7 +2,7 @@
 problem: history-tied-to-one-mac
 title: Pull each paired Mac's archive rows and build entries from both
 summary: Each sync asks every paired Mac for the pages, search terms and descriptions its own archive gained since the last ask, as `rows` does for sessions. This Mac keeps them in tables of their own, one set per Mac, and builds its search entries from its own rows and theirs together. A page visited on both Macs is one result, a page only the other Mac visited shows that Mac's name, and everything is embedded on this Mac.
-status: accepted
+status: shipped
 ---
 
 ## Solution

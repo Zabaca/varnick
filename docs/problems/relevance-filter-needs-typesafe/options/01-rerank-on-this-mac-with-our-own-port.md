@@ -2,7 +2,7 @@
 problem: relevance-filter-needs-typesafe
 title: Rerank on this Mac with our own MLX port of Laya
 summary: The relevance filter gets a TypeSafe / On this Mac / Off choice. On this Mac runs the distilled checkpoint inside Launchy on its pinned mlx-swift, with a ModernBERT encoder and Laya decision head written for Launchy. The checkpoint is imported once from a local folder, and nothing leaves the Mac.
-status: accepted
+status: shipped
 ---
 
 ## Solution
