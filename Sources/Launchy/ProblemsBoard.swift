@@ -4,12 +4,15 @@ import SwiftUI
 
 /// The session board's Problems tab: a card per problem of every project with a `docs/problems` folder, in Backlog, Decided, Building,
 /// Shipped and Closed (`ProblemRules`). The files and the branches tied to options are read off the main actor, when the tab shows and
-/// every 5 s after; nothing is read while it is hidden, and nothing in its view reads anything.
+/// every 5 s after; nothing is read while it is hidden, and nothing in its view reads anything. Its chips and live links come from the
+/// Sessions cards (`SessionBoard.refresh`, kept up to date on both tabs), not from files of its own.
 @MainActor
 final class ProblemsBoard: ObservableObject {
     @Published private(set) var cards: [ProblemCard] = []
     /// What the last read found, before the rules (`ProblemRules.cards`).
     private var sources: [ProjectProblems] = []
+    /// The Sessions cards' work links, as of the last refresh of the cards.
+    private var sessions: [WorkSession] = []
     /// A project's `#name` pill by its folder, filled only when more than one project has problems.
     @Published private(set) var pills: [String: String] = [:]
     /// The first read has come back.
@@ -78,7 +81,18 @@ final class ProblemsBoard: ObservableObject {
         let several = found.filter { !$0.problems.isEmpty }.count > 1
         let named = several ? Dictionary(projects.map { ($0.path, model.projectPill($0)) }, uniquingKeysWith: { first, _ in first }) : [:]
         if named != pills { pills = named }
-        let next = ProblemRules.cards(from: found)
+        rebuild()
+    }
+
+    /// The Sessions cards changed: chips and live links are worked out again from the files as last read.
+    func sessionsChanged(_ next: [WorkSession]) {
+        guard next != sessions else { return }
+        sessions = next
+        if loaded { rebuild() }
+    }
+
+    private func rebuild() {
+        let next = ProblemRules.cards(from: sources, sessions: sessions)
         if next != cards { cards = next }
         if let selection, !cards.contains(where: { $0.id == selection }) { self.selection = nil }
         if selection == nil { selection = Self.moved(nil, in: cards, .down) }
@@ -226,6 +240,9 @@ private struct ProblemCardView: View {
                     if let pill { WordBadge(text: pill) }
                 }
             }
+            if !card.chips.isEmpty {
+                ProblemChips(chips: card.chips, all: showsEvidence)
+            }
             if showsEvidence {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(card.evidence, id: \.self) { line in
@@ -252,5 +269,52 @@ private struct ProblemCardView: View {
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(color.opacity(0.15), in: Capsule())
             .foregroundStyle(color)
+    }
+}
+
+/// The sessions that worked on a problem, as chips: the Sessions card's title and a dot for its column. Two and "+3" while closed, every
+/// one once the card is opened (or Show evidence is on); a subagent's type follows the title of the session it worked in.
+private struct ProblemChips: View {
+    let chips: [SessionChip]
+    let all: Bool
+    private static let collapsed = 2
+
+    var body: some View {
+        let shown = all ? chips : Array(chips.prefix(Self.collapsed))
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                ForEach(all ? [] : shown) { ProblemChip(chip: $0, showsAgents: false) }
+                if !all, chips.count > Self.collapsed {
+                    Text("+\(chips.count - Self.collapsed)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                }
+            }
+            if all { ForEach(shown) { ProblemChip(chip: $0, showsAgents: true) } }
+        }
+    }
+}
+
+private struct ProblemChip: View {
+    let chip: SessionChip
+    let showsAgents: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            dot
+            Text(chip.title).lineLimit(1)
+            if showsAgents, !chip.agents.isEmpty {
+                Text(chip.agents.joined(separator: ", ")).foregroundStyle(.tertiary).lineLimit(1)
+            }
+        }
+        .font(.system(size: 10.5))
+        .padding(.horizontal, 7).padding(.vertical, 2)
+        .background(Theme.hairline.opacity(0.5), in: Capsule())
+    }
+
+    @ViewBuilder private var dot: some View {
+        switch chip.column {
+        case .running: Circle().fill(Theme.sourceColor("claude")).frame(width: 7, height: 7)
+        case .stopped: Circle().strokeBorder(Color.secondary, lineWidth: 1.2).frame(width: 7, height: 7)
+        case .completed: Circle().fill(.tertiary).frame(width: 7, height: 7)
+        }
     }
 }

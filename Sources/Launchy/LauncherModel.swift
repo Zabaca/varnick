@@ -1707,7 +1707,12 @@ final class LauncherModel: ObservableObject {
         guard !quitting, let index = tabs.firstIndex(where: { $0.contains(session) }) else { return }
         let tab = tabs[index]
         // Keep it resumable unless it never got a message (shells can't be resumed).
-        let record = session.snapshot
+        var record = session.snapshot
+        // Its links stay with the saved record, so its card keeps its chips (ADR 0019); the log is read here, once, as the pane closes.
+        if record.isClaude, !session.isOnPeer {
+            let links = PaneFolder.work(for: record.id).history
+            if !links.isEmpty { record.workLinks = links }
+        }
         let markedDone = doneRequested.remove(session.id) != nil
         // A tab that ends isn't being renamed any more, on screen or not (the board can end a tab under it).
         if renamingTab === tab, tab.sessions.count == 1 { renamingTab = nil }

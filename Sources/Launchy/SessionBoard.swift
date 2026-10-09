@@ -97,6 +97,10 @@ final class SessionBoard: ObservableObject {
         var note: String?
         /// A paired Mac's open session with no pane here: opening it shows its card, and Done only marks it.
         var hasNoPane = false
+        /// The work links (ADR 0019) the pane here keeps now and has logged; nil for a card with no pane here or none written yet.
+        var work: PaneWork?
+        /// The links an ended or Completed session's saved record keeps.
+        var archived: [WorkLink] = []
 
         /// It ended: opening it resumes it, and Done moves it to Completed with no question.
         var isEnded: Bool {
@@ -115,6 +119,21 @@ final class SessionBoard: ObservableObject {
 
         var column: Column {
             if case .done = standing { .completed } else { inRunningColumn ? .running : .stopped }
+        }
+
+        /// Its claude is up on this Mac: a pane that runs here, not an ended or Completed card, a restored pane that resumes when opened, or
+        /// a paired Mac's session. Only such a card's records make an option Building.
+        var isLive: Bool {
+            switch standing {
+            case .turn, .unknown: !hasNoPane
+            case .resumes, .done, .ended: false
+            }
+        }
+
+        /// This card as the Problems tab sees it.
+        var workSession: WorkSession {
+            WorkSession(id: id, title: title, column: column, isOpen: isLive, live: isLive ? work?.live ?? [] : [],
+                        links: work?.history ?? archived)
         }
 
         var mark: String? { turn?.mark }
@@ -180,9 +199,13 @@ final class SessionBoard: ObservableObject {
     /// reads its own files (`ProblemsBoard.start`) and nothing of Sessions.
     func appear() {
         appeared = true
+        startTicker()
+        checkZmx()
         switch tab {
         case .sessions: startSessions()
-        case .problems: problems.start()
+        case .problems:
+            refresh()
+            problems.start()
         }
     }
 
@@ -194,7 +217,11 @@ final class SessionBoard: ObservableObject {
             selection = model?.activeSession.flatMap { active in cards.first { $0.id == active.id }?.id }
                 ?? Self.moved(nil, in: cards, .down)
         }
-        checkZmx()
+    }
+
+    /// The cards are read once a second while the board shows, on either tab: Problems takes its chips and live links from them. Only
+    /// Sessions asks the paired Macs.
+    private func startTicker() {
         guard ticker == nil else { return }
         ticker = Task { [weak self] in
             while !Task.isCancelled {
@@ -202,14 +229,14 @@ final class SessionBoard: ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 // A hidden panel reads nothing; it is read again when it shows (`LauncherModel.panelDidShow`).
                 if Self.panelIsVisible {
-                    self.model?.refreshPeersForBoard()
+                    if self.tab == .sessions { self.model?.refreshPeersForBoard() }
                     self.refresh()
                 }
             }
         }
     }
 
-    private func stopSessions() {
+    private func stopTicker() {
         ticker?.cancel()
         ticker = nil
         zmxCheck?.cancel()
@@ -218,14 +245,14 @@ final class SessionBoard: ObservableObject {
 
     static var panelIsVisible: Bool { NSApp.windows.first(where: { $0 is LauncherPanel })?.isVisible == true }
 
-    /// Tab, ⇧Tab and `!problems`. Each tab reads only while it shows: leaving Sessions stops its tick, and returning reads it all again.
+    /// Tab, ⇧Tab and `!problems`. Problems reads its files only while it shows; the cards keep their tick on both tabs, and returning to
+    /// Sessions asks the paired Macs again.
     func show(_ next: Tab) {
         guard next != tab else { return }
         tab = next
         confirming = nil
         guard appeared else { return }
         if next == .problems {
-            stopSessions()
             problems.start()
         } else {
             problems.stop()
@@ -237,7 +264,7 @@ final class SessionBoard: ObservableObject {
         appeared = false
         problems.reset()
         confirming = nil
-        stopSessions()
+        stopTicker()
         selection = nil
         zmxSessions = nil
     }
@@ -259,13 +286,14 @@ final class SessionBoard: ObservableObject {
     /// One card per Claude pane here, with the turn its file holds now (a pane on a peer, the host's), then
     /// each paired Mac's other open sessions, then the ended sessions (Stopped, below the live cards), then the
     /// Completed sessions. A session whose Mac is no longer paired is hidden, and an ended card whose id already
-    /// has a card is skipped.
+    /// has a card is skipped. The Problems tab gets the cards' work links after each change.
     func refresh() {
-        guard let model, tab == .sessions else { return }
+        guard let model else { return }
         var next: [Card] = []
         for tab in model.tabs {
             for pane in tab.sessions where pane.isClaude {
                 pane.checkTurn()
+                pane.checkWork()
                 next.append(card(for: pane, in: tab, model))
             }
         }
@@ -282,7 +310,10 @@ final class SessionBoard: ObservableObject {
         }
         if let confirming, !next.contains(where: { $0.id == confirming && $0.asksBeforeDone }) { self.confirming = nil }
         let previous = cards
-        if next != cards { cards = next }
+        if next != cards {
+            cards = next
+            problems.sessionsChanged(next.map(\.workSession))
+        }
         if let selection, !next.contains(where: { $0.id == selection }) {
             self.selection = Self.neighbour(of: selection, in: previous, surviving: next)
         }
@@ -318,7 +349,8 @@ final class SessionBoard: ObservableObject {
                     folder: pane.record.folderName,
                     standing: standing,
                     background: pane.turn?.background ?? BackgroundWork(),
-                    note: pane.awayNote)
+                    note: pane.awayNote,
+                    work: pane.work)
     }
 
     /// A session open on a paired Mac that no pane here controls. Its turn is the Mac's reply, begun that
@@ -346,7 +378,8 @@ final class SessionBoard: ObservableObject {
              hostName: record.host.map { PeerManager.shared.name(of: $0) },
              folder: record.folderName,
              standing: standing,
-             note: note)
+             note: note,
+             archived: record.workLinks ?? [])
     }
 
     /// Whether a pane not started yet has a zmx session. Before zmx has answered, or when it couldn't be

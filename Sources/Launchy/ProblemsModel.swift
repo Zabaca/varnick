@@ -1,7 +1,9 @@
 import Foundation
+import LaunchyPeer
 
-// The Problems tab's rules (docs/problems/problems-not-on-the-board): which column a problem sits in, and why, from its files and the
-// branches tied to its options. Pure: no disk, no git, so the rules read the same from the board and from `Launchy --problems`.
+// The Problems tab's rules (docs/problems/problems-not-on-the-board): which column a problem sits in, and why, from its files, the
+// branches tied to its options and the work links of the sessions (ADR 0019). Pure: no disk, no git, so the rules read the same from the
+// board and from `Launchy --problems`.
 
 /// An option's `status` frontmatter (docs/agents/issue-tracker.md), in any case. One that is missing or unknown reads as proposed,
 /// and the card says so (`ProblemOption.statusNote`).
@@ -79,8 +81,36 @@ enum ProblemColumn: CaseIterable, Identifiable, Sendable {
 /// What was read of one project: its problems and the branches tied to its options. The rules run over this after the read.
 struct ProjectProblems: Equatable, Sendable {
     let project: String
+    /// The project as work links name a repository (`WorkRepo.key`), worked out by the reader.
+    let key: String
     let problems: [Problem]
     let ties: [BranchTie]
+}
+
+/// A card of the Sessions tab as the Problems tab sees it: the links its pane keeps now, and the ones it kept (the log's, or the saved
+/// record's once it ended).
+struct WorkSession: Equatable, Sendable {
+    let id: UUID
+    let title: String
+    let column: SessionBoard.Column
+    /// A pane on this Mac whose claude is up: only then does a record make an option Building.
+    let isOpen: Bool
+    /// The records that name a problem or an option: the session's, then each subagent's own.
+    let live: [PaneWork.Live]
+    /// Every link the session made: the log's while the pane is open, the saved record's after.
+    let links: [WorkLink]
+
+    func names(_ slug: String, in repo: String) -> Bool {
+        live.contains { $0.link.slug == slug && $0.link.repo == repo } || links.contains { $0.slug == slug && $0.repo == repo }
+    }
+}
+
+/// A session on a problem's card: its title and the column of its Sessions card, with the types of the subagents linked to the problem.
+struct SessionChip: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let title: String
+    let column: SessionBoard.Column
+    let agents: [String]
 }
 
 /// One problem on the board, with why it is in its column.
@@ -92,16 +122,68 @@ struct ProblemCard: Identifiable, Equatable, Sendable {
     let severity: Severity
     let column: ProblemColumn
     let evidence: [String]
+    /// Running sessions first, then Stopped, then Completed.
+    var chips: [SessionChip] = []
+}
+
+/// What the sessions' work links say of one problem (ADR 0019).
+struct ProblemWork: Equatable, Sendable {
+    /// An open option a session or subagent of an open pane is linked to. `agentType` is the subagent's, nil for the session.
+    struct Live: Equatable, Sendable {
+        let option: ProblemOption
+        let session: String
+        let isAgent: Bool
+        let agentType: String?
+    }
+
+    var live: [Live] = []
+    var chips: [SessionChip] = []
+    /// The sessions whose log says they created the problem.
+    var origins: [String] = []
+
+    static let none = ProblemWork()
+
+    /// The links of `sessions` to `problem` of the project `key`. A link to an option that is shipped, rejected or abandoned, or that
+    /// doesn't exist, makes nothing live; a chip stays, since the session did work on the problem.
+    static func of(_ problem: Problem, repo key: String, sessions: [WorkSession]) -> ProblemWork {
+        var work = ProblemWork()
+        var chips: [SessionChip] = []
+        for session in sessions where session.names(problem.slug, in: key) {
+            var agents: [String] = []
+            for entry in session.live where entry.link.slug == problem.slug && entry.link.repo == key {
+                if let type = entry.agentType, !agents.contains(type) { agents.append(type) }
+                guard session.isOpen, let number = entry.link.number,
+                      let option = problem.options.first(where: { $0.number == number && $0.status.isOpen }) else { continue }
+                work.live.append(Live(option: option, session: session.title, isAgent: entry.agentID != nil, agentType: entry.agentType))
+            }
+            chips.append(SessionChip(id: session.id, title: session.title, column: session.column, agents: agents))
+            if session.links.contains(where: { $0.slug == problem.slug && $0.repo == key && $0.origin == true }) {
+                work.origins.append(session.title)
+            }
+        }
+        work.live.sort { ($0.option.number, $0.session) < ($1.option.number, $1.session) }
+        work.chips = chips.sorted {
+            if $0.column != $1.column { return $0.column.rank < $1.column.rank }
+            let order = $0.title.localizedStandardCompare($1.title)
+            return order == .orderedSame ? $0.id.uuidString < $1.id.uuidString : order == .orderedAscending
+        }
+        return work
+    }
+}
+
+extension SessionBoard.Column {
+    /// Running first.
+    var rank: Int { self == .running ? 0 : self == .stopped ? 1 : 2 }
 }
 
 enum ProblemRules {
-    /// Closed if the problem says so; Building if an open option is `in-progress` or has a tied branch with commits main lacks;
-    /// else Decided (an accepted option), Shipped (a shipped one), Backlog (a proposed one, or no options yet); else every option
-    /// was rejected or abandoned, and it is Closed.
-    static func column(of problem: Problem, ties: [BranchTie]) -> ProblemColumn {
+    /// Closed if the problem says so; Building if an open option is `in-progress`, is linked to a live session or subagent, or has a
+    /// tied branch with commits main lacks; else Decided (an accepted option), Shipped (a shipped one), Backlog (a proposed one, or no
+    /// options yet); else every option was rejected or abandoned, and it is Closed.
+    static func column(of problem: Problem, ties: [BranchTie], work: ProblemWork = .none) -> ProblemColumn {
         if problem.isClosed { return .closed }
         let statuses = problem.options.map(\.status)
-        if statuses.contains(.inProgress) || !liveBranches(of: problem, ties: ties).isEmpty { return .building }
+        if statuses.contains(.inProgress) || !work.live.isEmpty || !liveBranches(of: problem, ties: ties).isEmpty { return .building }
         if statuses.contains(.accepted) { return .decided }
         if statuses.contains(.shipped) { return .shipped }
         if problem.options.isEmpty || statuses.contains(.proposed) { return .backlog }
@@ -115,23 +197,26 @@ enum ProblemRules {
         }.sorted { ($0.option.number, $0.tie.branch) < ($1.option.number, $1.tie.branch) }
     }
 
-    /// Why the problem sits in its column, a line each.
-    static func evidence(of problem: Problem, ties: [BranchTie]) -> [String] {
-        columnReasons(of: problem, ties: ties)
+    /// Why the problem sits in its column, a line each, then which session it came out of.
+    static func evidence(of problem: Problem, ties: [BranchTie], work: ProblemWork = .none) -> [String] {
+        columnReasons(of: problem, ties: ties, work: work)
             + problem.options.compactMap { option in option.statusNote.map { "Option \(option.label) \($0), read as proposed" } }
+            + work.origins.map { "Came out of session \"\($0)\"" }
     }
 
-    private static func columnReasons(of problem: Problem, ties: [BranchTie]) -> [String] {
+    private static func columnReasons(of problem: Problem, ties: [BranchTie], work: ProblemWork) -> [String] {
         func said(_ status: OptionStatus) -> [String] {
             problem.options.filter { $0.status == status }.map { "Option \($0.label) \(status.rawValue): \($0.title)" }
         }
-        switch column(of: problem, ties: ties) {
+        switch column(of: problem, ties: ties, work: work) {
         case .backlog:
             let proposed = problem.options.filter { $0.status == .proposed }.count
             return [problem.options.isEmpty ? "No options yet" : "\(proposed) option\(proposed == 1 ? "" : "s") proposed, none accepted"]
         case .decided: return said(.accepted)
         case .building:
-            return said(.inProgress) + liveBranches(of: problem, ties: ties).map {
+            return said(.inProgress) + work.live.map {
+                "Option \($0.option.label): " + ($0.isAgent ? "subagent \($0.agentType ?? "") of session" : "session") + " \"\($0.session)\" is linked"
+            } + liveBranches(of: problem, ties: ties).map {
                 "Option \($0.option.label): branch \($0.tie.branch) has \($0.tie.ahead) commit\($0.tie.ahead == 1 ? "" : "s") not on main"
             }
         case .shipped: return said(.shipped)
@@ -148,14 +233,16 @@ enum ProblemRules {
         }
     }
 
-    static func card(for problem: Problem, project: String, ties: [BranchTie]) -> ProblemCard {
-        ProblemCard(id: project + "#" + problem.slug, project: project, title: problem.title, severity: problem.severity,
-                    column: column(of: problem, ties: ties), evidence: evidence(of: problem, ties: ties))
+    static func card(for problem: Problem, in source: ProjectProblems, sessions: [WorkSession]) -> ProblemCard {
+        let work = ProblemWork.of(problem, repo: source.key, sessions: sessions)
+        return ProblemCard(id: source.project + "#" + problem.slug, project: source.project, title: problem.title, severity: problem.severity,
+                           column: column(of: problem, ties: source.ties, work: work),
+                           evidence: evidence(of: problem, ties: source.ties, work: work), chips: work.chips)
     }
 
-    /// Every card of what the reader found, sorted. Runs on the main actor, after the read.
-    static func cards(from sources: [ProjectProblems]) -> [ProblemCard] {
-        sorted(sources.flatMap { source in source.problems.map { card(for: $0, project: source.project, ties: source.ties) } })
+    /// Every card of what the reader found and the sessions' links, sorted. Runs on the main actor, after the read.
+    static func cards(from sources: [ProjectProblems], sessions: [WorkSession] = []) -> [ProblemCard] {
+        sorted(sources.flatMap { source in source.problems.map { card(for: $0, in: source, sessions: sessions) } })
     }
 }
 
@@ -210,7 +297,8 @@ enum ProblemsReader {
         for project in projects where FileManager.default.fileExists(atPath: problemsFolder(of: project)) {
             if Task.isCancelled { break }
             let problems = problems(in: project)
-            found.append(ProjectProblems(project: project, problems: problems, ties: problems.isEmpty ? [] : await ties(in: project)))
+            found.append(ProjectProblems(project: project, key: WorkRepo.key(project), problems: problems,
+                                         ties: problems.isEmpty ? [] : await ties(in: project)))
         }
         return found
     }
@@ -249,21 +337,43 @@ enum ProblemsReader {
         return ties
     }
 
-    /// `Launchy --problems [folder…]`: the columns and each card's evidence, for the given project folders or, with none, the ones
-    /// Launchy lists.
-    static func report(_ projects: [String]) async -> String {
-        let cards = ProblemRules.cards(from: await read(projects))
-        let several = Set(cards.map(\.project)).count > 1
+    /// `Launchy --problems [--work <pane folder>]… [--ended <pane folder>]… [folder…]`: the columns and each card's evidence and chips, for
+    /// the given project folders or, with none, the ones Launchy lists. A `--work` folder is read as an open pane's (Running when its turn
+    /// file says working), an `--ended` one as a pane that closed with its links kept; their work files are what the hooks wrote.
+    static func report(_ projects: [String], open: [URL] = [], ended: [URL] = []) async -> String {
+        var sessions: [WorkSession] = []
         var out = ""
+        for (folder, isOpen) in open.map({ ($0, true) }) + ended.map({ ($0, false) }) {
+            let work = PaneFolder.work(in: folder)
+            let turn = (try? String(contentsOf: folder.appendingPathComponent(".launchy-turn"), encoding: .utf8))
+                .flatMap { Turn(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            let column: SessionBoard.Column = !isOpen ? .completed : turn?.isRunning == true ? .running : .stopped
+            sessions.append(WorkSession(id: UUID(uuidString: folder.lastPathComponent) ?? UUID(), title: folder.lastPathComponent,
+                                        column: column, isOpen: isOpen, live: isOpen ? work.live : [], links: work.history))
+            out += "Session \(folder.lastPathComponent) (\(isOpen ? column.title : "ended"))\n"
+            for live in work.live { out += "    now: \(describe(live.link))\(live.agentID.map { " (subagent \(live.agentType ?? $0))" } ?? "")\n" }
+            for link in work.history { out += "    kept: \(describe(link))\(link.origin == true ? " (origin)" : "")\n" }
+        }
+        let cards = ProblemRules.cards(from: await read(projects), sessions: sessions)
+        let several = Set(cards.map(\.project)).count > 1
         for column in ProblemColumn.allCases {
             let inColumn = cards.filter { $0.column == column }
             out += "\(column.title) (\(inColumn.count))\n"
             for card in inColumn {
                 let project = several ? " [\((card.project as NSString).lastPathComponent)]" : ""
                 out += "  \(card.title)\(column == .backlog ? " (\(card.severity.rawValue))" : "")\(project)\n"
+                if !card.chips.isEmpty {
+                    out += "      chips: " + card.chips.map { "\($0.title) [\($0.column.title)]" + ($0.agents.isEmpty ? "" : " + " + $0.agents.joined(separator: ", ")) }
+                        .joined(separator: "; ") + "\n"
+                }
                 for line in card.evidence { out += "      \(line)\n" }
             }
         }
         return out
     }
+
+    private static func describe(_ link: WorkLink) -> String {
+        link.number.map { "option \(link.slug)/\(String(format: "%02d", $0))" } ?? "problem \(link.slug)"
+    }
 }
+
