@@ -102,10 +102,10 @@ final class ScreenAccess {
 
     /// How long the Arrow shows on a click's target before the click: long enough to see it fade in and read the sign.
     nonisolated static let clickLead: Duration = .seconds(1)
-    /// How long the Arrow stays after a click.
     static let clickLinger: TimeInterval = 2
-    /// A click still waiting or leading this long after its request arrived is dropped: the relay gives up at 15 s.
-    static let staleAfter: Duration = .seconds(12)
+    /// A click still waiting or leading this long after its request arrived is dropped: the relay gives up at 15 s, and the frame
+    /// read, press check and press after the last check can each take up to a second.
+    static let staleAfter: Duration = .seconds(10)
     /// A press that opens a dialog can block, so it waits longer than the walk's reads.
     nonisolated static let pressTimeout: Float = 1
     nonisolated static let signName = 30
@@ -186,7 +186,6 @@ final class ScreenAccess {
         guard arrived.duration(to: .now) < Self.staleAfter else { throw ScreenRefusal.late }
     }
 
-    /// Drops the tables of panes that have closed.
     private func prune(in model: LauncherModel) {
         guard !targets.isEmpty else { return }
         let open = Set(model.tabs.flatMap { $0.sessions.map(\.id) })
@@ -392,7 +391,6 @@ final class ScreenAccess {
         }
     }
 
-    /// Whether the element lists Accessibility's press action.
     private nonisolated static func pressable(_ reference: AXReference) async -> Bool {
         await Task.detached { () -> Bool in
             AXUIElementSetMessagingTimeout(reference.element, pressTimeout)

@@ -59,14 +59,15 @@ final class ArrowOverlay {
         hiding?.cancel()
         hiding = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled, let panel = self?.panel else { return }
+            guard !Task.isCancelled, let self, let panel = self.panel else { return }
+            let fading = self.generation
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.25
                 panel.animator().alphaValue = 0
             }, completionHandler: {
                 Task { @MainActor in
-                    // A `show` meanwhile has put it back.
-                    if panel.alphaValue == 0 { panel.orderOut(nil) }
+                    // A `show` or `hide` meanwhile has put it back or taken it away: the arrow now up is not this one's to hide.
+                    if self.generation == fading, panel.alphaValue == 0 { panel.orderOut(nil) }
                 }
             })
         }
