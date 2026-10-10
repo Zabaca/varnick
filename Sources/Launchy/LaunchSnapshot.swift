@@ -164,7 +164,6 @@ enum LaunchSnapshot {
         BuildStamp.read(in: latestFolder(in: checkout), binary: latestBinary(in: checkout))
     }
 
-    /// The last build's binary in a checkout.
     static func latestBinary(in checkout: URL) -> URL {
         // The relay's executable URL is the link `launchy-peer`; its target's name is the binary's.
         let binary = Bundle.main.executableURL?.resolvingSymlinksInPath().lastPathComponent ?? "Launchy"

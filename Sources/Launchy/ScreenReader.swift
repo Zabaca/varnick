@@ -117,7 +117,7 @@ enum ScreenReader {
     }
 
     /// Electron apps carry their framework; Chrome does not, and is not asked.
-    fileprivate static func isElectron(_ app: NSRunningApplication) -> Bool {
+    private static func isElectron(_ app: NSRunningApplication) -> Bool {
         guard let url = app.bundleURL else { return false }
         return FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/Frameworks/Electron Framework.framework").path)
     }
@@ -174,7 +174,7 @@ enum ScreenReader {
             return element
         }
         reading.entryFrames += walk.entryFrames
-        reading.chromeBlind = walk.sawEmptyWebArea && bundle.lowercased().contains("chrom")
+        reading.chromeBlind = walk.sawEmptyWebArea && isChromium(bundle: bundle)
         reading.emptyWebArea = walk.emptyWebArea
         reading.duration = began.duration(to: clock.now)
         return reading
@@ -192,38 +192,53 @@ enum ScreenReader {
 
     // MARK: Before a click
 
-    /// Whether the app is a browser or Electron app, whose whole window is web content: a press through Accessibility on a page's
-    /// element often reports success and does nothing.
-    static func isWebHosted(_ app: NSRunningApplication) -> Bool {
-        isElectron(app) || (app.bundleIdentifier ?? "").lowercased().contains("chrom")
+    /// Longest the activation requests below wait on the app each.
+    private static let frontTimeout: Float = 0.5
+
+    /// Chrome and the other Chromium browsers, by bundle id.
+    private static func isChromium(bundle: String) -> Bool { bundle.lowercased().contains("chrom") }
+
+    /// What a click on an element is, for how it is made.
+    enum ClickContent: Equatable {
+        /// In a page, or not known to be anywhere else: clicked, since a press through Accessibility there often reports success and does
+        /// nothing. The page's frame when it was found, which the click must land inside.
+        case page(CGRect?)
+        /// Not in a page: pressed when it can be.
+        case native
     }
 
-    /// Whether the element is in a page: an `AXWebArea` is it or above it, or the app is `webHosted`. Off the main actor, within `budget`.
-    static func isWebContent(_ target: ScreenTarget, webHosted: Bool) async -> Bool {
-        if webHosted { return true }
-        guard let reference = target.reference else { return false }
-        return await Task.detached { () -> Bool in
+    /// Where the element is: an `AXWebArea` is it or above it, or the app is a browser or Electron app. A search that times out or
+    /// fails is `page` with no frame, never `native`. Off the main actor, within `budget`.
+    static func content(of target: ScreenTarget, in app: NSRunningApplication) async -> ClickContent {
+        let webHosted = isElectron(app) || isChromium(bundle: app.bundleIdentifier ?? "")
+        guard let reference = target.reference else { return webHosted ? .page(nil) : .native }
+        return await Task.detached { () -> ClickContent in
             let deadline = ContinuousClock.now.advanced(by: budget)
             var element = reference.element
             for _ in 0..<maxDepth {
-                guard ContinuousClock.now < deadline else { return false }
+                guard ContinuousClock.now < deadline else { return .page(nil) }
                 AXUIElementSetMessagingTimeout(element, callTimeout)
-                if string(element, kAXRoleAttribute) == "AXWebArea" { return true }
-                guard let parent = attribute(element, kAXParentAttribute).flatMap(asElement) else { return false }
-                element = parent
+                if string(element, kAXRoleAttribute) == "AXWebArea" { return .page(frame(of: element)) }
+                var parent: CFTypeRef?
+                switch AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) {
+                case .success:
+                    guard let parent, let next = asElement(parent) else { return .page(nil) }
+                    element = next
+                case .noValue, .attributeUnsupported:
+                    return webHosted ? .page(nil) : .native
+                default:
+                    return .page(nil)
+                }
             }
-            return false
+            return .page(nil)
         }.value
     }
 
-    /// The window the target is in, for raising it: recognised text's window, else the element's own `AXWindow`.
+    /// The window the target is in, for raising it: recognised text's window, else the element's own.
     static func window(of target: ScreenTarget) async -> AXReference? {
         if let window = target.window { return window }
         guard let reference = target.reference else { return nil }
-        return await Task.detached { () -> AXReference? in
-            AXUIElementSetMessagingTimeout(reference.element, callTimeout)
-            return attribute(reference.element, kAXWindowAttribute).flatMap(asElement).map(AXReference.init)
-        }.value
+        return await Task.detached { windowAttribute(of: reference.element) }.value
     }
 
     /// The window of the app's element at a point (Accessibility coordinates), for raising it.
@@ -233,9 +248,13 @@ enum ScreenReader {
             AXUIElementSetMessagingTimeout(app, callTimeout)
             var hit: AXUIElement?
             guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit else { return nil }
-            AXUIElementSetMessagingTimeout(hit, callTimeout)
-            return attribute(hit, kAXWindowAttribute).flatMap(asElement).map(AXReference.init)
+            return windowAttribute(of: hit)
         }.value
+    }
+
+    private static func windowAttribute(of element: AXUIElement) -> AXReference? {
+        AXUIElementSetMessagingTimeout(element, callTimeout)
+        return attribute(element, kAXWindowAttribute).flatMap(asElement).map(AXReference.init)
     }
 
     /// Asks the app, through Accessibility, to come to the front and raises the window. Only a request: the caller waits to see the
@@ -243,10 +262,10 @@ enum ScreenReader {
     static func requestFront(pid: pid_t, raising window: AXReference?) async {
         await Task.detached {
             let app = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(app, 0.5)
+            AXUIElementSetMessagingTimeout(app, frontTimeout)
             _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
             if let window {
-                AXUIElementSetMessagingTimeout(window.element, 0.5)
+                AXUIElementSetMessagingTimeout(window.element, frontTimeout)
                 _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
             }
         }.value

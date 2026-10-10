@@ -382,19 +382,19 @@ final class BuildUpgrade {
     /// For the menu's confirmation: a restart starts whatever build is on disk, and an ad-hoc signed one asks for macOS permissions again.
     func newerBuildNote() -> String? {
         guard let checkout = LaunchSnapshot.checkout, let latest = newerBuild(in: checkout) else { return nil }
-        let asks = Self.isAdHocSigned(LaunchSnapshot.latestBinary(in: checkout)) ? " and macOS will ask for permissions again" : ""
+        let asks = Self.startingVoidsGrants(LaunchSnapshot.latestBinary(in: checkout)) ? " and macOS will ask for permissions again" : ""
         return "A newer build is waiting (\(latest.short)); restarting starts it\(asks)."
     }
 
-    /// Whether the binary has no team identifier: signed ad hoc, or not readable as signed at all, either of which macOS knows as a
-    /// new app (ADR 0022). A Developer ID build has one, and keeps its grants. The identifier itself is never read out or shown.
-    private static func isAdHocSigned(_ binary: URL) -> Bool {
+    /// Whether starting this binary makes macOS ask for permissions again (ADR 0022): it is signed ad hoc, or its signature can't be
+    /// read. A Developer ID build keeps its grants. Only the ad-hoc flag is read, never the team identifier.
+    private static func startingVoidsGrants(_ binary: URL) -> Bool {
         var code: SecStaticCode?
         var info: CFDictionary?
         guard SecStaticCodeCreateWithPath(binary as CFURL, [], &code) == errSecSuccess, let code,
               SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let info = info as? [String: Any] else { return true }
-        return info[kSecCodeInfoTeamIdentifier as String] == nil
+              let flags = (info as? [String: Any])?[kSecCodeInfoFlags as String] as? NSNumber else { return true }
+        return flags.uint32Value & SecCodeSignatureFlags.adhoc.rawValue != 0
     }
 
     /// After the reply: the detached restart `make run` does (`scripts/restart.sh` in a session of its own), which ends this Launchy and starts the

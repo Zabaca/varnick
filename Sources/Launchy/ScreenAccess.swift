@@ -26,6 +26,8 @@ indirect enum ScreenRefusal: Error {
     case noPostAccess
     /// The app did not come to the front when asked, so a click would only have focused it.
     case notFront
+    /// Another app's window, or something other than the target's app, is at the point to click.
+    case overlapped
     /// A window of Launchy's own is at the point to click.
     case covered
     /// The click waited so long for its turn that the relay has given up on it.
@@ -54,6 +56,7 @@ indirect enum ScreenRefusal: Error {
         case .offDisplay: "That is on no display"
         case .noPostAccess: "macOS hasn't let Launchy post clicks. Ask the user to grant Accessibility in Launchy's Settings › Claude, under Screen access"
         case .notFront: "The app did not come to the front when Launchy asked, so a click would only have focused it"
+        case .overlapped: "Another window is over that point, so the click would not land on the target"
         case .covered: "A window of Launchy's own is at that point, which a session may not click. Ask the user to move or hide it"
         case .late: "The click waited too long for its turn"
         case .replaced: "Another arrow was drawn over this click's"
@@ -80,6 +83,7 @@ indirect enum ScreenRefusal: Error {
         case .offDisplay: "off display"
         case .noPostAccess: "no post access"
         case .notFront: "not front"
+        case .overlapped: "overlapped"
         case .covered: "covered"
         case .late: "late"
         case .replaced: "replaced"
@@ -111,9 +115,10 @@ final class ScreenAccess {
     static let frontWait: Duration = .seconds(1)
     static let frontSettle: Duration = .milliseconds(150)
     /// A click still waiting, leading or bringing its app forward this long after its request arrived is dropped: the relay gives up
-    /// at 15 s, and the page check, frame read, press check and press after the last check (made once the app is in front) can each
-    /// take up to a second.
+    /// at 15 s, and the reads and the press after the last check can take several seconds (where-it-breaks.md, Screen access).
     static let staleAfter: Duration = .seconds(10)
+    /// How far a control's centre may move from where the arrow was drawn before the arrow is drawn again on it.
+    static let arrowFollows: CGFloat = 2
     /// A press that opens a dialog can block, so it waits longer than the walk's reads.
     nonisolated static let pressTimeout: Float = 1
     nonisolated static let signName = 30
@@ -359,26 +364,29 @@ final class ScreenAccess {
             let done: String
             switch aim {
             case .target(let id, let target):
-                // A page's element is clicked, not pressed: a press through Accessibility there can report success and do nothing.
-                let inPage = await ScreenReader.isWebContent(target, webHosted: app.map(ScreenReader.isWebHosted) ?? false)
+                guard let app else { throw ScreenRefusal.gone }
+                let content = await ScreenReader.content(of: target, in: app)
                 // Read after the app came forward, never the frame from the look or the lead: a page's frames move while it scrolls.
                 guard let frame = await ScreenReader.currentFrame(of: target) else { throw ScreenRefusal.gone }
-                if !inPage, let reference = target.reference, await Self.pressable(reference) {
+                let centre = CGPoint(x: frame.midX, y: frame.midY)
+                if case .native = content, let reference = target.reference, await Self.pressable(reference) {
                     done = try await Self.pressed(reference, id: id)
                 } else {
-                    let centre = CGPoint(x: frame.midX, y: frame.midY)
+                    // Lagging frames can put a page's element under the tab strip or toolbar.
+                    if case .page(let page?) = content, !page.contains(centre) { throw ScreenRefusal.gone }
                     guard Self.onDisplay(centre) else { throw ScreenRefusal.offDisplay }
                     // The arrow shows what is clicked: where the control now is, when it is not where it was drawn.
-                    if abs(frame.minX - shown.minX) > 2 || abs(frame.minY - shown.minY) > 2 {
+                    if abs(centre.x - shown.midX) > Self.arrowFollows || abs(centre.y - shown.midY) > Self.arrowFollows {
+                        guard ArrowOverlay.shared.generation == drawn else { throw ScreenRefusal.replaced }
                         guard ArrowOverlay.shared.show(frame: frame, note: sign) else { throw ScreenRefusal.offDisplay }
                         drawn = ArrowOverlay.shared.generation
                     }
-                    try Self.checkedToPost(at: centre, frontmost: app)
+                    try Self.checkedToPost(at: centre, frontmost: app, arrow: drawn)
                     await Self.leftClick(at: centre)
                     done = "Clicked \(id) at \(Int(centre.x.rounded())), \(Int(centre.y.rounded()))"
                 }
             case .point(let at):
-                try Self.checkedToPost(at: at, frontmost: app)
+                try Self.checkedToPost(at: at, frontmost: app, arrow: drawn)
                 await Self.leftClick(at: at)
                 done = "Clicked at \(Int(at.x.rounded())), \(Int(at.y.rounded()))"
             }
@@ -418,9 +426,8 @@ final class ScreenAccess {
         return NSRunningApplication(processIdentifier: pid)
     }
 
-    /// The app of the front-most window at the point, other than Launchy's, when that is an ordinary window of a regular app. Nil
-    /// where something else is in front (the menu bar, the Dock, a menu): activating an app there would only get in the way.
-    private static func appUnder(_ point: CGPoint) -> NSRunningApplication? {
+    /// The owner and layer of the front-most window at the point other than Launchy's, which `launchyCovers` answers for.
+    private static func frontWindow(at point: CGPoint) -> (pid: pid_t, layer: Int)? {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         for window in windows {
@@ -428,21 +435,27 @@ final class ScreenAccess {
                   (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                   let bounds = (window[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }),
                   bounds.contains(point) else { continue }
-            guard (window[kCGWindowLayer as String] as? Int) == 0, let app = NSRunningApplication(processIdentifier: pid),
-                  app.activationPolicy == .regular else { return nil }
-            return app
+            return (pid, window[kCGWindowLayer as String] as? Int ?? 0)
         }
         return nil
+    }
+
+    /// The app of the window in front at the point, when that is an ordinary window of a regular app. Nil where something else is in
+    /// front (the menu bar, the Dock, a menu): activating an app there would only get in the way.
+    private static func appUnder(_ point: CGPoint) -> NSRunningApplication? {
+        guard let front = frontWindow(at: point), front.layer == 0, let app = NSRunningApplication(processIdentifier: front.pid),
+              app.activationPolicy == .regular else { return nil }
+        return app
     }
 
     /// Activates the app and raises the window, then waits for it to be frontmost and settle. Launchy's panel hides as it does when
     /// the user clicks elsewhere, unless it is pinned: a pinned one that covers the click's point still refuses it.
     private static func bringForward(_ app: NSRunningApplication, raising window: AXReference?) async throws {
         let pid = app.processIdentifier
+        let deadline = ContinuousClock.now.advanced(by: frontWait)
         NSApp.yieldActivation(to: app)
         _ = app.activate(from: .current)
         await ScreenReader.requestFront(pid: pid, raising: window)
-        let deadline = ContinuousClock.now.advanced(by: frontWait)
         while NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
             guard ContinuousClock.now < deadline else { throw ScreenRefusal.notFront }
             try? await Task.sleep(for: .milliseconds(50))
@@ -450,10 +463,17 @@ final class ScreenAccess {
         try? await Task.sleep(for: frontSettle)
     }
 
-    /// Run on the main actor right before a click is posted, with nothing awaited between: Launchy's own windows are then where
-    /// they will be when it lands, now the app is in front (`app`, when the click has one).
-    private static func checkedToPost(at point: CGPoint, frontmost app: NSRunningApplication?) throws {
-        if let app, NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier { throw ScreenRefusal.notFront }
+    /// Run on the main actor right before a click is posted, with nothing awaited between: the app brought forward (`app`; nil for a
+    /// point where none was) is still in front and is what is at the point, Launchy's own windows are not over it, and the arrow up
+    /// is still this click's.
+    private static func checkedToPost(at point: CGPoint, frontmost app: NSRunningApplication?, arrow: Int?) throws {
+        if let app {
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { throw ScreenRefusal.notFront }
+            guard frontWindow(at: point)?.pid == app.processIdentifier else { throw ScreenRefusal.overlapped }
+        } else {
+            guard appUnder(point) == nil else { throw ScreenRefusal.overlapped }
+        }
+        guard ArrowOverlay.shared.generation == arrow else { throw ScreenRefusal.replaced }
         guard !launchyCovers(point) else { throw ScreenRefusal.covered }
         guard CGPreflightPostEventAccess() else { throw ScreenRefusal.noPostAccess }
     }
