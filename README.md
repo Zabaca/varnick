@@ -18,6 +18,10 @@
   <a href="https://varnick.com">varnick.com</a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/varnick-demo.gif" width="960" alt="Varnick's panel: describing an old Claude session finds it, then # picks the project, @ the agent and ^ the Mac, return starts Claude there, and !kanban opens the session board.">
+</p>
+
 ## What it does
 
 - **Find a page Chrome forgot.** Varnick keeps your Chrome history in an archive on your Mac that outlives
