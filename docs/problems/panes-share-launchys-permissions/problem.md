@@ -38,8 +38,8 @@ Why the eval saw a pane turn trusted after only zmx was granted is unexplained.
 ## Left to decide
 
 - **What holds until a fix.** Point at the screen stays available, with every session sharing its grants and the docs saying so, or Launchy's grants come off until the fix.
-- **How to cut the link.** Possible directions, none of them checked:
-  - start zmx and direct panes with responsibility disclaimed, through an undocumented macOS spawn attribute that SwiftTerm's spawn doesn't offer, so Launchy would spawn them itself;
+- **How to cut the link.** Possible directions:
+  - start zmx and direct panes with responsibility disclaimed, through an undocumented macOS spawn attribute that SwiftTerm's spawn doesn't offer, so Launchy would spawn them itself. Measured on 2026-10-09 to work for a process started from a pane, not yet through zmx: option 01;
   - start panes through launchd, so their responsible process is their own.
 
   "Always run panes in zmx" no longer helps.

@@ -1,7 +1,7 @@
 ---
 problem: sessions-cant-see-or-act-on-the-screen
 title: Option 01's broker as a command line, `launchy-screen`, for any agent in a pane
-summary: The same broker, verbs, per-pane switch, approval, refusals, indicator and record as option 01, reached through a command instead of an MCP server. `launchy-screen look`, `point`, `click` and `type`, run from a pane's shell, send one line on the user-only socket and print the reply as JSON. A picture is written to a file in the pane's folder, and the path is printed. It works for any agent or script in a pane, and needs no `--mcp-config` or session restart. But Claude reaches it through Bash, so Claude Code's only gate is its Bash prompt, which a Skip-permissions session never shows. Launchy's approval still stands for click and type. Like option 01, it needs pane processes to stop getting Launchy's grants first (`panes-share-launchys-permissions`).
+summary: A second front end on option 01's socket requests, reached through a command instead of an MCP server. `launchy-screen look`, `point` and `click`, run from a pane's shell, send one line on the user-only socket and print the reply as JSON. It works for any agent or script in a pane, and needs no `--mcp-config` or session restart. But Claude reaches it through Bash, so Claude Code's only gate is its Bash prompt, which a Skip-permissions session never shows. Option 01 as accepted has no approval yet, so a click would be gated only by the Screen access switch and the Arrow shown first.
 status: proposed
 ---
 
@@ -49,4 +49,5 @@ As option 01.
 
 ## Further Notes
 
+- **Since option 01 was accepted, narrower, on 2026-10-09:** this would be a second front end on its `look`, `point` and `click` requests. Pictures are out of option 01's scope, and `type`, the per-pane switch and the approval wait with its permissioning. The text below the summary still describes all four as first written.
 - **Can stand beside option 01:** the same socket operation, two front ends. Recommended only if agents other than Claude Code need it. Otherwise option 01's tools give Claude Code its own per-tool permission rule.
