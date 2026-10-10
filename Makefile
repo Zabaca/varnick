@@ -62,8 +62,8 @@ GOOD_COPY := .build/release/Varnick.good
 
 .PHONY: build build-steps cutover-check run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
 
-# The metallib goes next to the binary, where MLX looks for it. After swift build, which
-# creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
+# The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
+# ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
 # the linker's own ad-hoc signature leaves it unbound, and macOS needs it bound to find the
 # microphone and system audio usage strings. SwiftPM doesn't relink when only Info.plist
 # changed, so a newer Info.plist removes the binary first. Varnick and zmx are signed with the identity
