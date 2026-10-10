@@ -18,7 +18,7 @@ Accepted by the user on 2026-10-09, relayed by the coordinator. The user isn't w
 - **The icon is the Fold**, the rename's master mark. The rename gave the app only a runtime icon; the bundle gets a real icon file.
 - **The credentials exist** on the Mac that makes the app:
   - the Developer ID Application identity (option 01);
-  - a `notarytool` keychain profile holding an App Store Connect team API key with the Developer role, validated on 2026-10-09.
+  - a `notarytool` keychain profile, made once on that Mac (validated on 2026-10-09).
 
   `make app` reads the profile's name from the git-ignored local settings.
 - **The first notarization submission is approved** by the user as part of building this. Publishing a release is not: that stays the user's step.
@@ -188,8 +188,8 @@ The zip `make app` produces is what a person downloads: unzip, move to Applicati
 7. It never uploads.
 
 **Notary credentials**
-- `notarytool` reads them from a keychain profile on the Mac that makes the app. The profile's name is in the same git-ignored local settings as the identity, or on the command line. The profile holds an App Store Connect team API key with the Developer role. It isn't tied to a person's Apple ID password, and it can be revoked on its own.
-- The key file itself lives in the user's own encrypted secret store and was loaded into the profile once. The repository never holds the key, the key's id, the issuer, a team ID, an Apple ID or the profile's name.
+- `notarytool` reads them from a keychain profile on the Mac that makes the app. The profile's name is in the same git-ignored local settings as the identity, or on the command line.
+- The repository never holds what the profile holds, a team ID, an Apple ID or the profile's name.
 - An Apple ID with an app-specific password works with the same profile mechanism, as the fallback.
 
 **The version**
