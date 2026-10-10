@@ -37,9 +37,13 @@ ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SI
 VARNICK_PROCESS := ^($(shell pwd -P)/)?\.build/release/Varnick$$
 
 # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): a Mac still on
-# Launchy crosses by hand, from a terminal outside the app. Its binary is matched the same anchored way, by path only, so stop and
-# restart end it too. The old LaunchAgent is booted out and its plist removed by install and uninstall.
-LAUNCHY_PROCESS := ^($(shell pwd -P)/)?\.build/release/Launchy$$
+# Launchy crosses by hand, from a terminal outside the app. Its binary is matched by this checkout's absolute path only (the LaunchAgent's
+# form): a Launchy started by `make run` has the relative form `.build/release/Launchy`, which would match from any checkout, so a Varnick
+# worktree's stop or restart would end the Mac's Launchy. The old LaunchAgent is booted out and its plist removed by install and
+# uninstall, and `cutover-check` keeps them, and `make run`, to the checkout Launchy ran from.
+LAUNCHY_PROCESS := ^$(shell pwd -P)/\.build/release/Launchy$$
+# Ends every guard's `error:` line: the cutover is the user's, and an agent that reads one must not act on it.
+CUTOVER_NOTE := The cutover is the user's step, done from Terminal.app (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, \"Cutover: each Mac\"). An agent must stop here and report this to the user.
 OLD_LABEL := com.zabaca.launchy
 OLD_PLIST := $(HOME)/Library/LaunchAgents/$(OLD_LABEL).plist
 
@@ -56,7 +60,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
+.PHONY: build build-steps cutover-check run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
 
 # The metallib goes next to the binary, where MLX looks for it. After swift build, which
 # creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -73,7 +77,7 @@ GOOD_COPY := .build/release/Varnick.good
 # which stops Upgrade, Upgrade all and `make run` on a Mac that hasn't been cut over. A worktree's build folder starts empty.
 build:
 	@if [ -e .build/release/Launchy ] || [ -e .build/release/Launchy.good ]; then \
-	  echo "error: this checkout still has Launchy's binary in .build/release. Stop Launchy, remove the old binary (rm -f .build/release/Launchy .build/release/Launchy.good) or run make clean (it keeps db/), then follow the cutover: docs/problems/name-taken-by-another-launcher, option 01, \"Cutover: each Mac\"." >&2; exit 1; fi
+	  echo "error: this checkout still has Launchy's binary in .build/release, so this Mac hasn't been cut over to Varnick. $(CUTOVER_NOTE)" >&2; exit 1; fi
 	@if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Varnick; echo "restored the build an interrupted one left"; fi; if [ -f .build/release/Varnick ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Varnick -nt $(BUILD_STAMP) ]; then cp -c .build/release/Varnick $(GOOD_COPY); fi
 	@[ ! Info.plist -nt .build/release/Varnick ] || rm -f .build/release/Varnick
 	@$(MAKE) --no-print-directory build-steps || { \
@@ -156,8 +160,16 @@ $(ZMX_SIGNER_STAMP):
 	rm -f .build/release/zmx.signer.*
 	@touch $@
 
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
+# run, install and uninstall touch the Mac's running Launchy and its LaunchAgent, so while Launchy's support folder exists and Varnick's
+# doesn't they work only in the checkout Launchy ran from, which holds db/launchy.sqlite. A worktree's build passes the build guard.
+cutover-check:
+	@support="$(HOME)/Library/Application Support"; \
+	if [ -e "$$support/Launchy" ] && [ ! -e "$$support/Varnick" ] && [ ! -f db/launchy.sqlite ]; then \
+	  echo "error: this Mac still runs Launchy and this isn't the checkout it ran from (no db/launchy.sqlite). Nothing was changed. $(CUTOVER_NOTE)" >&2; exit 1; fi
+
 # The restart runs in its own session so it outlives a Varnick session that ran `make run`.
-run: build
+run: cutover-check build
 	nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' scripts/restart.sh $(CURDIR)/$(DB) >/dev/null 2>&1 &
 
 stop:
@@ -168,7 +180,7 @@ stop:
 # updates what the next login starts). Also starts it now, and links the custom-apps skill into
 # the user's skills so agents in any project find it (linked, not copied: one source). The link is
 # made only when the path is free or already ours; anything else there is left alone.
-install: build stop
+install: cutover-check build stop
 	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
 	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' \
 	    -e 's|@DB@|$(CURDIR)/$(DB)|g' -e 's|@LOG@|$(LOG)|g' \
@@ -180,7 +192,7 @@ install: build stop
 	launchctl bootstrap $(DOMAIN) $(PLIST)
 	@$(MAKE) --no-print-directory skill-link
 
-uninstall:
+uninstall: cutover-check
 	-@launchctl bootout $(DOMAIN)/$(OLD_LABEL) 2>/dev/null || true
 	rm -f $(OLD_PLIST)
 	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
