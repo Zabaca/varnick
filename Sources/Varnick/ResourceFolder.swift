@@ -7,6 +7,9 @@ enum ResourceFolder {
         /// The bundle's `Contents/Resources` when the executable is in a bundle, else the executable's own folder, where `make build` puts them.
         var folder: URL
         var inBundle: Bool
+
+        /// The `.app` itself, when `inBundle` (Contents/Resources is two levels in).
+        var bundle: URL? { inBundle ? folder.deletingLastPathComponent().deletingLastPathComponent() : nil }
     }
 
     /// This process's, from its executable with links resolved: the relay runs through the `varnick-peer` link, and `Bundle.main` answers

@@ -5,6 +5,21 @@ import VarnickPeer
 // `PeerMaintenanceAsk` and the reports are in VarnickPeer). The target is origin/main and nothing else; Upgrade fetches and builds, and only a
 // confirmed `restart` ever restarts Varnick, never the Mac.
 
+/// Why this Varnick can't upgrade or restart through a checkout: the installed app is updated by downloading the next build, and any other
+/// binary outside a checkout says where it runs from. The one place these texts are written (the report shapes carry them as refusals).
+enum NoCheckout {
+    /// `host` names this Mac in the peers' restart refusal, which another Mac shows beside other Macs' rows.
+    static func reason(on host: String? = nil) -> String {
+        if ResourceFolder.current.inBundle { return "Installed app: update it by downloading the newest build" }
+        return "Varnick" + (host.map { " on \($0)" } ?? "") + " isn't running from a checkout of its repository"
+    }
+
+    /// A headless host is installed and upgraded by a Mac's checkout (`scripts/install-peer.sh`), which the app doesn't hold.
+    static var headlessReason: String {
+        ResourceFolder.current.inBundle ? "Upgrade it from a Mac that runs Varnick from a checkout" : reason()
+    }
+}
+
 /// Lets the first of two racing tasks answer a continuation.
 private final class FirstAnswer: @unchecked Sendable {
     private let lock = NSLock()
@@ -56,7 +71,7 @@ final class OriginWatch {
     /// Starts a fetch, or joins the one under way, and waits for it up to `limit` seconds (for ever when nil). A fetch that outlasts the wait goes
     /// on, and the record shows its result.
     func fetch(waiting limit: TimeInterval?) async -> Fetched {
-        guard let task = current() else { return .finished("Varnick isn't running from a checkout of its repository") }
+        guard let task = current() else { return .finished(NoCheckout.reason()) }
         guard let limit else { return .finished(await task.value) }
         guard let error = await within(limit, { await task.value }) else { return .pending }
         return .finished(error)
@@ -202,7 +217,7 @@ final class BuildUpgrade {
         await resolve()
         // After the await: a confirmed restart may have been scheduled while it ran.
         guard !restartScheduled else { return "Varnick is restarting" }
-        guard let checkout = LaunchSnapshot.checkout else { return "Varnick isn't running from a checkout of its repository" }
+        guard let checkout = LaunchSnapshot.checkout else { return NoCheckout.reason() }
         if isBusy { return "A build is running there" }
         set(UpgradeRecord(.fetching, message: "Checking the checkout"))
         let task = Task { await self.run(checkout) }
@@ -350,7 +365,7 @@ final class BuildUpgrade {
 
     /// A restart is offered only when a newer successful build waits that was made from main with no uncommitted change, and nothing builds.
     private func restartRefusal() async -> String? {
-        guard let checkout = LaunchSnapshot.checkout else { return "Varnick on \(MacPeerHost().name) isn't running from a checkout of its repository" }
+        guard let checkout = LaunchSnapshot.checkout else { return NoCheckout.reason(on: MacPeerHost().name) }
         if let busy = await busyRefusal(in: checkout) { return busy }
         return newerBuildRefusal(in: checkout)
     }
@@ -396,6 +411,8 @@ final class BuildUpgrade {
 
     /// Whether the status menu's Restart Varnick can work: `scripts/restart.sh` in the checkout, and the database this Varnick has open.
     static func menuRestartAvailable(database: String) -> Bool {
+        // The app relaunches its own bundle: nothing else is needed.
+        if let bundle = ResourceFolder.current.bundle { return FileManager.default.fileExists(atPath: bundle.path) }
         guard let checkout = LaunchSnapshot.checkout else { return false }
         return FileManager.default.isExecutableFile(atPath: script(in: checkout)) && FileManager.default.fileExists(atPath: database)
     }
@@ -403,6 +420,7 @@ final class BuildUpgrade {
     /// The restart after the menu's confirmation, started at once: no build, no newer-build check. Returns why it didn't start, nil when it did.
     func restartFromMenu(database: String) async -> String? {
         guard !restartScheduled else { return nil }
+        if let bundle = ResourceFolder.current.bundle { return await relaunch(bundle) }
         guard let checkout = LaunchSnapshot.checkout, Self.menuRestartAvailable(database: database) else {
             return "scripts/restart.sh or the database isn't where this Varnick started"
         }
@@ -413,6 +431,43 @@ final class BuildUpgrade {
         restartScheduled = true
         guard Self.spawnRestart(checkout: checkout, database: database) else {
             restartScheduled = false
+            return "The restart didn't start (see ~/Library/Logs/Varnick.log)"
+        }
+        return nil
+    }
+
+    /// The app's restart: a new copy of the bundle is opened (`open -n`) and this one quits. The new copy waits on the account lock (up to 15 s)
+    /// while this one exits, so nothing here waits for it. Returns why it didn't start, nil when it did, which in practice never returns since
+    /// the process ends. It ends like the checkout's restart, which is a SIGTERM: no `applicationWillTerminate`, so an app pane's server isn't
+    /// stopped whatever Keep sessions running says (`restartImpact` counts on that).
+    private func relaunch(_ bundle: URL) async -> String? {
+        restartScheduled = true
+        let failure = await Task.detached(priority: .userInitiated) { Self.open(bundle) }.value
+        if let failure {
+            restartScheduled = false
+            return failure
+        }
+        // Not `exit`: no atexit handlers, which is what the SIGTERM of the checkout's restart skips too.
+        _exit(0)
+    }
+
+    /// `/usr/bin/open -n <bundle>`, which returns once LaunchServices has the request. Nil when it did, else why not.
+    nonisolated private static func open(_ bundle: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-n", bundle.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            NSLog("Varnick: the restart didn't start: \(error.localizedDescription)")
+            return "The restart didn't start (see ~/Library/Logs/Varnick.log)"
+        }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            NSLog("Varnick: the restart didn't start: open exited with \(process.terminationStatus)")
             return "The restart didn't start (see ~/Library/Logs/Varnick.log)"
         }
         return nil

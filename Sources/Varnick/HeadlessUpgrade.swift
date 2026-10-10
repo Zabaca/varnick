@@ -170,7 +170,7 @@ final class HeadlessUpgrade: ObservableObject {
             set(host, nil)
         }
         guard let checkout = LaunchSnapshot.checkout else {
-            comparisons[host] = Comparison(result: .unknown("Varnick isn't running from a checkout of its repository"), origin: nil)
+            comparisons[host] = Comparison(result: .unknown(NoCheckout.headlessReason), origin: nil)
             return
         }
         let git = CheckoutGit(root: checkout)
@@ -206,7 +206,7 @@ final class HeadlessUpgrade: ObservableObject {
         guard !host.hasPrefix("-"), host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._@-".contains($0)) }) else {
             return "The installer takes user@host with letters, digits and . _ - only (got \(host))"
         }
-        guard let checkout = LaunchSnapshot.checkout else { return "Varnick isn't running from a checkout of its repository" }
+        guard let checkout = LaunchSnapshot.checkout else { return NoCheckout.headlessReason }
         let installer = checkout.appendingPathComponent("scripts/install-peer.sh")
         guard FileManager.default.isExecutableFile(atPath: installer.path) else { return "The installer isn't in the checkout: \(installer.path)" }
         // Set before anything is awaited, so a second press finds the run under way. The task is this model's, so a caller that goes away
