@@ -14,10 +14,10 @@ enum SpokenText {
     /// beginning within the first three words, then one word that is the whole of `namePattern`, ignoring case and punctuation.
     /// A fragment of the name alone ("nick", "Hey Nick") never wakes it, nor does a word that merely resembles it (Warwick,
     /// Barney, Varun, varnish). The pattern is the spellings the transcriber was seen to write for "Varnick" (varnik most often,
-    /// then varnick, vanik, valnik, varnig, vardik, vonic and the like), measured with synthesized speech on the user's machine;
-    /// real-voice recordings pending. In that measurement it missed fewer clean clips than "Hey Launchy" did and more in loud
-    /// noise, and woke on none of the near-miss negatives. A candidate, untested on real speech: also take "a" for "hey" right
-    /// before such a word, since "Hey Varnick" was often written "A varnick". Docs:
+    /// then varnick, vanik, valnik, varnig, vardik, vonic and the like), measured with synthesized speech only; real-voice
+    /// recordings pending. On clean clips it missed 35% against 57.5% for "Hey Launchy", and more in heavy noise; none of 864
+    /// sound-alike phrases woke it, against 41 for "Hey Launchy". A candidate, untested on real speech: also take "a" for "hey"
+    /// right before such a word, since "Hey Varnick" was often written "A varnick". Docs:
     /// docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "Wake phrase".
     static func request(in text: String) -> String? {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)

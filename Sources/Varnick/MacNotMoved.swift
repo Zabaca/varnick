@@ -9,7 +9,7 @@ enum MacNotMoved {
     /// The one `error:` line to print, or nil when the Mac is moved, fresh, or has both folders.
     static func refusal(applicationSupport: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]) -> String? {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: applicationSupport.appendingPathComponent("Launchy").path),
+        guard OldLaunchy.isOurFolder(applicationSupport.appendingPathComponent("Launchy")),
               !fm.fileExists(atPath: applicationSupport.appendingPathComponent("Varnick").path) else { return nil }
         return "error: this Mac still runs Launchy (its support folder has the old name). " + FirstLaunchMigration.cutoverNote
     }

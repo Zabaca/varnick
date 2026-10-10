@@ -1,7 +1,7 @@
 import Foundation
 
 /// One Varnick per account: the app's start holds an exclusive lock on `varnick.lock` in the support folder until it exits.
-/// Foundation only, with the folder and the identity as parameters, so a harness compiles this file alone.
+/// Foundation only (with `DatabaseLocation.swift`), the folder and the identity as parameters, so a harness compiles these two alone.
 enum AccountLock {
     enum Outcome: Equatable {
         case held
@@ -16,9 +16,9 @@ enum AccountLock {
     nonisolated(unsafe) private static var heldDescriptor: Int32 = -1
 
     /// Takes the lock, polling for up to `wait` seconds: a restart overlaps the old copy's exit, and the restart script waits 10 s.
-    /// Creates the folder if it's missing, so it runs after the migration (which moves Launchy's folder into that place).
+    /// Creates the folder (0700) if it's missing, so it runs after the migration (which moves Launchy's folder into that place).
     static func acquire(in folder: URL, pid: Int32, executable: String, wait: TimeInterval = 15, poll: TimeInterval = 0.1) -> Outcome {
-        do { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) } catch {
+        do { try DatabaseLocation.makePrivateFolder(folder) } catch {
             return .failed("can't make \(folder.path): \(error.localizedDescription)")
         }
         let path = folder.appendingPathComponent(fileName).path

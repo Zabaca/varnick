@@ -59,7 +59,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
+.PHONY: build build-steps cutover-check cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -160,12 +160,20 @@ $(ZMX_SIGNER_STAMP):
 	@touch $@
 
 # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
-# run, install and uninstall touch the Mac's running Launchy and its LaunchAgent, so while Launchy's support folder exists and Varnick's
-# doesn't they work only in the checkout Launchy ran from, which holds db/launchy.sqlite. A worktree's build passes the build guard.
+# run, install and uninstall touch the Mac's running Launchy and its LaunchAgent, so while our Launchy's support folder exists (an unrelated
+# launcher is also called Launchy: scripts/old-launchy-folder.sh tests the folder's contents) and Varnick's doesn't they work only in the
+# checkout Launchy ran from, which holds db/launchy.sqlite. A worktree's build passes the build guard.
 cutover-check:
 	@support="$(HOME)/Library/Application Support"; \
-	if [ -e "$$support/Launchy" ] && [ ! -e "$$support/Varnick" ] && [ ! -f db/launchy.sqlite ]; then \
+	if scripts/old-launchy-folder.sh "$$support/Launchy" && [ ! -e "$$support/Varnick" ] && [ ! -f db/launchy.sqlite ]; then \
 	  echo "error: this Mac still runs Launchy and this isn't the checkout it ran from (no db/launchy.sqlite). Nothing was changed. $(CUTOVER_NOTE)" >&2; exit 1; fi
+
+# The opposite case: in the checkout Launchy ran from, `make clean` removes the binary that holds the build guard, and `make install` would
+# then install Varnick's LaunchAgent for the next login without the cutover. Both refuse there until the user passes CUTOVER=1 from Terminal.app.
+cutover-confirm:
+	@support="$(HOME)/Library/Application Support"; \
+	if scripts/old-launchy-folder.sh "$$support/Launchy" && [ ! -e "$$support/Varnick" ] && [ -f db/launchy.sqlite ] && [ "$(CUTOVER)" != 1 ]; then \
+	  echo "error: this Mac still runs Launchy from this checkout, and this would lift its build guard or install Varnick before the cutover. Nothing was changed. $(CUTOVER_NOTE)" >&2; exit 1; fi
 
 # The restart runs in its own session so it outlives a Varnick session that ran `make run`.
 run: cutover-check build
@@ -179,7 +187,7 @@ stop:
 # updates what the next login starts). Also starts it now, and links the custom-apps skill into
 # the user's skills so agents in any project find it (linked, not copied: one source). The link is
 # made only when the path is free or already ours; anything else there is left alone.
-install: cutover-check build stop
+install: cutover-check cutover-confirm build stop
 	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
 	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' -e 's|@LOG@|$(LOG)|g' \
 	    scripts/varnick.plist.in > $(PLIST)
@@ -216,7 +224,7 @@ skill-unlink:
 	fi
 
 # Leaves db/: it holds history Chrome may have already dropped.
-clean:
+clean: cutover-confirm
 	rm -rf .build
 
 # `make app` (the maintainer's, on the Mac that holds the signing identity and the notary credentials): Varnick.app, signed inside
@@ -239,8 +247,7 @@ APP_BUILD_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y%m%d.%H%M)
 # Every refusal is one `error:` line, and none reaches the build. The identity's script says its own reasons.
 app-guard:
 	@if ! git diff --quiet HEAD --; then echo "error: app: the checkout has changes to tracked files; a published build matches a commit" >&2; exit 1; fi
-	@id=$$(scripts/signing-identity.sh) || exit 1; \
-	  if [ "$$id" = - ]; then echo "error: app: no signing identity (an app is never signed ad hoc); fix SIGN_IDENTITY in Makefile.local" >&2; exit 1; fi
+	@scripts/signing-identity.sh --developer-id >/dev/null || { echo "error: app: no Developer ID Application identity to sign with (an app is never ad hoc); fix SIGN_IDENTITY in Makefile.local" >&2; exit 1; }
 	@if [ -z "$$NOTARY_PROFILE" ]; then echo "error: app: no NOTARY_PROFILE; name the notarytool keychain profile in Makefile.local or on the command line" >&2; exit 1; fi
 	@if [ "$(CHECK_BUILD)" != 1 ]; then \
 	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
@@ -274,8 +281,7 @@ app-bundle: app-guard
 	plutil -insert LSUIElement -bool YES $(APP)/Contents/Info.plist
 	plutil -insert VarnickCommit -string "$$(git rev-parse HEAD)" $(APP)/Contents/Info.plist
 	plutil -lint $(APP)/Contents/Info.plist
-	@id=$$(scripts/signing-identity.sh 2>/dev/null) || exit 1; \
-	  [ "$$id" != - ] || { echo "error: app: no signing identity" >&2; exit 1; }; \
+	@id=$$(scripts/signing-identity.sh --developer-id 2>/dev/null) || { echo "error: app: no Developer ID Application identity" >&2; exit 1; }; \
 	  codesign -f -s "$$id" -o runtime --timestamp $(APP)/Contents/MacOS/zmx || exit 1; \
 	  codesign -f -s "$$id" -o runtime --timestamp --entitlements Varnick.entitlements -i $(LABEL) $(APP) || exit 1
 	codesign --verify --deep --strict --verbose=2 $(APP)

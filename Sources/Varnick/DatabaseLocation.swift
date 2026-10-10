@@ -9,17 +9,20 @@ enum DatabaseLocation {
         environment["VARNICK_DB"] ?? supportFolder.appendingPathComponent(fileName).path
     }
 
-    /// Makes the support folder (0700) for the default path, which a Mac that never held a database lacks; a `VARNICK_DB` path's
-    /// folder is the caller's. Only the app calls it, and it makes no database.
+    /// Makes the support folder for the default path, which a Mac that never held a database lacks; a `VARNICK_DB` path's folder is
+    /// the caller's. Only the app calls it, and it makes no database.
     static func makeFolder(supportFolder: URL, environment: [String: String] = ProcessInfo.processInfo.environment) {
         guard environment["VARNICK_DB"] == nil else { return }
-        try? FileManager.default.createDirectory(at: supportFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? makePrivateFolder(supportFolder)
     }
 
-    /// The `error:` line for a command-line mode (`--sync`, `--search`, `--ask`, `--search-eval`) that would open the default database
-    /// while there is none. Opening it would create an empty one, which the app's first-launch copy then counts as already copied,
-    /// so the history in the checkout would never reach it. The relay and the app don't ask: the relay reads `search-db-path`, and
-    /// the app's start copies.
+    /// The support folder is 0700, whichever of its first writers (the account lock, this file) makes it. An existing one is left as it is.
+    static func makePrivateFolder(_ folder: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    }
+
+    /// The `error:` line for a command-line mode that would open the default database while there is none: it would create an empty
+    /// one, which the first-launch copy counts as done. The relay (reads `search-db-path`) and the app (copies) don't ask.
     static func commandLineRefusal(supportFolder: URL, environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         guard environment["VARNICK_DB"] == nil,
               !FileManager.default.fileExists(atPath: supportFolder.appendingPathComponent(fileName).path) else { return nil }
