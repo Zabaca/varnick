@@ -84,6 +84,13 @@ Launchy starts each pane's process itself with `posix_spawn` and the disclaim at
 ## Further Notes
 
 - **Recorded on 2026-10-09** from the user's measurement, relayed by the coordinator, as the planned follow-up to `sessions-cant-see-or-act-on-the-screen` option 01.
+- **Measured on 2026-10-10, relayed by the coordinator: macOS holds whoever started Varnick responsible for it too.**
+  - **The finding.** A Varnick started from a terminal (cmux) with `make run` or the restart script was attributed to that terminal by macOS. So it was checked under the terminal's permissions, not its own: Screen Recording read as on, which cmux had, and Accessibility as off.
+  - **Every pane's process inherited the same,** since the chain runs from the pane through Varnick up to the terminal.
+  - **The fix that day.** Starting Varnick through its LaunchAgent (`launchctl kickstart gui/<uid>/com.zabaca.varnick`) made it responsible for itself, and its own permissions applied again.
+  - **How it relates to this option.** It is this option's mechanism one level up, and it fits the problem's other direction: a process launchd starts is its own. This option disclaims panes, not Varnick's own start, so it doesn't cover the case.
+  - **Inferred:** a Varnick restarted from inside one a terminal started stays attributed to that terminal, since the new copy descends from the old. That covers Settings' Restart and a peer's Restart, both of which run the restart script.
+  - **For checking this option by hand:** start Varnick through its LaunchAgent first. Otherwise the panes are checked as the terminal, not as Varnick.
 - **Left to decide on acceptance:**
   - whether `--ask --app` refuses for good or asks the running Launchy over the socket like a session;
   - whether any short run needs the disclaim.
