@@ -4,3 +4,8 @@
 # A certificate's SHA-1 (`security find-identity -v -p codesigning`), or any part of its name; "-" signs ad hoc on purpose.
 # A name that isn't in the keychain stops the build instead of signing ad hoc.
 SIGN_IDENTITY := 0000000000000000000000000000000000000000
+
+# What `make app` hands to `notarytool --keychain-profile`: the name of a profile made once on the release Mac with
+# `xcrun notarytool store-credentials <name>`. The profile holds the credentials; only its name goes here. `make app` refuses without one,
+# and NOTARY_PROFILE=<name> on the command line works too.
+NOTARY_PROFILE := example-notary-profile

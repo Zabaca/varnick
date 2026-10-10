@@ -220,3 +220,84 @@ skill-unlink:
 # Leaves db/: it holds history Chrome may have already dropped.
 clean:
 	rm -rf .build
+
+# `make app` (the maintainer's, on the Mac that holds the signing identity and the notary credentials): Varnick.app, signed inside
+# out, notarized, stapled and zipped as .build/app/Varnick.zip, which the user attaches to a GitHub release by hand
+# (docs/problems/runs-only-from-a-checkout/options/02-notarized-app-updated-by-hand.md). Nothing is uploaded but to the notary service.
+# NOTARY_PROFILE (on the command line, else the git-ignored Makefile.local) names the keychain profile `notarytool` reads; like the
+# identity, it stays out of every tracked file. CHECK_BUILD=1 lets a build off main run every step but the zip.
+# `app-bundle` stops before anything is sent, so the signed bundle can be checked first.
+export NOTARY_PROFILE
+APP_DIR := .build/app
+APP := $(APP_DIR)/Varnick.app
+APP_ZIP := $(APP_DIR)/Varnick.zip
+# Both numbers come from the commit's time in UTC: 2026.10.9 and 20261009.1954. The short one has no leading zeros.
+APP_COMMIT_TIME = $(shell git show -s --format=%ct HEAD)
+APP_SHORT_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y.%m.%d | sed 's/\.0*\([0-9]\)/.\1/g')
+APP_BUILD_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y%m%d.%H%M)
+
+.PHONY: app app-bundle app-guard
+
+# Every refusal is one `error:` line, and none reaches the build. The identity's script says its own reasons.
+app-guard:
+	@if ! git diff --quiet HEAD --; then echo "error: app: the checkout has changes to tracked files; a published build matches a commit" >&2; exit 1; fi
+	@id=$$(scripts/signing-identity.sh) || exit 1; \
+	  if [ "$$id" = - ]; then echo "error: app: no signing identity (an app is never signed ad hoc); fix SIGN_IDENTITY in Makefile.local" >&2; exit 1; fi
+	@if [ -z "$$NOTARY_PROFILE" ]; then echo "error: app: no NOTARY_PROFILE; name the notarytool keychain profile in Makefile.local or on the command line" >&2; exit 1; fi
+	@if [ "$(CHECK_BUILD)" != 1 ]; then \
+	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+	    echo "error: app: a published build comes from main, with HEAD in origin/main as last fetched; CHECK_BUILD=1 builds anything else, without the zip" >&2; exit 1; fi; fi
+
+# Signing is inside out, never --deep: zmx first, then the bundle with the entitlements and the identifier. Both carry the
+# secure timestamp that only notarization needs. Lines that name the identity start with @.
+app-bundle: app-guard
+	@$(MAKE) --no-print-directory build
+	rm -rf $(APP) $(APP_DIR)/Varnick.iconset
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
+	cp -c .build/release/Varnick $(APP)/Contents/MacOS/Varnick
+	cp -c .build/release/zmx $(APP)/Contents/MacOS/zmx
+	cp -c .build/release/mlx.metallib $(APP)/Contents/Resources/mlx.metallib
+	rsync -a PhonePage/ $(APP)/Contents/Resources/PhonePage/ --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/'
+	cp .build/release/build-stamp $(APP)/Contents/Resources/build-stamp
+	mkdir -p $(APP)/Contents/Resources/skills
+	cp -RL .claude/skills/custom-apps $(APP)/Contents/Resources/skills/custom-apps
+	find $(APP) -name .DS_Store -delete
+	cp LICENSE THIRD_PARTY_NOTICES.md $(APP)/Contents/Resources/
+	swiftc -O -parse-as-library scripts/make-icon.swift Sources/Varnick/FoldMark.swift -o $(APP_DIR)/make-icon
+	$(APP_DIR)/make-icon $(APP_DIR)/Varnick.iconset
+	iconutil -c icns -o $(APP)/Contents/Resources/Varnick.icns $(APP_DIR)/Varnick.iconset
+	cp Info.plist $(APP)/Contents/Info.plist
+	plutil -insert CFBundleExecutable -string Varnick $(APP)/Contents/Info.plist
+	plutil -insert CFBundlePackageType -string APPL $(APP)/Contents/Info.plist
+	plutil -insert CFBundleIconFile -string Varnick $(APP)/Contents/Info.plist
+	plutil -insert CFBundleShortVersionString -string $(APP_SHORT_VERSION) $(APP)/Contents/Info.plist
+	plutil -insert CFBundleVersion -string $(APP_BUILD_VERSION) $(APP)/Contents/Info.plist
+	plutil -insert LSMinimumSystemVersion -string 14.0 $(APP)/Contents/Info.plist
+	plutil -insert LSUIElement -bool YES $(APP)/Contents/Info.plist
+	plutil -insert VarnickCommit -string "$$(git rev-parse HEAD)" $(APP)/Contents/Info.plist
+	plutil -lint $(APP)/Contents/Info.plist
+	@id=$$(scripts/signing-identity.sh 2>/dev/null) || exit 1; \
+	  [ "$$id" != - ] || { echo "error: app: no signing identity" >&2; exit 1; }; \
+	  codesign -f -s "$$id" -o runtime --timestamp $(APP)/Contents/MacOS/zmx || exit 1; \
+	  codesign -f -s "$$id" -o runtime --timestamp --entitlements Varnick.entitlements -i $(LABEL) $(APP) || exit 1
+	codesign --verify --deep --strict --verbose=2 $(APP)
+
+# The notary service answers in minutes, the first time perhaps longer. Anything but Accepted prints its log and fails.
+app: app-bundle
+	@rm -f $(APP_DIR)/notarize.zip
+	ditto -c -k --keepParent $(APP) $(APP_DIR)/notarize.zip
+	@echo "submitting to the notary service, and waiting for its answer"
+	@xcrun notarytool submit $(APP_DIR)/notarize.zip --keychain-profile "$$NOTARY_PROFILE" --wait > $(APP_DIR)/notary.out 2>&1; \
+	  rm -f $(APP_DIR)/notarize.zip; cat $(APP_DIR)/notary.out; \
+	  id=$$(sed -n 's/^ *id: *//p' $(APP_DIR)/notary.out | head -1); status=$$(sed -n 's/^ *status: *//p' $(APP_DIR)/notary.out | tail -1); \
+	  if [ "$$status" != Accepted ]; then \
+	    echo "error: app: the notary service didn't accept the app (status: $${status:-none}); what notarytool said is above" >&2; \
+	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" --keychain-profile "$$NOTARY_PROFILE"; fi; exit 1; fi
+	xcrun stapler staple $(APP)
+	xcrun stapler validate $(APP)
+	@spctl -a -vv -t exec $(APP) 2>&1 | tee $(APP_DIR)/spctl.out; grep -q 'source=Notarized Developer ID' $(APP_DIR)/spctl.out || { echo "error: app: Gatekeeper doesn't accept the app as notarized" >&2; exit 1; }
+	@if [ "$(CHECK_BUILD)" = 1 ]; then echo "CHECK_BUILD=1: no zip written"; else \
+	  rm -f $(APP_ZIP) $(APP_ZIP).sha256 && ditto -c -k --keepParent $(APP) $(APP_ZIP) && \
+	  (cd $(APP_DIR) && shasum -a 256 Varnick.zip > Varnick.zip.sha256 && cat Varnick.zip.sha256) && \
+	  echo "version $$(plutil -extract CFBundleShortVersionString raw $(APP)/Contents/Info.plist) ($$(plutil -extract CFBundleVersion raw $(APP)/Contents/Info.plist)), commit $$(plutil -extract VarnickCommit raw $(APP)/Contents/Info.plist)" && \
+	  echo "the published build: $(APP_ZIP)"; fi
