@@ -1008,9 +1008,8 @@ struct ScreenPermissionsView: View {
     }
 }
 
-/// Open at login, in the app only: a switch bound to `SMAppService.mainApp`, so Varnick appears in System Settings › Login Items. Nothing is
-/// saved here and nothing registers unless the switch is turned on; the status is read each time Settings shows it (and each second while it
-/// does, so an approval given in System Settings shows without reopening).
+/// Open at login, in the app only: a switch bound to `SMAppService.mainApp` (Login Items). Nothing is saved and nothing registers
+/// until the switch is turned on; the status is re-read each second, so an approval in System Settings shows.
 struct OpenAtLoginRow: View {
     @State private var status = SMAppService.mainApp.status
     /// What the last register or unregister threw; cleared by the next try.

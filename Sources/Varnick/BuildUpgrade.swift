@@ -436,10 +436,8 @@ final class BuildUpgrade {
         return nil
     }
 
-    /// The app's restart: a new copy of the bundle is opened (`open -n`) and this one quits. The new copy waits on the account lock (up to 15 s)
-    /// while this one exits, so nothing here waits for it. Returns why it didn't start, nil when it did, which in practice never returns since
-    /// the process ends. It ends like the checkout's restart, which is a SIGTERM: no `applicationWillTerminate`, so an app pane's server isn't
-    /// stopped whatever Keep sessions running says (`restartImpact` counts on that).
+    /// The app's restart: opens a new copy of the bundle (`open -n`) that waits on the account lock, and ends this one with no
+    /// `applicationWillTerminate`, as the checkout's SIGTERM does. Returns why it didn't start; in practice never returns when it did.
     private func relaunch(_ bundle: URL) async -> String? {
         restartScheduled = true
         let failure = await Task.detached(priority: .userInitiated) { Self.open(bundle) }.value

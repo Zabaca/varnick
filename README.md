@@ -51,8 +51,8 @@ Applications with the one in the newest download. Replacing it while it runs wou
 new executable before Varnick has restarted. Settings › Peers says "Installed app: update it by downloading
 the newest build" for a Mac that runs the app.
 
-**Moving a Mac from a checkout to the app.** Run `make uninstall` in the checkout first, so the LaunchAgent
-doesn't start a second Varnick beside the app. The app and a checkout build share one history database in
+**Moving a Mac from a checkout to the app.** Run `make uninstall` in the checkout first. The LaunchAgent would
+otherwise start a second Varnick at every login, and whichever copy comes second shows an alert and quits. The app and a checkout build share one history database in
 Application Support (see "Things that stay as they are"); a checkout's older `db/` copy is copied there
 once, and left in place.
 

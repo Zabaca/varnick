@@ -12,9 +12,8 @@ enum InstalledApp {
 
     // MARK: The log
 
-    /// Sends standard output and error to `log`, appending, unless standard error is a terminal. A log that can't be opened (or its folder
-    /// made) leaves both as they are. Only the app's start calls this: the relay, the MCP server and the command-line modes write
-    /// their reply to standard output, which a redirect there would send into the log.
+    /// Sends standard output and error to `log`, appending, unless standard error is a terminal or the log can't be opened. Only the
+    /// app's start calls it: the relay and the modes reply on standard output, which a redirect there would send into the log.
     @discardableResult
     static func redirectOutput(to log: URL, stderrIsTerminal: Bool = isatty(STDERR_FILENO) != 0) -> Bool {
         guard !stderrIsTerminal else { return false }

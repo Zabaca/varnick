@@ -17,8 +17,9 @@ VARNICK="^($(pwd -P)/)?\.build/release/Varnick$"
 LAUNCHY="^$(pwd -P)/\.build/release/Launchy$"
 LOG="$HOME/Library/Logs/Varnick.log"
 SUPPORT="$HOME/Library/Application Support"
-# A Mac still on Launchy reads Launchy.log, so a refusal goes there while Launchy's support folder is the one in use.
-if [ -e "$SUPPORT/Launchy" ] && [ ! -e "$SUPPORT/Varnick" ]; then ON_LAUNCHY=yes; REFUSAL_LOG="$HOME/Library/Logs/Launchy.log"; else ON_LAUNCHY=no; REFUSAL_LOG="$LOG"; fi
+# A Mac still on Launchy reads Launchy.log, so a refusal goes there while Launchy's support folder is the one in use. An
+# unrelated launcher is also called Launchy: the folder is ours only by what it holds (old-launchy-folder.sh).
+if scripts/old-launchy-folder.sh "$SUPPORT/Launchy" && [ ! -e "$SUPPORT/Varnick" ]; then ON_LAUNCHY=yes; REFUSAL_LOG="$HOME/Library/Logs/Launchy.log"; else ON_LAUNCHY=no; REFUSAL_LOG="$LOG"; fi
 # Short-lived, removed at the rename's Cleanup (same option): two refusals, before anything is stopped, each saying why in the log.
 #  - With no Varnick to start, stopping would leave nothing running. That is the state of a checkout an old Upgrade fast-forwarded
 #    and the status menu's or a peer's Restart (which run this with no build) reaches.

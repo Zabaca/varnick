@@ -1,9 +1,8 @@
 import Foundation
 import SQLite3
 
-/// Short-lived (phase 6, Cleanup, of docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md
-/// removes it): Launchy's data moved at Varnick's first app start. Every place is a parameter so a check runs on temporary ones.
-/// The order and why are in where-it-breaks, "The rename"; each step is skipped when its target exists and logs one line, no values.
+/// Short-lived (removed by Cleanup in docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
+/// Launchy's data moved at Varnick's first app start; every place is a parameter. The order and why: where-it-breaks, "The rename".
 enum FirstLaunchMigration {
     /// The names are parameters because a temporary home doesn't move UserDefaults: a check passes made-up domains and deletes them.
     struct Places {
@@ -18,8 +17,8 @@ enum FirstLaunchMigration {
         /// Where the app was started from: a checkout's `db/` may hold the database to copy.
         var workingFolder: URL
         var defaults: UserDefaults = .standard
-        /// Whether a Launchy app (not its relay or an MCP server) is running; a check passes its own answer.
-        var launchyIsRunning: () -> Bool = FirstLaunchMigration.launchyAppIsRunning
+        /// Whether our Launchy app (not its relay or an MCP server) is running; a check passes its own answer.
+        var launchyIsRunning: () -> Bool = { OldLaunchy.appIsRunning() }
 
         var supportFolder: URL { applicationSupport.appendingPathComponent(newFolder, isDirectory: true) }
         /// The database the app is about to open.
@@ -66,16 +65,13 @@ enum FirstLaunchMigration {
 
     // MARK: 0. Whether this is the Mac's cutover
 
-    /// The `error:` line when the steps must not start, checked first. While the old folder exists no Launchy app may run. A
-    /// cutover (the new folder doesn't exist) must also be the Mac's own: Launchy's database sits in the working folder's `db/` (or
-    /// beside the path `VARNICK_DB` chose, or that path exists already), else a Varnick built in another checkout, started by a
-    /// restart that stopped Launchy by its relative name, would end every session and move the folder. Both folders with no
-    /// sessions file in the new one would start empty.
+    /// The `error:` line when the steps must not start, only while our old folder exists (`OldLaunchy`): no Launchy app may run, and
+    /// a cutover must be the Mac's own (`launchy.sqlite` in `db/` or beside the database). Both folders and no sessions file refuses too.
     static func refusal(_ places: Places) -> String? {
         let fm = FileManager.default
         let old = places.applicationSupport.appendingPathComponent(places.oldFolder, isDirectory: true)
         let new = places.applicationSupport.appendingPathComponent(places.newFolder, isDirectory: true)
-        guard exists(old) else { return nil }
+        guard OldLaunchy.isOurFolder(old) else { return nil }
         if places.launchyIsRunning() {
             return "error: Launchy is still running. Nothing was changed. " + cutoverNote
         }
@@ -90,52 +86,6 @@ enum FirstLaunchMigration {
             return "error: Launchy's data is on this Mac, but \(oldDatabaseName) is in neither the working folder's db/ nor beside the database this Varnick would open, so it isn't the checkout Launchy ran from. Nothing was changed. " + cutoverNote
         }
         return nil
-    }
-
-    /// Whether a process whose executable is named `Launchy` runs as the app: its relay (`--peer`) and a pane's MCP server (`--mcp`)
-    /// are the same binary and are not it, and a pane's outlives the app. A process whose arguments can't be read counts as the app.
-    static func launchyAppIsRunning() -> Bool { appIsRunning(executableNamed: "Launchy") }
-
-    /// The name is a parameter so a check can use a binary of its own while the real Launchy runs.
-    static func appIsRunning(executableNamed name: String) -> Bool {
-        let capacity = proc_listallpids(nil, 0)
-        guard capacity > 0 else { return true }
-        var pids = [pid_t](repeating: 0, count: Int(capacity) + 64)
-        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
-        guard count > 0 else { return true }
-        var path = [CChar](repeating: 0, count: 4096)
-        var comm = [CChar](repeating: 0, count: 64)
-        for pid in pids.prefix(count) where pid > 0 {
-            // The running Launchy's file is gone at the cutover (the build guard needs it removed) and `proc_pidpath` then fails,
-            // so the name the kernel kept from the exec (`proc_name`) counts as well.
-            let byPath = proc_pidpath(pid, &path, UInt32(path.count)) > 0 && URL(fileURLWithPath: String(cString: path)).lastPathComponent == name
-            let byName = proc_name(pid, &comm, UInt32(comm.count)) > 0 && String(cString: comm) == name
-            guard byPath || byName else { continue }
-            let arguments = argumentsOf(pid)
-            if arguments == nil || !arguments!.contains(where: { $0 == "--peer" || $0 == "--mcp" }) { return true }
-        }
-        return false
-    }
-
-    /// A process's arguments, nil when they can't be read.
-    private static func argumentsOf(_ pid: pid_t) -> [String]? {
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return nil }
-        var buffer = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > 4 else { return nil }
-        let argc = Int(buffer[0]) | Int(buffer[1]) << 8 | Int(buffer[2]) << 16 | Int(buffer[3]) << 24
-        var i = 4
-        while i < size && buffer[i] != 0 { i += 1 }      // the executable path
-        while i < size && buffer[i] == 0 { i += 1 }      // its padding
-        var result: [String] = []
-        while result.count < argc && i < size {
-            var end = i
-            while end < size && buffer[end] != 0 { end += 1 }
-            result.append(String(decoding: buffer[i..<end], as: UTF8.self))
-            i = end + 1
-        }
-        return result
     }
 
     // MARK: 1. The old sessions
@@ -193,9 +143,9 @@ enum FirstLaunchMigration {
         let fm = FileManager.default
         let old = places.applicationSupport.appendingPathComponent(places.oldFolder, isDirectory: true)
         let new = places.applicationSupport.appendingPathComponent(places.newFolder, isDirectory: true)
-        let hasOld = exists(old), hasNew = exists(new)
+        let hasOld = OldLaunchy.isOurFolder(old), hasNew = exists(new)
         if hasOld && hasNew { return ("support folder: skipped, both the old and the new exist and nothing is merged, left to the user", nil) }
-        if !hasOld { return ("support folder: skipped, \(hasNew ? "already moved" : "no old folder")", nil) }
+        if !hasOld { return ("support folder: skipped, \(hasNew ? "already moved" : "no old folder of ours")", nil) }
         do { try fm.moveItem(at: old, to: new) } catch {
             return ("support folder: the move failed, the app stops",
                     "error: the support folder couldn't be moved from \(places.oldFolder) to \(places.newFolder): \(error.localizedDescription). Nothing was changed there. " + cutoverNote)
@@ -253,12 +203,8 @@ enum FirstLaunchMigration {
 
     static let oldDatabaseName = "launchy.sqlite"
 
-    /// Copies the checkout's history database into the support folder, once, and never touches the original: a Launchy started again
-    /// finds it as it was. Short-lived with the rest of the migration; removing this step is safe once every machine has started a
-    /// build that has it. It runs only when `VARNICK_DB` isn't set and the target doesn't exist. An empty database at the target
-    /// would count as copied for good, so the copy goes into a partial file beside the target (through SQLite's online backup, which
-    /// takes in what the WAL holds), is checked, and is moved into place without replacing anything. A copy that fails ends the app
-    /// with an `error:` line rather than start with an empty database beside the real one.
+    /// Copies the checkout's history database into the support folder, once, never touching the original: a checked partial file
+    /// (SQLite's backup, WAL included) is moved into place. A copy that fails ends the app, never an empty database beside the real one.
     static func copyDatabase(_ places: Places) -> (line: String, failure: String?) {
         if places.databaseOverride != nil { return ("database: skipped, VARNICK_DB is set", nil) }
         let target = URL(fileURLWithPath: places.databasePath)
@@ -300,9 +246,8 @@ enum FirstLaunchMigration {
         init(_ message: String) { self.message = message }
     }
 
-    /// The first that exists: the file the support folder's `search-db-path` names (the app writes it at each launch, and step 3 has
-    /// just moved the folder; on a Mac that ran Launchy it names the checkout's `launchy.sqlite`), then `db/varnick.sqlite`, then
-    /// `db/launchy.sqlite` under the working folder.
+    /// The first that exists: the file the moved folder's `search-db-path` names (on a Mac that ran Launchy, the checkout's
+    /// `launchy.sqlite`), then `db/varnick.sqlite`, then `db/launchy.sqlite` under the working folder.
     private static func databaseSource(_ places: Places) -> URL? {
         var candidates: [URL] = []
         let named = (try? String(contentsOf: places.supportFolder.appendingPathComponent("search-db-path"), encoding: .utf8))?
@@ -333,11 +278,8 @@ enum FirstLaunchMigration {
         return nil
     }
 
-    /// Copies the database and the files that hold its writes (`-wal`, `-journal`) into a folder of ours, so SQLite recovers and reads
-    /// them there. Opening the original, even read-only, rewrites its `-shm` when no other process has it open, and makes a `-wal` and
-    /// `-shm` beside a database that has none; the original is not to be changed, whatever SQLite does on opening. The files are
-    /// checked for change while they are copied. Nil when they did change on every try, which means a writer is at work: the caller
-    /// then reads the original through SQLite, whose backup is consistent with a writer, and a writer's files are in use anyway.
+    /// Copies the database, `-wal` and `-journal` aside for SQLite to read there, since opening the original rewrites its `-shm`.
+    /// Nil when they changed on every try (a writer is at work); the caller then reads the original, whose backup is consistent.
     private static func stage(_ source: URL, in staging: URL) -> URL? {
         let fm = FileManager.default
         let suffixes = ["", "-wal", "-journal"]
