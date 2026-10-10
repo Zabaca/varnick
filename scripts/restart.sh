@@ -9,18 +9,30 @@
 # Usage: restart.sh <database path>
 cd "$(dirname "$0")/.." || exit 1
 VARNICK="^($(pwd -P)/)?\.build/release/Varnick$"
-# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): a Launchy binary is stopped too, matched the same anchored way.
-LAUNCHY="^($(pwd -P)/)?\.build/release/Launchy$"
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
+# a Launchy binary is stopped too, but by this checkout's absolute path only. A Launchy started by `make run` has the relative argv
+# `.build/release/Launchy`, which would match from any checkout, and a Varnick worktree's restart would end the Mac's Launchy.
+LAUNCHY="^$(pwd -P)/\.build/release/Launchy$"
 LOG="$HOME/Library/Logs/Varnick.log"
+SUPPORT="$HOME/Library/Application Support"
+# A Mac still on Launchy reads Launchy.log, so a refusal goes there while Launchy's support folder is the one in use.
+if [ -e "$SUPPORT/Launchy" ] && [ ! -e "$SUPPORT/Varnick" ]; then ON_LAUNCHY=yes; REFUSAL_LOG="$HOME/Library/Logs/Launchy.log"; else ON_LAUNCHY=no; REFUSAL_LOG="$LOG"; fi
+# Short-lived, removed at the rename's Cleanup (same option): two refusals, before anything is stopped, each saying why in the log.
+#  - With no Varnick to start, stopping would leave nothing running. That is the state of a checkout an old Upgrade fast-forwarded
+#    and the status menu's or a peer's Restart (which run this with no build) reaches.
+#  - While the Mac still runs Launchy, only the checkout Launchy ran from (it holds db/launchy.sqlite) may restart: Varnick started from
+#    any other, say a worktree, would end every Launchy session and move its data.
+# The cutover is the user's step, done from Terminal.app; an agent must stop and report this to the user.
+refuse() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') restart refused: $1, and nothing was stopped. The cutover from Launchy is the user's step, done from Terminal.app (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, \"Cutover: each Mac\"); an agent must stop here and report this to the user" >> "$REFUSAL_LOG" 2>/dev/null
+  exit 1
+}
+[ -x .build/release/Varnick ] || refuse "$(pwd -P) has no .build/release/Varnick"
+if [ "$ON_LAUNCHY" = yes ] && [ ! -f db/launchy.sqlite ]; then
+  refuse "this Mac still runs Launchy and $(pwd -P) has no db/launchy.sqlite, so it isn't the checkout Launchy ran from"
+fi
 # A failed redirect on `exec` ends a non-interactive shell, so the log is tried in a subshell first.
 if ! ( : >> "$LOG" ) 2>/dev/null; then LOG=/dev/null; fi
-# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): with no Varnick to start, stopping would leave nothing running. That is the state of a
-# checkout an old Upgrade fast-forwarded and the status menu's or a peer's Restart (which run this with no build) reaches. Nothing is
-# stopped, and the log says why.
-if [ ! -x .build/release/Varnick ]; then
-  echo "$(date '+%Y-%m-%d %H:%M:%S') restart refused: $(pwd -P) has no .build/release/Varnick (a Mac still on Launchy is cut over by hand, from a terminal: docs/problems/name-taken-by-another-launcher, option 01, \"Cutover: each Mac\"), and nothing was stopped" >> "$LOG" 2>/dev/null
-  exit 1
-fi
 pkill -a -f "$VARNICK"
 pkill -a -f "$LAUNCHY"
 for _ in 1 2 3 4 5 6 7 8 9 10; do
