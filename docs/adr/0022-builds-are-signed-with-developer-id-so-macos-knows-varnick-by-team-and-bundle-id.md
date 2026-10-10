@@ -27,5 +27,4 @@ The user accepted this on 2026-10-09, after creating the identity. The problem a
 - **Library validation and the hardened runtime stop other code from being loaded into Varnick's process,** which an ad-hoc build without the runtime allowed.
 - **zmx is signed with the same identity** before it is moved into place. Running daemons keep their file, and the zmx stamp records the identity, so a change of identity re-signs a copy without a pin bump (ADR 0004).
 - **A strict `codesign --verify` runs after signing,** and its failure fails the build.
-
-- **Amended 2026-10-10: a grant also needs Varnick to be its own responsible process.** macOS used Accessibility and Screen Recording of whatever started Varnick, not Varnick's: a Varnick started by `scripts/restart.sh` from a cmux terminal got cmux's grants (measured). So every start goes through launchd, which makes the job its own responsible process: `launchctl kickstart` of the LaunchAgent, else a transient job from the same plist template (`docs/agents/where-it-breaks.md`, Signing).
+- **Added 2026-10-10: Varnick is started by launchd, so a grant is Varnick's own and not its starter's.** `docs/agents/where-it-breaks.md`, Signing, has the measurement and the rules.

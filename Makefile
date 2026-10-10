@@ -205,8 +205,7 @@ stop:
 # made only when the path is free or already ours; anything else there is left alone.
 install: cutover-check cutover-confirm build stop
 	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
-	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' -e 's|@LOG@|$(LOG)|g' \
-	    scripts/varnick.plist.in > $(PLIST)
+	scripts/varnick-plist.sh $(LABEL) $(CURDIR) $(LOG) > $(PLIST)
 	plutil -lint $(PLIST)
 	-@launchctl bootout $(DOMAIN)/$(OLD_LABEL) 2>/dev/null || true
 	rm -f $(OLD_PLIST)

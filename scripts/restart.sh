@@ -1,18 +1,13 @@
 #!/bin/sh
-# Started detached by `make run`: stops every Varnick, including one hosting the session that
-# ran make (pkill skips its own ancestors without -a, and with -a would kill make before the
-# new instance starts), then starts the fresh build. Matches this repo's build by relative path
-# (started by `make run`) or absolute path (started by the LaunchAgent from `make install`).
+# Started detached by `make run`, the status menu's Restart and the upgrade's restart (BuildUpgrade): stops every Varnick of this
+# checkout, including one hosting the session that ran it (pkill skips its own ancestors without -a, and with -a would kill make
+# before the new instance starts), then starts the fresh build through launchd, never as this script's own child: a child would get
+# the macOS permissions of whatever ran the script instead of Varnick's own (docs/agents/where-it-breaks.md, Signing). Every start
+# through launchd has the absolute path in its argv; the relative path is what a Varnick started by an older restart, or by the
+# direct fallback at the end, has.
 # Varnick's output is appended to ~/Library/Logs/Varnick.log, which is where its NSLog lines go (there, not to
 # `log show`); when that file can't be opened it goes to /dev/null, so a log that can't be written never stops Varnick
-# from starting. The peers' Restart runs this too (BuildUpgrade).
-# Varnick is started by launchd, never as a child of whatever ran this script: macOS makes a process's TCC "responsible process"
-# (whose Accessibility, Screen Recording and microphone grants it uses, and whose name its prompts show) the one that started it, and
-# a Varnick started from a terminal such as cmux got cmux's grants and none of its own (measured 2026-10-10; the chain stays rooted
-# there through every restart Varnick does of itself). A job launchd spawns is its own responsible process. So: with this checkout's
-# LaunchAgent (`make install`) loaded, `launchctl kickstart` of it (no -k: only after this script has stopped every Varnick of the
-# checkout, so it can't start a second one); else a transient job bootstrapped from the same plist template under a label of its own;
-# only when launchd refuses both, the direct start of old, which says so in the log. Where-it-breaks, Signing, has the rest.
+# from starting.
 # Usage: restart.sh [database path]
 # The path becomes VARNICK_DB only when it is given and not empty: Varnick takes an empty VARNICK_DB as the path itself, and with none
 # it opens its default database (varnick.sqlite in its support folder).
@@ -49,14 +44,18 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   pgrep -a -f "$VARNICK" >/dev/null || pgrep -a -f "$LAUNCHY" >/dev/null || break
   sleep 1
 done
-# Which launchd job starts Varnick. AGENT_LABEL is the Makefile's LABEL. The transient job is named by this checkout's path, so one
-# checkout's restart never removes another's.
+# Which launchd job starts Varnick. AGENT_LABEL is the Makefile's LABEL; change them together.
 ROOT=$(pwd -P)
 BINARY="$ROOT/.build/release/Varnick"
 DOMAIN="gui/$(id -u)"
 AGENT_LABEL=com.zabaca.varnick
-AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
-JOB_LABEL="$AGENT_LABEL.run.$(printf %s "$ROOT" | cksum | cut -d' ' -f1)"
+# Beyond launchd's own, a start carries only these two from the caller (a LaunchAgent can carry neither, so a start that has one is
+# the transient job's): the database path this script was given, and VARNICK_LOG_RESIZE, which `VARNICK_LOG_RESIZE=1 make run` sets.
+DB_ARG=$1
+LOG_RESIZE=${VARNICK_LOG_RESIZE-}
+# The label names the checkout and the environment above, so a loaded job always has the environment this restart wants and is
+# restarted with kickstart, never removed and loaded again: the Varnick the job started may be what ran this script.
+JOB_LABEL="$AGENT_LABEL.run.$(printf '%s|%s|%s' "$ROOT" "$DB_ARG" "$LOG_RESIZE" | cksum | cut -d' ' -f1)"
 note() { echo "$(date '+%Y-%m-%d %H:%M:%S') restart: $1" >> "$LOG" 2>/dev/null; }
 # What still runs after the wait above, normally nothing: a start counts only for a process that wasn't there before it.
 BEFORE=$(pgrep -a -f "$VARNICK" | tr '\n' ' ')
@@ -66,53 +65,78 @@ started() {
   done
   return 1
 }
-# The LaunchAgent counts when its plist runs this checkout's binary and the job is loaded. It sets no VARNICK_DB, so it can start
-# only a Varnick that opens the default database, which is what the menu's Restart passes when that is the one open.
-agent_fits() {
-  [ -f "$AGENT_PLIST" ] || return 1
-  [ "$(plutil -extract ProgramArguments.0 raw -o - "$AGENT_PLIST" 2>/dev/null)" = "$BINARY" ] || return 1
-  [ -z "$1" ] || [ "$1" = "$SUPPORT/Varnick/varnick.sqlite" ] || return 1
-  launchctl print "$DOMAIN/$AGENT_LABEL" >/dev/null 2>&1
+# What launchd says about a loaded job; the commands fail, or print nothing, for a label that isn't loaded.
+program() { launchctl print "$DOMAIN/$1" 2>/dev/null | sed -n 's/^[[:space:]]*program = //p' | head -1; }
+runs() {
+  out=$(launchctl print "$DOMAIN/$1" 2>/dev/null) || return 1
+  printf '%s\n' "$out" | sed -n 's/^[[:space:]]*runs = \([0-9][0-9]*\)$/\1/p' | head -1
 }
-# A kickstart does nothing while the job still counts as running, which a Varnick that has just been stopped may for a moment, so it is
-# repeated until a new process shows.
-start_agent() {
+# The LaunchAgent counts when the loaded job runs this checkout's binary (the plist file isn't consulted: the job is what runs).
+agent_fits() {
+  [ -z "$LOG_RESIZE" ] || return 1
+  [ -z "$DB_ARG" ] || [ "$DB_ARG" = "$SUPPORT/Varnick/varnick.sqlite" ] || return 1
+  [ "$(program "$AGENT_LABEL")" = "$BINARY" ]
+}
+# Kicks a loaded job (no -k, so a running Varnick is never started beside) and waits for a new process. A kickstart does nothing while
+# the job still counts as running, which a Varnick that has just been stopped may for a moment, so it is repeated, whatever it said,
+# until a new process shows. 0: started. 1: the job isn't loaded, or nothing started in 15 s. 2: the job ran and its Varnick is gone,
+# so launchd's run count went up: a build that dies at launch is not started again by another route.
+start_loaded() {
+  before=$(runs "$1") || return 1
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-    launchctl kickstart "$DOMAIN/$AGENT_LABEL" >/dev/null 2>&1 || return 1
+    launchctl kickstart "$DOMAIN/$1" >/dev/null 2>&1
     sleep 1
     started && return 0
+    now=$(runs "$1") || return 1
+    if [ "${now:-0}" -gt "${before:-0}" ]; then
+      note "launchd ran $1 and Varnick ended within a second; see the log above, and no other way to start it was tried"
+      return 2
+    fi
   done
   return 1
 }
-# The job's plist is the LaunchAgent's own template, so Varnick runs the same way however it was started: launchd's environment (not
-# the terminal's), this folder as its working folder, the same log. The plist is read once by bootstrap and then removed. A job left
-# from an earlier restart is removed first (it holds nothing: Varnick was stopped above), since bootstrap refuses a label already loaded.
+# A transient job: the LaunchAgent's own plist (scripts/varnick-plist.sh) in a temporary folder, read once by bootstrap and then
+# removed, so Varnick runs the same way however it was started: launchd's environment, this folder as its working folder, the same
+# log. Every step that fails says so before the next start is tried. Returns as start_loaded does.
 start_job() {
-  dir=$(mktemp -d "${TMPDIR:-/tmp}/varnick-run.XXXXXX") || return 1
+  start_loaded "$JOB_LABEL"
+  rc=$?
+  [ "$rc" = 1 ] || return "$rc"
+  # Loaded, but a kickstart started nothing: something holds it. Removing it ends that, and it is loaded again below.
+  if runs "$JOB_LABEL" >/dev/null; then launchctl bootout "$DOMAIN/$JOB_LABEL" >/dev/null 2>&1; fi
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/varnick-run.XXXXXX") || { note "couldn't make a temporary folder for the job's plist"; return 1; }
   plist="$dir/$JOB_LABEL.plist"
-  sed -e "s|@LABEL@|$JOB_LABEL|g" -e "s|@ROOT@|$ROOT|g" -e "s|@LOG@|$LOG|g" scripts/varnick.plist.in > "$plist" || { rm -rf "$dir"; return 1; }
-  if [ -n "$1" ]; then
-    plutil -insert EnvironmentVariables -dictionary "$plist" && plutil -insert EnvironmentVariables.VARNICK_DB -string "$1" "$plist" || { rm -rf "$dir"; return 1; }
+  scripts/varnick-plist.sh "$JOB_LABEL" "$ROOT" "$LOG" > "$plist" || { note "couldn't write the job's plist"; rm -rf "$dir"; return 1; }
+  if [ -n "$DB_ARG$LOG_RESIZE" ]; then
+    { plutil -insert EnvironmentVariables -dictionary "$plist" \
+      && { [ -z "$DB_ARG" ] || plutil -insert EnvironmentVariables.VARNICK_DB -string "$DB_ARG" "$plist"; } \
+      && { [ -z "$LOG_RESIZE" ] || plutil -insert EnvironmentVariables.VARNICK_LOG_RESIZE -string "$LOG_RESIZE" "$plist"; }; } \
+      || { note "couldn't put the environment in the job's plist"; rm -rf "$dir"; return 1; }
   fi
-  plutil -lint "$plist" >/dev/null || { rm -rf "$dir"; return 1; }
-  launchctl bootout "$DOMAIN/$JOB_LABEL" >/dev/null 2>&1
-  launchctl bootstrap "$DOMAIN" "$plist" >/dev/null 2>&1
-  status=$?
+  plutil -lint "$plist" >/dev/null || { note "the job's plist isn't valid (a character in the checkout's or the log's path?)"; rm -rf "$dir"; return 1; }
+  if ! launchctl bootstrap "$DOMAIN" "$plist" >/dev/null 2>&1; then
+    sleep 2
+    launchctl bootstrap "$DOMAIN" "$plist" >/dev/null 2>&1 || { note "launchctl bootstrap of $JOB_LABEL failed twice"; rm -rf "$dir"; return 1; }
+  fi
   rm -rf "$dir"
-  return $status
+  for _ in 1 2 3 4 5; do started && return 0; sleep 1; done
+  note "the job $JOB_LABEL is loaded, but no Varnick appeared"
+  return 2
 }
-if agent_fits "$1"; then
-  start_agent && exit 0
+if agent_fits; then
+  start_loaded "$AGENT_LABEL"
+  rc=$?
+  [ "$rc" = 0 ] && exit 0
+  [ "$rc" = 2 ] && exit 1
   note "launchctl kickstart of $AGENT_LABEL didn't start Varnick"
 fi
-if start_job "$1"; then
-  for _ in 1 2 3 4 5; do started && exit 0; sleep 1; done
-  note "the job $JOB_LABEL is loaded but no Varnick appeared"
-  exit 1
-fi
+start_job
+rc=$?
+[ "$rc" = 0 ] && exit 0
+[ "$rc" = 2 ] && exit 1
 # launchd refused (no GUI session, say): Varnick still starts, as a child of whatever ran this, so macOS may take that for the
 # process responsible for it and use its grants.
-note "launchd wouldn't start Varnick, so it started directly and may get the grants of whatever ran this script"
+note "launchd wouldn't start Varnick, so it is started directly and gets the macOS permissions of whatever ran this script"
 if [ -n "$1" ]; then
   VARNICK_DB="$1" exec .build/release/Varnick >> "$LOG" 2>&1
 fi
