@@ -7,7 +7,10 @@ final class ArrowOverlay {
     static let shared = ArrowOverlay()
 
     /// How long it stays after the speech ends.
-    static let lingers: TimeInterval = 8
+    nonisolated static let lingers: TimeInterval = 8
+
+    /// Counts every show and hide, so a caller can tell whether the arrow it drew is still the one up.
+    private(set) var generation = 0
 
     private var panel: OverlayPanel?
     private var view: OverlayView?
@@ -43,9 +46,13 @@ final class ArrowOverlay {
 
     /// Removes it at once: a new request, or a switch turned off.
     func hide() {
+        generation += 1
         hiding?.cancel()
         panel?.orderOut(nil)
     }
+
+    /// Whether `window` is the arrow's own panel, which covers a whole display and is not Launchy's to click under.
+    func owns(_ window: NSWindow) -> Bool { window === panel }
 
     /// Removes it after `lingers`, fading out; a new `show` or `hide` before then takes over.
     func hide(after delay: TimeInterval) {

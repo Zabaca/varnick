@@ -17,6 +17,11 @@ struct ScreenRequest: Codable {
     static let version = 1
 }
 
+/// The three tools, by the names the relay lists and the app answers to.
+enum ScreenTool: String {
+    case look, point, click
+}
+
 /// The tools' arguments, a union of all three. Points are Accessibility's: the origin at the top left of the main display.
 struct ScreenArguments: Codable {
     var app: String?
@@ -90,10 +95,12 @@ enum ScreenMCP {
 
     // MARK: The tools
 
-    private static func tool(_ name: String, _ description: String, properties: [String: Any], required: [String] = []) -> [String: Any] {
+    private static let clickLead = Int(ScreenAccess.clickLead.components.seconds)
+
+    private static func tool(_ name: ScreenTool, _ description: String, properties: [String: Any], required: [String] = []) -> [String: Any] {
         var schema: [String: Any] = ["type": "object", "properties": properties]
         if !required.isEmpty { schema["required"] = required }
-        return ["name": name, "description": description, "inputSchema": schema]
+        return ["name": name.rawValue, "description": description, "inputSchema": schema]
     }
 
     private static let rectSchema: [String: Any] = [
@@ -103,7 +110,7 @@ enum ScreenMCP {
     ]
 
     static let tools: [[String: Any]] = [
-        tool("look", "Lists the controls of a window on the user's Mac: its title, its frame, and each control with an id (e1, e2…), its name, "
+        tool(.look, "Lists the controls of a window on the user's Mac: its title, its frame, and each control with an id (e1, e2…), its name, "
              + "kind and frame. Where the window lists nothing, or Chrome hides its page, it adds the short lines of text read from a picture "
              + "of the window (t1, t2…). Ids are what point and click take, and are replaced by the next look. Frames are in screen points, "
              + "the origin at the top left of the main display. Nothing a person typed into a field is listed.",
@@ -111,14 +118,14 @@ enum ScreenMCP {
                 "app": ["type": "string", "description": "The app to look at, by name. Omit for the app the user is working in."],
                 "text": ["type": "boolean", "description": "Also read the window's text from a picture of it, even when its controls are listed."],
              ]),
-        tool("point", "Draws the user's attention to a control or a rectangle with an arrow and a sign that shows this session's name and "
-             + "the note. It stays 8 seconds, or until the next point or click. It changes nothing on the screen.",
+        tool(.point, "Draws the user's attention to a control or a rectangle with an arrow and a sign that shows this session's name and "
+             + "the note. It stays \(Int(ArrowOverlay.lingers)) seconds, or until the next point or click. It changes nothing on the screen.",
              properties: [
                 "id": ["type": "string", "description": "A control or line of text from the last look, such as e3 or t2."],
                 "rect": rectSchema,
-                "note": ["type": "string", "description": "What the sign says, a short sentence (cut to 120 characters)."],
+                "note": ["type": "string", "description": "What the sign says, a short sentence (cut to \(ScreenAccess.signNote) characters)."],
              ], required: ["note"]),
-        tool("click", "Clicks for the user, after showing the arrow on the target for a second. With an id it presses the control, or clicks "
+        tool(.click, "Clicks for the user, after showing the arrow on the target for \(clickLead) second\(clickLead == 1 ? "" : "s"). With an id it presses the control, or clicks "
              + "its centre when it cannot be pressed; with a point it left-clicks there. Nothing asks first. It reports what it did, not "
              + "that it worked: look again to see. A click on another app brings that app forward.",
              properties: [
@@ -158,7 +165,7 @@ enum ScreenMCP {
         case "ping":
             return success(id: id, [:])
         case "tools/call":
-            guard let name = params["name"] as? String, tools.contains(where: { $0["name"] as? String == name }) else {
+            guard let name = params["name"] as? String, ScreenTool(rawValue: name) != nil else {
                 return failure(id: id, code: -32602, "Unknown tool")
             }
             let arguments = (params["arguments"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }

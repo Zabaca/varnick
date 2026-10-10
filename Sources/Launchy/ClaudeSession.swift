@@ -486,13 +486,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let agent = record.agent.flatMap { name in
             Agent.available(in: record.directory).contains { $0.name == name } ? name : nil
         }
-        // Screen access (ADR 0023): the MCP server goes first, since `--mcp-config` takes several values and stops at the next option,
-        // `--settings`. Read when claude starts, so a pane gains the tools at its next start or restart.
-        let screenArgs = Settings.shared.screenAccess ? ["--mcp-config", ScreenMCP.configuration(pane: record.id)] : []
-        let claudeArgs = screenArgs + ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
-                                                              resuming: conversation,
-                                                              sessionID: restarting ? record.conversationID : record.id.uuidString.lowercased(),
-                                                              prompt: prompt)
+        // Screen access (ADR 0023) is read at each start, not stored: a pane gains the tools at its next start or restart.
+        let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
+                                                 resuming: conversation,
+                                                 sessionID: restarting ? record.conversationID : record.id.uuidString.lowercased(),
+                                                 prompt: prompt,
+                                                 mcpConfig: Settings.shared.screenAccess ? ScreenMCP.configuration(pane: record.id) : nil)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.

@@ -220,9 +220,8 @@ enum ScreenText {
         var window: CGRect?
     }
 
-    /// The text of a picture of the window `reading` found (ADR 0021), as candidates; none, with the reason in `look.skipped`, when
-    /// it can't be read. `area` keeps only lines whose centre is inside it. Needs Screen Recording. Hey Launchy and the screen tools
-    /// for sessions (`ScreenAccess`) both read text through this.
+    /// The picture's text as candidates (ADR 0021), none and `look.skipped` when it can't be read; `area` keeps only lines centred in
+    /// it. Hey Launchy and Screen access (`ScreenAccess`) both read text through this.
     static func windowText(of reading: ScreenReader.Reading, pid: pid_t, within area: CGRect? = nil, pointer: CGPoint) async throws -> WindowText {
         var look = SpokenPipeline.TextLook()
         guard hasAccess else { look.skipped = "no Screen Recording"; return WindowText(lines: [], look: look, window: nil) }

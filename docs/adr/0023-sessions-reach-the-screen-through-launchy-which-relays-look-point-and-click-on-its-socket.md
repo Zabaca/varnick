@@ -18,7 +18,8 @@ This amends ADR 0019 and 0021. Launchy now reads, points and clicks for sessions
 - **There is no `type`,** no named keys or shortcuts, no drag and no scroll.
 - **One click at a time across all sessions.** A second waits for the first.
 - **Another Mac's session.** While another Mac or a device is in control of a session, its calls are refused: the Arrow would show where nobody is looking.
-- **Never Launchy's own window.** A target in Launchy's process is refused, and a click at a point is checked (a system-wide hit test) before the Arrow is drawn, since the Arrow's panel is Launchy's own.
+- **Never Launchy's own window.** A target in Launchy's process is refused, and so is a posted click at a point that a visible window of Launchy's has its frame over, checked right before the click is posted (the Arrow's panel, which covers the display, is not counted).
+- **A stale or replaced click does not fire.** A click that waited too long for its turn, or whose Arrow was replaced during its second, is refused with "Nothing was clicked".
 
 ## What a session is shown goes to Anthropic
 
