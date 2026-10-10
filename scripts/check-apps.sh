@@ -18,6 +18,17 @@ field() {
   plutil -extract "$1" raw -o - "$2" 2>/dev/null || true
 }
 
+# Strict JSON with an object at the top, as the loader reads it: plutil takes any plist, which Varnick's loader would not.
+strict_json() {
+  osascript -l JavaScript -e 'function run(argv) {
+    var text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, $());
+    if (text.isNil()) throw new Error("unreadable");
+    var value = JSON.parse(ObjC.unwrap(text));
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("not an object");
+    return "ok";
+  }' "$1" >/dev/null 2>&1
+}
+
 [ -d "$root" ] || { echo "error: check-apps: no folder $root" >&2; exit 1; }
 
 for dir in "$root"/*/; do
@@ -31,8 +42,8 @@ for dir in "$root"/*/; do
   esac
 
   manifest="$dir/varnick.json"
-  if [ ! -f "$manifest" ] || ! plutil -convert json -o /dev/null "$manifest" >/dev/null 2>&1; then
-    fail "$name: no readable varnick.json"
+  if [ ! -f "$manifest" ] || ! strict_json "$manifest"; then
+    fail "$name: no varnick.json, or it is not a JSON object"
     continue
   fi
   entry=$(field entry "$manifest")

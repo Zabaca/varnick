@@ -55,8 +55,9 @@ SKILL_TARGET := $(CURDIR)/.claude/skills/custom-apps
 PHONE_PAGE_DIR := .build/release/PhonePage
 
 # The catalog (option 01 of custom-apps-must-be-written-first): apps/, copied next to the binary as the Phone page is, and into
-# the bundle's Resources by app-bundle. Never node_modules (Scratch's hold unsigned native binaries that notarization would
-# reject) or .DS_Store. Settings > Apps reads it from the resource folder, so the app and a checkout build share one path.
+# the bundle's Resources by app-bundle, both through scripts/copy-catalog.sh: tracked files only, so a release carries committed
+# files, and never node_modules or .DS_Store. Settings > Apps reads it from the resource folder, so the app and a checkout build
+# share one path.
 APPS_CATALOG_DIR := .build/release/apps
 
 # The line `BuildStamp` reads, written as the last step of `make build` (where-it-breaks, Peers, has the rules).
@@ -122,8 +123,7 @@ phone-page:
 	rsync -a --delete --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/' PhonePage/ $(PHONE_PAGE_DIR)/
 
 apps-catalog:
-	mkdir -p $(APPS_CATALOG_DIR)
-	rsync -a --delete --exclude 'node_modules' --exclude '.DS_Store' apps/ $(APPS_CATALOG_DIR)/
+	scripts/copy-catalog.sh $(APPS_CATALOG_DIR)
 
 # Offline checks of every catalog entry (scripts/check-apps.sh; the rules are in CONTRIBUTING). `app-guard` runs it, so a release
 # never ships a broken entry. `make check-apps APPS=<folder>` checks another folder.
@@ -296,7 +296,7 @@ app-bundle: app-guard
 	cp -c .build/release/zmx $(APP)/Contents/MacOS/zmx
 	cp -c .build/release/mlx.metallib $(APP)/Contents/Resources/mlx.metallib
 	rsync -a PhonePage/ $(APP)/Contents/Resources/PhonePage/ --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/'
-	rsync -a apps/ $(APP)/Contents/Resources/apps/ --exclude 'node_modules' --exclude '.DS_Store'
+	scripts/copy-catalog.sh $(APP)/Contents/Resources/apps
 	cp .build/release/build-stamp $(APP)/Contents/Resources/build-stamp
 	mkdir -p $(APP)/Contents/Resources/skills
 	cp -RL .claude/skills/custom-apps $(APP)/Contents/Resources/skills/custom-apps

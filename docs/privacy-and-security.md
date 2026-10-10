@@ -233,7 +233,8 @@ puts it in the Trash. It never asks for an administrator password: on an account
 The build checks the Metal shaders and zmx against SHA-256 digests in the `Makefile`; the Linux installer does
 the same for zmx and Bun; the models download at fixed revisions. A catalog app's packages are pinned by a
 `bun.lock` committed beside it, which holds an integrity hash for every package, and review makes sure it is in step
-with the app's `package.json`.
+with the app's `package.json`. The first pick installs with `--frozen-lockfile`, so it fails rather than resolve
+versions the lockfile doesn't name.
 
 ## Reporting a vulnerability
 

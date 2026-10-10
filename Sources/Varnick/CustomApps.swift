@@ -28,6 +28,8 @@ struct CustomApp: Identifiable, Equatable {
     /// with the same folder name. Outside any repo there are no project apps, and a repo at the
     /// home folder would read the user's folder twice, so its apps stay user apps.
     static func available(from directory: String) -> [CustomApp] {
+        // Not between a catalog app's refresh moving its folder to the Trash and putting the new one in place (AppCatalog).
+        AppCatalog.waitUntilIdle()
         let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
         var projectApps: [CustomApp] = []
         if let root = Project.repoRoot(of: directory), URL(fileURLWithPath: root).standardizedFileURL.path != home {
@@ -63,8 +65,12 @@ struct CustomApp: Identifiable, Equatable {
     }
 
     /// Icon to draw: the manifest's, unless it names no SF Symbol.
-    var symbol: String {
-        NSImage(systemSymbolName: icon, accessibilityDescription: nil) == nil ? Self.defaultIcon : icon
+    var symbol: String { Self.symbol(for: icon) }
+
+    /// The SF Symbol to draw for a manifest's `icon`: itself, else `defaultIcon` when it is missing or names no symbol.
+    static func symbol(for icon: String?) -> String {
+        guard let icon, NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil else { return defaultIcon }
+        return icon
     }
 
     /// Varnick's folder under Application Support, defined once in the package (`SupportFolder`).

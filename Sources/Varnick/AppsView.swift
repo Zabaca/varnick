@@ -33,14 +33,18 @@ extension AppCatalog {
     }
 }
 
-/// Settings › Apps: one switch per catalog app. The rows are read from disk each time the section shows, and after each change; the
-/// files are a few small ones, so this stays on the main thread.
+/// Settings › Apps: one switch per app. The rows are read from disk each time the section shows and after each change. Reading, and a
+/// switch's copy or move to the Trash, run off the main thread (a catalog app's folder can hold many files); the row's switch waits.
 struct AppsSettingsView: View {
     let openAppFolders: () -> Set<String>
     @State private var rows: [AppCatalog.Row] = []
     @State private var running: Set<String> = []
     /// What the last try on an app was refused or failed for, by app; cleared by the next change to it.
     @State private var messages: [String: String] = [:]
+    /// Apps whose switch is being worked on.
+    @State private var busy: Set<String> = []
+    /// Counts reads, so a slow one that finishes late doesn't replace a newer one.
+    @State private var generation = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,10 +60,11 @@ struct AppsSettingsView: View {
                     .padding(.horizontal, 14).padding(.vertical, 9)
             }
             ForEach(rows) { row in
-                CatalogAppRow(row: row, note: notes(for: row), isOn: Binding(get: { row.state == .on }, set: { change(row, to: $0) }))
+                CatalogAppRow(row: row, note: notes(for: row), busy: busy.contains(row.id),
+                              isOn: Binding(get: { row.state == .on }, set: { change(row, to: $0) }))
             }
             HStack(spacing: 12) {
-                Text("To make an app of your own, ask Claude in a session to make a custom app. A copy of a catalog app that you change is yours when you give it another name.")
+                Text("To make an app of your own, ask Claude in a session to make a custom app.")
                     .font(.system(size: 11.5)).foregroundStyle(.tertiary)
                 Spacer(minLength: 16)
                 Button("Show apps folder") { showAppsFolder() }
@@ -70,18 +75,30 @@ struct AppsSettingsView: View {
     }
 
     private func reload() {
-        running = openAppFolders()
-        rows = AppCatalog.rows(.live(running: running))
+        let running = openAppFolders()
+        generation += 1
+        let mine = generation
+        Task { @MainActor in
+            let read = await Task.detached(priority: .userInitiated) { AppCatalog.rows(.live(running: running)) }.value
+            guard mine == generation else { return }
+            self.running = running
+            rows = read
+        }
     }
 
     /// What a row says under its description, orange for a refusal or failure.
     private func notes(for row: AppCatalog.Row) -> [(text: String, orange: Bool)] {
-        let name = row.entry.name
+        let name = row.entry.folderName
         var notes: [(String, Bool)] = []
         if let message = messages[name] { notes.append((message, true)) }
         if row.state == .userApp { notes.append(("A custom app of yours has this name, so it can't be turned on. Rename or remove yours first.", true)) }
         if !row.inCatalog { notes.append(("This release's catalog no longer has it. It stays until you turn it off.", false)) }
-        if row.updatePending {
+        if row.state == .on {
+            notes.append(("Edits to the installed copy are replaced at the next update. To change the app, copy it under another name.", false))
+        }
+        if let failure = row.refreshFailure {
+            notes.append(("The last update failed: \(failure). It tries again at the next launch.", true))
+        } else if row.updatePending {
             notes.append((running.contains(name) ? "A newer version waits for its panes to close, and installs at the next launch after."
                                                  : "A newer version installs at the next launch.", false))
         }
@@ -90,16 +107,25 @@ struct AppsSettingsView: View {
     }
 
     private func change(_ row: AppCatalog.Row, to on: Bool) {
-        let name = row.entry.name
+        let name = row.entry.folderName
+        guard !busy.contains(name) else { return }
         messages[name] = nil
-        let places = AppCatalog.Places.live(running: openAppFolders())
-        switch on ? AppCatalog.turnOn(name, places) : AppCatalog.turnOff(name, places) {
-        case .turnedOn, .alreadyOn, .turnedOff, .notInstalled: break
-        case .userApp: messages[name] = "A custom app of yours has this name."
-        case .panesOpen: messages[name] = "Close the panes that run it first, then turn it off."
-        case .failed(let reason): messages[name] = "\(on ? "Couldn't turn it on" : "Couldn't turn it off"): \(reason)"
+        busy.insert(name)
+        let running = openAppFolders()
+        Task { @MainActor in
+            let result = await Task.detached(priority: .userInitiated) { () -> AppCatalog.Change in
+                let places = AppCatalog.Places.live(running: running)
+                return on ? AppCatalog.turnOn(name, places) : AppCatalog.turnOff(name, places)
+            }.value
+            switch result {
+            case .turnedOn, .alreadyOn, .turnedOff, .notInstalled: break
+            case .userApp: messages[name] = "A custom app of yours has this name."
+            case .panesOpen: messages[name] = "Close the panes that run it first, then turn it off."
+            case .failed(let reason): messages[name] = "\(on ? "Couldn't turn it on" : "Couldn't turn it off"): \(reason)"
+            }
+            busy.remove(name)
+            reload()
         }
-        reload()
     }
 
     /// Makes the folder first when nothing has been installed or made yet, so there is something to show.
@@ -114,17 +140,15 @@ struct AppsSettingsView: View {
 private struct CatalogAppRow: View {
     let row: AppCatalog.Row
     let note: [(text: String, orange: Bool)]
+    let busy: Bool
     @Binding var isOn: Bool
-
-    private var symbol: String {
-        NSImage(systemSymbolName: row.entry.icon, accessibilityDescription: nil) == nil ? CustomApp.defaultIcon : row.entry.icon
-    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(.secondary).frame(width: 22).padding(.top, 1)
+            Image(systemName: CustomApp.symbol(for: row.entry.icon)).font(.system(size: 15)).foregroundStyle(.secondary)
+                .frame(width: 22).padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.entry.displayName).font(.system(size: 13, weight: .medium))
+                Text(row.entry.name).font(.system(size: 13, weight: .medium))
                 if !row.entry.description.isEmpty {
                     Text(row.entry.description).font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
@@ -136,7 +160,7 @@ private struct CatalogAppRow: View {
             }
             Spacer(minLength: 16)
             Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                .disabled(row.state == .userApp)
+                .disabled(row.state == .userApp || busy)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)

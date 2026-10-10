@@ -162,7 +162,7 @@ run when you pick it, and shown in a pane. It needs [Bun](https://bun.sh) on zsh
     there, so it shows in the picker in every project. If the app has a skill, Varnick links it as
     `~/.claude/skills/<name>`, but only when nothing is at that path, so Claude in a session started afterwards
     knows how to use the app. Turning on fetches nothing: an app's packages install with Bun the first time you
-    pick it. Offline, the pane shows Bun's error, and reload (⌘R) tries again.
+    pick it, frozen to the lockfile that shipped with the app. Offline, the pane shows Bun's error, and reload (⌘R) tries again.
   - **Off** moves the copy to the Trash and removes the skill link if it is Varnick's. It is refused while a pane
     runs the app. The app's data is kept, so turning it on again finds it.
   - **A newer release** refreshes an installed app at launch, when no pane runs it. One that is open waits for a

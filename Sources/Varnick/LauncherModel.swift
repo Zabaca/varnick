@@ -177,7 +177,8 @@ final class LauncherModel: ObservableObject {
     var quitting = false
     /// sessions.json existed but didn't decode, so the tabs it held are lost and nothing can
     /// be said about which panes were open.
-    private var savedStateFailed = false
+    /// sessions.json didn't decode, so no tab was restored and what panes own is unknown (`cleanUpAfterLastRun`, the catalog refresh).
+    private(set) var savedStateFailed = false
     /// True once the user moves the selection for the current query; refinement passes
     /// then keep their pick instead of jumping back to the new top result.
     private var userPicked = false

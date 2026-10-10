@@ -55,7 +55,7 @@ Ending the Claude process in a pane that runs on this Mac and starting it again 
 _Avoid_: Reload, relaunch
 
 **Custom app**:
-A small web app the user builds, or turns on from the **Catalog**, kept in a project's or the user's custom-apps folder, that Varnick runs and shows in a pane picked from the split picker. It is not part of Varnick, and only appears where it's installed.
+A small web app that Varnick runs and shows in a pane picked from the split picker, kept in a project's or the user's custom-apps folder. The user builds it, or turns it on from the **Catalog**; it appears only where it's installed.
 _Avoid_: Plugin, extension, add-on
 
 **Catalog**:

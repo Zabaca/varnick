@@ -62,7 +62,7 @@ console.log(`listening on ${server.url}`);
 
 **Picker order and keys.** Claude, Terminal and Browser, then the project's apps, then the user's, each group sorted by name. Built-ins keep C, T and B. Apps are keyed in that order by their `key`, matched in either case, so project apps win clashes.
 
-**How it runs.** Varnick runs an interactive login shell (`zsh -l -i`, so `~/.zshrc` puts `bun` on `PATH`) in the app's folder, inside the pane's zmx session: `bun install` first if the folder has a `package.json` and no `node_modules`, then `bun run <entry>`. One server per app pane; two panes of an app run two servers. Varnick passes a minimal environment, nothing inherited from itself: the base set (`TERM`, `COLORTERM`, `LANG`, `HOME`, `USER`, `LOGNAME`, `ZMX_*`) and these, to which the login shell adds whatever `~/.zprofile` and `~/.zshrc` export (tokens included, so don't dump `process.env` into a page):
+**How it runs.** Varnick runs an interactive login shell (`zsh -l -i`, so `~/.zshrc` puts `bun` on `PATH`) in the app's folder, inside the pane's zmx session: `bun install` first if the folder has a `package.json` and no `node_modules` (`bun install --frozen-lockfile` in a folder Varnick installed from the catalog, which holds the `.varnick-catalog` marker, so the lockfile decides the versions), then `bun run <entry>`. One server per app pane; two panes of an app run two servers. Varnick passes a minimal environment, nothing inherited from itself: the base set (`TERM`, `COLORTERM`, `LANG`, `HOME`, `USER`, `LOGNAME`, `ZMX_*`) and these, to which the login shell adds whatever `~/.zprofile` and `~/.zshrc` export (tokens included, so don't dump `process.env` into a page):
 
 | Variable | Holds |
 |---|---|

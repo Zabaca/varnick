@@ -349,8 +349,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     // The entry ($1) and the log path ($2) are arguments, outside the script. Output is teed to the
     // log because zmx ends the session with the command, leaving the terminal nothing to show.
+    // A folder Varnick installed from the catalog (it holds the marker) installs frozen to its lockfile, so the first pick can't
+    // resolve versions nobody reviewed; the user's own apps keep the plain install.
     private static let appScript = #"""
-        { if [ -f package.json ] && [ ! -d node_modules ]; then bun install || exit $?; fi; exec bun run "$1"; } 2>&1 | tee "$2"; exit ${pipestatus[1]}
+        { if [ -f package.json ] && [ ! -d node_modules ]; then if [ -f \#(AppCatalog.markerName) ]; then bun install --frozen-lockfile || exit $?; else bun install || exit $?; fi; fi; exec bun run "$1"; } 2>&1 | tee "$2"; exit ${pipestatus[1]}
         """#
 
     /// Runs the app's server in the pane's zmx session, whatever Keep sessions running says: a
