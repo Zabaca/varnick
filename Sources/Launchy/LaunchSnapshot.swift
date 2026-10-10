@@ -161,10 +161,18 @@ enum LaunchSnapshot {
 
     /// The last successful build in a checkout: newer than the running one when `make build` has run since the launch.
     static func latestStamp(in checkout: URL) -> BuildStamp? {
-        let folder = checkout.appendingPathComponent(".build/release", isDirectory: true)
+        BuildStamp.read(in: latestFolder(in: checkout), binary: latestBinary(in: checkout))
+    }
+
+    /// The last build's binary in a checkout.
+    static func latestBinary(in checkout: URL) -> URL {
         // The relay's executable URL is the link `launchy-peer`; its target's name is the binary's.
         let binary = Bundle.main.executableURL?.resolvingSymlinksInPath().lastPathComponent ?? "Launchy"
-        return BuildStamp.read(in: folder, binary: folder.appendingPathComponent(binary))
+        return latestFolder(in: checkout).appendingPathComponent(binary)
+    }
+
+    private static func latestFolder(in checkout: URL) -> URL {
+        checkout.appendingPathComponent(".build/release", isDirectory: true)
     }
 
     /// The relay's own build: the stamp in the snapshot folder it runs from, else the build folder's. Never `current`, which would take a

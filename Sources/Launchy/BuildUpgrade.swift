@@ -1,5 +1,6 @@
 import Foundation
 import LaunchyPeer
+import Security
 
 // What a Mac's running Launchy does when another Mac, or its own user, asks it to upgrade or restart (the `upgrade` and `restart` requests;
 // `PeerMaintenanceAsk` and the reports are in LaunchyPeer). The target is origin/main and nothing else; Upgrade fetches and builds, and only a
@@ -378,10 +379,22 @@ final class BuildUpgrade {
         return nil
     }
 
-    /// For the menu's confirmation: a restart starts whatever build is on disk, and a new build asks for macOS permissions again.
+    /// For the menu's confirmation: a restart starts whatever build is on disk, and an ad-hoc signed one asks for macOS permissions again.
     func newerBuildNote() -> String? {
         guard let checkout = LaunchSnapshot.checkout, let latest = newerBuild(in: checkout) else { return nil }
-        return "A newer build is waiting (\(latest.short)); restarting starts it and macOS will ask for permissions again."
+        let asks = Self.isAdHocSigned(LaunchSnapshot.latestBinary(in: checkout)) ? " and macOS will ask for permissions again" : ""
+        return "A newer build is waiting (\(latest.short)); restarting starts it\(asks)."
+    }
+
+    /// Whether the binary has no team identifier: signed ad hoc, or not readable as signed at all, either of which macOS knows as a
+    /// new app (ADR 0022). A Developer ID build has one, and keeps its grants. The identifier itself is never read out or shown.
+    private static func isAdHocSigned(_ binary: URL) -> Bool {
+        var code: SecStaticCode?
+        var info: CFDictionary?
+        guard SecStaticCodeCreateWithPath(binary as CFURL, [], &code) == errSecSuccess, let code,
+              SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let info = info as? [String: Any] else { return true }
+        return info[kSecCodeInfoTeamIdentifier as String] == nil
     }
 
     /// After the reply: the detached restart `make run` does (`scripts/restart.sh` in a session of its own), which ends this Launchy and starts the
