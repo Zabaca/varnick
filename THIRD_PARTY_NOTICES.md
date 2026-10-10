@@ -1,6 +1,8 @@
 # Third-party notices
 
-Varnick's own code is under the Apache License 2.0 (see `LICENSE`). This file lists the other
+Varnick's own code is under the Functional Source License 1.1, Apache 2.0 Future License (FSL-1.1-ALv2,
+see `LICENSE`), except `Sources/Varnick/LayaModel.swift`, which is under the Apache License 2.0 (below). This
+file lists the other
 software and models it contains, builds with, downloads or is derived from, with the licence of each
 as read from its source. Every entry says what it was read from, on 2026-10-07; an entry marked
 "not verified" names what could not be read.
@@ -52,7 +54,7 @@ reference remains 573e5b62696ba441230cd6be71d593331b5d23af.
 ```
 
 Varnick's translation covers one question type (the `noul` question) and changes the code's shape
-(Swift, MLX, a fixed row format). It is a derivative of that work under the Apache License 2.0.
+(Swift, MLX, a fixed row format). It is a derivative of that work under the Apache License 2.0, and that file stays under it, not the FSL.
 Which of the two projects each part of `LayaModel.swift` follows was not checked line by line.
 
 ### xterm.js and its fit addon (MIT)
@@ -175,7 +177,7 @@ The full `NOTICE` files are in those packages' sources and are not reproduced he
 
 ## Licence texts
 
-The Apache License 2.0 is in `LICENSE`. The MIT licence, which the components above share apart from their
+The Apache License 2.0 is in `LICENSES/Apache-2.0.txt`. The MIT licence, which the components above share apart from their
 copyright lines, reads:
 
 ```
