@@ -12,12 +12,12 @@ is, and [`docs/guide.md`](docs/guide.md) what it needs.
   name or notary credential goes in a tracked file.
 - **`make app`** is the maintainer's, not part of a change. It makes the notarized `Varnick.app`, then the
   `Varnick.zip` and the `Varnick.dmg` that a release carries, both from that one app. It needs the Developer ID
-  Application identity in the keychain and a notary profile, both named in the git-ignored `Makefile.local`
-  (`Makefile.local.example` shows where), and `uv` on the PATH: the image is built with dmgbuild, which `uvx`
-  runs from pinned versions. It refuses anything but a clean `main` that origin has, unless `CHECK_BUILD=1`,
-  which runs every step but the zip and stops the image before the notary service (it writes
-  `Varnick-check.dmg`, never `Varnick.dmg`). Neither the identity nor the profile goes in a tracked file.
-  Publishing the files as a release is a separate step by hand (ADR 0025, ADR 0026).
+  Application identity in the keychain and a notary credential (a keychain profile or an API key file), named
+  in the git-ignored `Makefile.local` (`Makefile.local.example` shows where), and `uv` on the PATH: the image is
+  built with dmgbuild, which `uvx` runs from pinned versions. It refuses anything but a clean `main` that origin
+  has, unless `CHECK_BUILD=1`, which runs every step but the zip and stops the image before the notary service (it
+  writes `Varnick-check.dmg`, never `Varnick.dmg`). Neither the identity nor the credential goes in a tracked file.
+  Publishing the files as a release is a separate step by hand: [`docs/releasing.md`](docs/releasing.md).
 - **`bun test`**, run in `PhonePage/`, tests the Phone page's server and its page.
 - **There is no Swift test target.** Swift changes are checked by `make build` and then by hand in a running
   Varnick; say in your change what you checked and what you didn't.
