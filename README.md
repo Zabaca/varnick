@@ -61,14 +61,15 @@ Anything else leaves only when you turn it on:
 - **Screen access** lets Claude sessions read the window in front, which goes to Anthropic with the session.
 - **A model server** you name gets your searches, your prompts and the text it embeds, and nothing goes past it.
 
-Everything Varnick reads, records and sends is in [`docs/privacy.md`](docs/privacy.md).
+Everything Varnick reads, records and sends, and what it lets others do, is in
+[Privacy and security](docs/privacy-and-security.md).
 
 ## More
 
 - [Guide](docs/guide.md): every feature, its settings and its defaults.
 - [Building from source](docs/building.md), and installing the relay on a Linux host.
-- [Security](SECURITY.md): what Skip permissions, peers, the Phone page and upgrades let others do, and how to
-  report a vulnerability.
+- [Privacy and security](docs/privacy-and-security.md): what Varnick sends, what Skip permissions, peers, the
+  Phone page and upgrades let others do, and how to report a vulnerability.
 - [Contributing](CONTRIBUTING.md): how the code is checked and how work is planned. The design is in
   [`docs/adr/`](docs/adr/) and [`docs/problems/`](docs/problems/).
 - The varnick.com page is in [`site/`](site/).

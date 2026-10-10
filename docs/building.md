@@ -30,7 +30,7 @@ it resolves and compiles the Swift packages.
 The binary and zmx are signed ad hoc, unless the Mac's keychain holds a "Developer ID Application"
 identity: the build then signs with it, with the hardened runtime and one entitlement (audio input), so macOS
 should keep the permissions you give Varnick across rebuilds instead of treating each build as a new app (to be
-confirmed by hand; see ADR 0022 and [`SECURITY.md`](../SECURITY.md)). With two or more such identities, or to pick
+confirmed by hand; see ADR 0022 and [privacy and security](privacy-and-security.md#screen-permissions-reach-every-pane)). With two or more such identities, or to pick
 another, copy `Makefile.local.example` to `Makefile.local` (git-ignored) and name one.
 
 A build never falls back to ad hoc behind your back: if an identity was found and signing with it fails, the build
