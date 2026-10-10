@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- varnick.com: one self-contained page, no build. Its one external request is PostHog analytics, through the m.zabaca.com proxy, without cookies. -->
+<!-- varnick.com: one self-contained page, no build. Its one external request is PostHog analytics (cookies and session recording), through the m.zabaca.com proxy. -->
 <html lang="en" data-variant="d">
 <head>
 <meta charset="utf-8">
@@ -467,14 +467,13 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
 @media (prefers-reduced-motion: reduce) { .hero-anim .ha-stage { display: none !important; } .hero-anim .ha-still { display: block !important; } }
 </style>
 <script>
-// PostHog page analytics through the m.zabaca.com proxy (US project). No cookies or local storage (memory persistence), no session recording.
+// PostHog analytics through the m.zabaca.com proxy (US project), with its cookie and session recording (inputs masked).
 !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags on onFeatureFlags onSessionId identify setPersonProperties group resetGroups reset get_distinct_id getGroups get_session_id alias set_config opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing debug".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
 posthog.init("phc_tAayVNg5iWA8QdW7bqBZAaypeLfNiNuACuZtecQWQXEE", {
   api_host: "https://m.zabaca.com",
   ui_host: "https://us.posthog.com",
-  persistence: "memory",
   person_profiles: "identified_only",
-  disable_session_recording: true,
+  session_recording: { maskAllInputs: true },
   capture_pageleave: true,
 });
 document.addEventListener("click", (e) => {
@@ -870,7 +869,7 @@ document.addEventListener("click", (e) => {
         <li><a href="https://github.com/Zabaca/varnick/blob/main/CONTRIBUTING.md">Contributing</a></li></ul></nav>
     </div>
     <div class="fbottom">
-      <p>Varnick is not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic's. This site counts visits with PostHog, without cookies. &copy; 2026 Zabaca.</p>
+      <p>Varnick is not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic's. This site uses PostHog analytics, with cookies and session recording. &copy; 2026 Zabaca.</p>
       <div class="theme" role="group" aria-label="Colour theme">
         <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
         <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
