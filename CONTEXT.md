@@ -172,5 +172,9 @@ What the user says after the **Wake phrase**. It is answered aloud from **Histor
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
 
 **Arrow**:
-What Launchy draws over the screen to point at the thing a **Spoken request** asked about: a big arrow with a sign holding the note Launchy says aloud. It lets clicks through, never takes focus and goes by itself.
+What Launchy draws over the screen to point at the thing a **Spoken request** asked about, or that a **Session** points at with its screen tools: a big arrow with a sign holding the note Launchy says aloud, or the session's name and note. It lets clicks through, never takes focus and goes by itself.
 _Avoid_: Highlight, cursor, annotation, overlay
+
+**Screen access**:
+The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Launchy's panes, started or restarted while it is on, three tools: `look` at a window's controls, `point` at one with the **Arrow**, and `click`. The running Launchy does the work under its own permissions, with the code a **Spoken request** uses, and a click happens without asking, the **Arrow** showing on its target for a second first. What a session is shown goes to Anthropic with it.
+_Avoid_: Computer use, remote control

@@ -170,6 +170,37 @@ and without it that step is skipped.
   Privacy section and ADR 0021.
 - **The arrow** is drawn by Launchy, cannot take focus or clicks, and goes by itself.
 
+## Screen access
+
+Settings › Claude › **Screen access** (off by default) gives the Claude sessions started or restarted in
+Launchy's panes while it is on a `launchy` MCP server with three tools, `look`, `point` and `click`, on this
+Mac's screen (ADR 0023). It needs the same Accessibility and Screen Recording as Point at the screen.
+
+- **A session can click for you, and nothing asks.** `click` shows the arrow on its target for a second
+  and then presses the control or clicks at the point; there is no approval prompt, no per-pane switch and
+  no list of apps to keep out. There is no `type`. A session started with Skip permissions runs the
+  tool with no prompt of Claude Code's either; one without gets Claude Code's own prompt for an MCP tool
+  you haven't allowed (inferred, not checked). Whatever can steer a session, such as a web page
+  Claude reads, can then click as you in any app's window.
+- **It adds little today, because every pane already has the permissions.** macOS attributes every
+  process in Launchy's panes to Launchy (Point at the screen, above), so with Launchy granted a session can
+  already read and drive the screen with `osascript`, `screencapture` or its own code. Screen access gives
+  it a supported way, with the arrow before a click and a switch, not a boundary. The approval, per-pane
+  switch and record it lacks wait until pane processes stop getting Launchy's permissions
+  (`panes-share-launchys-permissions`).
+- **What a session is shown goes to Anthropic,** with the session's context, and stays in its transcript on
+  this Mac: the title of the window, its first 255 controls' labels, kinds and nearby text (the window's visible text) and, for a window that
+  lists nothing or a Chrome page, short lines read from a picture of it on this Mac. Never a field's typed
+  value or a password field; but **typed text of 6 words or fewer in a field Launchy can't place may be
+  among the lines** (ADR 0021). Nothing goes to TypeSafe on this path.
+- **The server only relays.** `Launchy --mcp` has no path that reads or acts: each call is one line on the
+  socket only your account can open, and the running Launchy answers it. A paired Mac or a device cannot
+  send one: the peer relay refuses any line without a known operation, and a screen request has none.
+  Any process of yours on this Mac can open the socket and send one, a pane's included, naming any pane's
+  id, which any process of yours can read; the pane id is a label, not a credential.
+- **Launchy's own window is refused,** so is a session that another Mac or a device is in control of, and
+  turning the switch off refuses every call at once.
+
 ## Other things Launchy fetches and runs
 
 - **Downloads are pinned and checked.** The build checks the Metal shaders and zmx against SHA-256 digests
