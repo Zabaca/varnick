@@ -3,7 +3,8 @@ import Foundation
 /// What only Varnick.app does at its start, kept Foundation only and taking every path as a parameter so a harness compiles it alone
 /// against temporary folders (where-it-breaks, One Varnick per account › the app's start).
 enum InstalledApp {
-    /// The `error:` line for an app macOS translocated (opened straight from a download), shown through `stopStart`.
+    /// The `error:` line for a copy that isn't where it will run: Quit's line on the move offer, and what every stop of the move
+    /// starts from, followed by its reason (`MoveToApplications.stopLine`), shown through `stopStart`.
     static let translocatedLine = "error: Move Varnick to Applications, then open it again"
 
     /// Whether an executable's path is the temporary, read-only copy macOS runs a quarantined app from. A translocated app must not

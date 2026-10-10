@@ -47,6 +47,29 @@ enum AccountLock {
         return .held
     }
 
+    enum Probe: Equatable {
+        case busy(pid: Int32?, path: String?)
+        case failed(String)
+    }
+
+    /// Whether a Varnick of this account holds the lock now: nil when none does. One non-blocking attempt, released at once;
+    /// it creates and writes nothing, since the move offer asks before the start has taken any lock of its own.
+    static func probe(in folder: URL) -> Probe? {
+        let path = folder.appendingPathComponent(fileName).path
+        let fd = open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else {
+            return errno == ENOENT ? nil : .failed("can't open \(path): \(String(cString: strerror(errno)))")
+        }
+        defer { close(fd) }
+        if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+            flock(fd, LOCK_UN)
+            return nil
+        }
+        guard errno == EWOULDBLOCK else { return .failed("can't lock \(path): \(String(cString: strerror(errno)))") }
+        let who = holder(at: path)
+        return .busy(pid: who.pid, path: who.path)
+    }
+
     /// The `error:` line for a copy that couldn't start, nil when it holds the lock.
     static func refusal(_ outcome: Outcome) -> String? {
         switch outcome {
