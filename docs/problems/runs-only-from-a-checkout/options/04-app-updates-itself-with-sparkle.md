@@ -1,7 +1,7 @@
 ---
 problem: runs-only-from-a-checkout
 title: Installed apps update themselves with Sparkle
-summary: Option 02, plus Sparkle 2 in the app. `make app` also signs the zip with an EdDSA key and writes an appcast entry for the user to publish with it. Sparkle checks daily, then downloads, verifies, installs and relaunches, with its standard update window and a Check for Updates item in the menu bar menu. On an installed Mac, Settings › Peers' Upgrade asks Sparkle to download quietly, and Restart Launchy asks it to install and relaunch. Sparkle's installer handles folders that need an administrator, App Management and translocation. The costs are a new dependency, a second signing key, and Sparkle's own install step, which ADR 0013's separate restart has to be fitted around. Rough effort is two weeks on top of option 02.
+summary: Left for later on 2026-10-09, still proposed: the user chose option 02 and isn't pursuing updates yet. Option 02, plus Sparkle 2 in the app. `make app` also signs the zip with an EdDSA key and writes an appcast entry for the user to publish with it. Sparkle checks daily, then downloads, verifies, installs and relaunches, with its standard update window and a Check for Updates item in the menu bar menu. On an installed Mac, Settings › Peers' Upgrade asks Sparkle to download quietly, and Restart Launchy asks it to install and relaunch. Sparkle's installer handles folders that need an administrator, App Management and translocation. The costs are a new dependency, a second signing key, and Sparkle's own install step, which ADR 0013's separate restart has to be fitted around. Rough effort is two weeks on top of option 02.
 status: proposed
 ---
 
@@ -80,5 +80,6 @@ There is no test target. These are hand checks with two published builds and a t
 
 ## Further Notes
 
+- **Left for later (2026-10-09).** The user accepted option 02 and isn't pursuing updates yet, so this option stays proposed for when they are. Before it is picked up it needs reading against what has changed since it was written: the rename (Launchy is Varnick, name-taken-by-another-launcher), and option 02 as built, whose published build is a fixed-name `Varnick.zip` on a GitHub release, with the hosting still open there.
 - Sparkle's licence is MIT. Its helpers are signed as part of the app, so notarization covers them.
 - Options 03 and 04 can't both be accepted; they are two answers to the same question.
