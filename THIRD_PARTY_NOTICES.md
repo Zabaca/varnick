@@ -76,6 +76,10 @@ are not stored in this repository.
 | `mlx.metallib`, MLX's compiled Metal shaders, from the `mlx-metal` 0.32.2 wheel (`MLX_METAL_WHEEL`) | The wheel on PyPI | MIT, Copyright 2023 Apple Inc. | The wheel's `METADATA` (`License: MIT`) and its `licenses/LICENSE`, after checking the wheel's SHA-256 against the Makefile's |
 | zmx 0.8.1, macOS arm64 (`ZMX_URL`) | `neurosnap/zmx` release `v0.8.1` | MIT, Copyright 2025 Eric Bower | `LICENSE` at the `v0.8.1` tag; the tarball's SHA-256 matches the Makefile's |
 
+The downloadable `Varnick.app` carries both in binary form: `mlx.metallib` in `Contents/Resources` and zmx in
+`Contents/MacOS`. This file and `LICENSE` are in the app's `Contents/Resources`, so the notices travel with the
+binaries.
+
 The same wheel carries Apple's metal-cpp headers (Apache-2.0, `mlx/include/metal_cpp/LICENSE.txt`). They are
 headers, not part of `mlx.metallib`.
 

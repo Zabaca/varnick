@@ -142,7 +142,7 @@ and without it that step is skipped.
   never consulted. Turning the switch off does not revoke the permissions: only taking Varnick out of
   Settings › Privacy & Security › Accessibility and Screen Recording does, if that is not acceptable.
 - **A signed rebuild keeps the permissions; an ad-hoc one may not.** Builds are signed ad hoc unless the Mac has a
-  Developer ID Application identity (README, Build and install). An ad-hoc build may not match the grants to the
+  Developer ID Application identity (README, Build from a checkout). An ad-hoc build may not match the grants to the
   next build (not verified). A signed build keeps them: Accessibility and Screen Recording still applied
   from a pane after a rebuild and a restart, with System Settings untouched. So the grants no longer
   lapse at a rebuild: they stay with every pane session until you remove Varnick in Settings › Privacy &

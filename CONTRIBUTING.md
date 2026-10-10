@@ -8,8 +8,14 @@ is and what it needs.
 
 - **`make build`** builds, codesigns and fetches the files plain `swift build` lacks. It must finish clean:
   fix every error and every new warning. The first build resolves packages and is slow. It signs ad hoc, or with
-  your Developer ID Application identity if you have one (README, Build and install); no team ID, certificate
+  your Developer ID Application identity if you have one (README, Build from a checkout); no team ID, certificate
   name or notary credential goes in a tracked file.
+- **`make app`** is the maintainer's, not part of a change. It makes the notarized `Varnick.app` and the
+  `Varnick.zip` that a release carries. It needs the Developer ID Application identity in the keychain and a
+  notary profile, both named in the git-ignored `Makefile.local` (`Makefile.local.example` shows where); it
+  refuses anything but a clean `main` that origin has, unless `CHECK_BUILD=1`, which runs every step but the
+  zip. Neither the identity nor the profile goes in a tracked file. Publishing the zip as a release is a
+  separate step by hand (ADR 0025).
 - **`bun test`**, run in `PhonePage/`, tests the Phone page's server and its page.
 - **There is no Swift test target.** Swift changes are checked by `make build` and then by hand in a running
   Varnick; say in your change what you checked and what you didn't.
