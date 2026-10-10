@@ -66,7 +66,6 @@ a:hover { text-decoration-thickness: 2px; }
 
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: .55rem; min-height: 3.25rem; padding: .8rem 1.6rem; border-radius: var(--r); border: 2px solid var(--accent); background: var(--accent); color: var(--on-accent); font: 600 1.05rem/1.2 var(--body); text-decoration: none; cursor: pointer; }
 .btn:hover { background: transparent; color: var(--accent); }
-.btn.soon, .btn.soon:hover { opacity: .55; cursor: default; background: var(--accent); color: var(--on-accent); }
 .btn.ghost { background: transparent; color: var(--ink); border-color: var(--edge); }
 .btn.ghost:hover { border-color: var(--ink); color: var(--ink); }
 .btn.small { min-height: 2.5rem; padding: .4rem 1rem; font-size: .95rem; }
@@ -401,7 +400,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
       </div>
       <div>
         <div class="cta" id="download">
-          <span class="btn soon" aria-disabled="true"><svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><use href="#i-down"/></svg>Download for Mac: coming soon</span>
+          <a class="btn" href="https://github.com/Zabaca/varnick/releases/latest/download/Varnick.zip"><svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><use href="#i-down"/></svg>Download for Mac</a>
           <a class="btn ghost" href="https://github.com/Zabaca/varnick">View source on GitHub</a>
         </div>
         <p class="note cta-note">macOS 14+, Apple Silicon</p>
@@ -676,7 +675,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
   <section class="closing" aria-labelledby="h-close">
     <h2 id="h-close">Try it on your own sessions</h2>
     <div class="cta">
-      <span class="btn soon" aria-disabled="true"><svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><use href="#i-down"/></svg>Download for Mac: coming soon</span>
+      <a class="btn" href="https://github.com/Zabaca/varnick/releases/latest/download/Varnick.zip"><svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><use href="#i-down"/></svg>Download for Mac</a>
       <a class="btn ghost" href="https://github.com/Zabaca/varnick">View source on GitHub</a>
     </div>
     <p class="note cta-note">macOS 14+, Apple Silicon</p>
