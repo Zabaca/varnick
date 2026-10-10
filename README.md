@@ -49,7 +49,8 @@ The app is signed and notarized. It doesn't update itself: to update, quit Varni
 replace the app with the newest download.
 
 Chrome (the only browser it reads), [Bun](https://bun.sh) and [Tailscale](https://tailscale.com) are optional;
-the [guide](docs/guide.md#requirements) says which features need them.
+the [guide](docs/guide.md#requirements) says which features need them. Settings › Apps turns on apps from
+Varnick's catalog, such as Scratch, a live page Claude shows beside its session ([custom apps](docs/guide.md#custom-apps)).
 
 ## Privacy
 

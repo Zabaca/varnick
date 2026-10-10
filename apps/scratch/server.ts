@@ -1,6 +1,6 @@
 // Scratch: a Vite dev server (HMR, React Fast Refresh) over the scratch area of the pane this
 // app was split from, <project>/.varnick/scratch/<VARNICK_SPLIT_FROM>/. Claude writes the page
-// there; see .claude/skills/scratch/SKILL.md.
+// there; see skill/SKILL.md beside this file (linked as ~/.claude/skills/scratch while Scratch is on in Settings > Apps).
 //
 // Layout: the scratch root, <project>/.varnick/scratch/, holds the page packages
 // (package.json, node_modules) and one folder per Claude pane, which is a Vite root. Pages
@@ -41,8 +41,9 @@ writeIfMissing(
     {
       private: true,
       type: "module",
-      dependencies: { react: "^19.1.0", "react-dom": "^19.1.0" },
-      devDependencies: { "@types/react": "^19.1.0", "@types/react-dom": "^19.1.0" },
+      // Exact versions, as the catalog's rules ask: no lockfile covers this install.
+      dependencies: { react: "19.3.0", "react-dom": "19.3.0" },
+      devDependencies: { "@types/react": "19.3.0", "@types/react-dom": "19.3.0" },
     },
     null,
     2,

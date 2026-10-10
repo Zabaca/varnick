@@ -126,6 +126,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         makeModel()
         spoken = SpokenRequests(model: model)
         model.cleanUpAfterLastRun()
+        // Catalog apps whose release changed, once the saved tabs say which apps panes run. Not when they didn't load: last run's
+        // app servers may still be running in zmx with no restored pane to show for them, as the sweep above also assumes.
+        if !model.savedStateFailed { AppCatalog.refreshAtLaunch(running: model.openAppFolders()) }
         PeerManager.shared.model = model
         PeerManager.shared.onRemoved = { [weak self] in Task { await self?.syncHistory() } }
         PeerManager.shared.start()

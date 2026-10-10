@@ -347,10 +347,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                       currentDirectory: directory ?? record.directory)
     }
 
-    // The entry ($1) and the log path ($2) are arguments, outside the script. Output is teed to the
+    // The entry ($1), the log path ($2) and "frozen" or "plain" ($3) are arguments, outside the script. Output is teed to the
     // log because zmx ends the session with the command, leaving the terminal nothing to show.
+    // Varnick's own installed copy of a catalog app installs frozen to its lockfile, so the first pick can't resolve versions nobody
+    // reviewed (decided in `startApp`, not here); the user's apps, a renamed copy of a catalog app included, keep the plain install.
     private static let appScript = #"""
-        { if [ -f package.json ] && [ ! -d node_modules ]; then bun install || exit $?; fi; exec bun run "$1"; } 2>&1 | tee "$2"; exit ${pipestatus[1]}
+        { if [ -f package.json ] && [ ! -d node_modules ]; then if [ "$3" = frozen ]; then bun install --frozen-lockfile || exit $?; else bun install || exit $?; fi; fi; exec bun run "$1"; } 2>&1 | tee "$2"; exit ${pipestatus[1]}
         """#
 
     /// Runs the app's server in the pane's zmx session, whatever Keep sessions running says: a
@@ -369,7 +371,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             "VARNICK_APP_DATA=\(app.dataDirectory.path)",
         ]
         if let from = record.splitFrom { env.append("VARNICK_SPLIT_FROM=\(from.uuidString.lowercased())") }
-        startInTerminal("/bin/zsh", ["-l", "-i", "-c", Self.appScript, "varnick-app", app.entry, appLog.path],
+        // A project's app is never Varnick's copy, whatever a marker in it says.
+        let frozen = app.projectPath == nil && AppCatalog.isInstalledCopy(app.directory, folderName: app.folderName)
+        startInTerminal("/bin/zsh", ["-l", "-i", "-c", Self.appScript, "varnick-app", app.entry, appLog.path, frozen ? "frozen" : "plain"],
                         environment: env, directory: app.directory.path, alwaysInZmx: true)
     }
 

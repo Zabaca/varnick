@@ -5,14 +5,14 @@ description: Scratch, a live page the user watches in a pane beside this session
 
 # Scratch
 
-Scratch is a custom app (`.varnick/custom-apps/scratch/`): a Vite dev server with hot reload and React Fast Refresh, serving a folder you write into. The user opens it beside your pane and sees the page change as you edit.
+Scratch is a custom app from Varnick's catalog, which the user turns on in Settings › Apps: a Vite dev server with hot reload and React Fast Refresh, serving a folder you write into. The user opens it beside your pane and sees the page change as you edit.
 
 ## Show the user something
 
 1. **Find your pane id.** It is `$VARNICK_PANE_ID`; if that is empty, the name of the folder that holds `$VARNICK_SESSION_FILE` (a pane from an older Varnick has only that). If both are empty you aren't in a Varnick pane: tell the user Scratch needs a Varnick Claude pane and that they can ask there. Stop.
 2. **Make the area** `<root>/.varnick/scratch/<pane id>/`, where `<root>` is `$VARNICK_PROJECT`. If `$VARNICK_PROJECT` is empty (this pane started before Varnick set it), `<root>` is the git top level of the folder this session started in, else that folder (`git -C <start folder> rev-parse --show-toplevel`); don't take it from a folder you have `cd`'d into since, a worktree included. If the area is missing, create it, then write `<root>/.varnick/scratch/.gitignore` containing `*` if that file is missing, so nothing here reaches git.
 3. **Write the page** in the area (below), `index.html` last: its appearance is what replaces the placeholder.
-4. **Ask the user to open Scratch** when you created the area in step 2, or can't tell they have it open: split this pane from the picker (⌃⌘⇧E or ⌃⌘⇧O) and choose Scratch (S). The page doesn't open by itself. Done when you have asked once; the pane then serves your page within a second of `index.html` existing.
+4. **Ask the user to open Scratch** when you created the area in step 2, or can't tell they have it open: split this pane from the picker (⌃⌘⇧E or ⌃⌘⇧O) and choose Scratch (S, or the key the picker shows it with). If Scratch isn't in the picker, tell them to turn it on in Settings › Apps first. The page doesn't open by itself. Done when you have asked once; the pane then serves your page within a second of `index.html` existing.
 
 ## The page
 

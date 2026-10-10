@@ -1,0 +1,8 @@
+{
+  "name": "Scratch",
+  "icon": "scribble.variable",
+  "key": "s",
+  "entry": "server.ts",
+  "description": "A live page Claude writes beside its session: charts, diagrams and UI prototypes, with hot reload.",
+  "network": "Vite and its React plugin from the npm registry at the first pick, and React for the pages at the first use in each project. Nothing else."
+}

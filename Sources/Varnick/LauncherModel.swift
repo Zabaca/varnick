@@ -177,7 +177,8 @@ final class LauncherModel: ObservableObject {
     var quitting = false
     /// sessions.json existed but didn't decode, so the tabs it held are lost and nothing can
     /// be said about which panes were open.
-    private var savedStateFailed = false
+    /// sessions.json didn't decode, so no tab was restored and what panes own is unknown (`cleanUpAfterLastRun`, the catalog refresh).
+    private(set) var savedStateFailed = false
     /// True once the user moves the selection for the current query; refinement passes
     /// then keep their pick instead of jumping back to the new top result.
     private var userPicked = false
@@ -1689,6 +1690,12 @@ final class LauncherModel: ObservableObject {
     func stopAppServers() {
         guard !Settings.shared.keepSessionsRunning else { return }
         for session in tabs.flatMap(\.sessions) where session.isApp && session.ownsZmxSession { Zmx.killNow(session.id) }
+    }
+
+    /// Folder names of the apps that open panes run, a restored pane not yet shown included. A project's app counts as a user's of the
+    /// same name, which errs on the safe side for turning a catalog app off or refreshing it.
+    func openAppFolders() -> Set<String> {
+        Set(tabs.flatMap(\.sessions).compactMap(\.record.app))
     }
 
     // MARK: Restart Varnick (status menu)

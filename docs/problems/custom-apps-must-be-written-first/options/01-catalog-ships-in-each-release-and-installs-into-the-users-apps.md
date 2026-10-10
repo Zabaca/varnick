@@ -2,7 +2,7 @@
 problem: custom-apps-must-be-written-first
 title: A catalog of apps in the repo, shipped in each release, that a switch in Settings › Apps copies into the user's own apps
 summary: Accepted by the user on 2026-10-10 (the contributor sign-off question stays open). A top-level `apps/` folder in this repo holds the catalog, one ordinary custom app per folder, with an optional skill and a one-line description; Scratch moves there, with its skill, and leaves this repo's project apps. `make build` and `make app` copy the catalog into Varnick's resource folder, so a person can turn on only reviewed code from their own release, and nothing is fetched to find apps. Settings › Apps lists it with one switch per app, off by default. On copies the app into `~/.varnick/custom-apps/<name>/` with a marker saying Varnick put it there, and links its skill into `~/.claude/skills/` when that name is free. Off moves only that copy to the Trash and removes only that link. A newer release refreshes an installed app at launch when no pane runs it. A user's own app of the same name is never touched. Packages install with Bun at the first pick, as for any custom app, from the committed lockfile. Contributions are pull requests that add a folder, accepted under rules in CONTRIBUTING. Rough effort is four days, plus under an hour of the user's time for the hand test.
-status: accepted
+status: shipped
 ---
 
 ## Solution
