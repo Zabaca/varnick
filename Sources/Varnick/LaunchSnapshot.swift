@@ -62,14 +62,28 @@ enum LaunchSnapshot {
     private static let snapshotsFolder = "snapshots"
     private static let pagePrefix = "page-"
 
-    /// Where the server's files are, for `PhonePage.serverFolder(installedIn:)`: the snapshot's, else the build folder's.
+    /// Where the server's files are, for `PhonePage.serverFolder(installedIn:)`: the snapshot's in a checkout, else the resource folder.
     static var serverInstall: URL? {
-        guard let current else { return Zmx.installFolder }
+        guard let current else { return ResourceFolder.current.folder }
         return current.page
     }
 
+    /// This process's own build, which every reader of "the build this Varnick runs" asks: in a bundle the resource folder's stamp, else the
+    /// snapshot's (nil when there is none).
+    static var runningStamp: BuildStamp? {
+        ResourceFolder.current.inBundle ? bundleStamp() : current?.stamp
+    }
+
+    /// Without the "older than the binary" rule of `BuildStamp.read`: signing rewrites the binary after the stamp, and the signature already
+    /// ties the two together.
+    private static func bundleStamp() -> BuildStamp? {
+        let stamp = ResourceFolder.current.folder.appendingPathComponent(BuildStamp.fileName)
+        return (try? String(contentsOf: stamp, encoding: .utf8)).flatMap(BuildStamp.init(line:))
+    }
+
     private static func take() -> Snapshot? {
-        guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
+        // A bundle is never a checkout build, wherever it sits.
+        guard !ResourceFolder.current.inBundle, let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
         let build = executable.deletingLastPathComponent()
         guard let dotBuild = enclosingBuildFolder(of: build) else { return nil }
         let stamp = BuildStamp.read(in: build, binary: executable)
@@ -152,9 +166,9 @@ enum LaunchSnapshot {
     // MARK: Where the build and the checkout are
 
     /// The checkout this process's binary is in: the folder above its `.build`, for the app and for its relay alike (the relay runs from a
-    /// snapshot inside it). Nil outside one.
+    /// snapshot inside it). Nil outside one, and for a bundle wherever it sits.
     static var checkout: URL? {
-        guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath(),
+        guard !ResourceFolder.current.inBundle, let executable = Bundle.main.executableURL?.resolvingSymlinksInPath(),
               let build = enclosingBuildFolder(of: executable.deletingLastPathComponent()) else { return nil }
         return build.deletingLastPathComponent()
     }
@@ -167,11 +181,12 @@ enum LaunchSnapshot {
         return BuildStamp.read(in: folder, binary: folder.appendingPathComponent(binary))
     }
 
-    /// The relay's own build: the stamp in the snapshot folder it runs from, else the build folder's. Never `current`, which would take a
-    /// snapshot of the snapshot.
+    /// The relay's own build: in a bundle the resource folder's stamp, else the stamp in the snapshot folder it runs from, else the build
+    /// folder's. Never `current`, which would take a snapshot of the snapshot.
     static func relayStamp() -> BuildStamp? {
+        if ResourceFolder.current.inBundle { return bundleStamp() }
         guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
-        let folder = executable.deletingLastPathComponent()
+        let folder = ResourceFolder.current.folder
         if folder.deletingLastPathComponent().lastPathComponent == snapshotsFolder {
             return (try? String(contentsOf: folder.appendingPathComponent(BuildStamp.fileName), encoding: .utf8)).flatMap(BuildStamp.init(line:))
         }

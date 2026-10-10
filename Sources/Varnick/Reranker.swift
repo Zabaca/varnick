@@ -106,10 +106,10 @@ struct Reranker: RelevanceJudge {
         return candidates.indices.map { answers["f\($0)"]?.noul ?? 0 }
     }
 
-    /// TYPESAFE_API_KEY from the environment, else from `.env` in the given directory.
-    static func loadAPIKey(env: [String: String], directory: String) -> String? {
+    /// TYPESAFE_API_KEY from the environment, else from `.env` in the given directory; no directory reads no file.
+    static func loadAPIKey(env: [String: String], directory: String?) -> String? {
         if let key = env["TYPESAFE_API_KEY"], !key.isEmpty { return key }
-        guard let text = try? String(contentsOfFile: directory + "/.env", encoding: .utf8) else { return nil }
+        guard let directory, let text = try? String(contentsOfFile: directory + "/.env", encoding: .utf8) else { return nil }
         for line in text.split(separator: "\n") where line.hasPrefix("TYPESAFE_API_KEY=") {
             let value = line.dropFirst("TYPESAFE_API_KEY=".count)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"' \r"))

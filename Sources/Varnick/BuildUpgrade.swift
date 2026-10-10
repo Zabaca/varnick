@@ -135,8 +135,8 @@ final class BuildUpgrade {
     private let monitor = PollingTask()
     private var restartScheduled = false
 
-    /// The build this Varnick runs: the stamp the launch snapshot took. Nil for one with no stamp.
-    private var running: BuildStamp? { LaunchSnapshot.current?.stamp }
+    /// The build this Varnick runs (`LaunchSnapshot.runningStamp`). Nil for one with no stamp.
+    private var running: BuildStamp? { LaunchSnapshot.runningStamp }
 
     /// An upgrade is under way: one begun here, or one a build session still runs for.
     private var isBusy: Bool { record.phase == .fetching || record.phase == .building }

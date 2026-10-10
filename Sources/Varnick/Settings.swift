@@ -180,7 +180,7 @@ final class Settings: ObservableObject {
     static let defaultProjectFolders = ["~/Projects"]
     static let fontRange: ClosedRange<Double> = 9...24
 
-    /// Folder new Claude sessions start in; empty uses VARNICK_CLAUDE_DIR or the launch folder.
+    /// Folder new Claude sessions start in; empty uses VARNICK_CLAUDE_DIR, else the launch folder from a checkout, else the home folder.
     @Published var claudeDirectory: String { didSet { defaults.set(claudeDirectory, forKey: "claudeDirectory") } }
     @Published var skipPermissions: Bool { didSet { defaults.set(skipPermissions, forKey: Self.skipPermissionsKey) } }
     /// Gives the Claude sessions started or restarted while it is on the look, point and click tools (`ScreenAccess`); off until
@@ -233,7 +233,7 @@ final class Settings: ObservableObject {
         }
     }
     /// TypeSafe key for the relevance filter: the Keychain (Settings › Models), else
-    /// TYPESAFE_API_KEY from the environment or `.env`. Never stored in UserDefaults.
+    /// TYPESAFE_API_KEY from the environment or, in a checkout, `.env`. Never stored in UserDefaults.
     @Published private(set) var typesafeKey: String?
     @Published private(set) var typesafeKeyInKeychain: Bool
     @Published private(set) var typesafeKeyError: String?
@@ -393,8 +393,10 @@ final class Settings: ObservableObject {
         workingOutFilterSwitch = false
     }
 
+    /// `.env` is read only from a checkout; the installed app takes the key from the Keychain or the environment.
     private static func typesafeKeyFromEnvironment() -> String? {
-        Reranker.loadAPIKey(env: ProcessInfo.processInfo.environment, directory: FileManager.default.currentDirectoryPath)
+        Reranker.loadAPIKey(env: ProcessInfo.processInfo.environment,
+                            directory: LaunchSnapshot.checkout == nil ? nil : FileManager.default.currentDirectoryPath)
     }
 
     func combo(_ action: ShortcutAction) -> KeyCombo? {
