@@ -49,8 +49,8 @@ struct SpokenRouter {
         return URLSession(configuration: config)
     }()
 
-    // Jev's wording keeps the old name, word for word as measured, until ticket 6 of the rename applies the measurement of
-    // "Varnick" in its place (ticket 1). Only the app's own name around it changed.
+    // Jev's wording keeps the old name, word for word as measured, until the rename's measurement of "Varnick" in its place is
+    // applied (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "The code rename").
     private static let context = "The person said `request` aloud to Launchy, a launcher on their Mac. Launchy answers by searching one of three places: the web pages the person visited in their browser, the pages they bookmarked, or their own Claude Code sessions (the coding work they did with Claude on their own software projects)."
 
     /// With the screen, word for word as measured: arm J4p of the screen-pointing eval (agent-lab 20fb286). The `point` action is

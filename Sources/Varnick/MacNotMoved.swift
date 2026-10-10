@@ -1,11 +1,11 @@
 import Foundation
 
-/// Short-lived guard for the rename from Launchy, removed by the cleanup ticket: a Mac whose support folder still has the old
-/// name hasn't been cut over yet (the option "Rename everything on one branch" in `docs/problems/name-taken-by-another-launcher`).
-/// Any Varnick binary run there, such as a check from a worktree, would otherwise make an empty `Varnick` folder beside the
-/// real one and make the cutover skip its folder step, or touch the settings the running Launchy uses. The relay and the MCP
-/// server exit before this runs, since neither writes saved state.
+/// Short-lived (removed by Cleanup in docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
+/// every mode but the relay, the MCP server and the app's start refuses on a Mac not yet cut over, as it would write beside Launchy's data.
 enum MacNotMoved {
+    /// Whether this is the app's start: no argument beginning `--`, so every command-line mode, and any unknown flag, isn't.
+    static func isAppStart(_ arguments: [String]) -> Bool { !arguments.dropFirst().contains { $0.hasPrefix("--") } }
+
     /// The one `error:` line to print, or nil when the Mac is moved, fresh, or has both folders.
     static func refusal(applicationSupport: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]) -> String? {
         let fm = FileManager.default

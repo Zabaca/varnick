@@ -9,8 +9,8 @@ enum SpokenText {
 
     /// What follows "hey varnick" in `text`, or nil when `text` doesn't wake Varnick; empty when nothing follows. "Hey" (or "hay")
     /// then a word starting "varnick" or "varnik", beginning within the first three words, ignoring case and punctuation. A
-    /// fragment of the name alone, such as "nick", never wakes it. Provisional: ticket 6 of the rename sets the spellings the
-    /// transcriber was measured to write for "Varnick", with their miss and false-wake rates here.
+    /// fragment of the name alone, such as "nick", never wakes it. Provisional: the rename's measurement sets the spellings the
+    /// transcriber writes for "Varnick" (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "Wake phrase").
     static func request(in text: String) -> String? {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         let tokens = words.map(token)

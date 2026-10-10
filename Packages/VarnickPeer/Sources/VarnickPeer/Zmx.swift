@@ -148,6 +148,11 @@ public enum Zmx {
         run(["ls", "--short"]).map { Set($0.split(separator: "\n").map(String.init)) }
     }
 
+    /// Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): runs the bundled zmx with `arguments` under a time limit, for the first-launch
+    /// migration to end sessions named the old way (`killNow(named:)` and `labels(of:)` would reach them, but with no limit).
+    /// Nil when zmx isn't there, failed or didn't answer in time. Blocks, so never on a thread that must stay responsive.
+    public static func ask(_ arguments: [String], timeout: TimeInterval) -> String? { run(arguments, timeout: timeout) }
+
     /// Whether `name` is a pane's session name, the only kind a peer may name.
     public static func isPaneSession(_ name: String) -> Bool { paneID(name) != nil }
 
