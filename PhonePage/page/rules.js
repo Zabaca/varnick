@@ -53,3 +53,13 @@ export function ctrlCode(text) {
   if (text.length !== 1 || !/[a-z@[\\\]^_ ]/i.test(text)) return null;
   return String.fromCharCode(text.toUpperCase().charCodeAt(0) & 0x1f);
 }
+
+/**
+ * How far a touch drag scrolls the terminal: the whole rows in `pixels` (positive is down the screen, which shows earlier
+ * lines), and the pixels left over, carried into the next move so a slow drag still scrolls.
+ */
+export function dragLines(pixels, rowHeight) {
+  if (!(rowHeight > 0)) return { lines: 0, rest: 0 };
+  const lines = Math.trunc(pixels / rowHeight);
+  return { lines, rest: pixels - lines * rowHeight };
+}

@@ -64,7 +64,7 @@ a.row-link:active { background: var(--button); }
 .notice { margin: 8px 0 0; padding: 10px 12px; font-size: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
 
 /* The session view fills the screen: header, then the terminal (or the card) and the key bar. */
-body.in-session { max-width: none; padding: 0; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+body.in-session { max-width: none; padding: 0; height: var(--page-height, 100dvh); overflow: hidden; display: flex; flex-direction: column; }
 #session { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .bar { display: flex; align-items: center; gap: 8px; padding: 8px; flex: none; }
 .bar .who { flex: 1; }
@@ -92,11 +92,15 @@ button.primary { background: var(--accent); color: var(--bg); border-color: tran
 button.danger { background: var(--warn); }
 
 #terminal-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #111; }
-#term { flex: 1; min-height: 0; padding: 2px; }
+/* With the keyboard up the grid keeps its rows (`refit` in session.js), so it is anchored to the bottom and its top is cut off.
+   Clipped, not hidden: a hidden overflow can still be scrolled, and Chrome scrolled it to show xterm.js's input each time
+   the keyboard came up, never back. */
+#term { flex: 1; min-height: 0; padding: 2px; overscroll-behavior: contain; display: flex; flex-direction: column; justify-content: flex-end; overflow: clip; }
+#term > .xterm { flex: none; }
 /* The eight keys share one row down to 360px: no wrapping, equal widths, and labels short enough for the narrowest. */
 #keys { display: flex; flex-wrap: nowrap; gap: 4px; padding: 4px 6px 8px; }
 #keys button { flex: 1 1 0; min-width: 0; min-height: 40px; padding: 6px 0; font-size: 13px; white-space: nowrap; background: #2a2a2a; color: #eee; border: 1px solid #444; }
-#keys button.on { background: #3a5; }
+#keys button.on, #keys button[aria-pressed="true"] { background: #3a5; }
 
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 16px; max-width: min(24rem, calc(100vw - 32px)); }
 dialog::backdrop { background: rgb(0 0 0 / .55); }
@@ -117,7 +121,7 @@ button.take-here { margin-right: 12px; min-height: 44px; }
 a.open-link { color: var(--accent); }
 
 /* New session fills the screen: the project list scrolls, the prompt takes what is left, and Start stays at the bottom, above the keyboard. */
-body.in-new { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; padding-bottom: 0; }
+body.in-new { height: var(--page-height, 100dvh); overflow: hidden; display: flex; flex-direction: column; padding-bottom: 0; }
 #new { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 #new .bar { padding: 8px 0; }
 /* With the keyboard up there is little height: the form scrolls and Start stays below it. */

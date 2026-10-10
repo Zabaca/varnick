@@ -6,7 +6,7 @@ import { buildRequest, relayEnvironment } from "./relay";
 import {
   attachEnvironment, clampGrid, closeCode, decideExit, decideOpen, recheckControl, takenReason, endText, firstOutput, fitReason, isSessionName, parseClient, parseOpen, refusal,
 } from "./terminal";
-import { closeAction, ctrlCode, keys, livedLongEnough, reconnectDelay, takenController } from "./page/rules.js";
+import { closeAction, ctrlCode, dragLines, keys, livedLongEnough, reconnectDelay, takenController } from "./page/rules.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
 const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXAMPLE4CNTRL", name: "Phone" };
@@ -259,6 +259,15 @@ describe("the page's rules", () => {
     expect(ctrlCode("1")).toBeNull();
     expect(ctrlCode("\r")).toBeNull();
     expect(ctrlCode("ab")).toBeNull();
+  });
+
+  test("a touch drag scrolls whole rows and carries the rest into the next move", () => {
+    expect(dragLines(40, 16)).toEqual({ lines: 2, rest: 8 });
+    expect(dragLines(-40, 16)).toEqual({ lines: -2, rest: -8 });
+    expect(dragLines(10, 16)).toEqual({ lines: 0, rest: 10 });
+    // Before the terminal is measured there is no row height: nothing scrolls, and nothing is carried.
+    expect(dragLines(40, 0)).toEqual({ lines: 0, rest: 0 });
+    expect(dragLines(40, NaN)).toEqual({ lines: 0, rest: 0 });
   });
 
   test("the key bar's keys", () => {
