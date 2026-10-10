@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Zabaca/varnick/releases/latest/download/Varnick.zip">Download for Mac</a>
+  <a href="https://github.com/Zabaca/varnick/releases/latest/download/Varnick.dmg">Download for Mac</a>
   &nbsp;·&nbsp;
   <a href="https://varnick.com">varnick.com</a>
 </p>
@@ -36,8 +36,9 @@ Varnick is not affiliated with or endorsed by Anthropic. Claude and Claude Code 
 
 You need an Apple Silicon Mac with macOS 14 or later, and the [Claude Code](https://claude.com/claude-code) CLI.
 
-1. Download `Varnick.zip` from [the latest release](https://github.com/Zabaca/varnick/releases/latest).
-2. Unzip it, move `Varnick.app` to Applications, and open it.
+1. Download `Varnick.dmg` from [the latest release](https://github.com/Zabaca/varnick/releases/latest) and open it.
+2. Drag Varnick onto Applications in the window, then open it. Opened from the disk image instead, it offers to
+   move itself there.
 3. macOS asks for each permission the first time a feature needs it.
 
 The app is signed and notarized. It doesn't update itself: to update, quit Varnick from its menu bar menu and
