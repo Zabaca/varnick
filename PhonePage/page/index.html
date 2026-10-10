@@ -102,8 +102,9 @@
       <button type="button" id="ctrl" aria-pressed="false">Ctrl</button>
       <button type="button" data-key="enter" aria-label="Enter">⏎</button>
       <button type="button" id="paste">Paste</button>
+      <button type="button" id="compose-toggle" aria-pressed="false" aria-controls="compose">Compose</button>
     </div>
-    <div id="compose">
+    <div id="compose" hidden>
       <textarea id="text" rows="1" placeholder="Compose (sent as paste, then Enter)" aria-label="Message to send" autocapitalize="sentences"></textarea>
       <button type="button" id="send" class="primary">Send</button>
     </div>
