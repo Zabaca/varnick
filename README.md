@@ -332,6 +332,8 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md). The design is written down in [`docs/`
 `docs/adr/`, the problems and options behind them in `docs/problems/`, and what a change can break in
 `docs/agents/where-it-breaks.md`.
 
+The varnick.com page is in [`site/`](site/), which also says how it is deployed.
+
 ## Licence
 
 Varnick is licensed under the Apache License 2.0 (see [`LICENSE`](LICENSE)).
