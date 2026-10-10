@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 # Runs ON the headless host, piped into `bash -s` by scripts/install-peer.sh. Do not run by hand.
 #
-# Builds Launchy's relay (`launchy-peer`, from Packages/LaunchyPeer) and installs it under ~/.launchy,
+# Builds Varnick's relay (`varnick-peer`, from Packages/VarnickPeer) and installs it under ~/.varnick,
 # whose layout, and why this prints KEY=value markers, ADR 0009 holds.
 #
 # Inputs (env): ACTION=install|uninstall, COMMIT (short), RUN (the near half's name for this run's files), NAME (the host's name,
-# optional), PAGE=on|auto|remove
+# optional), PROBLEMS=on|off|auto (the work-link hooks of ADR 0020 in the sessions this host starts: `on` writes ~/.varnick/problems, which the
+# relay looks for when it builds a session's hook settings, `off` removes it, `auto` keeps what is there; prints PROBLEMS=on|off), PAGE=on|auto|remove
 # (the Phone page, ADR 0011: `on` installs its server and unit, `auto` updates them only where the unit already
-# exists, `remove` takes them away; default auto). The package arrives as ~/.launchy/incoming-$RUN.tar.gz (`git archive
-# <commit> Packages/LaunchyPeer`), and the page, when PAGE is on or auto and the unit exists, as ~/.launchy/incoming-page-$RUN.tar.gz
+# exists, `remove` takes them away; default auto). The package arrives as ~/.varnick/incoming-$RUN.tar.gz (`git archive
+# <commit> Packages/VarnickPeer`), and the page, when PAGE is on or auto and the unit exists, as ~/.varnick/incoming-page-$RUN.tar.gz
 # (`git archive <commit> PhonePage`); without RUN the names have no suffix; a run's own are gone at its end, and another run's older than a day (left when its far half never ran) are removed once the lock is held. One install runs at a time per host: a lock on
-# ~/.launchy/install.lock is held from the start (LOCK=ok, waited, none where there is no flock, or busy after 15 minutes, which stops). It publishes the page's port with `tailscale serve` and takes it down; the rules and
+# ~/.varnick/install.lock is held from the start (LOCK=ok, waited, none where there is no flock, or busy after 15 minutes, which stops). It publishes the page's port with `tailscale serve` and takes it down; the rules and
 # PAGE_PUBLISH_PORT are ADR 0011's note of 2026-10-06.
 #
 # What this far half supports, which the near half reads rather than guessing from a function name: RUN (per-run tarball names), LOCK
-# (the install lock). Add a word when a feature the near half adapts to arrives; never remove one.
-# supports: RUN LOCK
+# (the install lock), PROBLEMS (the problems file). Add a word when a feature the near half adapts to arrives; never remove one.
+# supports: RUN LOCK PROBLEMS
 #
 # Everything that runs is called from `main`, with stdin on /dev/null: this script is read from stdin, and a command
 # that read stdin would take the rest of it. The functions above `main` only define what it calls.
@@ -27,7 +28,7 @@
 BUN_VERSION=1.3.14
 BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
 BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION/bun-linux-x64.zip"
-PAGE_UNIT=launchy-phone-page.service
+PAGE_UNIT=varnick-phone-page.service
 # The port the unit's Host check expects, and the one this script publishes (the only mount it touches; ADR 0011's note).
 PAGE_PORT=8444
 PUBLISH_PORT=${PAGE_PUBLISH_PORT:-8444}
@@ -49,7 +50,7 @@ ensure_bun() {
     elif ! command -v unzip >/dev/null 2>&1; then
       echo "unzip isn't installed here, and unpacking Bun's release needs it (apt install unzip)"
     else
-      work=$(mktemp -d "${TMPDIR:-/tmp}/launchy-bun.XXXXXX")
+      work=$(mktemp -d "${TMPDIR:-/tmp}/varnick-bun.XXXXXX")
       if curl -fsSL --retry 2 -o "$work/bun.zip" "$BUN_URL" \
          && [ "$(sha256sum "$work/bun.zip" | awk '{print $1}')" = "$BUN_SHA256" ] \
          && (cd "$work" && unzip -q bun.zip) && [ -f "$work/bun-linux-x64/bun" ] \
@@ -194,7 +195,7 @@ page_unpublish() {
 page_remove() {
   local unit_dir="$HOME/.config/systemd/user"
   adopt_runtime_dir
-  page_unpublish "$HOME/.launchy/phone/page.sock"
+  page_unpublish "$HOME/.varnick/phone/page.sock"
   if [ -f "$unit_dir/$PAGE_UNIT" ]; then
     systemctl --user disable --now "$PAGE_UNIT" >/dev/null 2>&1
     rm -f "$unit_dir/$PAGE_UNIT"
@@ -203,7 +204,7 @@ page_remove() {
   else
     echo "PAGE=off"
   fi
-  rm -rf "$HOME/.launchy/PhonePage" "$HOME/.launchy/PhonePage.new" "$HOME/.launchy/PhonePage.old" "$HOME/.launchy/phone" "$INCOMING_PAGE"
+  rm -rf "$HOME/.varnick/PhonePage" "$HOME/.varnick/PhonePage.new" "$HOME/.varnick/PhonePage.old" "$HOME/.varnick/phone" "$INCOMING_PAGE"
 }
 
 # The Phone page: Bun, Funnel, the files, the unit, and the markers the near half judges. Needs the relay installed.
@@ -238,17 +239,17 @@ page_install() {
   # RestartSec and no start limit: at boot tailscaled may be late, and the server exits until it answers.
   cat >"$unit_file.new" <<UNIT
 [Unit]
-Description=Launchy's phone page, behind tailscale serve on $PAGE_PORT
+Description=Varnick's phone page, behind tailscale serve on $PAGE_PORT
 StartLimitIntervalSec=0
 
 [Service]
-WorkingDirectory=%h/.launchy/PhonePage
+WorkingDirectory=%h/.varnick/PhonePage
 ExecStart=%h/.bun/bin/bun server.ts
-Environment=LAUNCHY_PAGE_SOCKET=%h/.launchy/phone/page.sock
-Environment=LAUNCHY_PAGE_PORT=$PAGE_PORT
-Environment=LAUNCHY_RELAY=%h/.launchy/launchy-peer
-Environment=LAUNCHY_DEVICES=%h/.launchy/state/devices.json
-Environment=LAUNCHY_TAILSCALE=/usr/bin/tailscale
+Environment=VARNICK_PAGE_SOCKET=%h/.varnick/phone/page.sock
+Environment=VARNICK_PAGE_PORT=$PAGE_PORT
+Environment=VARNICK_RELAY=%h/.varnick/varnick-peer
+Environment=VARNICK_DEVICES=%h/.varnick/state/devices.json
+Environment=VARNICK_TAILSCALE=/usr/bin/tailscale
 KillMode=process
 Restart=on-failure
 RestartSec=5
@@ -293,7 +294,7 @@ UNIT
   # Read again now that it runs: Funnel turned on in between stops it.
   funnel=$(funnel_state)
   if [ "$funnel" != off ]; then
-    # A mount made in this run goes too: it was Launchy's to make, and Funnel just made it public.
+    # A mount made in this run goes too: it was Varnick's to make, and Funnel just made it public.
     if [ "$(printf '%s\n' "$published" | sed -n 's/^PUBLISH=//p')" = published ]; then page_unpublish "$sock" fresh; fi
     funnel_refuse "$funnel" "after the start"; return 0
   fi
@@ -331,7 +332,7 @@ print("missing" if hit is None else "socket" if hit == want else "elsewhere")
 ' "unix:$sock" "$PUBLISH_PORT" 2>/dev/null || echo missing)"
 }
 
-# Holds ~/.launchy/install.lock on descriptor 9 until this script ends, so two installs on one host (two Macs, say) never unpack into the
+# Holds ~/.varnick/install.lock on descriptor 9 until this script ends, so two installs on one host (two Macs, say) never unpack into the
 # same source folder or swap the same binary. Nothing started here outlives the script holding the descriptor: the page's unit is
 # started by systemd. Prints LOCK=ok (free), waited, or none (no flock, as on a Mac); returns 1 with LOCK=busy after 15 minutes.
 acquire_lock() {
@@ -345,10 +346,10 @@ acquire_lock() {
 }
 
 main() {
-  ROOT="$HOME/.launchy"
+  ROOT="$HOME/.varnick"
   SRC="$ROOT/src"
   SWIFT="$HOME/.local/share/swiftly/bin/swift"
-  LINK="$HOME/.local/bin/launchy-peer"
+  LINK="$HOME/.local/bin/varnick-peer"
   # Pinned like the Makefile's macOS one: a release that changes zmx's protocol can't talk to daemons the
   # previous one started. The hash is the release's published .sha256 for the Linux x86_64 tarball.
   ZMX_VERSION=0.8.1
@@ -364,6 +365,17 @@ main() {
   INCOMING="$ROOT/incoming${RUN:+-$RUN}.tar.gz"
   INCOMING_PAGE="$ROOT/incoming-page${RUN:+-$RUN}.tar.gz"
   if [ -n "${RUN:-}" ]; then trap 'rm -f "$INCOMING" "$INCOMING_PAGE"' EXIT; fi
+  # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): a host whose install root still has the old name is moved by
+  # hand first (the headless host's cutover in the same option). An install here would put a second
+  # relay, with a new id, beside the old one. Nothing is changed: what the near half shipped is removed, and ~/.varnick goes again
+  # if shipping made it and it holds nothing. The lock isn't taken, since taking it makes ~/.varnick.
+  if [ "${ACTION:-install}" = install ] && [ -e "$HOME/.launchy" ]; then
+    rm -f "$INCOMING" "$INCOMING_PAGE"
+    rmdir "$ROOT" 2>/dev/null || true
+    echo "OLDROOT=present"
+    echo "$HOME/.launchy exists: this host still runs Launchy's relay. Moving it to ~/.varnick is the user's step, the headless host's cutover (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md). Nothing was changed. An agent must stop here and report this to the user"
+    return 0
+  fi
   acquire_lock || return 0
   # Tarballs a run left when its far half never ran (the ssh failed after shipping, the session was killed). Another run's that is a day
   # old is nobody's: a live run's is newer, and holds the lock before it reads it.
@@ -372,11 +384,11 @@ main() {
   if [ "${ACTION:-install}" = uninstall ]; then
     page_remove
     # Only a link that points at this install's binary is ours to remove.
-    if [ "$(readlink "$LINK" 2>/dev/null)" = "$ROOT/launchy-peer" ]; then rm -f "$LINK"; fi
-    rm -f "$ROOT/launchy-peer" "$ROOT/launchy-peer.new" "$ROOT/build"
+    if [ "$(readlink "$LINK" 2>/dev/null)" = "$ROOT/varnick-peer" ]; then rm -f "$LINK"; fi
+    rm -f "$ROOT/varnick-peer" "$ROOT/varnick-peer.new" "$ROOT/build" "$ROOT/problems"
     rm -f "$INCOMING" "$INCOMING_PAGE"
     rm -rf "$SRC"
-    echo "REMOVED=$ROOT/launchy-peer, $LINK, $ROOT/build and $SRC"
+    echo "REMOVED=$ROOT/varnick-peer, $LINK, $ROOT/build, $ROOT/problems and $SRC"
     echo "KEPT=$ROOT/state, $ROOT/config.json, $ROOT/zmx, Bun and any running session"
     return 0
   fi
@@ -417,12 +429,12 @@ main() {
   rm -rf "$SRC/Sources" "$SRC/Package.swift"
   if ! tar -xzmf "$INCOMING" -C "$SRC" --strip-components=2; then echo "BUILT=failed"; echo "the package didn't unpack"; return 0; fi
   rm -f "$INCOMING"
-  LOG=$(mktemp "${TMPDIR:-/tmp}/launchy-peer-build.XXXXXX")
+  LOG=$(mktemp "${TMPDIR:-/tmp}/varnick-peer-build.XXXXXX")
   # --build-system native: Swift Build, the default, leaves Foundation's static libraries out of a static
   # stdlib link (the spike); native is one flag, where naming each library with -Xlinker -l shifts between
   # Swift releases.
   build() { (cd "$SRC" && PATH="$(dirname "$SWIFT"):$PATH" "$SWIFT" build -c release --static-swift-stdlib --build-system native "$@") >"$LOG" 2>&1; }
-  BIN="$SRC/.build/release/launchy-peer"
+  BIN="$SRC/.build/release/varnick-peer"
   # Gone first, so a build that fails can't leave an older one to be taken for the new.
   rm -f "$BIN"
   FALLBACK=none
@@ -452,9 +464,9 @@ main() {
   # 6. Swap. Beside the running binary and renamed over it, so a running relay keeps its file. Only a
   # binary that is static and runs replaces the working one.
   if [ "$LINKED" != 0 ] || [ "$RUNS" != ok ]; then echo "SWAPPED=skipped"; return 0; fi
-  cp -f "$BIN" "$ROOT/launchy-peer.new" && chmod 755 "$ROOT/launchy-peer.new" && mv -f "$ROOT/launchy-peer.new" "$ROOT/launchy-peer" || { echo "SWAPPED=failed"; return 0; }
+  cp -f "$BIN" "$ROOT/varnick-peer.new" && chmod 755 "$ROOT/varnick-peer.new" && mv -f "$ROOT/varnick-peer.new" "$ROOT/varnick-peer" || { echo "SWAPPED=failed"; return 0; }
   mkdir -p "$(dirname "$LINK")"
-  ln -sfn "$ROOT/launchy-peer" "$LINK"
+  ln -sfn "$ROOT/varnick-peer" "$LINK"
   echo "SWAPPED=ok"
 
   # 7. zmx, the relay's own, renamed into place.
@@ -480,9 +492,15 @@ main() {
     if [ -n "${NAME:-}" ]; then printf '{"name": "%s"}\n' "$NAME" >"$ROOT/config.json"; else printf '{}\n' >"$ROOT/config.json"; fi
     echo "CONFIG=written"
   fi
-  echo "ID=$("$ROOT/launchy-peer" init)"
+  echo "ID=$("$ROOT/varnick-peer" init)"
   printf '%s\n' "$COMMIT" >"$ROOT/build.new" && mv -f "$ROOT/build.new" "$ROOT/build"
   echo "BUILD=$COMMIT"
+  # The problems file (ADR 0020): its existence is the switch the relay reads. Written by rename, so a relay never reads half a write.
+  case "${PROBLEMS:-auto}" in
+    on) printf 'on\n' >"$ROOT/problems.new" && mv -f "$ROOT/problems.new" "$ROOT/problems" ;;
+    off) rm -f "$ROOT/problems" ;;
+  esac
+  if [ -e "$ROOT/problems" ]; then echo "PROBLEMS=on"; else echo "PROBLEMS=off"; fi
 
   # 9. The Phone page (ADR 0011), after the relay it runs on: installed, kept up to date where it is installed, or removed.
   case "${PAGE:-auto}" in

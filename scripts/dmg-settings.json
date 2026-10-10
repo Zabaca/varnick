@@ -1,0 +1,13 @@
+{
+  "title": "Varnick",
+  "icon": ".build/app/Varnick.app/Contents/Resources/Varnick.icns",
+  "background": ".build/app/dmg-background/background.png",
+  "icon-size": 128,
+  "window": { "position": { "x": 200, "y": 120 }, "size": { "width": 640, "height": 400 } },
+  "format": "ULFO",
+  "filesystem": "HFS+",
+  "contents": [
+    { "x": 160, "y": 190, "type": "file", "path": ".build/app/Varnick.app" },
+    { "x": 480, "y": 190, "type": "link", "path": "/Applications", "name": "Applications" }
+  ]
+}

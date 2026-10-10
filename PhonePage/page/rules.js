@@ -37,7 +37,7 @@ export function closeAction(code) {
   return "reconnect";
 }
 
-/** The key bar's buttons, by name. */
+/** The key bar's buttons, by name: what the phone's own keyboard lacks (Enter and paste come from it, Ctrl+C from the Ctrl key). */
 export const keys = {
   esc: "\x1b",
   tab: "\t",
@@ -46,12 +46,20 @@ export const keys = {
   down: "\x1b[B",
   left: "\x1b[D",
   right: "\x1b[C",
-  interrupt: "\x03",
-  enter: "\r",
 };
 
 /** What the sticky Ctrl makes of one typed character: its control code, or null when it makes nothing (it then stays on). */
 export function ctrlCode(text) {
   if (text.length !== 1 || !/[a-z@[\\\]^_ ]/i.test(text)) return null;
   return String.fromCharCode(text.toUpperCase().charCodeAt(0) & 0x1f);
+}
+
+/**
+ * How far a touch drag scrolls the terminal: the whole rows in `pixels` (positive is down the screen, which shows earlier
+ * lines), and the pixels left over, carried into the next move so a slow drag still scrolls.
+ */
+export function dragLines(pixels, rowHeight) {
+  if (!(rowHeight > 0)) return { lines: 0, rest: 0 };
+  const lines = Math.trunc(pixels / rowHeight);
+  return { lines, rest: pixels - lines * rowHeight };
 }

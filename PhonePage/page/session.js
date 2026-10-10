@@ -1,5 +1,5 @@
 // One open session on the phone: the session view ("Controlled on X", Take over, and the session's live screen, read-only) and the
-// terminal (xterm.js, the key bar, the compose box). The server decides everything about control; this page asks `status` before
+// terminal (xterm.js and the key bar). The server decides everything about control; this page asks `status` before
 // every attach, and again whenever the live screen's channel ends (which never means the session ended), sets `take` only
 // right after a press (Take over, or the Start or Resume that made the session: `openSession`'s `take`), and never sends
 // anything while hidden. Rules that need no DOM are in rules.js.
@@ -10,7 +10,7 @@ import { Terminal } from "/vendor/xterm.mjs";
 import { FitAddon } from "/vendor/addon-fit.mjs";
 import { createLive } from "/live.js";
 import { parseFrame } from "/liverules.js";
-import { closeAction, ctrlCode, keys, livedLongEnough, reconnectDelay, takenController } from "/rules.js";
+import { closeAction, ctrlCode, dragLines, keys, livedLongEnough, reconnectDelay, takenController } from "/rules.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -272,13 +272,40 @@ function ensureTerminal(s) {
   term.onData((data) => input(s, data));
   term.onBinary((data) => send(s, { t: "bin", d: data }));
   term.onResize(({ cols, rows }) => send(s, { t: "resize", cols, rows }));
-  s.observer = new ResizeObserver(() => fit.fit());
+  s.observer = new ResizeObserver(() => refit(s));
   s.observer.observe($("term"));
+}
+
+/**
+ * The tallest the page has been at each width: shorter than that by a keyboard's height means the keyboard is up. Only
+ * the browser knows the keyboard is there, so this is the guess.
+ */
+const tallest = new Map();
+const keyboardUp = () => {
+  const viewport = window.visualViewport;
+  if (!viewport) return false;
+  const height = Math.max(tallest.get(innerWidth) ?? 0, viewport.height);
+  tallest.set(innerWidth, height);
+  return viewport.height < height - 150;
+};
+
+/**
+ * Fits the terminal to its box, except that the keyboard coming up never takes rows away: the grid keeps its height and
+ * shows its bottom rows, where the prompt is (the CSS anchors it). A resize each time the keyboard came and went had the
+ * session redraw at the new height while xterm.js moved lines in and out of its scrollback, and the two disagreed.
+ */
+function refit(s) {
+  const size = s.fit.proposeDimensions();
+  if (!size || !(size.cols > 0) || !(size.rows > 0)) return;
+  // Asked first, every time, so it has seen the page's full height before the keyboard ever comes up.
+  const keyboard = keyboardUp();
+  const rows = size.rows < s.term.rows && keyboard ? s.term.rows : size.rows;
+  if (size.cols !== s.term.cols || rows !== s.term.rows) s.term.resize(size.cols, rows);
 }
 
 function openSocket(s, take) {
   ensureTerminal(s);
-  s.fit.fit();
+  refit(s);
   const ws = new WebSocket(`wss://${location.host}/ws/terminal`);
   ws.binaryType = "arraybuffer";
   s.ws = ws;
@@ -288,7 +315,7 @@ function openSocket(s, take) {
     ws.send(JSON.stringify({ session: s.name, cols: s.term.cols, rows: s.term.rows, take }));
     s.openedAt = Date.now();
     s.term.reset();
-    s.fit.fit();
+    refit(s);
     setSub(s, "");
   };
   ws.onmessage = (event) => {
@@ -324,9 +351,9 @@ function send(s, message) {
   if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify(message));
 }
 
-/** Typed bytes: the sticky Ctrl turns the next typed letter into its control code, but never a paste or a composed message. */
+/** Typed bytes: the sticky Ctrl turns the next typed letter into its control code (one character only, so never a paste). */
 function input(s, data) {
-  if (s.ctrlOn && !s.pasting) {
+  if (s.ctrlOn) {
     const code = ctrlCode(data);
     if (code !== null) {
       data = code;
@@ -334,12 +361,6 @@ function input(s, data) {
     }
   }
   send(s, { t: "in", d: data });
-}
-
-/** A paste (bracketed when the program asked for it): xterm sends it through `onData`, where Ctrl must not touch it. */
-function pasteText(s, text) {
-  s.pasting = true;
-  try { s.term.paste(text); } finally { s.pasting = false; }
 }
 
 function setCtrl(s, on) {
@@ -358,7 +379,7 @@ export function openSession({ name, title, host, done, take = false }) {
   const s = {
     name, title: title || "Claude session", host: host || "", done,
     lv: newLive(),
-    view: "", ws: null, term: null, fit: null, observer: null, timer: null, tries: 0, generation: 0, ctrlOn: false, pasting: false, closed: false,
+    view: "", ws: null, term: null, fit: null, observer: null, timer: null, tries: 0, generation: 0, ctrlOn: false, closed: false,
     // mine: this page held the session (output arrived); note: "Taken over on X"; error: the relay's refusal; openedAt: when the socket opened.
     mine: false, note: "", error: "", openedAt: 0,
   };
@@ -388,7 +409,6 @@ export function closeSession() {
   s.term?.dispose();
   $("term").replaceChildren();
   $("session").hidden = true;
-  $("text").value = "";
 }
 
 async function endSession(s) {
@@ -431,33 +451,79 @@ $("retry").addEventListener("click", () => {
 });
 $("end").addEventListener("click", () => { if (current) endSession(current); });
 
-// The keys and Ctrl keep the focus (and the keyboard) where it is. Paste and Send don't, as in the spike: the keyboard then
-// commits a half-composed word before the press is handled.
-for (const button of document.querySelectorAll("#keys button[data-key], #ctrl")) {
+// A key press must not blur xterm's input, or the phone's keyboard would drop.
+for (const button of document.querySelectorAll("#keys button")) {
   button.addEventListener("pointerdown", (event) => event.preventDefault());
 }
 for (const button of document.querySelectorAll("#keys button[data-key]")) {
   button.addEventListener("click", () => { if (current) input(current, keys[button.dataset.key]); });
 }
 $("ctrl").addEventListener("click", () => { if (current) setCtrl(current, !current.ctrlOn); });
-$("paste").addEventListener("click", async () => {
-  const s = current;
-  if (!s || !s.term) return;
-  try {
-    pasteText(s, await navigator.clipboard.readText());
-  } catch {
-    setSub(s, "Couldn't read the clipboard");
-  }
-});
-$("send").addEventListener("click", () => {
-  const s = current;
-  const text = $("text");
-  if (!s || !s.term || !text.value) return;
-  // A paste (bracketed when the program asked for it), then Enter a moment later.
-  pasteText(s, text.value);
-  setTimeout(() => { if (!s.closed) input(s, "\r"); }, 50);
-  text.value = "";
-});
+// A tap on the terminal focuses it, which brings up the phone's keyboard: typing goes straight into xterm. xterm focuses its
+// input on a press inside its screen; this also covers the padding around the screen.
+$("term").addEventListener("click", () => current?.term?.focus());
+
+// Swiping the terminal scrolls it, and a flick glides on: xterm.js 6 has no touch scrolling of its own. A tap still focuses it
+// (and brings up the keyboard), since nothing is prevented until the finger has moved. A program that takes the mouse or the
+// alternate screen (Claude Code full screen) has no scrollback here: it scrolls itself, so each row is a wheel event, which
+// xterm.js reports to it as the program asked.
+{
+  const element = $("term");
+  let startY = 0, lastX = 0, lastY = null, lastTime = 0, dragging = false, pending = 0, velocity = 0, frame = 0;
+  const scrollBy = (pixels) => {
+    const term = current?.term;
+    if (!term) return false;
+    const screen = element.querySelector(".xterm-screen");
+    const { lines, rest } = dragLines(pending + pixels, screen?.clientHeight / term.rows);
+    pending = rest;
+    if (!lines) return true;
+    if (term.modes.mouseTrackingMode === "none" && term.buffer.active.type === "normal") {
+      term.scrollLines(-lines);
+      return true;
+    }
+    const box = screen.getBoundingClientRect();
+    const at = { clientX: Math.min(Math.max(lastX, box.left), box.right - 1), clientY: box.top + box.height / 2 };
+    for (let i = 0; i < Math.abs(lines); i++) {
+      screen.dispatchEvent(new WheelEvent("wheel", { ...at, deltaY: lines > 0 ? -100 : 100, bubbles: true, cancelable: true }));
+    }
+    return true;
+  };
+  element.addEventListener("touchstart", (event) => {
+    cancelAnimationFrame(frame);
+    lastY = event.touches.length === 1 ? event.touches[0].clientY : null;
+    lastX = event.touches[0]?.clientX ?? 0;
+    startY = lastY;
+    lastTime = event.timeStamp;
+    dragging = false;
+    pending = 0;
+    velocity = 0;
+  }, { passive: true });
+  element.addEventListener("touchmove", (event) => {
+    if (lastY === null || event.touches.length !== 1) return;
+    const y = event.touches[0].clientY;
+    if (!dragging && Math.abs(y - startY) < 8) return;
+    dragging = true;
+    event.preventDefault();
+    velocity = (y - lastY) / Math.max(1, event.timeStamp - lastTime);
+    scrollBy(y - lastY);
+    lastY = y;
+    lastTime = event.timeStamp;
+  }, { passive: false });
+  element.addEventListener("touchend", (event) => {
+    // A finger that stopped before it lifted doesn't glide.
+    if (!dragging || event.timeStamp - lastTime > 100) return void (lastY = null);
+    lastY = null;
+    let last = performance.now();
+    const glide = (now) => {
+      const elapsed = now - last;
+      last = now;
+      velocity *= Math.pow(0.95, elapsed / 16);
+      if (Math.abs(velocity) < 0.05 || !scrollBy(velocity * elapsed)) return;
+      frame = requestAnimationFrame(glide);
+    };
+    frame = requestAnimationFrame(glide);
+  });
+}
 
 document.addEventListener("visibilitychange", () => {
   const s = current;
@@ -473,3 +539,4 @@ document.addEventListener("visibilitychange", () => {
   s.tries = 0;
   if (!s.ws && s.view !== "gone") connect(s, false);
 });
+

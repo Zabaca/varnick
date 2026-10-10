@@ -4,12 +4,12 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.zabaca.launchy</string>
+    <string>com.zabaca.varnick</string>
     <key>CFBundleName</key>
-    <string>Launchy</string>
+    <string>Varnick</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>While listening is on, Launchy transcribes what you say into today's transcript, on this Mac.</string>
+    <string>While listening is on, Varnick transcribes what you say into today's transcript, on this Mac.</string>
     <key>NSAudioCaptureUsageDescription</key>
-    <string>While listening is on, Launchy transcribes what your Mac plays (calls, videos) into today's transcript, on this Mac.</string>
+    <string>While listening is on, Varnick transcribes what your Mac plays (calls, videos) into today's transcript, on this Mac.</string>
 </dict>
 </plist>

@@ -89,7 +89,7 @@ There is no test target. After `make build` on a Mac with the identity:
 
 - **Accepted by the user on 2026-10-09,** relayed by the coordinator.
 - **The identity now exists on this Mac:** a Developer ID Application certificate issued under Apple's Developer ID G2 intermediate, valid to 2031-09-16. Its private key is backed up as "Setting up a Mac" says. The team ID stays out of the repository.
-- **ADR:** [0022](../../../adr/0022-builds-are-signed-with-developer-id-so-macos-knows-launchy-by-team-and-bundle-id.md).
+- **ADR:** [0022](../../../adr/0022-builds-are-signed-with-developer-id-so-macos-knows-varnick-by-team-and-bundle-id.md).
 - **Measured 2026-10-09: Accessibility and Screen Recording survive a rebuild.** They were granted on the signed build b157600 and still held after `make build` of 8fe2721 and a restart, with no visit to System Settings. Testing has the details.
 - **Grants that survive rebuilds reach every pane.** Every pane process is attributed to Launchy (`panes-share-launchys-permissions`). The same run read both grants true from a pane, so once granted they stay with every pane session across rebuilds; until now a rebuild at least stopped them applying. ADR 0022 records it.
 - This option is the first step of options 02 to 04, which sign the dev build the same way, so it can be built first on its own.

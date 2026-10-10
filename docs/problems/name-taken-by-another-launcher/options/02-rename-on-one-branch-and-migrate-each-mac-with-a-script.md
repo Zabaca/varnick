@@ -2,7 +2,8 @@
 problem: name-taken-by-another-launcher
 title: Rename everything on one branch, and migrate each Mac with a script run by hand, so that the app never knows the old names
 summary: The same measurement, rename, protocol bump, docs, GitHub renames, Ryzen cutover, going public and cleanup as option 01. The difference is where each Mac's data is moved. Instead of a first-launch migration inside Varnick, a one-time script is run by hand from a terminal with Launchy stopped. It ends the old zmx sessions, exports and imports the settings domain with the one key renamed, moves the support folder, copies the web data, checkpoints and renames the database, removes the old LaunchAgent and binary, then runs make install. Varnick's code holds only the new names. A guard in make run and make install refuses to start Varnick while the old settings domain exists and the new one doesn't, so it can't come up with an empty identity. Option 01's build guard and the Linux installer's guard stay.
-status: proposed
+status: rejected
+reason: The user chose option 01 on 2026-10-09. Its migration runs inside Varnick before anything reads saved state, so the order holds however Varnick is started. A script run by hand holds only if it is run first, and a Varnick started before it gets a new identity that paired Macs drop.
 ---
 
 ## Solution

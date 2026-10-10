@@ -188,7 +188,7 @@ async function load() {
 }
 
 /** `#s=<session>`: a pane's zmx session name, which has a lowercase uuid (`Zmx.paneID`). */
-const sessionHash = /^#s=(launchy-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+const sessionHash = /^#s=(varnick-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const noticeLine = $("notice");
 
 function notice(text) {
@@ -234,7 +234,23 @@ function route() {
     $("home").hidden = false;
     load();
   }
+  // A session opened from far down the home would otherwise keep the home's scroll.
+  fitViewport();
 }
+
+// The session and New session fill the screen, and the keyboard can scroll the page under them as it opens (Chrome brings the
+// focused box into view before it resizes the page): the page never scrolls back, so the header stays off the top. They
+// take the visible height and go back to the top whenever it changes. Not while pinched in, which also shrinks it.
+const fullScreen = () => document.body.classList.contains("in-session") || document.body.classList.contains("in-new");
+function fitViewport() {
+  const viewport = window.visualViewport;
+  if (!viewport || viewport.scale > 1.01) return;
+  document.documentElement.style.setProperty("--page-height", `${viewport.height}px`);
+  if (fullScreen() && (window.scrollX || window.scrollY)) window.scrollTo(0, 0);
+}
+window.visualViewport?.addEventListener("resize", fitViewport);
+window.visualViewport?.addEventListener("scroll", fitViewport);
+window.addEventListener("scroll", fitViewport);
 
 refreshButton.addEventListener("click", () => { notice(null); load(); });
 document.addEventListener("visibilitychange", () => {

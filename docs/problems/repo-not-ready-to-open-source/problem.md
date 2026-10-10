@@ -27,6 +27,8 @@ The user wants the repository at github.com/Zabaca/launchy made public, so that 
 
 Option 01's scrub is done, and so is its cutover: origin holds only main, whose root is the squashed commit 253012d. Left: making the repository public, and turning on private vulnerability reporting.
 
+Later on 2026-10-09 the user chose to rename Launchy to Varnick before going public (name-taken-by-another-launcher, option 01 accepted). The steps left here, and the check from outside, now wait until the rename has merged, both GitHub renames are done (they were, the same day), every machine runs Varnick, and the public-repo check has run again over the renamed tree. They then run against Zabaca/varnick.
+
 ## Today
 
 ### The repository

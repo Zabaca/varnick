@@ -1,0 +1,10 @@
+{
+  "name": "varnick-site",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-11-01",
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "varnick.com/*", "zone_name": "varnick.com" },
+    { "pattern": "www.varnick.com/*", "zone_name": "varnick.com" }
+  ]
+}

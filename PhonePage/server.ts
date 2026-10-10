@@ -21,8 +21,8 @@ import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, resumeCon
 import { clean, Relay, Slots } from "./relay";
 import { decideOpen, endText, isSessionName } from "./terminal";
 
-/** The relay protocol this server speaks (`PeerProtocol.version` in Packages/LaunchyPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 18;
+/** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
+export const PROTOCOL_VERSION = 19;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */
@@ -266,7 +266,7 @@ async function main(): Promise<void> {
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
       if (path === "/api/end") {
         const session = typeof body === "object" && body !== null ? (body as Record<string, unknown>).session : undefined;
-        if (!isSessionName(session)) return plain(400, "Not a Launchy session name");
+        if (!isSessionName(session)) return plain(400, "Not a Varnick session name");
         // The host decides: a session this device started ends, any other is released to its host.
         const ended = await relay.ask("end", device.id, { session });
         if (!ended.ok) return json({ ok: false, error: ended.error }, 502);
@@ -295,7 +295,7 @@ async function main(): Promise<void> {
     }
     if (path === "/api/session" && request.method === "GET") {
       const session = new URL(request.url).searchParams.get("name");
-      if (!isSessionName(session)) return plain(400, "Not a Launchy session name");
+      if (!isSessionName(session)) return plain(400, "Not a Varnick session name");
       // Every open and every reconnect asks first: the label says whether to attach, show who has it, or say it ended.
       return json({ ...decideOpen(await relay.ask("status", device.id, { sessions: [session] }), session, device), host: host.name });
     }

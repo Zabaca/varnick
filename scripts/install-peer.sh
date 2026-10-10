@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
-# Install or update Launchy's headless relay on a Linux host, from the Mac you build on.
+# Install or update Varnick's headless relay on a Linux host, from the Mac you build on.
 #
-#   scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--commit REV] [--uninstall]
+#   scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--problems | --no-problems] [--commit REV] [--uninstall]
 #
 #   --name NAME    the host's name in the Macs' lists, written to config.json only when there is none
 #                  (default: its hostname with hyphens as spaces, so linux-box is "linux box")
 #   --page         also installs the Phone page (ADR 0011): `PhonePage/` as committed, Bun if the host has none (pinned,
-#                  checked by SHA-256), a systemd user unit that runs the server on a socket in ~/.launchy/phone, and
+#                  checked by SHA-256), a systemd user unit that runs the server on a socket in ~/.varnick/phone, and
 #                  publishes 8444 to it with `tailscale serve`. Without --page, a host that has the unit keeps it, gets
 #                  its files updated and its port kept published
 #   --no-page      unpublishes 8444 and removes the unit, its files and its socket
+#   --problems     the Claude sessions this host starts get the work-link hooks (ADR 0020) the Problems board reads: the host's
+#                  own switch, which a Mac's is Settings > Experimental. Writes ~/.varnick/problems
+#   --no-problems  removes it. Neither flag keeps what the host has; a host that never had it runs without the hooks, and sessions
+#                  already running keep the hooks they started with
 #   --commit REV   ships what REV holds, not what this checkout is on: the package, the Phone page, the far half and the
 #                  protocol and Mac command the verify uses all come from that commit (a full or short hash, or a ref such
 #                  as origin/main), and the working tree's changes are not looked at. The near half, this script, is the
 #                  working tree's. It is how a Mac upgrades a headless host to origin/main from any branch (`HeadlessUpgrade`)
-#   --uninstall    removes the relay, its link and its source, and the page. KEEPS state/, config.json, zmx and any
+#   --uninstall    removes the relay, its link and its source, the page and the problems file. KEEPS state/, config.json, zmx and any
 #                  running session
 #
 # What it publishes and unpublishes, and when it refuses, is ADR 0011's note of 2026-10-06 (so is PAGE_PUBLISH_PORT).
 #
-# Sends `Packages/LaunchyPeer` as it is at this checkout's commit (or --commit's), builds it on the host with the Swift
-# there (swiftly's, installed once by hand), and installs it under ~/.launchy. Nothing is built or
+# Sends `Packages/VarnickPeer` as it is at this checkout's commit (or --commit's), builds it on the host with the Swift
+# there (swiftly's, installed once by hand), and installs it under ~/.varnick. Nothing is built or
 # installed on this Mac, and nothing keeps running on the host between requests but the page's server, if it has one.
 #
 # Two halves: a far half (scripts/remote/install-peer.sh) piped into
@@ -51,7 +55,7 @@ report_unpublish() {
 PUBLISH_PORT=${PAGE_PUBLISH_PORT:-8444}
 case "$PUBLISH_PORT" in ''|*[!0-9]*) die "PAGE_PUBLISH_PORT must be a port number (got '$PUBLISH_PORT')" ;; esac
 
-TARGET=""; NAME=""; ACTION=install; PAGE=auto; REV=""
+TARGET=""; NAME=""; ACTION=install; PAGE=auto; PROBLEMS=auto; REV=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) [ $# -ge 2 ] || die "--name needs a value"; NAME=$2; shift 2 ;;
@@ -59,12 +63,14 @@ while [ $# -gt 0 ]; do
     --uninstall) ACTION=uninstall; shift ;;
     --page) [ "$PAGE" != remove ] || die "--page and --no-page together"; PAGE=on; shift ;;
     --no-page) [ "$PAGE" != on ] || die "--page and --no-page together"; PAGE=remove; shift ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    --problems) [ "$PROBLEMS" != off ] || die "--problems and --no-problems together"; PROBLEMS=on; shift ;;
+    --no-problems) [ "$PROBLEMS" != on ] || die "--problems and --no-problems together"; PROBLEMS=off; shift ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$TARGET" ] || die "one target only"; TARGET=$1; shift ;;
   esac
 done
-[ -n "$TARGET" ] || die "usage: scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--commit REV] [--uninstall]"
+[ -n "$TARGET" ] || die "usage: scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--problems | --no-problems] [--commit REV] [--uninstall]"
 case "$TARGET" in *[!A-Za-z0-9._@-]*) die "the target must be user@host, with letters, digits and . _ - only (got '$TARGET')" ;; esac
 # The name goes into a JSON string on the far side and, in single quotes, onto its command line.
 case "$NAME" in *[!A-Za-z0-9\ ._-]*) die "--name takes letters, digits, spaces and . _ - only (got '$NAME')" ;; esac
@@ -73,6 +79,7 @@ case "$NAME" in *[!A-Za-z0-9\ ._-]*) die "--name takes letters, digits, spaces a
 case "$REV" in -*|*[!A-Za-z0-9._/~^-]*) die "--commit takes a commit hash or a ref (got '$REV')" ;; esac
 [ -z "$REV" ] || [ "$ACTION" = install ] || die "--uninstall takes no --commit"
 [ "$ACTION" = install ] || [ "$PAGE" = auto ] || die "--uninstall takes the page away too: leave out --page and --no-page"
+[ "$ACTION" = install ] || [ "$PROBLEMS" = auto ] || die "--uninstall takes the problems file away too: leave out --problems and --no-problems"
 if [ "$ACTION" = uninstall ]; then
   log "uninstalling the relay from $TARGET"
   OUT=$("${SSH[@]}" "$TARGET" "env ACTION=uninstall PAGE_PUBLISH_PORT=$PUBLISH_PORT bash -s" <"$REMOTE_SCRIPT" | tee /dev/stderr) || true
@@ -95,13 +102,13 @@ COMMIT=$(git -C "$REPO" rev-parse --short "$REF") || die "$REPO isn't a git chec
 if [ -n "$REV" ]; then
   # The far half is the commit's too, so the host runs the installer that goes with what it is sent. Without --commit it is this
   # working tree's, as it always was.
-  REMOTE_SCRIPT=$(mktemp "${TMPDIR:-/tmp}/launchy-install-far.XXXXXX")
+  REMOTE_SCRIPT=$(mktemp "${TMPDIR:-/tmp}/varnick-install-far.XXXXXX")
   trap 'rm -f "$REMOTE_SCRIPT"' EXIT
   git -C "$REPO" show "$REF:scripts/remote/install-peer.sh" >"$REMOTE_SCRIPT" || die "$COMMIT has no scripts/remote/install-peer.sh"
 else
-  DIRTY=$(git -C "$REPO" status --porcelain -- Packages/LaunchyPeer)
+  DIRTY=$(git -C "$REPO" status --porcelain -- Packages/VarnickPeer)
   if [ -n "$DIRTY" ]; then
-    warn "uncommitted changes in Packages/LaunchyPeer are left out: the build is HEAD's ($COMMIT)"
+    warn "uncommitted changes in Packages/VarnickPeer are left out: the build is HEAD's ($COMMIT)"
     printf '%s\n' "$DIRTY" >&2
   fi
 fi
@@ -113,18 +120,22 @@ if ! grep -Eq '^# supports:.* RUN( |$)' "$REMOTE_SCRIPT" || ! grep -Eq '^# suppo
   RUN=""
   warn "$COMMIT's far half predates the # supports: RUN LOCK line: using the shared incoming.tar.gz names, and it may not guard against another install at once"
 fi
+# The problems file is the far half's to write, and one from before PROBLEMS would ignore the word and say nothing: stop before shipping.
+if [ "$PROBLEMS" != auto ] && ! grep -Eq '^# supports:.* PROBLEMS( |$)' "$REMOTE_SCRIPT"; then
+  die "$COMMIT's far half predates the # supports: PROBLEMS word, so --problems and --no-problems would be ignored: ship a later commit"
+fi
 # The protocol version and the command a Mac sends, both as committed, for the verify at the end.
-VERSION=$(git -C "$REPO" show "$REF:Packages/LaunchyPeer/Sources/LaunchyPeer/PeerProtocol.swift" | sed -n 's/.*static let version = \([0-9][0-9]*\).*/\1/p' | head -n 1)
-REMOTE_COMMAND=$(git -C "$REPO" show "$REF:Sources/Launchy/PeerSocket.swift" \
-  | sed -n 's/^ *static let remoteCommand = #"\(.*\)"#$/\1/p' | sed 's/\\#(name)/launchy-peer/g')
+VERSION=$(git -C "$REPO" show "$REF:Packages/VarnickPeer/Sources/VarnickPeer/PeerProtocol.swift" | sed -n 's/.*static let version = \([0-9][0-9]*\).*/\1/p' | head -n 1)
+REMOTE_COMMAND=$(git -C "$REPO" show "$REF:Sources/Varnick/PeerSocket.swift" \
+  | sed -n 's/^ *static let remoteCommand = #"\(.*\)"#$/\1/p' | sed 's/\\#(name)/varnick-peer/g')
 [ -n "$VERSION" ] || die "couldn't read the protocol version from PeerProtocol.swift"
 [ -n "$REMOTE_COMMAND" ] || die "couldn't read PeerLink.remoteCommand from PeerSocket.swift"
 
 # What this ships (the package, the page less its fixtures and tests, the far half) is `RelayFiles.pathspecs` in
-# Sources/Launchy/RelayComparison.swift, which decides "relay unchanged": change both together.
-log "shipping Packages/LaunchyPeer at $COMMIT to $TARGET"
-git -C "$REPO" archive --format=tar.gz "$REF" Packages/LaunchyPeer \
-  | "${SSH[@]}" "$TARGET" "mkdir -p \"\$HOME/.launchy\" && cat > \"\$HOME/.launchy/incoming${RUN:+-$RUN}.tar.gz\""
+# Sources/Varnick/RelayComparison.swift, which decides "relay unchanged": change both together.
+log "shipping Packages/VarnickPeer at $COMMIT to $TARGET"
+git -C "$REPO" archive --format=tar.gz "$REF" Packages/VarnickPeer \
+  | "${SSH[@]}" "$TARGET" "mkdir -p \"\$HOME/.varnick\" && cat > \"\$HOME/.varnick/incoming${RUN:+-$RUN}.tar.gz\""
 
 # The page, as committed, when it is wanted: asked for, or already installed there. The Makefile's copy leaves out the tests and
 # fixtures too. A second archive: the package's is unpacked with --strip-components=2.
@@ -133,7 +144,7 @@ if [ "$PAGE" = on ]; then
   SHIP_PAGE=yes
 elif [ "$PAGE" = auto ]; then
   # Tailscale SSH swallows exit codes: the answer is a word.
-  HAS_UNIT=$("${SSH[@]}" "$TARGET" '[ -f "$HOME/.config/systemd/user/launchy-phone-page.service" ] && echo yes || echo no' </dev/null | tail -n 1)
+  HAS_UNIT=$("${SSH[@]}" "$TARGET" '[ -f "$HOME/.config/systemd/user/varnick-phone-page.service" ] && echo yes || echo no' </dev/null | tail -n 1)
   if [ "$HAS_UNIT" = yes ]; then SHIP_PAGE=yes; fi
 fi
 if [ "$SHIP_PAGE" = yes ]; then
@@ -145,14 +156,16 @@ if [ "$SHIP_PAGE" = yes ]; then
   fi
   log "shipping PhonePage at $COMMIT to $TARGET"
   git -C "$REPO" archive --format=tar.gz "$REF" PhonePage ':(exclude)PhonePage/fixtures' ':(exclude)*.test.ts' \
-    | "${SSH[@]}" "$TARGET" "mkdir -p \"\$HOME/.launchy\" && cat > \"\$HOME/.launchy/incoming-page${RUN:+-$RUN}.tar.gz\""
+    | "${SSH[@]}" "$TARGET" "mkdir -p \"\$HOME/.varnick\" && cat > \"\$HOME/.varnick/incoming-page${RUN:+-$RUN}.tar.gz\""
 fi
 
 # 2 to 9, on the host: Swift, libstdc++, build, check, swap, zmx, config, identity, build and the page.
 log "building and installing on $TARGET (a first build takes a few minutes)"
-OUT=$("${SSH[@]}" "$TARGET" "env ACTION=install COMMIT=$COMMIT RUN=$RUN NAME='$NAME' PAGE=$PAGE PAGE_PUBLISH_PORT=$PUBLISH_PORT bash -s" <"$REMOTE_SCRIPT" | tee /dev/stderr) || true
+OUT=$("${SSH[@]}" "$TARGET" "env ACTION=install COMMIT=$COMMIT RUN=$RUN NAME='$NAME' PAGE=$PAGE PROBLEMS=$PROBLEMS PAGE_PUBLISH_PORT=$PUBLISH_PORT bash -s" <"$REMOTE_SCRIPT" | tee /dev/stderr) || true
 
-[ "$(printf '%s\n' "$OUT" | marker SHIPPED)" != missing ] || die "the package didn't arrive on $TARGET (~/.launchy/incoming${RUN:+-$RUN}.tar.gz is missing there)"
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): the far half refuses where ~/.launchy exists.
+[ "$(printf '%s\n' "$OUT" | marker OLDROOT)" != present ] || die "$TARGET still has ~/.launchy, so it still runs Launchy's relay: that is the user's step, the headless host's cutover (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md). Nothing was changed there. An agent must stop here and report this to the user"
+[ "$(printf '%s\n' "$OUT" | marker SHIPPED)" != missing ] || die "the package didn't arrive on $TARGET (~/.varnick/incoming${RUN:+-$RUN}.tar.gz is missing there)"
 [ "$(printf '%s\n' "$OUT" | marker LOCK)" != busy ] || die "another install on $TARGET held the lock for over 15 minutes: nothing was changed"
 SWIFT=$(printf '%s\n' "$OUT" | marker SWIFT)
 case "$SWIFT" in
@@ -170,8 +183,14 @@ ID=$(printf '%s\n' "$OUT" | marker ID)
 [ "$(printf '%s\n' "$OUT" | marker BUILD)" = "$COMMIT" ] || die "the build wasn't recorded on $TARGET (see above)"
 [ "$(printf '%s\n' "$OUT" | marker FALLBACK)" != gcc13 ] || warn "the build needed GCC 13's libstdc++ folder (libstdc++-14-dev: $(printf '%s\n' "$OUT" | marker STDCXX))"
 if [ "$(printf '%s\n' "$OUT" | marker CONFIG)" = kept ] && [ -n "$NAME" ]; then
-  warn "config.json already exists, so --name was ignored: edit ~/.launchy/config.json there"
+  warn "config.json already exists, so --name was ignored: edit ~/.varnick/config.json there"
 fi
+
+# The problems file, as the far half left it: what was asked, or what the host had (on, off, or unknown from an older far half).
+PROBLEMS_STATE=$(printf '%s\n' "$OUT" | marker PROBLEMS)
+# A far half from before PROBLEMS says nothing, which only matters when a flag was given (refused above, before shipping).
+[ -n "$PROBLEMS_STATE" ] || PROBLEMS_STATE=unknown
+[ "$PROBLEMS" = auto ] || [ "$PROBLEMS" = "$PROBLEMS_STATE" ] || die "the problems file on $TARGET is '$PROBLEMS_STATE', not '$PROBLEMS' (see above)"
 
 # 10. The page's markers, judged. Nothing here changes a thing on the host.
 PAGE_STATE=$(printf '%s\n' "$OUT" | marker PAGE)
@@ -179,11 +198,11 @@ UNIT_PORT=$(printf '%s\n' "$OUT" | marker PAGEPORT)
 case "$PAGE_STATE" in
   installed|kept)
     [ "$(printf '%s\n' "$OUT" | marker PUBLISHPORT)" = "$PUBLISH_PORT" ] || die "the far half says it publishes port '$(printf '%s\n' "$OUT" | marker PUBLISHPORT)', not $PUBLISH_PORT (see above)"
-    [ "$(printf '%s\n' "$OUT" | marker UNIT)" = active ] || die "the page's unit isn't active on $TARGET (see above): journalctl --user -u launchy-phone-page"
-    [ "$(printf '%s\n' "$OUT" | marker ANSWERS)" = yes ] || die "the page's socket on $TARGET doesn't answer (see above): journalctl --user -u launchy-phone-page"
+    [ "$(printf '%s\n' "$OUT" | marker UNIT)" = active ] || die "the page's unit isn't active on $TARGET (see above): journalctl --user -u varnick-phone-page"
+    [ "$(printf '%s\n' "$OUT" | marker ANSWERS)" = yes ] || die "the page's socket on $TARGET doesn't answer (see above): journalctl --user -u varnick-phone-page"
     [ "$(printf '%s\n' "$OUT" | marker KILLMODE)" = process ] || die "the page's unit lacks KillMode=process on $TARGET: stopping it would end every session its relay started"
     [ "$(printf '%s\n' "$OUT" | marker SOCKET)" = 600 ] || die "the page's socket on $TARGET isn't mode 600 (see above)"
-    [ "$(printf '%s\n' "$OUT" | marker PHONEDIR)" = 700 ] || die "~/.launchy/phone on $TARGET isn't mode 700 (see above)"
+    [ "$(printf '%s\n' "$OUT" | marker PHONEDIR)" = 700 ] || die "~/.varnick/phone on $TARGET isn't mode 700 (see above)"
     # Anything but a clean off is a failure: Funnel unread is Funnel unknown.
     [ "$(printf '%s\n' "$OUT" | marker FUNNEL)" = off ] || die "Funnel isn't known to be off for $PUBLISH_PORT on $TARGET ($(printf '%s\n' "$OUT" | marker FUNNEL)): the sessions might be public"
     [ "$(printf '%s\n' "$OUT" | marker LINGER)" = yes ] || warn "linger is off for the user on $TARGET: the page stops when the last login ends. Turn it on: sudo loginctl enable-linger \$USER"
@@ -220,6 +239,7 @@ printf '  binary:     %s bytes, static %s, runs %s\n' "$(printf '%s\n' "$OUT" | 
 printf '  zmx:        %s\n' "$(printf '%s\n' "$OUT" | marker ZMX)"
 printf '  id:         %s\n' "$ID"
 printf '  config:     %s\n' "$(printf '%s\n' "$OUT" | marker CONFIG)"
+printf '  problems:   %s (work-link hooks in new sessions)\n' "$PROBLEMS_STATE"
 echo "Add it on each Mac: Settings > Peers > Add $TARGET"
 
 case "$PAGE_STATE" in
@@ -256,7 +276,7 @@ case "$PAGE_STATE" in
       conflict) PUBLISH_PROBLEM="$PUBLISH_NOTE. The page is installed but not published: take that mount down yourself (tailscale serve --https=$PUBLISH_PORT off on $TARGET) if it isn't wanted, then run this again" ;;
       *) PUBLISH_PROBLEM="port $PUBLISH_PORT on $TARGET was not published (${PUBLISHED:-no answer}): ${PUBLISH_NOTE:-see above}" ;;
     esac
-    echo "Add the phone: ssh $TARGET '~/.launchy/launchy-peer device add <its tailnet name>'"
+    echo "Add the phone: ssh $TARGET '~/.varnick/varnick-peer device add <its tailnet name>'"
     [ -z "$PUBLISH_PROBLEM" ] || die "$PUBLISH_PROBLEM"
     ;;
   removed)

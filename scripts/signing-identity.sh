@@ -1,5 +1,5 @@
 #!/bin/sh
-# Chooses what `make build` signs Launchy and zmx with. Prints a certificate's SHA-1 on stdout, or "-" for an ad-hoc
+# Chooses what `make build` signs Varnick and zmx with. Prints a certificate's SHA-1 on stdout, or "-" for an ad-hoc
 # signature; the reasons go to stderr, and a choice it can't make fails (exit 1) so the build never signs under another
 # identity than the user meant.
 #
@@ -7,6 +7,9 @@
 # part of its name, or "-" to sign ad hoc on purpose. Unset, it is the only "Developer ID Application" identity in the
 # keychain; with none, "-", unless the keychain lists one that has gone invalid, which fails. A named identity that isn't in the keychain fails rather than falling back, and so do two or
 # more matches. Nothing here or in the Makefile names an identity: this stays fit to publish.
+#
+# With --developer-id (`make app`) the choice must be a "Developer ID Application" identity: ad hoc, or any other kind of
+# certificate (a development one, say), fails, since Gatekeeper accepts only a Developer ID build.
 #
 # $SIGNING_IDENTITIES_FROM and $SIGNING_ALL_IDENTITIES_FROM (files of `security find-identity -p codesigning` output, with
 # and without -v) stand in for the keychain.
@@ -25,11 +28,16 @@ say() {
   if [ -t 2 ]; then echo "signing with: $2" >&2; else echo "signing with identity $(printf '%.8s' "$1")" >&2; fi
 }
 
+# The ad-hoc answer, which --developer-id refuses.
+adhoc() {
+  if [ "$1" = --developer-id ]; then echo "error: signing: an app is never ad hoc; it needs a Developer ID Application identity" >&2; exit 1; fi
+  echo "-"
+  exit 0
+}
 wanted=$SIGN_IDENTITY
 if [ "$wanted" = "-" ]; then
   echo "signing ad hoc: SIGN_IDENTITY is -" >&2
-  echo "-"
-  exit 0
+  adhoc "$1"
 fi
 if [ -n "$wanted" ]; then
   matches=$(printf '%s\n' "$identities" | grep -i -F -- "$wanted" | grep -v '^$')
@@ -46,8 +54,7 @@ else
       exit 1
     fi
     echo "signing ad hoc: no Developer ID Application identity in the keychain" >&2
-    echo "-"
-    exit 0
+    adhoc "$1"
   fi
 fi
 count=$(printf '%s\n' "$matches" | grep -c .)
@@ -61,5 +68,11 @@ if [ "$count" -gt 1 ]; then
   exit 1
 fi
 hash=${matches%% *}
+if [ "$1" = --developer-id ]; then
+  case "${matches#* }" in "Developer ID Application"*) ;; *)
+    echo "error: signing: the identity chosen isn't a Developer ID Application one, which an app needs" >&2
+    exit 1 ;;
+  esac
+fi
 say "$hash" "${matches#* }"
 echo "$hash"

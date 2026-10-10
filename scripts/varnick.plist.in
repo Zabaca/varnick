@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for `make install`: @LABEL@, @ROOT@ and @LOG@ are filled in by sed. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@LABEL@</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@ROOT@/.build/release/Varnick</string>
+    </array>
+    <!-- The repo, so .env and the Claude session directory resolve as under `make run`. The database is Varnick's default, in Application Support. -->
+    <key>WorkingDirectory</key>
+    <string>@ROOT@</string>
+    <!-- Start at login only: no KeepAlive, so Quit from the menu bar stays quit. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>@LOG@</string>
+    <key>StandardErrorPath</key>
+    <string>@LOG@</string>
+</dict>
+</plist>

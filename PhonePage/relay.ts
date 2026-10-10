@@ -1,5 +1,5 @@
 // The only way the page asks about sessions: the host's own relay, run as a child with an argument list and a device's
-// id as `by`. The page decides nothing about sessions, so every rule of the relay and of the host's Launchy holds for it
+// id as `by`. The page decides nothing about sessions, so every rule of the relay and of the host's Varnick holds for it
 // unchanged (ADR 0011). User text only ever goes inside the request's JSON.
 
 import type { Config, Device } from "./checks";
@@ -27,7 +27,7 @@ export function relayArguments(relay: string, request: string): string[] {
  */
 export function relayEnvironment(config: Pick<Config, "zmxDir" | "userHome">, home: string): Record<string, string> {
   const env: Record<string, string> = { HOME: home, PATH: "/usr/bin:/bin" };
-  if (config.zmxDir) env.LAUNCHY_ZMX_DIR = config.zmxDir;
+  if (config.zmxDir) env.VARNICK_ZMX_DIR = config.zmxDir;
   if (config.userHome) env.CFFIXED_USER_HOME = config.userHome;
   return env;
 }

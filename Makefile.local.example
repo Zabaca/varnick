@@ -4,3 +4,17 @@
 # A certificate's SHA-1 (`security find-identity -v -p codesigning`), or any part of its name; "-" signs ad hoc on purpose.
 # A name that isn't in the keychain stops the build instead of signing ad hoc.
 SIGN_IDENTITY := 0000000000000000000000000000000000000000
+
+# What `make app` hands to `notarytool` to prove who is asking: one of the two forms below. `make app` refuses with neither,
+# and each variable also works on the command line. Nothing here is a secret itself, but none of it goes in a tracked file.
+#
+# 1. A keychain profile, made once on the release Mac with `xcrun notarytool store-credentials <name>`. The profile holds the
+#    credentials; only its name goes here. The profile cannot be read while the screen is locked.
+NOTARY_PROFILE := example-notary-profile
+
+# 2. An App Store Connect API key (a team key made in App Store Connect): the path to its .p8 file, the key's ID and the issuer's
+#    UUID. This form works with the screen locked. All three go together, and when they are set they win over NOTARY_PROFILE.
+#    Make does not expand ~, so spell the path out or build it from $(HOME).
+# NOTARY_KEY := $(HOME)/keys/AuthKey_EXAMPLE.p8
+# NOTARY_KEY_ID := EXAMPLEKEY1
+# NOTARY_ISSUER := 00000000-0000-0000-0000-000000000000
