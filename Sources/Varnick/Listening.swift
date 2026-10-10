@@ -424,7 +424,8 @@ private final class Capture {
             throw ListeningError("Can't convert \(source.rawValue) audio for the speech model")
         }
         if !contextualStrings.isEmpty {
-            // Whether SpeechTranscriber uses them is unverified; a refusal costs nothing.
+            // Measured to change no transcript on macOS 26.5.1 (these, the old strings and none gave the same text); kept anyway. A
+            // refusal costs nothing.
             let context = AnalysisContext()
             context.contextualStrings = [.general: contextualStrings]
             try? await analyzer.setContext(context)

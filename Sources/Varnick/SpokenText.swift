@@ -7,15 +7,23 @@ import Foundation
 enum SpokenText {
     // MARK: The wake phrase
 
+    /// The words the transcriber writes for "Varnick"; the whole token must match.
+    private static let namePattern = "^[vw][ao][rl]?[nld][iea](c|ck|k|g)$"
+
     /// What follows "hey varnick" in `text`, or nil when `text` doesn't wake Varnick; empty when nothing follows. "Hey" (or "hay")
-    /// then a word starting "varnick" or "varnik", beginning within the first three words, ignoring case and punctuation. A
-    /// fragment of the name alone, such as "nick", never wakes it. Provisional: the rename's measurement sets the spellings the
-    /// transcriber writes for "Varnick" (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "Wake phrase").
+    /// beginning within the first three words, then one word that is the whole of `namePattern`, ignoring case and punctuation.
+    /// A fragment of the name alone ("nick", "Hey Nick") never wakes it, nor does a word that merely resembles it (Warwick,
+    /// Barney, Varun, varnish). The pattern is the spellings the transcriber was seen to write for "Varnick" (varnik most often,
+    /// then varnick, vanik, valnik, varnig, vardik, vonic and the like), measured with synthesized speech on the user's machine;
+    /// real-voice recordings pending. In that measurement it missed fewer clean clips than "Hey Launchy" did and more in loud
+    /// noise, and woke on none of the near-miss negatives. A candidate, untested on real speech: also take "a" for "hey" right
+    /// before such a word, since "Hey Varnick" was often written "A varnick". Docs:
+    /// docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "Wake phrase".
     static func request(in text: String) -> String? {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         let tokens = words.map(token)
         for i in 0..<min(3, max(0, tokens.count - 1)) where tokens[i] == "hey" || tokens[i] == "hay" {
-            guard ["varnick", "varnik"].contains(where: tokens[i + 1].hasPrefix) else { continue }
+            guard tokens[i + 1].range(of: namePattern, options: .regularExpression) != nil else { continue }
             let rest = i + 2
             let request = words[rest...].joined(separator: " ")
             return String(request.drop { $0.isWhitespace || ",.:;!?-–—".contains($0) })
