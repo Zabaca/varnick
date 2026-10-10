@@ -191,7 +191,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = Self.editMenu()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Varnick")
+        statusItem.button?.image = FoldMark.menuBarImage(listening: false)
+        // A bare executable has no bundle icon; AppKit shows this wherever it shows the app's icon.
+        NSApp.applicationIconImage = FoldMark.appIcon()
         let menu = NSMenu()
         menu.autoenablesItems = false   // the listening item is disabled below macOS 26
         menu.addItem(withTitle: "Show Varnick", action: #selector(showFromMenu), keyEquivalent: "")
@@ -336,8 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// The icon shows at a glance that Varnick is listening; the menu item says what a click
     /// does, or why listening isn't running.
     private func showListening(_ state: Listener.State) {
-        statusItem.button?.image = NSImage(systemSymbolName: state.isListening ? "waveform" : "magnifyingglass",
-                                           accessibilityDescription: "Varnick")
+        statusItem.button?.image = FoldMark.menuBarImage(listening: state.isListening)
         let available: Bool
         if case .unavailable = state { available = false } else { available = true }
         let keySuffix = available ? Settings.shared.combo(.toggleListening).map { " (\($0.label))" } ?? "" : ""
