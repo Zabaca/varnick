@@ -175,10 +175,17 @@ enum LaunchSnapshot {
 
     /// The last successful build in a checkout: newer than the running one when `make build` has run since the launch.
     static func latestStamp(in checkout: URL) -> BuildStamp? {
-        let folder = checkout.appendingPathComponent(".build/release", isDirectory: true)
+        BuildStamp.read(in: latestFolder(in: checkout), binary: latestBinary(in: checkout))
+    }
+
+    static func latestBinary(in checkout: URL) -> URL {
         // The relay's executable URL is the link `varnick-peer`; its target's name is the binary's.
         let binary = Bundle.main.executableURL?.resolvingSymlinksInPath().lastPathComponent ?? "Varnick"
-        return BuildStamp.read(in: folder, binary: folder.appendingPathComponent(binary))
+        return latestFolder(in: checkout).appendingPathComponent(binary)
+    }
+
+    private static func latestFolder(in checkout: URL) -> URL {
+        checkout.appendingPathComponent(".build/release", isDirectory: true)
     }
 
     /// The relay's own build: in a bundle the resource folder's stamp, else the stamp in the snapshot folder it runs from, else the build

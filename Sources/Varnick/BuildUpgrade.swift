@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import VarnickPeer
 
 // What a Mac's running Varnick does when another Mac, or its own user, asks it to upgrade or restart (the `upgrade` and `restart` requests;
@@ -393,10 +394,22 @@ final class BuildUpgrade {
         return nil
     }
 
-    /// For the menu's confirmation: a restart starts whatever build is on disk, and a new build asks for macOS permissions again.
+    /// For the menu's confirmation: a restart starts whatever build is on disk, and an ad-hoc signed one asks for macOS permissions again.
     func newerBuildNote() -> String? {
         guard let checkout = LaunchSnapshot.checkout, let latest = newerBuild(in: checkout) else { return nil }
-        return "A newer build is waiting (\(latest.short)); restarting starts it and macOS will ask for permissions again."
+        let asks = Self.startingVoidsGrants(LaunchSnapshot.latestBinary(in: checkout)) ? " and macOS will ask for permissions again" : ""
+        return "A newer build is waiting (\(latest.short)); restarting starts it\(asks)."
+    }
+
+    /// Whether starting this binary makes macOS ask for permissions again (ADR 0022): it is signed ad hoc, or its signature can't be
+    /// read. A Developer ID build keeps its grants. Only the ad-hoc flag is read, never the team identifier.
+    private static func startingVoidsGrants(_ binary: URL) -> Bool {
+        var code: SecStaticCode?
+        var info: CFDictionary?
+        guard SecStaticCodeCreateWithPath(binary as CFURL, [], &code) == errSecSuccess, let code,
+              SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let flags = (info as? [String: Any])?[kSecCodeInfoFlags as String] as? NSNumber else { return true }
+        return flags.uint32Value & SecCodeSignatureFlags.adhoc.rawValue != 0
     }
 
     /// After the reply: the detached restart `make run` does (`scripts/restart.sh` in a session of its own), which ends this Varnick and starts the

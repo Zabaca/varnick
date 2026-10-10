@@ -75,8 +75,8 @@ logout ends the sessions either way.
 The menu bar menu's **Restart Varnick** (just above Quit) asks first and lists the panes that would end, if any.
 In the installed app it opens a new copy of the app and quits this one; the new copy waits for this one to let go.
 From a checkout it restarts without building, with `scripts/restart.sh`, so the macOS permission grants a build
-would void stay. If a build has run since Varnick started, the restart starts that build and macOS asks for the
-permissions again; the question says so. The item is hidden when the checkout's `scripts/restart.sh` or the
+would void stay. If a build has run since Varnick started, the restart starts that build; if it is signed ad hoc,
+macOS asks for the permissions again, and the question says so. The item is hidden when the checkout's `scripts/restart.sh` or the
 database can't be found from where Varnick runs, and a restart waits while a build is running.
 
 ## Peers
@@ -143,8 +143,8 @@ Varnick does the reading, drawing and clicking, with the code Hey Varnick uses. 
 Screen Recording to read the text of a window that lists nothing or of a Chrome page; Settings asks for
 both.
 
-**A click happens without asking**: the arrow shows on the target for a second first, and there is no
-`type`. A session started with Skip permissions has no prompt before a tool at all; one without gets Claude
+**A click happens without asking**: the arrow shows on the target for a second first, then the click brings
+its app to the front, and there is no `type`. A session started with Skip permissions has no prompt before a tool at all; one without gets Claude
 Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while
 still asking for `click` (not checked). A session gains the tools when it starts, so restart a running one
 (⌘⌥R) after turning the switch on; turning it off stops every session's tools at once. It is independent of

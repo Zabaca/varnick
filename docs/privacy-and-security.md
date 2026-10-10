@@ -206,7 +206,7 @@ Screen access (ADR 0023) gives the sessions started or restarted while it is on 
 `look`, `point` and `click`.
 
 - **A session can click for you, and nothing asks.** The arrow shows on the target for a second, then the click
-  happens: no approval prompt, no per-pane switch, no list of apps to keep out. There is no `type`. A session
+  brings its app to the front and happens: no approval prompt, no per-pane switch, no list of apps to keep out. There is no `type`. A session
   with Skip permissions gets no prompt from Claude Code either; one without gets Claude Code's own prompt for an
   MCP tool you haven't allowed (inferred, not checked). Whatever can steer a session can then click as you.
 - **It adds little today,** because every pane already has the permissions (above): a session could already use

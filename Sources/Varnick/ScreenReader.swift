@@ -174,7 +174,7 @@ enum ScreenReader {
             return element
         }
         reading.entryFrames += walk.entryFrames
-        reading.chromeBlind = walk.sawEmptyWebArea && bundle.lowercased().contains("chrom")
+        reading.chromeBlind = walk.sawEmptyWebArea && isChromium(bundle: bundle)
         reading.emptyWebArea = walk.emptyWebArea
         reading.duration = began.duration(to: clock.now)
         return reading
@@ -187,6 +187,107 @@ enum ScreenReader {
             if let reference = target.reference { return frame(of: reference.element) }
             guard let window = target.window, let was = target.windowFrame else { return target.frame }
             return frame(of: window.element).flatMap { ScreenGeometry.moved(target.frame, from: was, to: $0) }
+        }.value
+    }
+
+    // MARK: Before a click
+
+    /// Longest the activation requests below wait on the app each.
+    private static let frontTimeout: Float = 0.5
+
+    /// Chrome and the other Chromium browsers, by bundle id.
+    private static func isChromium(bundle: String) -> Bool { bundle.lowercased().contains("chrom") }
+
+    /// What a click on an element is, for how it is made.
+    enum ClickContent {
+        /// In a page, or not known to be anywhere else: clicked, since a press through Accessibility there often reports success and does
+        /// nothing. The click must land inside the frame when there is one: the part of the page that shows, so not under the toolbar.
+        case page(CGRect?)
+        /// Not in a page: pressed when it can be.
+        case native
+        /// In a browser or Electron app, with the search cut short: where the page is, is not known.
+        case unplaced
+    }
+
+    /// Where the element is, from its ancestors up to the window: an `AXWebArea` among them, or the app is a browser or Electron app.
+    /// The frame is the intersection of every web area on the way (an iframe's sits inside the top-level page's) and of every scroll
+    /// area whose frame reads (Safari's web area can be the whole document). A search cut short is `unplaced` in a browser or Electron
+    /// app, and `page` with the frames so far elsewhere, never `native`. Off the main actor, within `budget`.
+    static func content(of target: ScreenTarget, in app: NSRunningApplication) async -> ClickContent {
+        let webHosted = isElectron(app) || isChromium(bundle: app.bundleIdentifier ?? "")
+        guard let reference = target.reference else { return webHosted ? .page(nil) : .native }
+        return await Task.detached { () -> ClickContent in
+            let deadline = ContinuousClock.now.advanced(by: budget)
+            var area: CGRect?
+            var sawPage = false
+            var cutShort: ClickContent { webHosted ? .unplaced : .page(area) }
+            func narrow(to element: AXUIElement) -> Bool {
+                guard let frame = frame(of: element) else { return false }
+                area = area.map { $0.intersection(frame) } ?? frame
+                return true
+            }
+            var element = reference.element
+            for _ in 0..<maxDepth {
+                guard ContinuousClock.now < deadline else { return cutShort }
+                AXUIElementSetMessagingTimeout(element, callTimeout)
+                switch string(element, kAXRoleAttribute) {
+                case "AXWebArea":
+                    sawPage = true
+                    guard narrow(to: element) else { return cutShort }
+                case "AXScrollArea":
+                    _ = narrow(to: element)
+                default:
+                    break
+                }
+                var parent: CFTypeRef?
+                switch AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) {
+                case .success:
+                    guard let parent, let next = asElement(parent) else { return cutShort }
+                    element = next
+                case .noValue, .attributeUnsupported:
+                    return sawPage || webHosted ? .page(area) : .native
+                default:
+                    return cutShort
+                }
+            }
+            return cutShort
+        }.value
+    }
+
+    /// The window the target is in, for raising it: recognised text's window, else the element's own.
+    static func window(of target: ScreenTarget) async -> AXReference? {
+        if let window = target.window { return window }
+        guard let reference = target.reference else { return nil }
+        return await Task.detached { windowAttribute(of: reference.element) }.value
+    }
+
+    /// The window of the app's element at a point (Accessibility coordinates), for raising it.
+    static func window(at point: CGPoint, pid: pid_t) async -> AXReference? {
+        await Task.detached { () -> AXReference? in
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, callTimeout)
+            var hit: AXUIElement?
+            guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit else { return nil }
+            return windowAttribute(of: hit)
+        }.value
+    }
+
+    private static func windowAttribute(of element: AXUIElement) -> AXReference? {
+        AXUIElementSetMessagingTimeout(element, callTimeout)
+        return attribute(element, kAXWindowAttribute).flatMap(asElement).map(AXReference.init)
+    }
+
+    /// Asks the app, through Accessibility, to come to the front and raises the window. Only a request: the caller waits to see the
+    /// app in front.
+    static func requestFront(pid: pid_t, raising window: AXReference?) async {
+        await Task.detached {
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, frontTimeout)
+            _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+            if let window {
+                AXUIElementSetMessagingTimeout(window.element, frontTimeout)
+                _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+            }
         }.value
     }
 
