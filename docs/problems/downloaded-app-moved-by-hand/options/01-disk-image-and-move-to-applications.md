@@ -2,7 +2,7 @@
 problem: downloaded-app-moved-by-hand
 title: A disk image with an install window, and a Move to Applications offer in the app
 summary: Accepted on 2026-10-10 ("do both"). `make app` also makes Varnick.dmg from the same stapled app. Its window shows Varnick, an arrow on a background with the Fold, and a shortcut to Applications. dmgbuild writes the window's layout, pinned and run with uvx on the maintainer's Mac, so no Finder window opens and nothing of it ships. The image is signed, notarized and stapled. A release carries the dmg as the download people are pointed at, and keeps the zip so its links work. In the app, a copy macOS translocated, or one running straight off a disk image, offers Move to Applications and Quit instead of refusing. Move puts it in /Applications, replacing an older copy only once that has quit. It removes the download's quarantine from the moved copy after checking its signature, opens it, quits, and ejects the image. Where it can't move, the app falls back to today's message with the reason. Rough effort is three and a half days, plus an hour of the user's time for the hand test.
-status: accepted
+status: shipped
 ---
 
 ## Solution

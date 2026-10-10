@@ -20,13 +20,16 @@ setting lets others do, is in [privacy and security](privacy-and-security.md).
 
 ## Install and update
 
-Download `Varnick.zip` from [the latest release](https://github.com/Zabaca/varnick/releases/latest) (the
-link `https://github.com/Zabaca/varnick/releases/latest/download/Varnick.zip` always reaches the newest
-zip). A published build is signed and notarized, so macOS opens it without a security warning.
+Download `Varnick.dmg` from [the latest release](https://github.com/Zabaca/varnick/releases/latest) (the
+link `https://github.com/Zabaca/varnick/releases/latest/download/Varnick.dmg` always reaches the newest
+one). The app and the disk image are signed and notarized, so macOS opens them without a security warning.
+Each release also carries `Varnick.zip`, the same app zipped.
 
-1. Unzip it and move `Varnick.app` to Applications, then open it. Opened straight from Downloads, macOS runs
-   it from a temporary copy; Varnick says so, asks you to move it to Applications and quits, so peers and
-   the Phone page never point at a path that is gone at the next launch.
+1. Open the disk image and drag Varnick onto Applications in its window, then open it from Applications.
+   Opened straight from the disk image or from Downloads, Varnick offers **Move to Applications**: it moves
+   itself there, opens the moved copy and ejects the image, so peers and the Phone page never point at a
+   path that is gone at the next launch. If it can't (Applications isn't writable, or a Varnick is running),
+   it says why and quits.
 2. macOS asks for permissions when a feature first needs one, not at the first launch. Listening asks for
    the microphone and system audio; Point at the screen and Screen access ask for Accessibility and Screen
    Recording (Settings shows each and has a button to grant it). Screen Recording takes effect after a
