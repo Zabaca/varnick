@@ -347,6 +347,124 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
 .theme button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 @media (max-width: 48rem) { .fcols { grid-template-columns: 1fr 1fr; } .fbrand { grid-column: 1 / -1; } }
 
+
+/* ===== Animated hero. Live HTML/CSS/JS, no libraries. Real UI sizes: rows 40/44/48/64, panel 760 wide. ===== */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.ha-k { display: inline-grid; place-items: center; min-width: 1.9rem; height: 1.9rem; padding: 0 .45rem; border: 1.5px solid var(--accent); border-radius: 7px; color: var(--accent); font: 600 1rem/1 var(--mono); background: color-mix(in srgb, var(--accent) 9%, transparent); flex: none; }
+.ha-legend { list-style: none; margin: 1.3rem 0 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem 1.6rem; font-size: .95rem; color: var(--muted); }
+.ha-legend li { display: inline-flex; align-items: center; gap: .55rem; }
+.hero-anim .ha-stage { display: none; }
+.hero-anim.ha-on .ha-stage { display: block; }
+.hero-anim.ha-on .ha-still { display: none; }
+
+.ha-stage { position: relative; height: 424px; padding: 20px 14px 0; border-radius: var(--r); background: var(--panel); border: 1px solid var(--edge); overflow: hidden; }
+@container (max-width: 560px) { .ha-stage { padding: 14px 8px 0; } }
+.ha-app { margin: 0 auto; max-width: 760px; height: 60px; }
+.ha-app.ready { transition: height .4s cubic-bezier(.3,.7,.2,1); }
+.ha-in { position: relative; }
+.ha-in .hav { display: none; animation: ha-view .3s ease both; }
+@keyframes ha-view { from { opacity: 0; } }
+@keyframes ha-in { from { opacity: 0; transform: translateY(-4px); } }
+.ha-app[data-view="prompt"] .hav-prompt, .ha-app[data-view="claude"] .hav-claude, .ha-app[data-view="board"] .hav-board { display: block; }
+.ha-app[data-view="claude"] .ha-bar, .ha-app[data-view="board"] .ha-bar { display: none; }
+.hav-prompt > .new { animation: ha-in .22s ease both; }
+.ha-bar .q { flex: 1; display: block; text-overflow: clip; white-space: pre; }
+.ha-bar .ph { color: var(--m-ter); }
+.ha-bar .caret { margin-left: 1px; }
+.hr.sp4 { height: 4px; background: none; }
+.sp8 { height: 8px; }
+.prow { margin: 6px 8px; }
+.t1b { white-space: nowrap; overflow: hidden; }
+.t1b .pill { flex: none; }
+.row, .srow, .fr { transition: background-color .2s; }
+.srow { display: flex; align-items: center; gap: 10px; height: 40px; margin: 0 6px; padding: 0 10px; border-radius: 8px; }
+.srow.sel { background: var(--m-sel); }
+.srow .ic { font-size: 14px; color: var(--c-claude); width: 20px; }
+.srow .stk { font-weight: 500; flex: none; }
+.srow .sdet { flex: 1; font-size: 11.5px; color: var(--m-sec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .stag, .row .stag { font-size: 10.5px; color: var(--m-ter); white-space: nowrap; flex: none; }
+.row .stk2 { flex: 1; }
+@container (max-width: 560px) { .srow .stag { display: none; } .row .stag { display: none; } }
+.tile.transcript { --c: var(--c-transcript); }
+.tile .ic { font-size: 12px; }
+.kh kbd.press { animation: ha-press .42s ease; }
+@keyframes ha-press { 0% { transform: none; } 30% { transform: scale(.78) translateY(1px); background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); } 100% { transform: none; } }
+.pill.open { }
+.row .stack .t2 { gap: 6px; }
+
+/* a Claude pane */
+.hav-claude .hdr { height: 36px; }
+.hav-claude .tabx { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.hav-claude .tabs { min-width: 0; }
+.cpane { background: #1a1a1a; color: #e8e8e8; padding: 12px 14px; height: 200px; overflow: hidden; font: 11.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; margin-left: 2px; border-left: 0; }
+.cpane > div { animation: ha-in .25s ease both; }
+.cpane .you { color: #fff; }
+
+/* the session board */
+.bh { display: flex; align-items: center; gap: 14px; height: 56px; padding: 0 16px; font-size: 11.5px; }
+.bh > .ic { font-size: 15px; color: var(--m-sec); }
+.bh b { font-size: 15px; font-weight: 600; }
+.bh .t { font-size: 15px; color: var(--m-sec); }
+.bh .sp { flex: 1; }
+.bh .hint { display: flex; gap: 14px; }
+.bcols { display: flex; gap: 8px; padding: 6px; align-items: flex-start; }
+.bcol { flex: 1; min-width: 0; border-radius: 10px; transition: background-color .3s, box-shadow .3s; }
+.bcol.hit { background: color-mix(in srgb, var(--c-claude) 10%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c-claude) 60%, transparent); }
+.bch { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 6px; font-size: 13px; font-weight: 500; }
+.bch .need { margin-left: auto; font-size: 11.5px; font-weight: 500; color: var(--orange); white-space: nowrap; }
+.bcards { display: flex; flex-direction: column; gap: 6px; padding: 4px 1px 8px; }
+.bcard { background: var(--m-tile); border: 1px solid var(--m-hair); border-radius: 10px; padding: 8px 10px; display: grid; gap: 4px; transition: background-color .5s, border-color .5s; }
+.bcard .t1 { font-size: 13px; }
+.bpills { display: flex; gap: 6px; flex-wrap: wrap; }
+.bmeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--m-sec); }
+.bcol[data-col="run"] .bt { color: var(--c-claude); }
+.bcard.fly { position: relative; z-index: 2; box-shadow: 0 8px 22px -6px rgba(0,0,0,.35); }
+.bcard.landing { animation: ha-land .7s cubic-bezier(.2,.9,.25,1) both; }
+@keyframes ha-land { 0% { opacity: 0; transform: translateY(-22px) scale(.94); } 60% { opacity: 1; } 100% { transform: none; } }
+.bcard.glow { border-color: color-mix(in srgb, var(--c-claude) 60%, transparent); background: var(--m-sel); }
+.bempty { border: 1px dashed var(--m-hair); border-radius: 10px; padding: 22px 0; text-align: center; font-size: 11.5px; color: var(--m-ter); }
+.mk.pop { animation: ha-pop .45s cubic-bezier(.2,1.4,.4,1) both, ha-pulse 1.3s .45s ease-in-out infinite; }
+@keyframes ha-pop { from { opacity: 0; transform: scale(.4); } }
+@keyframes ha-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,159,10,.55); } 55% { box-shadow: 0 0 0 6px rgba(255,159,10,0); } }
+@container (max-width: 560px) {
+  .prow .kl, .srow .kl { display: none; }
+  .prow { height: auto; min-height: 64px; padding: 8px; }
+  .t1b { flex-wrap: wrap; white-space: normal; row-gap: 3px; }
+  .prow .t2 { white-space: normal; }
+  .ha-stage { height: 426px; }
+  .hav-claude .tabx:not(.on) { display: none; }
+  .bh { height: 44px; padding: 0 12px; } .bh .hint { display: none; }
+  .bcols { gap: 4px; padding: 2px 4px 4px; }
+  .bch { height: 26px; padding: 0 4px; gap: 5px; font-size: 12px; } .bch .need { display: none; }
+  .bcards { padding: 2px 0 4px; gap: 5px; }
+  .bcard { padding: 6px 7px; gap: 3px; }
+  .bcard .t1 { font-size: 12px; line-height: 1.25; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .bpills { gap: 3px; } .bpills .pill { font-size: 9px; padding: 1px 5px; }
+  .bmeta { font-size: 10.5px; gap: 4px; } .bmeta .mk { font-size: 9px; padding: 1px 6px; }
+  .bempty { padding: 12px 4px; font-size: 10.5px; }
+}
+
+/* caption and controls */
+.ha-cap { position: absolute; left: 0; right: 0; bottom: 50px; display: flex; justify-content: center; align-items: center; gap: .85rem; padding: 0 14px; opacity: 0; transform: translateY(10px); transition: opacity .28s ease, transform .28s ease; }
+.ha-cap.on { opacity: 1; transform: none; }
+.ha-cap-txt { font: 600 clamp(1.02rem, 2.6vw, 1.3rem)/1.25 var(--body); color: var(--ink); }
+.ha-cap .ha-k { height: 2.2rem; min-width: 2.2rem; font-size: 1.15rem; }
+.ha-k .ic { font-size: 1.1rem; }
+.ha-cap.on .ha-k { animation: ha-key .5s cubic-bezier(.2,1.3,.4,1); }
+@keyframes ha-key { from { transform: scale(.6); } }
+.ha-ctl { position: absolute; left: 14px; right: 12px; bottom: 11px; display: flex; align-items: center; justify-content: space-between; }
+.ha-segs { display: flex; gap: 5px; }
+.ha-segs i { width: 22px; height: 3px; border-radius: 2px; background: var(--edge); transition: background-color .3s; }
+.ha-segs i.done { background: var(--muted); }
+.ha-segs i.cur { background: var(--accent); }
+.ha-btn { width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 1px solid var(--edge); background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.ha-btn:hover { color: var(--ink); border-color: var(--muted); }
+.ha-btn .ic { width: 11px; height: 11px; fill: currentColor; stroke: none; }
+.ha-btn .i-play { display: none; }
+.ha-btn[aria-pressed="true"] .i-play { display: block; }
+.ha-btn[aria-pressed="true"] .i-pause { display: none; }
+.ha-paused * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) { .hero-anim .ha-stage { display: none !important; } .hero-anim .ha-still { display: block !important; } }
 </style>
 </head>
 <body>
@@ -361,6 +479,13 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
   <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6z"/><path d="M9 12h6M9 15.5h6"/></symbol>
   <symbol id="i-apple" viewBox="0 0 24 24"><path d="M12 5.5c1-1.6 2.6-2.2 3.6-2-.2 1.6-1.2 2.9-3.6 3.2M16.5 8.5c-1.5-1-3.2-1-4.5-.2-1.3-.8-3-.8-4.5.2-2.3 1.6-2 5.2-.5 8 1 1.8 2 3 3.3 3 .8 0 1.2-.5 1.7-.5s.9.5 1.7.5c1.3 0 2.3-1.2 3.3-3 .5-.9.8-1.6 1-2.3-2-.9-2.4-3.8-.5-5.2z" style="fill:currentColor;stroke:none"/></symbol>
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></symbol>
+  <symbol id="i-align" viewBox="0 0 24 24"><path d="M4 6h16M4 10.7h10M4 15.3h16M4 20h10"/></symbol>
+  <symbol id="i-split3" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M9 5v14M15 5v14"/></symbol>
+  <symbol id="i-tray" viewBox="0 0 24 24"><path d="M3 13l2.6-7h12.8L21 13v5a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 18z"/><path d="M3 13h5l1 2.2h6L16 13h5M9 9.5h6"/></symbol>
+  <symbol id="i-desktop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2H10l2 2.5h6.5a2 2 0 0 1 2 2V17.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="10" r="3"/><path d="M6.4 18.2c1.3-2.3 3.2-3.4 5.6-3.4s4.300 1.100 5.600 3.400"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
 </svg>
 
@@ -410,22 +535,51 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
       <li><b>Chrome</b>The only browser it reads</li>
     </ul>
 
-    <figure class="mock hero-mock" role="img" aria-label="The Varnick panel. A prompt line reads: hash shop-api at reviewer look at why the upload test is flaky. Under it, three Claude Code sessions are listed, one marked open.">
-      <div class="app hero-app">
-        <div class="bar"><svg class="ic claude" aria-hidden="true"><use href="#i-sparkle"/></svg><span class="q">#shop-api @reviewer look at why the upload test is flaky<span class="caret"></span></span></div>
-        <hr class="hr">
-        <div class="prow sel">
-          <span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span>
-          <div class="stack"><div class="t1b">Ask Claude Code <span class="pill">#shop-api</span><span class="pill">@reviewer</span></div><div class="t2">look at why the upload test is flaky</div></div>
-          <span class="kh">Start <kbd>↩</kbd></span>
+    <figure class="mock hero-mock hero-anim" id="hero-anim" role="group" aria-label="Animated demo of the Varnick panel. A description finds an old Claude session even when its title uses other words. Then a new session is started from the prompt: a word starting with hash picks the project, at picks the agent, caret picks the Mac it runs on, and Return starts Claude there. A word starting with an exclamation mark runs a command, here the session board with its Running, Stopped and Completed columns.">
+      <div class="ha-still">
+        <div class="app hero-app" aria-hidden="true">
+          <div class="bar"><svg class="ic claude" aria-hidden="true"><use href="#i-sparkle"/></svg><span class="q">#shop-api @reviewer ^studio why is the upload test flaky<span class="caret"></span></span></div>
+          <hr class="hr">
+          <div class="prow sel">
+            <span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span>
+            <div class="stack"><div class="t1b">Ask Claude Code <span class="pill">^studio</span><span class="pill">#shop-api</span><span class="pill">@reviewer</span></div><div class="t2">why is the upload test flaky</div></div>
+            <span class="kh">Start <kbd>↩</kbd></span>
+          </div>
+          <hr class="hr">
+          <div class="lab">Sessions</div>
+          <div class="row"><span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span><div class="stack"><div class="t1">Fix flaky upload test</div><div class="t2"><span class="pill">#shop-api</span><span class="pill">@reviewer</span>Last used 2 hours ago</div></div><span class="pill">open</span></div>
+          <div class="row"><span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span><div class="stack"><div class="t1">Stabilise the retry logic in uploads</div><div class="t2"><span class="pill">#shop-api</span>Last used yesterday</div></div></div>
+          <div class="row"><span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span><div class="stack"><div class="t1">Upload test times out on CI</div><div class="t2"><span class="pill">#shop-api</span><span class="pill">@planner</span>Last used 4 days ago</div></div></div>
+          <div style="height:8px"></div>
         </div>
-        <hr class="hr">
-        <div class="lab">Sessions</div>
-        <div class="row"><span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span><div class="stack"><div class="t1">Fix flaky upload test</div><div class="t2"><span class="pill">#shop-api</span><span class="pill">@reviewer</span>Last used 2 hours ago</div></div><span class="pill">open</span></div>
-        <div class="row"><span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span><div class="stack"><div class="t1">Stabilise the retry logic in uploads</div><div class="t2"><span class="pill">#shop-api</span>Last used yesterday</div></div></div>
-        <div class="row pad8"><span class="tile claude"><svg class="ic" aria-hidden="true"><use href="#i-sparkle"/></svg></span><div class="stack"><div class="t1">Draft release notes for 1.4</div><div class="t2"><span class="pill">#notes-app</span>Last used 3 days ago</div></div></div>
-        <div style="height:8px"></div>
+        <ul class="ha-legend" aria-hidden="true">
+          <li><span class="ha-k">#</span>picks the project</li>
+          <li><span class="ha-k">@</span>picks the agent</li>
+          <li><span class="ha-k">^</span>picks the Mac it runs on</li>
+          <li><span class="ha-k">↩</span>starts Claude there</li>
+          <li><span class="ha-k">!</span>runs a command</li>
+        </ul>
       </div>
+
+      <div class="ha-stage" hidden>
+        <div class="app hero-app ha-app" data-view="prompt" aria-hidden="true">
+          <div class="ha-in">
+            <div class="bar ha-bar"></div>
+            <div class="hav hav-prompt"></div>
+            <div class="hav hav-claude"></div>
+            <div class="hav hav-board"></div>
+          </div>
+        </div>
+        <div class="ha-cap" aria-hidden="true"><span class="ha-k ha-cap-key"></span><span class="ha-cap-txt"></span></div>
+        <div class="ha-ctl">
+          <div class="ha-segs" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <button type="button" class="ha-btn" aria-pressed="false" aria-label="Pause the animation" title="Pause">
+            <svg class="ic i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="5" height="16" rx="1.2"/><rect x="14" y="4" width="5" height="16" rx="1.2"/></svg>
+            <svg class="ic i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>
+          </button>
+        </div>
+      </div>
+      <p class="sr-only ha-say" role="status" aria-live="polite"></p>
     </figure>
   </section>
 
@@ -723,6 +877,404 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
   };
   document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.themeSet)));
   setTheme(saved);
+
+})();
+
+// ===== Animated hero. One scripted timeline over a tiny state model of the real panel. =====
+(() => {
+  const fig = document.getElementById("hero-anim");
+  if (!fig) return;
+  const $ = (s) => fig.querySelector(s);
+  const stage = $(".ha-stage"), app = $(".ha-app"), inner = $(".ha-in"), bar = $(".ha-bar");
+  const vPrompt = $(".hav-prompt"), vClaude = $(".hav-claude"), vBoard = $(".hav-board");
+  const capEl = $(".ha-cap"), capKey = $(".ha-cap-key"), capTxt = $(".ha-cap-txt"), segs = [...fig.querySelectorAll(".ha-segs i")];
+  const btn = $(".ha-btn"), say = $(".ha-say");
+
+  // ---------- helpers ----------
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const ic = (id, c = "") => `<svg class="ic ${c}" aria-hidden="true"><use href="#${id}"/></svg>`;
+  const kh = (label, key, press) => `<span class="kh"><span class="kl">${label}</span> <kbd${press ? ' class="press"' : ""}>${key}</kbd></span>`;
+  const pill = (t) => `<span class="pill">${esc(t)}</span>`;
+  const tile = (id, cls = "claude") => `<span class="tile ${cls}">${ic(id)}</span>`;
+  const dur = (s) => { s = Math.max(0, Math.round(s)); return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h"; };
+
+  // Flat keyed list: unchanged rows stay, changed rows are replaced, new rows animate in.
+  function patch(parent, items) {
+    const old = new Map([...parent.children].map((e) => [e.dataset.k, e]));
+    const els = items.map((it) => {
+      let el = old.get(it.k);
+      if (el && el._h === it.h) { old.delete(it.k); return el; }
+      const t = document.createElement("template"); t.innerHTML = it.h.trim();
+      const n = t.content.firstElementChild; n.dataset.k = it.k; n._h = it.h;
+      if (el) { el.replaceWith(n); old.delete(it.k); } else n.classList.add("new");
+      return n;
+    });
+    old.forEach((e) => e.remove());
+    els.forEach((e, i) => { if (parent.children[i] !== e) parent.insertBefore(e, parent.children[i] || null); });
+  }
+
+  // ---------- made-up data (shapes follow LauncherModel / LauncherView) ----------
+  const PROJECTS = [
+    { n: "shop-api", d: "~/Projects/acme", t: "2 hours ago" }, { n: "shop-admin", d: "~/Projects/acme", t: "last week" },
+    { n: "notes-app", d: "~/Projects/personal", t: "yesterday" },
+    { n: "dashboard", d: "~/Projects/acme", t: "3 weeks ago" },
+  ];
+  const AGENTS = [
+    { n: "reviewer", d: "Reviews a change for bugs and style", t: "user" }, { n: "planner", d: "Turns a goal into small steps", t: "project" },
+    { n: "researcher", d: "Reads docs and code, reports what it finds", t: "user" },
+    { n: "refactorer", d: "Restructures code without changing behaviour", t: "user" },
+  ];
+  const PEERS = [
+    { h: "studio", n: "Studio", t: "studio.local" }, { h: "laptop", n: "Laptop", t: "laptop.local" },
+    { h: "mini", n: "Mac mini", t: "mini.local" }, { h: "staging", n: "Staging", t: "Keep sessions running is off" },
+  ];
+  const COMMANDS = [
+    { id: "listen", names: ["listen"], sym: "i-wave", title: "Start listening", detail: "Transcribe the mic and the Mac's audio into today's transcript" },
+    { id: "transcript", names: ["transcript"], sym: "i-align", title: "Show transcript", detail: "Today's transcript in a tab, following new lines" },
+    { id: "kanban", names: ["kanban", "tabs"], sym: "i-split3", title: "Show session board", detail: "Claude sessions by turn: Running, Stopped, Completed (also !tabs)" },
+    { id: "problems", names: ["problems"], sym: "i-tray", title: "Show problems board", detail: "Problems by stage: Backlog, Decided, Building, Shipped, Closed" },
+  ];
+  const MESSAGE = "why is the upload test flaky";
+  const RES_PARTIAL = [
+    { t: "Why is the cache cold after a deploy", p: ["#shop-api"], ago: "3 days ago" },
+    { t: "Explain the retry backoff in uploads", p: ["#shop-api"], ago: "last week" },
+    { t: "Why is the build slow on CI", p: ["#infra"], ago: "2 weeks ago" },
+  ];
+  const RES_FINAL = [
+    { t: "Fix flaky upload test", p: ["#shop-api", "@reviewer"], ago: "2 hours ago", open: true },
+    { t: "Stabilise the retry logic in uploads", p: ["#shop-api"], ago: "yesterday" },
+    { t: "Upload test times out on CI", p: ["#shop-api", "@planner"], ago: "4 days ago" },
+  ];
+  const FIND_MSG = "where we fixed the login redirect loop";
+  const RES_FIND_PARTIAL = [
+    { t: "Where the config loader looks for files", p: ["#shop-api"], ago: "2 weeks ago" },
+    { t: "Release checklist for the web app", p: ["#site"], ago: "last month" },
+    { t: "Notes on the redirect middleware", p: ["#shop-api"], ago: "2 months ago" },
+  ];
+  const RES_FIND = [
+    { t: "Auth callback keeps bouncing back to sign-in", p: ["#shop-api"], ago: "5 weeks ago" },
+    { t: "Add rate limiting to the sign-in route", p: ["#shop-api"], ago: "2 months ago" },
+    { t: "Fix the OAuth scopes for the admin app", p: ["#shop-admin"], ago: "3 months ago" },
+  ];
+  const TAB_RENAME = { t: "Rename the billing module", p: ["#shop-api"], s: "Started 40 minutes ago" };
+  const TAB_AUTH = { t: "Auth callback keeps bouncing back to sign-in", p: ["#shop-api"], s: "Started 5 weeks ago" };
+  const TAB_NEW = { t: MESSAGE, p: ["^studio", "#shop-api", "@reviewer"], s: "Started just now" };
+
+  // ---------- the real prompt grammar: leadingWords, ranking, suggestions ----------
+  function lead(q) {
+    let t = q.replace(/^ +/, ""); const words = [];
+    while (t && "#@^".includes(t[0])) {
+      const w = t.match(/^\S+/)[0]; words.push(w); t = t.slice(w.length);
+      if (!t) return { words, rest: "", typing: true };
+      t = t.replace(/^\s+/, "");
+    }
+    return { words, rest: t, typing: false };
+  }
+  function ranked(items, names, typed) {
+    return items.map((it, i) => {
+      const l = names(it).map((x) => x.toLowerCase()); let r = null;
+      if (l.includes(typed)) r = 0; else if (l.some((x) => x.startsWith(typed))) r = 1; else if (typed && l.some((x) => x.includes(typed))) r = 2;
+      return r == null ? null : { r, i, it };
+    }).filter(Boolean).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.it);
+  }
+  function suggestions(q) {
+    const { words, typing } = lead(q); const w = words[words.length - 1];
+    if (!typing || !w) return [];
+    const typed = w.slice(1).toLowerCase(); let found;
+    if (w[0] === "^") found = ranked(PEERS, (p) => [p.h], typed).map((p) => ({ tok: "^" + p.h, icon: "i-desktop", detail: p.n, tag: p.t }));
+    else if (w[0] === "#") found = ranked(PROJECTS, (p) => [p.n], typed).map((p) => ({ tok: "#" + p.n, icon: "i-folder", detail: p.d, tag: p.t }));
+    else found = ranked(AGENTS, (a) => [a.n], typed).map((a) => ({ tok: "@" + a.n, icon: "i-person", detail: a.d, tag: a.t }));
+    return found.slice(0, 6);
+  }
+  function commands(q) {
+    const typed = q.slice(1).trim().toLowerCase();
+    return COMMANDS.map((c, i) => {
+      const r = Math.min(...c.names.map((n) => n === typed ? 0 : n.startsWith(typed) ? 1 : n.includes(typed) ? 2 : 9));
+      return { c, i, r };
+    }).filter((x) => x.r < 9).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.c);
+  }
+
+  // ---------- state ----------
+  let S, gen = 0, loopGen = 0, loops = 0;
+  const marks = [];
+  function fresh() {
+    return { q: "", over: null, press: null, starting: false, settled: false, sel: null, tabs: [TAB_RENAME] };
+  }
+
+  // ---------- render: the search bar and the prompt-mode lists ----------
+  function renderBar() {
+    const mag = S.q[0] === "!";
+    const ph = S.q ? "" : '<span class="ph">Ask Claude Code…   ! commands</span>';
+    bar.innerHTML = `${ic(mag ? "i-search" : "i-sparkle", mag ? "" : "claude")}<span class="q">${esc(S.q)}<span class="caret"></span>${ph}</span>`;
+    const q = bar.querySelector(".q"); q.scrollLeft = q.scrollWidth;
+  }
+  const rowSession = (t, pills, detail, extra = "", hint = "") =>
+    `<div class="row${hint ? " sel" : ""}">${tile("i-sparkle")}<div class="stack"><div class="t1">${esc(t)}</div><div class="t2">${pills.map(pill).join("")}${esc(detail)}</div></div>${extra}${hint}</div>`;
+
+  function renderPrompt() {
+    const q = S.q, items = [];
+    const hr = (k) => ({ k, h: '<hr class="hr">' });
+    if (!q) {
+      if (S.tabs.length) {
+        items.push(hr("h0"), { k: "labT", h: '<div class="lab">Tabs</div>' });
+        S.tabs.forEach((t, i) => items.push({ k: "tab" + t.t, h: `<div class="row${i === 0 ? " sel" : ""}">${tile("i-sparkle")}<div class="stack"><div class="t1">${esc(t.t)}</div><div class="t2">${t.p.map(pill).join("")}${esc(t.s)}</div></div>${i === 0 ? kh("Open", "↩") : ""}</div>` }));
+        items.push({ k: "pb", h: '<div class="sp8"></div>' });
+      }
+    } else if (q[0] === "!") {
+      const cs = commands(q);
+      items.push(hr("h0"), { k: "sp0", h: '<hr class="hr sp4">' });
+      cs.forEach((c, i) => items.push({ k: "c" + c.id, h: `<div class="row${i === 0 ? " sel" : ""}"><span class="tile transcript">${ic(c.sym)}</span><div class="stack"><div class="t1">${c.title}</div><div class="t2">${esc(c.detail)}</div></div><span class="stag">!${c.id}</span>${i === 0 ? kh("Run", "↩", S.press === "cmd") : ""}</div>` }));
+      items.push({ k: "sp1", h: '<hr class="hr sp4">' });
+    } else {
+      const { words, rest } = lead(q);
+      const peer = words.map((w) => w[0] === "^" && PEERS.find((p) => p.h === w.slice(1).toLowerCase())).find(Boolean);
+      const proj = words.map((w) => w[0] === "#" && PROJECTS.find((p) => p.n === w.slice(1).toLowerCase())).find(Boolean);
+      const agent = words.map((w) => w[0] === "@" && AGENTS.find((a) => a.n === w.slice(1).toLowerCase())).find(Boolean);
+      const sub = S.starting && peer ? `Starting on ${peer.n}…` : rest || "Start an interactive session";
+      items.push(hr("h0"), { k: "pl", h: `<div class="prow${S.sel == null ? " sel" : ""}">${tile("i-sparkle")}<div class="stack"><div class="t1b">Ask Claude Code ${peer ? pill("^" + peer.h) : ""}${proj ? pill("#" + proj.n) : ""}${agent ? pill("@" + agent.n) : ""}</div><div class="t2">${esc(sub)}</div></div>${S.sel == null ? kh("Start", "↩", S.press === "start") : ""}</div>` });
+      const sg = suggestions(q);
+      if (sg.length) {
+        items.push(hr("h1"), { k: "sp0", h: '<hr class="hr sp4">' });
+        sg.forEach((s, i) => items.push({ k: "s" + s.tok, h: `<div class="srow${i === 0 ? " sel" : ""}">${ic(s.icon)}<span class="stk">${esc(s.tok)}</span><span class="sdet">${esc(s.detail)}</span><span class="stag">${esc(s.tag)}</span>${i === 0 ? kh("Use", "⇥", S.press === "use") : ""}</div>` }));
+        items.push({ k: "sp1", h: '<hr class="hr sp4">' });
+      } else if (rest.length >= 6) {
+        const res = rest === FIND_MSG ? (S.settled ? RES_FIND : RES_FIND_PARTIAL) : FIND_MSG.startsWith(rest) ? RES_FIND_PARTIAL : rest === MESSAGE && S.settled ? RES_FINAL : RES_PARTIAL;
+        items.push(hr("h1"), { k: "lab", h: '<div class="lab">Sessions</div>' });
+        res.forEach((r, i) => items.push({ k: "r" + r.t, h: rowSession(r.t, r.p, "Last used " + r.ago, r.open ? '<span class="pill">open</span>' : "", S.sel === i ? kh(r.open ? "Open" : "Resume", "↩", S.press === "resume") : "") }));
+        items.push({ k: "pb", h: '<div class="sp8"></div>' });
+      }
+    }
+    patch(vPrompt, items);
+  }
+
+  // ---------- views ----------
+  function setView(v) { if (app.dataset.view !== v) app.dataset.view = v; }
+  function render() {
+    renderBar();
+    if (S.over) return setView(S.over);
+    setView("prompt"); renderPrompt();
+  }
+  function showClaude(name, pills, lines) {
+    vClaude.innerHTML = `<div class="hdr"><div class="tabs"><span class="tabx on">${esc(name)}</span><span class="tabx">+</span></div>${pills.map(pill).join("")}</div><hr class="hr"><div class="cpane"></div>`;
+    S.over = "claude"; render();
+    return vClaude.querySelector(".cpane");
+  }
+  async function line(pane, html, ms = 260) { const d = document.createElement("div"); d.innerHTML = html; pane.appendChild(d); await W(ms); }
+
+  // ---------- the board ----------
+  const mkBC = () => ({
+    rename: { t: "Rename the billing module", p: ["#shop-api"], verb: "Working", base: 128, col: "run" },
+    auth: { t: "Auth callback keeps bouncing back to sign-in", p: ["#shop-api"], verb: "Waiting", base: 48, col: "stop" },
+    fresh: { t: MESSAGE, p: ["^studio", "#shop-api", "@reviewer"], verb: "Working", base: 0, col: "run" },
+  });
+  let BC = mkBC();
+  const COLS = [["run", "Running"], ["stop", "Stopped"], ["done", "Completed"]];
+  function buildBoard() {
+    BC = mkBC();
+    Object.values(BC).forEach((c) => { c.since = clock - c.base * 1000; c.el = null; });
+    vBoard.innerHTML = `<div class="bh">${ic("i-split3")}<b>Sessions</b><span class="t">Problems</span><span class="sp"></span><span class="hint">${kh("Open", "↩")}${kh("Switch", "⇥")}${kh("Close", "esc")}</span></div><hr class="hr">
+      <div class="bcols">${COLS.map(([k, n]) => `<div class="bcol" data-col="${k}"><div class="bch"><i class="cd ${k}"></i>${n}<span class="cnt"></span><span class="need"></span></div><div class="bcards"></div></div>`).join("")}</div>`;
+    ["rename", "auth"].forEach((id) => addCard(id));
+    updateBoard();
+  }
+  function addCard(id, landing) {
+    const c = BC[id], el = document.createElement("div");
+    el.className = "bcard" + (landing ? " landing glow" : ""); el.dataset.id = id; c.el = el;
+    el.innerHTML = `<div class="t1">${esc(c.t)}</div><div class="bpills">${c.p.map(pill).join("")}</div><div class="bmeta"><span class="bt"></span></div>`;
+    vBoard.querySelector(`.bcol[data-col="${c.col}"] .bcards`).appendChild(el);
+    turnText(c);
+    return el;
+  }
+  function turnText(c) {
+    if (!c.el) return;
+    const s = (clock - c.since) / 1000;
+    c.el.querySelector(".bt").textContent = c.done ? `Done ${dur(s)} ago` : `${c.verb} ${dur(s)}`;
+  }
+  function updateBoard() {
+    COLS.forEach(([k]) => {
+      const col = vBoard.querySelector(`.bcol[data-col="${k}"]`), cards = col.querySelectorAll(".bcard");
+      col.querySelector(".cnt").textContent = cards.length;
+      const need = col.querySelectorAll(".mk").length;
+      col.querySelector(".need").textContent = k === "stop" && need ? `${need} need${need === 1 ? "s" : ""} permission` : "";
+      let empty = col.querySelector(".bempty");
+      if (!cards.length && !empty) { empty = document.createElement("div"); empty.className = "bempty"; empty.textContent = k === "done" ? "Nothing marked done" : "No sessions"; col.querySelector(".bcards").appendChild(empty); }
+      if (cards.length && empty) empty.remove();
+    });
+  }
+  function flip(mutate) {
+    const els = [...vBoard.querySelectorAll(".bcard")], first = new Map(els.map((e) => [e, e.getBoundingClientRect()]));
+    mutate();
+    els.forEach((e) => { const a = first.get(e), b = e.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top; if (dx || dy) { e.style.transition = "none"; e.style.transform = `translate(${dx}px,${dy}px)`; } });
+    void vBoard.offsetWidth;
+    els.forEach((e) => { if (e.style.transform) { e.style.transition = "transform .75s cubic-bezier(.25,.8,.25,1), background-color .5s, border-color .5s"; e.style.transform = ""; } });
+    setTimeout(() => els.forEach((e) => { e.style.transition = ""; e.classList.remove("fly"); }), 800);
+  }
+  function moveCard(id, col) {
+    const c = BC[id]; c.el.classList.add("fly");
+    flip(() => { c.col = col; vBoard.querySelector(`.bcol[data-col="${col}"] .bcards`).appendChild(c.el); updateBoard(); });
+  }
+
+  // ---------- clock: pause-aware, scripted waits ----------
+  let clock = 0, last = performance.now(), waiters = [], busy = false;
+  const CANCEL = { cancel: true };
+  const W = (ms) => new Promise((res, rej) => waiters.push({ at: clock + ms, res, rej }));
+  const hop = () => new Promise((r) => setTimeout(r, 0));
+  async function advance(dt) {
+    const end = clock + dt;
+    for (;;) {
+      waiters.sort((a, b) => a.at - b.at);
+      const w = waiters[0]; if (!w || w.at > end) break;
+      waiters.shift(); clock = w.at; w.res(); await hop();
+    }
+    clock = end;
+  }
+  const flags = { user: false, hover: false, focus: false, off: false };
+  const isPaused = () => flags.user || flags.hover || flags.focus || flags.off || document.hidden;
+  let running = false;
+  setInterval(async () => {
+    const now = performance.now(), dt = Math.min(now - last, 100); last = now;
+    fig.classList.toggle("ha-paused", isPaused());
+    if (!running || isPaused() || busy) return;
+    busy = true; try { await advance(dt); } finally { busy = false; }
+  }, 33);
+  function stopRun() { running = false; gen++; const ws = waiters; waiters = []; ws.forEach((w) => w.rej(CANCEL)); }
+
+  // ---------- script helpers ----------
+  const mark = (n) => marks.push({ n, t: Math.round(clock), loop: loops });
+  let capTimer;
+  async function cap(key, text) {
+    if (capEl.classList.contains("on")) { capEl.classList.remove("on"); await W(180); }
+    capKey.innerHTML = key; capTxt.textContent = text; capEl.classList.add("on");
+  }
+  function seg(i) { segs.forEach((s, j) => { s.className = j < i ? "done" : j === i ? "cur" : ""; }); }
+  function announce(t) { if (loops === 0) say.textContent = t; }
+  async function type(str, base = 62) {
+    for (const ch of str) { S.q += ch; render(); await W(base + ((ch.charCodeAt(0) * 13) % 34) - 10); }
+  }
+  async function press(kind, ms = 380) { S.press = kind; render(); await W(ms); S.press = null; }
+  function complete() {
+    const { words } = lead(S.q), w = words[words.length - 1], s = suggestions(S.q)[0];
+    S.q = S.q.slice(0, S.q.length - w.length) + s.tok + " "; render();
+  }
+  async function suggestScene(i, key, text, typed, announceText) {
+    seg(i); mark(text); announce(announceText);
+    await cap(key, text);
+    await W(220);
+    await type(typed[0], 0); await W(i === 1 ? 800 : 650);
+    await type(typed.slice(1), 250); await W(480);
+    await press("use", 330); complete(); await W(300);
+  }
+
+  // ---------- the timeline ----------
+  async function loopOnce() {
+    const myGen = ++loopGen, t0 = clock;
+    S = fresh(); capEl.classList.remove("on"); seg(-1);
+    buildBoard(); render();
+    (async () => { for (;;) { await W(1000); if (loopGen !== myGen) return; Object.values(BC).forEach(turnText); } })().catch(() => {});
+
+    await W(800);
+
+    // A: find a session by describing it, at the plain prompt: results by meaning, ↓ to one, ↩ resumes it
+    seg(0); mark("find"); announce("Describing an old session at the prompt lists the matching Claude sessions by meaning, even when their titles use other words. Down arrow picks one and Return resumes it.");
+    await cap(ic("i-sparkle"), "Find any session by describing it");
+    await W(250);
+    S.settled = false;
+    await type(FIND_MSG, 46);
+    await W(420); S.settled = true; render(); await W(1700);
+    S.sel = 0; render();
+    await cap("↓ ↩", "picks a session and resumes it");
+    await W(500);
+    await press("resume", 480);
+    const pane = showClaude(TAB_AUTH.t, ["#shop-api"]);
+    await line(pane, '<span class="o">· resumed</span>', 120);
+    await line(pane, "The cookie was dropped on the redirect from the sign-in provider.", 300);
+    await line(pane, '<span class="o">· edit auth/session.ts</span>   SameSite: Strict to Lax', 300);
+    await line(pane, '<span class="g">✓</span> 12 tests pass', 500);
+    S.tabs = [TAB_RENAME, TAB_AUTH]; S.over = null; S.q = ""; S.sel = null; S.settled = false; render(); await W(550);
+
+    // B, C, D: the three words
+    await suggestScene(1, "#", "picks the project", "#sh", "Typing # lists projects; Tab completes the highlighted one, here shop-api.");
+    await suggestScene(2, "@", "picks the agent", "@re", "Typing @ lists agents; Tab completes reviewer.");
+    await suggestScene(3, "^", "picks the Mac it runs on", "^st", "Typing ^ lists paired Macs; Tab completes studio.");
+
+    // E: the message, the matching sessions, Return
+    seg(4); mark("start"); announce("The message is typed, matching sessions list under it, and Return starts Claude on the chosen Mac.");
+    await cap("↩", "starts Claude there");
+    await W(150);
+    S.settled = false;
+    await type(MESSAGE, 52);
+    await W(380); S.settled = true; render(); await W(800);
+    await press("start", 420);
+    S.starting = true; render(); await W(750);
+    const p2 = showClaude(MESSAGE, ["^studio", "#shop-api", "@reviewer"]);
+    await line(p2, `<span class="you">› ${MESSAGE}</span>`, 260);
+    await line(p2, '<span class="o">· read uploads/retry.test.ts</span>', 240);
+    await line(p2, '<span class="o">· read uploads/retry.ts</span>', 300);
+    await line(p2, "The two cases share one timer. The second starts before the first has cleared it.", 420);
+    S.tabs = [TAB_RENAME, TAB_AUTH, TAB_NEW]; S.over = null; S.q = ""; S.starting = false; S.settled = false; render(); await W(600);
+
+    // F: a command
+    seg(5); mark("command"); announce("An exclamation mark lists commands; the session board command opens the board.");
+    await cap("!", "runs a command");
+    await W(150);
+    await type("!", 0); await W(1200);
+    await type("kanban", 105); await W(380);
+    await press("cmd", 380);
+
+    // G: the board
+    seg(6); mark("board"); announce("The session board opens. The new session lands in Running, one session is stopped waiting for permission, and one is marked Completed.");
+    S.over = "board"; render();
+    await cap(ic("i-split3"), "Sessions by what Claude is doing");
+    await W(900);
+    BC.fresh.since = clock; addCard("fresh", true); updateBoard(); await W(1300);
+    BC.fresh.el.classList.remove("glow");
+    await W(400);
+    BC.rename.verb = "Waiting"; BC.rename.since = clock; turnText(BC.rename);
+    const mk = document.createElement("span"); mk.className = "mk pop"; mk.textContent = "Needs permission"; BC.rename.el.querySelector(".bmeta").appendChild(mk);
+    moveCard("rename", "stop"); await W(1500);
+    const doneCol = vBoard.querySelector('.bcol[data-col="done"]'); doneCol.classList.add("hit"); await W(450);
+    BC.auth.done = true; BC.auth.since = clock; turnText(BC.auth); BC.auth.el.classList.add("glow");
+    moveCard("auth", "done"); await W(700); doneCol.classList.remove("hit");
+    await W(2800);
+    loops++;
+    marks.push({ n: "loop-length", t: Math.round(clock - t0) });
+  }
+
+  async function main() {
+    running = true;
+    for (;;) {
+      try { await loopOnce(); } catch (e) { if (e === CANCEL) return; throw e; }
+      capEl.classList.remove("on");
+      await W(500).catch(() => {});
+    }
+  }
+
+  // ---------- controls: user pause, hover, focus, visibility, reduced motion ----------
+  btn.addEventListener("click", () => {
+    flags.focus = false;   // pressing the button is an explicit choice, whatever focus says
+    flags.user = !flags.user; btn.setAttribute("aria-pressed", String(flags.user));
+    const l = flags.user ? "Play the animation" : "Pause the animation"; btn.setAttribute("aria-label", l); btn.title = flags.user ? "Play" : "Pause";
+  });
+  fig.addEventListener("mouseenter", () => { flags.hover = true; });
+  fig.addEventListener("mouseleave", () => { flags.hover = false; });
+  fig.addEventListener("focusin", (e) => { flags.focus = e.target.matches(":focus-visible"); });   // keyboard focus only, so a mouse click on the button does not hold it
+  fig.addEventListener("focusout", () => { flags.focus = false; });
+  new IntersectionObserver((es) => { flags.off = !es[0].isIntersecting; }, { threshold: 0.2 }).observe(fig);
+  new ResizeObserver(() => { app.style.height = inner.offsetHeight + 2 + "px"; }).observe(inner);
+
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+  let started = false;
+  function sync() {
+    if (reduce.matches) {
+      stopRun(); started = false; stage.hidden = true; fig.classList.remove("ha-on");
+    } else if (!started) {
+      started = true; stage.hidden = false; fig.classList.add("ha-on");
+      requestAnimationFrame(() => requestAnimationFrame(() => app.classList.add("ready")));
+      main();
+    }
+  }
+  reduce.addEventListener("change", sync);
+  sync();
 
 })();
 </script>
