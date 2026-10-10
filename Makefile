@@ -2,7 +2,6 @@
 -include Makefile.local
 export SIGN_IDENTITY
 
-DB := db/varnick.sqlite
 LABEL := com.zabaca.varnick
 PLIST := $(HOME)/Library/LaunchAgents/$(LABEL).plist
 LOG := $(HOME)/Library/Logs/Varnick.log
@@ -170,7 +169,7 @@ cutover-check:
 
 # The restart runs in its own session so it outlives a Varnick session that ran `make run`.
 run: cutover-check build
-	nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' scripts/restart.sh $(CURDIR)/$(DB) >/dev/null 2>&1 &
+	nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' scripts/restart.sh >/dev/null 2>&1 &
 
 stop:
 	-@pkill -a -f '$(VARNICK_PROCESS)' || true
@@ -182,8 +181,7 @@ stop:
 # made only when the path is free or already ours; anything else there is left alone.
 install: cutover-check build stop
 	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
-	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' \
-	    -e 's|@DB@|$(CURDIR)/$(DB)|g' -e 's|@LOG@|$(LOG)|g' \
+	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' -e 's|@LOG@|$(LOG)|g' \
 	    scripts/varnick.plist.in > $(PLIST)
 	plutil -lint $(PLIST)
 	-@launchctl bootout $(DOMAIN)/$(OLD_LABEL) 2>/dev/null || true

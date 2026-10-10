@@ -4,7 +4,7 @@ import VarnickPeer
 /// Short-lived (removed with `FirstLaunchMigration`): runs its steps against this Mac, once, where the app starts.
 enum AppStartMigration {
     /// The `error:` line to print when the app must stop, else nil.
-    static func run(databasePath: String) -> String? {
+    static func run() -> String? {
         // Without the embedded Info.plist the settings domain is the executable's name, not the one the steps fill: a build by plain
         // `swift build` would start with none of the Mac's settings.
         guard let bundleID = Bundle.main.bundleIdentifier else {
@@ -15,7 +15,8 @@ enum AppStartMigration {
             applicationSupport: fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
             library: fm.urls(for: .libraryDirectory, in: .userDomainMask)[0],
             newDomain: bundleID,
-            databasePath: databasePath)
+            databaseOverride: ProcessInfo.processInfo.environment["VARNICK_DB"],
+            workingFolder: URL(fileURLWithPath: fm.currentDirectoryPath, isDirectory: true))
         // The bundled zmx is the same release as Launchy's, so it reaches the old daemons. Each call has a time limit, so a zmx
         // that doesn't answer can't hold the app's start.
         let sessions = FirstLaunchMigration.Sessions(

@@ -6,7 +6,9 @@
 # Varnick's output is appended to ~/Library/Logs/Varnick.log, which is where its NSLog lines go (there, not to
 # `log show`); when that file can't be opened it goes to /dev/null, so a log that can't be written never stops Varnick
 # from starting. The peers' Restart runs this too (BuildUpgrade).
-# Usage: restart.sh <database path>
+# Usage: restart.sh [database path]
+# The path becomes VARNICK_DB only when it is given and not empty: Varnick takes an empty VARNICK_DB as the path itself, and with none
+# it opens its default database (varnick.sqlite in its support folder).
 cd "$(dirname "$0")/.." || exit 1
 VARNICK="^($(pwd -P)/)?\.build/release/Varnick$"
 # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
@@ -39,4 +41,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   pgrep -a -f "$VARNICK" >/dev/null || pgrep -a -f "$LAUNCHY" >/dev/null || break
   sleep 1
 done
-VARNICK_DB="$1" exec .build/release/Varnick >> "$LOG" 2>&1
+if [ -n "$1" ]; then
+  VARNICK_DB="$1" exec .build/release/Varnick >> "$LOG" 2>&1
+fi
+exec .build/release/Varnick >> "$LOG" 2>&1

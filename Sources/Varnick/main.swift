@@ -70,11 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var syncing = false
     private var syncAgain = false
 
-    static var databasePath: String {
-        ProcessInfo.processInfo.environment["VARNICK_DB"] ?? FileManager.default.currentDirectoryPath + "/db/varnick.sqlite"
-    }
+    static var databasePath: String { DatabaseLocation.path(supportFolder: SupportFolder.url) }
 
     func makeModel() {
+        DatabaseLocation.makeFolder(supportFolder: SupportFolder.url)
         let path = Self.databasePath
         let store: FavoritesStore
         do {
@@ -520,10 +519,12 @@ if !MacNotMoved.isAppStart(CommandLine.arguments), let refusal = MacNotMoved.ref
     exit(1)
 }
 
-// `Varnick --sync` runs one History sync into VARNICK_DB and exits (to build a test database for --search).
+// `Varnick --sync` runs one History sync into the database (VARNICK_DB, else the support folder's) and exits (to build a test database
+// for --search). Without VARNICK_DB it refuses while the default database doesn't exist, as `--search`, `--ask` and `--search-eval` do.
 // With `--peers` it also reads the paired Macs' session rows and one reply of their pages (the next run
 // continues from the cursor kept in that database) into it, over SSH.
 if CommandLine.arguments.contains("--sync") {
+    DatabaseLocation.refuseCommandLineWithoutDatabase(supportFolder: SupportFolder.url)
     MainActor.assumeIsolated {
         let path = AppDelegate.databasePath
         Task { @MainActor in
@@ -598,6 +599,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--work-history"), i + 1 < Comma
 // `Varnick --search "query"` prints the hybrid results of a `?` search for it (it adds the `?`) and exits (debugging / ranking checks).
 if let i = CommandLine.arguments.firstIndex(of: "--search"), i + 1 < CommandLine.arguments.count {
     let query = CommandLine.arguments[i + 1]
+    DatabaseLocation.refuseCommandLineWithoutDatabase(supportFolder: SupportFolder.url)
     MainActor.assumeIsolated {
         let delegate = AppDelegate()
         delegate.makeModel()
@@ -694,6 +696,7 @@ runTextCommand { text, generator, place in
 // cancels it after that long, as more speech does in the app. `--app <name>` reads that app's focused window for a request about
 // the screen, and `--draw` also shows the arrow for 8 s (ADR 0019). Request files are personal: keep them out of the repo.
 if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.arguments.count {
+    DatabaseLocation.refuseCommandLineWithoutDatabase(supportFolder: SupportFolder.url)
     MainActor.assumeIsolated {
         let delegate = AppDelegate()
         delegate.makeModel()
@@ -738,6 +741,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--rerank-eval") {
 
 // `Varnick --search-eval <terms> <output>` scores the app's own search on real search terms (see SearchEval) and exits.
 if let i = CommandLine.arguments.firstIndex(of: "--search-eval") {
+    DatabaseLocation.refuseCommandLineWithoutDatabase(supportFolder: SupportFolder.url)
     MainActor.assumeIsolated {
         let delegate = AppDelegate()
         delegate.makeModel()
@@ -753,7 +757,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--search-eval") {
 // `FirstLaunchMigration` moves Launchy's data here, before the delegate exists and so before `Settings.storeSkipPermissionsIfAbsent`
 // and `PeerLink.refresh`. Short-lived, removed at the rename's Cleanup
 // (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md).
-if let failure = AppStartMigration.run(databasePath: MainActor.assumeIsolated { AppDelegate.databasePath }) {
+if let failure = AppStartMigration.run() {
     FileHandle.standardError.write(Data((failure + "\n").utf8))
     exit(1)
 }

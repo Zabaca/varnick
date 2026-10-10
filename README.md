@@ -204,9 +204,11 @@ someone developing the filter, not to someone using Varnick.
 
 ## Things that stay as they are
 
-- **The database** is a SQLite file in this checkout's `db/` folder (`db/varnick.sqlite`), where `make run`
-  and `make install` point Varnick. The `VARNICK_DB` environment variable overrides the path. `make
-  clean` removes `.build/` and keeps `db/`, since it holds history Chrome may have already dropped.
+- **The database** is a SQLite file, `varnick.sqlite`, in Varnick's folder in Application Support, whichever
+  way Varnick runs. The first start copies a checkout's `db/` database there, if it has one, and leaves the original
+  in place. The `VARNICK_DB` environment variable overrides the path; without it, the command-line modes
+  (`--sync`, `--search`, `--ask`, `--search-eval`) refuse until Varnick has been opened once. `make clean`
+  removes `.build/` and keeps `db/`, since it holds history Chrome may have already dropped.
 - **`.env` is read from Varnick's working directory**, which is this checkout under `make run` and
   `make install`.
 - **Only Chrome's history** is read, and the lookups for `bun` and `tailscale` use the fixed locations above.
