@@ -2,7 +2,8 @@
 problem: name-taken-by-another-launcher
 title: Keep running sessions alive across the rename, by having Varnick read the old names until the last old session ends
 summary: Option 01, except that no session ends at the cutover. Varnick adopts every zmx session named the old way and keeps reading the old names for as long as one of them runs. That covers pane sessions, their labels, the hook files their baked-in hooks write, the work marker, and the Phone page's session links. A link left at the old support folder's name lets those hooks keep writing. A session drops the old names only when it is restarted or closed, and a cleanup ticket removes the dual reading once none is left. In-flight turns, background shells and teammates survive. The price is a second name across most of where-it-breaks' rules for zmx, hooks and peers. The user still visits each machine, grants permissions and restarts the app.
-status: proposed
+status: rejected
+reason: The user chose option 01 on 2026-10-09. Restored panes resume their conversations, and the visit for grants needs a restart anyway. Keeping old sessions alive would give every rule that fails silently a second name, for as long as one old session runs.
 ---
 
 ## Solution

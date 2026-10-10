@@ -1,11 +1,26 @@
 ---
 problem: name-taken-by-another-launcher
 title: Rename everything on one branch, let Varnick move its own data at first launch, and cut each machine over by hand once
-summary: A measurement comes first. It checks how the transcriber hears "Hey Varnick" and whether Jev's measured questions hold with the new name. Then one integration branch renames every name, identifier, file, folder and evergreen doc, and bumps the peer protocol. It also carries a one-time migration, copied from the app's existing settings migration. At its first launch, before anything reads saved state, Varnick ends every zmx session named the old way, then copies the settings domain, moves the support folder, copies the web data and renames the database. Four short-lived guards keep a machine still on Launchy from crossing by itself: the build refuses while Launchy's binary is in the checkout, stop and restart also stop Launchy, install removes the old LaunchAgent, and the Linux installer refuses a host still holding the old root. After the merge come the two GitHub renames. Each machine is then cut over by hand from a terminal outside the app, the Ryzen first, and the user grants permissions and enters keys again. The repository goes public after that, and a last ticket removes the migration and guards.
-status: proposed
+summary: Accepted on 2026-10-09, with the recommendations under Further Notes taken, the Fold as logo and menu-bar icon, and the chosen page for varnick.com. A measurement comes first. It checks how the transcriber hears "Hey Varnick" and whether Jev's measured questions hold with the new name. Then one integration branch renames every name, identifier, file, folder and evergreen doc, and bumps the peer protocol. It also carries a one-time migration, copied from the app's existing settings migration. At its first launch, before anything reads saved state, Varnick ends every zmx session named the old way, then copies the settings domain, moves the support folder, copies the web data and renames the database. Short-lived guards keep a machine still on Launchy from crossing by itself: Varnick's command-line modes refuse to run there, the build refuses while Launchy's binary is in the checkout, stop and restart also stop Launchy, restart refuses with no Varnick to start, install removes the old LaunchAgent, and the Linux installer refuses a host still holding the old root. After the merge come the two GitHub renames. Each machine is then cut over by hand from a terminal outside the app, the Ryzen first, and the user grants permissions and enters keys again. The repository goes public after that, and a last ticket removes the migration and guards. The checkout's folder is renamed after every machine runs Varnick, and varnick.com serves the new page once a downloadable build exists.
+status: accepted
 ---
 
 ## Solution
+
+Accepted by the user on 2026-10-09, relayed by the coordinator, with every question open under Further Notes decided as recommended there, and two additions:
+
+- **This option.** Options 02 and 03 are rejected.
+- **The checkout's folder** is renamed later, as its own step once every machine runs Varnick.
+- **Historical docs.** Problems stay dated records, slugs included. ADRs are renamed where they describe the system as it is now and kept where dated, their file names follow the new titles, and one new ADR maps old names to new (Implementation Decisions › Docs).
+  - ADR 0023 has merged since this option was written, so six ADR file names carry the name, and the mapping ADR is 0024.
+- **Saved keys** are entered again rather than copied, so no Keychain prompt sits in the launch path.
+- **The Ryzen's install root** is moved, not reinstalled fresh. It keeps its id, its pairings and the phone's device listing.
+- **The logo is the Fold.** It replaces the menu bar's symbols and becomes the app icon (Implementation Decisions › The logo).
+- **varnick.com** gets the chosen landing page. It moves into this repository after the rename and goes live once a downloadable build exists (Implementation Decisions › varnick.com).
+- **The in-flight screen-access branch has merged** (89f3b76), so phase 2 can start.
+- **Added by the planner while writing the tickets** (2026-10-09), each because a Mac still on Launchy could otherwise cross half-way:
+  - Varnick refuses every mode but the relay and the MCP server while the old support folder exists and the new one doesn't, and only the app's start migrates (The first-launch migration).
+  - The restart script refuses, stopping nothing, while the checkout has no Varnick binary (The guards).
 
 Six phases, in this order.
 
@@ -16,6 +31,7 @@ Six phases, in this order.
    - the rename in code;
    - the migration and the guards;
    - the docs and agents;
+   - the logo;
    - the final checks.
 
    It reaches main in one `--no-ff` merge and is pushed to origin, which is still the private Zabaca/launchy.
@@ -23,6 +39,8 @@ Six phases, in this order.
 4. **Cutover, one sitting** (the user's step, with the user at each machine). The Ryzen goes first, then each Mac. A machine left on Launchy can't reach one on Varnick, and the reverse.
 5. **Going public** (the user's step). repo-not-ready-to-open-source option 01's last steps run against the renamed repository: visibility, private vulnerability reporting, and the check from outside, after its public-repo check has run again over the renamed tree.
 6. **Cleanup.** Once every machine runs Varnick, the migration, the guards and their where-it-breaks entries are removed.
+
+Two pieces follow, each on its own: the checkout's folder is renamed after cleanup (Further Notes), and varnick.com's page moves into the repository after the merge and goes live after a downloadable build (Implementation Decisions › varnick.com).
 
 ## Trade-offs
 
@@ -98,7 +116,12 @@ One ticket, since a half-renamed tree doesn't compile.
 
 ### The first-launch migration
 
-It goes in the app's entry point, where the current settings migration is, after the relay's early exit (the relay never writes settings) and before anything else. Each step is skipped when its target already exists, so later launches do nothing.
+It goes in the app's entry point, after the relay's and the MCP server's early exits (neither writes settings). Each step is skipped when its target already exists, so later launches do nothing.
+
+- **Only the app's start migrates** (decided 2026-10-09). The steps run where the app starts, after every command-line mode has had its turn and before the app's delegate is made, so nothing on the app's path has read settings, the support folder or the database yet.
+- **Every other mode refuses on a Mac not yet moved.** Where the current settings migration is, Varnick exits with an `error:` line when `…/Launchy` exists and `…/Varnick` doesn't, unless it is the relay or the MCP server. The line says the Mac still runs Launchy and points to the cutover.
+  - A check run from a worktree (`--search-eval`, `--problems`, `--sync` and the rest) would otherwise either do the cutover under the running Launchy, ending every session, or create an empty `…/Varnick` that makes the folder step skip at the real cutover.
+  - It lands with the code rename, so no Varnick binary on the branch runs without it. Until the migration lands, the app's start refuses too.
 
 - **The steps run in this order:**
   1. **End the old sessions.** List zmx sessions with the bundled zmx, which is the same release, so it reaches the old daemons. End every session named `launchy-<uuid>` and labelled `launchy=1`, plus `launchy-phone-page`, `launchy-upgrade` and any `launchy-install-…`. Confirm from a listing that came back, as `Zmx.endConfirmed` does.
@@ -131,6 +154,8 @@ Short-lived; each says in a comment that the cleanup ticket removes it.
   - A worktree's build folder starts empty, so builders aren't affected.
   - An old Mac's Upgrade will already have fast-forwarded its checkout. Its build then fails, no stamp is written, and its Restart stays refused.
 - **Stop and restart.** `make stop` and the restart script also stop a Launchy binary, anchored the same way as today's pattern.
+- **Restart with nothing to start** (decided 2026-10-09). The restart script refuses before stopping anything when this checkout has no Varnick binary, and logs why.
+  - The status menu's Restart runs the checkout's script with no build, and so does a peer's Restart (verified at 7316d5f). On the Mac the merge lands on, or one whose checkout an old Upgrade fast-forwarded, the new script would otherwise stop Launchy and start nothing.
 - **Install.** `make install` and `make uninstall` also boot out the `com.zabaca.launchy` LaunchAgent and remove its plist.
 - **Linux installer.** Its far half refuses to install where `~/.launchy` exists, with a line the near half reports. A Mac whose checkout an old Upgrade fast-forwarded therefore can't put a second relay, with a new id, beside the old one.
 
@@ -155,6 +180,38 @@ Recommended. The problem leaves this open.
   - the skills.
 
   The planner's instructions pass to `varnick-planner`.
+
+### The logo: Fold
+
+Decided by the user on 2026-10-09.
+
+- **The mark.** A V split down the middle, its right half offset. Three drawings in a 64-unit box, each two filled quadrilaterals:
+
+  | Drawing | Used for | Path |
+  |---|---|---|
+  | master | the app icon, the page's mark and its favicon | `M6 4.5L24 4.5L30.25 27.94L30.25 51.13ZM58 11.5L40 11.5L33.75 34.94L33.75 58.13Z` |
+  | cut, idle | the menu bar, not Listening: the halves apart | `M6 5L24 5L29.75 26.56L29.75 50.67ZM58 11L40 11L34.25 32.56L34.25 56.67Z` |
+  | cut, Listening | the menu bar while Listening: the halves lined up | `M6 8L24 8L29.75 29.56L29.75 53.67ZM58 8L40 8L34.25 29.56L34.25 53.67Z` |
+
+  The cut widens the gap (3.5 units to 4.5) and shrinks the offset (7 to 6), so the halves stay apart at menu-bar size. Listening lines them up, so the change of state is the change of shape.
+- **The menu bar.** The two cuts replace the magnifying glass and the waveform symbols, at the same two places: when the status item is made, and when Listening's state changes. They are template images at 16pt, so the menu bar colours them, and their description is the app's name.
+  - They are drawn from the path data in code. A bare executable has no resource bundle to load an image file from.
+  - They must read at 16pt, at 1x and 2x, in a light and a dark menu bar and highlighted: two halves, and idle told from Listening at a glance.
+- **The app icon.** A bare executable has no bundle icon. At launch the app sets its runtime icon to the master, in the page's accent colour, which AppKit shows wherever it shows the app's icon. A bundle's icon file comes with whichever runs-only-from-a-checkout option makes the app bundle.
+- **Risk.** No trademark check has been done on the mark. Noted, not a blocker.
+
+### varnick.com
+
+Decided by the user on 2026-10-09.
+
+- **The page.** A prototype is chosen: variant D, which is A's hero with C's body, with hero copy 2. It is kept in a local Scratch area, outside version control.
+- **Into the repository after the rename.** Once the rename has merged, it moves to `site/` as one self-contained page, with no build and no external requests.
+  - The prototype's chrome goes: the variant switcher and its bar, the claims drawer and the data behind it, the hero switcher, and the styles of the variants not chosen.
+  - It passes the public-repo rule like any committed file.
+- **Its claims.** Read against the tree at db973f1, some of what the page says rested on work not yet shipped, among them a notarized download, the public repository and features still proposed. Before it goes live, each claim is backed by shipped work or reworded; the user decides which.
+- **Live after a download exists.** Its main button is Download, so it replaces what varnick.com serves only once a downloadable build exists (runs-only-from-a-checkout), and once the repository is public, since its other links lead into it.
+  - varnick.com is served through Cloudflare today, from outside this repository (its nameservers and response headers, checked 2026-10-09). Which project deploys it is unverified.
+  - The deploy and the DNS change are the user's.
 
 ### GitHub (the user's step, after the merge and before the cutover)
 
@@ -256,7 +313,9 @@ There is no Swift test target. Every ticket runs `make build`, and the Phone pag
   - The kill pattern matches the old binary's relative and absolute forms and not the relay's arguments.
   - Install and uninstall boot out a dummy old LaunchAgent label.
   - The far half refuses with a dummy `~/.launchy` in a throwaway home on the host.
-- **Search for leftovers.** A search for the old name over the tree finds only the allowed list: dated docs, the checkpoint's keys, and the migration and guards.
+  - The restart script, with no Varnick binary, refuses before it stops anything: run with stand-ins for `pkill` and `pgrep` first on the path, so a mistake can't stop the running Launchy.
+  - The refusal: a command-line mode with a temporary home holding a dummy old support folder exits with its `error:` line, and without that folder runs.
+- **Search for leftovers.** A search for the old name over the tree finds only the allowed list: dated docs, the checkpoint's keys, and the migration, the refusal and the guards.
 - **The public-repo patterns** run over the branch's diff, since it touches nearly every file.
 - **By hand at the cutover** (the user): the checks in each runbook.
 
@@ -273,7 +332,7 @@ There is no Swift test target. Every ticket runs `make build`, and the Phone pag
 
 ## Further Notes
 
-- **Open, each with a recommendation:**
+- **Decided on 2026-10-09, each as recommended** (these were open; the start of Solution records the decision):
   - **The checkout's folder.** Rename it, but as its own small step after every machine runs Varnick. Nothing published depends on it, and moving it also moves Claude Code's own data, which the cutover otherwise leaves alone.
     - Moving it means: `git worktree repair`; `make clean`, since SwiftPM's build folder holds absolute paths; `make install` again for the LaunchAgent and the skill link (removing a link into the old path first, since install leaves a foreign link alone); and moving Claude Code's project folder to the new path's key.
     - A link at the old key to the new folder, and one at the old checkout path, would keep the memory, the transcripts and every saved directory resolving. Whether Claude Code and the project picker treat links that way is unverified: try it on a throwaway project, and drop the checkout link if the picker lists the project twice.
@@ -309,15 +368,19 @@ There is no Swift test target. Every ticket runs `make build`, and the Phone pag
   - that the old Keychain items prompt the renamed app;
   - that GitHub's redirect lasts until the old name is reused;
   - that nothing besides the work branches' author pushes to the Deno project.
-- **Tickets, a sketch** (`/to-tickets` makes them):
-  1. **Measure** (AFK, the `eval` agent in agent-lab). Covers the wake phrase and Jev's wording.
-  2. **The code rename** (AFK, on `varnick`, after the in-flight branch merges and the last Launchy commit is tagged locally).
+- **Tickets,** written on 2026-10-09 as local files in the problem's scratch folder. The AFK ones run unattended; the user's need the user:
+  1. **Measure** (AFK, the `eval` agent in agent-lab): the wake phrase and Jev's wording.
+  2. **The code rename** (AFK, on `varnick`), with the refusal for a Mac not yet moved.
   3. **The first-launch migration and the guards** (AFK, on `varnick`, after 2). Their where-it-breaks entries are marked short-lived.
-  4. **Docs and agents** (AFK, on `varnick`, after 2). Covers evergreen docs, ADR text and file names, the mapping ADR, the agents and the skills.
-  5. **Final checks and merge** (AFK up to the push). Covers ticket 1's results in the matcher and wording, the leftover search, the public-repo patterns, the build, `bun test`, review, then the `--no-ff` merge to main and the push.
-  6. **GitHub renames** (the user).
-  7. **Cutover: the Ryzen** (the user).
-  8. **Cutover: each Mac** (the user).
-  9. **Custom apps in other projects** (the user, or AFK per project on the user's go).
-  10. **Going public** (the user): repo-not-ready-to-open-source option 01's last steps.
-  11. **Cleanup** (AFK, after 7 and 8 on every machine). Removes the migration, the guards and their where-it-breaks entries. The checkout's folder step can follow.
+  4. **Docs and agents** (AFK, on `varnick`, after 2): evergreen docs, ADR text and file names, the mapping ADR, the agents and the skills.
+  5. **The Fold** (AFK, on `varnick`, after 2): the menu bar's template images and the runtime app icon.
+  6. **Final checks and merge** (AFK up to the push, after 1 to 5): ticket 1's results in the matcher and wording, the leftover search, the public-repo patterns, the build, `bun test`, review, the `--no-ff` merge to main and the push.
+  7. **GitHub renames** (the user, after 6).
+  8. **Cutover: the Ryzen** (the user, after 7).
+  9. **Cutover: each Mac** (the user, after 8).
+  10. **Custom apps in other projects** (the user, or AFK per project on the user's go, after 9).
+  11. **Going public** (the user, after 9): repo-not-ready-to-open-source option 01's last steps against the renamed repository.
+  12. **Cleanup** (AFK, after 8 and 9 on every machine): removes the migration, the refusal, the guards and their where-it-breaks entries.
+  13. **The checkout's folder** (the user, after 12).
+  14. **The page into `site/`** (AFK, after 6).
+  15. **varnick.com goes live** (the user, after 14 and 11, and after a downloadable build exists).

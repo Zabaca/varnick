@@ -18,6 +18,7 @@ Accepted by the user on 2026-10-07, relayed by the coordinator, with the questio
 - **Machines by kind** ("the Studio", "the Air", "the Ryzen") stay in problems and ADRs as dated records. Code and the other docs name roles.
 - **The relevance filter** is off for a new install without a TypeSafe key.
 - **Where the work lands:** the scrub tickets merge into an integration branch, `open-source-prep`, not into main, and nothing is pushed until the cutover. Main is merged into that branch along the way, so its tip carries main's work. The public commit takes that branch's tree, from a fresh clone of the local repository, since origin doesn't have the branch. The cutover, the user's own ticket, moves it to origin as main. Where this option says main for the scrub, its checks or the public commit's tree, read that branch.
+- **Since 2026-10-09:** the name changes after all, to Varnick (name-taken-by-another-launcher option 01). Cutover steps 7 and 8 wait for the rename; the problem's "Where it stands" says until when.
 
 Two phases.
 
