@@ -69,7 +69,7 @@ enum PeerSocket {
     }
 
     /// The line `isAnswering` sends. The server replies to it on its own queue, so a busy main actor can't make a running
-    /// Launchy look gone; an older Launchy answers it as an unreadable request, and any reply counts.
+    /// Launchy look gone; an older Launchy answers it with its version-mismatch line, and any reply counts.
     static let probe = #"{"probe":1}"#
 
     /// Whether a Launchy answers on the socket. A socket that accepts a connection but never replies is one an earlier
