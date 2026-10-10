@@ -1,8 +1,8 @@
 # Guide
 
 What each part of Varnick needs, does and starts as. The words it uses (Session, Pane, Peer, Host and the rest)
-are defined in [`CONTEXT.md`](../CONTEXT.md). What leaves your Mac, feature by feature, is in
-[`privacy.md`](privacy.md).
+are defined in [`CONTEXT.md`](../CONTEXT.md). What leaves your Mac, feature by feature, and what each
+setting lets others do, is in [privacy and security](privacy-and-security.md).
 
 ## Requirements
 
@@ -48,9 +48,9 @@ To build it yourself instead, see [`building.md`](building.md).
 
 - **Skip permissions is off.** Claude sessions start with Claude's permission checks on. The setting
   (Settings › Skip permissions) starts them with `--dangerously-skip-permissions` instead: Claude then
-  runs tools without asking. See [`SECURITY.md`](../SECURITY.md).
+  runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
-  as `TYPESAFE_API_KEY`, or in `.env`. See [`privacy.md`](privacy.md) for what turning it on sends.
+  as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access and the
   Phone page.
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
@@ -81,11 +81,11 @@ database can't be found from where Varnick runs, and a restart waits while a bui
 Varnick on one Mac can pair with Varnick on another Mac, and with a headless host, over SSH with your own
 keys. A session runs on one host and stays there; another Mac shows its live screen and can take over.
 Add a peer in Settings › Peers (Find Macs searches your tailnet, or add by address as `<user>@<host>`).
-The peer list and your SSH keys are the boundary: see [`SECURITY.md`](../SECURITY.md). Pairing copies your
-history and Claude prompts to the other Mac: see [`privacy.md`](privacy.md).
+The peer list and your SSH keys are the boundary, and pairing copies your history and Claude prompts to the
+other Mac: see [privacy and security](privacy-and-security.md#peers-over-ssh).
 
 Settings › Peers also shows each Mac's build and can upgrade it from `origin/main`, which fetches and builds the
-checkout (again, see [`SECURITY.md`](../SECURITY.md)). Only a Mac that runs a checkout can be upgraded this way; an
+checkout (see [privacy and security](privacy-and-security.md#upgrades-from-originmain)). Only a Mac that runs a checkout can be upgraded this way; an
 installed app is updated by downloading the newest build. A Mac on the app speaks the protocol of the build it
 was made from, so when `main` has moved on, the two kinds of Mac may only be able to exchange hellos until the
 app is updated.
@@ -99,7 +99,7 @@ A web page each host can serve to your own devices, such as a phone: the host's 
 session and a terminal, typed into with the phone's own keyboard plus one row of the keys it lacks (Esc, Tab,
 Shift+Tab, the arrows and a sticky Ctrl). It is off by default (Settings › Serve the phone page; on Linux,
 `--page`). It needs Bun and Tailscale. It is published with `tailscale serve` on HTTPS port 8444, to your tailnet
-only, and each device you list on a host is identified by Tailscale. [`SECURITY.md`](../SECURITY.md) explains what
+only, and each device you list on a host is identified by Tailscale. [Privacy and security](privacy-and-security.md#the-phone-page) explains what
 that does and does not protect, including a mode in which any program on the Mac can reach it.
 
 ## Listening
@@ -115,7 +115,7 @@ you ("Hey Varnick, where's the Allow button"). Varnick reads the elements of the
 through macOS Accessibility, in its own process, asks TypeSafe's Jev which one you mean, draws a big arrow
 and a sign on it that never takes focus or clicks, says what it is, and takes the arrow away a few seconds
 later. It needs the Accessibility permission, which Settings asks for and shows, and the relevance filter
-on TypeSafe with a key (see [`privacy.md`](privacy.md) for what is sent).
+on TypeSafe with a key (see [privacy and security](privacy-and-security.md#typesafe) for what is sent).
 
 With Varnick's own panel open and in front, it looks in the panel first, as in any window, and reads the app
 behind it only when the thing isn't there; a terminal pane's text is not in the panel's elements, so it can't be
@@ -127,7 +127,7 @@ answer stands, and Varnick says it can't see inside Chrome's pages.
 
 A rebuild of Varnick may need either permission given again. The permissions are Varnick's, and every
 Claude session and shell in its panes gets them too, kept running in zmx or not: see
-[`SECURITY.md`](../SECURITY.md).
+[privacy and security](privacy-and-security.md#screen-permissions-reach-every-pane).
 
 ## Screen access
 
@@ -145,15 +145,15 @@ both.
 Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while
 still asking for `click` (not checked). A session gains the tools when it starts, so restart a running one
 (⌘⌥R) after turning the switch on; turning it off stops every session's tools at once. It is independent of
-Point at the screen and Hey Varnick. See [`privacy.md`](privacy.md) for what a session is shown, and
-[`SECURITY.md`](../SECURITY.md).
+Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
+for what a session is shown.
 
 ## TypeSafe
 
 The relevance filter can run on [TypeSafe](https://www.typesafe.ai)'s API, with your own key (Settings
 saves it in the Keychain, or it is read from `TYPESAFE_API_KEY` in the environment or from `.env`). Choosing
 TypeSafe is consent to send what its features need; with On this Mac, or the filter off, nothing goes to
-TypeSafe. What it sends is in [`privacy.md`](privacy.md).
+TypeSafe. What it sends is in [privacy and security](privacy-and-security.md#typesafe).
 
 ## On-device models
 
@@ -167,7 +167,7 @@ These download from Hugging Face when you ask (Settings), and run on this Mac wi
 Their licences are in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
 Each of these two can instead run on a model server on your tailnet (Settings › Models › Server);
-[`privacy.md`](privacy.md) says what that sends.
+[privacy and security](privacy-and-security.md#a-model-server-you-name) says what that sends.
 
 "On this Mac" is also a choice for the relevance filter. It runs a small checkpoint distilled from
 TypeSafe's judgments on a person's own history, and that checkpoint is not published: the choice needs

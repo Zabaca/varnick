@@ -635,7 +635,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
   <!-- ============ Privacy ============ -->
   <section class="privacy" id="privacy" aria-labelledby="h-privacy">
     <h2 id="h-privacy">What stays on your Mac, and what is sent</h2>
-    <p class="intro">Varnick works on your own data. Most of it never leaves the machine. What does, and when, is listed in the <a href="https://github.com/Zabaca/varnick/blob/main/docs/privacy.md">privacy notes</a> and <a href="https://github.com/Zabaca/varnick/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+    <p class="intro">Varnick works on your own data. Most of it never leaves the machine. What does, and when, is listed in <a href="https://github.com/Zabaca/varnick/blob/main/docs/privacy-and-security.md">Privacy and security</a>.</p>
   </section>
 
   <!-- ============ FAQ ============ -->
@@ -645,7 +645,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
       <details><summary>What do I need to run it?</summary><div>
         <p>An Apple Silicon Mac on macOS 14 or later, and the Claude Code command line, which Varnick's Claude panes run through your login shell. Chrome, if you want its history and bookmarks searched. Bun for the Phone page and for app panes. Tailscale for peers and the Phone page. Listening needs macOS 26.</p></div></details>
       <details><summary>Does it send my browsing history anywhere?</summary><div>
-        <p>The archive stays on your Mac. Varnick does request each page in it once, without cookies, to read its description, so those requests reach the sites you visited. The archive goes to another Mac only if you pair that Mac. A search goes to TypeSafe, with the titles, sites and descriptions of up to 20 results, only if you choose TypeSafe and give it a key. The full list is in the <a href="https://github.com/Zabaca/varnick/blob/main/docs/privacy.md">privacy notes</a>.</p></div></details>
+        <p>The archive stays on your Mac. Varnick does request each page in it once, without cookies, to read its description, so those requests reach the sites you visited. The archive goes to another Mac only if you pair that Mac. A search goes to TypeSafe, with the titles, sites and descriptions of up to 20 results, only if you choose TypeSafe and give it a key. The full list is in <a href="https://github.com/Zabaca/varnick/blob/main/docs/privacy-and-security.md">Privacy and security</a>.</p></div></details>
       <details><summary>Which browsers does it read?</summary><div>
         <p>Chrome only, every profile. No other browser is read.</p></div></details>
       <details><summary>Does it work on Windows or Linux?</summary><div>
@@ -659,7 +659,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
       <details><summary>Can the arrow point at anything?</summary><div>
         <p>At what the window shows to macOS Accessibility, and at text it can read from a picture of the window if you grant Screen Recording. It does not point into a terminal pane. It needs the relevance filter on TypeSafe with a key, because TypeSafe chooses the element. Chrome pages need Screen Recording.</p></div></details>
       <details><summary>Is the Phone page safe?</summary><div>
-        <p>It is off until you turn it on, reachable only through your tailnet, and answers only devices you list. One weakness is known and written down: when Tailscale can't serve a socket, the page falls back to a mode in which any program on the Mac can pose as a listed device. Settings says when that is the case, and <a href="https://github.com/Zabaca/varnick/blob/main/SECURITY.md">SECURITY.md</a> says how to avoid it.</p></div></details>
+        <p>It is off until you turn it on, reachable only through your tailnet, and answers only devices you list. One weakness is known and written down: when Tailscale can't serve a socket, the page falls back to a mode in which any program on the Mac can pose as a listed device. Settings says when that is the case, and <a href="https://github.com/Zabaca/varnick/blob/main/docs/privacy-and-security.md#the-phone-page">Privacy and security</a> says how to avoid it.</p></div></details>
       <details><summary>How is it licensed?</summary><div>
         <p>Apache License 2.0. The source is on <a href="https://github.com/Zabaca/varnick">GitHub</a>, and third-party code and models are credited in the notices file.</p></div></details>
       <details><summary>Is it from Anthropic?</summary><div>
@@ -695,7 +695,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
         <li><a href="https://github.com/Zabaca/varnick/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a></li></ul></nav>
       <nav aria-label="Read more"><h3>Read more</h3><ul>
         <li><a href="https://github.com/Zabaca/varnick/blob/main/README.md">README</a></li>
-        <li><a href="https://github.com/Zabaca/varnick/blob/main/SECURITY.md">Security</a></li>
+        <li><a href="https://github.com/Zabaca/varnick/blob/main/docs/privacy-and-security.md">Privacy and security</a></li>
         <li><a href="https://github.com/Zabaca/varnick/tree/main/docs/adr">Design decisions</a></li>
         <li><a href="https://github.com/Zabaca/varnick/blob/main/CONTRIBUTING.md">Contributing</a></li></ul></nav>
     </div>
