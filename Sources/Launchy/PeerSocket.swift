@@ -34,6 +34,8 @@ enum PeerSocket {
     private static func makeSocket(timeout: TimeInterval) -> Int32? {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
+        // A pane's processes would otherwise inherit it and keep the socket alive after Launchy quits.
+        _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
         var none: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &none, socklen_t(MemoryLayout<Int32>.size))
         var limit = timeval(tv_sec: Int(timeout), tv_usec: 0)
@@ -66,11 +68,10 @@ enum PeerSocket {
         }
     }
 
-    /// Whether something is listening, without sending it anything.
+    /// Whether a Launchy answers on the socket. A socket that accepts a connection but never replies is one an
+    /// earlier Launchy left open in a process it started, so it doesn't count.
     static func isListening() -> Bool {
-        guard let path, var address = address(for: path), let fd = makeSocket(timeout: 1) else { return false }
-        defer { close(fd) }
-        return withSockaddr(&address) { connect(fd, $0, $1) } == 0
+        request("{}", timeout: 1) != nil
     }
 
     /// Sends one request line to the running Launchy and returns its reply line; nil when Launchy
@@ -126,6 +127,7 @@ enum PeerSocket {
             while true {
                 let fd = Darwin.accept(listener, nil, nil)
                 if fd < 0 { if errno == EINTR { continue } else { return } }
+                _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
                 // The socket's mode already keeps other users out; this checks it anyway.
                 var uid: uid_t = 0, gid: gid_t = 0
                 guard getpeereid(fd, &uid, &gid) == 0, uid == getuid() else { close(fd); continue }
