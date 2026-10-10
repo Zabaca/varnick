@@ -20,7 +20,7 @@ Contents:
 
 `Sources/Varnick/LayaModel.swift` is a translation to Swift and MLX of the decision model in Laya and
 of laya-mlx's `model.py`, as its header says. Varnick ships no Laya or laya-mlx weights: the relevance
-checkpoint it can load is one the user imports (see the README).
+checkpoint it can load is one the user imports (see [`docs/guide.md`](docs/guide.md#on-device-models)).
 
 | Project | Source | Licence | NOTICE file |
 |---|---|---|---|

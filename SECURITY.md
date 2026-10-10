@@ -99,7 +99,7 @@ Advice, until loopback mode is fixed:
     whenever the app is installed, so a standalone command line (such as Homebrew's) takes over only on a Mac
     without the app;
   - an older command line: install a newer one;
-  - no command line found or none answering: install one where Varnick looks (the README lists the places).
+  - no command line found or none answering: install one where Varnick looks (the [guide](docs/guide.md#requirements) lists the places).
 - Or don't serve the page on a Mac that other people have accounts on, or run programs you don't trust.
 - On a headless host the page always uses a socket.
 
@@ -142,7 +142,7 @@ and without it that step is skipped.
   never consulted. Turning the switch off does not revoke the permissions: only taking Varnick out of
   Settings › Privacy & Security › Accessibility and Screen Recording does, if that is not acceptable.
 - **A signed rebuild keeps the permissions; an ad-hoc one may not.** Builds are signed ad hoc unless the Mac has a
-  Developer ID Application identity (README, Build from a checkout). An ad-hoc build may not match the grants to the
+  Developer ID Application identity ([`docs/building.md`](docs/building.md#signing)). An ad-hoc build may not match the grants to the
   next build (not verified). A signed build keeps them: Accessibility and Screen Recording still applied
   from a pane after a rebuild and a restart, with System Settings untouched. So the grants no longer
   lapse at a rebuild: they stay with every pane session until you remove Varnick in Settings › Privacy &
@@ -166,8 +166,8 @@ and without it that step is skipped.
   field the elements find (a native one, or a web page's in Safari or an Electron app), and inside the field with focus, are dropped. **A field Varnick can't place is
   not, so typed text of 6 words or fewer there may reach TypeSafe:** a Chrome page's field, one in a canvas
   app, a remote desktop or a virtual machine, one past the limits of the read, or one that moved before the
-  picture was taken. Do not use this with a password or other secret typed in such a field. See the README's
-  Privacy section and ADR 0021.
+  picture was taken. Do not use this with a password or other secret typed in such a field. See
+  [`docs/privacy.md`](docs/privacy.md) and ADR 0021.
 - **The arrow** is drawn by Varnick, cannot take focus or clicks, and goes by itself.
 
 ## Screen access
@@ -216,4 +216,4 @@ Mac's screen (ADR 0023). It needs the same Accessibility and Screen Recording as
   words and the title, site and page description of its first 20 pages. Words said before the request was
   finished may be sent and then discarded. With Point at the screen on, a request about the screen also
   sends the window's title and its controls' descriptions, Varnick's own panel's names included when it is in
-  front, and after a miss its short lines of recognised text (above). See the README's Privacy section.
+  front, and after a miss its short lines of recognised text (above). See [`docs/privacy.md`](docs/privacy.md).
