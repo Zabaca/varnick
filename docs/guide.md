@@ -12,7 +12,7 @@ setting lets others do, is in [privacy and security](privacy-and-security.md).
   account's own only when it is zsh, bash or sh; for any other, such as fish, panes use `/bin/zsh`, so
   `claude` has to be on zsh's PATH too.
 - Chrome, if you want its history and bookmarks searched. No other browser is read.
-- [Bun](https://bun.sh), only for the Phone page and for app panes (custom apps). App panes run in zsh, so
+- [Bun](https://bun.sh), only for the Phone page and for app panes ([custom apps](#custom-apps)). App panes run in zsh, so
   `bun` must be on zsh's PATH. The Phone page looks for it at `~/.bun/bin/bun`, `/opt/homebrew/bin/bun`
   and `/usr/local/bin/bun`.
 - [Tailscale](https://tailscale.com), for peers and for the Phone page. Varnick looks for its command
@@ -150,6 +150,36 @@ still asking for `click` (not checked). A session gains the tools when it starts
 (⌘⌥R) after turning the switch on; turning it off stops every session's tools at once. It is independent of
 Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
 for what a session is shown.
+
+## Custom apps
+
+A custom app is a small web server in a folder of its own. It is listed in the split picker (⌃⌘⇧E or ⌃⌘⇧O),
+run when you pick it, and shown in a pane. It needs [Bun](https://bun.sh) on zsh's PATH.
+
+- **The catalog.** Settings › **Apps** lists the apps that ship with this release of Varnick, reviewed in its
+  repository. Each row says what the app does and what it fetches, and has a switch, off until you turn it on.
+  - **On** copies the app into `~/.varnick/custom-apps/<name>/`, with a hidden marker file saying Varnick put it
+    there, so it shows in the picker in every project. If the app has a skill, Varnick links it as
+    `~/.claude/skills/<name>`, but only when nothing is at that path, so Claude in a session started afterwards
+    knows how to use the app. Turning on fetches nothing: an app's packages install with Bun the first time you
+    pick it. Offline, the pane shows Bun's error, and reload (⌘R) tries again.
+  - **Off** moves the copy to the Trash and removes the skill link if it is Varnick's. It is refused while a pane
+    runs the app. The app's data is kept, so turning it on again finds it.
+  - **A newer release** refreshes an installed app at launch, when no pane runs it. One that is open waits for a
+    launch where none is.
+- **Your own.** Ask Claude in a session to make a custom app: the `custom-apps` skill, which Varnick links into
+  `~/.claude/skills`, tells it how. The last line of Settings › Apps has a button that shows your apps folder.
+- **Where apps live.** In `~/.varnick/custom-apps/` for every project, or `<project>/.varnick/custom-apps/` for
+  one. A project's app hides a user's of the same name, a catalog app's included, and Settings can't see
+  projects, so it doesn't say when that happens.
+- **The installed copy is Varnick's.** A refresh replaces it, so an edit made in it is lost at the next update
+  that changes the app (the old copy is in the Trash). To change a catalog app, copy its folder under another
+  name: that app is yours, and Varnick never touches it. A folder of yours with a catalog app's name keeps its
+  switch off, and the row says why.
+- **Data.** An app's own files are in `~/Library/Application Support/Varnick/app-data/user/<name>/` for a user
+  app, and under a folder named for the repo and a hash of its path for a project's.
+- **Rights.** An app runs with your rights, and its panes have Varnick's macOS permissions. The catalog is
+  reviewed but not sandboxed: see [privacy and security](privacy-and-security.md#custom-apps).
 
 ## Experimental
 

@@ -54,12 +54,17 @@ SKILL_TARGET := $(CURDIR)/.claude/skills/custom-apps
 # their fixtures stay behind, and a file left unchanged is left alone, so building twice changes nothing.
 PHONE_PAGE_DIR := .build/release/PhonePage
 
+# The catalog (option 01 of custom-apps-must-be-written-first): apps/, copied next to the binary as the Phone page is, and into
+# the bundle's Resources by app-bundle. Never node_modules (Scratch's hold unsigned native binaries that notarization would
+# reject) or .DS_Store. Settings > Apps reads it from the resource folder, so the app and a checkout build share one path.
+APPS_CATALOG_DIR := .build/release/apps
+
 # The line `BuildStamp` reads, written as the last step of `make build` (where-it-breaks, Peers, has the rules).
 BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
+.PHONY: build build-steps cutover-check check-apps apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -92,6 +97,7 @@ build-steps:
 	    echo "error: signing: this checkout has been signed with an identity, and none is usable now. Fix the keychain, or set SIGN_IDENTITY=- to sign ad hoc on purpose." >&2; exit 1; fi; \
 	  $(MAKE) --no-print-directory sign-varnick sign-zmx SIGN_ID="$$id"
 	@$(MAKE) --no-print-directory phone-page
+	@$(MAKE) --no-print-directory apps-catalog
 	@$(MAKE) --no-print-directory build-stamp
 
 # Without an identity, ad hoc and nothing else, as before. With one: the hardened runtime and the one entitlement in
@@ -114,6 +120,16 @@ endif
 phone-page:
 	mkdir -p $(PHONE_PAGE_DIR)
 	rsync -a --delete --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/' PhonePage/ $(PHONE_PAGE_DIR)/
+
+apps-catalog:
+	mkdir -p $(APPS_CATALOG_DIR)
+	rsync -a --delete --exclude 'node_modules' --exclude '.DS_Store' apps/ $(APPS_CATALOG_DIR)/
+
+# Offline checks of every catalog entry (scripts/check-apps.sh; the rules are in CONTRIBUTING). `app-guard` runs it, so a release
+# never ships a broken entry. `make check-apps APPS=<folder>` checks another folder.
+APPS ?= apps
+check-apps:
+	@scripts/check-apps.sh $(APPS)
 
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.
@@ -258,6 +274,7 @@ APP_BUILD_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y%m%d.%H%M)
 
 # Every refusal is one `error:` line, and none reaches the build. The identity's script says its own reasons.
 app-guard:
+	@$(MAKE) --no-print-directory check-apps
 	@if ! git diff --quiet HEAD --; then echo "error: app: the checkout has changes to tracked files; a published build matches a commit" >&2; exit 1; fi
 	@scripts/signing-identity.sh --developer-id >/dev/null || { echo "error: app: no Developer ID Application identity to sign with (an app is never ad hoc); fix SIGN_IDENTITY in Makefile.local" >&2; exit 1; }
 	@command -v uvx >/dev/null || { echo "error: app: no uvx on the PATH; the disk image is built with dmgbuild, which uvx runs (uv: https://docs.astral.sh/uv/)" >&2; exit 1; }
@@ -279,6 +296,7 @@ app-bundle: app-guard
 	cp -c .build/release/zmx $(APP)/Contents/MacOS/zmx
 	cp -c .build/release/mlx.metallib $(APP)/Contents/Resources/mlx.metallib
 	rsync -a PhonePage/ $(APP)/Contents/Resources/PhonePage/ --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/'
+	rsync -a apps/ $(APP)/Contents/Resources/apps/ --exclude 'node_modules' --exclude '.DS_Store'
 	cp .build/release/build-stamp $(APP)/Contents/Resources/build-stamp
 	mkdir -p $(APP)/Contents/Resources/skills
 	cp -RL .claude/skills/custom-apps $(APP)/Contents/Resources/skills/custom-apps

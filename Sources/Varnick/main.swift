@@ -126,6 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         makeModel()
         spoken = SpokenRequests(model: model)
         model.cleanUpAfterLastRun()
+        // Catalog apps whose release changed, once the saved tabs say which apps panes run.
+        AppCatalog.refreshAtLaunch(running: model.openAppFolders())
         PeerManager.shared.model = model
         PeerManager.shared.onRemoved = { [weak self] in Task { await self?.syncHistory() } }
         PeerManager.shared.start()

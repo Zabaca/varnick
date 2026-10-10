@@ -45,6 +45,8 @@ console.log(`listening on ${server.url}`);
 
 **Where apps are found.** The picker reads `<project>/.varnick/custom-apps/` and `~/.varnick/custom-apps/` each time it opens. The project is the git repo (a folder with `.git`, directory or file, so a worktree is its own project) containing the focused pane's folder; outside any repo it is that folder, which has no project apps. A repo at the home folder has none either; its apps are the user's. An app is a subfolder of those. A project app hides a user app with the same folder name.
 
+**The catalog.** Apps that ship with Varnick are in the `apps/` folder of its repository (the public one, Zabaca/varnick), and the user turns each on in Settings › Apps, which copies it into `~/.varnick/custom-apps/<name>/` with a hidden `.varnick-catalog` marker file and links its `skill` folder, if it has one, as `~/.claude/skills/<name>`. An app turned on this way is an ordinary user app: edit nothing in it, since an update replaces it; to change one, copy it under another name. A catalog entry is an ordinary app plus an optional `skill` folder, a `bun.lock` beside any `package.json`, and `description` and `network` in its manifest; the rules are in CONTRIBUTING's "Contributing an app", and `make check-apps` checks what it can.
+
 **Manifest.** `varnick.json` in the app's folder:
 
 | Field | Required | Meaning |
@@ -53,6 +55,10 @@ console.log(`listening on ${server.url}`);
 | `name` | no | Shown in the picker; defaults to the folder name |
 | `icon` | no | SF Symbol name; defaults to `puzzlepiece.extension`, also used when the name is no symbol |
 | `key` | no | One character that picks the app in the picker |
+| `description` | no | One sentence, shown on the app's row in Settings › Apps (catalog apps) |
+| `network` | no | What the app fetches or sends, and where to, shown on that row. A catalog app whose only fetch is its packages says so |
+
+`description` and `network` are read only by Settings › Apps; the picker and the runner ignore them, so a user's own app may carry them too.
 
 **Picker order and keys.** Claude, Terminal and Browser, then the project's apps, then the user's, each group sorted by name. Built-ins keep C, T and B. Apps are keyed in that order by their `key`, matched in either case, so project apps win clashes.
 
@@ -66,7 +72,7 @@ console.log(`listening on ${server.url}`);
 | `VARNICK_PROJECT` | The project path, as above |
 | `VARNICK_APP_DATA` | A folder for the app's own data, made before the app runs, under `~/Library/Application Support/Varnick/app-data/`: `user/<folder name>` for a user app, `<repo folder>-<hash of the repo path>/<folder name>` for a project app |
 
-Claude and terminal panes get `VARNICK_PANE_ID` too, their own id, which stays with the pane across `/clear` and `/resume`, and Claude panes also get `VARNICK_PROJECT`, the same project path an app is given for that pane's folder. Both reach Claude's Bash tool. An app serving a Claude pane's files finds them under `VARNICK_PROJECT` by that pane's id, which `VARNICK_SPLIT_FROM` gives it. A Claude pane started before a Varnick build that sets `VARNICK_PROJECT` has no such variable until it restarts, and one older still has no `VARNICK_PANE_ID`: its id is the name of the folder holding its `VARNICK_SESSION_FILE`. Scratch's layout is in its skill: `.claude/skills/scratch/SKILL.md` in the Varnick repo, or `"$(readlink ~/.claude/skills/custom-apps)/../scratch/SKILL.md"` from another project.
+Claude and terminal panes get `VARNICK_PANE_ID` too, their own id, which stays with the pane across `/clear` and `/resume`, and Claude panes also get `VARNICK_PROJECT`, the same project path an app is given for that pane's folder. Both reach Claude's Bash tool. An app serving a Claude pane's files finds them under `VARNICK_PROJECT` by that pane's id, which `VARNICK_SPLIT_FROM` gives it. A Claude pane started before a Varnick build that sets `VARNICK_PROJECT` has no such variable until it restarts, and one older still has no `VARNICK_PANE_ID`: its id is the name of the folder holding its `VARNICK_SESSION_FILE`. Scratch's layout is in its skill, which is linked as `~/.claude/skills/scratch` while Scratch is on in Settings › Apps (its source is `apps/scratch/skill/SKILL.md` in the Varnick repo).
 
 **The pane.** A web pane on `http://127.0.0.1:$PORT/`. Until the server listens it shows "Waiting for … to start" and retries. Its label is the page's title, else the app's `name`. The port is chosen when the pane opens and kept with the pane, so it is the same after a restart if nothing else holds it.
 
@@ -94,4 +100,4 @@ Claude and terminal panes get `VARNICK_PANE_ID` too, their own id, which stays w
 - The data folder is shared by every pane of the app in that project (or by every pane of a user app, in every project); per-pane state belongs on disk in `$VARNICK_APP_DATA/$VARNICK_PANE_ID/` (nothing removes it when the pane closes), since a restart either keeps the old process or runs the app again, and memory survives only the first.
 - No sandbox: an app runs with the user's rights, and picking one runs its code. A cloned repo's apps appear in the picker.
 - Listing runs nothing; Varnick only reads manifests.
-- A Vite server started from the entry through `createServer` works under Bun, but give it real paths (`realpathSync`) for `root`, `cacheDir` and `fs.allow`: `VARNICK_PROJECT` can go through a link (`/tmp`, `/var`), Vite resolves modules to real paths, and a link in `fs.allow` leaves the page blank. Working example: `"$(readlink ~/.claude/skills/custom-apps)/../../../.varnick/custom-apps/scratch/server.ts"` (inside the Varnick repo, `.varnick/custom-apps/scratch/server.ts`).
+- A Vite server started from the entry through `createServer` works under Bun, but give it real paths (`realpathSync`) for `root`, `cacheDir` and `fs.allow`: `VARNICK_PROJECT` can go through a link (`/tmp`, `/var`), Vite resolves modules to real paths, and a link in `fs.allow` leaves the page blank. Working example: the catalog's Scratch, `apps/scratch/server.ts` in the public Varnick repository (github.com/Zabaca/varnick), or `~/.varnick/custom-apps/scratch/server.ts` while Scratch is on in Settings › Apps.

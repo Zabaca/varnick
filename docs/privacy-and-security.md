@@ -88,11 +88,32 @@ Varnick accepts only an address whose name resolves to your tailnet or this Mac,
 no redirect and no system proxy. It does not pin the address between its check and the connection. The server
 can read all of this and the key you give it (kept in the Keychain), so name only a server you run.
 
+### Custom apps and the npm registry
+
+Varnick itself makes no request to list or install the catalog's apps: they ship inside the release, and turning one
+on copies files on this Mac. An app's **packages** are fetched by Bun, from the npm registry it is set to use, in
+three cases:
+
+- the first time you pick an app that has packages, which for a catalog app is Scratch's Vite and React plugin;
+- Scratch's first use in each project, which installs React for the pages;
+- any app of your own that has a `package.json`, the same way.
+
+The registry sees the package names and your Mac's address. Offline, the pane shows Bun's error and nothing runs.
+What an app does beyond that is its own business, and each catalog app's row says what it fetches or sends.
+
 ### Peers and the Phone page
 
 They talk to the hosts and devices you list, over SSH and Tailscale (below).
 
 ## What can act as you
+
+### Custom apps
+
+A custom app is code that runs as you, and picking one runs it. It has your rights, and its pane has Varnick's macOS
+permissions (see Screen permissions reach every pane, below). Nothing sandboxes it. The apps in Varnick's catalog
+are reviewed in its repository before they ship and run only the code of the release you installed; that is a
+review, not a restriction. A project's `.varnick/custom-apps/` is read from any repository you open a pane in, so a
+cloned repository's apps appear in the picker, and picking one runs its code.
 
 ### Skip permissions
 
@@ -210,7 +231,9 @@ puts it in the Trash. It never asks for an administrator password: on an account
 ### Downloads are pinned and checked
 
 The build checks the Metal shaders and zmx against SHA-256 digests in the `Makefile`; the Linux installer does
-the same for zmx and Bun; the models download at fixed revisions.
+the same for zmx and Bun; the models download at fixed revisions. A catalog app's packages are pinned by a
+`bun.lock` committed beside it, which holds an integrity hash for every package, and review makes sure it is in step
+with the app's `package.json`.
 
 ## Reporting a vulnerability
 

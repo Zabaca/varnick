@@ -1691,6 +1691,12 @@ final class LauncherModel: ObservableObject {
         for session in tabs.flatMap(\.sessions) where session.isApp && session.ownsZmxSession { Zmx.killNow(session.id) }
     }
 
+    /// Folder names of the apps that open panes run, a restored pane not yet shown included. A project's app counts as a user's of the
+    /// same name, which errs on the safe side for turning a catalog app off or refreshing it.
+    func openAppFolders() -> Set<String> {
+        Set(tabs.flatMap(\.sessions).compactMap(\.record.app))
+    }
+
     // MARK: Restart Varnick (status menu)
 
     /// The status menu's Restart Varnick was chosen and waits for its confirmation card (`RestartCard`).

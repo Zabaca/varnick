@@ -478,6 +478,8 @@ struct SettingsView: View {
     let close: () -> Void
     /// Opens the Restart Varnick card (`LauncherModel.askRestart`): a restart without a build.
     let askRestart: () -> Void
+    /// Folder names of the apps that open panes run (`LauncherModel.openAppFolders`): turning a catalog app off waits for them.
+    let openAppFolders: () -> Set<String>
     @State private var typesafeKeyDraft = ""
     @State private var modelServerKeyDraft = ""
     /// Last section viewed, so Settings reopens where you left it.
@@ -568,6 +570,8 @@ struct SettingsView: View {
                                 Button("Default") { settings.fontSize = Settings.defaultFontSize }
                             }
                         }
+                        case .apps:
+                        AppsSettingsView(openAppFolders: openAppFolders)
                         case .search:
                         SettingRow(title: "Semantic search",
                                    detail: "Also finds pages and sessions by meaning, not only matching words. Runs on \(embeddingsPlace).") {
@@ -937,13 +941,14 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, search, listening, peers, models, shortcuts, experimental
+    case claude, apps, search, listening, peers, models, shortcuts, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self {
         case .claude: "sparkles"
+        case .apps: CustomApp.defaultIcon
         case .search: "magnifyingglass"
         case .listening: "waveform"
         case .peers: "desktopcomputer"
