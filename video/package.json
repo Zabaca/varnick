@@ -1,0 +1,21 @@
+{
+  "name": "varnick-video",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Remotion project for the Varnick README and social video",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "node scripts/render.mjs"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.528",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.528"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "typescript": "5.9.3"
+  }
+}

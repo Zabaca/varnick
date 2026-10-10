@@ -1,0 +1,34 @@
+/* Video-only styles: the stage, the caption and the cards around the panel. The panel itself is hero.css. */
+html, body { margin: 0; }
+.vc { position: absolute; inset: 0; overflow: hidden; background: var(--bg); color: var(--ink); font: 400 17px/1.4 var(--body); -webkit-font-smoothing: antialiased; }
+.vc-stage { position: absolute; inset: 0; background: var(--panel); }
+.vc-panel { position: absolute; transform-origin: top left; }
+
+/* The page's .ha-k key chip, sized in em so a caption can be scaled by its font-size. */
+.vc-cap { position: absolute; left: 0; right: 0; display: flex; justify-content: center; align-items: center; gap: .42em; padding: 0 5%; }
+.vc-cap .vc-txt { font: 600 1em/1.2 var(--body); color: var(--ink); text-wrap: balance; text-align: center; }
+.vc-cap .ha-k { min-width: 1.5em; height: 1.5em; padding: 0 .3em; border-width: .055em; border-radius: .2em; font-size: .86em; }
+.vc-cap .ha-k .ic { font-size: .95em; }
+@keyframes ha-key { from { transform: scale(.6); } }
+
+.vc-segs { position: absolute; left: 0; right: 0; display: flex; justify-content: center; }
+.vc-segs i { border-radius: 99px; background: var(--edge); }
+.vc-segs i.done { background: var(--muted); }
+.vc-segs i.cur { background: var(--accent); }
+
+.vc-brand { position: absolute; display: flex; align-items: center; color: var(--ink); font: 700 1em/1 var(--head); letter-spacing: .01em; }
+
+.vc-card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: var(--bg); }
+.vc-card h1, .vc-card h2 { font-family: var(--head); margin: 0; text-wrap: balance; color: var(--ink); }
+.vc-card p { margin: 0; }
+.vc-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 1em/1.2 var(--body); }
+.vc-btn .ic { width: 1.15em; height: 1.15em; }
+
+/* The page's key press, but the glyph turns on-accent as soon as the box fills, so it never sits grey on the accent. */
+@keyframes ha-press {
+  0% { transform: none; }
+  10% { transform: scale(.9); background: var(--accent); color: var(--on-accent); }
+  30% { transform: scale(.78) translateY(1px); background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+  80% { transform: scale(.95); background: var(--accent); color: var(--on-accent); }
+  100% { transform: none; }
+}
