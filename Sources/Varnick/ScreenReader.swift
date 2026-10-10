@@ -32,6 +32,26 @@ enum ScreenReader {
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
+    /// How long a repeated Grant press waits, after the prompt and the pane, before it decides the list still lacks Varnick.
+    static let grantWait: Duration = .seconds(1)
+
+    /// The Settings Grant button, the only place that asks macOS for Accessibility: (a) the prompt, (b) the pane. macOS shows the prompt
+    /// at most once, and it returns at once, so on the first press in a process the user is left with the prompt and the pane (the prompt
+    /// adds Varnick's row, switched off). From the second press, `grantWait` later, with Varnick still not trusted, (c) Varnick selected
+    /// in Finder (`PermissionGrant.revealIfMissing`), for a list the prompt will not put it back in. `ScreenText.askForAccess` is the
+    /// Screen Recording counterpart.
+    @MainActor
+    static func askForAccess() {
+        let pressedBefore = PermissionGrant.noteAsked(.accessibility)
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        PermissionGrant.openPane("Privacy_Accessibility")
+        guard pressedBefore else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: grantWait)
+            PermissionGrant.revealIfMissing(.accessibility, granted: isTrusted)
+        }
+    }
+
     // MARK: Which app
 
     /// Whether a request about the screen looks in Varnick's own panel before the app behind it, when the panel has focus: it is
