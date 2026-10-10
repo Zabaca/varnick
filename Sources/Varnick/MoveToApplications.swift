@@ -1,10 +1,8 @@
 import Foundation
 import Security
 
-/// Move to Applications: what Varnick.app does when it runs from a temporary copy macOS made of a download (translocation) or straight
-/// off a disk image. Foundation and Security only, every place a parameter (the Applications folder, the Trash, the support folder, the
-/// list of attached images), so a harness compiles it alone with `InstalledApp.swift`, `AccountLock.swift` and `DatabaseLocation.swift`
-/// against temporary folders (where-it-breaks, The installed app). The alert and the exit are `offerMoveToApplications`, beside `stopStart`.
+/// Move to Applications: what Varnick.app does when it runs from a temporary copy macOS made of a download, or off a disk image.
+/// Foundation and Security only, every place a parameter, so a harness compiles it alone (where-it-breaks, The installed app).
 enum MoveToApplications {
     static let targetName = "Varnick.app"
     static let quarantineAttribute = "com.apple.quarantine"
@@ -20,10 +18,16 @@ enum MoveToApplications {
         var device: String
     }
 
-    /// What a signature says about whose code it is. The running copy's is what a moved copy must match; no team is written anywhere.
-    struct SigningIdentity: Equatable {
-        var team: String?
-        var identifier: String?
+    /// What a moved copy must be: signed by the running copy's own team and satisfying its designated requirement.
+    struct Trust {
+        var team: String
+        var requirement: SecRequirement
+    }
+
+    /// A quarantine attribute that was removed, to put back if the move fails. `path` is relative to the bundle, "" for the bundle.
+    struct Cleared {
+        var path: String
+        var value: Data
     }
 
     enum Outcome: Equatable {
@@ -38,9 +42,12 @@ enum MoveToApplications {
     struct Places {
         var applications = URL(fileURLWithPath: "/Applications", isDirectory: true)
         var support: URL
-        var pid = getpid()
-        /// Puts an existing copy where the user can recover it.
-        var trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
+        /// Puts a copy where the user can recover it, and says where it went.
+        var trash: (URL) throws -> URL? = {
+            var result: NSURL?
+            try FileManager.default.trashItem(at: $0, resultingItemURL: &result)
+            return result as URL?
+        }
         /// Whether the first can be renamed into the second's folder: a rename leaves nothing behind, a copy leaves the original.
         var sameVolume: (URL, URL) -> Bool = MoveToApplications.onSameVolume
     }
@@ -52,9 +59,7 @@ enum MoveToApplications {
 
     static let notWritable = "This account can't add apps to Applications; Finder will ask for an administrator when you drag Varnick there."
 
-    /// Why the app is offered a move, or nil when it runs as it is: macOS translocated it (today's test), or its bundle is under
-    /// `volumesRoot` on a volume the system lists as an attached disk image. The list is asked only for a bundle under `/Volumes`: a
-    /// bundle on an external disk or a network volume is not an image and runs.
+    /// Why the app is offered a move, or nil when it runs as it is. The image list is asked only for a bundle under `volumesRoot`.
     static func situation(executablePath: String, bundle: URL, volumesRoot: String = "/Volumes",
                           images: () -> [AttachedImage] = { attachedImages() }) -> Situation? {
         if InstalledApp.isTranslocated(executablePath: executablePath) { return .translocated }
@@ -65,8 +70,7 @@ enum MoveToApplications {
 
     // MARK: Attached images
 
-    /// The mounted volumes of `hdiutil info -plist`'s images. The device is the image's whole disk when the list names one, else the
-    /// mounted volume's own.
+    /// The mounted volumes of `hdiutil info -plist`'s images, each with its whole disk's device when the list names one.
     static func parseImages(_ plist: Data) -> [AttachedImage] {
         guard let root = try? PropertyListSerialization.propertyList(from: plist, format: nil) as? [String: Any],
               let images = root["images"] as? [[String: Any]] else { return [] }
@@ -95,7 +99,7 @@ enum MoveToApplications {
         return process.terminationStatus == 0 ? parseImages(data) : []
     }
 
-    /// The image whose volume holds `url`.
+    /// The image whose volume holds `url`, which must exist (a missing path resolves differently from the mount point).
     static func image(containing url: URL, in images: [AttachedImage]) -> AttachedImage? {
         let path = url.resolvingSymlinksInPath().path
         return images.first { image in
@@ -106,7 +110,7 @@ enum MoveToApplications {
 
     // MARK: The original
 
-    /// Where the app was before macOS made its temporary copy; the bundle itself when it runs off an image. Nil when the lookup fails.
+    /// Where the app was before macOS made its temporary copy, or the bundle itself off an image. Nil when the lookup fails.
     static func original(of bundle: URL, situation: Situation, lookup: (URL) -> URL? = { translocatedOriginal(of: $0) }) -> URL? {
         switch situation {
         case .onDiskImage: return bundle
@@ -116,8 +120,7 @@ enum MoveToApplications {
 
     private typealias OriginalPathFunction = @convention(c) (CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFURL>?
 
-    /// `SecTranslocateCreateOriginalPathForURL`: Security exports it, but no public header declares it, so it is looked up at run time
-    /// (as LetsMove does). Nil when it is missing or fails.
+    /// `SecTranslocateCreateOriginalPathForURL`: exported by Security but declared in no public header, so looked up at run time.
     static func translocatedOriginal(of bundle: URL) -> URL? {
         guard let handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
               let symbol = dlsym(handle, "SecTranslocateCreateOriginalPathForURL") else { return nil }
@@ -132,69 +135,90 @@ enum MoveToApplications {
 
     // MARK: The move
 
-    /// The checks, then the move, in the order the option gives; each stop leaves what was there as it was. See `Outcome`.
-    static func move(original: URL, places: Places, bundleIdentifier: String, expected: SigningIdentity) -> Outcome {
+    /// The checks, then the move, in the option's order. Any stop leaves what was there as it was, quarantine included.
+    static func move(original: URL, places: Places, bundleIdentifier: String, trust: Trust?) -> Outcome {
         let fm = FileManager.default
         let target = places.applications.appendingPathComponent(targetName, isDirectory: true)
 
-        // 1. A standard account can't add to Applications; no prompt of ours.
+        // Before any file step: with no team on the running copy there is nothing to check the new copy against.
+        guard let trust else { return .stopped("The running copy has no team signature to compare the new copy with.") }
+        // A standard account can't add to Applications; no prompt of ours.
         guard fm.isWritableFile(atPath: places.applications.path) else { return .stopped(notWritable) }
+        // A running Varnick is never replaced.
+        if let stop = runningStop(places) { return stop }
 
-        // 2. A running Varnick is never replaced.
-        if let held = AccountLock.probe(in: places.support) {
-            switch held {
-            case .busy(_, let path): return .alreadyRunning(path: path ?? "an unknown path")
-            case .failed(let reason): return .stopped("Varnick can't tell whether it is already running: \(reason).")
-            case .held: break
-            }
-        }
-
-        // 3. Something that is not Varnick is at the target.
+        // Something that is not Varnick is at the target. A link there, even a dangling one, is not replaced.
+        let existing = entry(at: target)
+        if existing.isLink { return .stopped("\(target.path) is a link; remove it, then try again.") }
         let isTarget = samePath(original, target)
-        let atTarget = (try? target.checkResourceIsReachable()) == true
-        if atTarget, !isTarget {
+        if existing.exists, !isTarget {
             let found = Bundle(url: target)?.bundleIdentifier
             guard found == bundleIdentifier else {
                 return .stopped("\(target.path) is not Varnick (\(found.map { "bundle id \($0)" } ?? "no bundle id")); move or rename it, then try again.")
             }
         }
 
-        // 4. Already there, moved by something other than Finder, so still quarantined: nothing to move.
+        // Already there, moved by something other than Finder, so still quarantined: nothing to move.
         if isTarget {
-            if let reason = removeQuarantine(from: target, expected: expected) { return .stopped(reason) }
+            if let reason = clearQuarantineIfSigned(target, trust: trust) { return .stopped(reason) }
             return .moved(target)
         }
 
-        // The new copy lands under a hidden name, is checked, and only then does the old one go to the Trash.
-        let temporary = places.applications.appendingPathComponent(".Varnick-moving-\(places.pid).app", isDirectory: true)
-        try? fm.removeItem(at: temporary)
-        var renamed = false
-        if places.sameVolume(original, places.applications) { renamed = rename(original.path, temporary.path) == 0 }
-        if !renamed {
-            if let reason = copy(original, to: temporary) {
-                try? fm.removeItem(at: temporary)
-                return .stopped("Varnick couldn't be copied to Applications: \(reason).")
-            }
+        // The new copy lands under a hidden name of its own, is checked, and only then does the old one go to the Trash.
+        let temporary = places.applications.appendingPathComponent(".Varnick-moving-\(UUID().uuidString).app", isDirectory: true)
+        var renamed = places.sameVolume(original, places.applications) && rename(original.path, temporary.path) == 0
+        if !renamed, let reason = copy(original, to: temporary) {
+            try? fm.removeItem(at: temporary)
+            return .stopped("Varnick couldn't be copied to Applications: \(reason).")
         }
+        var cleared: [Cleared] = []
         func undo() {
-            if renamed { _ = rename(temporary.path, original.path) } else { try? fm.removeItem(at: temporary) }
+            if renamed {
+                if rename(temporary.path, original.path) == 0 { restoreQuarantine(cleared, in: original) }
+            } else {
+                try? fm.removeItem(at: temporary)
+            }
+            renamed = false
         }
 
-        if let reason = removeQuarantine(from: temporary, expected: expected) {
+        if let reason = checkAndClear(temporary, trust: trust, cleared: &cleared) {
             undo()
             return .stopped(reason)
         }
-        if atTarget {
-            do { try places.trash(target) } catch {
+        var trashed: URL?
+        if existing.exists {
+            if let stop = runningStop(places) {
+                undo()
+                return stop
+            }
+            do { trashed = try places.trash(target) } catch {
                 undo()
                 return .stopped("The Varnick in Applications couldn't be moved to the Trash: \(error.localizedDescription).")
             }
         }
         guard rename(temporary.path, target.path) == 0 else {
             let reason = String(cString: strerror(errno))
-            return .stopped("The new copy couldn't be put in place (\(reason)); it is at \(temporary.path)." + (atTarget ? " The previous copy is in the Trash." : ""))
+            var note = "Nothing was changed."
+            if existing.exists, trashed.map({ rename($0.path, target.path) }) != 0 { note = "The previous copy is in the Trash." }
+            undo()
+            return .stopped("The new copy couldn't be put in place (\(reason)). \(note)")
         }
         return .moved(target)
+    }
+
+    private static func runningStop(_ places: Places) -> Outcome? {
+        switch AccountLock.probe(in: places.support) {
+        case nil: return nil
+        case .busy(_, let path)?: return .alreadyRunning(path: path ?? "an unknown path")
+        case .failed(let reason)?: return .stopped("Varnick can't tell whether it is already running: \(reason).")
+        }
+    }
+
+    /// Whether anything is at `url`, a dangling link included, and whether it is a link.
+    static func entry(at url: URL) -> (exists: Bool, isLink: Bool) {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return (false, false) }
+        return (true, (info.st_mode & S_IFMT) == S_IFLNK)
     }
 
     static func samePath(_ a: URL, _ b: URL) -> Bool { a.resolvingSymlinksInPath().path == b.resolvingSymlinksInPath().path }
@@ -221,73 +245,95 @@ enum MoveToApplications {
 
     // MARK: Signature and quarantine
 
-    /// Checks the bundle's signature and, only if it carries the running copy's own team and identifier, removes the download's
-    /// quarantine from it and everything in it. Nil when both worked, else why not; a failed check leaves the attribute.
-    static func removeQuarantine(from bundle: URL, expected: SigningIdentity) -> String? {
-        if let reason = verifySignature(of: bundle, expected: expected) { return reason }
-        return clearQuarantine(in: bundle)
+    /// Checks the bundle's signature and, only if it passes, removes the download's quarantine from it. Nil when both worked.
+    /// A failure puts back what it had removed.
+    static func clearQuarantineIfSigned(_ bundle: URL, trust: Trust) -> String? {
+        var cleared: [Cleared] = []
+        guard let reason = checkAndClear(bundle, trust: trust, cleared: &cleared) else { return nil }
+        restoreQuarantine(cleared, in: bundle)
+        return reason
     }
 
-    /// Nil when the bundle's signature is valid, strictly and with its nested code, and is the expected team's and identifier.
-    static func verifySignature(of bundle: URL, expected: SigningIdentity) -> String? {
-        guard let team = expected.team, let identifier = expected.identifier else {
-            return "The running copy has no team signature to compare the new copy with."
-        }
+    /// The same, leaving to the caller what was removed, so a later failure in the move can put it back.
+    private static func checkAndClear(_ bundle: URL, trust: Trust, cleared: inout [Cleared]) -> String? {
+        if let reason = verifySignature(of: bundle, trust: trust) { return reason }
+        return clearQuarantine(in: bundle, cleared: &cleared)
+    }
+
+    /// Nil when the bundle's signature is valid, strictly and with its nested code, and satisfies the running copy's requirement.
+    static func verifySignature(of bundle: URL, trust: Trust) -> String? {
         var code: SecStaticCode?
         guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code else {
             return "The new copy's signature couldn't be read."
         }
         let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)
-        let status = SecStaticCodeCheckValidityWithErrors(code, flags, nil, nil)
-        guard status == errSecSuccess else { return "The new copy's signature isn't valid (status \(status))." }
-        guard let found = identity(of: code), found.team == team, found.identifier == identifier else {
-            return "The new copy isn't signed by the same team as the running one."
+        let status = SecStaticCodeCheckValidityWithErrors(code, flags, trust.requirement, nil)
+        switch status {
+        case errSecSuccess: return nil
+        case errSecCSReqFailed: return "The new copy isn't signed as the running one is."
+        default: return "The new copy's signature isn't valid (status \(status))."
         }
-        return nil
     }
 
-    /// The running copy's own team and identifier.
-    static func runningIdentity() -> SigningIdentity? {
+    /// The running copy's team and designated requirement; nil when it has no team (ad hoc) or they can't be read.
+    static func runningTrust() -> Trust? {
         var running: SecCode?
         var code: SecStaticCode?
         guard SecCodeCopySelf([], &running) == errSecSuccess, let running,
               SecCodeCopyStaticCode(running, [], &code) == errSecSuccess, let code else { return nil }
-        return identity(of: code)
+        return trust(of: code)
     }
 
-    /// A bundle's team and identifier, nil when it can't be read.
-    static func identity(of bundle: URL) -> SigningIdentity? {
+    /// A bundle's team and designated requirement, nil when it has no team or they can't be read.
+    static func trust(of bundle: URL) -> Trust? {
         var code: SecStaticCode?
         guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code else { return nil }
-        return identity(of: code)
+        return trust(of: code)
     }
 
-    private static func identity(of code: SecStaticCode) -> SigningIdentity? {
+    private static func trust(of code: SecStaticCode) -> Trust? {
         var information: CFDictionary?
+        var requirement: SecRequirement?
         guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
-              let dictionary = information as? [String: Any] else { return nil }
-        return SigningIdentity(team: dictionary[kSecCodeInfoTeamIdentifier as String] as? String,
-                               identifier: dictionary[kSecCodeInfoIdentifier as String] as? String)
+              let dictionary = information as? [String: Any], let team = dictionary[kSecCodeInfoTeamIdentifier as String] as? String,
+              SecCodeCopyDesignatedRequirement(code, [], &requirement) == errSecSuccess, let requirement else { return nil }
+        return Trust(team: team, requirement: requirement)
     }
 
-    /// Removes the quarantine attribute from the bundle and every item inside it (links themselves, never what they point at).
-    /// A bundle with none is fine. Nil when it worked, else why not.
-    static func clearQuarantine(in bundle: URL) -> String? {
-        var failure: String?
-        func clear(_ path: String) {
-            guard removexattr(path, quarantineAttribute, XATTR_NOFOLLOW) != 0, errno != ENOATTR, failure == nil else { return }
-            failure = "The download's quarantine couldn't be removed from \(path): \(String(cString: strerror(errno)))."
+    /// Removes the quarantine attribute from the bundle and every item in it (links themselves, never what they point at),
+    /// adding each value removed to `cleared`. Nil when it worked, else why not.
+    static func clearQuarantine(in bundle: URL, cleared: inout [Cleared]) -> String? {
+        func clear(_ relative: String) -> String? {
+            let path = relative.isEmpty ? bundle.path : bundle.appendingPathComponent(relative).path
+            let size = getxattr(path, quarantineAttribute, nil, 0, 0, XATTR_NOFOLLOW)
+            guard size >= 0 else { return errno == ENOATTR ? nil : "The download's quarantine couldn't be read on \(path): \(String(cString: strerror(errno)))." }
+            var value = Data(count: size)
+            let read = value.withUnsafeMutableBytes { getxattr(path, quarantineAttribute, $0.baseAddress, size, 0, XATTR_NOFOLLOW) }
+            guard read == size else { return "The download's quarantine couldn't be read on \(path)." }
+            guard removexattr(path, quarantineAttribute, XATTR_NOFOLLOW) == 0 else {
+                return "The download's quarantine couldn't be removed from \(path): \(String(cString: strerror(errno)))."
+            }
+            cleared.append(Cleared(path: relative, value: value))
+            return nil
         }
-        clear(bundle.path)
+        if let failure = clear("") { return failure }
         if let items = FileManager.default.enumerator(atPath: bundle.path) {
-            for case let relative as String in items { clear(bundle.appendingPathComponent(relative).path) }
+            for case let relative as String in items { if let failure = clear(relative) { return failure } }
         }
-        return failure
+        return nil
+    }
+
+    /// Writes back what `clearQuarantine` removed, so a move that failed leaves the original as quarantined as it was.
+    static func restoreQuarantine(_ cleared: [Cleared], in bundle: URL) {
+        for item in cleared {
+            let path = item.path.isEmpty ? bundle.path : bundle.appendingPathComponent(item.path).path
+            _ = item.value.withUnsafeBytes { setxattr(path, quarantineAttribute, $0.baseAddress, item.value.count, 0, XATTR_NOFOLLOW) }
+        }
     }
 
     // MARK: Afterwards
 
-    /// `/usr/bin/open -n <bundle>`: a new instance even while this one runs, as Restart opens one. Nil when it was asked, else why not.
+    /// `/usr/bin/open -n <bundle>`, a new instance as Restart opens one. Not BuildUpgrade's: the harness compiles this file alone.
     static func open(_ bundle: URL) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -300,8 +346,7 @@ enum MoveToApplications {
         return process.terminationStatus == 0 ? nil : "open exited with \(process.terminationStatus)"
     }
 
-    /// Starts a detached helper that waits for `pid` to end, then detaches the image by `device`, never forced: something else holding it
-    /// keeps it mounted, and the person ejects it. The old copy's executable is on the image, so it can't be detached before it exits.
+    /// Starts a detached helper that waits for `pid` to end, then detaches the image by `device`, never forced.
     @discardableResult
     static func ejectAfterExit(of pid: Int32, device: String) -> Bool {
         let script = """

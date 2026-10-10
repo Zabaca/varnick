@@ -47,10 +47,14 @@ enum AccountLock {
         return .held
     }
 
-    /// Whether a Varnick of this account holds the lock now: nil when none does, `.busy` when one does, `.failed` when it can't be told.
-    /// One non-blocking attempt, released at once. It never creates the file or the folder (a missing file means none runs), writes
-    /// nothing, and holds nothing: the move offer asks before the start has taken any lock of its own.
-    static func probe(in folder: URL) -> Outcome? {
+    enum Probe: Equatable {
+        case busy(pid: Int32?, path: String?)
+        case failed(String)
+    }
+
+    /// Whether a Varnick of this account holds the lock now: nil when none does. One non-blocking attempt, released at once;
+    /// it creates and writes nothing, since the move offer asks before the start has taken any lock of its own.
+    static func probe(in folder: URL) -> Probe? {
         let path = folder.appendingPathComponent(fileName).path
         let fd = open(path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else {

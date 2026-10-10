@@ -18,9 +18,8 @@ func stopStart(_ line: String) -> Never {
     exit(1)
 }
 
-/// The offer for a copy macOS translocated or that runs off a disk image, made where `stopStart` used to refuse it: Move to Applications
-/// or Quit. Quit writes today's line and exits with no second alert. Never returns: the moved copy is opened and this one ends, or a stop
-/// falls back to `stopStart` with the reason. Reads no settings and no database, and creates nothing in the support folder.
+/// Offers Move to Applications or Quit where `stopStart` used to refuse a translocated or disk-image copy. Never returns: it opens
+/// the moved copy and ends, exits on Quit, or falls back to `stopStart` with the reason. Reads and creates nothing of Varnick's.
 func offerMoveToApplications(_ situation: MoveToApplications.Situation) -> Never {
     let bundle = Bundle.main.bundleURL
     guard let original = MoveToApplications.original(of: bundle, situation: situation) else {
@@ -29,7 +28,7 @@ func offerMoveToApplications(_ situation: MoveToApplications.Situation) -> Never
     let why = situation == .onDiskImage ? "Varnick is running from the disk image." : "Varnick is running from a temporary copy."
     var message = why + " Peers and the Phone page need it where it will be at the next launch."
     let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.zabaca.varnick"
-    let expected = MoveToApplications.runningIdentity() ?? MoveToApplications.SigningIdentity()
+    let trust = MoveToApplications.runningTrust()
     // Asked before the move: the original's path is gone afterwards when it was renamed.
     let image = MoveToApplications.image(containing: original, in: MoveToApplications.attachedImages())
     while true {
@@ -49,7 +48,7 @@ func offerMoveToApplications(_ situation: MoveToApplications.Situation) -> Never
             exit(1)
         }
         let places = MoveToApplications.Places(support: SupportFolder.url)
-        switch MoveToApplications.move(original: original, places: places, bundleIdentifier: bundleIdentifier, expected: expected) {
+        switch MoveToApplications.move(original: original, places: places, bundleIdentifier: bundleIdentifier, trust: trust) {
         case .alreadyRunning(let path):
             message = "Varnick is already running from \(path). Quit it from its menu bar menu, then choose Move to Applications."
         case .stopped(let reason):

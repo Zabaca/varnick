@@ -54,7 +54,7 @@ Two parts, each useful alone:
 - **The window** is 640 by 400 points, with no toolbar, sidebar or status bar.
   - The icons are 128 points.
   - Varnick is centred in the left third and the Applications shortcut in the right third, at one height: about (160, 190) and (480, 190). The builder moves both so the arrow sits between them.
-  - Varnick.app's extension is hidden.
+  - Varnick.app's extension is not hidden, which the build found it can't be: dmgbuild hides it by writing Finder information onto the bundle, and a strict signature check (Varnick's own, on the copy it moves) rejects that. See where-it-breaks, Signing, the disk image.
 - **The format** is compressed with lzfse (ULFO, readable on macOS 14) on HFS+, dmgbuild's default file system for a JSON layout.
 
 **The disk image: the background**
