@@ -2057,13 +2057,13 @@ final class LauncherModel: ObservableObject {
         activate(tabs[(i + delta + tabs.count) % tabs.count])
     }
 
-    /// Where Claude starts: the folder from Settings, else VARNICK_CLAUDE_DIR, else the
-    /// launcher's working directory (the repo, when started with `make run`).
+    /// Where Claude starts: the folder from Settings, else VARNICK_CLAUDE_DIR, else the launcher's working directory from a checkout (the repo,
+    /// when started with `make run`), else the home folder.
     static var claudeDirectory: String {
         let chosen = Settings.shared.claudeDirectory
         if !chosen.isEmpty { return chosen }
-        return ProcessInfo.processInfo.environment["VARNICK_CLAUDE_DIR"]
-            ?? FileManager.default.currentDirectoryPath
+        if let folder = ProcessInfo.processInfo.environment["VARNICK_CLAUDE_DIR"] { return folder }
+        return LaunchSnapshot.checkout == nil ? NSHomeDirectory() : FileManager.default.currentDirectoryPath
     }
 
     /// ⌘,: settings in place of the current view; again (or esc) goes back.

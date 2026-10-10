@@ -8,7 +8,7 @@ enum EmbedCommands {
     /// reference when there is one. Needs the model installed; downloads nothing.
     static func reference() async -> Int32 {
         guard MLXRuntime.hasMetalLibrary else {
-            print("mlx.metallib isn't next to the binary: build with make build")
+            print("mlx.metallib isn't in Varnick's resources: build with make build")
             return 1
         }
         let embedder = Embedder()

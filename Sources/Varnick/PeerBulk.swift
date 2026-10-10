@@ -467,7 +467,7 @@ final class PeerBulk: ObservableObject {
         guard var saved = UpgradeFolder.read(BulkReport.self, Self.savedFile), saved.launch != Self.launch else { return }
         removeSaved()
         guard flow == nil, Date().timeIntervalSince(saved.date) < Self.savedLife else { return }
-        let running = LaunchSnapshot.current?.stamp.map { BuildText.short($0.commit) }
+        let running = LaunchSnapshot.runningStamp.map { BuildText.short($0.commit) }
         for index in saved.rows.indices where saved.rows[index].outcome == .waiting {
             saved.rows[index].text = "Restarted Varnick" + (running.map { ", now on \($0)" } ?? "")
             saved.rows[index].outcome = .done
