@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import ServiceManagement
 import VarnickPeer
 import SwiftUI
 
@@ -551,6 +552,7 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.keepSessionsRunning).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!Zmx.isAvailable)
                         }
+                        if ResourceFolder.current.inBundle { OpenAtLoginRow() }
                         SettingRow(title: "Text size", detail: "Terminal font size in points.") {
                             Button { settings.adjustFont(-0.5) } label: { Image(systemName: "minus") }
                             Text(String(format: "%.1f", settings.fontSize))
@@ -1003,6 +1005,45 @@ struct ScreenPermissionsView: View {
         if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(pane)
         }
+    }
+}
+
+/// Open at login, in the app only: a switch bound to `SMAppService.mainApp`, so Varnick appears in System Settings › Login Items. Nothing is
+/// saved here and nothing registers unless the switch is turned on; the status is read each time Settings shows it (and each second while it
+/// does, so an approval given in System Settings shows without reopening).
+struct OpenAtLoginRow: View {
+    @State private var status = SMAppService.mainApp.status
+    /// What the last register or unregister threw; cleared by the next try.
+    @State private var failure: String?
+
+    private var isOn: Bool { status == .enabled || status == .requiresApproval }
+
+    var body: some View {
+        SettingRow(title: "Open at login",
+                   detail: "Starts Varnick when you log in to this Mac, through Login Items. Off until you turn it on.") {
+            if let failure {
+                Text(failure).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(2)
+            } else if status == .requiresApproval {
+                Text("Needs approval in Login Items").font(.system(size: 12)).foregroundStyle(.orange)
+                Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+            } else if status == .notFound {
+                Text("Login Items can't find this copy of Varnick").font(.system(size: 12)).foregroundStyle(.orange)
+            }
+            Toggle("", isOn: Binding(get: { isOn }, set: { change(to: $0) }))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+        }
+        .onAppear { status = SMAppService.mainApp.status }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in status = SMAppService.mainApp.status }
+    }
+
+    private func change(to on: Bool) {
+        failure = nil
+        do {
+            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+        } catch {
+            failure = error.localizedDescription
+        }
+        status = SMAppService.mainApp.status
     }
 }
 

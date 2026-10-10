@@ -25,7 +25,7 @@ enum ScreenText {
     /// The Settings Grant button, the only place that asks macOS for Screen Recording, in this order. macOS answers
     /// `CGRequestScreenCaptureAccess` silently after the first time and may answer ScreenCaptureKit "declined" at once, so each step may do
     /// nothing: (a) the request; (b) one `SCShareableContent` call, which on a Mac never asked shows the prompt and lists the app; (c) the
-    /// pane; (d) with the grant still missing, Varnick's binary selected in Finder, to drag into the list or pick with +.
+    /// pane; (d) with the grant still missing, Varnick's binary (in the app, the app) selected in Finder, to drag into the list or pick with +.
     @MainActor
     static func askForAccess() {
         grantAsked = true
@@ -35,9 +35,10 @@ enum ScreenText {
             if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                 NSWorkspace.shared.open(pane)
             }
-            guard !hasAccess, let binary = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return }
+            // The app, not the executable inside it: the Screen Recording list takes Varnick.app.
+            guard !hasAccess, let shown = ResourceFolder.current.bundle ?? Bundle.main.executableURL?.resolvingSymlinksInPath() else { return }
             binaryRevealed = true
-            NSWorkspace.shared.activateFileViewerSelecting([binary])
+            NSWorkspace.shared.activateFileViewerSelecting([shown])
         }
     }
 

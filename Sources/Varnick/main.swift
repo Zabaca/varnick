@@ -752,10 +752,22 @@ if let i = CommandLine.arguments.firstIndex(of: "--search-eval") {
     }
 }
 
-// The app's start: every mode above has exited, and nothing on this path has read `Settings.shared`, the support folder or the
-// database yet (a mode above only reads the arguments before it runs, and the app's own objects are made below). So
-// `FirstLaunchMigration` moves Launchy's data here, before the delegate exists and so before `Settings.storeSkipPermissionsIfAbsent`
-// and `PeerLink.refresh`. Short-lived, removed at the rename's Cleanup
+// The app's start, in this order (where-it-breaks, One Varnick per account): the log, the translocation test, the migration, the lock.
+// Every mode above has exited. In Varnick.app, standard output and error go to the log first, so every line below lands there; only
+// here, since the relay, the MCP server and the command-line modes above write their reply to standard output. The log lives in
+// `~/Library/Logs`, outside the support folder the migration makes.
+if ResourceFolder.current.inBundle {
+    InstalledApp.redirectOutput(to: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Varnick.log"))
+    // A translocated app runs from a temporary path that is gone at the next launch: stop before the peer link or the Phone page
+    // can point at it.
+    if let executable = Bundle.main.executableURL, InstalledApp.isTranslocated(executablePath: executable.path) {
+        stopStart(InstalledApp.translocatedLine)
+    }
+}
+
+// Nothing on this path has read `Settings.shared`, the support folder or the database yet (a mode above only reads the arguments
+// before it runs, and the app's own objects are made below). So `FirstLaunchMigration` moves Launchy's data here,
+// before the delegate exists and so before `Settings.storeSkipPermissionsIfAbsent` and `PeerLink.refresh`. Short-lived, removed at the rename's Cleanup
 // (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md).
 if let failure = AppStartMigration.run() {
     stopStart(failure)
@@ -774,6 +786,15 @@ MainActor.assumeIsolated {
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
+    // The app's own copy of the custom-apps skill, linked for Claude Code as `make skill-link` does for a checkout.
+    if ResourceFolder.current.inBundle {
+        let skill = ResourceFolder.current.folder.appendingPathComponent("skills/custom-apps", isDirectory: true)
+        if FileManager.default.fileExists(atPath: skill.path) {
+            let outcome = InstalledApp.linkSkill(
+                in: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/skills", isDirectory: true), to: skill)
+            if case .failed(let reason) = outcome { NSLog("Varnick: the custom-apps skill link failed: \(reason)") }
+        }
+    }
     app.setActivationPolicy(.accessory) // no Dock icon
     app.run()
 }
