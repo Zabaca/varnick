@@ -148,8 +148,8 @@ The server carries a websocket to the relay's `attach`, which it runs in a pseud
 - **Resume.** A Recent row sends `resume` with a new id, and the terminal opens with take. The host refuses a conversation it has open in a running session. The page then offers that session's row instead, as a Mac does.
 - **Terminal.**
   - xterm.js, pinned and kept in the repo with the server, sized to fill the screen at a readable font. Landscape works.
-  - A key bar: Esc, Tab, Shift+Tab, ↑, ↓, ←, →, Ctrl+C and Enter.
-  - A compose box: a native text field to write or dictate a whole message in. It is sent as a paste followed by Enter, so autocorrect and dictation work as in any app.
+  - A key bar: Esc, Tab, Shift+Tab, ↑, ↓, ←, → and a sticky Ctrl (Ctrl+C and Enter were dropped on 2026-10-09, see "Changed by the user, 2026-10-09" at the end).
+  - ~~A compose box~~ (dropped on 2026-10-09: typing goes straight into the terminal).
   - A header with the session's title and host, and End.
 - **End** asks first, sends `end`, and says what the host did: "Ended", or "Handed back to Mac Studio, still running" when the reply says `released`.
 
@@ -404,3 +404,7 @@ Run over SSH with a throwaway Bun server (`/tmp/phone-spike` on each host, its o
    - the live view fits the width, with pinch to zoom;
    - the page is called "Phone page" in CONTEXT.md.
 4. **Sequenced after the Ryzen's relay** (sessions-hosted-only-on-macs option 01, ticket 2), so one page serves both kinds of host. Decision 2 already lets the Studio's existing browser terminal's `tailscale serve` come down.
+
+## Changed by the user, 2026-10-09: typing goes straight into the terminal
+
+The key bar and the compose box above are replaced. The terminal takes typing from the phone's own keyboard (tapping it focuses xterm and raises the keyboard), and the page no longer has the compose box (the textarea and Send), or the ⏎ (Enter), Paste and ^C keys. The key bar is now one row of eight: Esc, Tab, ⇧Tab, ↑, ↓, ←, →, Ctrl, equal in width, on one line at 360px and wider, 40px tall. Ctrl is sticky and turns the next typed character into its control code, as before; Ctrl then `c` is what ^C was. Where this differs from the user stories and Risks above (13 and "Typing on Android", which made the compose box the main way to type), this is current. The rules to keep are in `docs/agents/where-it-breaks.md` (the terminal).

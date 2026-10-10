@@ -273,8 +273,8 @@ describe("the page's rules", () => {
   test("the key bar's keys", () => {
     expect(keys.esc).toBe("\x1b");
     expect(keys.backtab).toBe("\x1b[Z");
-    expect(keys.interrupt).toBe("\x03");
-    expect(keys.enter).toBe("\r");
+    expect(Object.keys(keys)).toEqual(["esc", "tab", "backtab", "up", "down", "left", "right"]);
+    expect(keys.up).toBe("\x1b[A");
   });
 });
 

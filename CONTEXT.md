@@ -91,7 +91,7 @@ Another device of the user's on the tailnet, such as the phone, listed on a **Ho
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
 
 **Phone page**:
-The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its sessions, **Recent**, a new session and a terminal, all through the host's own relay, and links to the other hosts' pages.
+The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its sessions, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages.
 _Avoid_: Web UI, dashboard, remote
 
 **Host**:
