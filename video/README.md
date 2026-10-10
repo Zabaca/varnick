@@ -42,7 +42,7 @@ Or one by one: `npx remotion render src/index.ts Square out/square.mp4 --codec=h
 ## How it works
 
 - `src/hero/timeline.ts` replays the page's hero script on a virtual clock: every wait advances the clock and every change to the panel is recorded as a snapshot. A frame reads the snapshot at its time, so nothing depends on timers and renders are frame-exact. When the script on the page changes, port the change here.
-- `src/hero/data.ts` is the page's made-up data, prompt grammar and ranking.
+- `src/hero/data.ts` is the page's made-up data, prompt grammar and ranking. The experimental Problems board is left out: no Problems tab in the board header and no `!problems` command.
 - `src/hero/Panel.tsx` draws a snapshot with the page's markup and classes. `src/hero/hero.css` is the page's CSS (transitions removed). The page's CSS animations are kept and seeked: paused, with a negative delay equal to the time since they began.
 - `src/Video.tsx` has the title card, the end card, the caption, the progress bars and the two layouts (scale and positions in `LAYOUTS`).
 - Text uses the system font stacks the page uses (`-apple-system`, `ui-monospace`), so render on a Mac to match the page; elsewhere they fall back.

@@ -23,3 +23,12 @@ html, body { margin: 0; }
 .vc-card p { margin: 0; }
 .vc-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 1em/1.2 var(--body); }
 .vc-btn .ic { width: 1.15em; height: 1.15em; }
+
+/* The page's key press, but the glyph turns on-accent as soon as the box fills, so it never sits grey on the accent. */
+@keyframes ha-press {
+  0% { transform: none; }
+  10% { transform: scale(.9); background: var(--accent); color: var(--on-accent); }
+  30% { transform: scale(.78) translateY(1px); background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+  80% { transform: scale(.95); background: var(--accent); color: var(--on-accent); }
+  100% { transform: none; }
+}

@@ -93,7 +93,7 @@ const Card: React.FC<{ c: BCard; board: BoardS; pos: { col: ColKey; idx: number 
 
 const Board: React.FC<{ b: BoardS; ms: number }> = ({ b, ms }) => (
   <>
-    <div className="bh"><Ic id="i-split3" /><b>Sessions</b><span className="t">Problems</span><span className="sp" />
+    <div className="bh"><Ic id="i-split3" /><b>Sessions</b><span className="sp" />
       <span className="hint">
         <span className="kh"><span className="kl">Open</span> <kbd>↩</kbd></span>
         <span className="kh"><span className="kl">Switch</span> <kbd>⇥</kbd></span>

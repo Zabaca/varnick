@@ -29,7 +29,6 @@ export const COMMANDS: Command[] = [
   { id: "listen", names: ["listen"], sym: "i-wave", title: "Start listening", detail: "Transcribe the mic and the Mac's audio into today's transcript" },
   { id: "transcript", names: ["transcript"], sym: "i-align", title: "Show transcript", detail: "Today's transcript in a tab, following new lines" },
   { id: "kanban", names: ["kanban", "tabs"], sym: "i-split3", title: "Show session board", detail: "Claude sessions by turn: Running, Stopped, Completed (also !tabs)" },
-  { id: "problems", names: ["problems"], sym: "i-tray", title: "Show problems board", detail: "Problems by stage: Backlog, Decided, Building, Shipped, Closed" },
 ];
 
 export const MESSAGE = "why is the upload test flaky";
