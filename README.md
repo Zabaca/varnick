@@ -168,7 +168,7 @@ note, and `click`. A session that hits a setting it can't see can look, show you
 for you. The server is Launchy's own binary (`Launchy --mcp`) and only passes each call on: the running
 Launchy does the reading, drawing and clicking, with the code Hey Launchy uses. It needs Accessibility, and
 Screen Recording to read the text of a window that lists nothing or of a Chrome page; Settings asks for
-both. **A click happens without asking**: the arrow shows on the target for a second first, and there is no
+both. **A click happens without asking**: the arrow shows on the target for a second first, the click brings its app to the front, and there is no
 `type`. A session started with Skip permissions has no prompt before a tool at all; one without gets Claude
 Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while still asking
 for `click` (not checked). A session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the

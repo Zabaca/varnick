@@ -177,7 +177,7 @@ Launchy's panes while it is on a `launchy` MCP server with three tools, `look`, 
 Mac's screen (ADR 0023). It needs the same Accessibility and Screen Recording as Point at the screen.
 
 - **A session can click for you, and nothing asks.** `click` shows the arrow on its target for a second
-  and then presses the control or clicks at the point; there is no approval prompt, no per-pane switch and
+  and then brings its app to the front and presses the control or clicks at the point; there is no approval prompt, no per-pane switch and
   no list of apps to keep out. There is no `type`. A session started with Skip permissions runs the
   tool with no prompt of Claude Code's either; one without gets Claude Code's own prompt for an MCP tool
   you haven't allowed (inferred, not checked). Whatever can steer a session, such as a web page

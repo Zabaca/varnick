@@ -117,7 +117,7 @@ enum ScreenReader {
     }
 
     /// Electron apps carry their framework; Chrome does not, and is not asked.
-    private static func isElectron(_ app: NSRunningApplication) -> Bool {
+    fileprivate static func isElectron(_ app: NSRunningApplication) -> Bool {
         guard let url = app.bundleURL else { return false }
         return FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/Frameworks/Electron Framework.framework").path)
     }
@@ -187,6 +187,68 @@ enum ScreenReader {
             if let reference = target.reference { return frame(of: reference.element) }
             guard let window = target.window, let was = target.windowFrame else { return target.frame }
             return frame(of: window.element).flatMap { ScreenGeometry.moved(target.frame, from: was, to: $0) }
+        }.value
+    }
+
+    // MARK: Before a click
+
+    /// Whether the app is a browser or Electron app, whose whole window is web content: a press through Accessibility on a page's
+    /// element often reports success and does nothing.
+    static func isWebHosted(_ app: NSRunningApplication) -> Bool {
+        isElectron(app) || (app.bundleIdentifier ?? "").lowercased().contains("chrom")
+    }
+
+    /// Whether the element is in a page: an `AXWebArea` is it or above it, or the app is `webHosted`. Off the main actor, within `budget`.
+    static func isWebContent(_ target: ScreenTarget, webHosted: Bool) async -> Bool {
+        if webHosted { return true }
+        guard let reference = target.reference else { return false }
+        return await Task.detached { () -> Bool in
+            let deadline = ContinuousClock.now.advanced(by: budget)
+            var element = reference.element
+            for _ in 0..<maxDepth {
+                guard ContinuousClock.now < deadline else { return false }
+                AXUIElementSetMessagingTimeout(element, callTimeout)
+                if string(element, kAXRoleAttribute) == "AXWebArea" { return true }
+                guard let parent = attribute(element, kAXParentAttribute).flatMap(asElement) else { return false }
+                element = parent
+            }
+            return false
+        }.value
+    }
+
+    /// The window the target is in, for raising it: recognised text's window, else the element's own `AXWindow`.
+    static func window(of target: ScreenTarget) async -> AXReference? {
+        if let window = target.window { return window }
+        guard let reference = target.reference else { return nil }
+        return await Task.detached { () -> AXReference? in
+            AXUIElementSetMessagingTimeout(reference.element, callTimeout)
+            return attribute(reference.element, kAXWindowAttribute).flatMap(asElement).map(AXReference.init)
+        }.value
+    }
+
+    /// The window of the app's element at a point (Accessibility coordinates), for raising it.
+    static func window(at point: CGPoint, pid: pid_t) async -> AXReference? {
+        await Task.detached { () -> AXReference? in
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, callTimeout)
+            var hit: AXUIElement?
+            guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit else { return nil }
+            AXUIElementSetMessagingTimeout(hit, callTimeout)
+            return attribute(hit, kAXWindowAttribute).flatMap(asElement).map(AXReference.init)
+        }.value
+    }
+
+    /// Asks the app, through Accessibility, to come to the front and raises the window. Only a request: the caller waits to see the
+    /// app in front.
+    static func requestFront(pid: pid_t, raising window: AXReference?) async {
+        await Task.detached {
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 0.5)
+            _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+            if let window {
+                AXUIElementSetMessagingTimeout(window.element, 0.5)
+                _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+            }
         }.value
     }
 

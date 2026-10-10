@@ -125,9 +125,11 @@ enum ScreenMCP {
                 "rect": rectSchema,
                 "note": ["type": "string", "description": "What the sign says, a short sentence (cut to \(ScreenAccess.signNote) characters)."],
              ], required: ["note"]),
-        tool(.click, "Clicks for the user, after showing the arrow on the target for \(clickLead) second\(clickLead == 1 ? "" : "s"). With an id it presses the control, or clicks "
-             + "its centre when it cannot be pressed; with a point it left-clicks there. Nothing asks first. It reports what it did, not "
-             + "that it worked: look again to see. A click on another app brings that app forward.",
+        tool(.click, "Clicks for the user, after showing the arrow on the target for \(clickLead) second\(clickLead == 1 ? "" : "s"). It then brings the target's app "
+             + "and window forward, and refuses if the app does not come forward or Launchy's own panel is over the point (ask the user "
+             + "to move or hide it). With an id it presses the control, or clicks its centre when it cannot be pressed or is in a web "
+             + "page (the centre is read again after the app comes forward, so look again after a scroll); with a point it left-clicks "
+             + "there. Nothing asks first. It reports what it did, not that it worked: look again to see.",
              properties: [
                 "id": ["type": "string", "description": "A control or line of text from the last look."],
                 "at": ["type": "object", "description": "A point in screen points, the origin at the top left of the main display.",

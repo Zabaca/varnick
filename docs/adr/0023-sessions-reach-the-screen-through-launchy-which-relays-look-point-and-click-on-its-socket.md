@@ -3,7 +3,7 @@
 With **Screen access** on (Settings › Claude, off by default), a Claude session started or restarted in a Launchy pane has one more MCP server, `launchy`, with three tools:
 - **`look`** lists a window's controls, each with an id, in Hey Launchy's description. Where the window lists nothing, or Chrome hides its page, it adds the short lines of text read from a picture of the window on this Mac.
 - **`point`** draws the **Arrow** at a control from `look`, or at a rectangle, with a sign that shows the session's name and its note.
-- **`click`** shows the Arrow on the target for a second, then presses the control through Accessibility, or clicks at its centre, or left-clicks at a point.
+- **`click`** shows the Arrow on the target for a second, then brings the target's app and window forward and waits for it to be frontmost. It then presses the control through Accessibility, or clicks at its centre, or left-clicks at a point. A control in a web page (an `AXWebArea` above it, or a browser or Electron app) is clicked, not pressed, since a press there can report success and do nothing. The control's frame is read again once the app is in front.
 
 The server is Launchy's own binary in a relay mode, `Launchy --mcp --pane <id>`, like `--peer`. It turns each tool call into one request line on the user-only socket the peer relay already uses and prints the reply. **The relay has no path that reads or acts.** The running Launchy does the work in its own process, under its own Accessibility and Screen Recording, with the code Hey Launchy points with: `ScreenReader`, `ScreenText` and `ArrowOverlay`. Hey Launchy's text step is a function both use.
 
@@ -18,7 +18,7 @@ This amends ADR 0019 and 0021. Launchy now reads, points and clicks for sessions
 - **There is no `type`,** no named keys or shortcuts, no drag and no scroll.
 - **One click at a time across all sessions.** A second waits for the first.
 - **Another Mac's session.** While another Mac or a device is in control of a session, its calls are refused: the Arrow would show where nobody is looking.
-- **Never Launchy's own window.** A target in Launchy's process is refused, and so is a posted click at a point that a visible window of Launchy's has its frame over, checked right before the click is posted (the Arrow's panel, which covers the display, is not counted).
+- **Never Launchy's own window.** A target in Launchy's process is refused, and so is a posted click at a point that a visible window of Launchy's has its frame over, checked right before the click is posted, after the app has come forward (the Arrow's panel, which covers the display, is not counted). Launchy never moves its panel: a pinned one still over the point refuses the click, and the session asks the user to move or hide it.
 - **A stale or replaced click does not fire.** A click that waited too long for its turn, or whose Arrow was replaced during its second, is refused with "Nothing was clicked".
 
 ## What a session is shown goes to Anthropic
@@ -52,7 +52,7 @@ Every process in a Launchy pane gets Launchy's grants (the correction in ADR 001
 ## Consequences
 
 - **A session on this Mac can look at, point at and click on this Mac's screen.** Until panes stop sharing Launchy's grants it could do the same with its own tools; what Launchy adds is the Arrow before a click, the switch and one implementation.
-- **A click that lands on another app moves focus to it.** Launchy's panel hides when it loses key, unless it is pinned. A click at a point also moves the pointer there. A press through Accessibility usually leaves focus alone (inferred).
+- **A click brings its app forward first, then clicks.** The first click on a window of an app that is not in front only focuses it, so Launchy activates the app and raises the window before it presses or posts, and refuses ("Nothing was clicked") if the app is not frontmost within a second. Launchy's panel hides when it loses key, unless it is pinned. A click at a point also moves the pointer there. The wait counts against the click's 10 s budget.
 - **Nothing is logged but the tool, the outcome's kind, durations and counts.** Never a label, note, window title, app name or session name.
 - **Changing what `look` returns is a privacy change,** needing this ADR, the README, SECURITY.md and the switch's detail amended, as for ADR 0019.
 - **The tools' text is Hey Launchy's:** `ScreenElement.description`, the 255-element cap, the "dimmed" and "under the pointer" marks, no field's value and nothing of a secure field. A fix to the read is a fix to both.
