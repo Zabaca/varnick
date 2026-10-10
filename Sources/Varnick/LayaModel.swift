@@ -6,6 +6,7 @@ import MLXNN
 // model.py and Laya's common.py, restricted to the one noul question Varnick asks. Credit to Laya
 // and laya-mlx. Every size comes from the checkpoint's configs. The row format and the weights'
 // names are a contract with the checkpoint (ADR 0006): a mismatch lowers ranking with no error.
+// This file is under the Apache License 2.0 (LICENSES/Apache-2.0.txt), not the FSL that covers the rest of Varnick.
 
 /// The encoder's `config.json`. A config without `layer_types` or per-type `rope_parameters` fails to
 /// decode, and `validate()` refuses anything the model below doesn't implement.

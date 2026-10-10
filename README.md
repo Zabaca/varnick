@@ -76,5 +76,16 @@ Everything Varnick reads, records and sends, and what it lets others do, is in
 
 ## Licence
 
-Apache License 2.0 (see [`LICENSE`](LICENSE)). Copyright 2026 Zabaca. Third-party code and models are listed in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+Varnick is [Fair Source](https://fair.io), under the Functional Source License 1.1 with an Apache 2.0 future
+licence ([`LICENSE`](LICENSE)). You can use it, at work too, read and change the code, and send changes back. What
+you can't do is offer it, or a fork of it, in a commercial product or service that competes with Varnick. Two years
+after each version is released, that version is also yours under the Apache License 2.0, with no such limit.
+
+Earlier versions, up to and including release 2026.10.10, were published under the Apache License 2.0 and stay
+under it. `Sources/Varnick/LayaModel.swift` is under the Apache License 2.0 too. Third-party code and models are
+listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+**Trademarks.** "Varnick" and the Varnick logo are Zabaca's trademarks, and neither licence grants them. A fork
+needs its own name and logo; it may say it is based on Varnick.
+
+Copyright 2026 Zabaca.

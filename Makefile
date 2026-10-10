@@ -268,6 +268,7 @@ app-bundle: app-guard
 	cp -RL .claude/skills/custom-apps $(APP)/Contents/Resources/skills/custom-apps
 	find $(APP) -name .DS_Store -delete
 	cp LICENSE THIRD_PARTY_NOTICES.md $(APP)/Contents/Resources/
+	cp -R LICENSES $(APP)/Contents/Resources/LICENSES
 	swiftc -O -parse-as-library scripts/make-icon.swift Sources/Varnick/FoldMark.swift -o $(APP_DIR)/make-icon
 	$(APP_DIR)/make-icon $(APP_DIR)/Varnick.iconset
 	iconutil -c icns -o $(APP)/Contents/Resources/Varnick.icns $(APP_DIR)/Varnick.iconset
