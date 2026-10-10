@@ -541,9 +541,10 @@ if CommandLine.arguments.contains("--sync") {
     }
 }
 
-// `Varnick --hook-settings` prints the `--settings` value claude is started with, to run the hooks' shell by hand.
+// `Varnick --hook-settings` prints the `--settings` value claude is started with, to run the hooks' shell by hand. It always has the
+// work-link hooks, whatever the Problems board switch says: they are what it is run to reach.
 if CommandLine.arguments.contains("--hook-settings") {
-    print(ClaudeCommand.hookSettings())
+    print(ClaudeCommand.hookSettings(problems: true))
     exit(0)
 }
 

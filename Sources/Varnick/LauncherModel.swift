@@ -359,7 +359,7 @@ final class LauncherModel: ObservableObject {
                 return name.contains(typed) ? 2 : nil
             }.min()
         }
-        return LauncherCommand.allCases.enumerated()
+        return LauncherCommand.available.enumerated()
             .compactMap { i, command in rank(command).map { (rank: $0, i: i, command: command) } }
             .sorted { ($0.rank, $0.i) < ($1.rank, $1.i) }
             .map(\.command)
@@ -2313,6 +2313,11 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     case listen, transcript, kanban, problems
 
     var id: String { rawValue }
+
+    /// The commands `!` lists and matches: `!problems` only with the Problems board switch on (Settings › Experimental).
+    @MainActor static var available: [LauncherCommand] {
+        allCases.filter { $0 != .problems || Settings.shared.problemsBoard }
+    }
 
     /// What matches it after `!`: `!tabs` is another name for `!kanban`, so both find the one row.
     var names: [String] {

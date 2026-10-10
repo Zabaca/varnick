@@ -281,7 +281,7 @@ struct LauncherView: View {
         if model.commands.isEmpty {
             VStack(spacing: 4) {
                 Text("No such command").font(.system(size: 13, weight: .medium))
-                Text(LauncherCommand.allCases.map { LauncherModel.commandPrefix + $0.rawValue }.joined(separator: "   "))
+                Text(LauncherCommand.available.map { LauncherModel.commandPrefix + $0.rawValue }.joined(separator: "   "))
                     .font(.system(size: 11.5))
                     .foregroundStyle(.tertiary)
             }

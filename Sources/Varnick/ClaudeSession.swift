@@ -486,11 +486,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let agent = record.agent.flatMap { name in
             Agent.available(in: record.directory).contains { $0.name == name } ? name : nil
         }
-        // Screen access (ADR 0023) is read at each start, not stored: a pane gains the tools at its next start or restart.
+        // Screen access (ADR 0023) and the Problems board's work-link hooks are read at each start, not stored: a pane gains or loses them at
+        // its next start or restart.
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: restarting ? record.conversationID : record.id.uuidString.lowercased(),
-                                                 prompt: prompt,
+                                                 prompt: prompt, problems: Settings.shared.problemsBoard,
                                                  mcpConfig: Settings.shared.screenAccess ? ScreenMCP.configuration(pane: record.id) : nil)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds

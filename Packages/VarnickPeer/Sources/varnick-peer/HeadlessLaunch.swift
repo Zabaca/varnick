@@ -50,7 +50,8 @@ extension HeadlessPeerHost {
         // claude exits on an unknown --agent, so only one that exists is passed.
         let agent = record.agent.flatMap { wanted in Agent.available(in: folder).contains { $0.name == wanted } ? wanted : nil }
         let claude = ClaudeCommand.arguments(skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent,
-                                             resuming: conversation, sessionID: record.id, prompt: record.prompt ?? "")
+                                             resuming: conversation, sessionID: record.id, prompt: record.prompt ?? "",
+                                             problems: problemsBoard)
         guard let command = Zmx.attachCommand(uuid, running: account.shell, ClaudeCommand.shellArguments(claude), control: control, origin: origin) else {
             failed()
             return .failure("zmx isn't installed next to Varnick on \(name)")

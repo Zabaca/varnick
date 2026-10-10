@@ -10,31 +10,36 @@ public enum ClaudeCommand {
     public static let script = #"exec claude "$@""#
 
     /// The settings claude is started with (`--settings`), added to the user's own hooks: ADR 0001's SessionStart
-    /// hook, the turn hooks of ADR 0010 and the work-link hooks of ADR 0020 (`WorkHooks`). The rules for the entries are in
-    /// `docs/agents/where-it-breaks.md`.
-    public static func hookSettings() -> String {
+    /// hook, the turn hooks of ADR 0010 and, with `problems`, the work-link hooks of ADR 0020 (`WorkHooks`): the host that runs
+    /// the session decides, from its Problems board switch (Settings › Experimental, or the relay's `--problems`). With it off
+    /// the settings are the same less the `WorkHooks` entries. The rules for the entries are in `docs/agents/where-it-breaks.md`.
+    public static func hookSettings(problems: Bool) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
             .init(matcher: matcher, command: turnCommand(turn))
         }
-        let hooks: [String: [HookSettings.Entry]] = [
+        var hooks: [String: [HookSettings.Entry]] = [
             "SessionStart": [.init(command: #"cat > "$VARNICK_SESSION_FILE""#),
-                             .init(matcher: "clear", command: clearCommand), turn(.waiting, matcher: "resume"),
-                             .init(command: WorkHooks.sessionStart)],
+                             .init(matcher: "clear", command: clearCommand), turn(.waiting, matcher: "resume")],
             "UserPromptSubmit": [.init(command: promptCommand), .init(command: leadEndedCommand(.working))],
             "Stop": [turn(.waiting), .init(command: stopInputCommand), .init(command: leadEndedCommand(.waiting))],
             "StopFailure": [turn(.waiting), .init(command: stopInputKeepCommand), .init(command: leadEndedCommand(.waiting))],
             "Notification": [turn(.waiting, matcher: "idle_prompt")],
             "PermissionRequest": [.init(matcher: "^(?!(\(question)|\(plan))$)", command: askedCommand),
                                   turn(.question, matcher: question), turn(.plan, matcher: plan)],
-            "PreToolUse": [.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink)],
-            "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)"),
-                            .init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark)],
+            "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)")],
             "PostToolBatch": [.init(command: answeredCommand)],
-            "SubagentStop": [.init(command: answeredCommand), .init(command: WorkHooks.subagentStop)],
+            "SubagentStop": [.init(command: answeredCommand)],
             "Elicitation": [turn(.input)],
             "ElicitationResult": [turn(.working)],
         ]
+        if problems {
+            // Each entry goes last in its event's list, where it stood before the switch; PreToolUse has no other.
+            hooks["SessionStart", default: []].append(.init(command: WorkHooks.sessionStart))
+            hooks["PreToolUse"] = [.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink)]
+            hooks["PostToolUse", default: []].append(.init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark))
+            hooks["SubagentStop", default: []].append(.init(command: WorkHooks.subagentStop))
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         // Plain strings and arrays: encoding can't fail, and a silent fallback would drop every hook.
@@ -144,12 +149,13 @@ public enum ClaudeCommand {
     /// What follows `claude` in the script's arguments: the MCP config, the hooks' settings, skip permissions and agent,
     /// then `--resume <conversation>` or `--session-id <sessionID>` and the prompt after `--`. The order is
     /// part of the contract, and user text stays one argument each. `agent` is the one the host has found
-    /// to exist, since claude exits on an unknown one. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
+    /// to exist, since claude exits on an unknown one. `problems` is the running host's own Problems board switch, read at each start
+    /// like `mcpConfig` and not stored on the record. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
     /// and stops at the next option, `--settings`.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
-                                 sessionID: String, prompt: String, mcpConfig: String? = nil) -> [String] {
+                                 sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
-            + ["--settings", hookSettings()]
+            + ["--settings", hookSettings(problems: problems)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (agent.map { ["--agent", $0] } ?? [])
             + (conversation.map { ["--resume", $0] }
