@@ -1,7 +1,7 @@
 ---
 problem: runs-only-from-a-checkout
 title: Installed apps upgrade from published builds through the Upgrade and Restart Launchy buttons
-summary: Option 02, plus Launchy's own updater for the app. On an installed Mac, Upgrade downloads the newest published build from the repository's GitHub releases and checks that it is notarized and signed by the same team as the running app. It then stages the build in Application Support. Restart Launchy swaps it into place and opens it, and puts the old app back if the new one doesn't start. The frozen upgrade and restart requests, the separate restart, and Upgrade all and Restart all work as they do for checkouts, so one list in Settings › Peers upgrades a mixed fleet. Macs that run a checkout keep origin/main. There is no new dependency. Rough effort is a week and a half on top of option 02.
+summary: Left for later on 2026-10-09, still proposed: the user chose option 02 and isn't pursuing updates yet. Option 02, plus Launchy's own updater for the app. On an installed Mac, Upgrade downloads the newest published build from the repository's GitHub releases and checks that it is notarized and signed by the same team as the running app. It then stages the build in Application Support. Restart Launchy swaps it into place and opens it, and puts the old app back if the new one doesn't start. The frozen upgrade and restart requests, the separate restart, and Upgrade all and Restart all work as they do for checkouts, so one list in Settings › Peers upgrades a mixed fleet. Macs that run a checkout keep origin/main. There is no new dependency. Rough effort is a week and a half on top of option 02.
 status: proposed
 ---
 
@@ -93,5 +93,6 @@ There is no test target. These are hand checks with two published builds. The se
 
 ## Further Notes
 
+- **Left for later (2026-10-09).** The user accepted option 02 and isn't pursuing updates yet, so this option stays proposed for when they are. Before it is picked up it needs reading against what has changed since it was written: the rename (Launchy is Varnick, name-taken-by-another-launcher), and option 02 as built, whose published build is a fixed-name `Varnick.zip` on a GitHub release, with the hosting still open there.
 - The App Management protection on recent macOS lets an app update itself when the new bundle comes from the same team. That this holds for a helper script started by Launchy is unverified, and the first test above shows it. If macOS asks, the prompt names Launchy, and the user allows it once.
 - A later step could ship the relay's files inside the app, for a headless Upgrade from an installed Mac. It would need an installer mode that takes files instead of a commit, since an installed Mac has no git history to compare against.
