@@ -968,17 +968,32 @@ struct ScreenPermissionsView: View {
     @State private var accessibilityGranted = ScreenReader.isTrusted
     /// Whether Varnick has Screen Recording, for the text read from a picture of the window.
     @State private var screenRecordingGranted = ScreenText.hasAccess
-    /// Grant was pressed in this process (`ScreenText.grantAsked`), and Varnick's binary was shown in Finder (`binaryRevealed`).
+    /// Grant was pressed in this process (`grantAsked`), and Varnick was shown in Finder (`binaryRevealed`), for each permission.
+    @State private var accessibilityGrantAsked = ScreenReader.grantAsked
+    @State private var accessibilityBinaryRevealed = ScreenReader.binaryRevealed
     @State private var screenGrantAsked = ScreenText.grantAsked
     @State private var screenBinaryRevealed = ScreenText.binaryRevealed
 
     var body: some View {
-        Group {
-            Text(accessibilityGranted ? "Accessibility granted" : "Needs Accessibility")
-                .font(.system(size: 12))
-                .foregroundStyle(accessibilityGranted ? Color.secondary : Color.orange)
-            if !accessibilityGranted {
-                Button("Grant…") { askForAccessibility() }
+        // One column, each permission a line of status and buttons at their natural width, and the hints wrapping under it: in a row
+        // beside the setting's long description the controls would otherwise be squeezed to "Gr…" and the status to a letter a line.
+        VStack(alignment: .trailing, spacing: 6) {
+            VStack(alignment: .trailing, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(accessibilityGranted ? "Accessibility granted" : "Needs Accessibility")
+                        .font(.system(size: 12))
+                        .foregroundStyle(accessibilityGranted ? Color.secondary : Color.orange)
+                    if !accessibilityGranted {
+                        Button("Grant…") {
+                            ScreenReader.askForAccess()
+                            accessibilityGrantAsked = true
+                        }
+                    }
+                }
+                .fixedSize()
+                if !accessibilityGranted, accessibilityGrantAsked, accessibilityBinaryRevealed {
+                    hint("Drag Varnick into the list, or use + and pick it")
+                }
             }
             VStack(alignment: .trailing, spacing: 3) {
                 HStack(spacing: 6) {
@@ -995,32 +1010,34 @@ struct ScreenPermissionsView: View {
                         }
                     }
                 }
+                .fixedSize()
                 if !screenRecordingGranted, screenGrantAsked {
-                    Group {
-                        if screenBinaryRevealed {
-                            Text("Drag Varnick into the list, or use + and pick it")
-                        }
-                        Text("After switching it on, restart Varnick")
+                    if screenBinaryRevealed {
+                        hint("Drag Varnick into the list, or use + and pick it")
                     }
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
+                    hint("After switching it on, restart Varnick")
                 }
             }
         }
+        // Ahead of the description beside it, which wraps instead.
+        .layoutPriority(1)
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             accessibilityGranted = ScreenReader.isTrusted
+            accessibilityGrantAsked = ScreenReader.grantAsked
+            accessibilityBinaryRevealed = ScreenReader.binaryRevealed
             screenRecordingGranted = ScreenText.hasAccess
             screenGrantAsked = ScreenText.grantAsked
             screenBinaryRevealed = ScreenText.binaryRevealed
         }
     }
 
-    /// Adds Varnick to the Accessibility list (the system prompt) and opens that pane.
-    private func askForAccessibility() {
-        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-        if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(pane)
-        }
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11.5))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 260, alignment: .trailing)
     }
 }
 

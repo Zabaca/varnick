@@ -32,13 +32,9 @@ enum ScreenText {
         _ = CGRequestScreenCaptureAccess()
         Task { @MainActor in
             await requestListing()
-            if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                NSWorkspace.shared.open(pane)
-            }
-            // The app, not the executable inside it: the Screen Recording list takes Varnick.app.
-            guard !hasAccess, let shown = ResourceFolder.current.bundle ?? Bundle.main.executableURL?.resolvingSymlinksInPath() else { return }
+            PermissionGrant.openPane("Privacy_ScreenCapture")
+            guard !hasAccess, PermissionGrant.revealVarnick() else { return }
             binaryRevealed = true
-            NSWorkspace.shared.activateFileViewerSelecting([shown])
         }
     }
 

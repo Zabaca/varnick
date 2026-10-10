@@ -32,6 +32,28 @@ enum ScreenReader {
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
+    /// How long the Grant button waits, after the prompt and the pane, before it decides the list still lacks Varnick.
+    static let grantWait: Duration = .seconds(1)
+    /// The Grant button was pressed in this process.
+    @MainActor private(set) static var grantAsked = false
+    /// Varnick was shown in Finder because the list still lacked it (Settings says to drag it in).
+    @MainActor private(set) static var binaryRevealed = false
+
+    /// The Settings Grant button, the only place that asks macOS for Accessibility, in this order. The prompt shows once per app
+    /// and afterwards does nothing, so: (a) the prompt; (b) the pane; (c) with Varnick still not trusted `grantWait` later, Varnick's
+    /// app (outside one, the binary) selected in Finder, to drag into the list or pick with +. Same sequence as `ScreenText.askForAccess`.
+    @MainActor
+    static func askForAccess() {
+        grantAsked = true
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        PermissionGrant.openPane("Privacy_Accessibility")
+        Task { @MainActor in
+            try? await Task.sleep(for: grantWait)
+            guard !isTrusted, PermissionGrant.revealVarnick() else { return }
+            binaryRevealed = true
+        }
+    }
+
     // MARK: Which app
 
     /// Whether a request about the screen looks in Varnick's own panel before the app behind it, when the panel has focus: it is
