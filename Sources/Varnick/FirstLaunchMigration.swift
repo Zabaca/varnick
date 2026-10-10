@@ -51,6 +51,7 @@ enum FirstLaunchMigration {
         log(folder.line)
         // The database stays where it is: a rename before a stop would leave Launchy, started again, with an empty one.
         if let failure = folder.failure { return Outcome(failure: failure) }
+        log(renamePaneFiles(places))
         log(copyWebData(places))
         let database = renameDatabase(places)
         log(database.line)
@@ -59,16 +60,16 @@ enum FirstLaunchMigration {
 
     // MARK: 0. Whether this is the Mac's cutover
 
-    /// The `error:` line when the steps must not start, checked before the first one. Only a run that would do the cutover (the old
-    /// folder exists, the new doesn't) must be the Mac's own: its database sits beside the chosen path (or is there already), and
-    /// no Launchy app is running. Else a Varnick built in another checkout, started by a restart that stopped Launchy by its
-    /// relative name, would end every session and move the folder. Both folders present with no sessions file in the new
-    /// one is stopped too: starting there would be starting empty.
+    /// The `error:` line when the steps must not start, checked first. While the old folder exists no Launchy app may run, and a
+    /// cutover needs the Mac's own database beside the chosen path; both folders with no sessions file would start empty.
     static func refusal(_ places: Places) -> String? {
         let fm = FileManager.default
         let old = places.applicationSupport.appendingPathComponent(places.oldFolder, isDirectory: true)
         let new = places.applicationSupport.appendingPathComponent(places.newFolder, isDirectory: true)
         guard exists(old) else { return nil }
+        if places.launchyIsRunning() {
+            return "error: Launchy is still running. Nothing was changed. " + cutoverNote
+        }
         if exists(new) {
             if fm.fileExists(atPath: new.appendingPathComponent("sessions.json").path) { return nil }
             return "error: both \(places.oldFolder) and \(places.newFolder) exist in Application Support and \(places.newFolder) has no sessions file, so Varnick would start empty. Nothing was changed. " + cutoverNote
@@ -77,9 +78,6 @@ enum FirstLaunchMigration {
         let beside = chosen.deletingLastPathComponent().appendingPathComponent("launchy.sqlite")
         guard exists(chosen) || exists(beside) else {
             return "error: Launchy's data is on this Mac, but launchy.sqlite isn't beside the database this Varnick would open, so it isn't the checkout Launchy ran from. Nothing was changed. " + cutoverNote
-        }
-        if places.launchyIsRunning() {
-            return "error: Launchy is still running. Nothing was changed. " + cutoverNote
         }
         return nil
     }
@@ -96,9 +94,13 @@ enum FirstLaunchMigration {
         let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
         guard count > 0 else { return true }
         var path = [CChar](repeating: 0, count: 4096)
+        var comm = [CChar](repeating: 0, count: 64)
         for pid in pids.prefix(count) where pid > 0 {
-            guard proc_pidpath(pid, &path, UInt32(path.count)) > 0,
-                  URL(fileURLWithPath: String(cString: path)).lastPathComponent == name else { continue }
+            // The running Launchy's file is gone at the cutover (the build guard needs it removed) and `proc_pidpath` then fails,
+            // so the name the kernel kept from the exec (`proc_name`) counts as well.
+            let byPath = proc_pidpath(pid, &path, UInt32(path.count)) > 0 && URL(fileURLWithPath: String(cString: path)).lastPathComponent == name
+            let byName = proc_name(pid, &comm, UInt32(comm.count)) > 0 && String(cString: comm) == name
+            guard byPath || byName else { continue }
             let arguments = argumentsOf(pid)
             if arguments == nil || !arguments!.contains(where: { $0 == "--peer" || $0 == "--mcp" }) { return true }
         }
@@ -192,21 +194,23 @@ enum FirstLaunchMigration {
         // Only a link: a real `scratch` folder isn't ours to remove.
         let scratch = new.appendingPathComponent("scratch")
         if (try? fm.destinationOfSymbolicLink(atPath: scratch.path)) != nil { try? fm.removeItem(at: scratch) }
-        renamePaneFiles(in: new.appendingPathComponent("panes", isDirectory: true))
         return ("support folder: moved", nil)
     }
 
-    /// Each pane folder's `.launchy-…` files (session, conversations, stop, turn and its askers and before) take the `.varnick-…`
-    /// name the new code reads, where that name is free: the pane resumes its conversation and keeps its earlier transcripts.
-    private static func renamePaneFiles(in panes: URL) {
+    /// Each pane folder's `.launchy-…` files take the `.varnick-…` name the new code reads, where that name is free, so a pane
+    /// resumes its conversation. Every run, not only the move's: a crash between the move and this would leave them for good.
+    static func renamePaneFiles(_ places: Places) -> String {
         let fm = FileManager.default
+        let panes = places.applicationSupport.appendingPathComponent(places.newFolder, isDirectory: true).appendingPathComponent("panes", isDirectory: true)
+        var renamed = 0
         for pane in (try? fm.contentsOfDirectory(at: panes, includingPropertiesForKeys: nil)) ?? [] {
             for file in (try? fm.contentsOfDirectory(at: pane, includingPropertiesForKeys: nil)) ?? []
             where file.lastPathComponent.hasPrefix(".launchy-") {
-                let renamed = pane.appendingPathComponent(".varnick-" + file.lastPathComponent.dropFirst(".launchy-".count))
-                if !exists(renamed) { try? fm.moveItem(at: file, to: renamed) }
+                let target = pane.appendingPathComponent(".varnick-" + file.lastPathComponent.dropFirst(".launchy-".count))
+                if !exists(target), (try? fm.moveItem(at: file, to: target)) != nil { renamed += 1 }
             }
         }
+        return renamed == 0 ? "pane files: skipped, none to rename" : "pane files: renamed \(renamed)"
     }
 
     /// Whether something is at the path, a dangling link included.
