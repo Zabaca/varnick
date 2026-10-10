@@ -354,7 +354,7 @@ final class SessionBoard: ObservableObject {
             standing = .unknown(lastUsed: pane.record.lastUsed)
         }
         return Card(id: pane.id,
-                    title: tab.sessions.count == 1 ? tab.name ?? pane.label : pane.label,
+                    title: tab.boardTitle(of: pane),
                     pills: model.pills(for: pane.record),
                     hostName: pane.hostName,
                     folder: pane.record.folderName,

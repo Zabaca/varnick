@@ -310,6 +310,10 @@ final class ClaudeTab: ObservableObject, Identifiable {
     }
 
     var sessions: [ClaudeSession] { root.leaves }
+
+    /// What the session board's card for `pane` is called, and what the sign of its screen tools shows (`ScreenAccess`).
+    func boardTitle(of pane: ClaudeSession) -> String { sessions.count == 1 ? name ?? pane.label : pane.label }
+
     func contains(_ session: ClaudeSession) -> Bool { root.leaf(for: session) != nil }
 
     func focus(_ session: ClaudeSession) {

@@ -159,6 +159,12 @@ enum PeerLink {
     /// `~/.launchy`, `exec`ed so the relay is the ssh's own process. A request is appended as ` --peer '<…>'`.
     static let remoteCommand = #"p="$HOME/Library/Application Support/Launchy/\#(name)"; [ -x "$p" ] || p="$HOME/.launchy/\#(name)"; exec "$p""#
 
+    /// What claude runs as a pane's MCP server (`ScreenMCP.configuration`): the link, so a session's server is the build that was
+    /// running when it started, else this binary. The link's arguments (`--mcp`) never match `make run`'s kill pattern either.
+    static var mcpCommand: String {
+        FileManager.default.fileExists(atPath: url.path) ? url.path : Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? url.path
+    }
+
     /// At each launch: takes the snapshot and points the link at its binary (the binary in place without one). The earlier
     /// snapshots go only once the link is seen pointing at the new one.
     static func refresh() {

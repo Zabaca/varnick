@@ -173,6 +173,7 @@ final class Settings: ObservableObject {
     /// Also read by the peer relay, which runs without Settings.
     nonisolated static let keepSessionsRunningKey = "keepSessionsRunning"
     static let skipPermissionsKey = "skipPermissions"
+    static let screenAccessKey = "screenAccess"
     static let relevanceFilterOnKey = "relevanceFilterOn"
     static let relevanceFilterKey = "relevanceFilter"
     static let defaultFontSize: Double = 12.5
@@ -182,6 +183,9 @@ final class Settings: ObservableObject {
     /// Folder new Claude sessions start in; empty uses LAUNCHY_CLAUDE_DIR or the launch folder.
     @Published var claudeDirectory: String { didSet { defaults.set(claudeDirectory, forKey: "claudeDirectory") } }
     @Published var skipPermissions: Bool { didSet { defaults.set(skipPermissions, forKey: Self.skipPermissionsKey) } }
+    /// Gives the Claude sessions started or restarted while it is on the look, point and click tools (`ScreenAccess`); off until
+    /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
+    @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
     /// Claude and terminal panes run inside zmx and outlive Launchy (ADR 0004). Applies to panes
     /// started after it changes; use `Zmx.isEnabled` to act on it, since the binary may be missing.
     @Published var keepSessionsRunning: Bool { didSet { defaults.set(keepSessionsRunning, forKey: Self.keepSessionsRunningKey) } }
@@ -304,6 +308,7 @@ final class Settings: ObservableObject {
     private init() {
         claudeDirectory = defaults.string(forKey: "claudeDirectory") ?? ""
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
+        screenAccess = defaults.bool(forKey: Self.screenAccessKey)
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
@@ -467,13 +472,6 @@ struct SettingsView: View {
     let askRestart: () -> Void
     @State private var typesafeKeyDraft = ""
     @State private var modelServerKeyDraft = ""
-    /// Whether Launchy has Accessibility, checked while Settings shows it.
-    @State private var accessibilityGranted = ScreenReader.isTrusted
-    /// Whether Launchy has Screen Recording, for the text read from a picture of the window.
-    @State private var screenRecordingGranted = ScreenText.hasAccess
-    /// Grant was pressed in this process (`ScreenText.grantAsked`), and Launchy's binary was shown in Finder (`binaryRevealed`).
-    @State private var screenGrantAsked = ScreenText.grantAsked
-    @State private var screenBinaryRevealed = ScreenText.binaryRevealed
     /// Last section viewed, so Settings reopens where you left it.
     @AppStorage("settingsSection") private var sectionID = SettingsSection.claude.rawValue
 
@@ -538,6 +536,11 @@ struct SettingsView: View {
                                    detail: "Start sessions with --dangerously-skip-permissions: Claude runs tools without asking.") {
                             Toggle("", isOn: $settings.skipPermissions).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
+                        SettingRow(title: "Screen access",
+                                   detail: "Sessions started or restarted while this is on get tools to look at a window, point at things with the arrow and click, on this Mac's screen. What they are shown (a window's title, its controls' names and visible text, and short text read from a picture of it) goes to Anthropic with the session. Clicks happen without asking: the arrow shows on the target for a second first. Every pane already has Launchy's permissions: see SECURITY.md.") {
+                            ScreenPermissionsView(askRestart: askRestart)
+                            Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        }
                         SettingRow(title: "Keep sessions running",
                                    detail: "Claude and terminal panes keep running when Launchy restarts, quits or crashes, and reconnect when it is back. Closing a pane ends it.") {
                             if !Zmx.isAvailable {
@@ -591,46 +594,9 @@ struct SettingsView: View {
                                     .buttonStyle(.link)
                                     .font(.system(size: 12))
                             }
-                            Text(accessibilityGranted ? "Accessibility granted" : "Needs Accessibility")
-                                .font(.system(size: 12))
-                                .foregroundStyle(accessibilityGranted ? Color.secondary : Color.orange)
-                            if !accessibilityGranted {
-                                Button("Grant…") { askForAccessibility() }
-                            }
-                            VStack(alignment: .trailing, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(screenRecordingGranted ? "Screen Recording granted" : "Needs Screen Recording")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(screenRecordingGranted ? Color.secondary : Color.orange)
-                                    if !screenRecordingGranted {
-                                        Button("Grant…") {
-                                            ScreenText.askForAccess()
-                                            screenGrantAsked = true
-                                        }
-                                        if screenGrantAsked {
-                                            Button("Restart Launchy") { askRestart() }
-                                        }
-                                    }
-                                }
-                                if !screenRecordingGranted, screenGrantAsked {
-                                    Group {
-                                        if screenBinaryRevealed {
-                                            Text("Drag Launchy into the list, or use + and pick it")
-                                        }
-                                        Text("After switching it on, restart Launchy")
-                                    }
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(.secondary)
-                                }
-                            }
+                            ScreenPermissionsView(askRestart: askRestart)
                             Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.pointAtScreen && (!settings.heyLaunchy || !screenGateOpen))
-                        }
-                        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-                            accessibilityGranted = ScreenReader.isTrusted
-                            screenRecordingGranted = ScreenText.hasAccess
-                            screenGrantAsked = ScreenText.grantAsked
-                            screenBinaryRevealed = ScreenText.binaryRevealed
                         }
                         SettingRow(title: "Voice", detail: "What Launchy speaks in.") {
                             VoicePicker(settings: settings)
@@ -891,14 +857,6 @@ struct SettingsView: View {
     /// Point at the screen can be turned on only with the gate open: only Jev chooses the element.
     private var screenGateOpen: Bool { settings.typesafeGateKey != nil }
 
-    /// Adds Launchy to the Accessibility list (the system prompt) and opens that pane.
-    private func askForAccessibility() {
-        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-        if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(pane)
-        }
-    }
-
     /// The TypeSafe key comes from the environment or `.env`.
     private var envKeyNote: some View {
         Text("Key from .env").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -977,6 +935,71 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .peers: "desktopcomputer"
         case .models: "cpu"
         case .shortcuts: "keyboard"
+        }
+    }
+}
+
+/// Launchy's Accessibility and Screen Recording, with their Grant buttons: the permissions Point at the screen and Screen access both
+/// need. One view for both rows, since the buttons' state (a Grant pressed, the binary shown in Finder) is the process's, not a row's.
+struct ScreenPermissionsView: View {
+    /// Opens the Restart Launchy card (`LauncherModel.askRestart`): a Screen Recording grant applies after a restart.
+    let askRestart: () -> Void
+    /// Whether Launchy has Accessibility, checked while Settings shows it.
+    @State private var accessibilityGranted = ScreenReader.isTrusted
+    /// Whether Launchy has Screen Recording, for the text read from a picture of the window.
+    @State private var screenRecordingGranted = ScreenText.hasAccess
+    /// Grant was pressed in this process (`ScreenText.grantAsked`), and Launchy's binary was shown in Finder (`binaryRevealed`).
+    @State private var screenGrantAsked = ScreenText.grantAsked
+    @State private var screenBinaryRevealed = ScreenText.binaryRevealed
+
+    var body: some View {
+        Group {
+            Text(accessibilityGranted ? "Accessibility granted" : "Needs Accessibility")
+                .font(.system(size: 12))
+                .foregroundStyle(accessibilityGranted ? Color.secondary : Color.orange)
+            if !accessibilityGranted {
+                Button("Grant…") { askForAccessibility() }
+            }
+            VStack(alignment: .trailing, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(screenRecordingGranted ? "Screen Recording granted" : "Needs Screen Recording")
+                        .font(.system(size: 12))
+                        .foregroundStyle(screenRecordingGranted ? Color.secondary : Color.orange)
+                    if !screenRecordingGranted {
+                        Button("Grant…") {
+                            ScreenText.askForAccess()
+                            screenGrantAsked = true
+                        }
+                        if screenGrantAsked {
+                            Button("Restart Launchy") { askRestart() }
+                        }
+                    }
+                }
+                if !screenRecordingGranted, screenGrantAsked {
+                    Group {
+                        if screenBinaryRevealed {
+                            Text("Drag Launchy into the list, or use + and pick it")
+                        }
+                        Text("After switching it on, restart Launchy")
+                    }
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+            accessibilityGranted = ScreenReader.isTrusted
+            screenRecordingGranted = ScreenText.hasAccess
+            screenGrantAsked = ScreenText.grantAsked
+            screenBinaryRevealed = ScreenText.binaryRevealed
+        }
+    }
+
+    /// Adds Launchy to the Accessibility list (the system prompt) and opens that pane.
+    private func askForAccessibility() {
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        if let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(pane)
         }
     }
 }
