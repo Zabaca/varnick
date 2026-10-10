@@ -1,6 +1,6 @@
 # A spoken request can point at the screen, read from the focused window's Accessibility tree, with Jev picking the element
 
-With **Point at the screen** on, a spoken request about something on the screen ("where's the Allow button", "which one turns off the startup sound") is answered with an **Arrow** as well as aloud. Launchy reads the Accessibility tree of the window that has keyboard focus, in its own process. It describes each visible element by its label, its kind, its enclosing groups and the text beside it on the same row. One call to TypeSafe's Jev asks which element the request means and whether the thing is in the window at all. When that second answer is 0.5 or more, Launchy draws a click-through arrow and a sign at the element and says the sign's note. No screenshot is taken. Nothing is opened, clicked or focused.
+With **Point at the screen** on, a spoken request about something on the screen ("where's the Allow button", "which one turns off the startup sound") is answered with an **Arrow** as well as aloud. Varnick reads the Accessibility tree of the window that has keyboard focus, in its own process. It describes each visible element by its label, its kind, its enclosing groups and the text beside it on the same row. One call to TypeSafe's Jev asks which element the request means and whether the thing is in the window at all. When that second answer is 0.5 or more, Varnick draws a click-through arrow and a sign at the element and says the sign's note. No screenshot is taken. Nothing is opened, clicked or focused.
 
 This amends ADR 0015, under which a spoken request was answered only aloud with nothing shown. It also amends ADR 0016, under which Jev received only the request text. The user chose this on 2026-10-09, after an eval measured Jev and Gemma on made-up screen requests over eight windows:
 - Jev picked the right element 87 times in 97, and 95 counting the control's own row text.
@@ -31,11 +31,11 @@ Nothing is logged but durations and kinds. Settings, the README and SECURITY.md 
 - **Off-topic is still read before the source.** Off-topic requests ("set a timer") take `screen` as their source.
 - **The measured wording is fixed.** The model stays pinned. `offTopicFrom` held at 0.5 with the new questions, and `alsoSessionsFrom` wasn't re-measured.
 
-## The permission stays Launchy's
+## The permission stays Varnick's
 
-- **Launchy needs Accessibility.** While builds are signed ad hoc, a rebuild may stop the grant from applying (`runs-only-from-a-checkout`).
-- **The read runs only in Launchy's process.** zmx is never granted Accessibility. A Claude session's processes run under zmx, which macOS very likely treats as their responsible app, so a grant to zmx would let every hosted session read and drive any app's UI. (Wrong: see the correction of 2026-10-09 below. Pane processes are attributed to Launchy.)
-- **Panes started without zmx are a gap.** They run as Launchy's direct children, and probably share its grant (every pane does, zmx-hosted ones included: see the correction of 2026-10-09 below). With Keep sessions running off, the default, that is every pane. The user accepted this with a plain line in the switch's detail and in SECURITY.md, and the fix is a problem of its own: `panes-share-launchys-permissions`.
+- **Varnick needs Accessibility.** While builds are signed ad hoc, a rebuild may stop the grant from applying (`runs-only-from-a-checkout`).
+- **The read runs only in Varnick's process.** zmx is never granted Accessibility. A Claude session's processes run under zmx, which macOS very likely treats as their responsible app, so a grant to zmx would let every hosted session read and drive any app's UI. (Wrong: see the correction of 2026-10-09 below. Pane processes are attributed to Varnick.)
+- **Panes started without zmx are a gap.** They run as Varnick's direct children, and probably share its grant (every pane does, zmx-hosted ones included: see the correction of 2026-10-09 below). With Keep sessions running off, the default, that is every pane. The user accepted this with a plain line in the switch's detail and in SECURITY.md, and the fix is a problem of its own: `panes-share-launchys-permissions`.
 
 ## Considered Options
 
@@ -47,17 +47,17 @@ Nothing is logged but durations and kinds. Settings, the README and SECURITY.md 
 
 ## Consequences
 
-- **A spoken request can now draw on the screen.** The **Arrow** never activates Launchy or moves focus, ignores the mouse, and goes by itself 8 s after the speech. A new request, or turning the switch, Hey Launchy or Listening off, removes it. The note is a fixed sentence, spoken through `Speaker` as every answer is.
+- **A spoken request can now draw on the screen.** The **Arrow** never activates Varnick or moves focus, ignores the mouse, and goes by itself 8 s after the speech. A new request, or turning the switch, Hey Varnick or Listening off, removes it. The note is a fixed sentence, spoken through `Speaker` as every answer is.
 - **Coverage is what apps expose to Accessibility:**
   - Electron apps build their web tree when asked, and keep it until they quit.
-  - Chrome's page content stays out of reach without its accessibility flag, and Launchy says so.
+  - Chrome's page content stays out of reach without its accessibility flag, and Varnick says so.
   - An unlabelled icon is missed.
 - **The read and the choice run during the hold, as search and filter do (ADR 0017).** A partial request's element descriptions may reach Jev and be discarded.
 - **Changing the screen questions changes the measured thresholds' meaning,** as for the decide step's. So does anything added to what the call carries: that is a privacy change needing this ADR, the README and SECURITY.md amended.
 - Amended by ADR 0021: when the tree lacks the thing, a screenshot of the focused window is read on this Mac by Apple's text recognition, and its short lines go to the same Jev call under the same gate. "No screenshot is taken" now holds only for the tree's step.
-  - "What a text field holds never goes" no longer holds for that step either: short typed text in a field Launchy can't place may go.
+  - "What a text field holds never goes" no longer holds for that step either: short typed text in a field Varnick can't place may go.
   - A secure field's frame is now read, on this Mac only.
-  - Screen Recording joins Accessibility in what Launchy asks for.
+  - Screen Recording joins Accessibility in what Varnick asks for.
 - **Corrected 2026-10-09: macOS attributes every pane process to Launchy, zmx-hosted ones included.**
   - **Measured** from a zmx-hosted pane: the privacy service's log named Launchy as responsible for a process run there.
   - So Launchy's Accessibility, and Screen Recording (ADR 0021), reach every session in its panes, Skip-permissions ones included, whenever they match the build. A grant to zmx is never consulted.

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Launchy's own code is under the Apache License 2.0 (see `LICENSE`). This file lists the other
+Varnick's own code is under the Apache License 2.0 (see `LICENSE`). This file lists the other
 software and models it contains, builds with, downloads or is derived from, with the licence of each
 as read from its source. Every entry says what it was read from, on 2026-10-07; an entry marked
 "not verified" names what could not be read.
@@ -10,7 +10,7 @@ Contents:
 1. [Code in this repository](#code-in-this-repository)
 2. [What the build downloads](#what-the-build-downloads)
 3. [What the Linux installer downloads](#what-the-linux-installer-downloads)
-4. [What Launchy downloads at runtime](#what-launchy-downloads-at-runtime)
+4. [What Varnick downloads at runtime](#what-varnick-downloads-at-runtime)
 5. [Swift packages](#swift-packages)
 6. [Licence texts](#licence-texts)
 
@@ -18,8 +18,8 @@ Contents:
 
 ### Laya and laya-mlx (Apache-2.0)
 
-`Sources/Launchy/LayaModel.swift` is a translation to Swift and MLX of the decision model in Laya and
-of laya-mlx's `model.py`, as its header says. Launchy ships no Laya or laya-mlx weights: the relevance
+`Sources/Varnick/LayaModel.swift` is a translation to Swift and MLX of the decision model in Laya and
+of laya-mlx's `model.py`, as its header says. Varnick ships no Laya or laya-mlx weights: the relevance
 checkpoint it can load is one the user imports (see the README).
 
 | Project | Source | Licence | NOTICE file |
@@ -51,7 +51,7 @@ not an implementation of every upstream API. The neural architecture parity
 reference remains 573e5b62696ba441230cd6be71d593331b5d23af.
 ```
 
-Launchy's translation covers one question type (the `noul` question) and changes the code's shape
+Varnick's translation covers one question type (the `noul` question) and changes the code's shape
 (Swift, MLX, a fixed row format). It is a derivative of that work under the Apache License 2.0.
 Which of the two projects each part of `LayaModel.swift` follows was not checked line by line.
 
@@ -86,7 +86,7 @@ licences of the other code libghostty and zmx are built with were not verified.
 ## What the Linux installer downloads
 
 `scripts/install-peer.sh` builds the headless relay on the headless host from this repository's
-`Packages/LaunchyPeer`, which depends on nothing outside Foundation and POSIX. It also downloads, each
+`Packages/VarnickPeer`, which depends on nothing outside Foundation and POSIX. It also downloads, each
 checked against a pinned SHA-256 in `scripts/remote/install-peer.sh`:
 
 | Component | Licence | Read from |
@@ -98,16 +98,16 @@ The Swift toolchain the installer builds with is installed by the user, and the 
 the Swift standard library statically. That library's licence was not read from its source and is not
 listed here (not verified).
 
-## What Launchy downloads at runtime
+## What Varnick downloads at runtime
 
-Launchy downloads these models from Hugging Face on the user's request (Settings), at the pinned revisions
-in `Sources/Launchy/Embedder.swift` and `Sources/Launchy/TextGenerator.swift`. They are not stored in this
+Varnick downloads these models from Hugging Face on the user's request (Settings), at the pinned revisions
+in `Sources/Varnick/Embedder.swift` and `Sources/Varnick/TextGenerator.swift`. They are not stored in this
 repository. The terms are those of each model card at the pinned revision.
 
 | Model | Used for | Pinned revision | Licence on the card at that revision |
 |---|---|---|---|
 | `mlx-community/Qwen3-Embedding-0.6B-8bit`, an MLX conversion of `Qwen/Qwen3-Embedding-0.6B` | Semantic search | `407ad2329cd30702720aafe83f74a1ba30fdfbca` | `license: apache-2.0` |
-| `mlx-community/gemma-4-e2b-it-4bit`, an MLX conversion of `google/gemma-4-E2B-it` | Hey Launchy's answers | `238767527555cb75a05732a84dff5d6ba0dd6809` | `license: gemma` |
+| `mlx-community/gemma-4-e2b-it-4bit`, an MLX conversion of `google/gemma-4-E2B-it` | Hey Varnick's answers | `238767527555cb75a05732a84dff5d6ba0dd6809` | `license: gemma` |
 
 Notes on the two:
 
@@ -121,7 +121,7 @@ Notes on the two:
 ## Swift packages
 
 Resolved versions are those of `Package.resolved`, whose licences were read from the checked-out
-sources under `.build/checkouts/` after `make build`. `Packages/LaunchyPeer` is Launchy's own package and
+sources under `.build/checkouts/` after `make build`. `Packages/VarnickPeer` is Varnick's own package and
 has no dependencies. Whether each resolved package reaches the linked binary was not checked; the direct
 dependencies, from `Package.swift`, are marked.
 
@@ -143,7 +143,7 @@ dependencies, from `Package.swift`, are marked.
 | swift-syntax | 603.0.2 | Apache-2.0 | none in the file | |
 
 Of these, swift-syntax comes from mlx-swift-lm's macros (`#huggingFaceTokenizerLoader`) and runs at build
-time; it is not linked into Launchy (inferred from mlx-swift-lm's `Package.swift`, where it is the macro target's dependency).
+time; it is not linked into Varnick (inferred from mlx-swift-lm's `Package.swift`, where it is the macro target's dependency).
 
 mlx-swift compiles these projects into its `Cmlx` target, from `Source/Cmlx/` in its checkout:
 

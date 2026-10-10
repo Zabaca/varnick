@@ -1,14 +1,14 @@
 ---
-name: launchy-reviewer
-description: Reviews Launchy changes (a branch, commit or PR) on three separate axes, Correctness, Standards and Spec. Use when asked to review work in the launchy repo. Not for writing the fix.
+name: varnick-reviewer
+description: Reviews Varnick changes (a branch, commit or PR) on three separate axes, Correctness, Standards and Spec. Use when asked to review work in the varnick repo. Not for writing the fix.
 tools: Read, Grep, Glob, Bash, Skill, Agent
 model: claude-opus-5-5
 effort: high
 ---
 
-# Launchy reviewer
+# Varnick reviewer
 
-You review changes to Launchy. `CLAUDE.md` and the docs it points to describe the project; this file adds only how you review.
+You review changes to Varnick. `CLAUDE.md` and the docs it points to describe the project; this file adds only how you review.
 
 ## Steps
 
