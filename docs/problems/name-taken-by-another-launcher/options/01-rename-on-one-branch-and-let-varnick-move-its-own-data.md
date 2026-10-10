@@ -18,6 +18,10 @@ Accepted by the user on 2026-10-09, relayed by the coordinator, with every quest
 - **The logo is the Fold.** It replaces the menu bar's symbols and becomes the app icon (Implementation Decisions › The logo).
 - **varnick.com** gets the chosen landing page. It moves into this repository after the rename and goes live once a downloadable build exists (Implementation Decisions › varnick.com).
 - **The in-flight screen-access branch has merged** (89f3b76), so phase 2 can start.
+- **GitHub was done early,** on 2026-10-09 at the user's request, before the code rename. Phase 3 no longer waits for the merge.
+  - The Deno project is now Zabaca/varnick-deno, archived and still public; its one local clone was repointed first.
+  - Zabaca/launchy is now Zabaca/varnick, still private, with a new description. The old URL redirects (checked), and origin on the Mac that did it points at the new name.
+  - Left for the user: another tool that pushed the Deno project's work branches still has that clone registered as a project; clones on other machines weren't checked.
 - **Added by the planner while writing the tickets** (2026-10-09), each because a Mac still on Launchy could otherwise cross half-way:
   - Varnick refuses every mode but the relay and the MCP server while the old support folder exists and the new one doesn't, and only the app's start migrates (The first-launch migration).
   - The restart script refuses, stopping nothing, while the checkout has no Varnick binary (The guards).
@@ -215,6 +219,8 @@ Decided by the user on 2026-10-09.
 
 ### GitHub (the user's step, after the merge and before the cutover)
 
+Done on 2026-10-09, before the code rename (the start of Solution says what is left).
+
 1. **Repoint first.** Find every clone of the Deno project on every machine, and whatever pushed its work branches. Repoint each clone to the new name and stop that automation. GitHub's redirect covers them only until step 3.
 2. **Move the Deno project aside.** Rename Zabaca/varnick to Zabaca/varnick-deno, then archive it.
 3. **Rename this repository.** Rename Zabaca/launchy to Zabaca/varnick, still private, and update its description.
@@ -375,8 +381,8 @@ There is no Swift test target. Every ticket runs `make build`, and the Phone pag
   4. **Docs and agents** (AFK, on `varnick`, after 2): evergreen docs, ADR text and file names, the mapping ADR, the agents and the skills.
   5. **The Fold** (AFK, on `varnick`, after 2): the menu bar's template images and the runtime app icon.
   6. **Final checks and merge** (AFK up to the push, after 1 to 5): ticket 1's results in the matcher and wording, the leftover search, the public-repo patterns, the build, `bun test`, review, the `--no-ff` merge to main and the push.
-  7. **GitHub renames** (the user, after 6).
-  8. **Cutover: the Ryzen** (the user, after 7).
+  7. **GitHub renames** (the user): done on 2026-10-09, ahead of the rename, with two leftovers for the user.
+  8. **Cutover: the Ryzen** (the user, after 6).
   9. **Cutover: each Mac** (the user, after 8).
   10. **Custom apps in other projects** (the user, or AFK per project on the user's go, after 9).
   11. **Going public** (the user, after 9): repo-not-ready-to-open-source option 01's last steps against the renamed repository.
