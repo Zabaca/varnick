@@ -641,26 +641,10 @@ enum SpokenPipeline {
         // The text of a picture of the window (ADR 0021), as candidates; empty, with the reason in `look.text`, when it can't be read.
         // `area` keeps only lines whose centre is inside it. Needs Screen Recording: without it the tree's answer stands.
         func readText(within area: CGRect? = nil) async throws -> [ScreenElement] {
-            look.text = TextLook()
-            guard ScreenText.hasAccess else { look.text?.skipped = "no Screen Recording"; return [] }
-            guard let frame = reading.windowFrame else { look.text?.skipped = ScreenText.Failure.noWindow.logKind; return [] }
-            let recognition: ScreenText.Recognition
-            do {
-                recognition = try await ScreenText.recognise(pid: app.processIdentifier, near: frame)
-            } catch {
-                try Task.checkCancellation()
-                look.text?.skipped = error.logKind
-                return []
-            }
-            try Task.checkCancellation()
-            // The fields and the web area were read where the window was then; it may have moved since.
-            let fields = ScreenText.shifted(reading.entryFrames, from: frame, to: recognition.window)
-            let area = area.map { ScreenText.shifted([$0], from: frame, to: recognition.window)[0] }
-            captured = recognition.window
-            let lines = ScreenText.candidates(from: recognition.lines, in: recognition.window, avoiding: fields, within: area, pointer: pointer)
-            look.text = TextLook(capture: recognition.capture, recognise: recognition.recognise, recognised: recognition.lines.count,
-                                 candidates: lines.count)
-            return lines
+            let found = try await ScreenText.windowText(of: reading, pid: app.processIdentifier, within: area, pointer: pointer)
+            look.text = found.look
+            if let window = found.window { captured = window }
+            return found.lines
         }
 
         // The panel's elements are asked about first, in a call of their own; Jev not finding the thing there reads the app behind.

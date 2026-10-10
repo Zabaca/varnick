@@ -7,7 +7,10 @@ final class ArrowOverlay {
     static let shared = ArrowOverlay()
 
     /// How long it stays after the speech ends.
-    static let lingers: TimeInterval = 8
+    nonisolated static let lingers: TimeInterval = 8
+
+    /// Counts every show and hide, so a caller can tell whether the arrow it drew is still the one up.
+    private(set) var generation = 0
 
     private var panel: OverlayPanel?
     private var view: OverlayView?
@@ -43,23 +46,28 @@ final class ArrowOverlay {
 
     /// Removes it at once: a new request, or a switch turned off.
     func hide() {
+        generation += 1
         hiding?.cancel()
         panel?.orderOut(nil)
     }
+
+    /// Whether `window` is the arrow's own panel, which covers a whole display and is not Launchy's to click under.
+    func owns(_ window: NSWindow) -> Bool { window === panel }
 
     /// Removes it after `lingers`, fading out; a new `show` or `hide` before then takes over.
     func hide(after delay: TimeInterval) {
         hiding?.cancel()
         hiding = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled, let panel = self?.panel else { return }
+            guard !Task.isCancelled, let self, let panel = self.panel else { return }
+            let fading = self.generation
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.25
                 panel.animator().alphaValue = 0
             }, completionHandler: {
                 Task { @MainActor in
-                    // A `show` meanwhile has put it back.
-                    if panel.alphaValue == 0 { panel.orderOut(nil) }
+                    // A `show` or `hide` meanwhile has put it back or taken it away: the arrow now up is not this one's to hide.
+                    if self.generation == fading, panel.alphaValue == 0 { panel.orderOut(nil) }
                 }
             })
         }

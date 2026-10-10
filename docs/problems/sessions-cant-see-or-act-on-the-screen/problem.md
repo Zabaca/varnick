@@ -83,4 +83,4 @@ Read in the code at ca01eb4 unless marked.
 - **What a session may be shown.** One window or the whole display, element lists or pictures, and windows never shown (a password manager).
 - **How the user knows.** An indicator while a session looks or acts, and a record of what it did.
 - **The interim.** Launchy's grants reach every pane today. Is that acceptable until a broker ships, or do the grants come off and Point at the screen with them?
-- **A broker needs the inheritance cut.** While pane processes get Launchy's grants, a session can act around any broker. Options 01, 02 and 04 depend on `panes-share-launchys-permissions`.
+- **A broker needs the inheritance cut.** While pane processes get Launchy's grants, a session can act around any broker. Option 01 is accepted with permissioning deliberately deferred until `panes-share-launchys-permissions` (its option 01) makes Launchy the only way to the screen. Options 02 and 03 are rejected, and 04 waits on the same problem.

@@ -87,7 +87,7 @@ where Launchy runs, and a restart waits while a build is running.
   runs tools without asking. See [`SECURITY.md`](SECURITY.md).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See Privacy below for what turning it on sends.
-- **Keep sessions running** is off (above), and so are Listening, Point at the screen and the Phone page.
+- **Keep sessions running** is off (above), and so are Listening, Point at the screen, Screen access and the Phone page.
 - **`make install` leaves a skill link it didn't make alone** (above).
 
 A Mac that ran an earlier Launchy keeps what it stored. One that has Launchy's sessions file but never
@@ -158,6 +158,22 @@ picture is never written to disk, logged or sent; only the short lines of text i
 Without Screen Recording the elements' answer stands, and Launchy says it can't see inside Chrome's pages.
 A rebuild of Launchy may need either permission given again. The permissions are Launchy's, and every
 Claude session and shell in its panes gets them too, kept running in zmx or not: see [`SECURITY.md`](SECURITY.md).
+
+### Screen access
+
+Settings › Claude › **Screen access** (off by default) gives the Claude sessions you start or restart in
+Launchy's panes three tools, from an MCP server named `launchy`: `look` at the controls of a window on your Mac,
+`point` at one with the same big arrow Point at the screen draws, signed with the session's name and its
+note, and `click`. A session that hits a setting it can't see can look, show you where to click, or click
+for you. The server is Launchy's own binary (`Launchy --mcp`) and only passes each call on: the running
+Launchy does the reading, drawing and clicking, with the code Hey Launchy uses. It needs Accessibility, and
+Screen Recording to read the text of a window that lists nothing or of a Chrome page; Settings asks for
+both. **A click happens without asking**: the arrow shows on the target for a second first, and there is no
+`type`. A session started with Skip permissions has no prompt before a tool at all; one without gets Claude
+Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while still asking
+for `click` (not checked). A session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the
+switch on; turning it off stops every session's tools at once. It is independent of Point at the screen
+and Hey Launchy. See Privacy below for what a session is shown, and [`SECURITY.md`](SECURITY.md).
 
 ### TypeSafe
 
@@ -240,6 +256,17 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   can't place is not: a Chrome page's, a canvas app's, a remote desktop's or a virtual machine's, one past
   the limits of the read, or one that moved before the picture was taken. So typed text of 6 words or
   fewer there may reach TypeSafe. The picture, the lines' positions and longer lines never leave the Mac.
+- **With Screen access on** (Settings › Claude, off by default), the Claude sessions started or restarted
+  after you turn it on can read the window in front, or one they name, and what they read goes to Anthropic
+  with the session, and stays in its transcript on this Mac: the window's title, each of its first 255
+  controls' label, kind and nearby text, which is the window's visible text, such as a message list's
+  subjects and senders or a page's text in Safari, and, for a window that lists nothing or a Chrome page,
+  its short lines of text read from a picture of the window on this Mac (at most 6 words and 60 characters
+  each, at most 150). The controls never hold what is typed in a field, and a password field is not read. But
+  a line in a field Launchy can't place is not dropped (see Point at the screen above), so typed text of 6 words or
+  fewer there may be shown to the session, and so reach Anthropic. The picture is never written, logged or
+  sent. None of this goes to TypeSafe, and the TypeSafe filter has no part in it. Clicks happen without
+  asking. Launchy's own panel is never read or clicked by it.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere

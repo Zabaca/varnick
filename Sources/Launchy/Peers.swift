@@ -853,6 +853,12 @@ final class PeerManager: ObservableObject {
         guard let head = PeerJSON.decode(PeerRequestHead.self, from: line) else {
             return PeerJSON.line(PeerReply.failure("Unreadable request"))
         }
+        // A screen request (ADR 0023) is told apart before any peer check, and only by having no `op`: a line with one is a peer's
+        // whatever else it holds. The relay refuses a line without a known `op` and passes the app only lines that carry one, so
+        // no Mac or device can send this; only a process on this Mac that opens the socket, as every pane's can.
+        if head.op == nil, PeerJSON.decode(ScreenRequestHead.self, from: line)?.screen != nil {
+            return await ScreenAccess.shared.answer(line)
+        }
         // `upgrade` and `restart` are read before the version (the relay does the same), and only for a Mac in the list: not a device.
         if let op = head.op.flatMap(PeerOp.init), PeerProtocol.answersAnyVersion(op) {
             guard let by = head.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {

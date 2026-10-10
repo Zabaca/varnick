@@ -2,7 +2,7 @@
 problem: sessions-cant-see-or-act-on-the-screen
 title: Launchy brokers look, point and click for sessions through an MCP server on its socket, with permissioning deferred
 summary: Accepted on 2026-10-09, narrower than first written. A Settings switch, Screen access, is off by default. Each Claude pane started while it is on gets a stdio MCP server, `Launchy --mcp`, with three tools. `look` lists a window's controls through Hey Launchy's Accessibility read, plus text read from a picture of the window where the app exposes none. `point` draws the Arrow, with the session's note, at a control from `look` or at a rectangle. `click` presses a control or clicks at a point, after showing the Arrow on the target for a second. The server only relays. Each call is one request on Launchy's existing socket, and the running Launchy does the work with Hey Launchy's code, under its own grants. There is no `type`, no per-click approval and no per-pane switch. Permissioning is deferred because every pane process already gets Launchy's grants and could act around an approval (`panes-share-launchys-permissions`). It comes after that problem's option 01 makes Launchy the only way to the screen.
-status: accepted
+status: shipped
 ---
 
 ## Solution

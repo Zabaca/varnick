@@ -213,6 +213,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 .sink { [weak self] _ in self?.registerHotKey() },
             Settings.shared.$fontSize
                 .sink { [weak self] size in self?.model.applyFontSize(size) },
+            // Turning Screen access off ends the sessions' tools at once, with no restart: each call reads the switch.
+            Settings.shared.$screenAccess.dropFirst().removeDuplicates()
+                .sink { on in if !on { ScreenAccess.shared.switchedOff() } },
             Listener.shared.$state
                 .sink { [weak self] state in self?.showListening(state) },
             // The phone page's server follows its setting; `apply` reads the setting itself, once didSet has run.
@@ -499,6 +502,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 // of the app starts, and before the migration below (the relay writes no saved state, see `PeerRelay`).
 if let i = CommandLine.arguments.firstIndex(of: "--peer"), i + 1 < CommandLine.arguments.count {
     exit(PeerRelay.run(CommandLine.arguments[i + 1], host: MacPeerHost()))
+}
+
+// `Launchy --mcp --pane <id>` is the MCP server a Claude pane starts with when Screen access is on (`ScreenMCP`): JSON-RPC on
+// standard input and output, each tool call one line on the peer socket. It never reads or acts. Like `--peer`, it runs before
+// anything of the app starts, and it exits when its input ends.
+if CommandLine.arguments.contains("--mcp") {
+    let pane = CommandLine.arguments.firstIndex(of: "--pane").flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil } ?? ""
+    exit(ScreenMCP.run(pane: pane))
 }
 
 // The embedded Info.plist (for the listening permissions) gives the binary a bundle id, which

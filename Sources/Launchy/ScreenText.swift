@@ -212,6 +212,38 @@ enum ScreenText {
         return Recognition(lines: lines, window: window, capture: capture, recognise: began.duration(to: clock.now))
     }
 
+    /// What the text step found in a window: the candidates, how it went (counts and the reason when it was skipped; never the
+    /// lines), and where the window was when it was captured, which the lines' boxes are relative to.
+    struct WindowText {
+        var lines: [ScreenElement]
+        var look: SpokenPipeline.TextLook
+        var window: CGRect?
+    }
+
+    /// The picture's text as candidates (ADR 0021), none and `look.skipped` when it can't be read; `area` keeps only lines centred in
+    /// it. Hey Launchy and Screen access (`ScreenAccess`) both read text through this.
+    static func windowText(of reading: ScreenReader.Reading, pid: pid_t, within area: CGRect? = nil, pointer: CGPoint) async throws -> WindowText {
+        var look = SpokenPipeline.TextLook()
+        guard hasAccess else { look.skipped = "no Screen Recording"; return WindowText(lines: [], look: look, window: nil) }
+        guard let frame = reading.windowFrame else { look.skipped = Failure.noWindow.logKind; return WindowText(lines: [], look: look, window: nil) }
+        let recognition: Recognition
+        do {
+            recognition = try await recognise(pid: pid, near: frame)
+        } catch {
+            try Task.checkCancellation()
+            look.skipped = error.logKind
+            return WindowText(lines: [], look: look, window: nil)
+        }
+        try Task.checkCancellation()
+        // The fields and the web area were read where the window was then; it may have moved since.
+        let fields = shifted(reading.entryFrames, from: frame, to: recognition.window)
+        let area = area.map { shifted([$0], from: frame, to: recognition.window)[0] }
+        let lines = candidates(from: recognition.lines, in: recognition.window, avoiding: fields, within: area, pointer: pointer)
+        look = SpokenPipeline.TextLook(capture: recognition.capture, recognise: recognition.recognise, recognised: recognition.lines.count,
+                                       candidates: lines.count)
+        return WindowText(lines: lines, look: look, window: recognition.window)
+    }
+
     // MARK: Pure parts
 
     /// The window whose frame overlaps `near` most, by intersection over union and at least half. Among windows that overlap alike

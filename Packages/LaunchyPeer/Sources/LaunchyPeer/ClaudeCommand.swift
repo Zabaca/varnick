@@ -141,13 +141,15 @@ public enum ClaudeCommand {
         ["-l", "-i", "-c", script, "claude"] + claudeArguments
     }
 
-    /// What follows `claude` in the script's arguments: the hooks' settings, skip permissions and agent,
+    /// What follows `claude` in the script's arguments: the MCP config, the hooks' settings, skip permissions and agent,
     /// then `--resume <conversation>` or `--session-id <sessionID>` and the prompt after `--`. The order is
     /// part of the contract, and user text stays one argument each. `agent` is the one the host has found
-    /// to exist, since claude exits on an unknown one.
+    /// to exist, since claude exits on an unknown one. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
+    /// and stops at the next option, `--settings`.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
-                                 sessionID: String, prompt: String) -> [String] {
-        ["--settings", hookSettings()]
+                                 sessionID: String, prompt: String, mcpConfig: String? = nil) -> [String] {
+        (mcpConfig.map { ["--mcp-config", $0] } ?? [])
+            + ["--settings", hookSettings()]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (agent.map { ["--agent", $0] } ?? [])
             + (conversation.map { ["--resume", $0] }
