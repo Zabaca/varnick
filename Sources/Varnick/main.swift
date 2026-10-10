@@ -758,6 +758,15 @@ if let failure = AppStartMigration.run(databasePath: MainActor.assumeIsolated { 
     exit(1)
 }
 
+// One Varnick per account. After the migration above, which makes the support folder by moving Launchy's: taken earlier, this
+// would create `…/Varnick` first and make that step skip. Once the rename's Cleanup removes the migration, this becomes the
+// first step. The relay, the MCP server and the command-line modes have exited by here, so they never take it.
+if let refusal = AccountLock.refusal(AccountLock.acquire(
+    in: SupportFolder.url, pid: getpid(),
+    executable: Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? CommandLine.arguments[0])) {
+    stopStart(refusal)
+}
+
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     let delegate = AppDelegate()
