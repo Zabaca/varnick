@@ -82,6 +82,10 @@ _Avoid_: Remote, node
 The commit a machine's Varnick or relay was built from, and its protocol. A Mac can have a newer build waiting for Restart Varnick: built, not yet running. Upgrade makes a build and never runs it.
 _Avoid_: Version
 
+**Published build**:
+A **Build** that is signed, notarized and attached to a release, which a person downloads and installs as Varnick.app. A Mac on one is updated by downloading the next.
+_Avoid_: Release (it already means giving up control of a pane), version
+
 **Device**:
 Another device of the user's on the tailnet, such as the phone, listed on a **Host** by its tailnet node so it may use that host's **Phone page**. It can be **in control** of a session, and is never contacted.
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
