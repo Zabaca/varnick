@@ -11,7 +11,7 @@ import { PROTOCOL as V } from "./fixtures/protocol";
 
 const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXAMPLE4CNTRL", name: "Phone" };
 const mac = "00000000-0000-4000-8000-000000000001";
-const name = "launchy-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d";
+const name = "varnick-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d";
 const reply = (sessions: Record<string, unknown>) => ({ ok: true as const, reply: { v: V, ok: true, sessions } });
 
 describe("a reconnect, from status and the device's id", () => {
@@ -120,12 +120,12 @@ describe("the first message", () => {
     for (const take of ["true", 1, "yes", null, [true]]) expect(parseOpen(JSON.stringify({ session: name, cols: 50, rows: 30, take }))!.take).toBe(false);
   });
 
-  test("a name that isn't launchy-<uuid> is refused", () => {
-    for (const session of ["phone", "launchy-", "launchy-not-a-uuid", `${name}x`, `x${name}`, `${name}\n`, "../launchy-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d", 5, null]) {
+  test("a name that isn't varnick-<uuid> is refused", () => {
+    for (const session of ["phone", "varnick-", "varnick-not-a-uuid", `${name}x`, `x${name}`, `${name}\n`, "../varnick-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d", 5, null]) {
       expect(parseOpen(JSON.stringify({ session, cols: 50, rows: 30 }))).toBeNull();
       expect(isSessionName(session)).toBe(false);
     }
-    expect(isSessionName(name.toUpperCase().replace("LAUNCHY", "launchy"))).toBe(false);
+    expect(isSessionName(name.toUpperCase().replace("VARNICK", "varnick"))).toBe(false);
     expect(isSessionName(name)).toBe(true);
   });
 
@@ -202,7 +202,7 @@ describe("End", () => {
 describe("the terminal's environment", () => {
   test("a home, a plain PATH, TERM and LANG, and the check folders; nothing else", () => {
     const env = attachEnvironment(relayEnvironment({ zmxDir: "/tmp/zmx-check", userHome: undefined }, "/home/me"), "en_US.UTF-8", "linux");
-    expect(env).toEqual({ HOME: "/home/me", PATH: "/usr/bin:/bin", LAUNCHY_ZMX_DIR: "/tmp/zmx-check", TERM: "xterm-256color", LANG: "en_US.UTF-8" });
+    expect(env).toEqual({ HOME: "/home/me", PATH: "/usr/bin:/bin", VARNICK_ZMX_DIR: "/tmp/zmx-check", TERM: "xterm-256color", LANG: "en_US.UTF-8" });
     expect(Object.keys(attachEnvironment({ HOME: "/h", PATH: "/usr/bin:/bin" }, undefined, "darwin")).sort()).toEqual(["HOME", "LANG", "PATH", "TERM"]);
     expect(attachEnvironment({}, undefined, "darwin").LANG).toBe("en_US.UTF-8");
     expect(attachEnvironment({}, undefined, "linux").LANG).toBe("C.UTF-8");
@@ -273,8 +273,8 @@ describe("the page's rules", () => {
   test("the key bar's keys", () => {
     expect(keys.esc).toBe("\x1b");
     expect(keys.backtab).toBe("\x1b[Z");
-    expect(keys.interrupt).toBe("\x03");
-    expect(keys.enter).toBe("\r");
+    expect(Object.keys(keys)).toEqual(["esc", "tab", "backtab", "up", "down", "left", "right"]);
+    expect(keys.up).toBe("\x1b[A");
   });
 });
 

@@ -2,10 +2,9 @@
 -include Makefile.local
 export SIGN_IDENTITY
 
-DB := db/launchy.sqlite
-LABEL := com.zabaca.launchy
+LABEL := com.zabaca.varnick
 PLIST := $(HOME)/Library/LaunchAgents/$(LABEL).plist
-LOG := $(HOME)/Library/Logs/Launchy.log
+LOG := $(HOME)/Library/Logs/Varnick.log
 DOMAIN = gui/$(shell id -u)
 
 # MLX's Metal shaders, prebuilt: `swift build` can't compile them without Xcode. Taken from the
@@ -16,9 +15,9 @@ METALLIB := .build/release/mlx.metallib
 # Named after the wheel, so a new pin fetches again instead of keeping a mismatched metallib.
 METAL_STAMP := .build/release/mlx.metallib.$(MLX_METAL_SHA256)
 
-# zmx keeps pane processes alive across Launchy restarts (ADR 0004). Pinned to one release: a
+# zmx keeps pane processes alive across Varnick restarts (ADR 0004). Pinned to one release: a
 # release that changes its IPC protocol can't talk to daemons the previous one started, so bumping
-# this ends running sessions once. Launchy only ever uses the copy next to its binary.
+# this ends running sessions once. Varnick only ever uses the copy next to its binary.
 ZMX_VERSION := 0.8.1
 ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
@@ -31,15 +30,26 @@ SIGN_SHORT = $(if $(filter -,$(SIGN_ID)),adhoc,$(shell printf '%.8s' '$(SIGN_ID)
 ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(SIGN_SHORT)
 # The secure timestamp is left out: only notarization needs it, and it calls Apple on every build.
 ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
-# Matches Launchy's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
+# Matches Varnick's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
 # names it, which would kill a session that should survive.
-LAUNCHY_PROCESS := ^($(shell pwd -P)/)?\.build/release/Launchy$$
+VARNICK_PROCESS := ^($(shell pwd -P)/)?\.build/release/Varnick$$
+
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): a Mac still on
+# Launchy crosses by hand, from a terminal outside the app. Its binary is matched by this checkout's absolute path only (the LaunchAgent's
+# form): a Launchy started by `make run` has the relative form `.build/release/Launchy`, which would match from any checkout, so a Varnick
+# worktree's stop or restart would end the Mac's Launchy. The old LaunchAgent is booted out and its plist removed by install and
+# uninstall, and `cutover-check` keeps them, and `make run`, to the checkout Launchy ran from.
+LAUNCHY_PROCESS := ^$(shell pwd -P)/\.build/release/Launchy$$
+# Ends every guard's `error:` line: the cutover is the user's, and an agent that reads one must not act on it.
+CUTOVER_NOTE := The cutover is the user's step, done from Terminal.app (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, \"Cutover: each Mac\"). An agent must stop here and report this to the user.
+OLD_LABEL := com.zabaca.launchy
+OLD_PLIST := $(HOME)/Library/LaunchAgents/$(OLD_LABEL).plist
 
 SKILL_LINK := $(HOME)/.claude/skills/custom-apps
 SKILL_TARGET := $(CURDIR)/.claude/skills/custom-apps
 
-# The Phone page's server (ADR 0011): Launchy clones this copy next to its binary, as it does zmx, at each launch (the
+# The Phone page's server (ADR 0011): Varnick clones this copy next to its binary, as it does zmx, at each launch (the
 # launch snapshot), so edits in a checkout reach a running server only through a build and a restart. The tests and
 # their fixtures stay behind, and a file left unchanged is left alone, so building twice changes nothing.
 PHONE_PAGE_DIR := .build/release/PhonePage
@@ -47,25 +57,30 @@ PHONE_PAGE_DIR := .build/release/PhonePage
 # The line `BuildStamp` reads, written as the last step of `make build` (where-it-breaks, Peers, has the rules).
 BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
-GOOD_COPY := .build/release/Launchy.good
+GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-launchy sign-zmx
+.PHONY: build build-steps cutover-check cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
 
-# The metallib goes next to the binary, where MLX looks for it. After swift build, which
-# creates .build/release. Signing Launchy binds the Info.plist the linker embeds (Package.swift):
+# The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
+# ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
 # the linker's own ad-hoc signature leaves it unbound, and macOS needs it bound to find the
 # microphone and system audio usage strings. SwiftPM doesn't relink when only Info.plist
-# changed, so a newer Info.plist removes the binary first. Launchy and zmx are signed with the identity
+# changed, so a newer Info.plist removes the binary first. Varnick and zmx are signed with the identity
 # scripts/signing-identity.sh chooses; a build that can't choose or sign fails rather than signing ad hoc.
 #
 # A build that fails leaves the last good binary where it was, so a restart never starts a relinked, unsigned one: when the
 # build stamp is no older than the binary (a good build), a clone of the binary is put back if any step fails. A build that was
 # interrupted (^C, a kill) left its clone behind: the next build puts it back first, before it takes a new one.
+#
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): it fails first when this checkout still holds Launchy's binary or its good copy,
+# which stops Upgrade, Upgrade all and `make run` on a Mac that hasn't been cut over. A worktree's build folder starts empty.
 build:
-	@if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Launchy; echo "restored the build an interrupted one left"; fi; if [ -f .build/release/Launchy ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Launchy -nt $(BUILD_STAMP) ]; then cp -c .build/release/Launchy $(GOOD_COPY); fi
-	@[ ! Info.plist -nt .build/release/Launchy ] || rm -f .build/release/Launchy
+	@if [ -e .build/release/Launchy ] || [ -e .build/release/Launchy.good ]; then \
+	  echo "error: this checkout still has Launchy's binary in .build/release, so this Mac hasn't been cut over to Varnick. $(CUTOVER_NOTE)" >&2; exit 1; fi
+	@if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Varnick; echo "restored the build an interrupted one left"; fi; if [ -f .build/release/Varnick ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Varnick -nt $(BUILD_STAMP) ]; then cp -c .build/release/Varnick $(GOOD_COPY); fi
+	@[ ! Info.plist -nt .build/release/Varnick ] || rm -f .build/release/Varnick
 	@$(MAKE) --no-print-directory build-steps || { \
-	  if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Launchy; echo "restored the previous build"; fi; \
+	  if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Varnick; echo "restored the previous build"; fi; \
 	  exit 1; }
 	@rm -f $(GOOD_COPY)
 
@@ -75,19 +90,19 @@ build-steps:
 	@id=$$(scripts/signing-identity.sh) || exit 1; \
 	  if [ "$$id" = - ] && [ "$$SIGN_IDENTITY" != - ] && ls .build/release/zmx.signer.* 2>/dev/null | grep -qv 'zmx\.signer\.adhoc$$'; then \
 	    echo "error: signing: this checkout has been signed with an identity, and none is usable now. Fix the keychain, or set SIGN_IDENTITY=- to sign ad hoc on purpose." >&2; exit 1; fi; \
-	  $(MAKE) --no-print-directory sign-launchy sign-zmx SIGN_ID="$$id"
+	  $(MAKE) --no-print-directory sign-varnick sign-zmx SIGN_ID="$$id"
 	@$(MAKE) --no-print-directory phone-page
 	@$(MAKE) --no-print-directory build-stamp
 
 # Without an identity, ad hoc and nothing else, as before. With one: the hardened runtime and the one entitlement in
-# Launchy.entitlements. Either way the signature is verified strictly. The certificate's SHA-1 stays out of the log (@).
-sign-launchy:
+# Varnick.entitlements. Either way the signature is verified strictly. The certificate's SHA-1 stays out of the log (@).
+sign-varnick:
 ifeq ($(SIGN_ID),-)
-	codesign -f -s - -i $(LABEL) .build/release/Launchy
+	codesign -f -s - -i $(LABEL) .build/release/Varnick
 else
-	@codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Launchy.entitlements -i $(LABEL) .build/release/Launchy
+	@codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Varnick.entitlements -i $(LABEL) .build/release/Varnick
 endif
-	@codesign --verify --strict .build/release/Launchy
+	@codesign --verify --strict .build/release/Varnick
 
 sign-zmx:
 ifneq ($(SIGN_ID),-)
@@ -144,28 +159,48 @@ $(ZMX_SIGNER_STAMP):
 	rm -f .build/release/zmx.signer.*
 	@touch $@
 
-# The restart runs in its own session so it outlives a Launchy session that ran `make run`.
-run: build
-	nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' scripts/restart.sh $(CURDIR)/$(DB) >/dev/null 2>&1 &
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
+# run, install and uninstall touch the Mac's running Launchy and its LaunchAgent, so while our Launchy's support folder exists (an unrelated
+# launcher is also called Launchy: scripts/old-launchy-folder.sh tests the folder's contents) and Varnick's doesn't they work only in the
+# checkout Launchy ran from, which holds db/launchy.sqlite. A worktree's build passes the build guard.
+cutover-check:
+	@support="$(HOME)/Library/Application Support"; \
+	if scripts/old-launchy-folder.sh "$$support/Launchy" && [ ! -e "$$support/Varnick" ] && [ ! -f db/launchy.sqlite ]; then \
+	  echo "error: this Mac still runs Launchy and this isn't the checkout it ran from (no db/launchy.sqlite). Nothing was changed. $(CUTOVER_NOTE)" >&2; exit 1; fi
+
+# The opposite case: in the checkout Launchy ran from, `make clean` removes the binary that holds the build guard, and `make install` would
+# then install Varnick's LaunchAgent for the next login without the cutover. Both refuse there until the user passes CUTOVER=1 from Terminal.app.
+cutover-confirm:
+	@support="$(HOME)/Library/Application Support"; \
+	if scripts/old-launchy-folder.sh "$$support/Launchy" && [ ! -e "$$support/Varnick" ] && [ -f db/launchy.sqlite ] && [ "$(CUTOVER)" != 1 ]; then \
+	  echo "error: this Mac still runs Launchy from this checkout, and this would lift its build guard or install Varnick before the cutover. Nothing was changed. $(CUTOVER_NOTE)" >&2; exit 1; fi
+
+# The restart runs in its own session so it outlives a Varnick session that ran `make run`.
+run: cutover-check build
+	nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' scripts/restart.sh >/dev/null 2>&1 &
 
 stop:
+	-@pkill -a -f '$(VARNICK_PROCESS)' || true
 	-@pkill -a -f '$(LAUNCHY_PROCESS)' || true
 
 # Start at login via a LaunchAgent that runs this repo's release build (so `make build`
 # updates what the next login starts). Also starts it now, and links the custom-apps skill into
 # the user's skills so agents in any project find it (linked, not copied: one source). The link is
 # made only when the path is free or already ours; anything else there is left alone.
-install: build stop
+install: cutover-check cutover-confirm build stop
 	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
-	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' \
-	    -e 's|@DB@|$(CURDIR)/$(DB)|g' -e 's|@LOG@|$(LOG)|g' \
-	    scripts/launchy.plist.in > $(PLIST)
+	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' -e 's|@LOG@|$(LOG)|g' \
+	    scripts/varnick.plist.in > $(PLIST)
 	plutil -lint $(PLIST)
+	-@launchctl bootout $(DOMAIN)/$(OLD_LABEL) 2>/dev/null || true
+	rm -f $(OLD_PLIST)
 	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
 	launchctl bootstrap $(DOMAIN) $(PLIST)
 	@$(MAKE) --no-print-directory skill-link
 
-uninstall:
+uninstall: cutover-check
+	-@launchctl bootout $(DOMAIN)/$(OLD_LABEL) 2>/dev/null || true
+	rm -f $(OLD_PLIST)
 	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
 	rm -f $(PLIST)
 	@$(MAKE) --no-print-directory skill-unlink
@@ -189,5 +224,84 @@ skill-unlink:
 	fi
 
 # Leaves db/: it holds history Chrome may have already dropped.
-clean:
+clean: cutover-confirm
 	rm -rf .build
+
+# `make app` (the maintainer's, on the Mac that holds the signing identity and the notary credentials): Varnick.app, signed inside
+# out, notarized, stapled and zipped as .build/app/Varnick.zip, which the user attaches to a GitHub release by hand
+# (docs/problems/runs-only-from-a-checkout/options/02-notarized-app-updated-by-hand.md). Nothing is uploaded but to the notary service.
+# NOTARY_PROFILE (on the command line, else the git-ignored Makefile.local) names the keychain profile `notarytool` reads; like the
+# identity, it stays out of every tracked file. CHECK_BUILD=1 lets a build off main run every step but the zip.
+# `app-bundle` stops before anything is sent, so the signed bundle can be checked first.
+export NOTARY_PROFILE
+APP_DIR := .build/app
+APP := $(APP_DIR)/Varnick.app
+APP_ZIP := $(APP_DIR)/Varnick.zip
+# Both numbers come from the commit's time in UTC: 2026.10.9 and 20261009.1954. The short one has no leading zeros.
+APP_COMMIT_TIME = $(shell git show -s --format=%ct HEAD)
+APP_SHORT_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y.%m.%d | sed 's/\.0*\([0-9]\)/.\1/g')
+APP_BUILD_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y%m%d.%H%M)
+
+.PHONY: app app-bundle app-guard
+
+# Every refusal is one `error:` line, and none reaches the build. The identity's script says its own reasons.
+app-guard:
+	@if ! git diff --quiet HEAD --; then echo "error: app: the checkout has changes to tracked files; a published build matches a commit" >&2; exit 1; fi
+	@scripts/signing-identity.sh --developer-id >/dev/null || { echo "error: app: no Developer ID Application identity to sign with (an app is never ad hoc); fix SIGN_IDENTITY in Makefile.local" >&2; exit 1; }
+	@if [ -z "$$NOTARY_PROFILE" ]; then echo "error: app: no NOTARY_PROFILE; name the notarytool keychain profile in Makefile.local or on the command line" >&2; exit 1; fi
+	@if [ "$(CHECK_BUILD)" != 1 ]; then \
+	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+	    echo "error: app: a published build comes from main, with HEAD in origin/main as last fetched; CHECK_BUILD=1 builds anything else, without the zip" >&2; exit 1; fi; fi
+
+# Signing is inside out, never --deep: zmx first, then the bundle with the entitlements and the identifier. Both carry the
+# secure timestamp that only notarization needs. Lines that name the identity start with @.
+app-bundle: app-guard
+	@$(MAKE) --no-print-directory build
+	rm -rf $(APP) $(APP_DIR)/Varnick.iconset
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
+	cp -c .build/release/Varnick $(APP)/Contents/MacOS/Varnick
+	cp -c .build/release/zmx $(APP)/Contents/MacOS/zmx
+	cp -c .build/release/mlx.metallib $(APP)/Contents/Resources/mlx.metallib
+	rsync -a PhonePage/ $(APP)/Contents/Resources/PhonePage/ --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/'
+	cp .build/release/build-stamp $(APP)/Contents/Resources/build-stamp
+	mkdir -p $(APP)/Contents/Resources/skills
+	cp -RL .claude/skills/custom-apps $(APP)/Contents/Resources/skills/custom-apps
+	find $(APP) -name .DS_Store -delete
+	cp LICENSE THIRD_PARTY_NOTICES.md $(APP)/Contents/Resources/
+	swiftc -O -parse-as-library scripts/make-icon.swift Sources/Varnick/FoldMark.swift -o $(APP_DIR)/make-icon
+	$(APP_DIR)/make-icon $(APP_DIR)/Varnick.iconset
+	iconutil -c icns -o $(APP)/Contents/Resources/Varnick.icns $(APP_DIR)/Varnick.iconset
+	cp Info.plist $(APP)/Contents/Info.plist
+	plutil -insert CFBundleExecutable -string Varnick $(APP)/Contents/Info.plist
+	plutil -insert CFBundlePackageType -string APPL $(APP)/Contents/Info.plist
+	plutil -insert CFBundleIconFile -string Varnick $(APP)/Contents/Info.plist
+	plutil -insert CFBundleShortVersionString -string $(APP_SHORT_VERSION) $(APP)/Contents/Info.plist
+	plutil -insert CFBundleVersion -string $(APP_BUILD_VERSION) $(APP)/Contents/Info.plist
+	plutil -insert LSMinimumSystemVersion -string 14.0 $(APP)/Contents/Info.plist
+	plutil -insert LSUIElement -bool YES $(APP)/Contents/Info.plist
+	plutil -insert VarnickCommit -string "$$(git rev-parse HEAD)" $(APP)/Contents/Info.plist
+	plutil -lint $(APP)/Contents/Info.plist
+	@id=$$(scripts/signing-identity.sh --developer-id 2>/dev/null) || { echo "error: app: no Developer ID Application identity" >&2; exit 1; }; \
+	  codesign -f -s "$$id" -o runtime --timestamp $(APP)/Contents/MacOS/zmx || exit 1; \
+	  codesign -f -s "$$id" -o runtime --timestamp --entitlements Varnick.entitlements -i $(LABEL) $(APP) || exit 1
+	codesign --verify --deep --strict --verbose=2 $(APP)
+
+# The notary service answers in minutes, the first time perhaps longer. Anything but Accepted prints its log and fails.
+app: app-bundle
+	@rm -f $(APP_DIR)/notarize.zip
+	ditto -c -k --keepParent $(APP) $(APP_DIR)/notarize.zip
+	@echo "submitting to the notary service, and waiting for its answer"
+	@xcrun notarytool submit $(APP_DIR)/notarize.zip --keychain-profile "$$NOTARY_PROFILE" --wait > $(APP_DIR)/notary.out 2>&1; \
+	  rm -f $(APP_DIR)/notarize.zip; cat $(APP_DIR)/notary.out; \
+	  id=$$(sed -n 's/^ *id: *//p' $(APP_DIR)/notary.out | head -1); status=$$(sed -n 's/^ *status: *//p' $(APP_DIR)/notary.out | tail -1); \
+	  if [ "$$status" != Accepted ]; then \
+	    echo "error: app: the notary service didn't accept the app (status: $${status:-none}); what notarytool said is above" >&2; \
+	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" --keychain-profile "$$NOTARY_PROFILE"; fi; exit 1; fi
+	xcrun stapler staple $(APP)
+	xcrun stapler validate $(APP)
+	@spctl -a -vv -t exec $(APP) 2>&1 | tee $(APP_DIR)/spctl.out; grep -q 'source=Notarized Developer ID' $(APP_DIR)/spctl.out || { echo "error: app: Gatekeeper doesn't accept the app as notarized" >&2; exit 1; }
+	@if [ "$(CHECK_BUILD)" = 1 ]; then echo "CHECK_BUILD=1: no zip written"; else \
+	  rm -f $(APP_ZIP) $(APP_ZIP).sha256 && ditto -c -k --keepParent $(APP) $(APP_ZIP) && \
+	  (cd $(APP_DIR) && shasum -a 256 Varnick.zip > Varnick.zip.sha256 && cat Varnick.zip.sha256) && \
+	  echo "version $$(plutil -extract CFBundleShortVersionString raw $(APP)/Contents/Info.plist) ($$(plutil -extract CFBundleVersion raw $(APP)/Contents/Info.plist)), commit $$(plutil -extract VarnickCommit raw $(APP)/Contents/Info.plist)" && \
+	  echo "the published build: $(APP_ZIP)"; fi

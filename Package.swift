@@ -2,13 +2,13 @@
 import Foundation
 import PackageDescription
 
-// Launchy is a bare executable, so its Info.plist (bundle id, microphone and system audio usage
+// Varnick is a bare executable, so its Info.plist (bundle id, microphone and system audio usage
 // strings) is linked into the binary; `make build` re-signs so the signature binds it, and
 // relinks after an Info.plist-only change (SwiftPM doesn't track it).
 let infoPlist = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Info.plist").path
 
 let package = Package(
-    name: "Launchy",
+    name: "Varnick",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.20.0"),
@@ -18,14 +18,14 @@ let package = Package(
         // Exact: its token ids are part of the relevance checkpoint's contract (ADR 0006).
         .package(url: "https://github.com/huggingface/swift-transformers", exact: "1.3.4"),
         // The relay's shared code: Foundation only, so a Linux host builds it alone.
-        .package(path: "Packages/LaunchyPeer"),
+        .package(path: "Packages/VarnickPeer"),
     ],
     targets: [
         .executableTarget(
-            name: "Launchy",
+            name: "Varnick",
             dependencies: [
                 "SwiftTerm",
-                .product(name: "LaunchyPeer", package: "LaunchyPeer"),
+                .product(name: "VarnickPeer", package: "VarnickPeer"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
@@ -33,7 +33,7 @@ let package = Package(
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
-            path: "Sources/Launchy",
+            path: "Sources/Varnick",
             swiftSettings: [.swiftLanguageMode(.v5)],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),

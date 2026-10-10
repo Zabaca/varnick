@@ -8,8 +8,8 @@ import { controlledText, optional, same } from "./home";
 import type { Json } from "./json";
 import { parseReply } from "./relay";
 
-/** The one kind of name the page may open: a pane's zmx session, `launchy-<uuid>` with a lowercase uuid (`Zmx.paneID`). */
-export const sessionPattern = /^launchy-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The one kind of name the page may open: a pane's zmx session, `varnick-<uuid>` with a lowercase uuid (`Zmx.paneID`). */
+export const sessionPattern = /^varnick-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const isSessionName = (value: unknown): value is string => typeof value === "string" && sessionPattern.test(value);
 
 export interface Grid {
@@ -52,7 +52,7 @@ export type ClientMessage =
   | { t: "bin"; data: Uint8Array }
   | { t: "resize"; cols: number; rows: number };
 
-/** The most one message may type: a paste from the compose box, not a flood. */
+/** The most one message may type: a paste, not a flood. */
 export const inputLimit = 256 << 10;
 
 export function parseClient(text: string): ClientMessage | null {

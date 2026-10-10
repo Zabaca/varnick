@@ -130,7 +130,7 @@ export type Launched =
   | { status: number; body: { ok: false; error: string; open?: HomeSession } };
 
 const failed = (status: number, error: string, open?: HomeSession): Launched => ({ status, body: open ? { ok: false, error, open } : { ok: false, error } });
-export const sessionNameFor = (id: string): string => `launchy-${id}`;
+export const sessionNameFor = (id: string): string => `varnick-${id}`;
 
 const notAProject = (host: string): string => `That folder isn't one of ${host}'s projects`;
 

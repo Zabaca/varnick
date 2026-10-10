@@ -1,5 +1,5 @@
 #!/bin/sh
-# /work: checks its arguments against the repository's problem files and prints the marker line that Launchy's hook after Bash turns
+# /work: checks its arguments against the repository's problem files and prints the marker line that Varnick's hook after Bash turns
 # into the caller's work record (ADR 0020). It writes no record itself: only the hook input carries a subagent's id. For an option on a
 # branch other than main it also ties the branch in git config (docs/agents/issue-tracker.md).
 
@@ -9,10 +9,10 @@ usage() {
 }
 
 folder=
-[ -n "$LAUNCHY_SESSION_FILE" ] && folder="${LAUNCHY_SESSION_FILE%/*}"
+[ -n "$VARNICK_SESSION_FILE" ] && folder="${VARNICK_SESSION_FILE%/*}"
 
 if [ $# -eq 0 ]; then
-  [ -d "$folder" ] || { echo "Not in a Launchy pane: no work records here."; exit 0; }
+  [ -d "$folder" ] || { echo "Not in a Varnick pane: no work records here."; exit 0; }
   for f in "$folder"/work "$folder"/work.*; do
     [ -f "$f" ] || continue
     echo "$(basename "$f"): $(tr '\n' ' ' < "$f")"
@@ -64,12 +64,12 @@ if [ "$kind" = option ]; then
   branch=$(git symbolic-ref --short -q HEAD 2>/dev/null)
   case "$branch" in
     ""|main|master) tied="no branch tie on ${branch:-a detached HEAD}" ;;
-    *) git config "branch.$branch.launchy-option" "$value" && tied="branch $branch tied" || tied="branch tie failed" ;;
+    *) git config "branch.$branch.varnick-option" "$value" && tied="branch $branch tied" || tied="branch tie failed" ;;
   esac
 fi
 
 if [ ! -d "$folder" ]; then
-  echo "Not in a Launchy pane, so no record is written.${tied:+ ($tied)}"
+  echo "Not in a Varnick pane, so no record is written.${tied:+ ($tied)}"
   exit 0
 fi
 
@@ -78,10 +78,10 @@ case "$kind" in
   problem) echo "Linked to problem $slug." ;;
   option) echo "Linked to option $value ($tied)." ;;
 esac
-echo "Launchy writes the record after this command; a session started before the hooks existed records nothing until restarted."
+echo "Varnick writes the record after this command; a session started before the hooks existed records nothing until restarted."
 # The marker carries the pane id and a one-shot nonce: the hook accepts it once, by deleting the nonce's file, so a marker printed again
 # (a transcript read back, a log) links nothing, and another pane's marker is ignored.
 find "$folder" -maxdepth 1 -name '.work-mark.*' -mmin +60 -exec rm -f {} + 2>/dev/null
 nonce=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
 : > "$folder/.work-mark.$nonce" || { echo "Could not write to the pane folder." >&2; exit 1; }
-printf 'LAUNCHY-WORK|%s|%s|%s|%s|%s|\n' "${folder##*/}" "$nonce" "$kind" "$value" "${repo:-/}"
+printf 'VARNICK-WORK|%s|%s|%s|%s|%s|\n' "${folder##*/}" "$nonce" "$kind" "$value" "${repo:-/}"

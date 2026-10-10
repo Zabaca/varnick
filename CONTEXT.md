@@ -1,6 +1,8 @@
-# Launchy
+# Varnick
 
 A macOS launcher: a floating panel that searches browser history, and runs Claude Code sessions side by side with terminals, web pages and files.
+
+Called Launchy until 2026-10. Older records keep that name; [ADR 0024](docs/adr/0024-launchy-is-renamed-varnick.md) maps old names to new.
 
 ## Language
 
@@ -12,12 +14,12 @@ A **Peer**'s History is searched with this Mac's, marked with its Mac when only 
 _Avoid_: Favorite, browsing data
 
 **Bookmark**:
-A page saved in Chrome's bookmarks, searched alongside **History** whether or not it was visited. Launchy follows Chrome, so a bookmark deleted there leaves search.
+A page saved in Chrome's bookmarks, searched alongside **History** whether or not it was visited. Varnick follows Chrome, so a bookmark deleted there leaves search.
 _Avoid_: Favorite, saved page
 
 **Search term**:
 What was typed into a search engine before clicking through to a page of **History**; kept with the page and searched alongside its title.
-_Avoid_: Keyword, query (the query is what's typed into Launchy)
+_Avoid_: Keyword, query (the query is what's typed into Varnick)
 
 **Relevance filter**:
 Search's last pass: a model judges which of the top 20 pages match what the search is after and moves them to the top, leaving the rest below in their order. Runs on TypeSafe or on this Mac, for a **Spoken request** as for a typed search; a Claude session is never judged.
@@ -49,11 +51,11 @@ One box inside a tab, showing a session, a terminal, a web page, a **Custom app*
 _Avoid_: Window, view, leaf
 
 **Restart**:
-Ending the Claude process in a pane that runs on this Mac and starting it again in the same pane, resuming the same **Session**, so it picks up the current hooks. The tab, splits, title and folder stay. It asks first when the **Turn** is working or background. A pane showing a **Card**, or a session on a **Peer**, can't restart. Not Restart Launchy (the app quitting and starting again, which ends every pane) and not the peer `restart` request (a **Peer**'s Launchy restarting).
+Ending the Claude process in a pane that runs on this Mac and starting it again in the same pane, resuming the same **Session**, so it picks up the current hooks. The tab, splits, title and folder stay. It asks first when the **Turn** is working or background. A pane showing a **Card**, or a session on a **Peer**, can't restart. Not Restart Varnick (the app quitting and starting again, which ends every pane) and not the peer `restart` request (a **Peer**'s Varnick restarting).
 _Avoid_: Reload, relaunch
 
 **Custom app**:
-A small web app the user builds, kept in a project's or the user's custom-apps folder, that Launchy runs and shows in a pane picked from the split picker. It is not part of Launchy, and only appears where it's installed.
+A small web app the user builds, kept in a project's or the user's custom-apps folder, that Varnick runs and shows in a pane picked from the split picker. It is not part of Varnick, and only appears where it's installed.
 _Avoid_: Plugin, extension, add-on
 
 **Tab**:
@@ -73,19 +75,23 @@ A folder in the project, belonging to one Claude pane, where Claude builds a pag
 _Avoid_: Sandbox, playground
 
 **Peer**:
-Another machine that this Mac is paired with over SSH: a Mac running Launchy, or a **Headless host**. Pairing is mutual between Macs, and removal is not.
+Another machine that this Mac is paired with over SSH: a Mac running Varnick, or a **Headless host**. Pairing is mutual between Macs, and removal is not.
 _Avoid_: Remote, node
 
 **Build**:
-The commit a machine's Launchy or relay was built from, and its protocol. A Mac can have a newer build waiting for Restart Launchy: built, not yet running. Upgrade makes a build and never runs it.
+The commit a machine's Varnick or relay was built from, and its protocol. A Mac can have a newer build waiting for Restart Varnick: built, not yet running. Upgrade makes a build and never runs it.
 _Avoid_: Version
+
+**Published build**:
+A **Build** that is signed, notarized and attached to a release, which a person downloads and installs as Varnick.app. A Mac on one is updated by downloading the next.
+_Avoid_: Release (it already means giving up control of a pane), version
 
 **Device**:
 Another device of the user's on the tailnet, such as the phone, listed on a **Host** by its tailnet node so it may use that host's **Phone page**. It can be **in control** of a session, and is never contacted.
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
 
 **Phone page**:
-The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its sessions, **Recent**, a new session and a terminal, all through the host's own relay, and links to the other hosts' pages.
+The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its sessions, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages.
 _Avoid_: Web UI, dashboard, remote
 
 **Host**:
@@ -93,7 +99,7 @@ The machine where a session's Claude process runs, kept alive by its zmx: a Mac,
 _Avoid_: Server, remote
 
 **Headless host**:
-A host with no Launchy app, such as an always-on Linux machine: Launchy's relay alone answers for it, and nothing runs between requests. A Mac or a **Device** is always the one **in control** of a session on it.
+A host with no Varnick app, such as an always-on Linux machine: Varnick's relay alone answers for it, and nothing runs between requests. A Mac or a **Device** is always the one **in control** of a session on it.
 _Avoid_: Server, Linux host
 
 **In control**:
@@ -136,7 +142,7 @@ _Avoid_: Profile, persona
 ### Commands
 
 **Command**:
-A word typed after `!` that runs a Launchy action instead of searching, such as `!listen` or `!transcript`.
+A word typed after `!` that runs a Varnick action instead of searching, such as `!listen` or `!transcript`.
 _Avoid_: Prompt, action, shortcut
 
 ### Planning
@@ -156,15 +162,15 @@ _Avoid_: Tag, assignment
 ### Listening
 
 **Listening**:
-Launchy transcribing the microphone and the Mac's own audio on this Mac, until it's turned off. Off at each launch.
+Varnick transcribing the microphone and the Mac's own audio on this Mac, until it's turned off. Off at each launch.
 _Avoid_: Recording, dictation
 
 **Transcript**:
-What Launchy heard while listening: one file per day, a line per finished phrase with its time and source (`mic` or `system`), and a line for each answer Launchy spoke (`launchy`). What the mic hears while Launchy speaks isn't in it. Not a Claude Code conversation's transcript.
+What Varnick heard while listening: one file per day, a line per finished phrase with its time and source (`mic` or `system`), and a line for each answer Varnick spoke (`varnick`). What the mic hears while Varnick speaks isn't in it. Not a Claude Code conversation's transcript.
 _Avoid_: Log, recording
 
 **Wake phrase**:
-"Hey Launchy" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**.
+"Hey Varnick" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**.
 _Avoid_: Hotword, trigger
 
 **Spoken request**:
@@ -172,9 +178,9 @@ What the user says after the **Wake phrase**. It is answered aloud from **Histor
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
 
 **Arrow**:
-What Launchy draws over the screen to point at the thing a **Spoken request** asked about, or that a **Session** points at with its screen tools: a big arrow with a sign holding the note Launchy says aloud, or the session's name and note. It lets clicks through, never takes focus and goes by itself.
+What Varnick draws over the screen to point at the thing a **Spoken request** asked about, or that a **Session** points at with its screen tools: a big arrow with a sign holding the note Varnick says aloud, or the session's name and note. It lets clicks through, never takes focus and goes by itself.
 _Avoid_: Highlight, cursor, annotation, overlay
 
 **Screen access**:
-The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Launchy's panes, started or restarted while it is on, three tools: `look` at a window's controls, `point` at one with the **Arrow**, and `click`. The running Launchy does the work under its own permissions, with the code a **Spoken request** uses, and a click happens without asking, the **Arrow** showing on its target for a second first. What a session is shown goes to Anthropic with it.
+The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, three tools: `look` at a window's controls, `point` at one with the **Arrow**, and `click`. The running Varnick does the work under its own permissions, with the code a **Spoken request** uses, and a click happens without asking, the **Arrow** showing on its target for a second first. What a session is shown goes to Anthropic with it.
 _Avoid_: Computer use, remote control

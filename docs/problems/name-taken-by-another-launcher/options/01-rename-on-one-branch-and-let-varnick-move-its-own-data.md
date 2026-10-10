@@ -135,12 +135,12 @@ It goes in the app's entry point, after the relay's and the MCP server's early e
      - The current step, which copies from the executable-named domain, is removed. On one Mac that older domain is still on disk and would be copied instead.
   3. **Move the support folder.** If `…/Varnick` doesn't exist and `…/Launchy` does, rename it. Then remove the moved `launchy-peer` link, the stale socket, and the `scratch` link left by an earlier migration, since every pane that needed it has just ended.
      - No link is left at the old name. A Launchy relay reached through one would answer from the old domain.
-     - If both folders exist, nothing is merged. The step logs it and leaves it to the user.
+     - If both folders exist, nothing is merged. The step logs it and leaves it to the user. When `…/Varnick` then has no sessions file, the start stops with an `error:` line instead, since it would start empty (added after the first review).
      - The sibling is `PaneFolder.migrateOldScratchFolder(in:)`. Like it, the step takes the folder as a parameter so a check can run it on a temporary one.
   4. **Copy the web data.** Copy WebKit's `com.zabaca.launchy` folder to the new id's, as the current step does for the older name.
-  5. **Rename the database.** If the chosen database path doesn't exist and `launchy.sqlite` sits beside it, open it, checkpoint its WAL into the file (truncate), close it, then rename it and drop the `-shm` file.
-     - Only the app does this, never the relay.
-     - A database that can't be opened is left alone, and the app stops with the error, as it does today, rather than creating an empty one beside it.
+  5. **Copy the database** (changed in `runs-only-from-a-checkout`, option 02, which moves the database into Application Support). It runs only without `VARNICK_DB`, when `varnick.sqlite` isn't in the support folder. The source is the file the folder's `search-db-path` names, else `db/varnick.sqlite`, else `db/launchy.sqlite` under the working folder.
+     - It is a copy, never a rename: SQLite's online backup (which takes in the WAL) fills a partial file beside the target, `quick_check` passes it, and it is moved into place without replacing anything. The original is never changed, so a rollback to Launchy finds it as it was.
+     - Only the app does this, never the relay. A copy that fails stops the app with an `error:` line naming both files, rather than start with an empty database beside the real one.
 - **The order matters.** The sessions end before the folder moves, so no hook writes into a folder that is moving. The domain is copied before `Settings.storeSkipPermissionsIfAbsent`, which decides it's an existing install from the sessions file, so the folder is in place by then too. Everything happens before `PeerLink.refresh` makes the relay's link.
 - **Logging.** Each step logs one line: what it did, or why it skipped. It logs no values.
 - **Not migrated:**
@@ -153,15 +153,23 @@ It goes in the app's entry point, after the relay's and the MCP server's early e
 
 Short-lived; each says in a comment that the cleanup ticket removes it.
 
-- **Build.** The build fails when this checkout's build folder still holds Launchy's binary or its good copy. Its first line starts with `error:`, so the Upgrade card shows it, and says to stop Launchy, remove the old binary (or `make clean`, which keeps `db/`) and follow the cutover.
+- **Build.** The build fails when this checkout's build folder still holds Launchy's binary or its good copy. Its first line starts with `error:`, so the Upgrade card shows it, and says that the cutover is the user's step.
   - This stops Upgrade, Upgrade all and `make run` on a Mac that hasn't been cut over.
   - A worktree's build folder starts empty, so builders aren't affected.
   - An old Mac's Upgrade will already have fast-forwarded its checkout. Its build then fails, no stamp is written, and its Restart stays refused.
-- **Stop and restart.** `make stop` and the restart script also stop a Launchy binary, anchored the same way as today's pattern.
+- **Stop and restart.** `make stop` and the restart script also stop a Launchy binary, but only by this checkout's absolute path (the LaunchAgent's form). A Launchy started by `make run` has the relative argv `.build/release/Launchy`, which would match from every checkout, so `make stop` will not stop it: the user quits Launchy from its menu at cutover step 2.
 - **Restart with nothing to start** (decided 2026-10-09). The restart script refuses before stopping anything when this checkout has no Varnick binary, and logs why.
   - The status menu's Restart runs the checkout's script with no build, and so does a peer's Restart (verified at 7316d5f). On the Mac the merge lands on, or one whose checkout an old Upgrade fast-forwarded, the new script would otherwise stop Launchy and start nothing.
 - **Install.** `make install` and `make uninstall` also boot out the `com.zabaca.launchy` LaunchAgent and remove its plist.
 - **Linux installer.** Its far half refuses to install where `~/.launchy` exists, with a line the near half reports. A Mac whose checkout an old Upgrade fast-forwarded therefore can't put a second relay, with a new id, beside the old one.
+
+### Added in review
+
+- **Our Launchy only.** An unrelated keystroke launcher is also called Launchy; its macOS build keeps its data in `~/Library/Launchy` (its public source, `platforms/mac/platform_mac.cpp`), not Application Support, but newer apps by the name may use `Application Support/Launchy`. So a folder named `Launchy` proves nothing: it is ours when it holds `sessions.json`, `search-db-path`, `launchy-peer` or `peer.sock` (`OldLaunchy.isOurFolder`, and `scripts/old-launchy-folder.sh` for the Makefile and the restart script, which must agree). A running app is ours when its executable, or the path it was started with (the file is gone at the cutover), ends in `.build/release/Launchy`, and it belongs to this account. Every guard below applies the same test, and fails closed only for what passes it. A folder of ours with none of those entries is not recognised: Varnick then starts fresh.
+- **Running Launchy.** The app's start refuses while our Launchy app runs (its relay and a pane's MCP server don't count).
+- **Cutover guards.** `cutover-check` (`make run`, `install`, `uninstall`) and the restart script refuse, before stopping anything, in a checkout that isn't the one Launchy ran from. In the one it ran from, `make clean` and `make install` refuse unless the user passes `CUTOVER=1`: `make clean` removes the binary that holds the build guard, and `install` would otherwise install Varnick's LaunchAgent before the cutover.
+- **A failed folder move stops the app** before the database step, and so does a database that can't be copied. The settings copy counts as done only when the new domain has `peerID`, since any stray key would otherwise skip it for good. The app refuses to start with no bundle id (a plain `swift build`), whose settings domain would be the executable's name. Each pane folder's `.launchy-…` files are renamed `.varnick-…` after the move, every run, so a pane resumes.
+- **The cutover can't be done from Varnick.app.** An app started from Finder has `/` as its working folder, so it finds no `db/launchy.sqlite` and refuses. The cutover is a build from the checkout Launchy ran from.
 
 ### Docs
 
@@ -242,10 +250,10 @@ From a Mac:
 From Terminal.app, not a pane, because this ends every session in the app:
 
 1. **Wait for a quiet moment.** Let background work finish, and mark Done what should close.
-2. **Stop Launchy.** Its zmx sessions keep running when Keep sessions running is on, which is expected: Varnick ends them.
+2. **Quit Launchy from its menu** (`make stop` will not stop one started by `make run`). Its zmx sessions keep running when Keep sessions running is on, which is expected: Varnick ends them.
 3. **Update the checkout.** Point `origin` at the new URL, fetch, then fast-forward main to origin/main. A branch still tied to an option has its git key renamed by hand (none is expected; see Further Notes).
-4. **Remove Launchy's binary and its good copy.** This lifts the build guard. If the checkout's folder is renamed now (see Open), do that first and `make clean` instead.
-5. **`make install`.** It builds Varnick, removes the old LaunchAgent, installs and starts the new one, and links the skill. Varnick's first launch migrates. Read its lines in the new log.
+4. **Remove Launchy's binary and its good copy.** This lifts the build guard. If the checkout's folder is renamed now (see Open), do that first and `make clean CUTOVER=1` instead.
+5. **`make install CUTOVER=1`.** It builds Varnick, removes the old LaunchAgent, installs and starts the new one, and links the skill. Varnick's first launch migrates. Read its lines in the new log.
 6. **Grant again.**
    - Turn Listening on, which asks for the microphone and system audio.
    - In Settings, press Grant for Accessibility and for Screen Recording, then restart when Settings offers it.
@@ -313,7 +321,7 @@ There is no Swift test target. Every ticket runs `make build`, and the Phone pag
   - Jev's decide and screen-picker results against their thresholds, with the new name and with the old.
 - **The migration's steps** are checked in a temporary folder with made-up domain names, deleted afterwards.
   - Old-named sessions are made in a throwaway absolute `ZMX_DIR`, the way the app makes them (`zmx attach` through a pty, never `zmx run`), with `LAUNCHY_ZMX_DIR` and `VARNICK_ZMX_DIR` both set. The step must end them and leave other names alone.
-  - The database step runs on a copy with a WAL holding a write: the row must be there after the rename.
+  - The database step runs on a copy with a WAL holding a write: the row must be there in the copy, and the original's three files keep their bytes and modification times.
 - **The guards.**
   - In a scratch checkout with a dummy old binary, the build fails with the `error:` line first.
   - The kill pattern matches the old binary's relative and absolute forms and not the relay's arguments.

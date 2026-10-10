@@ -6,12 +6,12 @@ The first step of a spoken request, where to look and what to look for, is decid
 
 - **Only the request text**, as heard after the wake phrase and cut to 500 characters. No history, bookmark or session titles, no folder or project names, no rows, no search words and no answer.
 - **Only with the relevance filter on TypeSafe.** A key alone isn't enough: with the filter On this Mac or off, or with no key, Gemma decides. The user's choice of the filter's backend is the choice of whether TypeSafe sees anything.
-- Two questions are asked of it in one call, on a pinned model version (the alias moves, and the questions were measured on one version): which source fits the request, and whether it is about none of the user's things. Jev gives a probability for each source. The request's search words are not asked of it: Launchy strips filler words in code, which matched Jev's own word-by-word judgments in the spike.
-- **Project names stay here.** Jev reads a name it has not heard of as a web topic, so "what is <a project>" went to History. Launchy corrects this locally and sends nothing to do it: a request that holds the words of one of the user's session folders, or a chance of sessions of 0.1 or more, adds sessions to the rows read.
+- Two questions are asked of it in one call, on a pinned model version (the alias moves, and the questions were measured on one version): which source fits the request, and whether it is about none of the user's things. Jev gives a probability for each source. The request's search words are not asked of it: Varnick strips filler words in code, which matched Jev's own word-by-word judgments in the spike.
+- **Project names stay here.** Jev reads a name it has not heard of as a web topic, so "what is <a project>" went to History. Varnick corrects this locally and sends nothing to do it: a request that holds the words of one of the user's session folders, or a chance of sessions of 0.1 or more, adds sessions to the rows read.
 
 ## Off-topic
 
-When Jev puts the request at "other" (0.5 or more), Launchy says "I only look up your pages, bookmarks and Claude sessions." at once, with no search and no Gemma, and writes it to the transcript like the other spoken lines. When Gemma decides there is no such signal and every request is searched, as ADR 0015 says.
+When Jev puts the request at "other" (0.5 or more), Varnick says "I only look up your pages, bookmarks and Claude sessions." at once, with no search and no Gemma, and writes it to the transcript like the other spoken lines. When Gemma decides there is no such signal and every request is searched, as ADR 0015 says.
 
 ## Fallback
 
@@ -27,7 +27,7 @@ No key, the filter not on TypeSafe, a network error, a status other than 200, no
 
 ## Consequences
 
-- Hey Launchy is no longer wholly local when the filter is on TypeSafe. The request, in the user's own words, reaches a third party on every spoken request. Settings › Listening and the TypeSafe rows say so, and so do the README and SECURITY.md.
+- Hey Varnick is no longer wholly local when the filter is on TypeSafe. The request, in the user's own words, reaches a third party on every spoken request. Settings › Listening and the TypeSafe rows say so, and so do the README and SECURITY.md.
 - The decide step then needs the network. Without it, or on the other filter settings, it costs what it cost before, 1 to 2 s on this Mac.
 - Jev's source probabilities shift a little between runs; a chance of sessions near the floor can fall on either side of it from one run to the next, so the same request may read sessions in one and not the other.
 - The `spoken request timing` log line names who decided and, when Text generation did instead, why Jev was not used. It logs durations and kinds only.

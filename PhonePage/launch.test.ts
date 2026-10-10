@@ -156,7 +156,7 @@ describe("the host's projects and agents", () => {
 
   test("no projects, or a host that couldn't say", () => {
     expect(shapeProjects(ok({}))).toEqual({ rows: [] });
-    expect(shapeProjects({ ok: false, error: "Launchy isn't running on Mac mini" })).toEqual({ error: "Launchy isn't running on Mac mini" });
+    expect(shapeProjects({ ok: false, error: "Varnick isn't running on Mac mini" })).toEqual({ error: "Varnick isn't running on Mac mini" });
   });
 
   test("agents are the host's, with the folder it read them from", () => {
@@ -175,7 +175,7 @@ describe("starting", () => {
   test("sends start as the device, with the server's id, and no skipPermissions", async () => {
     const { asker, calls } = fakeRelay({ projects, agents, start: ok({ folder }) });
     const launched = await startSession(asker, device, "linux box", { folder, agent: "reviewer", prompt: "Reply with the word ok." }, () => fixedID);
-    expect(launched).toEqual({ status: 200, body: { ok: true, session: `launchy-${fixedID}` } });
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}` } });
     const start = calls.find((call) => call.op === "start")!;
     expect(start.by).toBe(device.id);
     expect(start.fields).toEqual({ start: { id: fixedID, folder, prompt: "Reply with the word ok.", agent: "reviewer" } });
@@ -213,7 +213,7 @@ describe("starting", () => {
   });
 
   test("a host whose projects can't be read starts nothing", async () => {
-    const { asker, calls } = fakeRelay({ projects: { ok: false, error: "Launchy isn't running on Mac mini" } });
+    const { asker, calls } = fakeRelay({ projects: { ok: false, error: "Varnick isn't running on Mac mini" } });
     const launched = await startSession(asker, device, "Mac mini", { folder, agent: null, prompt: "" }, () => fixedID);
     expect(launched.status).toBe(502);
     expect(calls.map((call) => call.op)).toEqual(["projects"]);
@@ -228,9 +228,9 @@ describe("starting", () => {
     // What the relay parses back is the very text.
     expect(JSON.parse(request).start.prompt).toBe(prompt);
     // The argument list is the relay, the flag and one base64 argument: the text isn't an argument of its own.
-    const argv = relayArguments("/home/alex/.launchy/launchy-peer", request);
+    const argv = relayArguments("/home/alex/.varnick/varnick-peer", request);
     expect(argv).toHaveLength(3);
-    expect(argv.slice(0, 2)).toEqual(["/home/alex/.launchy/launchy-peer", "--peer"]);
+    expect(argv.slice(0, 2)).toEqual(["/home/alex/.varnick/varnick-peer", "--peer"]);
     expect(argv[2]).toMatch(/^[A-Za-z0-9+/=]+$/);
     expect(argv.join(" ")).not.toContain("rm -rf");
   });
@@ -250,7 +250,7 @@ describe("resuming", () => {
     const { asker, calls } = fakeRelay({ recent, sessions: empty, resume: ok({ folder }) });
     const launched = await resumeConversation(asker, device, "linux box", conversation.toUpperCase(), () => fixedID);
     // The conversation is compared case-insensitively, and sent lowercase.
-    expect(launched).toEqual({ status: 200, body: { ok: true, session: `launchy-${fixedID}` } });
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}` } });
     const resume = calls.find((call) => call.op === "resume")!;
     expect(resume.by).toBe(device.id);
     expect(resume.fields).toEqual({ conversation, start: { id: fixedID, folder, prompt: "", agent: "reviewer" } });
@@ -265,16 +265,16 @@ describe("resuming", () => {
   });
 
   test("a conversation a running session has open is answered with that session's row, and resume isn't sent", async () => {
-    const sessions = ok({ open: [{ session: "launchy-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Open one", folder, conversation, controlName: "Mac mini", clients: 1 }] });
+    const sessions = ok({ open: [{ session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Open one", folder, conversation, controlName: "Mac mini", clients: 1 }] });
     const { asker, calls } = fakeRelay({ recent, sessions, resume: ok({}) });
     const launched = await resumeConversation(asker, device, "linux box", conversation, () => fixedID);
     expect(launched.status).toBe(409);
-    expect(launched.body).toMatchObject({ ok: false, error: "That session is open on linux box: take it over from the list", open: { session: "launchy-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", text: "Controlled on Mac mini", mine: false } });
+    expect(launched.body).toMatchObject({ ok: false, error: "That session is open on linux box: take it over from the list", open: { session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", text: "Controlled on Mac mini", mine: false } });
     expect(calls.some((call) => call.op === "resume")).toBe(false);
   });
 
   test("an open session is found by its own id when it hasn't moved to another conversation", () => {
-    const sessions = ok({ open: [{ session: `launchy-${conversation}`, title: "Same id", folder, clients: 0, controlName: "Phone" }, { session: "launchy-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", title: "Elsewhere", folder, conversation: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }] });
+    const sessions = ok({ open: [{ session: `varnick-${conversation}`, title: "Same id", folder, clients: 0, controlName: "Phone" }, { session: "varnick-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", title: "Elsewhere", folder, conversation: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }] });
     expect(findOpenSession(sessions, conversation, device)?.title).toBe("Same id");
     expect(findOpenSession(sessions, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", device)?.title).toBe("Elsewhere");
     expect(findOpenSession(sessions, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", device)).toBeNull();
@@ -349,15 +349,15 @@ describe("New session's preselection", () => {
   });
 
   test("the filter takes every word, in the name or the path, ignoring case", () => {
-    const projects = [{ path: "/home/u/zabaca/launchy" }, { path: "/home/u/play/cc" }, { path: "/home/u/zabaca/Other-App" }];
+    const projects = [{ path: "/home/u/zabaca/varnick" }, { path: "/home/u/play/cc" }, { path: "/home/u/zabaca/Other-App" }];
     expect(filterProjects(projects, "")).toBe(projects);
-    expect(filterProjects(projects, "LAUNCH").map((project) => project.path)).toEqual(["/home/u/zabaca/launchy"]);
+    expect(filterProjects(projects, "VARN").map((project) => project.path)).toEqual(["/home/u/zabaca/varnick"]);
     expect(filterProjects(projects, "zabaca app").map((project) => project.path)).toEqual(["/home/u/zabaca/Other-App"]);
     expect(filterProjects(projects, "nothing")).toEqual([]);
   });
 
   test("the title before the host says one", () => {
-    expect(projectName("/home/u/zabaca/launchy")).toBe("launchy");
+    expect(projectName("/home/u/zabaca/varnick")).toBe("varnick");
     expect(startTitle("\n  Fix the build\nthen test", "/p/one")).toBe("Fix the build");
     expect(startTitle("   ", "/p/one")).toBe("one");
     expect(startTitle("x".repeat(200), "/p/one")).toHaveLength(80);
@@ -369,7 +369,7 @@ describe("a start or resume that failed or came late", () => {
   const recent = ok({ recent: [{ conversation, title: "x", folder, last: 1 }] });
   const empty = ok({ open: [] });
   const running = (name: string) => ok({ sessions: { [name]: { running: true, clients: 0 } } });
-  const sessionOf = `launchy-${fixedID}`;
+  const sessionOf = `varnick-${fixedID}`;
 
   test("a start whose answer was lost but whose session runs is a success, so a second tap makes no duplicate", async () => {
     const { asker, calls } = fakeRelay({ projects, start: { ok: false, error: "The relay didn't answer in time" }, status: running(sessionOf) });
@@ -403,7 +403,7 @@ describe("a start or resume that failed or came late", () => {
   });
 
   test("a resume the host refuses in a race returns the session that opened meanwhile, to take over", async () => {
-    const opened = ok({ open: [{ session: "launchy-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Opened meanwhile", folder, conversation, controlName: "Mac mini", clients: 1 }] });
+    const opened = ok({ open: [{ session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Opened meanwhile", folder, conversation, controlName: "Mac mini", clients: 1 }] });
     // The first look finds nothing; by the second the conversation is open.
     const { asker, calls } = fakeRelay({
       recent, sessions: [empty, opened],
@@ -412,7 +412,7 @@ describe("a start or resume that failed or came late", () => {
     });
     const launched = await resumeConversation(asker, device, "linux box", conversation, () => fixedID);
     expect(launched.status).toBe(409);
-    expect(launched.body).toMatchObject({ ok: false, error: "That session is open on linux box: take it over from the list", open: { session: "launchy-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", text: "Controlled on Mac mini" } });
+    expect(launched.body).toMatchObject({ ok: false, error: "That session is open on linux box: take it over from the list", open: { session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", text: "Controlled on Mac mini" } });
     expect(calls.filter((call) => call.op === "sessions")).toHaveLength(2);
   });
 
@@ -446,8 +446,8 @@ describe("a folder's agents", () => {
   });
 
   test("a host that can't list its projects shows no agents", async () => {
-    const { asker } = fakeRelay({ projects: { ok: false, error: "Launchy isn't running on Mac mini" }, agents });
-    expect(await agentsOf(asker, device, "Mac mini", folder)).toEqual({ status: 502, body: { ok: false, error: "Launchy isn't running on Mac mini" } });
+    const { asker } = fakeRelay({ projects: { ok: false, error: "Varnick isn't running on Mac mini" }, agents });
+    expect(await agentsOf(asker, device, "Mac mini", folder)).toEqual({ status: 502, body: { ok: false, error: "Varnick isn't running on Mac mini" } });
   });
 });
 

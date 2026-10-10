@@ -1,18 +1,24 @@
 # Contributing
 
-Launchy is a macOS app written in Swift, with a small Bun server for the Phone page. This is how to
-build it, check a change and work the way the repository does. [`README.md`](README.md) says what Launchy
+Varnick is a macOS app written in Swift, with a small Bun server for the Phone page. This is how to
+build it, check a change and work the way the repository does. [`README.md`](README.md) says what Varnick
 is and what it needs.
 
 ## Build and check
 
 - **`make build`** builds, codesigns and fetches the files plain `swift build` lacks. It must finish clean:
   fix every error and every new warning. The first build resolves packages and is slow. It signs ad hoc, or with
-  your Developer ID Application identity if you have one (README, Build and install); no team ID, certificate
+  your Developer ID Application identity if you have one (README, Build from a checkout); no team ID, certificate
   name or notary credential goes in a tracked file.
+- **`make app`** is the maintainer's, not part of a change. It makes the notarized `Varnick.app` and the
+  `Varnick.zip` that a release carries. It needs the Developer ID Application identity in the keychain and a
+  notary profile, both named in the git-ignored `Makefile.local` (`Makefile.local.example` shows where); it
+  refuses anything but a clean `main` that origin has, unless `CHECK_BUILD=1`, which runs every step but the
+  zip. Neither the identity nor the profile goes in a tracked file. Publishing the zip as a release is a
+  separate step by hand (ADR 0025).
 - **`bun test`**, run in `PhonePage/`, tests the Phone page's server and its page.
 - **There is no Swift test target.** Swift changes are checked by `make build` and then by hand in a running
-  Launchy; say in your change what you checked and what you didn't.
+  Varnick; say in your change what you checked and what you didn't.
 
 How code here is wired and styled is in [`CODING_STANDARDS.md`](CODING_STANDARDS.md). What a change can
 break even when it follows them is in [`docs/agents/where-it-breaks.md`](docs/agents/where-it-breaks.md).
@@ -21,9 +27,9 @@ The words the code and docs use are in [`CONTEXT.md`](CONTEXT.md), and the decis
 
 ## Restarting ends sessions
 
-`make run` and `make install` restart Launchy, which ends every Claude, terminal and app pane that isn't
+`make run` and `make install` restart Varnick, which ends every Claude, terminal and app pane that isn't
 kept in zmx (README, "Restarting ends sessions that aren't kept in zmx"). Leave restarts to the user,
-and don't run one from inside a Claude session running in the Launchy you are restarting.
+and don't run one from inside a Claude session running in the Varnick you are restarting.
 
 ## How work is planned
 
