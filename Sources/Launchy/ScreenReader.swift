@@ -199,38 +199,58 @@ enum ScreenReader {
     private static func isChromium(bundle: String) -> Bool { bundle.lowercased().contains("chrom") }
 
     /// What a click on an element is, for how it is made.
-    enum ClickContent: Equatable {
+    enum ClickContent {
         /// In a page, or not known to be anywhere else: clicked, since a press through Accessibility there often reports success and does
-        /// nothing. The page's frame when it was found, which the click must land inside.
+        /// nothing. The click must land inside the frame when there is one: the part of the page that shows, so not under the toolbar.
         case page(CGRect?)
         /// Not in a page: pressed when it can be.
         case native
+        /// In a browser or Electron app, with the search cut short: where the page is, is not known.
+        case unplaced
     }
 
-    /// Where the element is: an `AXWebArea` is it or above it, or the app is a browser or Electron app. A search that times out or
-    /// fails is `page` with no frame, never `native`. Off the main actor, within `budget`.
+    /// Where the element is, from its ancestors up to the window: an `AXWebArea` among them, or the app is a browser or Electron app.
+    /// The frame is the intersection of every web area on the way (an iframe's sits inside the top-level page's) and of every scroll
+    /// area whose frame reads (Safari's web area can be the whole document). A search cut short is `unplaced` in a browser or Electron
+    /// app, and `page` with the frames so far elsewhere, never `native`. Off the main actor, within `budget`.
     static func content(of target: ScreenTarget, in app: NSRunningApplication) async -> ClickContent {
         let webHosted = isElectron(app) || isChromium(bundle: app.bundleIdentifier ?? "")
         guard let reference = target.reference else { return webHosted ? .page(nil) : .native }
         return await Task.detached { () -> ClickContent in
             let deadline = ContinuousClock.now.advanced(by: budget)
+            var area: CGRect?
+            var sawPage = false
+            var cutShort: ClickContent { webHosted ? .unplaced : .page(area) }
+            func narrow(to element: AXUIElement) -> Bool {
+                guard let frame = frame(of: element) else { return false }
+                area = area.map { $0.intersection(frame) } ?? frame
+                return true
+            }
             var element = reference.element
             for _ in 0..<maxDepth {
-                guard ContinuousClock.now < deadline else { return .page(nil) }
+                guard ContinuousClock.now < deadline else { return cutShort }
                 AXUIElementSetMessagingTimeout(element, callTimeout)
-                if string(element, kAXRoleAttribute) == "AXWebArea" { return .page(frame(of: element)) }
+                switch string(element, kAXRoleAttribute) {
+                case "AXWebArea":
+                    sawPage = true
+                    guard narrow(to: element) else { return cutShort }
+                case "AXScrollArea":
+                    _ = narrow(to: element)
+                default:
+                    break
+                }
                 var parent: CFTypeRef?
                 switch AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) {
                 case .success:
-                    guard let parent, let next = asElement(parent) else { return .page(nil) }
+                    guard let parent, let next = asElement(parent) else { return cutShort }
                     element = next
                 case .noValue, .attributeUnsupported:
-                    return webHosted ? .page(nil) : .native
+                    return sawPage || webHosted ? .page(area) : .native
                 default:
-                    return .page(nil)
+                    return cutShort
                 }
             }
-            return .page(nil)
+            return cutShort
         }.value
     }
 

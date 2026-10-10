@@ -26,6 +26,8 @@ indirect enum ScreenRefusal: Error {
     case noPostAccess
     /// The app did not come to the front when asked, so a click would only have focused it.
     case notFront
+    /// In a browser or Electron app whose page could not be placed in time, so a click could land outside it.
+    case unplaced
     /// Another app's window, or something other than the target's app, is at the point to click.
     case overlapped
     /// A window of Launchy's own is at the point to click.
@@ -56,6 +58,7 @@ indirect enum ScreenRefusal: Error {
         case .offDisplay: "That is on no display"
         case .noPostAccess: "macOS hasn't let Launchy post clicks. Ask the user to grant Accessibility in Launchy's Settings › Claude, under Screen access"
         case .notFront: "The app did not come to the front when Launchy asked, so a click would only have focused it"
+        case .unplaced: "Couldn't tell where the page is: look again"
         case .overlapped: "Another window is over that point, so the click would not land on the target"
         case .covered: "A window of Launchy's own is at that point, which a session may not click. Ask the user to move or hide it"
         case .late: "The click waited too long for its turn"
@@ -83,6 +86,7 @@ indirect enum ScreenRefusal: Error {
         case .offDisplay: "off display"
         case .noPostAccess: "no post access"
         case .notFront: "not front"
+        case .unplaced: "page unplaced"
         case .overlapped: "overlapped"
         case .covered: "covered"
         case .late: "late"
@@ -116,7 +120,7 @@ final class ScreenAccess {
     static let frontSettle: Duration = .milliseconds(150)
     /// A click still waiting, leading or bringing its app forward this long after its request arrived is dropped: the relay gives up
     /// at 15 s, and the reads and the press after the last check can take several seconds (where-it-breaks.md, Screen access).
-    static let staleAfter: Duration = .seconds(10)
+    static let staleAfter: Duration = .seconds(9)
     /// How far a control's centre may move from where the arrow was drawn before the arrow is drawn again on it.
     static let arrowFollows: CGFloat = 2
     /// A press that opens a dialog can block, so it waits longer than the walk's reads.
@@ -366,6 +370,7 @@ final class ScreenAccess {
             case .target(let id, let target):
                 guard let app else { throw ScreenRefusal.gone }
                 let content = await ScreenReader.content(of: target, in: app)
+                if case .unplaced = content { throw ScreenRefusal.unplaced }
                 // Read after the app came forward, never the frame from the look or the lead: a page's frames move while it scrolls.
                 guard let frame = await ScreenReader.currentFrame(of: target) else { throw ScreenRefusal.gone }
                 let centre = CGPoint(x: frame.midX, y: frame.midY)
