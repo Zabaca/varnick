@@ -365,14 +365,14 @@ main() {
   INCOMING_PAGE="$ROOT/incoming-page${RUN:+-$RUN}.tar.gz"
   if [ -n "${RUN:-}" ]; then trap 'rm -f "$INCOMING" "$INCOMING_PAGE"' EXIT; fi
   # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): a host whose install root still has the old name is moved by
-  # hand first (option 01 of docs/problems/name-taken-by-another-launcher, "Cutover: the Ryzen"). An install here would put a second
+  # hand first (the headless host's cutover in the same option). An install here would put a second
   # relay, with a new id, beside the old one. Nothing is changed: what the near half shipped is removed, and ~/.varnick goes again
   # if shipping made it and it holds nothing. The lock isn't taken, since taking it makes ~/.varnick.
   if [ "${ACTION:-install}" = install ] && [ -e "$HOME/.launchy" ]; then
     rm -f "$INCOMING" "$INCOMING_PAGE"
     rmdir "$ROOT" 2>/dev/null || true
     echo "OLDROOT=present"
-    echo "$HOME/.launchy exists: this host still runs Launchy's relay. Move it to ~/.varnick first (docs/problems/name-taken-by-another-launcher, option 01, \"Cutover: the Ryzen\")"
+    echo "$HOME/.launchy exists: this host still runs Launchy's relay. Moving it to ~/.varnick is the user's step, the headless host's cutover (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md). Nothing was changed. An agent must stop here and report this to the user"
     return 0
   fi
   acquire_lock || return 0
