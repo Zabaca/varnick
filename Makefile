@@ -279,7 +279,7 @@ app: app-bundle
 	  rm -f $(APP_DIR)/notarize.zip; cat $(APP_DIR)/notary.out; \
 	  id=$$(sed -n 's/^ *id: *//p' $(APP_DIR)/notary.out | head -1); status=$$(sed -n 's/^ *status: *//p' $(APP_DIR)/notary.out | tail -1); \
 	  if [ "$$status" != Accepted ]; then \
-	    echo "error: app: the notary service answered \"$$status\"; its log follows" >&2; \
+	    echo "error: app: the notary service didn't accept the app (status: $${status:-none}); what notarytool said is above" >&2; \
 	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" --keychain-profile "$$NOTARY_PROFILE"; fi; exit 1; fi
 	xcrun stapler staple $(APP)
 	xcrun stapler validate $(APP)
