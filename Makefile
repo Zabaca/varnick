@@ -229,12 +229,15 @@ clean: cutover-confirm
 
 # `make app` (the maintainer's, on the Mac that holds the signing identity and the notary credentials): Varnick.app, signed inside
 # out, notarized, stapled and zipped as .build/app/Varnick.zip, then the disk image Varnick.dmg made from that same app (`app-image`);
-# the user attaches both to a GitHub release by hand
-# (docs/problems/runs-only-from-a-checkout/options/02-notarized-app-updated-by-hand.md, ADR 0026). Nothing is uploaded but to the notary service.
-# NOTARY_PROFILE (on the command line, else the git-ignored Makefile.local) names the keychain profile `notarytool` reads; like the
-# identity, it stays out of every tracked file. CHECK_BUILD=1 lets a build off main run every step but the zip.
-# `app-bundle` stops before anything is sent, so the signed bundle can be checked first.
-export NOTARY_PROFILE
+# the user attaches both to a GitHub release by hand (docs/releasing.md; ADR 0025, ADR 0026). Nothing is uploaded but to the notary service.
+# The notary credential is one of two, on the command line or else in the git-ignored Makefile.local, and like the identity stays out of
+# every tracked file: NOTARY_PROFILE names the keychain profile `notarytool` reads (which can't be read while the screen is locked), or
+# NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER give an App Store Connect API key file (which can). A key set wins over a profile.
+# CHECK_BUILD=1 lets a build off main run every step but the zip. `app-bundle` stops before anything is sent, so the signed bundle can be checked first.
+export NOTARY_PROFILE NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER
+# The one place that turns the credential into notarytool arguments, for every submit and log. The values stay in the environment, and
+# every recipe line that uses this starts with @, so make never prints them.
+NOTARY_AUTH = $(if $(NOTARY_KEY),--key "$$NOTARY_KEY" --key-id "$$NOTARY_KEY_ID" --issuer "$$NOTARY_ISSUER",--keychain-profile "$$NOTARY_PROFILE")
 APP_DIR := .build/app
 APP := $(APP_DIR)/Varnick.app
 APP_ZIP := $(APP_DIR)/Varnick.zip
@@ -258,7 +261,10 @@ app-guard:
 	@if ! git diff --quiet HEAD --; then echo "error: app: the checkout has changes to tracked files; a published build matches a commit" >&2; exit 1; fi
 	@scripts/signing-identity.sh --developer-id >/dev/null || { echo "error: app: no Developer ID Application identity to sign with (an app is never ad hoc); fix SIGN_IDENTITY in Makefile.local" >&2; exit 1; }
 	@command -v uvx >/dev/null || { echo "error: app: no uvx on the PATH; the disk image is built with dmgbuild, which uvx runs (uv: https://docs.astral.sh/uv/)" >&2; exit 1; }
-	@if [ -z "$$NOTARY_PROFILE" ]; then echo "error: app: no NOTARY_PROFILE; name the notarytool keychain profile in Makefile.local or on the command line" >&2; exit 1; fi
+	@if [ -n "$$NOTARY_KEY$$NOTARY_KEY_ID$$NOTARY_ISSUER" ]; then \
+	  if [ -z "$$NOTARY_KEY" ] || [ -z "$$NOTARY_KEY_ID" ] || [ -z "$$NOTARY_ISSUER" ]; then echo "error: app: the notary API key is incomplete; NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER go together (Makefile.local.example)" >&2; exit 1; fi; \
+	  if [ ! -f "$$NOTARY_KEY" ] || [ ! -r "$$NOTARY_KEY" ]; then echo "error: app: NOTARY_KEY isn't a readable file" >&2; exit 1; fi; \
+	elif [ -z "$$NOTARY_PROFILE" ]; then echo "error: app: no notary credential; set NOTARY_PROFILE, or NOTARY_KEY with NOTARY_KEY_ID and NOTARY_ISSUER, in Makefile.local or on the command line (Makefile.local.example)" >&2; exit 1; fi
 	@if [ "$(CHECK_BUILD)" != 1 ]; then \
 	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
 	    echo "error: app: a published build comes from main, with HEAD in origin/main as last fetched; CHECK_BUILD=1 builds anything else, without the zip" >&2; exit 1; fi; fi
@@ -302,12 +308,12 @@ app: app-bundle
 	@rm -f $(APP_DIR)/notarize.zip
 	ditto -c -k --keepParent $(APP) $(APP_DIR)/notarize.zip
 	@echo "submitting to the notary service, and waiting for its answer"
-	@xcrun notarytool submit $(APP_DIR)/notarize.zip --keychain-profile "$$NOTARY_PROFILE" --wait > $(APP_DIR)/notary.out 2>&1; \
+	@xcrun notarytool submit $(APP_DIR)/notarize.zip $(NOTARY_AUTH) --wait > $(APP_DIR)/notary.out 2>&1; \
 	  rm -f $(APP_DIR)/notarize.zip; cat $(APP_DIR)/notary.out; \
 	  id=$$(sed -n 's/^ *id: *//p' $(APP_DIR)/notary.out | head -1); status=$$(sed -n 's/^ *status: *//p' $(APP_DIR)/notary.out | tail -1); \
 	  if [ "$$status" != Accepted ]; then \
 	    echo "error: app: the notary service didn't accept the app (status: $${status:-none}); what notarytool said is above" >&2; \
-	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" --keychain-profile "$$NOTARY_PROFILE"; fi; exit 1; fi
+	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" $(NOTARY_AUTH); fi; exit 1; fi
 	xcrun stapler staple $(APP)
 	xcrun stapler validate $(APP)
 	@spctl -a -vv -t exec $(APP) 2>&1 | tee $(APP_DIR)/spctl.out; grep -q 'source=Notarized Developer ID' $(APP_DIR)/spctl.out || { echo "error: app: Gatekeeper doesn't accept the app as notarized" >&2; exit 1; }
@@ -340,12 +346,12 @@ app-image: $(if $(filter 1,$(FROM_APP)),,$(if $(filter 1,$(CHECK_BUILD)),,app-gu
 	hdiutil verify $(DMG_BUILD)
 	@if [ "$(CHECK_BUILD)" = 1 ]; then echo "CHECK_BUILD=1: $(DMG_BUILD) is signed and verified, not sent to the notary service; no Varnick.dmg written"; else \
 	  echo "submitting the disk image to the notary service, and waiting for its answer"; \
-	  xcrun notarytool submit $(DMG_BUILD) --keychain-profile "$$NOTARY_PROFILE" --wait > $(APP_DIR)/notary-dmg.out 2>&1; \
+	  xcrun notarytool submit $(DMG_BUILD) $(NOTARY_AUTH) --wait > $(APP_DIR)/notary-dmg.out 2>&1; \
 	  cat $(APP_DIR)/notary-dmg.out; \
 	  id=$$(sed -n 's/^ *id: *//p' $(APP_DIR)/notary-dmg.out | head -1); status=$$(sed -n 's/^ *status: *//p' $(APP_DIR)/notary-dmg.out | tail -1); \
 	  if [ "$$status" != Accepted ]; then \
 	    echo "error: app-image: the notary service didn't accept the disk image (status: $${status:-none}); what notarytool said is above" >&2; \
-	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" --keychain-profile "$$NOTARY_PROFILE"; fi; exit 1; fi; \
+	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" $(NOTARY_AUTH); fi; exit 1; fi; \
 	  xcrun stapler staple $(DMG_BUILD) && xcrun stapler validate $(DMG_BUILD) || exit 1; \
 	  spctl -a -vv -t open --context context:primary-signature $(DMG_BUILD) 2>&1 | tee $(APP_DIR)/spctl-dmg.out; \
 	  grep -q 'source=Notarized Developer ID' $(APP_DIR)/spctl-dmg.out || { echo "error: app-image: Gatekeeper doesn't accept the disk image as notarized" >&2; exit 1; }; \
