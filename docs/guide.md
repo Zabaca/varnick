@@ -75,7 +75,8 @@ logout ends the sessions either way.
 The menu bar menu's **Restart Varnick** (just above Quit) asks first and lists the panes that would end, if any.
 In the installed app it opens a new copy of the app and quits this one; the new copy waits for this one to let go.
 From a checkout it restarts without building, with `scripts/restart.sh`, so the macOS permission grants a build
-would void stay. If a build has run since Varnick started, the restart starts that build; if it is signed ad hoc,
+would void stay. It starts Varnick through launchd, so Varnick holds its own permissions and not those of the terminal
+it was restarted from. If a build has run since Varnick started, the restart starts that build; if it is signed ad hoc,
 macOS asks for the permissions again, and the question says so. The item is hidden when the checkout's `scripts/restart.sh` or the
 database can't be found from where Varnick runs, and a restart waits while a build is running.
 
