@@ -11,6 +11,6 @@ enum MacNotMoved {
         let fm = FileManager.default
         guard fm.fileExists(atPath: applicationSupport.appendingPathComponent("Launchy").path),
               !fm.fileExists(atPath: applicationSupport.appendingPathComponent("Varnick").path) else { return nil }
-        return "error: this Mac still runs Launchy (its support folder has the old name). Cut it over from a terminal outside the app first: docs/problems/name-taken-by-another-launcher, option 01, \"Cutover: each Mac\"."
+        return "error: this Mac still runs Launchy (its support folder has the old name). " + FirstLaunchMigration.cutoverNote
     }
 }
