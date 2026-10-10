@@ -194,6 +194,10 @@ final class Settings: ObservableObject {
     /// when it changes.
     @Published var servePhonePage: Bool { didSet { defaults.set(servePhonePage, forKey: Self.servePhonePageKey) } }
     static let servePhonePageKey = "servePhonePage"
+    /// Experimental (Settings › Experimental): the board's Problems tab, `!problems`, and the work-link hooks (ADR 0020) in the Claude
+    /// sessions this Mac starts. Off by default, for every install. The work links already recorded are kept either way.
+    @Published var problemsBoard: Bool { didSet { defaults.set(problemsBoard, forKey: Self.problemsBoardKey) } }
+    static let problemsBoardKey = "problemsBoard"
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
@@ -312,6 +316,7 @@ final class Settings: ObservableObject {
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
+        problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         voice = defaults.string(forKey: "voice") ?? ""
@@ -779,6 +784,11 @@ struct SettingsView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
+                        case .experimental:
+                        SettingRow(title: "Problems board",
+                                   detail: "The Problems tab and work links, for projects that plan work in docs/problems. Experimental.") {
+                            Toggle("", isOn: $settings.problemsBoard).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        }
                         }
                     }
                     .padding(.horizontal, 6)
@@ -927,7 +937,7 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, search, listening, peers, models, shortcuts
+    case claude, search, listening, peers, models, shortcuts, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -939,6 +949,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .peers: "desktopcomputer"
         case .models: "cpu"
         case .shortcuts: "keyboard"
+        case .experimental: "testtube.2"
         }
     }
 }

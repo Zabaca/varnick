@@ -54,8 +54,8 @@ To build it yourself instead, see [`building.md`](building.md).
   runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
-- **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access and the
-  Phone page.
+- **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, the
+  Phone page and the Problems board (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
 A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
@@ -150,6 +150,20 @@ still asking for `click` (not checked). A session gains the tools when it starts
 (⌘⌥R) after turning the switch on; turning it off stops every session's tools at once. It is independent of
 Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
 for what a session is shown.
+
+## Experimental
+
+Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on.
+
+**Problems board** is for a project that plans its work in `docs/problems/` the way Varnick's own repository
+does (problems, options, the `/work` skill and the planner and builder agents, which live in that
+repository's `.claude/`). On, the session board has a Problems tab beside Sessions (`!problems`, and Tab switches
+between them) and each Claude session Varnick starts on this Mac carries the hooks that link it to the problem
+or option it works on. Off, the board shows Sessions only, `!problems` is not listed, and sessions started
+after that get none of those hooks; sessions already running keep the hooks they started with. Links already
+recorded are kept, so turning it on again shows them. Each Mac decides for the sessions it starts, whoever asks
+for them, and a headless host decides with `scripts/install-peer.sh <user@host> --problems` or `--no-problems` (a host
+that has neither runs without). `Varnick --problems` prints the board's columns whatever the switch says.
 
 ## TypeSafe
 

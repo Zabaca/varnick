@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import Combine
 import VarnickPeer
 import SwiftUI
 
@@ -46,7 +47,8 @@ extension BackgroundWork {
 
 /// The session board (ADR 0010): this Mac's Claude panes and the paired Macs' open sessions in three columns
 /// by turn, and the sessions marked done. Opened by ⌘⇧B and `!kanban` through `LauncherModel.showBoard`, which shows it in place of the panel's content like Settings.
-/// Beside Sessions it has a Problems tab (`ProblemsBoard`, `!problems`); ⌘⇧B opens whichever was shown last.
+/// Beside Sessions it has a Problems tab (`ProblemsBoard`, `!problems`) while the Problems board switch (Settings › Experimental) is on, and
+/// Sessions alone without it; ⌘⇧B opens whichever was shown last.
 @MainActor
 final class SessionBoard: ObservableObject {
     enum Tab { case sessions, problems }
@@ -187,6 +189,19 @@ final class SessionBoard: ObservableObject {
     @Published private(set) var confirming: Question?
     @Published private(set) var tab = Tab.sessions
     let problems = ProblemsBoard()
+    /// Turning the switch off while Problems shows (Settings opens over the board) puts the board back on Sessions. The publisher sends
+    /// before the value is stored, so this reads the value it is sent.
+    private var problemsSwitch: AnyCancellable?
+
+    init() {
+        problemsSwitch = Settings.shared.$problemsBoard.removeDuplicates().sink { [weak self] on in
+            if !on { self?.show(.sessions) }
+        }
+    }
+
+    /// Whether the board has a Problems tab, and the key that switches to it.
+    var hasProblems: Bool { Settings.shared.problemsBoard }
+
     weak var model: LauncherModel? {
         didSet {
             problems.model = model
@@ -258,7 +273,8 @@ final class SessionBoard: ObservableObject {
 
     /// Tab, ⇧Tab and `!problems`. Problems reads its files only while it shows; the cards keep their tick on both tabs, and returning to
     /// Sessions asks the paired Macs again.
-    func show(_ next: Tab) {
+    func show(_ requested: Tab) {
+        let next = requested == .problems && !hasProblems ? Tab.sessions : requested
         guard next != tab else { return }
         tab = next
         confirming = nil
@@ -406,13 +422,14 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Keys
 
-    /// The keys the board takes: Tab and ⇧Tab switch tabs; the Problems tab takes the rest while it shows (`ProblemsBoard.key`). On
+    /// The keys the board takes: Tab and ⇧Tab switch tabs (with the Problems tab); the Problems tab takes the rest while it shows (`ProblemsBoard.key`). On
     /// Sessions, ←/→ column, ↑/↓ card, ↩ opens, D, the End session key and the Mark session done key mark done, R and the
     /// Restart session key restart, esc cancels a question and otherwise closes. A modified ↩ is taken and does nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(KeyCombo.relevant)
         if Int(event.keyCode) == kVK_Tab, flags.isSubset(of: .shift) {
-            show(tab == .sessions ? .problems : .sessions)
+            // With one tab there is nothing to switch to, and Tab is still taken, as it was.
+            if hasProblems { show(tab == .sessions ? .problems : .sessions) }
             return true
         }
         if tab == .problems { return problems.key(event) }
@@ -561,7 +578,7 @@ struct SessionBoardView: View {
             HStack(spacing: 14) {
                 Image(systemName: "rectangle.split.3x1").foregroundStyle(.secondary)
                 tabButton("Sessions", .sessions)
-                tabButton("Problems", .problems)
+                if board.hasProblems { tabButton("Problems", .problems) }
                 Spacer()
                 OpenHint(problems: board.problems, onProblems: board.tab == .problems)
                 if board.tab == .sessions {
@@ -569,7 +586,7 @@ struct SessionBoardView: View {
                     ShortcutHint(label: "", action: .restartSession)
                     ShortcutHint(label: "Done", action: .endPane)
                 }
-                KeyHint(label: "Switch", keys: ["⇥"])
+                if board.hasProblems { KeyHint(label: "Switch", keys: ["⇥"]) }
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
                     .buttonStyle(.plain)
             }

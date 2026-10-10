@@ -63,6 +63,14 @@ struct HeadlessPeerHost: PeerHost {
         return text?.isEmpty == false ? text : nil
     }
 
+    /// Whether the work-link hooks are added to the sessions it starts: the file `problems` in the install root, which the installer's
+    /// `--problems` writes and `--no-problems` removes. Off without it, so a host that never had the option has no work-link hooks.
+    var problemsBoard: Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent(Self.problemsFileName).path)
+    }
+
+    static let problemsFileName = "problems"
+
     /// A headless host has no checkout to fetch into, so `fetch` is ignored. It reports its kind, protocol and the commit the installer ran from, and
     /// refuses a start: it is upgraded from a Mac, with the installer.
     func upgrade(_ ask: PeerMaintenanceAsk, line: String) -> PeerReply {

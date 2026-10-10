@@ -5,7 +5,8 @@
 # whose layout, and why this prints KEY=value markers, ADR 0009 holds.
 #
 # Inputs (env): ACTION=install|uninstall, COMMIT (short), RUN (the near half's name for this run's files), NAME (the host's name,
-# optional), PAGE=on|auto|remove
+# optional), PROBLEMS=on|off|auto (the work-link hooks of ADR 0020 in the sessions this host starts: `on` writes ~/.varnick/problems, which the
+# relay looks for when it builds a session's hook settings, `off` removes it, `auto` keeps what is there; prints PROBLEMS=on|off), PAGE=on|auto|remove
 # (the Phone page, ADR 0011: `on` installs its server and unit, `auto` updates them only where the unit already
 # exists, `remove` takes them away; default auto). The package arrives as ~/.varnick/incoming-$RUN.tar.gz (`git archive
 # <commit> Packages/VarnickPeer`), and the page, when PAGE is on or auto and the unit exists, as ~/.varnick/incoming-page-$RUN.tar.gz
@@ -14,8 +15,8 @@
 # PAGE_PUBLISH_PORT are ADR 0011's note of 2026-10-06.
 #
 # What this far half supports, which the near half reads rather than guessing from a function name: RUN (per-run tarball names), LOCK
-# (the install lock). Add a word when a feature the near half adapts to arrives; never remove one.
-# supports: RUN LOCK
+# (the install lock), PROBLEMS (the problems file). Add a word when a feature the near half adapts to arrives; never remove one.
+# supports: RUN LOCK PROBLEMS
 #
 # Everything that runs is called from `main`, with stdin on /dev/null: this script is read from stdin, and a command
 # that read stdin would take the rest of it. The functions above `main` only define what it calls.
@@ -384,10 +385,10 @@ main() {
     page_remove
     # Only a link that points at this install's binary is ours to remove.
     if [ "$(readlink "$LINK" 2>/dev/null)" = "$ROOT/varnick-peer" ]; then rm -f "$LINK"; fi
-    rm -f "$ROOT/varnick-peer" "$ROOT/varnick-peer.new" "$ROOT/build"
+    rm -f "$ROOT/varnick-peer" "$ROOT/varnick-peer.new" "$ROOT/build" "$ROOT/problems"
     rm -f "$INCOMING" "$INCOMING_PAGE"
     rm -rf "$SRC"
-    echo "REMOVED=$ROOT/varnick-peer, $LINK, $ROOT/build and $SRC"
+    echo "REMOVED=$ROOT/varnick-peer, $LINK, $ROOT/build, $ROOT/problems and $SRC"
     echo "KEPT=$ROOT/state, $ROOT/config.json, $ROOT/zmx, Bun and any running session"
     return 0
   fi
@@ -494,6 +495,12 @@ main() {
   echo "ID=$("$ROOT/varnick-peer" init)"
   printf '%s\n' "$COMMIT" >"$ROOT/build.new" && mv -f "$ROOT/build.new" "$ROOT/build"
   echo "BUILD=$COMMIT"
+  # The problems file (ADR 0020): its existence is the switch the relay reads. Written by rename, so a relay never reads half a write.
+  case "${PROBLEMS:-auto}" in
+    on) printf 'on\n' >"$ROOT/problems.new" && mv -f "$ROOT/problems.new" "$ROOT/problems" ;;
+    off) rm -f "$ROOT/problems" ;;
+  esac
+  if [ -e "$ROOT/problems" ]; then echo "PROBLEMS=on"; else echo "PROBLEMS=off"; fi
 
   # 9. The Phone page (ADR 0011), after the relay it runs on: installed, kept up to date where it is installed, or removed.
   case "${PAGE:-auto}" in
