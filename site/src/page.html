@@ -300,8 +300,7 @@ html[data-variant="d"] .faq, html[data-variant="d"] .closing { width: min(100%, 
 /* ===== Privacy ===== */
 .privacy { padding-top: 4rem; }
 .privacy h2 { font-size: clamp(1.2rem, 3vw, 1.45rem) !important; }
-.privacy .intro, .privacy .perm p { color: var(--muted); font-size: .95rem; }
-.privacy .perm { border: 0; background: none; padding: 0; margin-top: .5rem; max-width: 40rem; }
+.privacy .intro { color: var(--muted); font-size: .95rem; }
 .privacy h2, .faq h2 { font-size: clamp(1.6rem, 4.6vw, 2.3rem); line-height: 1.15; font-weight: 600; letter-spacing: -.015em; margin-bottom: .8rem; }
 .privacy .intro { max-width: 40rem; }
 .ledger { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 2rem; }
@@ -313,13 +312,10 @@ html[data-variant="d"] .faq, html[data-variant="d"] .closing { width: min(100%, 
 .lg li b { display: block; font-weight: 600; }
 .lg.local { border-top: 4px solid var(--accent); }
 html[data-variant="a"] .faq { width: min(100% - 2 * var(--pad), 52rem); margin-inline: auto; }
-html[data-variant="a"] .privacy > h2, html[data-variant="a"] .privacy > .intro, html[data-variant="a"] .perm { width: min(100%, 52rem); margin-inline: auto; }
-html[data-variant="a"] .perm { margin-top: 1rem; }
+html[data-variant="a"] .privacy > h2, html[data-variant="a"] .privacy > .intro { width: min(100%, 52rem); margin-inline: auto; }
 html[data-variant="c"] .privacy { border-top: 0; }
 html[data-variant="c"] .lg { border-radius: 3px; }
 @media (max-width: 62rem) { .ledger { grid-template-columns: 1fr; } }
-.perm { margin-top: 1rem; padding: 1rem 1.2rem; border: 1px solid var(--edge); border-left: 4px solid var(--accent); border-radius: var(--r); background: var(--panel); max-width: 52rem; }
-.perm p { margin: 0; font-size: .97rem; }
 
 /* ===== FAQ ===== */
 .faq { padding-top: 6rem; }
@@ -640,7 +636,6 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
   <section class="privacy" id="privacy" aria-labelledby="h-privacy">
     <h2 id="h-privacy">What stays on your Mac, and what is sent</h2>
     <p class="intro">Varnick works on your own data. Most of it never leaves the machine. What does, and when, is listed in the <a href="https://github.com/Zabaca/varnick/blob/main/docs/privacy.md">privacy notes</a> and <a href="https://github.com/Zabaca/varnick/blob/main/SECURITY.md">SECURITY.md</a>.</p>
-    <div class="perm"><p><b>Permissions are shared.</b> macOS gives every Claude session and shell in Varnick's panes the Accessibility and Screen Recording permissions you give Varnick. Skip permissions, which lets Claude run tools without asking, is off for a new install.</p></div>
   </section>
 
   <!-- ============ FAQ ============ -->
