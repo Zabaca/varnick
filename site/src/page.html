@@ -669,7 +669,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
       </div>
       <figure class="mock" role="img" aria-label="The session board with three columns. Running holds two sessions. Stopped holds two, one marked Needs permission. Completed holds one.">
         <div class="app">
-          <div class="btabs"><b>Sessions</b><span>Problems</span></div>
+          <div class="btabs"><b>Sessions</b></div>
           <hr class="hr" style="margin-bottom:8px">
           <div class="cols">
             <div><div class="colh"><i class="cd run"></i>Running <span class="cnt">2</span></div>
@@ -932,7 +932,6 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
     { id: "listen", names: ["listen"], sym: "i-wave", title: "Start listening", detail: "Transcribe the mic and the Mac's audio into today's transcript" },
     { id: "transcript", names: ["transcript"], sym: "i-align", title: "Show transcript", detail: "Today's transcript in a tab, following new lines" },
     { id: "kanban", names: ["kanban", "tabs"], sym: "i-split3", title: "Show session board", detail: "Claude sessions by turn: Running, Stopped, Completed (also !tabs)" },
-    { id: "problems", names: ["problems"], sym: "i-tray", title: "Show problems board", detail: "Problems by stage: Backlog, Decided, Building, Shipped, Closed" },
   ];
   const MESSAGE = "why is the upload test flaky";
   const RES_PARTIAL = [
@@ -1072,7 +1071,7 @@ footer { margin-top: 5rem; border-top: 1px solid var(--edge); padding: 3rem 0 2r
   function buildBoard() {
     BC = mkBC();
     Object.values(BC).forEach((c) => { c.since = clock - c.base * 1000; c.el = null; });
-    vBoard.innerHTML = `<div class="bh">${ic("i-split3")}<b>Sessions</b><span class="t">Problems</span><span class="sp"></span><span class="hint">${kh("Open", "↩")}${kh("Switch", "⇥")}${kh("Close", "esc")}</span></div><hr class="hr">
+    vBoard.innerHTML = `<div class="bh">${ic("i-split3")}<b>Sessions</b><span class="sp"></span><span class="hint">${kh("Open", "↩")}${kh("Switch", "⇥")}${kh("Close", "esc")}</span></div><hr class="hr">
       <div class="bcols">${COLS.map(([k, n]) => `<div class="bcol" data-col="${k}"><div class="bch"><i class="cd ${k}"></i>${n}<span class="cnt"></span><span class="need"></span></div><div class="bcards"></div></div>`).join("")}</div>`;
     ["rename", "auth"].forEach((id) => addCard(id));
     updateBoard();
