@@ -1,13 +1,13 @@
-# Launchy
+# Varnick
 
-Launchy is a macOS launcher: a floating panel that searches your browser history, and runs Claude Code
+Varnick is a macOS launcher: a floating panel that searches your browser history, and runs Claude Code
 sessions side by side with terminals, web pages and files. It keeps your Chrome history in a local
 archive that outlives Chrome's own retention, searches it by meaning as well as by words, lists your Claude
-Code sessions so you can resume any of them, and can pair with Launchy on your other Macs, and with a
+Code sessions so you can resume any of them, and can pair with Varnick on your other Macs, and with a
 headless Linux machine, so that a session on one is reachable from another. A web page it can serve to your own
 phone over Tailscale shows the same sessions.
 
-Launchy is not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic's.
+Varnick is not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic's.
 
 The words it uses (Session, Pane, Peer, Host and the rest) are defined in [`CONTEXT.md`](CONTEXT.md).
 
@@ -22,7 +22,7 @@ The words it uses (Session, Pane, Peer, Host and the rest) are defined in [`CONT
   panes run `claude` through that shell, so the shell's startup files have to find it. That shell is the
   account's own only when it is zsh, bash or sh; for any other, such as fish, panes use `/bin/zsh`, so
   `claude` has to be on zsh's PATH too.
-- [Tailscale](https://tailscale.com), for peers and for the Phone page. Launchy looks for its command
+- [Tailscale](https://tailscale.com), for peers and for the Phone page. Varnick looks for its command
   line in the Tailscale app, `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`.
 - Chrome, if you want its history and bookmarks searched. No other browser is read.
 
@@ -32,8 +32,8 @@ Build and run through the `Makefile`:
 
 ```
 make build      # builds, codesigns, and fetches the files below
-make run        # builds, then restarts Launchy from this checkout
-make install    # builds, then starts Launchy now and at each login, through a LaunchAgent
+make run        # builds, then restarts Varnick from this checkout
+make install    # builds, then starts Varnick now and at each login, through a LaunchAgent
 make uninstall
 ```
 
@@ -45,7 +45,7 @@ it resolves and compiles the Swift packages.
 
 **Signing.** The binary and zmx are signed ad hoc, unless the Mac's keychain holds a "Developer ID Application"
 identity: the build then signs with it, with the hardened runtime and one entitlement (audio input), so macOS
-should keep the permissions you give Launchy across rebuilds instead of treating each build as a new app (to be
+should keep the permissions you give Varnick across rebuilds instead of treating each build as a new app (to be
 confirmed by hand; see ADR 0022 and SECURITY.md). With two or more such identities, or to pick another, copy
 `Makefile.local.example` to `Makefile.local` (git-ignored) and name one. A build never falls back to ad hoc
 behind your back: if an identity was found and signing with it fails, the build fails; so does one named in
@@ -59,26 +59,26 @@ any project can find it. It links only when nothing is at that path, or when the
 points into this checkout; any other entry is left as it is, and `make uninstall` removes only a link that
 points into this checkout.
 
-Launchy reads and writes a few places outside the checkout: `~/Library/Application Support/Launchy` (saved
+Varnick reads and writes a few places outside the checkout: `~/Library/Application Support/Varnick` (saved
 tabs, models, transcripts and other state), the macOS Keychain (the TypeSafe key, if you save one), and
 its own preferences.
 
 ### Restarting ends sessions that aren't kept in zmx
 
-Launchy runs each Claude and terminal pane as its own child process. Restarting it, which `make run`
+Varnick runs each Claude and terminal pane as its own child process. Restarting it, which `make run`
 and `make install` do, quitting it, or a crash ends every pane's process. Claude conversations resume
 (`claude --resume`), but work in flight does not.
 
 Settings › **Keep sessions running** avoids that: it runs each pane's process in [zmx](https://github.com/neurosnap/zmx),
-which keeps it alive and lets Launchy reconnect after a restart. It is off until you turn it on. It
-needs the zmx the build fetches, and Launchy only ever uses the copy next to its binary. A reboot or a
+which keeps it alive and lets Varnick reconnect after a restart. It is off until you turn it on. It
+needs the zmx the build fetches, and Varnick only ever uses the copy next to its binary. A reboot or a
 logout ends the sessions either way.
 
-The menu bar menu's **Restart Launchy** (just above Quit) restarts it without building, with `scripts/restart.sh`, so
+The menu bar menu's **Restart Varnick** (just above Quit) restarts it without building, with `scripts/restart.sh`, so
 the macOS permission grants a build would void stay. It asks first and lists the panes that would end, if any. If a
-build has run since Launchy started, the restart starts that build and macOS asks for the permissions again; the
+build has run since Varnick started, the restart starts that build and macOS asks for the permissions again; the
 question says so. The item is hidden when the checkout's `scripts/restart.sh` or the database can't be found from
-where Launchy runs, and a restart waits while a build is running.
+where Varnick runs, and a restart waits while a build is running.
 
 ## Defaults for a new install
 
@@ -90,7 +90,7 @@ where Launchy runs, and a restart waits while a build is running.
 - **Keep sessions running** is off (above), and so are Listening, Point at the screen, Screen access and the Phone page.
 - **`make install` leaves a skill link it didn't make alone** (above).
 
-A Mac that ran an earlier Launchy keeps what it stored. One that has Launchy's sessions file but never
+A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
 stored a Skip permissions choice keeps Skip permissions on (it is stored as on at the first launch of this
 version); turn it off in Settings.
 
@@ -98,7 +98,7 @@ version); turn it off in Settings.
 
 ### Peers
 
-Launchy on one Mac can pair with Launchy on another Mac, and with a headless host, over SSH with your own
+Varnick on one Mac can pair with Varnick on another Mac, and with a headless host, over SSH with your own
 keys. A session runs on one host and stays there; another Mac shows its live screen and can take over.
 Add a peer in Settings › Peers (Find Macs searches your tailnet, or add by address as `<user>@<host>`).
 The peer list and your SSH keys are the boundary: see [`SECURITY.md`](SECURITY.md). Settings › Peers also
@@ -107,13 +107,13 @@ shows each Mac's build and can upgrade it from `origin/main`, which fetches and 
 
 ### The Linux relay
 
-A headless host (a Linux machine with no Launchy app) runs Launchy's relay alone. Install it from a Mac, from this checkout:
+A headless host (a Linux machine with no Varnick app) runs Varnick's relay alone. Install it from a Mac, from this checkout:
 
 ```
 scripts/install-peer.sh <user>@<host> [--name NAME] [--page | --no-page] [--uninstall]
 ```
 
-The installer builds `Packages/LaunchyPeer` on the host, so the host needs:
+The installer builds `Packages/VarnickPeer` on the host, so the host needs:
 
 - **x86_64 Linux.** Any other architecture is refused.
 - **Swift from [swiftly](https://www.swift.org/install/linux/), installed by hand** at
@@ -138,42 +138,42 @@ that does and does not protect, including a mode in which any program on the Mac
 ### Listening
 
 Listening transcribes your microphone and what the Mac plays, on this Mac, into a text file for the day
-(`Launchy/transcripts/` under Application Support). It is off at each launch and needs macOS 26. macOS asks for
+(`Varnick/transcripts/` under Application Support). It is off at each launch and needs macOS 26. macOS asks for
 the microphone and system audio permissions the first time.
 
 ### Point at the screen
 
-With Hey Launchy on, Settings › Listening › **Point at the screen** lets you ask about what is in front of
-you ("Hey Launchy, where's the Allow button"). Launchy reads the elements of the window that has focus
+With Hey Varnick on, Settings › Listening › **Point at the screen** lets you ask about what is in front of
+you ("Hey Varnick, where's the Allow button"). Varnick reads the elements of the window that has focus
 through macOS Accessibility, in its own process, asks TypeSafe's Jev which one you mean, draws a big arrow
 and a sign on it that never takes focus or clicks, says what it is, and takes the arrow away a few seconds
 later. It needs the Accessibility permission, which Settings asks for and shows, and the relevance filter
-on TypeSafe with a key (see Privacy below for what is sent). With Launchy's own panel open and in front,
+on TypeSafe with a key (see Privacy below for what is sent). With Varnick's own panel open and in front,
 it looks in the panel first, as in any window, and reads the app behind it only when the thing isn't there;
 a terminal pane's text is not in the panel's elements, so it can't be pointed into. When the thing isn't among the window's
 elements, or the window is a Chrome page, whose content the elements don't hold, and Screen Recording is
-also granted, Launchy captures that window alone into memory and reads its text with Apple's text
+also granted, Varnick captures that window alone into memory and reads its text with Apple's text
 recognition on this Mac, so a Chrome page, a canvas app or a remote desktop can be pointed into. The
 picture is never written to disk, logged or sent; only the short lines of text it finds go on, as below.
-Without Screen Recording the elements' answer stands, and Launchy says it can't see inside Chrome's pages.
-A rebuild of Launchy may need either permission given again. The permissions are Launchy's, and every
+Without Screen Recording the elements' answer stands, and Varnick says it can't see inside Chrome's pages.
+A rebuild of Varnick may need either permission given again. The permissions are Varnick's, and every
 Claude session and shell in its panes gets them too, kept running in zmx or not: see [`SECURITY.md`](SECURITY.md).
 
 ### Screen access
 
 Settings › Claude › **Screen access** (off by default) gives the Claude sessions you start or restart in
-Launchy's panes three tools, from an MCP server named `launchy`: `look` at the controls of a window on your Mac,
+Varnick's panes three tools, from an MCP server named `varnick`: `look` at the controls of a window on your Mac,
 `point` at one with the same big arrow Point at the screen draws, signed with the session's name and its
 note, and `click`. A session that hits a setting it can't see can look, show you where to click, or click
-for you. The server is Launchy's own binary (`Launchy --mcp`) and only passes each call on: the running
-Launchy does the reading, drawing and clicking, with the code Hey Launchy uses. It needs Accessibility, and
+for you. The server is Varnick's own binary (`Varnick --mcp`) and only passes each call on: the running
+Varnick does the reading, drawing and clicking, with the code Hey Varnick uses. It needs Accessibility, and
 Screen Recording to read the text of a window that lists nothing or of a Chrome page; Settings asks for
 both. **A click happens without asking**: the arrow shows on the target for a second first, and there is no
 `type`. A session started with Skip permissions has no prompt before a tool at all; one without gets Claude
 Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while still asking
 for `click` (not checked). A session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the
 switch on; turning it off stops every session's tools at once. It is independent of Point at the screen
-and Hey Launchy. See Privacy below for what a session is shown, and [`SECURITY.md`](SECURITY.md).
+and Hey Varnick. See Privacy below for what a session is shown, and [`SECURITY.md`](SECURITY.md).
 
 ### TypeSafe
 
@@ -189,7 +189,7 @@ These download from Hugging Face when you ask (Settings), and run on this Mac wi
 | Model | Used for | Download |
 |---|---|---|
 | Qwen3-Embedding-0.6B (8-bit) | Search by meaning | about 650 MB |
-| Gemma 4 E2B (4-bit) | Hey Launchy's answers | about 3.6 GB |
+| Gemma 4 E2B (4-bit) | Hey Varnick's answers | about 3.6 GB |
 
 Their licences are in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
@@ -198,22 +198,22 @@ says what that sends.
 
 "On this Mac" is also a choice for the relevance filter. It runs a small checkpoint distilled from
 TypeSafe's judgments on a person's own history, and that checkpoint is not published: the choice needs
-you to import one you have made yourself, and Launchy has no recipe to make it. The two evaluation commands
-(`Launchy --rerank-eval` and `Launchy --search-eval`) need labelled data of your own, so they are of use to
-someone developing the filter, not to someone using Launchy.
+you to import one you have made yourself, and Varnick has no recipe to make it. The two evaluation commands
+(`Varnick --rerank-eval` and `Varnick --search-eval`) need labelled data of your own, so they are of use to
+someone developing the filter, not to someone using Varnick.
 
 ## Things that stay as they are
 
-- **The database** is a SQLite file in this checkout's `db/` folder (`db/launchy.sqlite`), where `make run`
-  and `make install` point Launchy. The `LAUNCHY_DB` environment variable overrides the path. `make
+- **The database** is a SQLite file in this checkout's `db/` folder (`db/varnick.sqlite`), where `make run`
+  and `make install` point Varnick. The `VARNICK_DB` environment variable overrides the path. `make
   clean` removes `.build/` and keeps `db/`, since it holds history Chrome may have already dropped.
-- **`.env` is read from Launchy's working directory**, which is this checkout under `make run` and
+- **`.env` is read from Varnick's working directory**, which is this checkout under `make run` and
   `make install`.
 - **Only Chrome's history** is read, and the lookups for `bun` and `tailscale` use the fixed locations above.
 
 ## Privacy
 
-Launchy works on your own data, mostly on your Mac. What it reads, records and sends:
+Varnick works on your own data, mostly on your Mac. What it reads, records and sends:
 
 - **It reads the History of every Chrome profile** and copies it into a local archive that only grows,
   and mirrors every profile's bookmarks beside it.
@@ -230,14 +230,14 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   description, and stores the description. Those requests go to the sites you visited.
 - **It records the microphone and the Mac's system audio while Listening is on,** and writes what it
   transcribes, on this Mac, to the day's transcript file.
-- **Choosing TypeSafe is consent to send what a feature backed by it needs,** Launchy's own panel and the names
+- **Choosing TypeSafe is consent to send what a feature backed by it needs,** Varnick's own panel and the names
   of your sessions and projects included, and each new kind of data is listed here and in SECURITY.md. Keeping
   things private is the relevance filter's **On this Mac** setting: with it, or with the filter off, none of
   the TypeSafe sending below happens.
 - **With a TypeSafe key and the relevance filter on TypeSafe,** it sends each search to TypeSafe's API
   with the title, site and page description of up to 20 results. It does not send full addresses or tags.
-  The filter is off by default (above). With Hey Launchy on, it also sends TypeSafe's Jev the text you
-  say after "Hey Launchy", to choose where to look, with no titles, names or results. Then the request is
+  The filter is off by default (above). With Hey Varnick on, it also sends TypeSafe's Jev the text you
+  say after "Hey Varnick", to choose where to look, with no titles, names or results. Then the request is
   searched and filtered as a typed search is, so its search words and the title, site and page description
   of its first 20 pages go to TypeSafe too. This starts before you have quite finished, so if you go on
   speaking, words said so far may be sent and then discarded. With the filter On this Mac or off, nothing leaves.
@@ -246,13 +246,13 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   front and, for each of its first 255 elements, the label, kind and nearby text. That is the window's
   visible text, not only that near its controls: a message list's subjects and senders, an open mail's body in
   Mail, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. The elements never
-  hold what is typed in a field. None of this goes to a model server. With Launchy's panel open and in front,
+  hold what is typed in a field. None of this goes to a model server. With Varnick's panel open and in front,
   the panel is such a window too, and is read first: its session titles, folders, projects, Macs' names, page
   titles and problem titles go the same way. A terminal pane's text is not among them. If the elements don't have the thing,
   and Screen Recording is granted, a picture of the window alone is also read on this Mac, and its short
   lines of text (at most 6 words and 60 characters each, at most 150) go too, so more of the window's text
   leaves: every short line, such as a message list's subjects and senders or a chat's names. Lines inside a
-  text field the elements find (a native one, or a web page's in Safari or an Electron app), and inside the field with focus, are dropped. But a field Launchy
+  text field the elements find (a native one, or a web page's in Safari or an Electron app), and inside the field with focus, are dropped. But a field Varnick
   can't place is not: a Chrome page's, a canvas app's, a remote desktop's or a virtual machine's, one past
   the limits of the read, or one that moved before the picture was taken. So typed text of 6 words or
   fewer there may reach TypeSafe. The picture, the lines' positions and longer lines never leave the Mac.
@@ -263,16 +263,16 @@ Launchy works on your own data, mostly on your Mac. What it reads, records and s
   subjects and senders or a page's text in Safari, and, for a window that lists nothing or a Chrome page,
   its short lines of text read from a picture of the window on this Mac (at most 6 words and 60 characters
   each, at most 150). The controls never hold what is typed in a field, and a password field is not read. But
-  a line in a field Launchy can't place is not dropped (see Point at the screen above), so typed text of 6 words or
+  a line in a field Varnick can't place is not dropped (see Point at the screen above), so typed text of 6 words or
   fewer there may be shown to the session, and so reach Anthropic. The picture is never written, logged or
   sent. None of this goes to TypeSafe, and the TypeSafe filter has no part in it. Clicks happen without
-  asking. Launchy's own panel is never read or clicked by it.
+  asking. Varnick's own panel is never read or clicked by it.
 - **It downloads its models from Hugging Face** when you ask.
 - **With Server chosen for Search embeddings or Text generation** (Settings › Models, off until you
   choose it), it sends to an OpenAI-compatible server you name, on your tailnet or this Mac and nowhere
   else: the searches you type, the prompts typed in the panel, the text of every page and session it
   embeds, which for a session includes Claude's last reply to each prompt (the paired Macs' sessions included). With
-  Hey Launchy on, the words you say after "Hey Launchy" and the request's search words go to the
+  Hey Varnick on, the words you say after "Hey Varnick" and the request's search words go to the
   embedding server, and the request and the titles, sites, folders and descriptions of the results it reads out
   go to the Text generation server; words said before you finished may be sent and then discarded. A key
   for that server is kept in the Keychain. Nothing goes to a third party.
@@ -292,7 +292,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md). The design is written down in [`docs/`
 
 ## Licence
 
-Launchy is licensed under the Apache License 2.0 (see [`LICENSE`](LICENSE)).
+Varnick is licensed under the Apache License 2.0 (see [`LICENSE`](LICENSE)).
 
 Copyright 2026 Zabaca
 

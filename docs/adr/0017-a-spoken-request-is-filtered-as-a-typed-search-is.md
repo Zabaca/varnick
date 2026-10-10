@@ -25,9 +25,9 @@ When the filter judged any page of the chosen kind relevant, only those pages ar
 ## Consequences
 
 - With the filter on TypeSafe, every spoken request sends page rows to a third party. The filter's backend is the one switch for what TypeSafe sees, typed or spoken. Settings, the README and SECURITY.md say so.
-- The filter is a pass the user waits on, shown in the timing line and in `Launchy --ask` with who filtered. On this Mac a spoken request can load the relevance model beside Gemma and the embedder.
+- The filter is a pass the user waits on, shown in the timing line and in `Varnick --ask` with who filtered. On this Mac a spoken request can load the relevance model beside Gemma and the embedder.
 - A page wrongly judged irrelevant is not heard when another was judged relevant. The panel still shows it under "Less relevant"; speech has no room for that.
-- A change to the panel's passes now reaches Hey Launchy without being copied by hand. The panel must behave as it did: `--search-eval` and `--search` before and after.
+- A change to the panel's passes now reaches Hey Varnick without being copied by hand. The panel must behave as it did: `--search-eval` and `--search` before and after.
 - The wording of the answer prompt is tuned for a small model and brittle: a one-clause change flipped answers to requests that nothing fits and to requests for several. Re-check with `--ask` after touching it.
 - Amends ADR 0015 and ADR 0016.
 - Decide, search and filter start when the request's last final result arrives and run through the wait that ends it (`SpokenRequests.hold`); only the answer and the speech wait for the end. More speech cancels the run and starts another on the new text, so a partial request may be sent to Jev, and its search words and pages to TypeSafe, and then discarded. It is the same data as an unhurried request sends, for text that was not the whole request.

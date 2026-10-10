@@ -1,7 +1,7 @@
 # Contributing
 
-Launchy is a macOS app written in Swift, with a small Bun server for the Phone page. This is how to
-build it, check a change and work the way the repository does. [`README.md`](README.md) says what Launchy
+Varnick is a macOS app written in Swift, with a small Bun server for the Phone page. This is how to
+build it, check a change and work the way the repository does. [`README.md`](README.md) says what Varnick
 is and what it needs.
 
 ## Build and check
@@ -12,7 +12,7 @@ is and what it needs.
   name or notary credential goes in a tracked file.
 - **`bun test`**, run in `PhonePage/`, tests the Phone page's server and its page.
 - **There is no Swift test target.** Swift changes are checked by `make build` and then by hand in a running
-  Launchy; say in your change what you checked and what you didn't.
+  Varnick; say in your change what you checked and what you didn't.
 
 How code here is wired and styled is in [`CODING_STANDARDS.md`](CODING_STANDARDS.md). What a change can
 break even when it follows them is in [`docs/agents/where-it-breaks.md`](docs/agents/where-it-breaks.md).
@@ -21,9 +21,9 @@ The words the code and docs use are in [`CONTEXT.md`](CONTEXT.md), and the decis
 
 ## Restarting ends sessions
 
-`make run` and `make install` restart Launchy, which ends every Claude, terminal and app pane that isn't
+`make run` and `make install` restart Varnick, which ends every Claude, terminal and app pane that isn't
 kept in zmx (README, "Restarting ends sessions that aren't kept in zmx"). Leave restarts to the user,
-and don't run one from inside a Claude session running in the Launchy you are restarting.
+and don't run one from inside a Claude session running in the Varnick you are restarting.
 
 ## How work is planned
 

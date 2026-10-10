@@ -1,4 +1,4 @@
-# Launchy
+# Varnick
 
 ## Agent skills
 
@@ -16,12 +16,12 @@ Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/age
 
 ## Writing docs, agents and skills
 
-Each meaning lives in one place; everywhere else points to it. Agents in `.claude/agents/` say only their role, the skills they load and what differs for Launchy, and point to `docs/agents/`, `CODING_STANDARDS.md` and the rest for everything else. Leave to the environment what it already answers (the source tree, the `Makefile`, `git log`); write down only what looking can't find: conventions, reasons, gotchas. When creating or editing any of these, load `mattpocock-skills:writing-for-agents`.
+Each meaning lives in one place; everywhere else points to it. Agents in `.claude/agents/` say only their role, the skills they load and what differs for Varnick, and point to `docs/agents/`, `CODING_STANDARDS.md` and the rest for everything else. Leave to the environment what it already answers (the source tree, the `Makefile`, `git log`); write down only what looking can't find: conventions, reasons, gotchas. When creating or editing any of these, load `mattpocock-skills:writing-for-agents`.
 
 ## Working here
 
 - Build and run through the `Makefile` (`make build`, `make run`): it also codesigns and fetches the prebuilt `mlx.metallib` that plain `swift build` lacks.
-- Restarting Launchy ends every Claude session open in it, possibly the one you're running in. `make run` restarts it however it was started. `launchctl kickstart -k` restarts only an instance the LaunchAgent started, and beside one `make run` started it starts a second Launchy. Leave restarts to the user unless they ask for one.
+- Restarting Varnick ends every Claude session open in it, possibly the one you're running in. `make run` restarts it however it was started. `launchctl kickstart -k` restarts only an instance the LaunchAgent started, and beside one `make run` started it starts a second Varnick. Leave restarts to the user unless they ask for one.
 - No test target yet: verification is `make build`, then checking by hand after a restart.
 
 ## Coding standards
