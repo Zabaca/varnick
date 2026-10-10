@@ -600,14 +600,18 @@ struct SettingsView: View {
                         }
                         SettingRow(title: "Point at the screen",
                                    detail: "Ask \"Hey Varnick, where's the Allow button\" and Varnick draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Varnick can't place. With Varnick's panel open, it is read too, so its session, project, Mac and page names go. A rebuild may need both permissions again. Every session and shell in Varnick's panes gets them too, kept running in zmx or not: see SECURITY.md.") {
-                            if !settings.heyVarnick {
-                                Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                            } else if !screenGateOpen {
-                                Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
-                                    .buttonStyle(.link)
-                                    .font(.system(size: 12))
+                            // Above the permissions in one column, at its natural width: beside them the note would get no width.
+                            VStack(alignment: .trailing, spacing: 6) {
+                                if !settings.heyVarnick {
+                                    Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
+                                } else if !screenGateOpen {
+                                    Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
+                                        .buttonStyle(.link)
+                                        .font(.system(size: 12))
+                                }
+                                ScreenPermissionsView(askRestart: askRestart)
                             }
-                            ScreenPermissionsView(askRestart: askRestart)
+                            .fixedSize()
                             Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !screenGateOpen))
                         }
@@ -960,7 +964,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 }
 
 /// Varnick's Accessibility and Screen Recording, with their Grant buttons: the permissions Point at the screen and Screen access both
-/// need. One view for both rows, since the buttons' state (a Grant pressed, the binary shown in Finder) is the process's, not a row's.
+/// need. One view for both rows, since the buttons' state (a Grant pressed, Varnick shown in Finder) is the process's, not a row's.
 struct ScreenPermissionsView: View {
     /// Opens the Restart Varnick card (`LauncherModel.askRestart`): a Screen Recording grant applies after a restart.
     let askRestart: () -> Void
@@ -968,11 +972,13 @@ struct ScreenPermissionsView: View {
     @State private var accessibilityGranted = ScreenReader.isTrusted
     /// Whether Varnick has Screen Recording, for the text read from a picture of the window.
     @State private var screenRecordingGranted = ScreenText.hasAccess
-    /// Grant was pressed in this process (`grantAsked`), and Varnick was shown in Finder (`binaryRevealed`), for each permission.
-    @State private var accessibilityGrantAsked = ScreenReader.grantAsked
-    @State private var accessibilityBinaryRevealed = ScreenReader.binaryRevealed
+    /// Varnick was shown in Finder by a Grant press in this process (`PermissionGrant.revealed`), for each permission.
+    @State private var accessibilityRevealed = PermissionGrant.revealed.contains(.accessibility)
+    @State private var screenRevealed = PermissionGrant.revealed.contains(.screenRecording)
+    /// The Screen Recording Grant was pressed in this process (`ScreenText.grantAsked`).
     @State private var screenGrantAsked = ScreenText.grantAsked
-    @State private var screenBinaryRevealed = ScreenText.binaryRevealed
+    /// The widest a hint grows before it wraps.
+    private static let hintWidth: CGFloat = 260
 
     var body: some View {
         // One column, each permission a line of status and buttons at their natural width, and the hints wrapping under it: in a row
@@ -984,15 +990,12 @@ struct ScreenPermissionsView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(accessibilityGranted ? Color.secondary : Color.orange)
                     if !accessibilityGranted {
-                        Button("Grant…") {
-                            ScreenReader.askForAccess()
-                            accessibilityGrantAsked = true
-                        }
+                        Button("Grant…") { ScreenReader.askForAccess() }
                     }
                 }
                 .fixedSize()
-                if !accessibilityGranted, accessibilityGrantAsked, accessibilityBinaryRevealed {
-                    hint("Drag Varnick into the list, or use + and pick it")
+                if !accessibilityGranted, accessibilityRevealed {
+                    hint(PermissionGrant.revealHint)
                 }
             }
             VStack(alignment: .trailing, spacing: 3) {
@@ -1012,22 +1015,19 @@ struct ScreenPermissionsView: View {
                 }
                 .fixedSize()
                 if !screenRecordingGranted, screenGrantAsked {
-                    if screenBinaryRevealed {
-                        hint("Drag Varnick into the list, or use + and pick it")
+                    if screenRevealed {
+                        hint(PermissionGrant.revealHint)
                     }
                     hint("After switching it on, restart Varnick")
                 }
             }
         }
-        // Ahead of the description beside it, which wraps instead.
-        .layoutPriority(1)
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             accessibilityGranted = ScreenReader.isTrusted
-            accessibilityGrantAsked = ScreenReader.grantAsked
-            accessibilityBinaryRevealed = ScreenReader.binaryRevealed
+            accessibilityRevealed = PermissionGrant.revealed.contains(.accessibility)
             screenRecordingGranted = ScreenText.hasAccess
             screenGrantAsked = ScreenText.grantAsked
-            screenBinaryRevealed = ScreenText.binaryRevealed
+            screenRevealed = PermissionGrant.revealed.contains(.screenRecording)
         }
     }
 
@@ -1037,7 +1037,7 @@ struct ScreenPermissionsView: View {
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.trailing)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: 260, alignment: .trailing)
+            .frame(maxWidth: Self.hintWidth, alignment: .trailing)
     }
 }
 

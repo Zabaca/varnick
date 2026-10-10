@@ -32,25 +32,23 @@ enum ScreenReader {
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
-    /// How long the Grant button waits, after the prompt and the pane, before it decides the list still lacks Varnick.
+    /// How long a repeated Grant press waits, after the prompt and the pane, before it decides the list still lacks Varnick.
     static let grantWait: Duration = .seconds(1)
-    /// The Grant button was pressed in this process.
-    @MainActor private(set) static var grantAsked = false
-    /// Varnick was shown in Finder because the list still lacked it (Settings says to drag it in).
-    @MainActor private(set) static var binaryRevealed = false
 
-    /// The Settings Grant button, the only place that asks macOS for Accessibility, in this order. The prompt shows once per app
-    /// and afterwards does nothing, so: (a) the prompt; (b) the pane; (c) with Varnick still not trusted `grantWait` later, Varnick's
-    /// app (outside one, the binary) selected in Finder, to drag into the list or pick with +. Same sequence as `ScreenText.askForAccess`.
+    /// The Settings Grant button, the only place that asks macOS for Accessibility: (a) the prompt, (b) the pane. macOS shows the prompt
+    /// at most once, and it returns at once, so on the first press in a process the user is left with the prompt and the pane (the prompt
+    /// adds Varnick's row, switched off). From the second press, `grantWait` later, with Varnick still not trusted, (c) Varnick selected
+    /// in Finder (`PermissionGrant.revealIfMissing`), for a list the prompt will not put it back in. `ScreenText.askForAccess` is the
+    /// Screen Recording counterpart.
     @MainActor
     static func askForAccess() {
-        grantAsked = true
+        let pressedBefore = PermissionGrant.noteAsked(.accessibility)
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         PermissionGrant.openPane("Privacy_Accessibility")
+        guard pressedBefore else { return }
         Task { @MainActor in
             try? await Task.sleep(for: grantWait)
-            guard !isTrusted, PermissionGrant.revealVarnick() else { return }
-            binaryRevealed = true
+            PermissionGrant.revealIfMissing(.accessibility, granted: isTrusted)
         }
     }
 

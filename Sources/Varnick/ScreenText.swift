@@ -19,13 +19,12 @@ enum ScreenText {
     /// The Grant button was pressed in this process. A grant switched on afterwards applies only after a restart and preflight can't tell
     /// that from "not granted", so Settings offers Restart Varnick from then on.
     @MainActor private(set) static var grantAsked = false
-    /// Varnick's binary was shown in Finder because the list still lacked it (Settings says to drag it in).
-    @MainActor private(set) static var binaryRevealed = false
 
     /// The Settings Grant button, the only place that asks macOS for Screen Recording, in this order. macOS answers
     /// `CGRequestScreenCaptureAccess` silently after the first time and may answer ScreenCaptureKit "declined" at once, so each step may do
     /// nothing: (a) the request; (b) one `SCShareableContent` call, which on a Mac never asked shows the prompt and lists the app; (c) the
-    /// pane; (d) with the grant still missing, Varnick's binary (in the app, the app) selected in Finder, to drag into the list or pick with +.
+    /// pane; (d) with the grant still missing, Varnick selected in Finder (`PermissionGrant.revealIfMissing`). `ScreenReader.askForAccess`
+    /// is the Accessibility counterpart.
     @MainActor
     static func askForAccess() {
         grantAsked = true
@@ -33,8 +32,7 @@ enum ScreenText {
         Task { @MainActor in
             await requestListing()
             PermissionGrant.openPane("Privacy_ScreenCapture")
-            guard !hasAccess, PermissionGrant.revealVarnick() else { return }
-            binaryRevealed = true
+            PermissionGrant.revealIfMissing(.screenRecording, granted: hasAccess)
         }
     }
 
