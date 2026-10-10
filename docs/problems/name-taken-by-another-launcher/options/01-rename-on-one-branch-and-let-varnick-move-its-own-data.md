@@ -135,7 +135,7 @@ It goes in the app's entry point, after the relay's and the MCP server's early e
      - The current step, which copies from the executable-named domain, is removed. On one Mac that older domain is still on disk and would be copied instead.
   3. **Move the support folder.** If `…/Varnick` doesn't exist and `…/Launchy` does, rename it. Then remove the moved `launchy-peer` link, the stale socket, and the `scratch` link left by an earlier migration, since every pane that needed it has just ended.
      - No link is left at the old name. A Launchy relay reached through one would answer from the old domain.
-     - If both folders exist, nothing is merged. The step logs it and leaves it to the user.
+     - If both folders exist, nothing is merged. The step logs it and leaves it to the user. When `…/Varnick` then has no sessions file, the start stops with an `error:` line instead, since it would start empty (added after the first review).
      - The sibling is `PaneFolder.migrateOldScratchFolder(in:)`. Like it, the step takes the folder as a parameter so a check can run it on a temporary one.
   4. **Copy the web data.** Copy WebKit's `com.zabaca.launchy` folder to the new id's, as the current step does for the older name.
   5. **Rename the database.** If the chosen database path doesn't exist and `launchy.sqlite` sits beside it, open it, checkpoint its WAL into the file (truncate), close it, then rename it and drop the `-shm` file.
@@ -157,7 +157,7 @@ Short-lived; each says in a comment that the cleanup ticket removes it.
   - This stops Upgrade, Upgrade all and `make run` on a Mac that hasn't been cut over.
   - A worktree's build folder starts empty, so builders aren't affected.
   - An old Mac's Upgrade will already have fast-forwarded its checkout. Its build then fails, no stamp is written, and its Restart stays refused.
-- **Stop and restart.** `make stop` and the restart script also stop a Launchy binary, anchored the same way as today's pattern.
+- **Stop and restart.** `make stop` and the restart script also stop a Launchy binary, but only by this checkout's absolute path (the LaunchAgent's form). A Launchy started by `make run` has the relative argv `.build/release/Launchy`, which would match from every checkout, so `make stop` will not stop it: the user quits Launchy from its menu at cutover step 2.
 - **Restart with nothing to start** (decided 2026-10-09). The restart script refuses before stopping anything when this checkout has no Varnick binary, and logs why.
   - The status menu's Restart runs the checkout's script with no build, and so does a peer's Restart (verified at 7316d5f). On the Mac the merge lands on, or one whose checkout an old Upgrade fast-forwarded, the new script would otherwise stop Launchy and start nothing.
 - **Install.** `make install` and `make uninstall` also boot out the `com.zabaca.launchy` LaunchAgent and remove its plist.
@@ -242,7 +242,7 @@ From a Mac:
 From Terminal.app, not a pane, because this ends every session in the app:
 
 1. **Wait for a quiet moment.** Let background work finish, and mark Done what should close.
-2. **Stop Launchy.** Its zmx sessions keep running when Keep sessions running is on, which is expected: Varnick ends them.
+2. **Quit Launchy from its menu** (`make stop` will not stop one started by `make run`). Its zmx sessions keep running when Keep sessions running is on, which is expected: Varnick ends them.
 3. **Update the checkout.** Point `origin` at the new URL, fetch, then fast-forward main to origin/main. A branch still tied to an option has its git key renamed by hand (none is expected; see Further Notes).
 4. **Remove Launchy's binary and its good copy.** This lifts the build guard. If the checkout's folder is renamed now (see Open), do that first and `make clean` instead.
 5. **`make install`.** It builds Varnick, removes the old LaunchAgent, installs and starts the new one, and links the skill. Varnick's first launch migrates. Read its lines in the new log.

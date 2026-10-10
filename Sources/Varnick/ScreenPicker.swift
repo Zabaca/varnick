@@ -22,9 +22,9 @@ struct ScreenPicker {
         var isConfident: Bool { present >= ScreenPicker.pointFrom }
     }
 
-    // Jev's wording keeps the old name, word for word as measured, until the rename's measurement of "Varnick" in its place is
-    // applied (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "The code rename").
-    private static let context = "The person said `request` aloud to Launchy, a launcher on their Mac, about the window in front of them, titled `window`. Launchy will point an arrow at the element of that window they mean. Each element is described by its label, its kind in parentheses, the groups it sits in and the text beside it."
+    // The wording was measured with the old name; "Varnick" in its place moved no decision rate beyond its confidence interval, so
+    // `pointFrom` keeps its value (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "The code rename").
+    private static let context = "The person said `request` aloud to Varnick, a launcher on their Mac, about the window in front of them, titled `window`. Varnick will point an arrow at the element of that window they mean. Each element is described by its label, its kind in parentheses, the groups it sits in and the text beside it."
     private static let presentQuestion = "Is the thing the person asks about in `request` one of `elements`?"
     private static let presentTrue = "One of `elements` is the control, item or text the person asks about."
     private static let presentFalse = "None of `elements` is what the person asks about: it is not in this window."

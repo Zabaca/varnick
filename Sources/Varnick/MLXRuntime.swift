@@ -3,9 +3,8 @@ import MLX
 
 /// What every MLX model in the process shares (the embedder, the local reranker and text generation).
 enum MLXRuntime {
-    /// MLX aborts the whole app when it can't find its Metal shaders (a plain `swift build`; `make build` adds them), so nothing touches
-    /// MLX without this. The shaders are the resource folder's `mlx.metallib`; when it is there, MLX is told the path before its first
-    /// call, so it doesn't guess at the binary's folder.
+    /// MLX aborts the app without its Metal shaders (a plain `swift build` has none), so nothing touches MLX without this.
+    /// They are the resource folder's `mlx.metallib`, and MLX is told that path before its first call.
     static var hasMetalLibrary: Bool { metalLibraryFound }
     private static let metalLibraryFound: Bool = {
         let metallib = ResourceFolder.current.folder.appendingPathComponent("mlx.metallib")

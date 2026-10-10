@@ -758,8 +758,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--search-eval") {
 // and `PeerLink.refresh`. Short-lived, removed at the rename's Cleanup
 // (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md).
 if let failure = AppStartMigration.run() {
-    FileHandle.standardError.write(Data((failure + "\n").utf8))
-    exit(1)
+    stopStart(failure)
 }
 
 // One Varnick per account. After the migration above, which makes the support folder by moving Launchy's: taken earlier, this

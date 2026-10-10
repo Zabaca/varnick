@@ -49,13 +49,14 @@ struct SpokenRouter {
         return URLSession(configuration: config)
     }()
 
-    // Jev's wording keeps the old name, word for word as measured, until the rename's measurement of "Varnick" in its place is
-    // applied (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "The code rename").
-    private static let context = "The person said `request` aloud to Launchy, a launcher on their Mac. Launchy answers by searching one of three places: the web pages the person visited in their browser, the pages they bookmarked, or their own Claude Code sessions (the coding work they did with Claude on their own software projects)."
+    // The wording was measured with the old name; "Varnick" in its place moved no decision rate beyond its confidence interval, so
+    // `offTopicFrom`, `alsoSessionsFrom` and the questions below keep their values (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "The code rename").
+    private static let context = "The person said `request` aloud to Varnick, a launcher on their Mac. Varnick answers by searching one of three places: the web pages the person visited in their browser, the pages they bookmarked, or their own Claude Code sessions (the coding work they did with Claude on their own software projects)."
 
-    /// With the screen, word for word as measured: arm J4p of the screen-pointing eval (agent-lab 20fb286). The `point` action is
-    /// there so that a request about the screen is not read as "other" (the weather, a timer) and refused; it is not read itself.
-    private static let contextWithScreen = "The person said `request` aloud to Launchy, a launcher on their Mac. Launchy answers by searching one of four places: the web pages the person visited in their browser, the pages they bookmarked, their own Claude Code sessions (the coding work they did with Claude on their own software projects), or the window on their screen right now (its buttons, fields and other controls, so Launchy can point at one)."
+    /// With the screen, as measured (arm J4p of the screen-pointing eval, agent-lab 20fb286; "Varnick" for the old name, which
+    /// moved nothing). The `point` action is there so that a request about the screen is not read as "other" (the weather, a
+    /// timer) and refused; it is not read itself.
+    private static let contextWithScreen = "The person said `request` aloud to Varnick, a launcher on their Mac. Varnick answers by searching one of four places: the web pages the person visited in their browser, the pages they bookmarked, their own Claude Code sessions (the coding work they did with Claude on their own software projects), or the window on their screen right now (its buttons, fields and other controls, so Varnick can point at one)."
 
     private static let screenCriterion = "What is on the person's screen right now: the buttons, switches, fields, menus and icons in the window in front of them. Pick this when the person asks where something is, which one to press or what something is in the app they are looking at, rather than about a page, bookmark or session from before."
 
@@ -82,12 +83,12 @@ struct SpokenRouter {
         return [
             "source": [
                 "type": "choice",
-                "instructions": ["context": context, "question": "Where should Launchy look to answer `request`?"],
+                "instructions": ["context": context, "question": "Where should Varnick look to answer `request`?"],
                 "criteria": sources,
             ],
             "action": [
                 "type": "choice",
-                "instructions": ["context": context, "question": "What does the person want Launchy to do with `request`?"],
+                "instructions": ["context": context, "question": "What does the person want Varnick to do with `request`?"],
                 "criteria": actions,
             ],
         ]
