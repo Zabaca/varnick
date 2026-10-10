@@ -296,6 +296,12 @@ enum AppCatalog {
         return try? JSONDecoder().decode(Marker.self, from: data)
     }
 
+    /// Whether `folder` is Varnick's own installed copy of the catalog app `folderName`: a real folder whose marker names that very
+    /// folder. A copy the user renamed (`my-scratch`) keeps a marker naming `scratch`, so it is not.
+    static func isInstalledCopy(_ folder: URL, folderName: String) -> Bool {
+        state(of: folder, folderName: folderName) == .on
+    }
+
     /// Varnick's only if it is a real folder (not a link) and its marker names this very folder.
     private static func state(of folder: URL, folderName: String) -> State {
         guard exists(folder) else { return .off }

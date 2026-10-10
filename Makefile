@@ -123,7 +123,7 @@ phone-page:
 	rsync -a --delete --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/' PhonePage/ $(PHONE_PAGE_DIR)/
 
 apps-catalog:
-	scripts/copy-catalog.sh $(APPS_CATALOG_DIR)
+	scripts/copy-catalog.sh $(CURDIR)/$(APPS_CATALOG_DIR)
 
 # Offline checks of every catalog entry (scripts/check-apps.sh; the rules are in CONTRIBUTING). `app-guard` runs it, so a release
 # never ships a broken entry. `make check-apps APPS=<folder>` checks another folder.
@@ -296,7 +296,7 @@ app-bundle: app-guard
 	cp -c .build/release/zmx $(APP)/Contents/MacOS/zmx
 	cp -c .build/release/mlx.metallib $(APP)/Contents/Resources/mlx.metallib
 	rsync -a PhonePage/ $(APP)/Contents/Resources/PhonePage/ --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/'
-	scripts/copy-catalog.sh $(APP)/Contents/Resources/apps
+	scripts/copy-catalog.sh $(CURDIR)/$(APP)/Contents/Resources/apps
 	cp .build/release/build-stamp $(APP)/Contents/Resources/build-stamp
 	mkdir -p $(APP)/Contents/Resources/skills
 	cp -RL .claude/skills/custom-apps $(APP)/Contents/Resources/skills/custom-apps
