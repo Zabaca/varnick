@@ -52,7 +52,7 @@ export type ClientMessage =
   | { t: "bin"; data: Uint8Array }
   | { t: "resize"; cols: number; rows: number };
 
-/** The most one message may type: a paste from the compose box, not a flood. */
+/** The most one message may type: a paste, not a flood. */
 export const inputLimit = 256 << 10;
 
 export function parseClient(text: string): ClientMessage | null {

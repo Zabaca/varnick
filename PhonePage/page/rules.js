@@ -37,7 +37,7 @@ export function closeAction(code) {
   return "reconnect";
 }
 
-/** The key bar's buttons, by name. */
+/** The key bar's buttons, by name: what the phone's own keyboard lacks (Enter and paste come from it, Ctrl+C from the Ctrl key). */
 export const keys = {
   esc: "\x1b",
   tab: "\t",
@@ -46,8 +46,6 @@ export const keys = {
   down: "\x1b[B",
   left: "\x1b[D",
   right: "\x1b[C",
-  interrupt: "\x03",
-  enter: "\r",
 };
 
 /** What the sticky Ctrl makes of one typed character: its control code, or null when it makes nothing (it then stays on). */
