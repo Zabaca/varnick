@@ -36,6 +36,13 @@ ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SI
 # names it, which would kill a session that should survive.
 VARNICK_PROCESS := ^($(shell pwd -P)/)?\.build/release/Varnick$$
 
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): a Mac still on
+# Launchy crosses by hand, from a terminal outside the app. Its binary is matched the same anchored way, by path only, so stop and
+# restart end it too. The old LaunchAgent is booted out and its plist removed by install and uninstall.
+LAUNCHY_PROCESS := ^($(shell pwd -P)/)?\.build/release/Launchy$$
+OLD_LABEL := com.zabaca.launchy
+OLD_PLIST := $(HOME)/Library/LaunchAgents/$(OLD_LABEL).plist
+
 SKILL_LINK := $(HOME)/.claude/skills/custom-apps
 SKILL_TARGET := $(CURDIR)/.claude/skills/custom-apps
 
@@ -61,7 +68,12 @@ GOOD_COPY := .build/release/Varnick.good
 # A build that fails leaves the last good binary where it was, so a restart never starts a relinked, unsigned one: when the
 # build stamp is no older than the binary (a good build), a clone of the binary is put back if any step fails. A build that was
 # interrupted (^C, a kill) left its clone behind: the next build puts it back first, before it takes a new one.
+#
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): it fails first when this checkout still holds Launchy's binary or its good copy,
+# which stops Upgrade, Upgrade all and `make run` on a Mac that hasn't been cut over. A worktree's build folder starts empty.
 build:
+	@if [ -e .build/release/Launchy ] || [ -e .build/release/Launchy.good ]; then \
+	  echo "error: this checkout still has Launchy's binary in .build/release. Stop Launchy, remove the old binary (rm -f .build/release/Launchy .build/release/Launchy.good) or run make clean (it keeps db/), then follow the cutover: docs/problems/name-taken-by-another-launcher, option 01, \"Cutover: each Mac\"." >&2; exit 1; fi
 	@if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Varnick; echo "restored the build an interrupted one left"; fi; if [ -f .build/release/Varnick ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Varnick -nt $(BUILD_STAMP) ]; then cp -c .build/release/Varnick $(GOOD_COPY); fi
 	@[ ! Info.plist -nt .build/release/Varnick ] || rm -f .build/release/Varnick
 	@$(MAKE) --no-print-directory build-steps || { \
@@ -150,6 +162,7 @@ run: build
 
 stop:
 	-@pkill -a -f '$(VARNICK_PROCESS)' || true
+	-@pkill -a -f '$(LAUNCHY_PROCESS)' || true
 
 # Start at login via a LaunchAgent that runs this repo's release build (so `make build`
 # updates what the next login starts). Also starts it now, and links the custom-apps skill into
@@ -161,11 +174,15 @@ install: build stop
 	    -e 's|@DB@|$(CURDIR)/$(DB)|g' -e 's|@LOG@|$(LOG)|g' \
 	    scripts/varnick.plist.in > $(PLIST)
 	plutil -lint $(PLIST)
+	-@launchctl bootout $(DOMAIN)/$(OLD_LABEL) 2>/dev/null || true
+	rm -f $(OLD_PLIST)
 	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
 	launchctl bootstrap $(DOMAIN) $(PLIST)
 	@$(MAKE) --no-print-directory skill-link
 
 uninstall:
+	-@launchctl bootout $(DOMAIN)/$(OLD_LABEL) 2>/dev/null || true
+	rm -f $(OLD_PLIST)
 	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
 	rm -f $(PLIST)
 	@$(MAKE) --no-print-directory skill-unlink

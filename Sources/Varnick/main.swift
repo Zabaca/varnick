@@ -513,28 +513,11 @@ if CommandLine.arguments.contains("--mcp") {
     exit(ScreenMCP.run(pane: pane))
 }
 
-// Short-lived, removed by the cleanup ticket (`MacNotMoved`): every other mode, the app's start included, refuses on a Mac
-// still running Launchy, until the first-launch migration lands and makes the app's start move it instead.
-if let refusal = MacNotMoved.refusal() {
+// Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): every command-line mode (`MacNotMoved`) refuses on a Mac still running Launchy.
+// The app's start, which has no `--` argument, doesn't: it migrates instead, at the end of this file.
+if !MacNotMoved.isAppStart(CommandLine.arguments), let refusal = MacNotMoved.refusal() {
     FileHandle.standardError.write(Data((refusal + "\n").utf8))
     exit(1)
-}
-
-// The embedded Info.plist (for the listening permissions) gives the binary a bundle id, which
-// moves UserDefaults and web pane data (cookies, logins) from the executable's name to it:
-// copy what was saved before over once, before anything reads them. Short-lived: the first-launch migration replaces this
-// copy, and its source stays the old executable's name, "Launchy", until then.
-if let id = Bundle.main.bundleIdentifier {
-    let defaults = UserDefaults.standard
-    if defaults.persistentDomain(forName: id)?.isEmpty ?? true,
-       let old = defaults.persistentDomain(forName: "Launchy"), !old.isEmpty {
-        defaults.setPersistentDomain(old, forName: id)
-    }
-    let webKit = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("WebKit")
-    let oldWeb = webKit.appendingPathComponent("Launchy"), newWeb = webKit.appendingPathComponent(id)
-    if !FileManager.default.fileExists(atPath: newWeb.path), FileManager.default.fileExists(atPath: oldWeb.path) {
-        try? FileManager.default.copyItem(at: oldWeb, to: newWeb)
-    }
 }
 
 // `Varnick --sync` runs one History sync into VARNICK_DB and exits (to build a test database for --search).
@@ -763,6 +746,16 @@ if let i = CommandLine.arguments.firstIndex(of: "--search-eval") {
         }
         RunLoop.main.run()
     }
+}
+
+// The app's start: every mode above has exited, and nothing on this path has read `Settings.shared`, the support folder or the
+// database yet (a mode above only reads the arguments before it runs, and the app's own objects are made below). So
+// `FirstLaunchMigration` moves Launchy's data here, before the delegate exists and so before `Settings.storeSkipPermissionsIfAbsent`
+// and `PeerLink.refresh`. Short-lived, removed at the rename's Cleanup
+// (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md).
+if let failure = AppStartMigration.run(databasePath: MainActor.assumeIsolated { AppDelegate.databasePath }) {
+    FileHandle.standardError.write(Data((failure + "\n").utf8))
+    exit(1)
 }
 
 MainActor.assumeIsolated {

@@ -152,6 +152,8 @@ fi
 log "building and installing on $TARGET (a first build takes a few minutes)"
 OUT=$("${SSH[@]}" "$TARGET" "env ACTION=install COMMIT=$COMMIT RUN=$RUN NAME='$NAME' PAGE=$PAGE PAGE_PUBLISH_PORT=$PUBLISH_PORT bash -s" <"$REMOTE_SCRIPT" | tee /dev/stderr) || true
 
+# Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): the far half refuses where ~/.launchy exists.
+[ "$(printf '%s\n' "$OUT" | marker OLDROOT)" != present ] || die "$TARGET still has ~/.launchy, so it still runs Launchy's relay: move it to ~/.varnick first (docs/problems/name-taken-by-another-launcher, option 01, \"Cutover: the Ryzen\"). Nothing was changed there"
 [ "$(printf '%s\n' "$OUT" | marker SHIPPED)" != missing ] || die "the package didn't arrive on $TARGET (~/.varnick/incoming${RUN:+-$RUN}.tar.gz is missing there)"
 [ "$(printf '%s\n' "$OUT" | marker LOCK)" != busy ] || die "another install on $TARGET held the lock for over 15 minutes: nothing was changed"
 SWIFT=$(printf '%s\n' "$OUT" | marker SWIFT)
