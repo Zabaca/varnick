@@ -2,13 +2,13 @@
 
 Varnick is a macOS app written in Swift, with a small Bun server for the Phone page. This is how to
 build it, check a change and work the way the repository does. [`README.md`](README.md) says what Varnick
-is and what it needs.
+is, and [`docs/guide.md`](docs/guide.md) what it needs.
 
 ## Build and check
 
 - **`make build`** builds, codesigns and fetches the files plain `swift build` lacks. It must finish clean:
   fix every error and every new warning. The first build resolves packages and is slow. It signs ad hoc, or with
-  your Developer ID Application identity if you have one (README, Build from a checkout); no team ID, certificate
+  your Developer ID Application identity if you have one ([`docs/building.md`](docs/building.md#signing)); no team ID, certificate
   name or notary credential goes in a tracked file.
 - **`make app`** is the maintainer's, not part of a change. It makes the notarized `Varnick.app` and the
   `Varnick.zip` that a release carries. It needs the Developer ID Application identity in the keychain and a
@@ -28,7 +28,7 @@ The words the code and docs use are in [`CONTEXT.md`](CONTEXT.md), and the decis
 ## Restarting ends sessions
 
 `make run` and `make install` restart Varnick, which ends every Claude, terminal and app pane that isn't
-kept in zmx (README, "Restarting ends sessions that aren't kept in zmx"). Leave restarts to the user,
+kept in zmx ([`docs/guide.md`](docs/guide.md#restarting-ends-sessions-that-arent-kept-in-zmx)). Leave restarts to the user,
 and don't run one from inside a Claude session running in the Varnick you are restarting.
 
 ## How work is planned
