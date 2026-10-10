@@ -188,7 +188,7 @@ enum ScreenMCP {
     /// running.
     static func ask(_ line: String) -> ScreenReply {
         guard let answer = PeerSocket.request(line, timeout: callTimeout) else {
-            return PeerSocket.isListening()
+            return PeerSocket.isAnswering()
                 ? ScreenReply(text: "Launchy didn't answer within \(Int(callTimeout)) seconds. Look again to see what happened.", isError: true)
                 : ScreenReply(text: "Launchy isn't running", isError: true)
         }

@@ -68,10 +68,14 @@ enum PeerSocket {
         }
     }
 
-    /// Whether a Launchy answers on the socket. A socket that accepts a connection but never replies is one an
-    /// earlier Launchy left open in a process it started, so it doesn't count.
-    static func isListening() -> Bool {
-        request("{}", timeout: 1) != nil
+    /// The line `isAnswering` sends. The server replies to it on its own queue, so a busy main actor can't make a running
+    /// Launchy look gone; an older Launchy answers it as an unreadable request, and any reply counts.
+    static let probe = #"{"probe":1}"#
+
+    /// Whether a Launchy answers on the socket. A socket that accepts a connection but never replies is one an earlier
+    /// Launchy left open in a process it started, so it doesn't count. Waits up to 1 s for such a socket.
+    static func isAnswering() -> Bool {
+        request(probe, timeout: 1) != nil
     }
 
     /// Sends one request line to the running Launchy and returns its reply line; nil when Launchy
@@ -101,7 +105,7 @@ enum PeerSocket {
             }
             try? FileManager.default.createDirectory(at: CustomApp.supportDirectory, withIntermediateDirectories: true,
                                                      attributes: [.posixPermissions: 0o700])
-            guard !PeerSocket.isListening() else { return "another Launchy is listening on \(path)" }
+            guard !PeerSocket.isAnswering() else { return "another Launchy is answering on \(path)" }
             unlink(path)
             guard let fd = PeerSocket.makeSocket(timeout: 5) else { return "no socket could be made (errno \(errno))" }
             let bound = PeerSocket.withSockaddr(&address) { bind(fd, $0, $1) } == 0
@@ -138,6 +142,11 @@ enum PeerSocket {
                 setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &none, socklen_t(MemoryLayout<Int32>.size))
                 queue.async { [handler, queue] in
                     guard let line = PeerSocket.readLine(fd) else { close(fd); return }
+                    if line == PeerSocket.probe {
+                        PeerSocket.write(fd, line)
+                        close(fd)
+                        return
+                    }
                     Task {
                         let reply = await handler(line)
                         queue.async {
