@@ -197,6 +197,16 @@ Screen access (ADR 0023) gives the sessions started or restarted while it is on 
 - **Varnick's own window is refused,** and so is a session another Mac or a device is in control of. Turning the
   switch off refuses every call at once.
 
+### The downloaded app moves itself to Applications
+
+Opened from a download (macOS runs it from a temporary copy) or straight off its disk image, Varnick offers to
+move itself to `/Applications`. If you agree, it first checks that the new copy's signature is valid and carries
+the same team and identifier as the running copy, and only then removes the "downloaded from the Internet"
+quarantine attribute from that copy, so macOS doesn't run it from a temporary copy again at each open. It removes
+that attribute from nothing else. It replaces an older Varnick in `/Applications` only once that has quit, and
+puts it in the Trash. It never asks for an administrator password: on an account that can't add apps to
+`/Applications`, it says so and stops.
+
 ### Downloads are pinned and checked
 
 The build checks the Metal shaders and zmx against SHA-256 digests in the `Makefile`; the Linux installer does

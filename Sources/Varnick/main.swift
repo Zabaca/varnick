@@ -752,16 +752,17 @@ if let i = CommandLine.arguments.firstIndex(of: "--search-eval") {
     }
 }
 
-// The app's start, in this order (where-it-breaks, One Varnick per account): the log, the translocation test, the migration, the lock.
+// The app's start, in this order (where-it-breaks, One Varnick per account): the log, the move offer, the migration, the lock.
 // Every mode above has exited. In Varnick.app, standard output and error go to the log first, so every line below lands there; only
 // here, since the relay, the MCP server and the command-line modes above write their reply to standard output. The log lives in
 // `~/Library/Logs`, outside the support folder the migration makes.
 if ResourceFolder.current.inBundle {
     InstalledApp.redirectOutput(to: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Varnick.log"))
-    // A translocated app runs from a temporary path that is gone at the next launch: stop before the peer link or the Phone page
-    // can point at it.
-    if let executable = Bundle.main.executableURL, InstalledApp.isTranslocated(executablePath: executable.path) {
-        stopStart(InstalledApp.translocatedLine)
+    // A translocated app runs from a temporary path, and one off a disk image from a volume, that are gone at the next launch: offer
+    // the move before the peer link or the Phone page can point at either.
+    if let executable = Bundle.main.executableURL,
+       let situation = MoveToApplications.situation(executablePath: executable.path, bundle: Bundle.main.bundleURL) {
+        offerMoveToApplications(situation)
     }
 }
 

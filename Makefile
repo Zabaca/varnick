@@ -228,8 +228,9 @@ clean: cutover-confirm
 	rm -rf .build
 
 # `make app` (the maintainer's, on the Mac that holds the signing identity and the notary credentials): Varnick.app, signed inside
-# out, notarized, stapled and zipped as .build/app/Varnick.zip, which the user attaches to a GitHub release by hand
-# (docs/problems/runs-only-from-a-checkout/options/02-notarized-app-updated-by-hand.md). Nothing is uploaded but to the notary service.
+# out, notarized, stapled and zipped as .build/app/Varnick.zip, then the disk image Varnick.dmg made from that same app (`app-image`);
+# the user attaches both to a GitHub release by hand
+# (docs/problems/runs-only-from-a-checkout/options/02-notarized-app-updated-by-hand.md, ADR 0026). Nothing is uploaded but to the notary service.
 # NOTARY_PROFILE (on the command line, else the git-ignored Makefile.local) names the keychain profile `notarytool` reads; like the
 # identity, it stays out of every tracked file. CHECK_BUILD=1 lets a build off main run every step but the zip.
 # `app-bundle` stops before anything is sent, so the signed bundle can be checked first.
@@ -237,17 +238,25 @@ export NOTARY_PROFILE
 APP_DIR := .build/app
 APP := $(APP_DIR)/Varnick.app
 APP_ZIP := $(APP_DIR)/Varnick.zip
+APP_DMG := $(APP_DIR)/Varnick.dmg
+# A check build's image has another name, so it never looks publishable.
+APP_DMG_CHECK := $(APP_DIR)/Varnick-check.dmg
+DMG_FILE = $(if $(filter 1,$(CHECK_BUILD)),$(APP_DMG_CHECK),$(APP_DMG))
+# dmgbuild writes the image window's layout (the .DS_Store) itself, with no Finder window, so it runs with the screen locked. Nothing of
+# it ships. Pinned with its two libraries, all pure Python and MIT; uvx runs it (the badge-icon extra, which needs PyObjC, is not used).
+DMGBUILD := uvx --from dmgbuild==1.6.7 --with ds_store==1.3.3 --with mac_alias==2.2.3 dmgbuild
 # Both numbers come from the commit's time in UTC: 2026.10.9 and 20261009.1954. The short one has no leading zeros.
 APP_COMMIT_TIME = $(shell git show -s --format=%ct HEAD)
 APP_SHORT_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y.%m.%d | sed 's/\.0*\([0-9]\)/.\1/g')
 APP_BUILD_VERSION = $(shell date -u -r $(APP_COMMIT_TIME) +%Y%m%d.%H%M)
 
-.PHONY: app app-bundle app-guard
+.PHONY: app app-bundle app-guard app-image
 
 # Every refusal is one `error:` line, and none reaches the build. The identity's script says its own reasons.
 app-guard:
 	@if ! git diff --quiet HEAD --; then echo "error: app: the checkout has changes to tracked files; a published build matches a commit" >&2; exit 1; fi
 	@scripts/signing-identity.sh --developer-id >/dev/null || { echo "error: app: no Developer ID Application identity to sign with (an app is never ad hoc); fix SIGN_IDENTITY in Makefile.local" >&2; exit 1; }
+	@command -v uvx >/dev/null || { echo "error: app: no uvx on the PATH; the disk image is built with dmgbuild, which uvx runs (uv: https://docs.astral.sh/uv/)" >&2; exit 1; }
 	@if [ -z "$$NOTARY_PROFILE" ]; then echo "error: app: no NOTARY_PROFILE; name the notarytool keychain profile in Makefile.local or on the command line" >&2; exit 1; fi
 	@if [ "$(CHECK_BUILD)" != 1 ]; then \
 	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
@@ -303,6 +312,37 @@ app: app-bundle
 	@spctl -a -vv -t exec $(APP) 2>&1 | tee $(APP_DIR)/spctl.out; grep -q 'source=Notarized Developer ID' $(APP_DIR)/spctl.out || { echo "error: app: Gatekeeper doesn't accept the app as notarized" >&2; exit 1; }
 	@if [ "$(CHECK_BUILD)" = 1 ]; then echo "CHECK_BUILD=1: no zip written"; else \
 	  rm -f $(APP_ZIP) $(APP_ZIP).sha256 && ditto -c -k --keepParent $(APP) $(APP_ZIP) && \
-	  (cd $(APP_DIR) && shasum -a 256 Varnick.zip > Varnick.zip.sha256 && cat Varnick.zip.sha256) && \
+	  (cd $(APP_DIR) && shasum -a 256 Varnick.zip > Varnick.zip.sha256 && cat Varnick.zip.sha256); fi
+	@$(MAKE) --no-print-directory app-image
+	@if [ "$(CHECK_BUILD)" != 1 ]; then \
 	  echo "version $$(plutil -extract CFBundleShortVersionString raw $(APP)/Contents/Info.plist) ($$(plutil -extract CFBundleVersion raw $(APP)/Contents/Info.plist)), commit $$(plutil -extract VarnickCommit raw $(APP)/Contents/Info.plist)" && \
-	  echo "the published build: $(APP_ZIP)"; fi
+	  echo "the published build: $(APP_DMG) and $(APP_ZIP)"; fi
+
+# The disk image, made from the app already in $(APP_DIR) (stapled, when `app` runs it): Varnick, an arrow and a shortcut to Applications
+# on a background drawn from the Fold, laid out by scripts/dmg-settings.json (its paths are relative to the checkout, where make runs).
+# Signed with the Developer ID and the secure timestamp, no hardened runtime (that is for code), then notarized, stapled and assessed as
+# a disk image. CHECK_BUILD=1 stops before the notary service and writes Varnick-check.dmg, never Varnick.dmg: the first image
+# notarization is the first real `make app`.
+app-image:
+	@test -d $(APP) || { echo "error: app-image: no $(APP); make app-bundle builds it" >&2; exit 1; }
+	rm -rf $(APP_DIR)/dmg-background
+	swiftc -O -parse-as-library scripts/make-dmg-background.swift Sources/Varnick/FoldMark.swift -o $(APP_DIR)/make-dmg-background
+	$(APP_DIR)/make-dmg-background $(APP_DIR)/dmg-background
+	rm -f $(DMG_FILE) $(DMG_FILE).sha256
+	$(DMGBUILD) -s scripts/dmg-settings.json Varnick $(DMG_FILE)
+	@id=$$(scripts/signing-identity.sh --developer-id 2>/dev/null) || { echo "error: app: no Developer ID Application identity" >&2; exit 1; }; \
+	  codesign -f -s "$$id" --timestamp $(DMG_FILE) || exit 1
+	codesign --verify --verbose=2 $(DMG_FILE)
+	hdiutil verify $(DMG_FILE)
+	@if [ "$(CHECK_BUILD)" = 1 ]; then echo "CHECK_BUILD=1: $(DMG_FILE) is signed and verified, not sent to the notary service; no Varnick.dmg written"; else \
+	  echo "submitting the disk image to the notary service, and waiting for its answer"; \
+	  xcrun notarytool submit $(APP_DMG) --keychain-profile "$$NOTARY_PROFILE" --wait > $(APP_DIR)/notary-dmg.out 2>&1; \
+	  cat $(APP_DIR)/notary-dmg.out; \
+	  id=$$(sed -n 's/^ *id: *//p' $(APP_DIR)/notary-dmg.out | head -1); status=$$(sed -n 's/^ *status: *//p' $(APP_DIR)/notary-dmg.out | tail -1); \
+	  if [ "$$status" != Accepted ]; then \
+	    echo "error: app: the notary service didn't accept the disk image (status: $${status:-none}); what notarytool said is above" >&2; \
+	    if [ -n "$$id" ]; then xcrun notarytool log "$$id" --keychain-profile "$$NOTARY_PROFILE"; fi; exit 1; fi; \
+	  xcrun stapler staple $(APP_DMG) && xcrun stapler validate $(APP_DMG) || exit 1; \
+	  spctl -a -vv -t open --context context:primary-signature $(APP_DMG) 2>&1 | tee $(APP_DIR)/spctl-dmg.out; \
+	  grep -q 'source=Notarized Developer ID' $(APP_DIR)/spctl-dmg.out || { echo "error: app: Gatekeeper doesn't accept the disk image as notarized" >&2; exit 1; }; \
+	  (cd $(APP_DIR) && shasum -a 256 Varnick.dmg > Varnick.dmg.sha256 && cat Varnick.dmg.sha256); fi
