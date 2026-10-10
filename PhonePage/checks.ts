@@ -24,24 +24,24 @@ export type Config =
 
 /** The server's configuration from its environment only. The names are the check kit's. */
 export function readConfig(env: Record<string, string | undefined>): { config: Config } | { error: string } {
-  const socketPath = env.LAUNCHY_PAGE_SOCKET || undefined;
-  const loopback = env.LAUNCHY_PAGE_LOOPBACK || undefined;
-  if (socketPath && loopback) return { error: "Set LAUNCHY_PAGE_SOCKET or LAUNCHY_PAGE_LOOPBACK, not both" };
-  if (!socketPath && !loopback) return { error: "Set LAUNCHY_PAGE_SOCKET (a socket path) or LAUNCHY_PAGE_LOOPBACK (a port on 127.0.0.1)" };
-  const port = parsePort(env.LAUNCHY_PAGE_PORT ?? "8444");
-  if (port === null) return { error: "LAUNCHY_PAGE_PORT isn't a port number" };
-  const relay = env.LAUNCHY_RELAY;
-  if (!relay || !relay.startsWith("/")) return { error: "LAUNCHY_RELAY must be the absolute path of the relay" };
-  const devices = env.LAUNCHY_DEVICES;
-  if (!devices || !devices.startsWith("/")) return { error: "LAUNCHY_DEVICES must be the absolute path of devices.json" };
-  const tailscale = env.LAUNCHY_TAILSCALE || "tailscale";
-  const shared = { port, relay, devices, tailscale, zmxDir: env.LAUNCHY_ZMX_DIR || undefined, userHome: env.CFFIXED_USER_HOME || undefined };
+  const socketPath = env.VARNICK_PAGE_SOCKET || undefined;
+  const loopback = env.VARNICK_PAGE_LOOPBACK || undefined;
+  if (socketPath && loopback) return { error: "Set VARNICK_PAGE_SOCKET or VARNICK_PAGE_LOOPBACK, not both" };
+  if (!socketPath && !loopback) return { error: "Set VARNICK_PAGE_SOCKET (a socket path) or VARNICK_PAGE_LOOPBACK (a port on 127.0.0.1)" };
+  const port = parsePort(env.VARNICK_PAGE_PORT ?? "8444");
+  if (port === null) return { error: "VARNICK_PAGE_PORT isn't a port number" };
+  const relay = env.VARNICK_RELAY;
+  if (!relay || !relay.startsWith("/")) return { error: "VARNICK_RELAY must be the absolute path of the relay" };
+  const devices = env.VARNICK_DEVICES;
+  if (!devices || !devices.startsWith("/")) return { error: "VARNICK_DEVICES must be the absolute path of devices.json" };
+  const tailscale = env.VARNICK_TAILSCALE || "tailscale";
+  const shared = { port, relay, devices, tailscale, zmxDir: env.VARNICK_ZMX_DIR || undefined, userHome: env.CFFIXED_USER_HOME || undefined };
   if (socketPath) {
-    if (!socketPath.startsWith("/")) return { error: "LAUNCHY_PAGE_SOCKET must be an absolute path" };
+    if (!socketPath.startsWith("/")) return { error: "VARNICK_PAGE_SOCKET must be an absolute path" };
     return { config: { mode: "socket", socketPath, ...shared } };
   }
   const loopbackPort = parsePort(loopback!);
-  if (loopbackPort === null) return { error: "LAUNCHY_PAGE_LOOPBACK isn't a port number" };
+  if (loopbackPort === null) return { error: "VARNICK_PAGE_LOOPBACK isn't a port number" };
   return { config: { mode: "loopback", loopbackPort, ...shared } };
 }
 

@@ -2,10 +2,10 @@
 -include Makefile.local
 export SIGN_IDENTITY
 
-DB := db/launchy.sqlite
-LABEL := com.zabaca.launchy
+DB := db/varnick.sqlite
+LABEL := com.zabaca.varnick
 PLIST := $(HOME)/Library/LaunchAgents/$(LABEL).plist
-LOG := $(HOME)/Library/Logs/Launchy.log
+LOG := $(HOME)/Library/Logs/Varnick.log
 DOMAIN = gui/$(shell id -u)
 
 # MLX's Metal shaders, prebuilt: `swift build` can't compile them without Xcode. Taken from the
@@ -16,9 +16,9 @@ METALLIB := .build/release/mlx.metallib
 # Named after the wheel, so a new pin fetches again instead of keeping a mismatched metallib.
 METAL_STAMP := .build/release/mlx.metallib.$(MLX_METAL_SHA256)
 
-# zmx keeps pane processes alive across Launchy restarts (ADR 0004). Pinned to one release: a
+# zmx keeps pane processes alive across Varnick restarts (ADR 0004). Pinned to one release: a
 # release that changes its IPC protocol can't talk to daemons the previous one started, so bumping
-# this ends running sessions once. Launchy only ever uses the copy next to its binary.
+# this ends running sessions once. Varnick only ever uses the copy next to its binary.
 ZMX_VERSION := 0.8.1
 ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
@@ -31,15 +31,15 @@ SIGN_SHORT = $(if $(filter -,$(SIGN_ID)),adhoc,$(shell printf '%.8s' '$(SIGN_ID)
 ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(SIGN_SHORT)
 # The secure timestamp is left out: only notarization needs it, and it calls Apple on every build.
 ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
-# Matches Launchy's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
+# Matches Varnick's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
 # names it, which would kill a session that should survive.
-LAUNCHY_PROCESS := ^($(shell pwd -P)/)?\.build/release/Launchy$$
+VARNICK_PROCESS := ^($(shell pwd -P)/)?\.build/release/Varnick$$
 
 SKILL_LINK := $(HOME)/.claude/skills/custom-apps
 SKILL_TARGET := $(CURDIR)/.claude/skills/custom-apps
 
-# The Phone page's server (ADR 0011): Launchy clones this copy next to its binary, as it does zmx, at each launch (the
+# The Phone page's server (ADR 0011): Varnick clones this copy next to its binary, as it does zmx, at each launch (the
 # launch snapshot), so edits in a checkout reach a running server only through a build and a restart. The tests and
 # their fixtures stay behind, and a file left unchanged is left alone, so building twice changes nothing.
 PHONE_PAGE_DIR := .build/release/PhonePage
@@ -47,25 +47,25 @@ PHONE_PAGE_DIR := .build/release/PhonePage
 # The line `BuildStamp` reads, written as the last step of `make build` (where-it-breaks, Peers, has the rules).
 BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
-GOOD_COPY := .build/release/Launchy.good
+GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-launchy sign-zmx
+.PHONY: build build-steps run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
 
 # The metallib goes next to the binary, where MLX looks for it. After swift build, which
-# creates .build/release. Signing Launchy binds the Info.plist the linker embeds (Package.swift):
+# creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
 # the linker's own ad-hoc signature leaves it unbound, and macOS needs it bound to find the
 # microphone and system audio usage strings. SwiftPM doesn't relink when only Info.plist
-# changed, so a newer Info.plist removes the binary first. Launchy and zmx are signed with the identity
+# changed, so a newer Info.plist removes the binary first. Varnick and zmx are signed with the identity
 # scripts/signing-identity.sh chooses; a build that can't choose or sign fails rather than signing ad hoc.
 #
 # A build that fails leaves the last good binary where it was, so a restart never starts a relinked, unsigned one: when the
 # build stamp is no older than the binary (a good build), a clone of the binary is put back if any step fails. A build that was
 # interrupted (^C, a kill) left its clone behind: the next build puts it back first, before it takes a new one.
 build:
-	@if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Launchy; echo "restored the build an interrupted one left"; fi; if [ -f .build/release/Launchy ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Launchy -nt $(BUILD_STAMP) ]; then cp -c .build/release/Launchy $(GOOD_COPY); fi
-	@[ ! Info.plist -nt .build/release/Launchy ] || rm -f .build/release/Launchy
+	@if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Varnick; echo "restored the build an interrupted one left"; fi; if [ -f .build/release/Varnick ] && [ -f $(BUILD_STAMP) ] && [ ! .build/release/Varnick -nt $(BUILD_STAMP) ]; then cp -c .build/release/Varnick $(GOOD_COPY); fi
+	@[ ! Info.plist -nt .build/release/Varnick ] || rm -f .build/release/Varnick
 	@$(MAKE) --no-print-directory build-steps || { \
-	  if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Launchy; echo "restored the previous build"; fi; \
+	  if [ -f $(GOOD_COPY) ]; then mv -f $(GOOD_COPY) .build/release/Varnick; echo "restored the previous build"; fi; \
 	  exit 1; }
 	@rm -f $(GOOD_COPY)
 
@@ -75,19 +75,19 @@ build-steps:
 	@id=$$(scripts/signing-identity.sh) || exit 1; \
 	  if [ "$$id" = - ] && [ "$$SIGN_IDENTITY" != - ] && ls .build/release/zmx.signer.* 2>/dev/null | grep -qv 'zmx\.signer\.adhoc$$'; then \
 	    echo "error: signing: this checkout has been signed with an identity, and none is usable now. Fix the keychain, or set SIGN_IDENTITY=- to sign ad hoc on purpose." >&2; exit 1; fi; \
-	  $(MAKE) --no-print-directory sign-launchy sign-zmx SIGN_ID="$$id"
+	  $(MAKE) --no-print-directory sign-varnick sign-zmx SIGN_ID="$$id"
 	@$(MAKE) --no-print-directory phone-page
 	@$(MAKE) --no-print-directory build-stamp
 
 # Without an identity, ad hoc and nothing else, as before. With one: the hardened runtime and the one entitlement in
-# Launchy.entitlements. Either way the signature is verified strictly. The certificate's SHA-1 stays out of the log (@).
-sign-launchy:
+# Varnick.entitlements. Either way the signature is verified strictly. The certificate's SHA-1 stays out of the log (@).
+sign-varnick:
 ifeq ($(SIGN_ID),-)
-	codesign -f -s - -i $(LABEL) .build/release/Launchy
+	codesign -f -s - -i $(LABEL) .build/release/Varnick
 else
-	@codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Launchy.entitlements -i $(LABEL) .build/release/Launchy
+	@codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Varnick.entitlements -i $(LABEL) .build/release/Varnick
 endif
-	@codesign --verify --strict .build/release/Launchy
+	@codesign --verify --strict .build/release/Varnick
 
 sign-zmx:
 ifneq ($(SIGN_ID),-)
@@ -144,12 +144,12 @@ $(ZMX_SIGNER_STAMP):
 	rm -f .build/release/zmx.signer.*
 	@touch $@
 
-# The restart runs in its own session so it outlives a Launchy session that ran `make run`.
+# The restart runs in its own session so it outlives a Varnick session that ran `make run`.
 run: build
 	nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' scripts/restart.sh $(CURDIR)/$(DB) >/dev/null 2>&1 &
 
 stop:
-	-@pkill -a -f '$(LAUNCHY_PROCESS)' || true
+	-@pkill -a -f '$(VARNICK_PROCESS)' || true
 
 # Start at login via a LaunchAgent that runs this repo's release build (so `make build`
 # updates what the next login starts). Also starts it now, and links the custom-apps skill into
@@ -159,7 +159,7 @@ install: build stop
 	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
 	sed -e 's|@LABEL@|$(LABEL)|g' -e 's|@ROOT@|$(CURDIR)|g' \
 	    -e 's|@DB@|$(CURDIR)/$(DB)|g' -e 's|@LOG@|$(LOG)|g' \
-	    scripts/launchy.plist.in > $(PLIST)
+	    scripts/varnick.plist.in > $(PLIST)
 	plutil -lint $(PLIST)
 	-@launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
 	launchctl bootstrap $(DOMAIN) $(PLIST)

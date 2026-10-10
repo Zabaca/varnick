@@ -1,5 +1,5 @@
 #!/bin/sh
-# Chooses what `make build` signs Launchy and zmx with. Prints a certificate's SHA-1 on stdout, or "-" for an ad-hoc
+# Chooses what `make build` signs Varnick and zmx with. Prints a certificate's SHA-1 on stdout, or "-" for an ad-hoc
 # signature; the reasons go to stderr, and a choice it can't make fails (exit 1) so the build never signs under another
 # identity than the user meant.
 #

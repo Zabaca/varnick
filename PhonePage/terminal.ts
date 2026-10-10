@@ -8,8 +8,8 @@ import { controlledText, optional, same } from "./home";
 import type { Json } from "./json";
 import { parseReply } from "./relay";
 
-/** The one kind of name the page may open: a pane's zmx session, `launchy-<uuid>` with a lowercase uuid (`Zmx.paneID`). */
-export const sessionPattern = /^launchy-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The one kind of name the page may open: a pane's zmx session, `varnick-<uuid>` with a lowercase uuid (`Zmx.paneID`). */
+export const sessionPattern = /^varnick-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const isSessionName = (value: unknown): value is string => typeof value === "string" && sessionPattern.test(value);
 
 export interface Grid {

@@ -11,7 +11,7 @@ import { Outbox, WatchDecoder, longestMessage, longestScreen, pageGrid, parseWat
 import { fitScale, gridLimits, parseFrame } from "./page/liverules.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
-const name = "launchy-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d";
+const name = "varnick-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d";
 const encoder = new TextEncoder();
 const replyLine = (extra: Record<string, unknown> = {}) => `${JSON.stringify({ v: V, ok: true, ...extra })}\n`;
 const frame = (cols: number, rows: number, text: string) => {
@@ -35,7 +35,7 @@ describe("a watch's first message", () => {
   });
 
   test("anything else is refused", () => {
-    for (const text of ["", "not json", "[]", "null", "{}", JSON.stringify({ session: "launchy-1" }), JSON.stringify({ session: `${name}; rm -rf /` }), JSON.stringify({ session: 5 })]) {
+    for (const text of ["", "not json", "[]", "null", "{}", JSON.stringify({ session: "varnick-1" }), JSON.stringify({ session: `${name}; rm -rf /` }), JSON.stringify({ session: 5 })]) {
       expect(parseWatchOpen(text)).toBeNull();
     }
     expect(parseWatchOpen(JSON.stringify({ session: name, pad: "x".repeat(2000) }))).toBeNull();
@@ -213,7 +213,7 @@ describe("against a real server: an oversized frame doesn't make the socket clos
       const value = JSON.parse(String(event.data));
       received.push({ length: String(event.data).length, tooLarge: value.tooLarge === true, text: typeof value.text === "string" ? value.text.slice(0, 5) : undefined });
     };
-    ws.onopen = () => ws.send(JSON.stringify({ session: "launchy-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d" }));
+    ws.onopen = () => ws.send(JSON.stringify({ session: "varnick-7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d" }));
     for (let waited = 0; waited < 8000 && !(received.length >= 4 && received.at(-1)?.text === "hello") && !closed; waited += 50) await Bun.sleep(50);
     expect(closed).toBeNull();
     expect(received.map((message) => message.tooLarge)).toEqual([true, true, false, false]);

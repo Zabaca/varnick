@@ -188,7 +188,7 @@ async function load() {
 }
 
 /** `#s=<session>`: a pane's zmx session name, which has a lowercase uuid (`Zmx.paneID`). */
-const sessionHash = /^#s=(launchy-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+const sessionHash = /^#s=(varnick-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const noticeLine = $("notice");
 
 function notice(text) {

@@ -246,33 +246,33 @@ describe("requests from another site", () => {
 });
 
 describe("the configuration", () => {
-  const base = { LAUNCHY_RELAY: "/opt/launchy-peer", LAUNCHY_DEVICES: "/opt/devices.json" };
+  const base = { VARNICK_RELAY: "/opt/varnick-peer", VARNICK_DEVICES: "/opt/devices.json" };
 
   test("a socket or a loopback port, one of them", () => {
-    expect("config" in readConfig({ ...base, LAUNCHY_PAGE_SOCKET: "/tmp/x/page.sock" })).toBe(true);
-    expect("config" in readConfig({ ...base, LAUNCHY_PAGE_LOOPBACK: "18449" })).toBe(true);
+    expect("config" in readConfig({ ...base, VARNICK_PAGE_SOCKET: "/tmp/x/page.sock" })).toBe(true);
+    expect("config" in readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "18449" })).toBe(true);
     expect("error" in readConfig(base)).toBe(true);
-    expect("error" in readConfig({ ...base, LAUNCHY_PAGE_SOCKET: "/tmp/x/page.sock", LAUNCHY_PAGE_LOOPBACK: "18449" })).toBe(true);
+    expect("error" in readConfig({ ...base, VARNICK_PAGE_SOCKET: "/tmp/x/page.sock", VARNICK_PAGE_LOOPBACK: "18449" })).toBe(true);
   });
 
   test("the published port is 8444 unless set, and must be a port", () => {
-    const read = (extra: Record<string, string>) => readConfig({ ...base, LAUNCHY_PAGE_LOOPBACK: "18449", ...extra });
+    const read = (extra: Record<string, string>) => readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "18449", ...extra });
     expect((read({}) as any).config.port).toBe(8444);
-    expect((read({ LAUNCHY_PAGE_PORT: "8449" }) as any).config.port).toBe(8449);
-    expect("error" in read({ LAUNCHY_PAGE_PORT: "0" })).toBe(true);
-    expect("error" in read({ LAUNCHY_PAGE_PORT: "99999" })).toBe(true);
-    expect("error" in read({ LAUNCHY_PAGE_PORT: "8444x" })).toBe(true);
-    expect("error" in readConfig({ ...base, LAUNCHY_PAGE_LOOPBACK: "nope" })).toBe(true);
+    expect((read({ VARNICK_PAGE_PORT: "8449" }) as any).config.port).toBe(8449);
+    expect("error" in read({ VARNICK_PAGE_PORT: "0" })).toBe(true);
+    expect("error" in read({ VARNICK_PAGE_PORT: "99999" })).toBe(true);
+    expect("error" in read({ VARNICK_PAGE_PORT: "8444x" })).toBe(true);
+    expect("error" in readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "nope" })).toBe(true);
   });
 
   test("the relay and the device file are absolute paths", () => {
-    expect("error" in readConfig({ LAUNCHY_PAGE_LOOPBACK: "18449", LAUNCHY_DEVICES: "/d" })).toBe(true);
-    expect("error" in readConfig({ LAUNCHY_PAGE_LOOPBACK: "18449", LAUNCHY_RELAY: "relay", LAUNCHY_DEVICES: "/d" })).toBe(true);
-    expect("error" in readConfig({ LAUNCHY_PAGE_LOOPBACK: "18449", LAUNCHY_RELAY: "/r" })).toBe(true);
+    expect("error" in readConfig({ VARNICK_PAGE_LOOPBACK: "18449", VARNICK_DEVICES: "/d" })).toBe(true);
+    expect("error" in readConfig({ VARNICK_PAGE_LOOPBACK: "18449", VARNICK_RELAY: "relay", VARNICK_DEVICES: "/d" })).toBe(true);
+    expect("error" in readConfig({ VARNICK_PAGE_LOOPBACK: "18449", VARNICK_RELAY: "/r" })).toBe(true);
   });
 
   test("the zmx folder and the home are passed on when set", () => {
-    const read = readConfig({ ...base, LAUNCHY_PAGE_LOOPBACK: "18449", LAUNCHY_ZMX_DIR: "/tmp/zmx-check", CFFIXED_USER_HOME: "/tmp/home" }) as any;
+    const read = readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "18449", VARNICK_ZMX_DIR: "/tmp/zmx-check", CFFIXED_USER_HOME: "/tmp/home" }) as any;
     expect(read.config.zmxDir).toBe("/tmp/zmx-check");
     expect(read.config.userHome).toBe("/tmp/home");
     expect(read.config.tailscale).toBe("tailscale");

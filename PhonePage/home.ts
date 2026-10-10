@@ -8,7 +8,7 @@ import { objects } from "./json";
 export type RelayResult = { ok: true; reply: Record<string, unknown> } | { ok: false; error: string };
 
 export interface HomeSession {
-  /** The zmx session name, `launchy-<uuid>`: what opening a row will name. */
+  /** The zmx session name, `varnick-<uuid>`: what opening a row will name. */
   session: string;
   title: string;
   folder: string;
@@ -121,8 +121,8 @@ export function unlistedLines(caller: { reason: "unknown" | "not-own" | "not-lis
       return [
         `${device} can't use ${hostName}'s phone page.`,
         host.headless
-          ? `Add it on ${hostName} with <code>launchy-peer device add ${escapeHTML(caller.label ?? "<its name>")}</code>.`
-          : `Add it in Launchy › Settings › Peers › Devices on ${hostName}.`,
+          ? `Add it on ${hostName} with <code>varnick-peer device add ${escapeHTML(caller.label ?? "<its name>")}</code>.`
+          : `Add it in Varnick › Settings › Peers › Devices on ${hostName}.`,
       ];
   }
 }

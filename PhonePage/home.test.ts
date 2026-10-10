@@ -17,8 +17,8 @@ describe("a session row", () => {
 
   test("says who is in control, and Last when no client is attached", () => {
     const [attached, detached] = rows([
-      { session: "launchy-a", title: "T", folder: "/f", controlName: "Mac mini", clients: 1 },
-      { session: "launchy-b", title: "T", folder: "/f", controlName: "Alex’s MacBook Pro", clients: 0 },
+      { session: "varnick-a", title: "T", folder: "/f", controlName: "Mac mini", clients: 1 },
+      { session: "varnick-b", title: "T", folder: "/f", controlName: "Alex’s MacBook Pro", clients: 0 },
     ]);
     expect(attached.text).toBe("Controlled on Mac mini");
     expect(detached.text).toBe("Last controlled on Alex’s MacBook Pro");
@@ -26,7 +26,7 @@ describe("a session row", () => {
   });
 
   test("says this phone when the label is the device's own id, whatever its case", () => {
-    const [row] = rows([{ session: "launchy-a", title: "T", folder: "/f", control: device.id.toUpperCase(), controlName: "Phone", clients: 1 }]);
+    const [row] = rows([{ session: "varnick-a", title: "T", folder: "/f", control: device.id.toUpperCase(), controlName: "Phone", clients: 1 }]);
     expect(row.mine).toBe(true);
     expect(row.text).toBe("Controlled on this phone");
   });
@@ -34,7 +34,7 @@ describe("a session row", () => {
   test("never passes a controller's id on to the browser", () => {
     const home = shapeHome({
       host, loopback: false, device,
-      sessions: ok({ open: [{ session: "launchy-a", title: "T", folder: "/f", control: mac, controlName: "Mac mini", clients: 1 }, { session: "launchy-b", title: "T", folder: "/f", control: device.id, clients: 0 }] }),
+      sessions: ok({ open: [{ session: "varnick-a", title: "T", folder: "/f", control: mac, controlName: "Mac mini", clients: 1 }, { session: "varnick-b", title: "T", folder: "/f", control: device.id, clients: 0 }] }),
       recent: ok({ recent: [] }),
     });
     const json = JSON.stringify(home);
@@ -44,7 +44,7 @@ describe("a session row", () => {
   });
 
   test("a row whose controller the host can't name still reads", () => {
-    const [row] = rows([{ session: "launchy-a", title: "T", folder: "/f", clients: 1 }]);
+    const [row] = rows([{ session: "varnick-a", title: "T", folder: "/f", clients: 1 }]);
     expect(row.text).toBe("Controlled on another device");
   });
 
@@ -70,21 +70,21 @@ describe("the home reply", () => {
 });
 
 describe("the page an unlisted caller gets", () => {
-  test("on a Mac it says where in Launchy to add the device", () => {
+  test("on a Mac it says where in Varnick to add the device", () => {
     expect(unlistedLines({ reason: "not-listed", label: "phone-1" }, host)).toEqual([
       "phone-1 can't use Mac mini's phone page.",
-      "Add it in Launchy › Settings › Peers › Devices on Mac mini.",
+      "Add it in Varnick › Settings › Peers › Devices on Mac mini.",
     ]);
   });
 
   test("on a headless host it gives the hand command", () => {
     const lines = unlistedLines({ reason: "not-listed", label: "phone-1" }, { name: "linux box", headless: true });
-    expect(lines[1]).toBe("Add it on linux box with <code>launchy-peer device add phone-1</code>.");
+    expect(lines[1]).toBe("Add it on linux box with <code>varnick-peer device add phone-1</code>.");
   });
 
   test("on a headless host it gives the hand command even when the node's name isn't known", () => {
     const lines = unlistedLines({ reason: "not-listed", label: null }, { name: "linux box", headless: true });
-    expect(lines.join(" ")).toContain("launchy-peer device add &lt;its name&gt;");
+    expect(lines.join(" ")).toContain("varnick-peer device add &lt;its name&gt;");
     expect(lines.join(" ")).not.toContain("Settings");
   });
 
@@ -133,9 +133,9 @@ describe("the relay", () => {
 
   test("the request is one base64 argument of an argument list", () => {
     const request = buildRequest(V, "sessions", device.id);
-    const args = relayArguments("/opt/launchy-peer", request);
+    const args = relayArguments("/opt/varnick-peer", request);
     expect(args).toHaveLength(3);
-    expect(args.slice(0, 2)).toEqual(["/opt/launchy-peer", "--peer"]);
+    expect(args.slice(0, 2)).toEqual(["/opt/varnick-peer", "--peer"]);
     expect(Buffer.from(args[2], "base64").toString("utf8")).toBe(request);
   });
 
@@ -147,7 +147,7 @@ describe("the relay", () => {
   test("the relay gets a small environment, not the server's", () => {
     expect(relayEnvironment({}, "/home/u")).toEqual({ HOME: "/home/u", PATH: "/usr/bin:/bin" });
     expect(relayEnvironment({ zmxDir: "/tmp/z", userHome: "/tmp/h" }, "/home/u")).toEqual({
-      HOME: "/home/u", PATH: "/usr/bin:/bin", LAUNCHY_ZMX_DIR: "/tmp/z", CFFIXED_USER_HOME: "/tmp/h",
+      HOME: "/home/u", PATH: "/usr/bin:/bin", VARNICK_ZMX_DIR: "/tmp/z", CFFIXED_USER_HOME: "/tmp/h",
     });
   });
 
