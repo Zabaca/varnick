@@ -181,6 +181,10 @@ _Avoid_: Hotword, trigger
 The voice installed on this Mac that speaks a line when an ElevenLabs voice is chosen and ElevenLabs fails or is slow. It is the same setting that holds the installed voice otherwise, kept when an ElevenLabs voice is picked.
 _Avoid_: Backup voice
 
+**Text helper**:
+The signed copy of Bun inside Varnick.app and the `agent.js` it runs, which write a text through the user's own `claude` when Text generation is set to Claude Code. It keeps no transcript and shows on no board, so a call is not a **Session**.
+_Avoid_: Agent (an **Agent** is a Claude Code definition), Claude session
+
 **Spoken request**:
 What the user says after the **Wake phrase**. It is answered aloud from **History**, **Bookmark**s and **Session**s. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query

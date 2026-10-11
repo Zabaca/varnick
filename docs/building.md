@@ -18,8 +18,9 @@ make uninstall
 
 Plain `swift build` is not enough. `make build` also re-signs the binary so macOS binds its
 `Info.plist` (the microphone and system audio usage strings), downloads MLX's prebuilt Metal shaders
-(`mlx.metallib`), which `swift build` cannot compile without Xcode, and downloads the pinned zmx release.
-Both downloads are checked against SHA-256 digests in the `Makefile`. The first build is slow:
+(`mlx.metallib`), which `swift build` cannot compile without Xcode, and downloads the pinned zmx and Bun releases.
+The downloads are checked against SHA-256 digests in the `Makefile`. Bun builds the text helper (`TextHelper/`) into
+one `agent.js`, installing its npm packages from the committed lockfile, and ships beside the binary. The first build is slow:
 it resolves and compiles the Swift packages.
 
 `make run` and `make install` restart Varnick, which ends every pane that isn't kept running in zmx (see
@@ -27,8 +28,9 @@ it resolves and compiles the Swift packages.
 
 ## Signing
 
-The binary and zmx are signed ad hoc, unless the Mac's keychain holds a "Developer ID Application"
-identity: the build then signs with it, with the hardened runtime and one entitlement (audio input), so macOS
+The binary is signed ad hoc (zmx and Bun keep the signature they were fetched with), unless the Mac's keychain holds a
+"Developer ID Application" identity: the build then signs all three with it, with the hardened runtime and one entitlement
+for the binary (audio input) and one for Bun (`allow-jit`, in `Bun.entitlements`), so macOS
 should keep the permissions you give Varnick across rebuilds instead of treating each build as a new app (to be
 confirmed by hand; see ADR 0022 and [privacy and security](privacy-and-security.md#screen-permissions-reach-every-pane)). With two or more such identities, or to pick
 another, copy `Makefile.local.example` to `Makefile.local` (git-ignored) and name one.

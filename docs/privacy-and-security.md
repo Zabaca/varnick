@@ -84,6 +84,33 @@ lines private, leave the voice on one installed on this Mac, which is the defaul
 - **The key** is kept in the macOS Keychain and goes only to ElevenLabs, in a request header, and no redirect is
   followed. Varnick never reads it from the environment or a file, and never logs it or what it speaks.
 
+### Anthropic, through Text generation
+
+Text generation writes Hey Varnick's answers, and its decide step whenever TypeSafe's Jev doesn't decide. Choosing
+**Claude Code** for it (Settings › Models; the default for an install that never chose) is consent to send what it
+needs to Anthropic, under your own Claude account and on your plan. Hey Varnick is off until you turn it on, and its
+setting says so; nothing is sent before that. To keep the text on this Mac, choose **On this Mac**. An install that
+already answered with it stays there when it upgrades.
+
+- **What you say.** The request after "Hey Varnick", cut to 500 characters. The decide step starts before you have
+  quite finished, so words said so far may be sent and then discarded.
+- **The results it reads,** for the answer: each one's kind, title, site or folder, how long ago, and description (cut
+  to 300 characters), and for a Claude session its prompts, your paired Macs' too. The decide step sends the request
+  alone.
+- **What Claude Code itself sends** with a call: your account's token, and device and account ids in metadata, as a
+  pane's Claude does.
+
+It never sends your Claude settings, hooks, plugins, CLAUDE.md or memory, a `.env`, tools or files, nor the working
+folder, the OS or the date that Claude Code would add (a filter drops them). Nothing is saved as a transcript, so a
+call is not a session: it is on no board and in no search. Each answer counts toward your plan's usage limits.
+
+The call runs through a copy of Bun inside the app, driving your own `claude` with the environment your login shell
+builds, as a pane's does. Varnick reads that environment once per launch, keeps it in memory, never logs or writes it,
+and gives it only to Bun and `claude`. It holds whatever your shell exports, other services' tokens included, as a
+pane's Claude does; the model has no tools to read it back. An `ANTHROPIC_API_KEY` in it is removed, so your plan is
+billed and not a key. When Claude Code can't answer or is slow, this Mac's Gemma writes the text if you have installed
+it, and nothing is sent for that.
+
 ### Anthropic, through Screen access
 
 With Screen access on (off by default), the Claude sessions started or restarted after you turn it on can read
@@ -288,8 +315,9 @@ puts it in the Trash. It never asks for an administrator password: on an account
 
 ### Downloads are pinned and checked
 
-The build checks the Metal shaders and zmx against SHA-256 digests in the `Makefile`; the Linux installer does
-the same for zmx and Bun; the models download at fixed revisions. A catalog app's packages are pinned by a
+The build checks the Metal shaders, zmx and Bun against SHA-256 digests in the `Makefile`; the Linux installer does
+the same for zmx and Bun; the models download at fixed revisions. The text helper's packages (`@zabaca/agent` and the
+Agent SDK) are pinned in `TextHelper/package.json` and install from a committed lockfile, frozen. A catalog app's packages are pinned by a
 `bun.lock` committed beside it, which holds an integrity hash for every package, and review makes sure it is in step
 with the app's `package.json`. The first pick installs with `--frozen-lockfile`, so it fails rather than resolve
 versions the lockfile doesn't name.
