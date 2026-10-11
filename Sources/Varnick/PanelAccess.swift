@@ -215,6 +215,14 @@ final class PanelAccess {
         return Answered(text: text, action: action)
     }
 
+    /// Whether a call from this pane may still act: the switch is on, and the pane is still a Claude pane on this Mac that no other Mac or device
+    /// controls. A view's `perform` asks right before it changes anything, since the router checks only before and after.
+    func mayAct(caller: UUID) -> Bool {
+        guard Settings.shared.panelAccess, let model = PeerManager.shared.model else { return false }
+        if case .found = CallingPane.find(caller.uuidString, in: model) { return true }
+        return false
+    }
+
     /// The calling pane's id, or why it may not call.
     private func callingPane(_ text: String, in model: LauncherModel) throws -> UUID {
         switch CallingPane.find(text, in: model) {

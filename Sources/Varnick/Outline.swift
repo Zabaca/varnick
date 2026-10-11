@@ -219,10 +219,7 @@ final class Outline: ObservableObject {
         var run: [OutlinePath] = []
     }
 
-    /// `apply`, with the edit's own caret handed back. With `forSession` (Panel access) the edit is the same, on the same undo stack, but it
-    /// doesn't follow the edit's caret, scroll, beep, say anything in the header, keep its rows in view under a filter, or end the user's
-    /// selection itself: `performForSession` decides where the user's caret goes. `scope` is what the edit works with, the user's own when
-    /// left out.
+    /// `apply` with the edit's caret handed back. With `forSession` it moves nothing of the user's (caret, scroll, selection, header, kept rows).
     private func applyEdit(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false, forSession: Bool = false,
                            scope: OutlineScope? = nil) -> Applied {
         guard load == .ready else { return Applied(refusal: "not ready") }
@@ -278,7 +275,7 @@ final class Outline: ObservableObject {
     /// What a session's edit did. `refusal` is a sentence for the session; with none, `changed` says whether the tree differs, and `run` and
     /// `caret` are the tree edit's own (the new rows of an insert, the placement of a mirror).
     struct SessionOutcome {
-        var refusal: String?
+        var refusal: OutlineRefusal?
         var changed = false
         var run: [OutlinePath] = []
         var caret: OutlineCaret?
@@ -294,37 +291,41 @@ final class Outline: ObservableObject {
     private func wait(_ timeout: Duration, until done: () -> Bool) async -> Bool {
         let end = ContinuousClock.now + timeout
         while !done() {
-            if ContinuousClock.now >= end { return false }
+            if Task.isCancelled || ContinuousClock.now >= end { return false }
             try? await Task.sleep(for: .milliseconds(20))
         }
         return true
     }
 
-    /// One edit for a session, on the same undo stack as the keys' (one step, which ends the user's typing run and keeps the user's caret, so
-    /// ⌘Z puts everything back together). It never sets the text of the view with the caret, so a text or note edit to the field the caret is in
-    /// is refused here ("not yet": ticket 07 goes through the view). The user's caret moves only as the keys would move it
-    /// (`OutlineActing.caretMove`); an edit that doesn't touch its row leaves it, and the view's text, alone. `allowed` is asked again after the
-    /// waits, so a switch turned off meanwhile applies nothing.
+    /// One edit for a session: one undo step on the keys' stack, the user's caret moved only as `OutlineActing.caretMove` says, and never the
+    /// text of the view that has it. `allowed` is asked right before the edit, after the waits.
     func performForSession(_ edit: OutlineEdit, allowed: () -> Bool) async -> SessionOutcome {
-        guard load == .ready else { return SessionOutcome(refusal: load.problem ?? "the outline isn't ready") }
-        // The caret on its way to a row lands first, and an input method composing in the caret's bullet finishes (its marked text isn't in the
-        // tree yet, and a move would take the view away).
+        guard load == .ready else { return SessionOutcome(refusal: .other(load.problem ?? "the outline isn't ready")) }
+        // The caret on its way to a row lands first.
         guard await wait(.seconds(1), until: { pending == nil }) else {
             return SessionOutcome(refusal: "The user's caret is still moving to another bullet: try again")
         }
-        guard await wait(.seconds(3), until: { caretView?.hasMarkedText() != true }) else {
-            return SessionOutcome(refusal: "The user is composing text in a bullet: try again")
+        // Marked text isn't in the tree yet, and a move or a delete of its row would take the view away: those edits wait for it.
+        if let row = caretView?.rowPath, OutlineActing.touches(edit, row: row) {
+            guard await wait(.seconds(3), until: { caretView?.hasMarkedText() != true }) else {
+                return SessionOutcome(refusal: "The user is composing text in a bullet: try again")
+            }
         }
         guard allowed(), load == .ready else { return SessionOutcome(refusal: "Panel access was turned off, or the outline closed, while this waited") }
+        // Under a filter every bullet shows open, as the key's collapse knows.
+        if case .collapse = edit, !filterWords.isEmpty {
+            return SessionOutcome(refusal: "the user's filter is on, and every bullet shows open under a filter: a collapse would show nothing")
+        }
         if let view = caretView, let target = Self.textTarget(of: edit),
            view.field == target.field, tree.bulletID(at: target.path) != nil, tree.bulletID(at: target.path) == tree.bulletID(at: view.rowPath) {
-            return SessionOutcome(refusal: "Not yet: the user's caret is in that bullet's \(target.field == .note ? "note" : "text"), and a session can't change it there")
+            return SessionOutcome(refusal: .other("Not yet: the user's caret is in that bullet's \(target.field == .note ? "note" : "text"), and a session can't change it there"))
         }
         let user = selection == nil ? currentCaret() : nil
         let live = caretView != nil
         let before = tree
-        let done = applyEdit(edit, typing: false, forSession: true, scope: OutlineActing.ignoresFilter(edit) ? OutlineScope() : nil)
-        if let refusal = done.refusal { return SessionOutcome(refusal: refusal.reason) }
+        let wholeTree = OutlineScope(wholeTree: true)
+        let done = applyEdit(edit, typing: false, forSession: true, scope: OutlineActing.usesWholeTree(edit) ? wholeTree : nil)
+        if let refusal = done.refusal { return SessionOutcome(refusal: refusal) }
         guard tree != before else { return SessionOutcome() }
         if let user {
             let showingNow: (OutlinePath) -> Bool = { self.showing($0) }
@@ -334,8 +335,13 @@ final class Outline: ObservableObject {
             case .to(let target):
                 place(target, live: live)
             case .nearest:
-                if let near = nearestVisible(user.path) ?? rows.first?.path ?? crumbs.last?.path {
+                // The row above a deleted top-level row has no parent to go to: the delete's own caret is better than the first row.
+                if let near = nearestVisible(user.path) {
                     place(OutlineCaret(path: near, offset: (tree.text(at: near) ?? "").utf16.count), live: live)
+                } else if let own = done.caret, showing(own.path) {
+                    place(own, live: live)
+                } else if let first = rows.first?.path ?? crumbs.last?.path {
+                    place(OutlineCaret(path: first, offset: (tree.text(at: first) ?? "").utf16.count), live: live)
                 }
             }
         }

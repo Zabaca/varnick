@@ -375,6 +375,18 @@ struct OutlinePanelView: PanelAccessView {
         }
         func id(_ path: OutlinePath) -> String { ids.outlineID(for: path, caller: caller) }
         func quoted(_ text: String) -> String { OutlineReading.quoted(text, limit: OutlineReading.crumbLimit) }
+        /// A parent for the reply: Home, or its id and text.
+        func named(_ path: OutlinePath) -> String {
+            path.placements.isEmpty ? "Home" : id(path) + " " + quoted(outline.tree.text(at: path) ?? "")
+        }
+        /// Why the user's view doesn't show the first of these rows (the zoom, a collapsed or completed bullet, the filter), as a sentence.
+        func hiding(_ paths: [OutlinePath]) -> String {
+            let shown = Set(outline.rows.map(\.path))
+            for path in paths {
+                if let why = OutlineActing.hiddenReason(of: path, in: outline.tree, shown: shown.contains(path)) { return " The user's view doesn't show it: \(why)." }
+            }
+            return ""
+        }
 
         let edit: OutlineEdit
         let said: (Outline.SessionOutcome) -> String
@@ -397,49 +409,47 @@ struct OutlinePanelView: PanelAccessView {
             } else {
                 place = first ? .firstUnder(under) : .lastUnder(under)
             }
-            // A collapsed place keeps what is added to it out of the user's view.
-            let hidden = !under.placements.isEmpty && outline.tree.placement(at: under)?.collapsed == true
-            let parent = under.placements.isEmpty ? "Home" : id(under) + " " + quoted(outline.tree.text(at: under) ?? "")
             edit = .insert(made.drafts, at: place)
             said = { done in
                 let (rows, more) = OutlineActing.newRows(of: done.run, in: outline.tree)
-                var lines = ["Added \(rows.count + more) bullet\(rows.count + more == 1 ? "" : "s") under \(parent)"
-                             + (hidden ? " (collapsed: the user's view hides them)" : "") + ":"]
+                var lines = ["Added \(rows.count + more) bullet\(rows.count + more == 1 ? "" : "s") under \(named(under)):"]
                 for row in rows { lines.append(String(repeating: "  ", count: row.depth + 1) + id(row.path) + " " + quoted(row.text)) }
-                if more > 0 { lines.append("  … and \(more) more: read them with outline_read") }
-                return lines.joined(separator: "\n")
+                if more > 0, let last = rows.last {
+                    let at = under.placements.isEmpty ? "" : "at: \(id(under)), "
+                    lines.append("  … and \(more) more: call outline_read with \(at)depth: 0, after: \(id(last.path))")
+                }
+                return lines.joined(separator: "\n") + hiding(done.run)
             }
-        case "set_text":
+        case "set_text", "set_note":
             let path = try row("id")
-            guard let new = args["text"] else { throw PanelRefusal.bad("text is required") }
-            guard !new.contains(where: \.isNewline) else { throw PanelRefusal.bad("a bullet's text is one line: use add for several bullets") }
-            edit = .setText(path, new)
-            said = { _ in "Set the text of \(id(path))." }
-        case "set_note":
-            let path = try row("id")
-            guard let new = args["note"] else { throw PanelRefusal.bad("note is required (empty removes the note)") }
-            edit = .setNote(path, new)
-            said = { _ in new.isEmpty ? "Removed the note of \(id(path))." : "Set the note of \(id(path))." }
+            let key = action == "set_text" ? "text" : "note"
+            guard let new = args[key] else { throw PanelRefusal.bad(key == "note" ? "note is required (empty removes the note)" : "text is required") }
+            if let problem = OutlineActing.problem(withText: new, note: key == "note") { throw PanelRefusal.bad(problem) }
+            edit = key == "note" ? .setNote(path, new) : .setText(path, new)
+            said = { _ in key == "text" ? "Set the text of \(id(path))." : new.isEmpty ? "Removed the note of \(id(path))." : "Set the note of \(id(path))." }
         case "complete":
             let path = try row("id")
             guard let done = try flag("done") else { throw PanelRefusal.bad("done is true or false") }
-            let isDone = outline.tree.bulletID(at: path).flatMap { outline.tree.bullets[$0]?.completed } != nil
-            guard isDone != done else { return "\(id(path)) is already \(done ? "done" : "not done"): nothing changed." }
-            edit = .complete(OutlineRun(path))
+            edit = .setDone(path, done)
             said = { _ in "Marked \(id(path)) \(done ? "done" : "not done")." }
         case "delete":
             let path = try row("id")
             edit = .delete(OutlineRun(path))
             said = { _ in "Deleted \(id(path)) and everything nested under it: their ids are gone." }
-        case "move":
+        case "move", "indent", "outdent":
             let path = try row("id")
-            guard let step = Int(text("by")), step == 1 || step == -1 else { throw PanelRefusal.bad("by is -1 or 1") }
-            edit = .move(OutlineRun(path), by: step)
-            said = { done in "Moved \(id(path)) \(step < 0 ? "up" : "down"); it is \(done.run.first.map(id) ?? "?") now. Read again for the ids of what is nested under it." }
-        case "indent", "outdent":
-            let path = try row("id")
-            edit = action == "indent" ? .indent(OutlineRun(path)) : .outdent(OutlineRun(path))
-            said = { done in "\(action == "indent" ? "Indented" : "Outdented") \(id(path)); it is \(done.run.first.map(id) ?? "?") now. Read again for the ids of what is nested under it." }
+            var step = 0
+            if action == "move" {
+                guard let by = Int(text("by")), by == 1 || by == -1 else { throw PanelRefusal.bad("by is -1 or 1") }
+                step = by
+            }
+            let verb = ["move": step < 0 ? "Moved up" : "Moved down", "indent": "Indented", "outdent": "Outdented"][action] ?? ""
+            edit = action == "move" ? .move(OutlineRun(path), by: step) : action == "indent" ? .indent(OutlineRun(path)) : .outdent(OutlineRun(path))
+            said = { done in
+                guard let now = done.run.first else { return "\(verb) \(id(path))." }
+                return "\(verb) \(id(path)); it is \(id(now)) now, under \(named(now.parent)). Read again for the ids of what is nested under it."
+                    + hiding([now])
+            }
         case "collapse":
             let path = try row("id")
             guard let collapsed = try flag("collapsed") else { throw PanelRefusal.bad("collapsed is true or false") }
@@ -449,14 +459,18 @@ struct OutlinePanelView: PanelAccessView {
             let path = try row("id"), after = try row("after")
             guard let bullet = outline.tree.bulletID(at: path) else { throw PanelRefusal.gone }
             edit = .placeMirror(after: after, bullets: [bullet])
-            said = { done in "Placed a mirror of \(id(path)) after \(id(after)); the new row is \(done.caret.map { id($0.path) } ?? "?")." }
+            said = { done in
+                guard let new = done.caret?.path else { return "Placed a mirror of \(id(path))." }
+                return "Placed a mirror of \(id(path)) after \(id(after)); the new row is \(id(new)), under \(named(new.parent))." + hiding([new])
+            }
         default:
             throw PanelRefusal.bad("action is one of: " + Self.actionSpecs.map(\.name).joined(separator: ", "))
         }
-        let done = await outline.performForSession(edit) { Settings.shared.panelAccess }
+        // Asked again right before the edit, after its waits: a session told "controlled" or cancelled must not have changed the Outline.
+        let done = await outline.performForSession(edit) { !Task.isCancelled && ids.mayAct(caller: caller) }
         if let refusal = done.refusal {
-            if refusal == "no such row" { throw PanelRefusal.gone }
-            throw PanelRefusal.refused(refusal)
+            if refusal == .gone { throw PanelRefusal.gone }
+            throw PanelRefusal.refused(refusal.reason)
         }
         guard done.changed else { return "Already so: nothing changed." }
         return said(done)

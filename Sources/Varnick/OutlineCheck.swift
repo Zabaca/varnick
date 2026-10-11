@@ -212,10 +212,53 @@ enum OutlineCheck {
         print("read check: an after that is not a row of the read is refused: \(gone)")
     }
 
-    /// What a session's edits do (Panel access), on a copy with the zoom cleared and Show completed on: an `add` of indented lines under Home,
-    /// first, under a bullet and after one (nesting, the new ids, the old placements untouched, an undo of it), and where the user's caret goes
-    /// for the edits that move, remove or leave its row. Prints counts and yes or no, never a bullet's text.
+    /// The edits a session makes on rows the user's view doesn't show, on a small tree of its own: the user's scope refuses them (outside the
+    /// zoom, under a collapsed bullet), the whole-tree scope does them. Also set-done, and the delete of what the user is zoomed into.
+    private static func wholeTreeCheck() {
+        let at = Date(timeIntervalSince1970: 0)
+        func bullet(_ text: String, _ children: [(String, String)] = []) -> OutlineBullet {
+            OutlineBullet(text: text, created: at, changed: at, children: children.map { OutlinePlacement(id: $0.0, bullet: $0.1) })
+        }
+        // Home: a, b (d, e), c, zoomed into b. The collapsed case below collapses b's place instead.
+        var tree = OutlineTree(root: "r", bullets: ["r": bullet("", [("pa", "a"), ("pb", "b"), ("pc", "c")]), "a": bullet("a"),
+                                                    "b": bullet("b", [("pd", "d"), ("pe", "e")]), "c": bullet("c"), "d": bullet("d"), "e": bullet("e")])
+        tree.zoom = ["pb"]
+        let wholeTree = OutlineScope(wholeTree: true)
+        func result(_ edit: OutlineEdit, _ scope: OutlineScope?, on start: OutlineTree) -> String {
+            switch start.applying(edit, now: at, scope: scope ?? OutlineScope()) {
+            case .applied: "done"
+            case .refused(let why): "refused (\(why.reason))"
+            }
+        }
+        let pc = OutlinePath(placements: ["pc"]), pe = OutlinePath(placements: ["pb", "pe"])
+        print("act check: with the user zoomed into a bullet, indenting a row outside the zoom: the user's scope \(result(.indent(OutlineRun(pc)), nil, on: tree)), "
+              + "the whole tree \(result(.indent(OutlineRun(pc)), wholeTree, on: tree))")
+        var collapsed = tree
+        collapsed.zoom = []
+        collapsed.bullets["r"]?.children[1].collapsed = true
+        print("act check: with the parent collapsed, moving a row nested in it: the user's scope \(result(.move(OutlineRun(pe), by: -1), nil, on: collapsed)), "
+              + "the whole tree \(result(.move(OutlineRun(pe), by: -1), wholeTree, on: collapsed))")
+        print("act check: outdenting a row at the top of the zoom: the user's scope \(result(.outdent(OutlineRun(pe)), nil, on: tree)), "
+              + "the whole tree \(result(.outdent(OutlineRun(pe)), wholeTree, on: tree))")
+        print("act check: deleting the bullet zoomed into: \(result(.delete(OutlineRun(OutlinePath(placements: ["pb"]))), nil, on: tree))")
+        var deeper = tree
+        deeper.bullets["e"]?.children = [OutlinePlacement(id: "pf", bullet: "f")]
+        deeper.bullets["f"] = bullet("f")
+        deeper.zoom = ["pb", "pe"]
+        print("act check: deleting a bullet the zoomed-into one is nested in: \(result(.delete(OutlineRun(OutlinePath(placements: ["pb"]))), nil, on: deeper))")
+        var done = tree
+        if case .applied(let next, _, _) = tree.applying(.setDone(pe, true), now: at) { done = next }
+        let twice = done.applying(.setDone(pe, true), now: at)
+        print("act check: set done marks a bullet done: \(done.bullets["e"]?.completed != nil), and again changes nothing: \(twice == .applied(done, caret: nil))")
+        print("act check: a text with a tab is refused: \(OutlineActing.problem(withText: "a\tb", note: false) != nil), a note with line breaks is not: "
+              + "\(OutlineActing.problem(withText: "a\nb", note: true) == nil), a text too long is refused: "
+              + "\(OutlineActing.problem(withText: String(repeating: "x", count: OutlineActing.textLimit + 1), note: false) != nil)")
+    }
+
+    /// A session's edits (Panel access) on a copy with the zoom cleared: `add` in each place, and where the user's caret goes. Prints counts and
+    /// yes or no, never a bullet's text.
     private static func actCheck(_ tree: OutlineTree) {
+        wholeTreeCheck()
         var copy = tree
         copy.zoom = []
         copy.showsCompleted = true
@@ -242,7 +285,7 @@ enum OutlineCheck {
               + "last under Home: \(ok(Array(newRoot.prefix(oldKept.count)) == oldKept)), the other bullets' placements untouched: \(ok(untouched))")
         print("act check: the new ids are all different: \(ok(Set(listed.rows.map(\.path.id)).count == listed.rows.count))")
         let restored = copy.keepingView(of: added.tree)
-        print("act check: an undo of the add (the tree before it, with the view kept) is the tree as it was: \(ok(shape(restored) == shape(copy) && Counts(restored) == Counts(copy)))")
+        print("act check: the tree before the add, put back as an undo puts it (the view kept), has the shape and counts it had: \(ok(shape(restored) == shape(copy) && Counts(restored) == Counts(copy)))")
         print("act check: more lines than the limit, and none, are refused: \(ok(OutlineActing.drafts(ofAdd: String(repeating: "x\n", count: OutlineActing.addLimit + 1)).problem != nil && OutlineActing.drafts(ofAdd: " \n").problem != nil))")
 
         if let first = applied(.insert(made.drafts, at: .firstUnder(home)), to: copy) {

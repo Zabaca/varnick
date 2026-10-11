@@ -160,6 +160,8 @@ enum OutlineEdit {
     /// ⌥⌘V: new placements of `bullets`, in order, the next siblings of the row at `after` (the first nested ones under a title). A bullet that
     /// is gone is left out; refused when none is left, or when any would end up inside itself.
     case placeMirror(after: OutlinePath, bullets: [String])
+    /// A session's: the bullet is completed or not, as asked, whatever it was; no change when it already is.
+    case setDone(OutlinePath, Bool)
     /// ⌘↩: if every bullet is completed, clears them; otherwise stamps the ones that aren't, now. With Show completed off they leave the view
     /// and the caret goes to the next row showing.
     case complete(OutlineRun)
@@ -179,6 +181,8 @@ enum OutlineEdit {
 /// Why an edit changed nothing. A refusal with a `message` is said to the user (a beep and a header message); the rest is for whoever reads a check.
 enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     case insideItself
+    /// A path that leads nowhere (the row has left the tree).
+    case gone
     case other(String)
 
     init(stringLiteral reason: String) { self = .other(reason) }
@@ -186,7 +190,7 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     var message: String? {
         switch self {
         case .insideItself: "A bullet can't go inside itself"
-        case .other: nil
+        case .gone, .other: nil
         }
     }
 
@@ -194,6 +198,7 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     var reason: String {
         switch self {
         case .insideItself: "a bullet can't go inside itself"
+        case .gone: "no such row"
         case .other(let why): why
         }
     }
@@ -205,6 +210,8 @@ struct OutlineScope {
     /// Bullets that show under a filter whether they match or not: every one the caret has been in since the filter last changed.
     var keeping: Set<OutlinePath> = []
     var cache: OutlineFoldCache?
+    /// A session's edit (Panel access): every row of the tree, whatever the zoom and the collapsed bullets hide. Only Show completed applies.
+    var wholeTree = false
 }
 
 /// A `#word` or `@word` in a bullet's text or note. One rule, used by the text views (colour, click) and the filter (a tag word matches a tag
@@ -305,6 +312,7 @@ extension OutlineEdit {
         switch self {
         case .addBelow(let path), .addAbove(let path), .join(let path): [path]
         case .indent(let run), .outdent(let run), .move(let run, _), .complete(let run), .delete(let run): run.paths
+        case .setDone(let path, _): [path]
         case .insert(_, .after(let path)), .insert(_, .replacing(let path)): [path]
         case .setText, .setNote, .split, .insert, .addFirstChild, .collapse, .placeMirror: []
         }
@@ -381,7 +389,7 @@ struct OutlineTree: Codable, Equatable {
     /// show open, and a match's nested bullets show only if they match too. The bullets in `keeping`, and their ancestors, show whether they
     /// match or not: the ones the caret has been in.
     func visibleRows(_ scope: OutlineScope = OutlineScope()) -> [OutlineRow] {
-        let base = effectiveZoom
+        let base = scope.wholeTree ? [] : effectiveZoom
         let filter = scope.filter
         let filtering = !filter.isEmpty
         let placements = placementCounts()
@@ -392,7 +400,7 @@ struct OutlineTree: Codable, Equatable {
                 guard let child = bullets[placement.bullet], !onStack.contains(placement.bullet),
                       showsCompleted || child.completed == nil else { continue }
                 let path = prefix + [placement.id]
-                let collapsed = placement.collapsed == true && !filtering
+                let collapsed = placement.collapsed == true && !filtering && !scope.wholeTree
                 let below = dimmed || child.completed != nil
                 let nested = collapsed ? [] : walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet]), dimmed: below)
                 var matched = true
@@ -644,22 +652,22 @@ struct OutlineTree: Codable, Equatable {
         var moved: [OutlinePath] = []
         switch edit {
         case .setText(let path, let text):
-            guard let spot = locate(path) else { return .refused("no such row") }
+            guard let spot = locate(path) else { return .refused(.gone) }
             let clean = Self.oneLine(text)
             guard bullets[spot.bullet]?.text != clean else { return .applied(self, caret: nil) }
             tree.bullets[spot.bullet]?.text = clean
             tree.bullets[spot.bullet]?.changed = now
             caret = nil
         case .addBelow(let path):
-            guard let spot = locate(path) else { return .refused("no such row") }
+            guard let spot = locate(path) else { return .refused(.gone) }
             let new = tree.insertEmpty(after: path, at: spot, now: now, newID: newID)
             caret = OutlineCaret(path: new, offset: 0)
         case .addAbove(let path):
-            guard let spot = locate(path) else { return .refused("no such row") }
+            guard let spot = locate(path) else { return .refused(.gone) }
             tree.insertNew(text: "", at: spot.index, in: spot.parent, now: now, newID: newID)
             caret = OutlineCaret(path: path, offset: 0)
         case .split(let path, let range):
-            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
+            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused(.gone) }
             let length = bullet.text.utf16.count
             let low = min(max(range.lowerBound, 0), length), high = min(max(range.upperBound, low), length)
             if low == 0, high == 0, !bullet.text.isEmpty {
@@ -672,10 +680,10 @@ struct OutlineTree: Codable, Equatable {
                 caret = OutlineCaret(path: new, offset: 0)
             }
         case .join(let path):
-            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
+            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused(.gone) }
             guard bullet.children.isEmpty else { return .refused("bullets are nested under it") }
             let rows = visibleRows(scope)
-            guard let at = rows.firstIndex(where: { $0.path == path }) else { return .refused("no such row") }
+            guard let at = rows.firstIndex(where: { $0.path == path }) else { return .refused(.gone) }
             // The row above: the one before in the list, or for the first nested bullet of a zoom its title.
             var above: (path: OutlinePath, bullet: String, text: String)?
             if at > 0 {
@@ -703,7 +711,9 @@ struct OutlineTree: Codable, Equatable {
                 caret = OutlineCaret(path: above.path, offset: above.text.utf16.count)
             }
         case .delete(let run):
-            guard let run = resolve(run) else { return .refused("no such row") }
+            guard let run = resolve(run) else { return .refused(.gone) }
+            // The bullet zoomed into, or one it is nested in, can't go while the user is inside it (the title itself is refused above).
+            if run.items.contains(where: { effectiveZoom.starts(with: $0.path.placements) }) { return .refused("the user is zoomed into it") }
             let rows = visibleRows(scope)
             let at = rows.firstIndex { $0.path == run.items[0].path }
             run.remove(from: &tree)
@@ -717,7 +727,7 @@ struct OutlineTree: Codable, Equatable {
                 return Self.finish(tree, caret: nil, now: now, newID: newID, caretInFirstRow: true)
             }
         case .placeMirror(let path, let wanted):
-            guard let spot = locate(path) else { return .refused("no such row") }
+            guard let spot = locate(path) else { return .refused(.gone) }
             let mirrored = wanted.filter { bullets[$0] != nil }
             guard let lastBullet = mirrored.last else { return .refused("that bullet is gone") }
             // Below a row, or at the top of what is nested under the title. Not into the bullet itself, nor anything nested under it (through
@@ -729,8 +739,12 @@ struct OutlineTree: Codable, Equatable {
             tree.bullets[parent]?.changed = now
             caret = OutlineCaret(path: (isTitle(path) ? path : path.parent).appending(placements[placements.count - 1].id),
                                  offset: bullets[lastBullet]?.text.utf16.count ?? 0)
+        case .setDone(let path, let done):
+            guard let spot = locate(path) else { return .refused(.gone) }
+            if (bullets[spot.bullet]?.completed != nil) == done { return .applied(self, caret: nil) }
+            return applying(.complete(OutlineRun(path)), now: now, newID: newID, scope: scope)
         case .complete(let asked):
-            guard let run = resolve(asked), let last = run.items.last else { return .refused("no such row") }
+            guard let run = resolve(asked), let last = run.items.last else { return .refused(.gone) }
             let before = visibleRows(scope)
             // All completed: clear them. Otherwise the ones that aren't are stamped now, and the others keep their date.
             let everyOne = run.items.allSatisfy { bullets[$0.placement.bullet]?.completed != nil }
@@ -740,12 +754,12 @@ struct OutlineTree: Codable, Equatable {
                 tree.bullets[id]?.completed = everyOne ? nil : now
                 tree.bullets[id]?.changed = now
             }
-            guard case .applied(let done, _, _) = Self.finish(tree, caret: nil, now: now, newID: newID) else { return .refused("no such row") }
+            guard case .applied(let done, _, _) = Self.finish(tree, caret: nil, now: now, newID: newID) else { return .refused(.gone) }
             // With Show completed off they leave the view: the caret goes on to the next row, and nothing stays selected.
             if let landing = done.caretAfterHiding(last.path, from: before, scope: scope) { return .applied(done, caret: landing) }
             return .applied(done, caret: nil, run: run.items.map(\.path))
         case .setNote(let path, let note):
-            guard let spot = locate(path) else { return .refused("no such row") }
+            guard let spot = locate(path) else { return .refused(.gone) }
             let clean = Self.cleanNote(note)
             let new = clean.isEmpty ? nil : clean
             guard bullets[spot.bullet]?.note != new else { return .applied(self, caret: nil) }
@@ -753,7 +767,7 @@ struct OutlineTree: Codable, Equatable {
             tree.bullets[spot.bullet]?.changed = now
             caret = nil
         case .addFirstChild(let path, let range):
-            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
+            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused(.gone) }
             let length = bullet.text.utf16.count
             let low = min(max(range.lowerBound, 0), length), high = min(max(range.upperBound, low), length)
             var tail = ""
@@ -765,7 +779,7 @@ struct OutlineTree: Codable, Equatable {
             caret = OutlineCaret(path: path.appending(tree.insertNew(text: tail, at: 0, in: spot.bullet, now: now, newID: newID)), offset: 0)
         case .indent(let asked):
             // Under the nearest sibling above the run that shows (one a filter, or Show completed, hides is stepped over).
-            guard let run = resolve(asked), let siblings = bullets[run.parent]?.children else { return .refused("no such row") }
+            guard let run = resolve(asked), let siblings = bullets[run.parent]?.children else { return .refused(.gone) }
             let shown = Set(visibleRows(scope).map(\.path))
             var index = run.items[0].index - 1
             while index >= 0, !shown.contains(run.parentPath.appending(siblings[index].id)) { index -= 1 }
@@ -781,7 +795,8 @@ struct OutlineTree: Codable, Equatable {
             caret = run.caret(at: moved)
         case .outdent(let asked):
             // Stops at the top level of the zoom.
-            guard let run = resolve(asked), run.parentPath.placements.count > effectiveZoom.count, let parent = locate(run.parentPath) else {
+            guard let run = resolve(asked), run.parentPath.placements.count > (scope.wholeTree ? 0 : effectiveZoom.count),
+                  let parent = locate(run.parentPath) else {
                 return .refused("already at the top")
             }
             run.remove(from: &tree)
@@ -794,7 +809,7 @@ struct OutlineTree: Codable, Equatable {
             // The run goes as a block past the nearest sibling that shows beyond it: hidden ones (by a filter, or completed) are stepped over,
             // and any between selected bullets stay behind.
             guard let run = resolve(asked), let siblings = bullets[run.parent]?.children, let first = run.items.first, let last = run.items.last else {
-                return .refused("no such row")
+                return .refused(.gone)
             }
             let shown = Set(visibleRows(scope).map(\.path))
             var target = step < 0 ? first.index + step : last.index + step
@@ -818,13 +833,13 @@ struct OutlineTree: Codable, Equatable {
             let target: (parent: String, path: OutlinePath, index: Int)
             switch place {
             case .after(let path):
-                guard let spot = locate(path) else { return .refused("no such row") }
+                guard let spot = locate(path) else { return .refused(.gone) }
                 target = (spot.parent, path.parent, spot.index + 1)
             case .firstUnder(let path):
-                guard let parent = container(path) else { return .refused("no such row") }
+                guard let parent = container(path) else { return .refused(.gone) }
                 target = (parent, path, 0)
             case .lastUnder(let path):
-                guard let parent = container(path) else { return .refused("no such row") }
+                guard let parent = container(path) else { return .refused(.gone) }
                 target = (parent, path, bullets[parent]?.children.count ?? 0)
             case .replacing(let path):
                 guard canReplace(path), let spot = locate(path) else { return .refused("not an empty bullet") }
