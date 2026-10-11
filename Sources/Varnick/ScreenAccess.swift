@@ -288,7 +288,9 @@ final class ScreenAccess {
 
     private func look(_ args: ScreenArguments, pane: UUID) async throws -> Done {
         guard args.screen == true || args.display != nil || args.displayUnreadable == true else {
-            return try await lookWindow(args, pane: pane)
+            let (done, table) = try await lookWindow(args)
+            targets[pane] = table
+            return done
         }
         // Early, so a refusal costs no read.
         guard ScreenText.hasAccess else { throw ScreenRefusal.noScreenRecording }
@@ -297,24 +299,27 @@ final class ScreenAccess {
         }
         let crop = try cropArea(args)
         // The listing is the window's, only when an app is named; the pictures include the window, so none is taken of it alone.
-        var window: Done?
+        var window: (done: Done, table: [String: ScreenTarget])?
         if let named = args.app?.trimmingCharacters(in: .whitespaces), !named.isEmpty {
             var windowArgs = args
             windowArgs.picture = nil
             windowArgs.rect = nil
             windowArgs.rectUnreadable = nil
-            window = try await lookWindow(windowArgs, pane: pane)
+            window = try await lookWindow(windowArgs)
         }
-        let shown = try await screenPictures(display: args.display, crop: crop, textBytes: window?.text.utf8.count ?? 0)
-        let text = ([window?.text, shown.text].compactMap { $0 }).joined(separator: "\n")
-        return Done(text: text, counts: ([window?.counts, shown.counts].compactMap { $0 }).filter { !$0.isEmpty }.joined(separator: ", "),
-                    images: shown.images)
+        let shown = try await screenPictures(display: args.display, crop: crop, textBytes: window?.done.text.utf8.count ?? 0)
+        guard let window else { return shown }
+        // Only now, so a refused screen part leaves the ids of the last look standing, as a refused picture does.
+        targets[pane] = window.table
+        return Done(text: window.done.text + "\n" + shown.text, counts: window.done.counts + ", " + shown.counts, images: shown.images)
     }
 
-    /// One picture per display chosen, with the Displays list and what the pictures show and hide. Nothing is painted black: Varnick
-    /// read none of the windows on the screen, and its own are in the pictures. Pictures are made one at a time, each given an equal share
-    /// of what is left under the socket's cap.
-    private func screenPictures(display: Int?, crop: CGRect?, textBytes: Int) async throws -> (text: String, counts: String, images: [ScreenReply.Image]) {
+    /// What the text after the pictures can take, so the pictures leave room for it: the Displays list and a line for each picture.
+    private static let screenTextReserve = 600
+    private static let screenTextPerDisplay = 300
+
+    /// One picture per display chosen, each given an equal share of what is left under the socket's cap. Nothing is painted black.
+    private func screenPictures(display: Int?, crop: CGRect?, textBytes: Int) async throws -> Done {
         let screens: ScreenText.Screens
         do {
             screens = try await ScreenText.screens(display: display, crop: crop)
@@ -331,8 +336,8 @@ final class ScreenAccess {
         }
         try Task.checkCancellation()
         let count = screens.shots.count
-        // The text that follows the pictures is not known yet: room for the list and a few lines for each.
-        let total = ScreenPicture.maxBytes(textBytes: textBytes + 600 + 300 * screens.displays.count, count: count)
+        let total = ScreenPicture.maxBytes(textBytes: textBytes + Self.screenTextReserve + Self.screenTextPerDisplay * screens.displays.count,
+                                           count: count)
         let startingLongSide = ScreenPicture.startingLongSide(forCount: count)
         let made: [(display: ScreenText.Display, picture: ScreenPicture.Made)]
         do {
@@ -372,10 +377,11 @@ final class ScreenAccess {
                      + "other sessions, what was typed, and any password field.")
         let counts = "pictures \(made.count)" + made.map { ", \($0.picture.kind) \($0.picture.width)x\($0.picture.height) \($0.picture.data.count) bytes" }.joined()
         let images = made.map { ScreenReply.Image(data: $0.picture.data.base64EncodedString(), mimeType: $0.picture.mimeType) }
-        return (lines.joined(separator: "\n"), counts, images)
+        return Done(text: lines.joined(separator: "\n"), counts: counts, images: images)
     }
 
-    private func lookWindow(_ args: ScreenArguments, pane: UUID) async throws -> Done {
+    /// A window's listing and its ids, which the caller keeps once the whole reply is made.
+    private func lookWindow(_ args: ScreenArguments) async throws -> (Done, [String: ScreenTarget]) {
         // Early, so a refusal costs no read.
         let wantsPicture = args.picture == true
         var crop: CGRect?
@@ -460,8 +466,7 @@ final class ScreenAccess {
             }
             counts += ", picture \(made.kind) \(made.width)x\(made.height) \(made.data.count) bytes, hidden \(made.hidden)"
         }
-        targets[pane] = table
-        return Done(text: (lines + notes).joined(separator: "\n"), counts: counts, image: image)
+        return (Done(text: (lines + notes).joined(separator: "\n"), counts: counts, image: image), table)
     }
 
     /// The window `look` read, as a picture (`ScreenPicture`), off the main actor. Password fields the walk found are painted black.

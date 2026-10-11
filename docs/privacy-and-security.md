@@ -272,7 +272,8 @@ Screen access (ADR 0023) gives the sessions started or restarted while it is on 
 - **`look` can return a picture of a window,** which takes nothing from the screen but that window (see above for
   what it shows and what is hidden), **or of the whole screen,** which takes everything on it and hides nothing
   (see above).
-- **Varnick's own window is refused,** and so is a session another Mac or a device is in control of. Turning the
+- **Varnick's own window is refused for reading controls and for actions,** though not in a picture of the screen
+  (above), and so is a session another Mac or a device is in control of. Turning the
   switch off refuses every call at once. `window` moves no pointer and brings no app forward.
 
 ### The downloaded app moves itself to Applications

@@ -174,6 +174,9 @@ struct ScreenArguments: Codable {
         to = try? values.decodeIfPresent(Spot.self, forKey: .to)
         position = try? values.decodeIfPresent(Point.self, forKey: .position)
         size = try? values.decodeIfPresent(Size.self, forKey: .size)
+        // The relay's verdicts, which travel in the request line: the arguments they were judged from are not in it.
+        if Self.flag(values, .rectUnreadable) == true { rectUnreadable = true }
+        if Self.flag(values, .displayUnreadable) == true { displayUnreadable = true }
     }
 
     /// `look`'s `text` flag (read the window's text from a picture): `true`, or `"true"` as a model sends it.

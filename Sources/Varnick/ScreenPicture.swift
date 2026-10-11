@@ -19,7 +19,7 @@ enum ScreenPicture {
     static let imageOverhead = 200
 
     /// The most bytes of picture that fit a reply with `textBytes` of text under the socket's line cap: base64 is four thirds, and
-    /// the text counts twice for the escapes JSON may add. With `count` pictures, the total of all of them.
+    /// the text counts twice for the escapes JSON may add. `count` pictures share it.
     static func maxBytes(textBytes: Int, count: Int = 1) -> Int {
         max(0, PeerSocket.maxLine - replyHeadroom - count * imageOverhead - 2 * textBytes) / 4 * 3
     }
@@ -65,8 +65,8 @@ enum ScreenPicture {
 
     /// Makes the picture of `capture`. `secure` are frames read from the window when it was at `was` (nil when unknown): they follow
     /// the window to where it was captured, and a window that changed size has none to follow, which fails the call rather than
-    /// risk a field in the picture. `crop` is an area in screen points. The picture is at most `maxBytes`, and starts with its long side
-    /// at most `longSide` pixels. A display is a `capture` whose `window` is its frame, with no `secure` frames.
+    /// risk a field in the picture. `crop` is an area in screen points. The picture is at most `maxBytes`. A display is a `capture`
+    /// whose `window` is its frame, with no `secure` frames.
     static func make(_ capture: ScreenText.Capture, secure: [CGRect], windowWas was: CGRect?, crop: CGRect?, maxBytes: Int,
                      longSide: Int = ScreenPicture.longSide) throws -> Made {
         let window = capture.window

@@ -176,7 +176,7 @@ enum ScreenText {
         }
     }
 
-    /// Capture of all the displays gives up after this: more than one window's, since each display is a bigger image.
+    /// Capture of all the displays gives up after this: each is a bigger image than a window.
     static let screensLimit: Duration = .seconds(5)
 
     /// A display as a session's `look` numbers it: the main display is 1, then the others left to right and top to bottom.
@@ -193,9 +193,8 @@ enum ScreenText {
         var shots: [(display: Display, image: CGImage)]
     }
 
-    /// Pictures of the displays (`display` is one's number; nil is all), of those that `crop` (screen points) reaches, within
-    /// `screensLimit`. Nothing is excluded or painted over: Varnick's own windows and the Arrow are in them. The caller has checked
-    /// `hasAccess`.
+    /// Pictures of the displays (`display` is one's number; nil is all) that `crop` (screen points) reaches, nothing excluded or
+    /// painted over. The caller has checked `hasAccess`.
     static func screens(display: Int?, crop: CGRect?) async throws -> Screens {
         try await withinLimit(screensLimit) { try await captureDisplays(display: display, crop: crop) }
     }
@@ -241,10 +240,10 @@ enum ScreenText {
     /// The order displays are numbered in, as indices into `displays`: the main display first, then by left edge and top edge.
     static func displayOrder(of displays: [(frame: CGRect, isMain: Bool)]) -> [Int] {
         displays.indices.sorted { a, b in
-            let (x, y) = (displays[a], displays[b])
-            if x.isMain != y.isMain { return x.isMain }
-            if x.frame.minX != y.frame.minX { return x.frame.minX < y.frame.minX }
-            if x.frame.minY != y.frame.minY { return x.frame.minY < y.frame.minY }
+            let (first, second) = (displays[a], displays[b])
+            if first.isMain != second.isMain { return first.isMain }
+            if first.frame.minX != second.frame.minX { return first.frame.minX < second.frame.minX }
+            if first.frame.minY != second.frame.minY { return first.frame.minY < second.frame.minY }
             return a < b
         }
     }
