@@ -142,8 +142,13 @@ note, `click`, `type` (text and key combos), `drag` between two controls or poin
 resize one. A session that hits a setting it can't see can look, show you where to click, or do it
 for you. The server is Varnick's own binary (`Varnick --mcp`) and only passes each call on: the running
 Varnick does the reading, drawing and acting, with the code Hey Varnick uses. It needs Accessibility, and
-Screen Recording to read the text of a window that lists nothing or of a Chrome page; Settings asks for
-both.
+Screen Recording to read the text of a window that lists nothing or of a Chrome page, or to return a picture;
+Settings asks for both.
+
+`look` with `picture` also returns an image of the window (or of one area of it), scaled to at most 1568 pixels
+on the long side. It shows everything on the window, typed text included, which the listing leaves out, and
+goes to Anthropic with the session. Password fields Varnick can see are painted black first; one it can't see
+(a Chrome page whose tree is hidden, a remote desktop) is not.
 
 **Nothing asks before an action**: the arrow shows on the target for a second first, then the app comes to the
 front (not for `window`) and a click, typing, drag or resize happens. `look` also says which control has focus.

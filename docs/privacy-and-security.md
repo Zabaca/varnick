@@ -77,6 +77,15 @@ field"), never its label or what it holds. The same caveat holds: typed text of 
 Varnick can't place may be among the lines. Nothing on this path goes to TypeSafe. Varnick's own panel is never
 read.
 
+A session can also ask for a **picture** of the window (`look` with `picture`, or one area of it). A picture shows
+everything on the window, including what you typed into a field, which the listing leaves out, and it goes to
+Anthropic with the session and stays in its transcript on this Mac. Varnick paints black the password fields it
+can see before it sends the picture. It can't see one where the app doesn't report it (a Chrome page whose tree
+is hidden, a canvas app, a remote desktop, a virtual machine), in a window with more controls than it reads, or
+where an app shows a password in a plain field, and those show. The picture needs Screen Recording. Varnick's log
+holds its kind, pixel size and byte count, never what it shows. If you don't want what is on a window sent to
+Anthropic, leave Screen access off, or close the window first.
+
 ### A model server you name
 
 With Server chosen for Search embeddings or Text generation (Settings › Models), Varnick sends the server the
@@ -233,6 +242,8 @@ Screen access (ADR 0023) gives the sessions started or restarted while it is on 
 - **The server only relays.** `Varnick --mcp` sends each call as one line on a socket only your account can open,
   and the running Varnick answers. A paired Mac or a device can't send one: the peer relay refuses it. Any
   process of yours on this Mac can, naming any pane's id; the id is a label, not a credential.
+- **`look` can return a picture of a window,** which takes nothing from the screen but that window (see above for
+  what it shows and what is hidden).
 - **Varnick's own window is refused,** and so is a session another Mac or a device is in control of. Turning the
   switch off refuses every call at once. `window` moves no pointer and brings no app forward.
 

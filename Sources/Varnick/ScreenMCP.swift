@@ -27,6 +27,8 @@ struct ScreenArguments: Codable {
     var app: String?
     /// `look`'s flag or `type`'s characters, whichever the call sent: the tool says which it takes.
     var text: Text?
+    /// `look`'s flag for a picture of the window, with `rect` to crop it.
+    var picture: Bool?
     var id: String?
     var rect: Rect?
     var note: String?
@@ -135,6 +137,11 @@ struct ScreenArguments: Codable {
         } else if let word = try? values.decodeIfPresent(String.self, forKey: .replace) {
             replace = word.lowercased() == "true"
         }
+        if let flag = try? values.decodeIfPresent(Bool.self, forKey: .picture) {
+            picture = flag
+        } else if let word = try? values.decodeIfPresent(String.self, forKey: .picture) {
+            picture = word.lowercased() == "true"
+        }
         from = try? values.decodeIfPresent(Spot.self, forKey: .from)
         to = try? values.decodeIfPresent(Spot.self, forKey: .to)
         position = try? values.decodeIfPresent(Point.self, forKey: .position)
@@ -156,13 +163,21 @@ struct ScreenArguments: Codable {
         return (try? values.decodeIfPresent(String.self, forKey: key)).flatMap { Double($0) }
     }
 
-    private enum CodingKeys: String, CodingKey { case app, text, id, rect, note, at, keys, replace, from, to, position, size }
+    private enum CodingKeys: String, CodingKey { case app, text, picture, id, rect, note, at, keys, replace, from, to, position, size }
 }
 
-/// The reply line: the call's text, and whether it was a refusal or a failure.
+/// The reply line: the call's text, whether it was a refusal or a failure, and for a `look` that asked for one, a picture. An older
+/// Varnick sends no picture and an older server ignores one, so the request's version is unchanged.
 struct ScreenReply: Codable {
     var text: String
     var isError: Bool
+    var image: Image?
+
+    /// A picture as MCP carries it: base64 data and its mime type.
+    struct Image: Codable {
+        var data: String
+        var mimeType: String
+    }
 }
 
 /// The server: newline-delimited JSON-RPC on standard input and output, the stdio transport of MCP. No library: the protocol
@@ -217,10 +232,18 @@ enum ScreenMCP {
              + "read from a picture of the window (t1, t2…). A last line says which control has focus, by its id or its kind: \"Focus: e7\", "
              + "\"Focus: a text field that isn't listed\", \"Focus: a password field\" or \"Focus: none\". Ids are what point, click, type, "
              + "drag and window take, and are replaced by the next look. Frames are in screen points, the origin at the top left of the "
-             + "main display. Nothing a person typed into a field is listed.",
+             + "main display. Nothing a person typed into a field is listed. With `picture` it also returns an image of the window "
+             + "(at most about \(ScreenPicture.longSide) pixels on the long side), and the text says which part of the screen it shows. The "
+             + "image shows everything on the window, typed text included, and goes to Anthropic with this session: ask for it only when the "
+             + "listing is not enough. Password fields Varnick can see are painted black; one it cannot see (a Chrome page's, a remote "
+             + "desktop's) is not.",
              properties: [
                 "app": ["type": "string", "description": "The app to look at, by name. Omit for the app the user is working in."],
                 "text": ["type": "boolean", "description": "Also read the window's text from a picture of it, even when its controls are listed."],
+                "picture": ["type": "boolean", "description": "Also return an image of the window. Needs Screen Recording."],
+                "rect": ["type": "object", "description": "With `picture`: only this area of the window, in screen points, the origin at the top left of the main display.",
+                         "properties": ["x": ["type": "number"], "y": ["type": "number"], "width": ["type": "number"], "height": ["type": "number"]],
+                         "required": ["x", "y", "width", "height"]],
              ]),
         tool(.point, "Draws the user's attention to a control or a rectangle with an arrow and a sign that shows this session's name and "
              + "the note. It stays \(Int(ArrowOverlay.lingers)) seconds, or until the next point or click. It changes nothing on the screen.",
@@ -317,7 +340,9 @@ enum ScreenMCP {
             let arguments = (params["arguments"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                 .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
             let reply = ask(requestLine(pane: pane, tool: name, arguments: arguments))
-            return success(id: id, ["content": [["type": "text", "text": reply.text]], "isError": reply.isError])
+            var content: [[String: Any]] = [["type": "text", "text": reply.text]]
+            if let image = reply.image { content.append(["type": "image", "data": image.data, "mimeType": image.mimeType]) }
+            return success(id: id, ["content": content, "isError": reply.isError])
         default:
             return failure(id: id, code: -32601, "Method not found")
         }

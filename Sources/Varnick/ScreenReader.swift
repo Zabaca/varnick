@@ -4,7 +4,7 @@ import Foundation
 
 /// Reads the elements of the focused window through Accessibility, in this process under Varnick's own grant (ADR 0019). It never
 /// goes through a helper, a script or a pane: those run under zmx, and a grant to zmx would reach every session it hosts.
-/// No image is made. What an element may hold is in where-it-breaks.md, Pointing at the screen.
+/// No image is made here (a session's picture is `ScreenPicture`, which only reads the secure fields' frames from this). What an element may hold is in where-it-breaks.md, Pointing at the screen.
 enum ScreenReader {
     // Limits, tuned by hand. A hung app costs only the budget.
     static let budget: Duration = .seconds(1)
@@ -26,6 +26,9 @@ enum ScreenReader {
         /// The frames of the text fields, text areas, combo boxes, search fields and secure fields the walk met, and of the field
         /// that has focus: recognised lines inside them are what a person typed and are dropped. Never sent.
         var entryFrames: [CGRect] = []
+        /// The frames of the secure text fields the walk met, and of the focused one when it is secure: what a picture of the window
+        /// (`ScreenPicture`) paints black. Never sent.
+        var secureFrames: [CGRect] = []
         /// The biggest web area with nothing in it that has a frame, which is where a Chrome page's text is.
         var emptyWebArea: CGRect?
         /// Which control has the app's focus, for a session's `look`. Hey Varnick's read ignores it.
@@ -197,6 +200,7 @@ enum ScreenReader {
         if let focus, let focusValues,
            isEntry(role: focusValues[0] as? String ?? "", subrole: focusValues[1] as? String ?? ""), let focusFrame = frame(of: focus) {
             reading.entryFrames.append(focusFrame)
+            if focusValues[1] as? String == "AXSecureTextField" { reading.secureFrames.append(focusFrame) }
         }
         var walk = Walk(deadline: deadline)
         walk.run(window: window)
@@ -209,6 +213,7 @@ enum ScreenReader {
             return element
         }
         reading.entryFrames += walk.entryFrames
+        reading.secureFrames += walk.secureFrames
         reading.chromeBlind = walk.sawEmptyWebArea && isChromium(bundle: bundle)
         reading.emptyWebArea = walk.emptyWebArea
         if let focus, let focusValues {
@@ -393,6 +398,7 @@ enum ScreenReader {
         var sawEmptyWebArea = false
         var emptyWebArea: CGRect?
         var entryFrames: [CGRect] = []
+        var secureFrames: [CGRect] = []
         var window = CGRect.infinite
 
         var outOfBudget: Bool { nodes >= ScreenReader.maxNodes || ContinuousClock.now >= deadline }
@@ -419,6 +425,7 @@ enum ScreenReader {
                 if let frame, emptyWebArea == nil || frame.width * frame.height > emptyWebArea!.width * emptyWebArea!.height { emptyWebArea = frame }
             }
             if entry, let frame { entryFrames.append(frame) }
+            if subrole == "AXSecureTextField", let frame { secureFrames.append(frame) }
             // Nothing of a secure field is read but where it is (text recognition drops what lies in it, ADR 0021).
             guard subrole != "AXSecureTextField" else { return [] }
             if node.depth == 0 { window = frame ?? .infinite }
