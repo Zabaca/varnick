@@ -130,9 +130,6 @@ struct OutlineSelection: Equatable {
     var fixed: OutlinePath
     var moving: OutlinePath
 
-    /// Whether the row is selected, or nested under a selected one.
-    func covers(_ path: OutlinePath) -> Bool { run.contains { path.placements.starts(with: $0.placements) } }
-
     /// The same selection at the paths an edit moved the run to, which come in the run's order.
     func following(_ moved: [OutlinePath]) -> OutlineSelection? {
         guard moved.count == run.count, let f = run.firstIndex(of: fixed), let m = run.firstIndex(of: moving) else { return nil }
@@ -151,7 +148,7 @@ enum OutlineEdit {
     case join(OutlinePath)
     /// These placements only, each with whatever is nested under it. A bullet goes when its last placement goes.
     case delete(OutlineRun)
-    /// New bullets made from a paste (or panel access's `add`): the drafts, with new ids, `created` and `changed` now, and completion and collapse
+    /// New bullets made from a paste (panel access's `insert` is to be this edit): the drafts, with new ids, `created` and `changed` now, and completion and collapse
     /// as the drafts have them. The caret goes to the end of the last top-level one that shows; the result's run is the new top-level paths.
     case insert([OutlineDraft], at: OutlineInsertion)
     /// ↩ in the title of a zoom: the text after the caret moves into a new first nested bullet; at the start of a non-empty title the new
@@ -698,7 +695,8 @@ struct OutlineTree: Codable, Equatable {
             guard let run = resolve(run) else { return .refused("no such row") }
             let rows = visibleRows(scope)
             let at = rows.firstIndex { $0.path == run.items[0].path }
-            for item in run.items.reversed() { tree.removePlacement(at: (run.parent, item.index, item.placement.bullet), now: now) }
+            run.remove(from: &tree)
+            tree.bullets[run.parent]?.changed = now
             if let at, at > 0 {
                 caret = OutlineCaret(path: rows[at - 1].path, offset: rows[at - 1].text.utf16.count)
             } else if let title = crumbs().last {
@@ -737,7 +735,7 @@ struct OutlineTree: Codable, Equatable {
             return .applied(done, caret: nil, run: run.items.map(\.path))
         case .setNote(let path, let note):
             guard let spot = locate(path) else { return .refused("no such row") }
-            let clean = note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            let clean = Self.cleanNote(note)
             let new = clean.isEmpty ? nil : clean
             guard bullets[spot.bullet]?.note != new else { return .applied(self, caret: nil) }
             tree.bullets[spot.bullet]?.note = new
@@ -763,24 +761,24 @@ struct OutlineTree: Codable, Equatable {
             guard index >= 0 else { return .refused("no sibling above") }
             let above = siblings[index]
             guard !run.items.contains(where: { contains($0.placement.bullet, descendant: above.bullet) }) else { return .refused(.insideItself) }
-            for item in run.items.reversed() { tree.bullets[run.parent]?.children.remove(at: item.index) }
+            run.remove(from: &tree)
             tree.bullets[run.parent]?.children[index].collapsed = nil
             tree.bullets[run.parent]?.changed = now
             tree.bullets[above.bullet]?.children.append(contentsOf: run.items.map(\.placement))
             tree.bullets[above.bullet]?.changed = now
             moved = run.items.map { run.parentPath.appending(above.id).appending($0.placement.id) }
-            caret = run.caretOffset.map { OutlineCaret(path: moved[0], offset: $0) }
+            caret = run.caret(at: moved)
         case .outdent(let asked):
             // Stops at the top level of the zoom.
             guard let run = resolve(asked), run.parentPath.placements.count > effectiveZoom.count, let parent = locate(run.parentPath) else {
                 return .refused("already at the top")
             }
-            for item in run.items.reversed() { tree.bullets[run.parent]?.children.remove(at: item.index) }
+            run.remove(from: &tree)
             tree.bullets[parent.parent]?.children.insert(contentsOf: run.items.map(\.placement), at: parent.index + 1)
             tree.bullets[run.parent]?.changed = now
             tree.bullets[parent.parent]?.changed = now
             moved = run.items.map { run.parentPath.parent.appending($0.placement.id) }
-            caret = run.caretOffset.map { OutlineCaret(path: moved[0], offset: $0) }
+            caret = run.caret(at: moved)
         case .move(let asked, let step):
             // The run goes as a block past the nearest sibling that shows beyond it: hidden ones (by a filter, or completed) are stepped over,
             // and any between selected bullets stay behind.
@@ -791,13 +789,13 @@ struct OutlineTree: Codable, Equatable {
             var target = step < 0 ? first.index + step : last.index + step
             while siblings.indices.contains(target), !shown.contains(run.parentPath.appending(siblings[target].id)) { target += step }
             guard siblings.indices.contains(target) else { return .refused("first or last") }
-            for item in run.items.reversed() { tree.bullets[run.parent]?.children.remove(at: item.index) }
+            run.remove(from: &tree)
             // Where the sibling it passes stands once the run is out of the list.
             let landing = step < 0 ? target : target - run.items.count + 1
             tree.bullets[run.parent]?.children.insert(contentsOf: run.items.map(\.placement), at: landing)
             tree.bullets[run.parent]?.changed = now
             moved = run.items.map(\.path)
-            caret = run.caretOffset.map { OutlineCaret(path: moved[0], offset: $0) }
+            caret = run.caret(at: moved)
         case .collapse(let path, let collapsed):
             guard let spot = locate(path), bullets[spot.bullet]?.children.isEmpty == false else { return .refused("nothing nested") }
             tree.bullets[spot.parent]?.children[spot.index].collapsed = collapsed ? true : nil
@@ -853,6 +851,14 @@ struct OutlineTree: Codable, Equatable {
         let parent: String
         let items: [Item]
         let caretOffset: Int?
+
+        /// Takes the run's placements out of their parent's list; whoever calls this puts them somewhere, or drops them.
+        func remove(from tree: inout OutlineTree) {
+            for item in items.reversed() { tree.bullets[parent]?.children.remove(at: item.index) }
+        }
+
+        /// Where the caret goes when the run was the caret's row: at the first of `paths`, the run's new places, in the offset it had.
+        func caret(at paths: [OutlinePath]) -> OutlineCaret? { caretOffset.map { OutlineCaret(path: paths[0], offset: $0) } }
     }
 
     /// The run's placements, or nil when a path leads nowhere or the rows aren't all under one parent.
@@ -899,6 +905,11 @@ struct OutlineTree: Codable, Equatable {
         return levels(below: root, stack: [root])
     }
 
+    /// A note's line breaks as line feeds.
+    private static func cleanNote(_ note: String) -> String {
+        note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
     private static func oneLine(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
     }
@@ -918,7 +929,7 @@ struct OutlineTree: Codable, Equatable {
     private mutating func make(_ draft: OutlineDraft, now: Date, newID: () -> String) -> OutlinePlacement {
         let bullet = newID(), placement = newID()
         let children = draft.children.map { make($0, now: now, newID: newID) }
-        let note = (draft.note ?? "").replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let note = Self.cleanNote(draft.note ?? "")
         bullets[bullet] = OutlineBullet(text: Self.oneLine(draft.text), note: note.isEmpty ? nil : note, completed: draft.completed,
                                         created: now, changed: now, children: children)
         return OutlinePlacement(id: placement, bullet: bullet, collapsed: draft.collapsed && !children.isEmpty ? true : nil)

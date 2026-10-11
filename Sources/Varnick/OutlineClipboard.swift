@@ -40,12 +40,9 @@ struct OutlineDraft: Equatable, Codable {
         if collapsed { try c.encode(true, forKey: .collapsed) }
         if !children.isEmpty { try c.encode(children, forKey: .children) }
     }
-
-    /// The bullets in this one and under it.
-    var count: Int { 1 + children.reduce(0) { $0 + $1.count } }
 }
 
-/// The one writer and reader of both forms. Panel access's `add` reads indented text through `drafts(fromText:)`.
+/// The one writer and reader of both forms. Panel access's `add` is to read indented text through `drafts(fromText:)`.
 enum OutlineClipboard {
     /// The pasteboard type of Varnick's own copy.
     static let pasteboardType = "com.zabaca.varnick.outline"
@@ -56,17 +53,26 @@ enum OutlineClipboard {
 
     // MARK: Writing
 
-    /// The bullets at `run` (rows of `tree`), each with everything nested under it, whether it shows or not.
-    static func drafts(of run: [OutlinePath], in tree: OutlineTree) -> [OutlineDraft] {
+    /// The bullets at `run` (rows of `tree`), each with everything nested under it, whether it shows or not. `cutShort` is set when `copyLimit`
+    /// left some out: such a copy must never be the one a cut deletes.
+    static func drafts(of run: [OutlinePath], in tree: OutlineTree) -> (drafts: [OutlineDraft], cutShort: Bool) {
         var budget = copyLimit
-        return run.compactMap { path in tree.placement(at: path).flatMap { draft($0, in: tree, budget: &budget) } }
+        var cutShort = false
+        let drafts = run.compactMap { path in tree.placement(at: path).flatMap { draft($0, in: tree, budget: &budget, cutShort: &cutShort) } }
+        return (drafts, cutShort)
     }
 
-    private static func draft(_ placement: OutlinePlacement, in tree: OutlineTree, budget: inout Int) -> OutlineDraft? {
-        guard budget > 0, let bullet = tree.bullets[placement.bullet] else { return nil }
+    private static func draft(_ placement: OutlinePlacement, in tree: OutlineTree, budget: inout Int, cutShort: inout Bool) -> OutlineDraft? {
+        guard let bullet = tree.bullets[placement.bullet] else { return nil }
+        guard budget > 0 else {
+            cutShort = true
+            return nil
+        }
         budget -= 1
         var children: [OutlineDraft] = []
-        for child in bullet.children { if let made = draft(child, in: tree, budget: &budget) { children.append(made) } }
+        for child in bullet.children {
+            if let made = draft(child, in: tree, budget: &budget, cutShort: &cutShort) { children.append(made) }
+        }
         return OutlineDraft(text: bullet.text, note: bullet.note?.isEmpty == false ? bullet.note : nil, completed: bullet.completed,
                             collapsed: placement.collapsed == true && !children.isEmpty, children: children)
     }
@@ -110,7 +116,8 @@ enum OutlineClipboard {
     /// How many lines of `text` are not blank.
     static func lineCount(of text: String) -> Int { lines(of: text).count }
 
-    private static func lines(of text: String) -> [String] {
+    /// The lines of `text` that are not blank.
+    static func lines(of text: String) -> [String] {
         text.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 

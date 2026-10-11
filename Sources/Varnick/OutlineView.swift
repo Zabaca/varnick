@@ -665,8 +665,7 @@ final class OutlineTextView: NSTextView {
         // A note keeps its line breaks.
         if kind == .note { return super.paste(sender) }
         if outline?.pasteBullets(into: self) == true { return }
-        let lines = NSPasteboard.general.string(forType: .string)?.components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let lines = NSPasteboard.general.string(forType: .string).map(OutlineClipboard.lines(of:))
         if let line = lines?.first { insertText(line, replacementRange: selectedRange()) }
     }
 

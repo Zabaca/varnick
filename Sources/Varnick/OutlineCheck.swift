@@ -101,11 +101,11 @@ enum OutlineCheck {
     /// Prints counts only.
     private static func clipboardCheck(_ tree: OutlineTree) {
         let top = (tree.bullets[tree.root]?.children ?? []).map { OutlinePath(placements: [$0.id]) }
-        let drafts = OutlineClipboard.drafts(of: top, in: tree)
+        let (drafts, cutShort) = OutlineClipboard.drafts(of: top, in: tree)
         let original = DraftCounts(drafts)
         let fromText = DraftCounts(OutlineClipboard.drafts(fromText: OutlineClipboard.text(of: drafts)))
         let fromOwn = OutlineClipboard.data(of: drafts).flatMap(OutlineClipboard.drafts(fromData:)).map(DraftCounts.init)
-        print("clipboard check: \(top.count) top-level bullets copy as \(original)")
+        print("clipboard check: \(top.count) top-level bullets copy as \(original)\(cutShort ? ", cut short" : "")")
         print("clipboard check: indented text reads back with the same bullet count: \(fromText.bullets == original.bullets), "
               + "the same deepest level: \(fromText.deepest == original.deepest)")
         if let fromOwn {

@@ -246,23 +246,30 @@ final class Outline: ObservableObject {
     private static let ownType = NSPasteboard.PasteboardType(OutlineClipboard.pasteboardType)
 
     /// Copies the bullets at `paths` to the system clipboard, in the two forms together so that another app's copy replaces both: as indented
-    /// text, and as Varnick's own copy. Says how many in the header. Never logs the text.
+    /// text, and as Varnick's own copy. Says how many in the header. Never logs the text. A copy that `OutlineClipboard.copyLimit` cut short is
+    /// made but said to be; with `wholeOnly` (a cut) it is refused instead, since the delete would remove bullets the clipboard never got.
     @discardableResult
-    private func copy(_ paths: [OutlinePath]) -> Bool {
-        let drafts = OutlineClipboard.drafts(of: paths, in: tree)
+    private func copy(_ paths: [OutlinePath], wholeOnly: Bool = false) -> Bool {
+        let (drafts, cutShort) = OutlineClipboard.drafts(of: paths, in: tree)
         guard !drafts.isEmpty else { return false }
+        if cutShort, wholeOnly {
+            NSSound.beep()
+            say("Too many bullets to cut: nothing was cut")
+            return false
+        }
         let board = NSPasteboard.general
         let own = OutlineClipboard.data(of: drafts)
         board.declareTypes(own == nil ? [.string] : [.string, Self.ownType], owner: nil)
         board.setString(OutlineClipboard.text(of: drafts), forType: .string)
         if let own { board.setData(own, forType: Self.ownType) }
-        say(drafts.count == 1 ? "Copied 1 bullet" : "Copied \(drafts.count) bullets")
+        let count = paths.count == 1 ? "1 bullet" : "\(paths.count) bullets"
+        say(cutShort ? "Copied \(count), cut short at \(OutlineClipboard.copyLimit) in all" : "Copied \(count)")
         return true
     }
 
     /// ⌘X on bullets selected: the copy, then the delete of the run, in one undo step (the delete's).
     private func cut(_ paths: [OutlinePath]) {
-        guard copy(paths) else { return }
+        guard copy(paths, wholeOnly: true) else { return }
         apply(.delete(OutlineRun(paths)))
     }
 
@@ -289,8 +296,7 @@ final class Outline: ObservableObject {
         guard load == .ready, let drafts = pastedBullets(minimumLines: 2) else { return false }
         let path = view.rowPath
         let place: OutlineInsertion = tree.isTitle(path) ? .firstUnder(path) : tree.canReplace(path) ? .replacing(path) : .after(path)
-        apply(.insert(drafts, at: place))
-        return true
+        return apply(.insert(drafts, at: place)) == nil
     }
 
     /// ⌥⌘C: the bullet under the caret, or the bullets selected, are remembered, to be placed again as mirrors.

@@ -197,6 +197,10 @@ _Avoid_: Copy, clone, link, reference, original
 **Bullet**s chosen whole in the **Outline**: siblings next to each other, each with everything nested under it, so that one key acts on all of them. Not text selected inside one bullet, which never runs into the next.
 _Avoid_: Highlight (the **Filter**'s mark on matching words), block, multi-select
 
+**Varnick's own copy**:
+What ⌘C or ⌘X on a **Selection** puts on the clipboard beside the indented text: **Bullet**s with their notes, completion and collapse, nested, and no ids, in a pasteboard type of Varnick's with a version. A paste prefers it to the text, and makes new bullets from it. Not the **Mirror** copy, which ⌥⌘C keeps in the app and never puts on the clipboard.
+_Avoid_: Clipboard format, native paste
+
 ### Listening
 
 **Listening**:
