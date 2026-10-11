@@ -267,8 +267,16 @@ final class PanelAccess {
             throw PanelRefusal.bad("The panel is hidden, and Varnick doesn't swap a terminal's tab under a hidden panel: ask the user to open the panel first")
         }
         act()
-        let showing = panelText(model, caller: caller).split(separator: "\n").first { $0.hasPrefix("Showing:") }.map(String.init) ?? "Shown."
-        return (showing + (visible ? "" : " The panel is hidden, so this is there when the user opens it."), kind)
+        let showing = Self.showingBlock(of: panelText(model, caller: caller)) ?? "Shown."
+        return (showing + (visible ? "" : "\nThe panel is hidden, so this is there when the user opens it."), kind)
+    }
+
+    /// The "Showing:" line of `panel`'s text with the indented lines under it (a tab's panes), as `panel` gives them: not the line alone.
+    private static func showingBlock(of text: String) -> String? {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("Showing:") }) else { return nil }
+        let rest = lines[(start + 1)...].prefix { $0.hasPrefix(" ") }
+        return ([lines[start]] + rest).joined(separator: "\n")
     }
 
     private static let outlineNotYet = "The outline is not available to sessions yet"

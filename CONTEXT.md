@@ -42,6 +42,10 @@ _Avoid_: Turn (what Claude is doing now), chunk (the sync embeds in chunks)
 What Claude is doing in a **Session** right now: working, waiting for the user's next prompt, waiting in the middle of a turn on a permission dialog, a question, a plan to approve or an MCP server's request, or background (the turn ended with background agents, busy teammates, workflows or shells still running, which start Claude's next turn when they end).
 _Avoid_: Status, state, running (a session "runs" while its zmx session is alive)
 
+**Panel**:
+Varnick's one floating window, shown and hidden with ⌃Space and pinnable, that shows one view at a time: the search, a **Tab** of **Pane**s, the **Session board** or the **Outline**, with Settings over it.
+_Avoid_: Window (another app's, which **Screen access** reaches), popup
+
 **Session board**:
 The panel's view of the Claude panes on this Mac and the sessions open on paired Macs, each as a **board card** in one of three columns by **Turn**: Running (working or background), Stopped (everything else, marked when Claude waits on the user mid-turn, and below the live cards the **ended cards** of sessions whose pane closed without Done, or that a paired Mac's Recent says closed there after this Mac listed them open, kept until the user marks them done or opens them) and Completed (reached only by Done, and shared between the paired Macs through each session's host: ADR 0028). It replaces the panel's content as Settings does. Beside Sessions it has a Problems tab, while Settings › Experimental › Problems board is on: a card per problem of the projects that keep `docs/problems`, in Backlog, Decided, Building, Shipped or Closed by what the problem and option files say, the branches tied to options and the **Work links** of live sessions, not by **Turn**, with a chip for each session that worked on it.
 _Avoid_: Kanban (the command's name), dashboard; "card" alone, which is a pane's **Card**
