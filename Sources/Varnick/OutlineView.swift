@@ -13,6 +13,7 @@ struct OutlineView: View {
             HStack(spacing: 14) {
                 Image(systemName: "list.bullet.indent").foregroundStyle(.secondary)
                 Text("Outline").font(.system(size: 15, weight: .semibold))
+                if let notice = outline.notice { Text(notice).foregroundStyle(.orange).lineLimit(1) }
                 Spacer()
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
                     .buttonStyle(.plain)
@@ -87,15 +88,41 @@ private struct OutlineRowView: View {
     static let indent: CGFloat = 18
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(Color.secondary)
-                .frame(width: 5, height: 5)
-                .frame(width: 14, height: 18)
+        HStack(alignment: .top, spacing: 4) {
+            disclosure
+            dot
             BulletText(outline: outline, row: row)
         }
         .padding(.leading, CGFloat(row.depth) * Self.indent)
         .padding(.vertical, 2)
+    }
+
+    /// A triangle on a bullet with bullets nested under it; the space is kept on the others so the dots line up.
+    @ViewBuilder private var disclosure: some View {
+        if row.hasChildren {
+            Button { outline.toggleCollapse(row.path) } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(row.collapsed ? 0 : 90))
+                    .frame(width: 12, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else {
+            Color.clear.frame(width: 12, height: 18)
+        }
+    }
+
+    /// A ring around the dot of a collapsed bullet that has bullets nested under it.
+    private var dot: some View {
+        ZStack {
+            Circle().fill(Color.secondary).frame(width: 5, height: 5)
+            if row.hasChildren, row.collapsed {
+                Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 12, height: 12)
+            }
+        }
+        .frame(width: 14, height: 18)
     }
 }
 
@@ -225,7 +252,7 @@ final class OutlineTextView: NSTextView {
         return accepted
     }
 
-    // A bullet is one paragraph: ↩ is the outline's, and ⇥ is for nesting (a later ticket).
+    // A bullet is one paragraph: ↩ and ⇥ are the outline's (an input method that is composing gets them first).
     override func insertNewline(_ sender: Any?) {}
     override func insertNewlineIgnoringFieldEditor(_ sender: Any?) {}
     override func insertLineBreak(_ sender: Any?) {}

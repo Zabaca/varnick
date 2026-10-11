@@ -9,15 +9,17 @@ enum OutlineCheck {
         let bullets: Int
         let placements: Int
         let mirrors: Int
+        let deepest: Int
 
         /// Everything the tree holds but the top bullet, reachable or not: a save drops what the top bullet can't reach, so the round trip shows it.
         init(_ tree: OutlineTree) {
             bullets = tree.bullets.count - 1
             placements = tree.placementTotal
             mirrors = tree.mirrorCount
+            deepest = tree.deepestLevel
         }
 
-        var description: String { "\(bullets) bullets, \(placements) placements, \(mirrors) mirrors" }
+        var description: String { "\(bullets) bullets, \(placements) placements, \(mirrors) mirrors, deepest level \(deepest)" }
     }
 
     static func run(_ arguments: [String]) -> Int32 {

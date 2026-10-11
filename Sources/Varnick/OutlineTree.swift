@@ -75,6 +75,14 @@ enum OutlineEdit {
     case delete(OutlinePath)
     /// Several lines pasted over `range`: the first at the caret, each further one in a new bullet below. Blank lines are skipped.
     case paste(OutlinePath, range: Range<Int>, lines: [String])
+    /// ⇥: the last bullet under the sibling above, which opens. `offset` is where the caret was, for the caret that follows the row.
+    case indent(OutlinePath, offset: Int)
+    /// ⇧⇥: the next sibling of its parent. The siblings after it stay where they were.
+    case outdent(OutlinePath, offset: Int)
+    /// ⌘⇧↑ and ⌘⇧↓ (`by` is -1 or 1): swaps with a sibling, nested bullets and all; refused at the first or last.
+    case move(OutlinePath, by: Int, offset: Int)
+    /// ⌘↑ and ⌘↓: the placement's own state, so it is refused for a bullet with nothing nested.
+    case collapse(OutlinePath, Bool)
 }
 
 enum OutlineEditResult: Equatable {
@@ -264,8 +272,40 @@ struct OutlineTree: Codable, Equatable {
             if let at, at > 0 {
                 caret = OutlineCaret(path: rows[at - 1].path, offset: rows[at - 1].text.utf16.count)
             } else {
-                caret = nil
+                // No row above: the caret goes to the first row left, the empty one a lone bullet's delete leaves included.
+                return Self.finish(tree, caret: nil, now: now, newID: newID, caretInFirstRow: true)
             }
+        case .indent(let path, let offset):
+            guard let spot = locate(path), spot.index > 0, let above = bullets[spot.parent]?.children[spot.index - 1] else {
+                return .refused("no sibling above")
+            }
+            guard !contains(spot.bullet, descendant: above.bullet) else { return .refused(Self.insideItself) }
+            let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index)
+            tree.bullets[spot.parent]?.children[spot.index - 1].collapsed = nil
+            tree.bullets[spot.parent]?.changed = now
+            if let moved { tree.bullets[above.bullet]?.children.append(moved) }
+            tree.bullets[above.bullet]?.changed = now
+            caret = OutlineCaret(path: path.parent.appending(above.id).appending(path.placements[path.placements.count - 1]), offset: offset)
+        case .outdent(let path, let offset):
+            guard path.placements.count >= 2, let spot = locate(path), let parent = locate(path.parent) else { return .refused("already at the top") }
+            if let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index) {
+                tree.bullets[parent.parent]?.children.insert(moved, at: parent.index + 1)
+            }
+            tree.bullets[spot.parent]?.changed = now
+            tree.bullets[parent.parent]?.changed = now
+            caret = OutlineCaret(path: path.parent.parent.appending(path.placements[path.placements.count - 1]), offset: offset)
+        case .move(let path, let step, let offset):
+            guard let spot = locate(path), let count = bullets[spot.parent]?.children.count,
+                  (0..<count).contains(spot.index + step) else { return .refused("first or last") }
+            tree.bullets[spot.parent]?.children.swapAt(spot.index, spot.index + step)
+            tree.bullets[spot.parent]?.changed = now
+            caret = OutlineCaret(path: path, offset: offset)
+        case .collapse(let path, let collapsed):
+            guard let spot = locate(path), bullets[spot.bullet]?.children.isEmpty == false else { return .refused("nothing nested") }
+            tree.bullets[spot.parent]?.children[spot.index].collapsed = collapsed ? true : nil
+            guard tree != self else { return .applied(self, caret: nil) }
+            tree.bullets[spot.parent]?.changed = now
+            caret = nil
         case .paste(let path, let range, let lines):
             guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
             let pasted = lines.map(Self.oneLine).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -294,8 +334,39 @@ struct OutlineTree: Codable, Equatable {
         return Self.finish(tree, caret: caret, now: now, newID: newID)
     }
 
-    private static func finish(_ tree: OutlineTree, caret: OutlineCaret?, now: Date, newID: () -> String) -> OutlineEditResult {
-        .applied(tree.pruned().ensuringBullet(now: now, newID: newID), caret: caret)
+    private static func finish(_ tree: OutlineTree, caret: OutlineCaret?, now: Date, newID: () -> String,
+                               caretInFirstRow: Bool = false) -> OutlineEditResult {
+        let done = tree.pruned().ensuringBullet(now: now, newID: newID)
+        guard caretInFirstRow, let first = done.visibleRows().first else { return .applied(done, caret: caret) }
+        return .applied(done, caret: OutlineCaret(path: first.path, offset: 0))
+    }
+
+    /// The refusal that beeps and shows in the header.
+    static let insideItself = "A bullet can't go inside itself"
+
+    /// Whether `descendant` is `ancestor` or can be reached from it by placements.
+    func contains(_ ancestor: String, descendant: String) -> Bool {
+        var seen: Set<String> = []
+        var pending = [ancestor]
+        while let id = pending.popLast() {
+            if id == descendant { return true }
+            guard seen.insert(id).inserted, let bullet = bullets[id] else { continue }
+            pending.append(contentsOf: bullet.children.map(\.bullet))
+        }
+        return false
+    }
+
+    /// How many levels the deepest bullet is down: 1 for bullets directly under the top bullet, 0 for none.
+    var deepestLevel: Int {
+        var deepest = 0
+        func walk(_ id: String, level: Int, stack: Set<String>) {
+            for placement in bullets[id]?.children ?? [] where !stack.contains(placement.bullet) {
+                deepest = max(deepest, level)
+                walk(placement.bullet, level: level + 1, stack: stack.union([placement.bullet]))
+            }
+        }
+        walk(root, level: 1, stack: [root])
+        return deepest
     }
 
     private static func oneLine(_ text: String) -> String {

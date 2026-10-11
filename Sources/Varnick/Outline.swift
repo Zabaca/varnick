@@ -30,6 +30,8 @@ final class Outline: ObservableObject {
     @Published private(set) var rows: [OutlineRow] = []
     /// Asks the view to scroll a row into sight before the caret moves into it.
     @Published private(set) var scrollRequest: ScrollRequest?
+    /// A refusal's words, for a moment, in the header.
+    @Published private(set) var notice: String?
     /// Not published: the view reads `rows`, and typing must not publish twice.
     private(set) var tree = OutlineTree(root: "", bullets: [:])
 
@@ -44,6 +46,10 @@ final class Outline: ObservableObject {
     private var pending: (path: OutlinePath, place: OutlineCaretPlace)?
     /// Keys that arrive while the caret is on its way to another bullet; they are sent again once it has landed.
     private var queuedEvents: [NSEvent] = []
+    private var undoStack: [Step] = []
+    private var redoStack: [Step] = []
+    private var typingRun: (path: OutlinePath, last: Date)?
+    private var noticeTask: Task<Void, Never>?
 
     var fileURL: URL { OutlineFile.url(in: SupportFolder.url) }
 
@@ -109,30 +115,119 @@ final class Outline: ObservableObject {
             return NSLog("Varnick: outline.json couldn't be moved aside: \(error.localizedDescription)")
         }
         use(OutlineTree.empty(now: Date()))
+        undoStack = []
+        redoStack = []
         load = .ready
         restoreCaret()
     }
 
     // MARK: Editing
 
-    /// Applies one edit to the tree. A refusal changes nothing.
+    /// Applies one edit to the tree and puts it on the undo stack. A refusal changes nothing; one that would put a bullet inside itself also
+    /// beeps and says so in the header.
     @discardableResult
-    private func apply(_ edit: OutlineEdit) -> Bool {
-        guard load == .ready, case .applied(let new, let caret) = tree.applying(edit, now: Date()) else { return false }
-        if new != tree {
-            use(new)
-            saver.changed(new)
+    private func apply(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false) -> Bool {
+        guard load == .ready else { return false }
+        switch tree.applying(edit, now: Date()) {
+        case .refused(let reason):
+            if reason == OutlineTree.insideItself {
+                NSSound.beep()
+                say(reason)
+            }
+            return false
+        case .applied(let new, let caret):
+            if new != tree {
+                record(caretBefore ?? currentCaret(), typing: typing)
+                use(new)
+                saver.changed(new)
+            }
+            if let caret { moveCaret(to: caret.path, .offset(caret.offset)) }
+            return true
         }
-        if let caret { moveCaret(to: caret.path, .offset(caret.offset)) }
-        return true
     }
 
     /// A text view's text changed: the user typed.
-    func textChanged(_ path: OutlinePath, _ text: String) { apply(.setText(path, text)) }
+    func textChanged(_ path: OutlinePath, _ text: String) {
+        // The caret was behind what was typed, or in front of what was deleted.
+        let length = (tree.text(at: path) ?? "").utf16.count
+        var before: OutlineCaret?
+        if let view = activeView, view.rowPath == path {
+            let delta = text.utf16.count - length
+            before = OutlineCaret(path: path, offset: min(max(view.selectedRange().location - delta, 0), length))
+        }
+        apply(.setText(path, text), caretBefore: before, typing: true)
+    }
 
     func paste(_ view: OutlineTextView, lines: [String]) {
         let selection = view.selectedRange()
         apply(.paste(view.rowPath, range: selection.location..<NSMaxRange(selection), lines: lines))
+    }
+
+    /// The disclosure triangle. The caret stays where it was.
+    func toggleCollapse(_ path: OutlinePath) {
+        guard let row = rows.first(where: { $0.path == path }) else { return }
+        apply(.collapse(path, !row.collapsed))
+        restoreCaret()
+    }
+
+    // MARK: Header message
+
+    /// A short message in the header, such as "A bullet can't go inside itself".
+    private func say(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
+        }
+    }
+
+    // MARK: Undo
+
+    private struct Step {
+        let tree: OutlineTree
+        let caret: OutlineCaret?
+    }
+
+    private static let undoLimit = 200
+    /// Typing in one bullet is one step until this long a pause, or until the caret leaves the bullet.
+    private static let typingPause: TimeInterval = 1
+
+    private func currentCaret() -> OutlineCaret? {
+        if let view = activeView, view.window?.firstResponder === view {
+            return OutlineCaret(path: view.rowPath, offset: view.selectedRange().location)
+        }
+        return remembered.map { OutlineCaret(path: $0.path, offset: $0.location) }
+    }
+
+    /// Puts the tree as it is, with the caret, on the undo stack before an edit changes it. A new edit ends the redo line.
+    private func record(_ caret: OutlineCaret?, typing: Bool) {
+        redoStack = []
+        if typing, let run = typingRun, run.path == caret?.path, Date().timeIntervalSince(run.last) < Self.typingPause {
+            typingRun = (run.path, Date())
+            return
+        }
+        typingRun = typing ? caret.map { ($0.path, Date()) } : nil
+        undoStack.append(Step(tree: tree, caret: caret))
+        if undoStack.count > Self.undoLimit { undoStack.removeFirst(undoStack.count - Self.undoLimit) }
+    }
+
+    /// ⌘Z and ⌘⇧Z. The text views keep no undo of their own, so typing and structure undo in one order.
+    private func undoOrRedo(redo: Bool) {
+        guard load == .ready else { return }
+        guard let step = redo ? redoStack.popLast() : undoStack.popLast() else { return }
+        let here = Step(tree: tree, caret: currentCaret())
+        if redo { undoStack.append(here) } else { redoStack.append(here) }
+        typingRun = nil
+        use(step.tree)
+        saver.changed(step.tree)
+        if let caret = step.caret, rows.contains(where: { $0.path == caret.path }) {
+            moveCaret(to: caret.path, .offset(caret.offset))
+        } else {
+            remembered = nil
+            restoreCaret()
+        }
     }
 
     func text(at path: OutlinePath) -> String? { tree.text(at: path) }
@@ -146,6 +241,7 @@ final class Outline: ObservableObject {
     }
 
     func caretEntered(_ view: OutlineTextView) {
+        if typingRun?.path != view.rowPath { typingRun = nil }
         activeView = view
         selectionChanged(view)
     }
@@ -234,32 +330,55 @@ final class Outline: ObservableObject {
                 return true
             }
         }
-        guard flags.isEmpty else { return false }
         let composing = activeView?.hasMarkedText() == true
         let code = Int(event.keyCode)
-        if code == kVK_Escape {
+        if code == kVK_Escape, flags.isEmpty {
             if composing { return false }
             model?.closeOutline()
             return true
         }
+        // ⌘Z and ⌘⇧Z are taken even when there is nothing to undo, so the Edit menu's never acts on a text view with no undo of its own.
+        let command: NSEvent.ModifierFlags = .command, commandShift: NSEvent.ModifierFlags = [.command, .shift]
+        if code == kVK_ANSI_Z, flags == command || flags == commandShift {
+            if composing { return false }
+            undoOrRedo(redo: flags == commandShift)
+            return true
+        }
         guard load == .ready, !composing, let view = activeView, view.window?.firstResponder === view else { return false }
         let selection = view.selectedRange()
-        switch code {
-        case kVK_Return, kVK_ANSI_KeypadEnter:
-            apply(.split(view.rowPath, range: selection.location..<NSMaxRange(selection)))
-        case kVK_Delete where selection.location == 0 && selection.length == 0:
-            apply(.join(view.rowPath))
-        case kVK_UpArrow where view.caretOnFirstLine:
-            return move(from: view, by: -1)
-        case kVK_DownArrow where view.caretOnLastLine:
-            return move(from: view, by: 1)
+        let path = view.rowPath
+        let atStart = selection.location == 0 && selection.length == 0
+        switch (code, flags) {
+        case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []):
+            apply(.split(path, range: selection.location..<NSMaxRange(selection)))
+        case (kVK_Delete, []) where atStart:
+            apply(.join(path))
+        case (kVK_Delete, commandShift):
+            apply(.delete(path))
+        case (kVK_Tab, []):
+            apply(.indent(path, offset: selection.location))
+        case (kVK_Tab, .shift):
+            apply(.outdent(path, offset: selection.location))
+        case (kVK_UpArrow, []) where view.caretOnFirstLine:
+            return cross(from: view, by: -1)
+        case (kVK_DownArrow, []) where view.caretOnLastLine:
+            return cross(from: view, by: 1)
+        case (kVK_UpArrow, commandShift):
+            apply(.move(path, by: -1, offset: selection.location))
+        case (kVK_DownArrow, commandShift):
+            apply(.move(path, by: 1, offset: selection.location))
+        case (kVK_UpArrow, command):
+            apply(.collapse(path, true))
+        case (kVK_DownArrow, command):
+            apply(.collapse(path, false))
         default:
             return false
         }
         return true
     }
 
-    private func move(from view: OutlineTextView, by step: Int) -> Bool {
+    /// ↑ or ↓ out of the first or last line of a bullet, into the row above or below.
+    private func cross(from view: OutlineTextView, by step: Int) -> Bool {
         guard let at = rows.firstIndex(where: { $0.path == view.rowPath }), rows.indices.contains(at + step) else { return false }
         moveCaret(to: rows[at + step].path, .x(view.caretX(), bottom: step < 0))
         return true
