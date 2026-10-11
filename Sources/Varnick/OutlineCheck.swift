@@ -10,6 +10,7 @@ enum OutlineCheck {
         let placements: Int
         let mirrors: Int
         let deepest: Int
+        let zoom: Int
 
         /// Everything the tree holds but the top bullet, reachable or not: a save drops what the top bullet can't reach, so the round trip shows it.
         init(_ tree: OutlineTree) {
@@ -17,6 +18,7 @@ enum OutlineCheck {
             placements = tree.placementTotal
             mirrors = tree.mirrorCount
             deepest = tree.deepestLevel
+            zoom = tree.effectiveZoom.count
         }
 
         var description: String { "\(bullets) bullets, \(placements) placements, \(mirrors) mirrors, deepest level \(deepest)" }
@@ -42,9 +44,9 @@ enum OutlineCheck {
             print("newer: version \(version), this Varnick reads \(OutlineTree.currentVersion)")
             return 1
         case .loaded(let loaded, let repairs):
-            print("loaded: version \(loaded.version), \(Counts(loaded))")
+            print("loaded: version \(loaded.version), \(Counts(loaded)), zoomed \(loaded.effectiveZoom.count) deep")
             print("repaired: \(repairs.missingBullets) missing bullets, \(repairs.insideItself) inside itself, \(repairs.recovered) recovered, "
-                  + "\(repairs.duplicatePlacements) repeated ids, \(repairs.unreachable) unreachable")
+                  + "\(repairs.duplicatePlacements) repeated ids, \(repairs.unreachable) unreachable, zoom \(repairs.zoomLost ? "reset to Home" : "kept")")
             tree = loaded
         }
         guard paths.count > 1 else { return 0 }

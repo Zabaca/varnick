@@ -28,6 +28,8 @@ final class Outline: ObservableObject {
     weak var model: LauncherModel?
     @Published private(set) var load = Load.notLoaded
     @Published private(set) var rows: [OutlineRow] = []
+    /// The bullets zoomed through, the last being the title; none at Home.
+    @Published private(set) var crumbs: [OutlineCrumb] = []
     /// Asks the view to scroll a row into sight before the caret moves into it.
     @Published private(set) var scrollRequest: ScrollRequest?
     /// A refusal's words, for a moment, in the header.
@@ -92,6 +94,8 @@ final class Outline: ObservableObject {
     private func use(_ new: OutlineTree) {
         tree = new
         rows = new.visibleRows()
+        let shown = new.crumbs()
+        if shown != crumbs { crumbs = shown }
     }
 
     /// The outline closes: a change not yet written is written at once.
@@ -219,9 +223,12 @@ final class Outline: ObservableObject {
         let here = Step(tree: tree, caret: currentCaret())
         if redo { undoStack.append(here) } else { redoStack.append(here) }
         typingRun = nil
-        use(step.tree)
-        saver.changed(step.tree)
-        if let caret = step.caret, rows.contains(where: { $0.path == caret.path }) {
+        // Moving about isn't an edit: the zoom stays, unless the caret's row is outside it.
+        var restored = step.tree.keepingView(of: tree)
+        if let caret = step.caret { restored = restored.zoomShowing(caret.path) }
+        use(restored)
+        saver.changed(restored)
+        if let caret = step.caret, showing(caret.path) {
             moveCaret(to: caret.path, .offset(caret.offset))
         } else {
             if let caret = step.caret { remembered = (caret.path, caret.offset) }
@@ -256,27 +263,60 @@ final class Outline: ObservableObject {
     /// at the end of its text; a path that is gone gives it to the first bullet.
     func restoreCaret() {
         guard load == .ready else { return }
-        if let remembered, rows.contains(where: { $0.path == remembered.path }) {
+        if let remembered, showing(remembered.path) {
             moveCaret(to: remembered.path, .offset(remembered.location))
         } else if let remembered, let near = nearestVisible(remembered.path) {
             moveCaret(to: near, .offset(Int.max))
-        } else if let first = rows.first {
-            moveCaret(to: first.path, .offset(Int.max))
+        } else if let first = rows.first?.path ?? crumbs.last?.path {
+            moveCaret(to: first, .offset(Int.max))
         }
     }
 
     private func nearestVisible(_ path: OutlinePath) -> OutlinePath? {
         var near = path.parent
         while !near.placements.isEmpty {
-            if rows.contains(where: { $0.path == near }) { return near }
+            if showing(near) { return near }
             near = near.parent
         }
         return nil
     }
 
+    /// Whether a row is on screen: under the zoom, or the title.
+    private func showing(_ path: OutlinePath) -> Bool {
+        (path == zoomPath && !crumbs.isEmpty) || rows.contains { $0.path == path }
+    }
+
+    // MARK: Zoom
+
+    /// The bullet zoomed into, as a row path: no placements at Home. Its text is the title.
+    var zoomPath: OutlinePath { OutlinePath(placements: tree.effectiveZoom) }
+
+    /// ⌘] or a click on a dot: the bullet becomes the top of the view, with the caret in its first nested bullet or, with none, its title.
+    func zoomIn(_ path: OutlinePath) {
+        guard load == .ready, path != zoomPath, let zoomed = tree.zoomed(into: path) else { return }
+        setZoom(zoomed)
+        moveCaret(to: rows.first?.path ?? path, .offset(Int.max))
+    }
+
+    /// ⌘[ and the breadcrumbs: back up to `depth` bullets zoomed through (0 is Home), with the caret on the bullet the zoom came from.
+    func zoomOut(to depth: Int) {
+        let before = zoomPath
+        guard load == .ready, depth >= 0, depth < before.placements.count,
+              let zoomed = tree.zoomed(into: OutlinePath(placements: Array(before.placements.prefix(depth)))) else { return }
+        setZoom(zoomed)
+        moveCaret(to: OutlinePath(placements: Array(before.placements.prefix(depth + 1))), .offset(Int.max))
+    }
+
+    /// Where the zoom is isn't an edit, so it isn't undone; it is saved with the file.
+    private func setZoom(_ zoomed: OutlineTree) {
+        typingRun = nil
+        use(zoomed)
+        saver.changed(zoomed)
+    }
+
     /// A click below the last bullet.
     func focusLast() {
-        if let last = rows.last { moveCaret(to: last.path, .offset(Int.max)) }
+        if let last = rows.last?.path ?? crumbs.last?.path { moveCaret(to: last, .offset(Int.max)) }
     }
 
     /// Scrolls to the row, then moves the caret into its text view a tick later: no view update moves the first responder, and a row
@@ -360,7 +400,29 @@ final class Outline: ObservableObject {
         let path = view.rowPath
         let here = OutlineCaret(path: path, offset: selection.location)
         let atStart = selection.location == 0 && selection.length == 0
+        if code == kVK_ANSI_LeftBracket, flags == command {
+            zoomOut(to: tree.effectiveZoom.count - 1)
+            return true
+        }
+        // The title of a zoom is the zoomed bullet itself: ↩ adds its first nested bullet, and nothing here moves, joins or deletes it.
+        if path == zoomPath, !tree.effectiveZoom.isEmpty {
+            switch (code, flags) {
+            case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []):
+                apply(.addFirstChild(path, range: selection.location..<NSMaxRange(selection)))
+            case (kVK_Delete, []) where atStart, (kVK_Delete, commandShift), (kVK_Tab, []), (kVK_Tab, .shift),
+                 (kVK_UpArrow, command), (kVK_DownArrow, command), (kVK_UpArrow, commandShift), (kVK_DownArrow, commandShift),
+                 (kVK_ANSI_RightBracket, command):
+                break
+            case (kVK_DownArrow, []) where view.caretOnLastLine:
+                return cross(from: view, by: 1)
+            default:
+                return false
+            }
+            return true
+        }
         switch (code, flags) {
+        case (kVK_ANSI_RightBracket, command):
+            zoomIn(path)
         case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []):
             apply(.split(path, range: selection.location..<NSMaxRange(selection)))
         case (kVK_Delete, []) where atStart:
@@ -391,8 +453,10 @@ final class Outline: ObservableObject {
 
     /// ↑ or ↓ out of the first or last line of a bullet, into the row above or below.
     private func cross(from view: OutlineTextView, by step: Int) -> Bool {
-        guard let at = rows.firstIndex(where: { $0.path == view.rowPath }), rows.indices.contains(at + step) else { return false }
-        moveCaret(to: rows[at + step].path, .x(view.caretX(), bottom: step < 0))
+        // The title, when zoomed, comes before the rows.
+        let order = (crumbs.last.map { [$0.path] } ?? []) + rows.map(\.path)
+        guard let at = order.firstIndex(of: view.rowPath), order.indices.contains(at + step) else { return false }
+        moveCaret(to: order[at + step], .x(view.caretX(), bottom: step < 0))
         return true
     }
 }

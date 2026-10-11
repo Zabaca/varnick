@@ -52,8 +52,18 @@ struct OutlineRepairs: Equatable {
     var duplicatePlacements = 0
     /// Bullets that can't be reached from the top bullet and are dropped at the next save.
     var unreachable = 0
+    /// The saved zoom led nowhere, so the outline opens at Home.
+    var zoomLost = false
 
     var isEmpty: Bool { self == OutlineRepairs() }
+}
+
+/// One bullet zoomed through, for the header's breadcrumbs and the title.
+struct OutlineCrumb: Identifiable, Equatable {
+    let path: OutlinePath
+    let text: String
+
+    var id: String { path.id }
 }
 
 /// Where the caret goes after an edit: a row, and a UTF-16 offset in its text.
@@ -75,6 +85,9 @@ enum OutlineEdit {
     case delete(OutlinePath)
     /// Several lines pasted over `range`: the first at the caret, each further one in a new bullet below. Blank lines are skipped.
     case paste(OutlinePath, range: Range<Int>, lines: [String])
+    /// ↩ in the title of a zoom: the text after the caret moves into a new first nested bullet; at the start of a non-empty title the new
+    /// bullet is empty. The caret goes into it.
+    case addFirstChild(OutlinePath, range: Range<Int>)
     /// ⇥: the last bullet under the sibling above, which opens. The caret's row is the one edited; it follows the row to its new path.
     case indent(OutlineCaret)
     /// ⇧⇥: the next sibling of its parent. The siblings after it stay where they were.
@@ -93,6 +106,17 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     init(stringLiteral reason: String) { self = .other(reason) }
 
     static let insideItselfMessage = "A bullet can't go inside itself"
+}
+
+extension OutlineEdit {
+    /// The row an edit moves, joins, deletes or adds beside; nil for edits that only change what is in a bullet.
+    fileprivate var restructuredPath: OutlinePath? {
+        switch self {
+        case .addBelow(let path), .addAbove(let path), .join(let path), .delete(let path): path
+        case .indent(let at), .outdent(let at), .move(let at, _): at.path
+        case .setText, .split, .paste, .addFirstChild, .collapse: nil
+        }
+    }
 }
 
 enum OutlineEditResult: Equatable {
@@ -148,22 +172,84 @@ struct OutlineTree: Codable, Equatable {
 
     // MARK: Reading
 
-    /// The rows on screen, in order. A collapsed placement hides what is nested under it.
+    /// The rows on screen, in order: the bullets nested under the one zoomed into (the top bullet at Home), each level 0 at the zoom's top. A
+    /// collapsed placement hides what is nested under it. A row's path always starts at the top bullet, zoomed or not.
     func visibleRows() -> [OutlineRow] {
         var rows: [OutlineRow] = []
+        let base = effectiveZoom
         func walk(_ id: String, prefix: [String], onStack: Set<String>) {
             guard let bullet = bullets[id] else { return }
             for placement in bullet.children {
                 guard let child = bullets[placement.bullet], !onStack.contains(placement.bullet) else { continue }
                 let path = prefix + [placement.id]
                 let collapsed = placement.collapsed == true
-                rows.append(OutlineRow(path: OutlinePath(placements: path), bullet: placement.bullet, depth: path.count - 1, text: child.text,
-                                       hasChildren: !child.children.isEmpty, collapsed: collapsed))
+                rows.append(OutlineRow(path: OutlinePath(placements: path), bullet: placement.bullet, depth: path.count - base.count - 1,
+                                       text: child.text, hasChildren: !child.children.isEmpty, collapsed: collapsed))
                 if !collapsed { walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet])) }
             }
         }
-        walk(root, prefix: [], onStack: [root])
+        var top = root
+        var stack: Set<String> = [root]
+        if let spot = locate(OutlinePath(placements: base)) {
+            top = spot.bullet
+            stack = Set(bulletsAlong(base) + [root])
+        }
+        walk(top, prefix: base, onStack: stack)
         return rows
+    }
+
+    // MARK: Zoom
+
+    /// Whether `zoom` leads somewhere: placements from the top bullet, each in the list of the one before.
+    var zoomLeads: Bool { zoom.isEmpty || locate(OutlinePath(placements: zoom)) != nil }
+
+    /// The zoom, or Home when it leads nowhere (a bullet deleted, a file edited by hand).
+    var effectiveZoom: [String] { zoomLeads ? zoom : [] }
+
+    private func bulletsAlong(_ placements: [String]) -> [String] {
+        var parent = root
+        var found: [String] = []
+        for id in placements {
+            guard let placement = bullets[parent]?.children.first(where: { $0.id == id }) else { break }
+            found.append(placement.bullet)
+            parent = placement.bullet
+        }
+        return found
+    }
+
+    /// Home first is not here: one crumb for each bullet zoomed through, the last being the one zoomed into.
+    func crumbs() -> [OutlineCrumb] {
+        let along = bulletsAlong(effectiveZoom)
+        return along.indices.map { i in
+            OutlineCrumb(path: OutlinePath(placements: Array(effectiveZoom[0...i])), text: bullets[along[i]]?.text ?? "")
+        }
+    }
+
+    /// The same tree zoomed into `path`, or nil when the path leads nowhere.
+    func zoomed(into path: OutlinePath) -> OutlineTree? {
+        var tree = self
+        tree.zoom = path.placements
+        return tree.zoomLeads ? tree : nil
+    }
+
+    /// The zoom (and Show completed) of `other`, where this tree still has it: what an undo keeps, since moving about isn't an edit.
+    func keepingView(of other: OutlineTree) -> OutlineTree {
+        var tree = self
+        tree.showsCompleted = other.showsCompleted
+        tree.zoom = other.effectiveZoom
+        if !tree.zoomLeads { tree.zoom = [] }
+        return tree
+    }
+
+    /// Zoomed out as far as it takes for `path` to be on screen: where the zoom and the path part ways.
+    func zoomShowing(_ path: OutlinePath) -> OutlineTree {
+        var tree = self
+        var kept = 0
+        while kept < zoom.count, kept < path.placements.count, zoom[kept] == path.placements[kept] { kept += 1 }
+        // A path that is a bullet zoomed through shows as a row one level up.
+        if kept == path.placements.count, kept < zoom.count { kept = max(kept - 1, 0) }
+        tree.zoom = Array(zoom.prefix(kept))
+        return tree
     }
 
     func text(at path: OutlinePath) -> String? { locate(path).flatMap { bullets[$0.bullet]?.text } }
@@ -217,6 +303,8 @@ struct OutlineTree: Codable, Equatable {
 
     /// One edit at a row. The result is the new tree and where the caret goes (nil: it stays), or a refusal that changes nothing.
     func applying(_ edit: OutlineEdit, now: Date, newID: () -> String = OutlineTree.newID) -> OutlineEditResult {
+        // The title is the bullet zoomed into: its text can be edited, but it can't be moved, joined or deleted from inside the zoom.
+        if !zoom.isEmpty, let target = edit.restructuredPath, target.placements == effectiveZoom { return .refused("the title") }
         var tree = self
         let caret: OutlineCaret?
         switch edit {
@@ -257,6 +345,8 @@ struct OutlineTree: Codable, Equatable {
                 // Nothing to keep: gone, with the caret at the end of the row above, or at the start of the next when there is none.
                 if at > 0 {
                     caret = OutlineCaret(path: rows[at - 1].path, offset: rows[at - 1].text.utf16.count)
+                } else if let title = crumbs().last {
+                    caret = OutlineCaret(path: title.path, offset: title.text.utf16.count)
                 } else if rows.count > 1 {
                     caret = OutlineCaret(path: rows[1].path, offset: 0)
                 } else {
@@ -281,10 +371,23 @@ struct OutlineTree: Codable, Equatable {
             tree.removePlacement(at: spot, now: now)
             if let at, at > 0 {
                 caret = OutlineCaret(path: rows[at - 1].path, offset: rows[at - 1].text.utf16.count)
+            } else if let title = crumbs().last {
+                caret = OutlineCaret(path: title.path, offset: title.text.utf16.count)
             } else {
                 // No row above: the caret goes to the first row left, the empty one a lone bullet's delete leaves included.
                 return Self.finish(tree, caret: nil, now: now, newID: newID, caretInFirstRow: true)
             }
+        case .addFirstChild(let path, let range):
+            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
+            let length = bullet.text.utf16.count
+            let low = min(max(range.lowerBound, 0), length), high = min(max(range.upperBound, low), length)
+            var tail = ""
+            if low > 0 || bullet.text.isEmpty {
+                tree.bullets[spot.bullet]?.text = bullet.text.utf16Slice(0..<low)
+                tail = bullet.text.utf16Slice(high..<length)
+            }
+            tree.bullets[spot.bullet]?.changed = now
+            caret = OutlineCaret(path: path.appending(tree.insertNew(text: tail, at: 0, in: spot.bullet, now: now, newID: newID)), offset: 0)
         case .indent(let at):
             guard let spot = locate(at.path), spot.index > 0, let above = bullets[spot.parent]?.children[spot.index - 1],
                   let own = at.path.placements.last else { return .refused("no sibling above") }
@@ -296,7 +399,8 @@ struct OutlineTree: Codable, Equatable {
             tree.bullets[above.bullet]?.changed = now
             caret = OutlineCaret(path: at.path.parent.appending(above.id).appending(own), offset: at.offset)
         case .outdent(let at):
-            guard at.path.placements.count >= 2, let spot = locate(at.path), let parent = locate(at.path.parent),
+            // Stops at the top level of the zoom.
+            guard at.path.placements.count - effectiveZoom.count >= 2, let spot = locate(at.path), let parent = locate(at.path.parent),
                   let own = at.path.placements.last else { return .refused("already at the top") }
             if let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index) {
                 tree.bullets[parent.parent]?.children.insert(moved, at: parent.index + 1)
@@ -331,13 +435,17 @@ struct OutlineTree: Codable, Equatable {
             }
             tree.bullets[spot.bullet]?.text = head
             tree.bullets[spot.bullet]?.changed = now
-            var index = spot.index
+            // The further lines go below the bullet, or at the top of what is nested under the title of a zoom.
+            let onTitle = !zoom.isEmpty && path.placements == effectiveZoom
+            let into = onTitle ? spot.bullet : spot.parent
+            let before = onTitle ? path : path.parent
+            var index = onTitle ? -1 : spot.index
             var last = path
             for (n, line) in pasted.dropFirst().enumerated() {
                 index += 1
                 let text = n == pasted.count - 2 ? line + tail : line
-                let placement = tree.insertNew(text: text, at: index, in: spot.parent, now: now, newID: newID)
-                last = path.parent.appending(placement)
+                let placement = tree.insertNew(text: text, at: index, in: into, now: now, newID: newID)
+                last = before.appending(placement)
             }
             caret = OutlineCaret(path: last, offset: pasted[pasted.count - 1].utf16.count)
         }
@@ -346,7 +454,8 @@ struct OutlineTree: Codable, Equatable {
 
     private static func finish(_ tree: OutlineTree, caret: OutlineCaret?, now: Date, newID: () -> String,
                                caretInFirstRow: Bool = false) -> OutlineEditResult {
-        let done = tree.pruned().ensuringBullet(now: now, newID: newID)
+        var done = tree.pruned().ensuringBullet(now: now, newID: newID)
+        if !done.zoomLeads { done.zoom = [] }
         guard caretInFirstRow, let first = done.visibleRows().first else { return .applied(done, caret: caret) }
         return .applied(done, caret: OutlineCaret(path: first.path, offset: 0))
     }
@@ -466,6 +575,11 @@ struct OutlineTree: Codable, Equatable {
             repairs.recovered = orphans.count
         }
         repairs.unreachable = tree.bullets.count - tree.reachable().count
+        // A zoom that leads nowhere opens at Home; the file keeps it until the next edit.
+        if !tree.zoomLeads {
+            tree.zoom = []
+            repairs.zoomLost = true
+        }
         return (tree, repairs)
     }
 }

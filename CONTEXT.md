@@ -173,6 +173,10 @@ _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 One line of the **Outline**: its text, an optional note under it, whether it is completed, and the bullets nested under it.
 _Avoid_: Item, node, row, entry, task, card
 
+**Zoom**:
+Showing one **Bullet** as the top of the **Outline**: its text as the title, the bullets nested under it below, and breadcrumbs back up the way the user came in.
+_Avoid_: Focus (a pane's), open, drill down
+
 **Placement**:
 One spot where a **Bullet** shows: an entry in its parent's list. A bullet's text, note and completion are kept once, however many placements it has.
 _Avoid_: Instance, occurrence, link

@@ -12,7 +12,7 @@ struct OutlineView: View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 Image(systemName: "list.bullet.indent").foregroundStyle(.secondary)
-                Text("Outline").font(.system(size: 15, weight: .semibold))
+                OutlineCrumbs(outline: outline)
                 if let notice = outline.notice { Text(notice).font(.system(size: 11.5)).foregroundStyle(.orange).lineLimit(1) }
                 Spacer()
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
@@ -53,6 +53,83 @@ struct OutlineView: View {
     }
 }
 
+/// Home, then each bullet zoomed through, each clickable but the last. When the trail is too long for the header the crumbs between the first and
+/// the last drop out, nearest the first first, and one "…" stands for them.
+private struct OutlineCrumbs: View {
+    @ObservedObject var outline: Outline
+
+    /// About how many characters the header leaves for the trail.
+    private static let budget = 44
+    private static let longest = 20
+
+    private enum Item: Identifiable {
+        case home
+        case crumb(OutlineCrumb)
+        case gap
+
+        var id: String {
+            switch self {
+            case .home: "home"
+            case .crumb(let crumb): crumb.id
+            case .gap: "gap"
+            }
+        }
+    }
+
+    private func clipped(_ text: String) -> String {
+        text.isEmpty ? "(empty)" : text.count > Self.longest ? String(text.prefix(Self.longest)) + "…" : text
+    }
+
+    private var items: [Item] {
+        let crumbs = outline.crumbs
+        var hidden = 0
+        func size(_ shown: ArraySlice<OutlineCrumb>) -> Int { shown.reduce(0) { $0 + clipped($1.text).count } }
+        // Crumbs after the first, nearest it first, go until the rest fit; the last stays.
+        while crumbs.count - hidden > 2, size(crumbs[...]) - size(crumbs[1..<(1 + hidden)]) > Self.budget { hidden += 1 }
+        var out: [Item] = [.home]
+        for (i, crumb) in crumbs.enumerated() {
+            if i == 0 || i > hidden { out.append(.crumb(crumb)) } else if i == 1 { out.append(.gap) }
+        }
+        return out
+    }
+
+    var body: some View {
+        let last = outline.crumbs.last
+        HStack(spacing: 6) {
+            ForEach(items) { item in
+                switch item {
+                case .home:
+                    if last == nil {
+                        Text("Outline").font(.system(size: 15, weight: .semibold))
+                    } else {
+                        link("Home") { outline.zoomOut(to: 0) }
+                    }
+                case .crumb(let crumb):
+                    separator
+                    if crumb == last {
+                        Text(clipped(crumb.text)).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                    } else {
+                        link(clipped(crumb.text)) { outline.zoomOut(to: crumb.path.placements.count) }
+                    }
+                case .gap:
+                    separator
+                    Text("…").font(.system(size: 13)).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .lineLimit(1)
+    }
+
+    private var separator: some View {
+        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
+    }
+
+    private func link(_ text: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Text(text).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1) }
+            .buttonStyle(.plain)
+    }
+}
+
 private struct OutlineRows: View {
     @ObservedObject var outline: Outline
 
@@ -60,6 +137,13 @@ private struct OutlineRows: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // The zoomed bullet's own text, above what is nested under it.
+                    if let title = outline.crumbs.last {
+                        BulletText(outline: outline, row: OutlineRow(path: title.path, bullet: "", depth: 0, text: title.text,
+                                                                     hasChildren: false, collapsed: false), isTitle: true)
+                            .id(title.id)
+                            .padding(.vertical, 6)
+                    }
                     ForEach(outline.rows) { row in
                         OutlineRowView(outline: outline, row: row).id(row.id)
                     }
@@ -117,15 +201,19 @@ private struct OutlineRowView: View {
         }
     }
 
-    /// A ring around the dot of a collapsed bullet that has bullets nested under it.
+    /// A click zooms into the bullet. A ring marks a collapsed bullet that has bullets nested under it.
     private var dot: some View {
-        ZStack {
-            Circle().fill(Color.secondary).frame(width: 5, height: 5)
-            if row.hasChildren, row.collapsed {
-                Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 12, height: 12)
+        Button { outline.zoomIn(row.path) } label: {
+            ZStack {
+                Circle().fill(Color.secondary).frame(width: 5, height: 5)
+                if row.hasChildren, row.collapsed {
+                    Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 12, height: 12)
+                }
             }
+            .frame(width: 14, height: Self.lineHeight)
+            .contentShape(Rectangle())
         }
-        .frame(width: 14, height: Self.lineHeight)
+        .buttonStyle(.plain)
     }
 }
 
@@ -136,11 +224,13 @@ private struct OutlineRowView: View {
 private struct BulletText: NSViewRepresentable {
     let outline: Outline
     let row: OutlineRow
+    /// The text of the bullet zoomed into, set large above the rows.
+    var isTitle = false
 
     func makeCoordinator() -> Coordinator { Coordinator(outline: outline) }
 
     func makeNSView(context: Context) -> OutlineTextView {
-        let view = OutlineTextView.make(path: row.path, outline: outline)
+        let view = OutlineTextView.make(path: row.path, outline: outline, font: isTitle ? OutlineTextView.titleFont : OutlineTextView.font)
         view.delegate = context.coordinator
         view.setTextQuietly(row.text)
         outline.register(view)
@@ -198,10 +288,12 @@ final class OutlineTextView: NSTextView {
     var selectionBeforeChange: Int?
 
     static let font = NSFont.systemFont(ofSize: 13)
+    static let titleFont = NSFont.systemFont(ofSize: 20, weight: .semibold)
+    private var bulletFont = OutlineTextView.font
 
     /// TextKit 1 on purpose: the caret's line and x come from its layout manager.
     @MainActor
-    static func make(path: OutlinePath, outline: Outline) -> OutlineTextView {
+    static func make(path: OutlinePath, outline: Outline, font: NSFont) -> OutlineTextView {
         let storage = NSTextStorage()
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude))
@@ -220,7 +312,8 @@ final class OutlineTextView: NSTextView {
         view.isHorizontallyResizable = false
         view.isVerticallyResizable = false
         view.textContainerInset = .zero
-        view.font = Self.font
+        view.bulletFont = font
+        view.font = font
         view.textColor = .labelColor
         view.focusRingType = .none
         view.isAutomaticQuoteSubstitutionEnabled = false
@@ -289,7 +382,7 @@ final class OutlineTextView: NSTextView {
     // MARK: Layout
 
     private var lineHeight: CGFloat {
-        layoutManager?.defaultLineHeight(for: Self.font) ?? 16
+        layoutManager?.defaultLineHeight(for: bulletFont) ?? 16
     }
 
     /// The height the text needs at `width`.
