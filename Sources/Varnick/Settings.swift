@@ -526,8 +526,10 @@ final class Settings: ObservableObject {
     func resetAllShortcuts() { overrides = [:] }
 
     /// The local action for a key press. ⌘= also answers to ⌘+ (⇧=), the way it's labelled.
-    func action(for event: NSEvent) -> ShortcutAction? {
-        let pressed = KeyCombo(event)
+    func action(for event: NSEvent) -> ShortcutAction? { action(for: KeyCombo(event)) }
+
+    /// The shortcut a key would run, as the panel's key monitor matches it (`keys` asks this before it presses one).
+    func action(for pressed: KeyCombo) -> ShortcutAction? {
         let local = ShortcutAction.allCases.filter { !$0.isGlobal }
         if let hit = local.first(where: { combo($0) == pressed }) { return hit }
         if pressed.flags.contains(.shift), Int(pressed.keyCode) == kVK_ANSI_Equal {

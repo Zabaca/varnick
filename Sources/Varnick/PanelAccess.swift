@@ -118,14 +118,19 @@ final class PanelAccess {
     static let shared = PanelAccess()
 
     /// How long after a key the user pressed in the panel `show` is refused: they are typing there.
-    static let typingQuiet: Duration = .seconds(2)
+    nonisolated static let typingQuiet: Duration = .seconds(2)
     private var lastKey: ContinuousClock.Instant?
 
     /// The panel's key monitor says a key came in. Only the time is kept, and only for the user's: one `keys` posted (`PanelKeys`, told by the
     /// stamp it gave the event, which survives a re-post) is not.
     func noteKey(_ event: NSEvent) {
-        if postedStamps.contains(where: { abs($0 - event.timestamp) < PanelKeys.stampTolerance }) { return }
+        if isPosted(event) { return }
         lastKey = .now
+    }
+
+    /// Whether `keys` made this key (or the copy `postEvent` hands on), by its stamp.
+    func isPosted(_ event: NSEvent) -> Bool {
+        postedStamps.contains { abs($0 - event.timestamp) < PanelKeys.stampTolerance }
     }
 
     /// The timestamps of the key-downs `keys` made, kept a minute so the Outline's queued keys, sent again later, are still known.

@@ -58,7 +58,7 @@ enum PanelViews {
         if model.showingBoard { return BoardPanelView(model: model) }
         if model.showingOutline { return OutlinePanelView(model: model) }
         if model.activeTab != nil { return PanePanelView(model: model) }
-        return SearchPanelKeys(model: model)
+        return SearchPanelView(model: model)
     }
 
     /// The adopter and the kind of tool a name is: `board_read` is the board's read, `board_act` its actions (only if it has any).
@@ -111,10 +111,10 @@ struct BoardPanelView: PanelAccessView {
     /// another session. ↩ elsewhere would resume a session or open a paired Mac's (`SessionBoard.returnRefusal`).
     @MainActor func refusal(of key: PanelKey) -> String? {
         guard key.modifiers.isEmpty else { return nil }
+        if key.isReturn { return model.board.returnRefusal() }
         switch Int(key.keyCode) {
         case kVK_ANSI_D: return "D marks the selected session done, which ends it"
         case kVK_ANSI_R: return "R restarts the selected session"
-        case kVK_Return, kVK_ANSI_KeypadEnter: return model.board.returnRefusal()
         default: return nil
         }
     }

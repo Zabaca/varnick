@@ -36,13 +36,28 @@ struct PanelKey {
     /// ⌃ ⌥ ⇧ ⌘ as pressed.
     let modifiers: NSEvent.ModifierFlags
     let characters: String
+    /// The characters the key gives without ⌃, as a real event's `charactersIgnoringModifiers` does: ⌃M has "\r" in `characters` and "m" here.
+    let ignoring: String
     /// A character of `text`, not a combo.
     let isText: Bool
 
     var combo: KeyCombo { KeyCombo(keyCode: Int(keyCode), modifiers) }
     var label: String { isText ? "\"\(characters)\"" : combo.label }
-    var isReturn: Bool { Int(keyCode) == kVK_Return || Int(keyCode) == kVK_ANSI_KeypadEnter }
-    var isEscape: Bool { Int(keyCode) == kVK_Escape }
+    /// ↩ by its key or by its characters: SwiftUI's `.onKeyPress(.return)` matches the characters, so ⌃M and ⌃J are ↩ to the search field.
+    var isReturn: Bool {
+        Int(keyCode) == kVK_Return || Int(keyCode) == kVK_ANSI_KeypadEnter || ["\r", "\n", "\u{3}"].contains(characters)
+    }
+    /// esc by its key or its characters (⌃[), or ⌘. which a text field turns into cancelOperation:.
+    var isEscape: Bool {
+        Int(keyCode) == kVK_Escape || characters == "\u{1B}" || (modifiers.contains(.command) && Int(keyCode) == kVK_ANSI_Period)
+    }
+    /// The characters hold a control character and the key isn't one of the named keys that have one (⌃ and a letter, say): a text view and
+    /// SwiftUI read those as editing commands, and as ↩ and esc by another name.
+    var givesControlCharacter: Bool {
+        guard !isText else { return false }
+        let named: Set<Int> = [kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab, kVK_Escape, kVK_Delete]
+        return !named.contains(Int(keyCode)) && characters.unicodeScalars.contains { $0.properties.generalCategory == .control }
+    }
 
     // MARK: Making keys
 
@@ -58,12 +73,13 @@ struct PanelKey {
                     codes[character] = ScreenKeys.parse(String(character)).map(\.keyCode) ?? 0
                 }
             }
-            return PanelKey(keyCode: codes[character] ?? 0, modifiers: [], characters: String(character), isText: true)
+            return PanelKey(keyCode: codes[character] ?? 0, modifiers: [], characters: String(character), ignoring: String(character), isText: true)
         }
     }
 
     @MainActor static func key(pressing combo: KeyCombo) -> PanelKey {
-        PanelKey(keyCode: combo.keyCode, modifiers: combo.flags, characters: Self.characters(of: combo), isText: false)
+        let typed = Self.characters(of: combo)
+        return PanelKey(keyCode: combo.keyCode, modifiers: combo.flags, characters: typed.characters, ignoring: typed.ignoring, isText: false)
     }
 
     /// The function-key characters AppKit gives arrows and the like, which a text view's key bindings read.
@@ -77,25 +93,28 @@ struct PanelKey {
 
     private static let arrows: Set<Int> = [kVK_UpArrow, kVK_DownArrow, kVK_LeftArrow, kVK_RightArrow]
 
-    /// What the combo's key gives as the event's characters.
-    @MainActor private static func characters(of combo: KeyCombo) -> String {
+    /// What the combo's key gives as the event's characters, and as its characters ignoring ⌃.
+    @MainActor private static func characters(of combo: KeyCombo) -> (characters: String, ignoring: String) {
+        func same(_ text: String) -> (characters: String, ignoring: String) { (text, text) }
         let code = Int(combo.keyCode)
-        if let function = functionCharacters[code], let scalar = Unicode.Scalar(function) { return String(Character(scalar)) }
+        if let function = functionCharacters[code], let scalar = Unicode.Scalar(function) { return same(String(Character(scalar))) }
         switch code {
-        case kVK_Return, kVK_ANSI_KeypadEnter: return "\r"
-        case kVK_Tab: return combo.flags.contains(.shift) ? "\u{19}" : "\t"
-        case kVK_Escape: return "\u{1B}"
-        case kVK_Delete: return "\u{7F}"
-        case kVK_Space: return " "
+        case kVK_Return, kVK_ANSI_KeypadEnter: return same("\r")
+        case kVK_Tab: return same(combo.flags.contains(.shift) ? "\u{19}" : "\t")
+        case kVK_Escape: return same("\u{1B}")
+        case kVK_Delete: return same("\u{7F}")
+        case kVK_Space: return same(" ")
         default: break
         }
         let name = KeyCombo.keyName(code).lowercased()
-        guard name != "?" else { return "" }
-        // ⌃ and a letter is the control character; ⇧ and a letter the capital.
+        guard name != "?" else { return same("") }
+        // ⇧ and a letter is the capital.
+        let shown = combo.flags.contains(.shift) && name.count == 1 && name.first?.isLetter == true ? name.uppercased() : name
+        // ⌃ and a letter is the control character, with the letter itself ignoring ⌃, as a real event has them.
         if combo.flags.contains(.control), name.unicodeScalars.count == 1, let scalar = name.unicodeScalars.first, scalar.isASCII, scalar.properties.isAlphabetic {
-            return String(Character(Unicode.Scalar(scalar.value & 0x1F)!))
+            return (String(Character(Unicode.Scalar(scalar.value & 0x1F)!)), shown)
         }
-        return combo.flags.contains(.shift) && name.count == 1 && name.first?.isLetter == true ? name.uppercased() : name
+        return same(shown)
     }
 
     // MARK: The events
@@ -108,7 +127,7 @@ struct PanelKey {
         if PanelKey.arrows.contains(code) { flags.insert(.numericPad) }
         func make(_ type: NSEvent.EventType) -> NSEvent? {
             NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: stamp, windowNumber: window.windowNumber, context: nil,
-                             characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)
+                             characters: characters, charactersIgnoringModifiers: ignoring, isARepeat: false, keyCode: keyCode)
         }
         guard let down = make(.keyDown), let up = make(.keyUp) else { return nil }
         return (down, up)
@@ -161,20 +180,26 @@ enum PanelKeys {
     /// call before anything is sent. The monitor runs before the shortcuts, so each of these would act: the End session, Mark session done
     /// and Restart session keys as bound; Varnick's own anywhere-shortcuts (`ScreenKeys.refusal`), which include Listening's; the keys that
     /// start a terminal or open Settings, whose switches govern sessions; ⌘Q; and paste, which would put the user's clipboard where the
-    /// session can read it (the Outline, then `outline_read`).
+    /// session can read it (the Outline, then `outline_read`). ⌥⌘V is the Outline's Place mirror and is allowed. The shortcuts are matched as the
+    /// key monitor does (`Settings.action(for:)`), which also answers ⌘⇧= to a ⌘= binding.
     @MainActor static func neverSent(_ key: PanelKey) -> String? {
         if let why = ScreenKeys.refusal(of: key.combo) { return why }
-        let actions: [(ShortcutAction, String)] = [
-            (.endPane, "ends a session"), (.doneSession, "marks a session done"), (.restartSession, "restarts a session"),
-            (.newTerminalTab, "starts a terminal"), (.settings, "opens Settings, whose switches govern sessions"),
+        let refused: [ShortcutAction: String] = [
+            .endPane: "ends a session", .doneSession: "marks a session done", .restartSession: "restarts a session",
+            .newTerminalTab: "starts a terminal", .settings: "opens Settings, whose switches govern sessions",
+            .paste: "pastes the user's clipboard, which a session could then read",
         ]
-        for (action, what) in actions where Settings.shared.combo(action) == key.combo {
+        if let action = Settings.shared.action(for: key.combo), let what = refused[action] {
             return "\(key.label) is bound to \"\(action.title)\", which \(what)"
         }
-        if let paste = Settings.shared.combo(.paste), paste == key.combo { return "\(key.label) pastes the user's clipboard" }
+        if key.givesControlCharacter {
+            return "\(key.label) gives a control character, which a text field reads as an editing command and the search as ↩ or esc by another name"
+        }
         if key.modifiers.contains(.command) {
             if layoutCodes(of: "q").contains(Int(key.keyCode)) { return "\(key.label) quits Varnick" }
-            if layoutCodes(of: "v").contains(Int(key.keyCode)) { return "\(key.label) pastes the user's clipboard, which a session could then read" }
+            if !key.modifiers.contains(.option), layoutCodes(of: "v").contains(Int(key.keyCode)) {
+                return "\(key.label) pastes the user's clipboard, which a session could then read"
+            }
         }
         return nil
     }
@@ -195,13 +220,13 @@ struct NoKeys: PanelKeyView {
 
 /// The search: text, arrows and ⇥ are the field's. ↩ is refused where it would start a session, turn on the microphone or open a page in the
 /// browser, and esc because it hides the panel, which a session may not do.
-struct SearchPanelKeys: PanelKeyView {
+struct SearchPanelView: PanelKeyView {
     let model: LauncherModel
 
     @MainActor init(model: LauncherModel) { self.model = model }
 
     @MainActor func refusal(of key: PanelKey) -> String? {
-        if key.isEscape { return "esc hides the panel, which a session may not do" }
+        if key.isEscape { return "\(key.label) hides the panel, which a session may not do" }
         guard key.isReturn else { return nil }
         // ⌘↩ copies a link or starts a session, ⌥↩ and ⌃↩ are not the field's.
         if !key.modifiers.subtracting(.shift).isEmpty { return "\(key.label) in the search copies a link or starts a session" }
@@ -259,7 +284,7 @@ extension PanelAccess {
             try? await Task.sleep(for: key.isText ? ScreenKeys.characterPace : ScreenKeys.comboPace)
             // The Outline queues keys while its caret moves to another bullet and sends them again once it has landed: the next key waits for that.
             if model.showingOutline, !(await model.outline.keysSettled()) {
-                throw stop("the Outline's caret was still moving to another bullet")
+                throw stop("the Outline had not finished with the last key (its caret still moving, or keys waiting): try the rest again")
             }
         }
         return Answered(text: "Sent \(sent.text). This says what was sent, not what it did: read panel, or board_read or outline_read with as_shown, to see.",
@@ -274,6 +299,11 @@ extension PanelAccess {
             return "The panel is not up with the keyboard (hidden, or another app is in front): keys never brings it up, so ask the user to open it"
         }
         if userTypedRecently { return "the user typed in the panel" }
+        // A key of the user's still waiting in the queue is typing that the monitor has not stamped yet.
+        if let waiting = NSApp.nextEvent(matching: .keyDown, until: .distantPast, inMode: .default, dequeue: false),
+           waiting.window === window, !isPosted(waiting) {
+            return "the user typed in the panel"
+        }
         // Composing at the start is the user's; later it may be the call's own characters, which the call reports, and the view's text rules apply.
         if first, (window.firstResponder as? NSTextView)?.hasMarkedText() == true { return "an input method is composing text in the panel" }
         if let why = PanelKeys.neverSent(key) ?? PanelViews.onScreen(model).refusal(of: key) { return why }
