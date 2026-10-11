@@ -9,7 +9,7 @@ Decisions: ElevenLabs speaks with Flash v2.5 only, pinned in code, with no model
 - **Multilingual v2, or a model picker:** rejected. Multilingual v2's first audio, measured on the user's machine (figures kept locally), left nothing under the fallback's deadline.
 - **The ElevenLabs Agents platform:** rejected. It runs the whole conversation on ElevenLabs' side, the user's audio and the model that answers included, against ADR 0015's rule that Text generation answers on this Mac or the user's own server.
 - **Always falling back to "System default":** rejected. It would lose the voice the user chose before.
-- **Keep-alive requests all day:** rejected. A request to `GET /v1/voices/{id}` when "Hey Varnick" is heard opens the connection in time for the answer and sends nothing while Hey Varnick is idle.
+- **Keep-alive requests all day:** rejected. A request to `GET /v1/voices/{id}` when "Hey Varnick" is heard opens the connection ahead of the answer and sends nothing while Hey Varnick is idle.
 - **Reading the key from the environment or `.env`, as TypeSafe's does:** rejected. A key found in a file would send every spoken line to a third party without the user having chosen ElevenLabs in Settings.
 
 ## Consequences
