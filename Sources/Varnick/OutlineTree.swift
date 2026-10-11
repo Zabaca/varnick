@@ -44,6 +44,8 @@ struct OutlineRow: Identifiable, Equatable {
     /// Under a filter: the bullet itself matches (the others show only as a match's ancestors, or because the caret is in them). Always true
     /// with no filter.
     let matched: Bool
+    /// The bullet has more than one placement: this is one of several rows that are the same bullet.
+    let mirrored: Bool
 
     var id: String { path.id }
 }
@@ -104,6 +106,8 @@ enum OutlineEdit {
     /// ↩ in the title of a zoom: the text after the caret moves into a new first nested bullet; at the start of a non-empty title the new
     /// bullet is empty. The caret goes into it.
     case addFirstChild(OutlinePath, range: Range<Int>)
+    /// ⌥⌘V: a new placement of `bullet`, the next sibling of the row at `path`. Refused when the bullet would end up inside itself.
+    case placeMirror(after: OutlinePath, bullet: String)
     /// ⌘↩: sets `completed` to now, or clears it. With Show completed off the bullet leaves the view and the caret goes to the next row showing.
     case complete(OutlineCaret)
     /// The note under a bullet; empty removes it.
@@ -236,6 +240,7 @@ extension OutlineEdit {
         switch self {
         case .addBelow(let path), .addAbove(let path), .join(let path), .delete(let path): path
         case .indent(let at), .outdent(let at), .move(let at, _), .complete(let at): at.path
+        case .placeMirror(let path, _): path
         case .setText, .setNote, .split, .paste, .addFirstChild, .collapse: nil
         }
     }
@@ -305,6 +310,7 @@ struct OutlineTree: Codable, Equatable {
         let base = effectiveZoom
         let filter = scope.filter
         let filtering = !filter.isEmpty
+        let placements = placementCounts()
         func walk(_ id: String, prefix: [String], onStack: Set<String>, dimmed: Bool) -> [OutlineRow] {
             var rows: [OutlineRow] = []
             guard let bullet = bullets[id] else { return rows }
@@ -323,7 +329,8 @@ struct OutlineTree: Codable, Equatable {
                 }
                 rows.append(OutlineRow(path: OutlinePath(placements: path), bullet: placement.bullet, depth: path.count - base.count - 1,
                                        text: child.text, hasChildren: !child.children.isEmpty, collapsed: collapsed, note: child.note,
-                                       completed: child.completed != nil, dimmed: below, matched: matched))
+                                       completed: child.completed != nil, dimmed: below, matched: matched,
+                                       mirrored: (placements[placement.bullet] ?? 0) > 1))
                 rows.append(contentsOf: nested)
             }
             return rows
@@ -439,17 +446,48 @@ struct OutlineTree: Codable, Equatable {
 
     func text(at path: OutlinePath) -> String? { locate(path).flatMap { bullets[$0.bullet]?.text } }
 
+    /// How many placements name each bullet.
+    func placementCounts() -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for bullet in bullets.values { for placement in bullet.children { counts[placement.bullet, default: 0] += 1 } }
+        return counts
+    }
+
+    func bulletID(at path: OutlinePath) -> String? { locate(path)?.bullet }
+
+    /// The rows (as paths from the top bullet) where `bullet` is placed, at most `limit`; the order is the file's, none of them the original.
+    func placementPaths(of bullet: String, limit: Int = 50) -> [OutlinePath] {
+        var found: [OutlinePath] = []
+        var visited = 0
+        func walk(_ id: String, prefix: [String], onStack: Set<String>) {
+            for placement in bullets[id]?.children ?? [] where !onStack.contains(placement.bullet) && found.count < limit && visited < 20_000 {
+                visited += 1
+                let path = prefix + [placement.id]
+                if placement.bullet == bullet { found.append(OutlinePath(placements: path)) }
+                walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet]))
+            }
+        }
+        walk(root, prefix: [], onStack: [root])
+        return found
+    }
+
+    /// Where else the bullet at `path` is placed, as breadcrumbs ("Home › List › Sub"), for the dot's tooltip.
+    func otherPlaces(of path: OutlinePath, limit: Int = 6) -> [String] {
+        guard let id = bulletID(at: path) else { return [] }
+        let others = placementPaths(of: id, limit: limit + 2).filter { $0 != path }
+        return others.prefix(limit).map { other in
+            let names = bulletsAlong(Array(other.placements.dropLast())).map { bullets[$0]?.text ?? "" }.map { $0.isEmpty ? "(empty)" : $0 }
+            return (["Home"] + names).joined(separator: " › ")
+        }
+    }
+
     /// How many placements name `bullet`, anywhere in the tree.
     func placementCount(of bullet: String) -> Int {
         bullets.values.reduce(0) { $0 + $1.children.filter { $0.bullet == bullet }.count }
     }
 
     /// Bullets with two or more placements.
-    var mirrorCount: Int {
-        var counts: [String: Int] = [:]
-        for bullet in bullets.values { for placement in bullet.children { counts[placement.bullet, default: 0] += 1 } }
-        return counts.values.filter { $0 > 1 }.count
-    }
+    var mirrorCount: Int { placementCounts().values.filter { $0 > 1 }.count }
 
     var noteCount: Int { bullets.values.filter { $0.note?.isEmpty == false }.count }
 
@@ -573,6 +611,14 @@ struct OutlineTree: Codable, Equatable {
                 // No row above: the caret goes to the first row left, the empty one a lone bullet's delete leaves included.
                 return Self.finish(tree, caret: nil, now: now, newID: newID, caretInFirstRow: true)
             }
+        case .placeMirror(let path, let bullet):
+            guard let spot = locate(path), let mirrored = bullets[bullet] else { return .refused("that bullet is gone") }
+            // Through any placement: not into the bullet itself, nor into anything nested under it.
+            guard !contains(bullet, descendant: spot.parent) else { return .refused(.insideItself) }
+            let placement = OutlinePlacement(id: newID(), bullet: bullet)
+            tree.bullets[spot.parent]?.children.insert(placement, at: spot.index + 1)
+            tree.bullets[spot.parent]?.changed = now
+            caret = OutlineCaret(path: path.parent.appending(placement.id), offset: mirrored.text.utf16.count)
         case .complete(let at):
             guard let spot = locate(at.path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
             let before = visibleRows(scope)

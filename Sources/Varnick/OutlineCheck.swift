@@ -31,6 +31,21 @@ enum OutlineCheck {
             + "\(notes) notes, \(completed) completed, Show completed \(showsCompleted ? "on" : "off")" }
     }
 
+    /// On a copy of the tree, deletes the placements of the first mirror one at a time: the bullet must stay while any placement is left and
+    /// go with the last. Prints counts only.
+    private static func mirrorCheck(_ tree: OutlineTree) {
+        guard let (id, count) = tree.placementCounts().sorted(by: { $0.key < $1.key }).first(where: { $0.value > 1 }) else { return }
+        var copy = tree
+        var steps: [String] = []
+        for _ in 1...count {
+            guard let path = copy.placementPaths(of: id, limit: 1).first,
+                  case .applied(let next, _) = copy.applying(.delete(path), now: Date()) else { break }
+            copy = next
+            steps.append("\(copy.placementCounts()[id] ?? 0) left, bullet \(copy.bullets[id] == nil ? "gone" : "kept")")
+        }
+        print("mirror check: a bullet with \(count) placements, deleting them one by one: " + steps.joined(separator: "; "))
+    }
+
     static func run(_ arguments: [String]) -> Int32 {
         let paths = arguments.filter { !$0.hasPrefix("--") }
         guard let file = paths.first else {
@@ -56,6 +71,7 @@ enum OutlineCheck {
                   + "\(repairs.duplicatePlacements) repeated ids, \(repairs.unreachable) unreachable, zoom \(repairs.zoomLost ? "reset to Home" : "kept")")
             tree = loaded
         }
+        mirrorCheck(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {

@@ -44,6 +44,8 @@ final class Outline: ObservableObject {
     /// vanish under the caret, or from under a click.
     private var filterKept: Set<OutlinePath> = []
     private let foldCache = OutlineFoldCache()
+    /// The bullet ⌥⌘C copied, to be placed again by ⌥⌘V: held here for the launch, never on the system clipboard.
+    private var mirrorToPlace: String?
 
     /// What the rows depend on besides the tree.
     private var scope: OutlineScope { OutlineScope(filter: filterWords, keeping: filterKept, cache: foldCache) }
@@ -161,13 +163,15 @@ final class Outline: ObservableObject {
     /// Applies one edit to the tree and puts it on the undo stack. A refusal changes nothing; one that would put a bullet inside itself also
     /// beeps and says so in the header.
     @discardableResult
-    private func apply(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false) -> Bool {
+    private func apply(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false, beepOnRefusal: Bool = false) -> Bool {
         guard load == .ready else { return false }
         switch tree.applying(edit, now: Date(), scope: scope) {
         case .refused(let reason):
             if let message = reason.message {
                 NSSound.beep()
                 say(message)
+            } else if beepOnRefusal {
+                NSSound.beep()
             }
             return false
         case .applied(let new, let caret):
@@ -209,6 +213,25 @@ final class Outline: ObservableObject {
     func paste(_ view: OutlineTextView, lines: [String]) {
         let selection = view.selectedRange()
         apply(.paste(view.rowPath, range: selection.location..<NSMaxRange(selection), lines: lines))
+    }
+
+    /// ⌥⌘C: the bullet under the caret is remembered, to be placed again as a mirror.
+    private func copyAsMirror(_ path: OutlinePath) {
+        guard let bullet = tree.bulletID(at: path) else { return }
+        mirrorToPlace = bullet
+        say("Copied as a mirror")
+    }
+
+    /// ⌥⌘V: a mirror of the copied bullet, below the bullet that has the caret. A bullet that is gone, or would end up inside itself, is refused.
+    private func placeMirror(after path: OutlinePath) {
+        guard let bullet = mirrorToPlace else { return NSSound.beep() }
+        apply(.placeMirror(after: path, bullet: bullet), beepOnRefusal: true)
+    }
+
+    /// What the dot of a row that is a mirror says: where the bullet is placed besides here.
+    func placesTooltip(for row: OutlineRow) -> String {
+        let others = tree.otherPlaces(of: row.path)
+        return others.isEmpty ? "A mirror" : "Also in:\n" + others.joined(separator: "\n")
     }
 
     /// ⇧↩ in a bullet: its note opens, empty if it has none, with the caret in it.
@@ -558,6 +581,10 @@ final class Outline: ObservableObject {
         let path = view.rowPath
         let here = OutlineCaret(path: path, offset: selection.location, field: view.field)
         let atStart = selection.location == 0 && selection.length == 0
+        if flags == [.command, .option], code == kVK_ANSI_C || code == kVK_ANSI_V {
+            if code == kVK_ANSI_C { copyAsMirror(path) } else { placeMirror(after: path) }
+            return true
+        }
         // In a note ↩ is a new line, which the text view does itself; the keys that mean the bullet still work.
         if view.field == .note {
             switch (code, flags) {

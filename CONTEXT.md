@@ -190,7 +190,7 @@ One spot where a **Bullet** shows: an entry in its parent's list. A bullet's tex
 _Avoid_: Instance, occurrence, link
 
 **Mirror**:
-A **Bullet** with more than one **Placement**, so an edit in one spot shows in all. None is the original: deleting a placement removes only that spot, and the bullet is gone with its last. Not the **Live screen**, which avoids the word.
+A **Bullet** with more than one **Placement**, so an edit in one spot shows in all. Collapse is each placement's own. None is the original: deleting a placement removes only that spot, and the bullet is gone with its last. Not the **Live screen**, which avoids the word.
 _Avoid_: Copy, clone, reference, original
 
 ### Listening

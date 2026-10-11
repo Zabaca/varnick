@@ -271,19 +271,24 @@ private struct OutlineRowView: View {
         }
     }
 
-    /// A click zooms into the bullet. A ring marks a collapsed bullet that has bullets nested under it.
+    /// A click zooms into the bullet. An outer ring marks a collapsed bullet that has bullets nested under it, an inner one in the tag colour a
+    /// mirror (the tooltip says where else it is).
     private var dot: some View {
         Button { outline.zoomIn(row.path) } label: {
             ZStack {
                 Circle().fill(Color.secondary).frame(width: 5, height: 5)
+                if row.mirrored {
+                    Circle().strokeBorder(Theme.tag, lineWidth: 1).frame(width: 9, height: 9)
+                }
                 if row.hasChildren, row.collapsed {
-                    Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 12, height: 12)
+                    Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 13, height: 13)
                 }
             }
             .frame(width: 14, height: Self.lineHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(row.mirrored ? outline.placesTooltip(for: row) : "")
     }
 }
 
