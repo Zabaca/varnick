@@ -201,7 +201,7 @@ struct PanePanelView: PanelAccessView {
     static func rows(of terminal: Terminal) -> String {
         let end = Self.endOfBuffer(terminal)
         var lines: [String] = []
-        for row in max(0, end - terminal.rows)..<end {
+        for row in max(terminal.buffer.totalLinesTrimmed, end - terminal.rows)..<end {
             let line = terminal.getScrollInvariantLine(row: row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? ""
             lines.append(String(line.reversed().drop(while: { $0.isWhitespace }).reversed()))
         }
@@ -209,11 +209,13 @@ struct PanePanelView: PanelAccessView {
         return lines.joined(separator: "\n")
     }
 
-    /// One past the last line of the buffer, found by asking `getScrollInvariantLine`, since SwiftTerm doesn't expose the count.
-    private static func endOfBuffer(_ terminal: Terminal) -> Int {
-        guard terminal.getScrollInvariantLine(row: 0) != nil else { return terminal.rows }
-        var low = 0, high = max(terminal.rows, 1)
-        while terminal.getScrollInvariantLine(row: high) != nil, high < 1 << 24 { low = high; high *= 2 }
+    /// One past the last line of the buffer, found by asking `getScrollInvariantLine`, since SwiftTerm doesn't expose the count. Rows are
+    /// counted from the start of the scrollback, so once it is full the first `totalLinesTrimmed` rows no longer exist: the probe starts there.
+    static func endOfBuffer(_ terminal: Terminal) -> Int {
+        let top = terminal.buffer.totalLinesTrimmed
+        guard terminal.getScrollInvariantLine(row: top) != nil else { return top + terminal.rows }
+        var low = top, step = max(terminal.rows, 1), high = top + step
+        while terminal.getScrollInvariantLine(row: high) != nil, step < 1 << 24 { low = high; step *= 2; high = top + step }
         // `low` has a line and `high` has none.
         while high - low > 1 {
             let middle = (low + high) / 2

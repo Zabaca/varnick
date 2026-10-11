@@ -162,12 +162,7 @@ final class PanelAccess {
     private func run(_ request: PanelRequest) async throws -> Answered {
         guard Settings.shared.panelAccess else { throw PanelRefusal.off }
         guard let model = PeerManager.shared.model else { throw PanelRefusal.starting }
-        let caller: UUID
-        switch CallingPane.find(request.pane, in: model) {
-        case .found(let id, _, _): caller = id
-        case .missing: throw PanelRefusal.noPane
-        case .controlled: throw PanelRefusal.controlled
-        }
+        let caller = try callingPane(request.pane, in: model)
         prune(in: model)
         if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }
         if request.tool == "show" {
@@ -184,8 +179,17 @@ final class PanelAccess {
         let text = try await view.perform(action, request.args, caller: caller)
         // The action may have waited: the switch and the pane can have changed meanwhile.
         guard Settings.shared.panelAccess else { throw PanelRefusal.off }
-        guard case .found = CallingPane.find(request.pane, in: model) else { throw PanelRefusal.noPane }
+        _ = try callingPane(request.pane, in: model)
         return Answered(text: text, action: action)
+    }
+
+    /// The calling pane's id, or why it may not call.
+    private func callingPane(_ text: String, in model: LauncherModel) throws -> UUID {
+        switch CallingPane.find(text, in: model) {
+        case .found(let id, _, _): return id
+        case .missing: throw PanelRefusal.noPane
+        case .controlled: throw PanelRefusal.controlled
+        }
     }
 
     /// Tables of panes that have gone are dropped.
