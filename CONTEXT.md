@@ -170,7 +170,7 @@ The panel's view of one tree of **Bullet**s the user writes, kept in a file on t
 _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 
 **Bullet**:
-One line of the **Outline**: its text, an optional note under it, whether it is completed, and the bullets nested under it.
+One line of the **Outline**: its text, an optional note under it, whether it is completed, and the bullets nested under it. A completed bullet is struck through, and hidden unless Show completed is on. (Not the board's Completed column, which holds sessions marked Done.)
 _Avoid_: Item, node, row, entry, task, card
 
 **Zoom**:

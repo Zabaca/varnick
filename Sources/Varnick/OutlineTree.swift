@@ -36,6 +36,11 @@ struct OutlineRow: Identifiable, Equatable {
     let text: String
     let hasChildren: Bool
     let collapsed: Bool
+    let note: String?
+    /// Struck through: this bullet is completed.
+    let completed: Bool
+    /// Dimmed: this bullet, or one it is nested under, is completed.
+    let dimmed: Bool
 
     var id: String { path.id }
 }
@@ -66,10 +71,16 @@ struct OutlineCrumb: Identifiable, Equatable {
     var id: String { path.id }
 }
 
-/// Where the caret goes after an edit: a row, and a UTF-16 offset in its text.
+/// Which text of a row the caret is in.
+enum OutlineField: Equatable {
+    case text, note
+}
+
+/// Where the caret goes after an edit: a row, and a UTF-16 offset in its text (or its note's).
 struct OutlineCaret: Equatable {
     var path: OutlinePath
     var offset: Int
+    var field = OutlineField.text
 }
 
 enum OutlineEdit {
@@ -88,6 +99,10 @@ enum OutlineEdit {
     /// ↩ in the title of a zoom: the text after the caret moves into a new first nested bullet; at the start of a non-empty title the new
     /// bullet is empty. The caret goes into it.
     case addFirstChild(OutlinePath, range: Range<Int>)
+    /// ⌘↩: sets `completed` to now, or clears it. With Show completed off the bullet leaves the view and the caret goes to the next row showing.
+    case complete(OutlineCaret)
+    /// The note under a bullet; empty removes it.
+    case setNote(OutlinePath, String)
     /// ⇥: the last bullet under the sibling above, which opens. The caret's row is the one edited; it follows the row to its new path.
     case indent(OutlineCaret)
     /// ⇧⇥: the next sibling of its parent. The siblings after it stay where they were.
@@ -109,12 +124,12 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
 }
 
 extension OutlineEdit {
-    /// The row an edit moves, joins, deletes or adds beside; nil for edits that only change what is in a bullet.
+    /// The row an edit moves, joins, deletes, completes or adds beside; nil for edits that only change what is in a bullet.
     fileprivate var restructuredPath: OutlinePath? {
         switch self {
         case .addBelow(let path), .addAbove(let path), .join(let path), .delete(let path): path
-        case .indent(let at), .outdent(let at), .move(let at, _): at.path
-        case .setText, .split, .paste, .addFirstChild, .collapse: nil
+        case .indent(let at), .outdent(let at), .move(let at, _), .complete(let at): at.path
+        case .setText, .setNote, .split, .paste, .addFirstChild, .collapse: nil
         }
     }
 }
@@ -159,9 +174,9 @@ struct OutlineTree: Codable, Equatable {
         return tree.ensuringBullet(now: now, newID: newID)
     }
 
-    /// An outline with no bullets gets one empty bullet.
+    /// There is always a line to type in: an outline with no bullets, or at Home none showing (all completed and hidden), gets an empty one.
     func ensuringBullet(now: Date, newID: () -> String = OutlineTree.newID) -> OutlineTree {
-        guard bullets[root]?.children.isEmpty == true else { return self }
+        guard bullets[root]?.children.isEmpty == true || (effectiveZoom.isEmpty && visibleRows().isEmpty) else { return self }
         var tree = self
         let bullet = newID()
         tree.bullets[bullet] = OutlineBullet(text: "", created: now, changed: now, children: [])
@@ -173,30 +188,38 @@ struct OutlineTree: Codable, Equatable {
     // MARK: Reading
 
     /// The rows on screen, in order: the bullets nested under the one zoomed into (the top bullet at Home), each level 0 at the zoom's top. A
-    /// collapsed placement hides what is nested under it. A row's path always starts at the top bullet, zoomed or not.
+    /// collapsed placement hides what is nested under it, and a completed bullet is hidden with what is nested under it unless Show completed
+    /// is on. A row's path always starts at the top bullet, zoomed or not.
     func visibleRows() -> [OutlineRow] {
         var rows: [OutlineRow] = []
         let base = effectiveZoom
-        func walk(_ id: String, prefix: [String], onStack: Set<String>) {
+        func walk(_ id: String, prefix: [String], onStack: Set<String>, dimmed: Bool) {
             guard let bullet = bullets[id] else { return }
             for placement in bullet.children {
-                guard let child = bullets[placement.bullet], !onStack.contains(placement.bullet) else { continue }
+                guard let child = bullets[placement.bullet], !onStack.contains(placement.bullet),
+                      showsCompleted || child.completed == nil else { continue }
                 let path = prefix + [placement.id]
                 let collapsed = placement.collapsed == true
+                let below = dimmed || child.completed != nil
                 rows.append(OutlineRow(path: OutlinePath(placements: path), bullet: placement.bullet, depth: path.count - base.count - 1,
-                                       text: child.text, hasChildren: !child.children.isEmpty, collapsed: collapsed))
-                if !collapsed { walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet])) }
+                                       text: child.text, hasChildren: !child.children.isEmpty, collapsed: collapsed, note: child.note,
+                                       completed: child.completed != nil, dimmed: below))
+                if !collapsed { walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet]), dimmed: below) }
             }
         }
         var top = root
         var stack: Set<String> = [root]
+        var dimmed = false
         if let spot = locate(OutlinePath(placements: base)) {
             top = spot.bullet
             stack = Set(bulletsAlong(base) + [root])
+            dimmed = bulletsAlong(base).contains { bullets[$0]?.completed != nil }
         }
-        walk(top, prefix: base, onStack: stack)
+        walk(top, prefix: base, onStack: stack, dimmed: dimmed)
         return rows
     }
+
+    func note(at path: OutlinePath) -> String? { locate(path).flatMap { bullets[$0.bullet]?.note } }
 
     // MARK: Zoom
 
@@ -386,6 +409,33 @@ struct OutlineTree: Codable, Equatable {
                 // No row above: the caret goes to the first row left, the empty one a lone bullet's delete leaves included.
                 return Self.finish(tree, caret: nil, now: now, newID: newID, caretInFirstRow: true)
             }
+        case .complete(let at):
+            guard let spot = locate(at.path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
+            let before = visibleRows()
+            tree.bullets[spot.bullet]?.completed = bullet.completed == nil ? now : nil
+            tree.bullets[spot.bullet]?.changed = now
+            guard case .applied(let done, _) = Self.finish(tree, caret: nil, now: now, newID: newID) else { return .refused("no such row") }
+            let after = done.visibleRows()
+            guard !after.contains(where: { $0.path == at.path }) else { return .applied(done, caret: nil) }
+            // It left the view: the caret goes to the next row that shows, else the one before it, else the title.
+            let index = before.firstIndex { $0.path == at.path } ?? 0
+            let shown = Set(after.map(\.path))
+            if let next = before[min(index + 1, before.count)...].first(where: { shown.contains($0.path) }) {
+                return .applied(done, caret: OutlineCaret(path: next.path, offset: 0))
+            } else if let previous = before[..<index].last(where: { shown.contains($0.path) }) {
+                return .applied(done, caret: OutlineCaret(path: previous.path, offset: previous.text.utf16.count))
+            } else if let title = done.crumbs().last {
+                return .applied(done, caret: OutlineCaret(path: title.path, offset: title.text.utf16.count))
+            }
+            return .applied(done, caret: after.first.map { OutlineCaret(path: $0.path, offset: 0) })
+        case .setNote(let path, let note):
+            guard let spot = locate(path) else { return .refused("no such row") }
+            let clean = note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            let new = clean.isEmpty ? nil : clean
+            guard bullets[spot.bullet]?.note != new else { return .applied(self, caret: nil) }
+            tree.bullets[spot.bullet]?.note = new
+            tree.bullets[spot.bullet]?.changed = now
+            caret = nil
         case .addFirstChild(let path, let range):
             guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
             let length = bullet.text.utf16.count
@@ -537,6 +587,8 @@ struct OutlineTree: Codable, Equatable {
         let ids = bullets.keys.sorted()
         for id in ids {
             if let text = bullets[id]?.text { tree.bullets[id]?.text = Self.oneLine(text) }
+            // An empty note is no note.
+            if bullets[id]?.note?.isEmpty == true { tree.bullets[id]?.note = nil }
             // The top bullet is never placed, and a placement can't name a bullet the file lacks.
             tree.bullets[id]?.children = (bullets[id]?.children ?? []).filter { placement in
                 if placement.bullet == root { repairs.insideItself += 1; return false }
