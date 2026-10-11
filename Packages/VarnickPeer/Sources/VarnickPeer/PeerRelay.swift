@@ -20,7 +20,7 @@ public protocol PeerHost {
     func controllerNames() -> PeerControllerNames
     /// The answer to a hello, which the relay has found to speak this version.
     func hello(line: String) -> PeerReply
-    /// `start`, `resume`, `end`, `projects` and `agents`, which the host's app does.
+    /// `start`, `resume`, `end`, `done`, `projects` and `agents`, which the host's app does.
     func forward(_ op: PeerOp, line: String) -> PeerForwarded
     /// Fills in what the host's saved state says about running sessions (`status`).
     func follow(_ statuses: inout [String: PeerSessionStatus])
@@ -73,14 +73,14 @@ public enum PeerRelay {
         var device: String?
         if op != .hello {
             let peer = host.lists(head.by)
-            let macsOnly = op == .rows || op == .pages || PeerProtocol.answersAnyVersion(op)
+            let macsOnly = op == .rows || op == .pages || op == .done || PeerProtocol.answersAnyVersion(op)
             if !peer, !macsOnly, host.listsDevice(head.by) { device = head.by }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
         }
         switch op {
         case .hello:
             return finish(host.hello(line: line))
-        case .start, .resume, .end, .projects, .agents:
+        case .start, .resume, .end, .done, .projects, .agents:
             return forwarded(host.forward(op, line: line), host: host, for: device)
         case .status:
             return status(PeerJSON.decode(PeerRequest.self, from: line), host: host, for: device)
@@ -95,7 +95,7 @@ public enum PeerRelay {
         case .pages:
             return finish(host.pages(after: PeerJSON.decode(PeerRequest.self, from: line)?.cursor))
         case .recent:
-            return finish(host.recent())
+            return finish(device == nil ? host.recent() : hidingMarks(host.recent()))
         case .hosts:
             // Names and addresses only (`PeerHostEntry` has no id), so a device may ask it as it may ask for `sessions`.
             var reply = PeerReply.success()
@@ -172,8 +172,20 @@ public enum PeerRelay {
             if let device {
                 if !Zmx.sameID(session.control, device) { session.control = nil }
                 session.work = nil
+                session.doneAge = nil
             }
             return session
+        }
+        return reply
+    }
+
+    /// `recent` without the marks, for a device: the page has no board.
+    private static func hidingMarks(_ reply: PeerReply) -> PeerReply {
+        var reply = reply
+        reply.recent = reply.recent?.map { entry in
+            var entry = entry
+            entry.done = nil
+            return entry
         }
         return reply
     }

@@ -1153,6 +1153,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         return changed
     }
 
+    /// The done mark a paired Mac made on a session that runs here (`LauncherModel.hostDone`), kept on the record so it is saved with the tabs
+    /// and survives a restart. Never set on a pane on a peer: that host holds the mark.
+    func setDoneMark(_ date: Date?) {
+        guard isClaude, !isOnPeer else { return }
+        record.completedAt = date
+    }
+
     /// The host didn't answer: its last word on the turn is no longer known to hold.
     func clearHostTurn() {
         turn = nil

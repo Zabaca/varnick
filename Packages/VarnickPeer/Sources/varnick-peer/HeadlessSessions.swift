@@ -24,6 +24,8 @@ struct HeadlessSession: Codable, Equatable {
     var ended: Date?
     /// True from the record's first save until `start` has handed the session over.
     var starting: Bool?
+    /// When a Mac marked the session done (`done`), running or ended: the one place a headless host keeps the mark. Nil: not marked.
+    var done: Date?
 
     /// The conversation claude is on: the hook's last report, else the one saved, else the session's own id.
     func conversationID(reported: String?) -> String { reported ?? conversation ?? id }

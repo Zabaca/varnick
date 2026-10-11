@@ -228,6 +228,11 @@ final class LauncherModel: ObservableObject {
     private static let recentWatchWindow: TimeInterval = 60
     private static let rememberedLife: TimeInterval = 30 * 24 * 3600
     private static let closedHereLife: TimeInterval = 600
+    /// When this Mac last marked, or took the mark off, a paired Mac's session by its pane id (Done, ↩ on a Completed card, the host's
+    /// reply). A listing or Recent asked before that is ignored for that pane id (`askPredatesAct`), or its stale word would undo it.
+    private var actedHereAt: [UUID: Date] = [:]
+    /// The Dones whose `done` to the host is still out: their cards don't say "Done on this Mac only" yet.
+    private var pendingDone: Set<UUID> = []
     /// Runs while this Mac has a pane on a peer (`updatePeerFollowing`); nil otherwise.
     private var peerFollowTask: Task<Void, Never>?
     private var followingPeers = false
@@ -634,11 +639,12 @@ final class LauncherModel: ObservableObject {
         peerOpenRows.first { $0.paneID == paneID && (host == nil || Zmx.sameID($0.peer.id, host)) }
     }
 
-    /// What the board shows of the paired Macs: `peerOpenRows` less the sessions marked done (by pane id,
-    /// as a resume here drops a session out of Completed), which Completed shows with "Still open on…".
+    /// What the board shows of the paired Macs: `peerOpenRows` less the sessions marked done, here (by pane id, as a resume here drops
+    /// a session out of Completed) or by their host, which Completed shows with "Still open on…". A session its host marks is never
+    /// a Running or Stopped card, even once Completed's cap has dropped it.
     var boardPeerRows: [PeerOpenRow] {
         let done = Set(completed.map(\.id))
-        return peerOpenRows.filter { $0.paneID.map { !done.contains($0) } ?? false }
+        return peerOpenRows.filter { row in row.paneID.map { !done.contains($0) && row.info.doneAge == nil } ?? false }
     }
 
     /// The session list's rows, in order: this Mac's tabs, then the peers' open sessions, then
@@ -1213,7 +1219,156 @@ final class LauncherModel: ObservableObject {
             loadProjectsForRows()
             sessionSelection = highlighted.flatMap(sessionRowIndex(of:)) ?? min(sessionSelection, max(0, sessionListCount - 1))
         }
+        if takeInRecentMarks(found, from: id, sentAt: sentAt) {
+            saveSessions()
+            if showingBoard { board.refresh() }
+        }
         endRememberedSessions(on: id)
+    }
+
+    // MARK: Done marks from the hosts (ADR 0028)
+
+    /// Whether a listing or Recent asked at `sentAt` was asked before this Mac's own Done or open of `id`, and so can't know of it.
+    private func askPredatesAct(_ id: UUID, _ sentAt: Date) -> Bool {
+        actedHereAt[id].map { sentAt <= $0 } ?? false
+    }
+
+    private func noteActed(on id: UUID) {
+        let now = Date()
+        actedHereAt = actedHereAt.filter { now.timeIntervalSince($0.value) < Self.closedHereLife }
+        actedHereAt[id] = now
+    }
+
+    /// `record` into Completed, newest mark first, keeping the newest `completedLimit`: a mark older than the 20th isn't added, so
+    /// answers from the hosts and this Mac's own Dones never evict each other in turn. Returns whether Completed changed.
+    @discardableResult
+    private func insertCompleted(_ record: SessionRecord) -> Bool {
+        guard record.resumable else { return false }
+        var list = completed.filter { $0.id != record.id }
+        list.append(record)
+        let ordered = list.enumerated().sorted {
+            let (a, b) = ($0.element.completedAt ?? $0.element.lastUsed, $1.element.completedAt ?? $1.element.lastUsed)
+            return a != b ? a > b : $0.offset < $1.offset
+        }.map(\.element)
+        let next = Array(ordered.prefix(SessionStore.completedLimit))
+        guard next != completed else { return false }
+        completed = next
+        return true
+    }
+
+    /// What a paired Mac's `sessions` answer says of its marks. A listed session it doesn't mark takes out of Completed every mark of
+    /// that Mac's that it flagged, with its pane id or its conversation (opened or resumed there). A listed session it marks, with no
+    /// pane here, goes into Completed if it isn't there, dated by the host's mark, and is flagged; one already there keeps its date.
+    /// A pane here shows the mark on its own card. Ignored for a pane id this Mac marked or opened after the ask was sent. Returns
+    /// whether anything changed, so an answer that changes nothing saves nothing.
+    private func takeInListingMarks(_ found: [PeerOpenSession], on host: String, sentAt: Date) -> Bool {
+        guard let peer = PeerManager.shared.peers.first(where: { $0.id == host }), PeerManager.shared.status[host] != .removedThisMac else { return false }
+        let panes = Set(tabs.flatMap(\.sessions).map(\.id)), here = openHere
+        var changed = false
+        for info in found where info.doneAge == nil {
+            guard let id = Zmx.paneID(info.session), !askPredatesAct(id, sentAt) else { continue }
+            let conversation = Self.conversation(of: info)
+            let before = completed.count
+            completed.removeAll { $0.host == host && $0.hostHoldsDone == true && ($0.id == id || $0.conversationID == conversation) }
+            changed = changed || completed.count != before
+        }
+        for info in found {
+            // A conversation open in a pane here is no Completed entry (`rebuildRecent` would drop it again at once).
+            guard let age = info.doneAge, let id = Zmx.paneID(info.session), !panes.contains(id), !here.contains(Self.conversation(of: info) ?? ""),
+                  !askPredatesAct(id, sentAt) else { continue }
+            if ended.contains(where: { $0.id == id }) { ended.removeAll { $0.id == id }; changed = true }
+            if remembered.contains(where: { $0.id == id }) { remembered.removeAll { $0.id == id }; changed = true }
+            if let at = completed.firstIndex(where: { $0.id == id }) {
+                if completed[at].hostHoldsDone != true {
+                    completed[at].hostHoldsDone = true
+                    changed = true
+                }
+            } else if var record = PeerOpenRow(peer: peer, info: info).record {
+                record.completedAt = Date().addingTimeInterval(-TimeInterval(age))
+                record.hostHoldsDone = true
+                changed = insertCompleted(record) || changed
+            }
+        }
+        return changed
+    }
+
+    /// What a paired Mac's Recent says of its marks: an entry it marks goes into Completed as above, an ended card or a remembered
+    /// session with its pane id becoming that entry. An entry without a mark changes nothing, so a mark that left the host's Completed
+    /// by its cap, or its Recent by age, doesn't leave this Mac's. Returns whether anything changed.
+    private func takeInRecentMarks(_ found: [PeerRecentSession], from host: String, sentAt: Date) -> Bool {
+        guard PeerManager.shared.peers.contains(where: { $0.id == host }), PeerManager.shared.status[host] != .removedThisMac else { return false }
+        let panes = Set(tabs.flatMap(\.sessions).map(\.id)), here = openHere
+        var changed = false
+        for entry in found {
+            guard let done = entry.done, let id = entry.session.flatMap(Zmx.paneID) ?? UUID(uuidString: entry.conversation),
+                  !panes.contains(id), !here.contains(entry.conversation), !askPredatesAct(id, sentAt) else { continue }
+            let card = ended.first { $0.id == id } ?? remembered.first { $0.id == id && $0.host == host }
+            if ended.contains(where: { $0.id == id }) { ended.removeAll { $0.id == id }; changed = true }
+            if remembered.contains(where: { $0.id == id }) { remembered.removeAll { $0.id == id }; changed = true }
+            if let at = completed.firstIndex(where: { $0.id == id }) {
+                if completed[at].hostHoldsDone != true {
+                    completed[at].hostHoldsDone = true
+                    changed = true
+                }
+                continue
+            }
+            let last = Date(timeIntervalSince1970: TimeInterval(entry.last))
+            var record = card ?? SessionRecord(id: id, prompt: "", title: entry.title, directory: entry.folder, startedAt: last, lastUsed: last)
+            if card != nil {
+                if !entry.title.isEmpty { record.title = entry.title }
+                record.directory = entry.folder
+            }
+            record.agent = entry.agent
+            record.host = host
+            record.conversation = record.conversation(reportedAs: entry.conversation)
+            record.completedAt = Date(timeIntervalSince1970: TimeInterval(done))
+            record.hostHoldsDone = true
+            changed = insertCompleted(record) || changed
+        }
+        return changed
+    }
+
+    /// When a paired Mac's last listing says it marked this session done, for a card of a pane here on that Mac; nil when it doesn't, or
+    /// the listing was asked before this Mac's own Done or open of it.
+    func hostDoneMark(of id: UUID, on host: String) -> Date? {
+        guard let age = peerOpenSessions[host]?.first(where: { Zmx.paneID($0.session) == id })?.doneAge,
+              !askPredatesAct(id, peerOpenSessionsSentAt[host] ?? .distantPast) else { return nil }
+        return Turn.began(ageSeconds: age, before: peerOpenSessionsAnsweredAt[host] ?? Date())
+    }
+
+    /// When a Claude pane here is marked done: by another Mac on a session that runs here (its record), or by its host on one that runs
+    /// on a paired Mac. Such a pane is a Completed card ("Still open here"), and closing it goes to Completed.
+    func doneMark(of pane: ClaudeSession) -> Date? {
+        guard pane.isClaude else { return nil }
+        if let host = pane.record.host { return hostDoneMark(of: pane.id, on: host) }
+        return pane.record.completedAt
+    }
+
+    /// The note a Completed card carries: where the session still runs, and that the Done is this Mac's only.
+    func completedNote(for record: SessionRecord) -> String? {
+        var parts: [String] = []
+        if let mac = stillOpenOn(record) { parts.append("Still open on " + mac) }
+        if record.host != nil, record.hostHoldsDone != true, !pendingDone.contains(record.id) { parts.append("Done on this Mac only") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Tells a session's host that this Mac marked it done, or with `mark` false that it opened it again. A mark the host takes is
+    /// flagged here; any failure leaves it this Mac's only, and nothing sends it again.
+    private func sendDone(_ id: UUID, on host: String, mark: Bool = true) {
+        if mark { pendingDone.insert(id) }
+        noteActed(on: id)
+        Task { [weak self] in
+            let taken = await PeerManager.shared.done(session: id, on: host, mark: mark)
+            guard let self else { return }
+            self.pendingDone.remove(id)
+            // Asked before the host answered, a listing can't know of the mark or the clear.
+            if taken { self.noteActed(on: id) }
+            if mark, taken, let at = self.completed.firstIndex(where: { $0.id == id }) {
+                self.completed[at].hostHoldsDone = true
+                self.saveSessions()
+            }
+            if self.showingBoard { self.board.refresh() }
+        }
     }
 
     /// Remembers what a Mac's answer lists that the board would show: no pane here, not marked done, not closed
@@ -1224,7 +1379,7 @@ final class LauncherModel: ObservableObject {
         let marked = Set(completed.map(\.id))
         var changed = false
         for info in found {
-            guard let new = PeerOpenRow(peer: peer, info: info).record, !panes.contains(new.id), !marked.contains(new.id),
+            guard info.doneAge == nil, let new = PeerOpenRow(peer: peer, info: info).record, !panes.contains(new.id), !marked.contains(new.id),
                   !listingPredatesClose(of: new.id, on: host) else { continue }
             if let at = remembered.firstIndex(where: { $0.id == new.id }) {
                 let old = remembered[at]
@@ -1250,6 +1405,12 @@ final class LauncherModel: ObservableObject {
         var changed = false
         for old in remembered where old.host == host && asked > old.lastUsed && !listedPanes.contains(old.id) && !panes.contains(old.id) {
             guard let entry = entries.first(where: { $0.session == Zmx.sessionName(old.id) }) else { continue }
+            // Marked done there: it is Completed's (`takeInRecentMarks`), never an ended card.
+            if entry.done != nil {
+                remembered.removeAll { $0.id == old.id }
+                changed = true
+                continue
+            }
             let end = min(Date(timeIntervalSince1970: TimeInterval(entry.last)), Date())
             var record = SessionRecord(id: old.id, prompt: "", title: entry.title.isEmpty ? old.title : entry.title,
                                        directory: entry.folder, startedAt: end, lastUsed: end)
@@ -1357,6 +1518,7 @@ final class LauncherModel: ObservableObject {
         peerOpenSessions[id] = found
         peerOpenSessionsAnsweredAt[id] = found == nil ? nil : Date()
         if let found {
+            if takeInListingMarks(found, on: id, sentAt: sentAt) { saveSessions() }
             remember(found, on: id)
             endRememberedSessions(on: id)
             // The close reaches that Mac's Recent a moment after its session goes, so a Mac that just stopped listing
@@ -1374,6 +1536,10 @@ final class LauncherModel: ObservableObject {
         if let host = record.host { return resumeOnPeer(conversation: record.conversationID, on: host, folder: record.directory,
                                                        title: record.title, agent: record.agent) }
         recent.removeAll { $0.id == record.id }
+        // A pane started from a record starts unmarked; only a restored tab keeps its mark (ADR 0028).
+        var record = record
+        record.completedAt = nil
+        record.hostHoldsDone = nil
         addTab(PaneNode(session: makeSession(record, resuming: true, query: "")), name: store.tabName(ofSession: record.conversationID))
     }
 
@@ -1804,7 +1970,15 @@ final class LauncherModel: ObservableObject {
                 if !session.isOnPeer { HistorySync.recordWork(of: record, links: links, databasePath: store.path) }
             }
         }
-        let markedDone = doneRequested.remove(session.id) != nil
+        let pressedDone = doneRequested.remove(session.id) != nil
+        // Marked while open: by another Mac on a session that runs here (its record keeps the date), or by the host of one that runs on a
+        // paired Mac, whose Completed copy is flagged. Either way it closes into Completed, never Stopped.
+        let markedAt = record.isClaude ? doneMark(of: session) : nil
+        if let markedAt {
+            record.completedAt = markedAt
+            if record.host != nil { record.hostHoldsDone = true }
+        }
+        let markedDone = pressedDone || markedAt != nil
         // A tab that ends isn't being renamed any more, on screen or not (the board can end a tab under it).
         if renamingTab === tab, tab.sessions.count == 1 { renamingTab = nil }
         // The frozen view of a session another Mac controls ends nothing: that Mac's Recent has it when it ends.
@@ -1816,12 +1990,12 @@ final class LauncherModel: ObservableObject {
         defer { saveSessions() }
         // Other panes remain: focus moves to a neighbour, if the tab is on screen to take it.
         if tab.remove(session, focusing: showsTerminal && activeTab === tab) {
-            if markedDone { addCompleted(record) } else if leavesEnded { addClosed(record, waitsForRecent: waitsForRecent) }
+            if markedDone { addDone(record) } else if leavesEnded { addClosed(record, waitsForRecent: waitsForRecent) }
             return
         }
 
         tabs.remove(at: index)
-        if markedDone { addCompleted(record) } else if leavesEnded { addClosed(record, waitsForRecent: waitsForRecent) }
+        if markedDone { addDone(record) } else if leavesEnded { addClosed(record, waitsForRecent: waitsForRecent) }
         sessionSelection = min(sessionSelection, max(0, tabs.count - 1))
         guard activeTab === tab else { return }   // a background tab ended
 
@@ -1855,6 +2029,10 @@ final class LauncherModel: ObservableObject {
     /// Newest first, one entry per conversation; only conversations with a transcript. A session that
     /// ran on a paired Mac has it there: it goes in, and resuming it asks that Mac.
     private func addRecent(_ record: SessionRecord) {
+        // Recent's copies carry no mark: a resume starts unmarked, and the relay reads a mark from Completed (ADR 0028).
+        var record = record
+        record.completedAt = nil
+        record.hostHoldsDone = nil
         Self.put(record, first: &recent, limit: SessionStore.recentLimit, byConversation: true)
     }
 
@@ -1899,9 +2077,17 @@ final class LauncherModel: ObservableObject {
     private func addCompleted(_ record: SessionRecord) {
         ended.removeAll { $0.id == record.id }
         var done = record
-        done.completedAt = Date()
-        Self.put(done, first: &completed, limit: SessionStore.completedLimit, byConversation: false)
+        // A pane marked while it was open keeps its mark's date.
+        done.completedAt = record.completedAt ?? Date()
+        if done.host != nil { noteActed(on: done.id) }
+        insertCompleted(done)
         if showingBoard { board.refresh() }
+    }
+
+    /// A Done on another Mac's session, once this Mac's Completed has it: its host is told, unless it marked it itself.
+    private func addDone(_ record: SessionRecord) {
+        addCompleted(record)
+        if let host = record.host, record.hostHoldsDone != true { sendDone(record.id, on: host) }
     }
 
     /// Done on a board card: ends the pane as ⌘W does, and the session goes into Completed once the
@@ -1979,14 +2165,14 @@ final class LauncherModel: ObservableObject {
     /// on…". This Mac can't end it: the host takes `end` only from the Mac in control.
     func markPeerDone(_ id: UUID) {
         guard let record = peerOpenRow(id)?.record else { return }
-        addCompleted(record)
+        addDone(record)
         saveSessions()
     }
 
     /// Done on an ended card: Completed, with no question, since there is nothing left to end.
     func markEndedDone(_ id: UUID) {
         guard let record = ended.first(where: { $0.id == id }) else { return }
-        addCompleted(record)
+        addDone(record)
         saveSessions()
     }
 
@@ -2002,9 +2188,23 @@ final class LauncherModel: ObservableObject {
     /// ↩ on a Completed card: resumed as Recent resumes it, here or on its Mac, and out of Completed.
     /// A paired Mac's session still open there opens on its card instead.
     func openCompleted(_ id: UUID) {
+        // A pane here the mark is on ("Still open here"): shown, and the mark taken off, here or on its host.
+        if let pane = tabs.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude }) {
+            if let host = pane.record.host { sendDone(id, on: host, mark: false) } else { pane.setDoneMark(nil) }
+            saveSessions()
+            if showingBoard { board.refresh() }
+            showPane(id)
+            return
+        }
         guard var record = completed.first(where: { $0.id == id }) else { return }
         completed.removeAll { $0.id == id }
         record.completedAt = nil
+        if let host = record.host {
+            noteActed(on: id)
+            // The host's mark goes when the session is open again there; one still open only needs its mark taken off.
+            if record.hostHoldsDone == true, peerOpenRow(record.id, on: host) != nil { sendDone(id, on: host, mark: false) }
+        }
+        record.hostHoldsDone = nil
         if let host = record.host, let row = peerOpenRow(record.id, on: host) {
             openPeerSession(row)
         } else {
@@ -2291,6 +2491,25 @@ final class LauncherModel: ObservableObject {
             return reply
         }
         if let pane { pane.endSession() } else { Zmx.kill(id) }
+        return .success()
+    }
+
+    /// A peer's `done` (ADR 0028): marks a session of this Mac done, or with `mark` false takes the mark off, and ends nothing, so any
+    /// Mac in the list may ask, not only the one in control. A pane here is marked on its own record, which makes it a Completed card
+    /// and sends its close to Completed. A session that ended here is marked by moving its ended card, or its Recent entry, into
+    /// Completed. A mark already there is left as it is, and taking one off a session with none changes nothing.
+    func hostDone(_ request: PeerRequest) async -> PeerReply {
+        guard let name = request.session, let id = Zmx.paneID(name) else { return .failure("Not a Varnick session name") }
+        let mark = request.mark ?? true
+        if let pane = tabs.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) {
+            if !mark { pane.setDoneMark(nil) } else if pane.record.completedAt == nil { pane.setDoneMark(Date()) }
+        } else if let record = ended.first(where: { $0.id == id && $0.host == nil }) ?? recent.first(where: { $0.id == id && $0.host == nil }) {
+            if mark && !completed.contains(where: { $0.id == id }) { addCompleted(record) }
+        } else if !completed.contains(where: { $0.id == id && $0.host == nil }) {
+            return .failure("That session isn't on \(PeerIdentity.name ?? "this Mac")")
+        }
+        saveSessions()
+        if showingBoard { board.refresh() }
         return .success()
     }
 
