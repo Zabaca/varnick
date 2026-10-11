@@ -15,7 +15,7 @@ status: accepted
 | `show` | `view`, `command` or `pane` | Shows the search, the board, the Problems tab, the Outline or a pane's tab. Or runs a `!` Command as ↩ on its row would. It changes what the panel shows, never whether it shows. |
 | `board_read` | `tab` | The Session board's cards by column, as the board shows them, or the Problems tab's. |
 | `pane_read` | `id` | A pane's kind and title, and for a terminal the text its screen shows now. |
-| `outline_read` | `at`, `depth`, `as_shown` | The Outline's bullets as indented lines with ids, from Home or from a bullet. With `as_shown`, the rows exactly as the user sees them, with the zoom, the filter and the caret. |
+| `outline_read` | `at`, `depth`, `as_shown`, `after` | The Outline's bullets as indented lines with ids, from Home or from a bullet. With `as_shown`, the rows exactly as the user sees them, with the zoom, the filter and the caret. With `after`, the read that a capped one names continues from the row after that id. |
 | `outline_act` | `action`, then its arguments | One edit, through the Outline's own edits and undo stack: `add`, `set_text`, `set_note`, `complete`, `delete`, `move`, `indent`, `outdent`, `collapse` or `mirror`. |
 
 `panel` and `show` belong to the panel. The other four come from the first three views that adopt the protocol: the board, the panes and the Outline. A view added later gets its own `<view>_read`, and `<view>_act` if it has actions, without a change to the relay.
