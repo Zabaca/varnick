@@ -645,7 +645,7 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Panel access",
-                                   detail: "Sessions started or restarted while this is on get a tool to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. This goes to Anthropic with the session. It works through Varnick itself and needs no permission.") {
+                                   detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. This goes to Anthropic with the session. It works through Varnick itself and needs no permission.") {
                             Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Keep sessions running",

@@ -188,7 +188,9 @@ Settings › Claude › **Panel access** (off by default, and independent of Scr
 you start or restart in Varnick's panes tools for Varnick itself, from the same `varnick` MCP server. `panel` says
 whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
-Settings) and what has the keyboard. Each pane gets an id such as `s1`, the same every time. The tools work through
+Settings) and what has the keyboard. `board_read` gives the session board's cards by column (Running, Stopped,
+Completed) as the board shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane
+gets an id such as `s1`, the same every time, in both. The tools work through
 Varnick's own state, so they need no permission, no Accessibility and no Screen Recording. What a session reads goes to
 Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access). A
 session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the switch on; turning it off

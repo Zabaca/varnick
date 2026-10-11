@@ -146,7 +146,11 @@ With Panel access on (off by default), the Claude sessions started or restarted 
 Varnick's panel shows, through Varnick itself (ADR 0031). What they read goes to Anthropic with the session and stays
 in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of
 the tab and panes in it (the session board's selected card, Settings or the Restart Varnick card when one is up);
-and which of those has the keyboard. The search field's mode (the session list, a prompt, a `?` search or a `!`
+and which of those has the keyboard. They can also read **the session board** (`board_read`): for every session
+it lists, on this Mac or a paired one, the title (which can be a prompt's first line or a name you gave it), the
+folder, the Mac, the turn and how long, any background work, the card's note, the problem or option it is linked
+to, and for the Problems tab the problems' titles, projects and the sessions on them. A paired Mac's cards are as
+last fetched: the read asks no paired Mac. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
 It reads no window through Accessibility and needs no permission, and turning the switch off stops every session's
 tools at once. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name or a title.

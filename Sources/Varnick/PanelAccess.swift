@@ -97,6 +97,7 @@ final class PanelAccess {
     func answer(_ line: String) async -> String {
         let arrived = ContinuousClock.now
         var tool = "-"
+        var action = ""
         var kind = "ok"
         var counts = ""
         var reply: ScreenReply
@@ -105,10 +106,11 @@ final class PanelAccess {
             guard head.panel == PanelRequest.version else { throw PanelRefusal.versionDiffers }
             guard let request = PeerJSON.decode(PanelRequest.self, from: line) else { throw PanelRefusal.unreadable }
             tool = PanelMCP.names.contains(request.tool) ? request.tool : "-"
-            let text = try await run(request)
+            let done = try await run(request)
+            action = done.action.map { " " + $0 } ?? ""
             // Counts only: the lines of the reply, never what they say.
-            counts = "\(text.split(separator: "\n", omittingEmptySubsequences: false).count) lines"
-            reply = ScreenReply(text: text, isError: false)
+            counts = "\(done.text.split(separator: "\n", omittingEmptySubsequences: false).count) lines"
+            reply = ScreenReply(text: done.text, isError: false)
         } catch let refusal as PanelRefusal {
             kind = refusal.logKind
             reply = ScreenReply(text: refusal.message, isError: true)
@@ -116,13 +118,20 @@ final class PanelAccess {
             kind = "failed"
             reply = ScreenReply(text: "The call failed inside Varnick", isError: true)
         }
-        // Only the tool, the outcome's kind, durations and counts: never a title, a name, a screen's text or the request's own words.
-        NSLog("Varnick: panel %@ %@%@ [%.2f s]", tool, kind, counts.isEmpty ? "" : " (\(counts))", arrived.duration(to: .now).seconds)
+        // Only the tool, the action (one a view declares), the outcome's kind, durations and counts: never a title, a name, a screen's
+        // text or the request's own words.
+        NSLog("Varnick: panel %@%@ %@%@ [%.2f s]", tool, action, kind, counts.isEmpty ? "" : " (\(counts))", arrived.duration(to: .now).seconds)
         return PeerJSON.line(reply)
     }
 
+    /// What a call did: the text the session reads, and the action when a view's `_act` made one.
+    private struct Answered {
+        var text: String
+        var action: String?
+    }
+
     /// In order: the switch, Varnick starting, the pane, then the tool.
-    private func run(_ request: PanelRequest) async throws -> String {
+    private func run(_ request: PanelRequest) async throws -> Answered {
         guard Settings.shared.panelAccess else { throw PanelRefusal.off }
         guard let model = PeerManager.shared.model else { throw PanelRefusal.starting }
         let caller: UUID
@@ -132,10 +141,15 @@ final class PanelAccess {
         case .controlled: throw PanelRefusal.controlled
         }
         prune(in: model)
-        switch request.tool {
-        case "panel": return panelText(model, caller: caller)
-        default: throw PanelRefusal.unknownTool(request.tool)
+        if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }
+        // A registered view's tools: the router has done everything but the view's own part.
+        guard let (type, acts) = PanelViews.find(request.tool) else { throw PanelRefusal.unknownTool(request.tool) }
+        let view = type.init(model: model)
+        guard acts else { return Answered(text: try view.read(request.args, caller: caller)) }
+        guard let action = request.args["action"], type.actionSpecs.contains(where: { $0.name == action }) else {
+            throw PanelRefusal.bad("action is one of: " + type.actionSpecs.map(\.name).joined(separator: ", "))
         }
+        return Answered(text: try await view.perform(action, request.args, caller: caller), action: action)
     }
 
     /// Tables of panes that have gone are dropped.

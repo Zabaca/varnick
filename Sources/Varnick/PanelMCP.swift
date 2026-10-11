@@ -38,8 +38,15 @@ struct PanelActionSpec {
 }
 
 enum PanelMCP {
-    /// The tools of the set, as `tools/list` gives them.
-    static var tools: [[String: Any]] { [panel] }
+    /// The tools of the set, as `tools/list` gives them: `panel`, then each registered view's, built from the views' own static specs so a
+    /// view joins by adopting the protocol (`PanelViews`) with no change here.
+    static var tools: [[String: Any]] {
+        [panel] + PanelViews.all.flatMap { view in
+            var list = [tool("\(view.name)_read", view.readSpec)]
+            if !view.actionSpecs.isEmpty { list.append(actTool(view.name, view.actionSpecs)) }
+            return list
+        }
+    }
 
     /// The names `tools` lists: the only ones a call may use.
     static var names: Set<String> { Set(tools.compactMap { $0["name"] as? String }) }
@@ -85,10 +92,18 @@ enum PanelMCP {
         return ["name": name, "description": spec.summary, "inputSchema": schema]
     }
 
+    /// `<view>_act`: one tool with an `action` argument and the union of the actions' arguments, each action's line in the description.
+    private static func actTool(_ name: String, _ actions: [PanelActionSpec]) -> [String: Any] {
+        var properties: [String: Any] = ["action": ["type": "string", "enum": actions.map(\.name), "description": "Which change to make."]]
+        for action in actions { properties.merge(action.properties) { first, _ in first } }
+        let lines = actions.map { "\($0.name): \($0.summary)" }.joined(separator: " ")
+        return tool("\(name)_act", PanelToolSpec(summary: "One change to the \(name), by `action`. \(lines)", properties: properties, required: ["action"]))
+    }
+
     private static let panel = tool("panel", PanelToolSpec(
         summary: "Says what Varnick's panel shows now, and where the keyboard focus is. Whether the panel is visible, key and pinned; what it "
             + "shows: the search (its mode, and whether its field is empty, never its text), a tab with its panes (each with an id such as s1, "
             + "its kind and title, which has focus and which is this session), the session board with its tab and selected card, Settings, "
-            + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives.",
+            + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives, and board_read uses the same ids.",
         properties: [:]))
 }
