@@ -76,10 +76,12 @@ extension HeadlessPeerHost {
         case .start(let conversation):
             guard let before = claim.before else { return .failure("That session has no record on \(name)") }
             // Labelled for the Mac that asked, with the record's own origin.
-            var lost = before
-            lost.conversation = conversation
             reply = launch(before, control: by, origin: before.origin, resuming: conversation) {
-                _ = try? state.update(id) { if $0.ended == nil, $0.starting == true { $0 = lost } }
+                // Only what the claim changed goes back, so a mark made or cleared during the start stays.
+                _ = try? state.update(id) {
+                    guard $0.ended == nil, $0.starting == true else { return }
+                    ($0.starting, $0.bootID, $0.started, $0.conversation) = (before.starting, before.bootID, before.started, conversation)
+                }
             }
             if reply.ok { reply.resume = .started }
         }
@@ -110,6 +112,10 @@ extension HeadlessPeerHost {
         do {
             switch try state.add(record, refusing: { records in
                 HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: StateFolder.conversations(of: records))
+            }, alongside: { records in
+                // Open again, so its ended records lose their mark, as a Mac's Completed drops an open conversation (ADR 0028).
+                let conversations = StateFolder.conversations(of: records)
+                for index in records.indices where conversations[records[index].id] == conversation { records[index].done = nil }
             }) {
             case .exists: return taken
             case .refused: return .failure("That session is open on \(name): take it over from the list")

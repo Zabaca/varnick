@@ -81,12 +81,14 @@ extension StateFolder {
 
     /// Saves a new record unless one has that id, or `refusing` says no to the records there are. The checks
     /// and the save are one step under the lock, so two starts with one id, or two resumes of one conversation,
-    /// can't both go on.
-    func add(_ session: HeadlessSession, refusing: ([HeadlessSession]) -> Bool = { _ in false }) throws -> Added {
+    /// can't both go on. `alongside` changes the other records in that same save.
+    func add(_ session: HeadlessSession, refusing: ([HeadlessSession]) -> Bool = { _ in false },
+             alongside: (inout [HeadlessSession]) -> Void = { _ in }) throws -> Added {
         try locked(exclusive: true) {
             var sessions = try readSessions()
             guard !sessions.contains(where: { $0.id == session.id }) else { return .exists }
             guard !refusing(sessions) else { return .refused }
+            alongside(&sessions)
             sessions.append(session)
             try writeSessions(sessions)
             return .added

@@ -63,8 +63,7 @@ public enum PeerOp: String, Codable, Sendable {
     case pages
     /// The receiving Mac's Recent, for the other Mac's own. The relay answers it from the saved tabs alone.
     case recent
-    /// Marks a session done on its host, or with `mark` false takes the mark off, without ending anything (ADR 0028). Any listed Mac may ask,
-    /// not only the one in control, and a device may not. A Mac's running Varnick does it; a headless host's relay does it itself.
+    /// Marks a session done on its host, or with `mark` false takes the mark off, without ending anything. Who may ask and who answers: ADR 0028.
     case done
     /// Start `claude --resume` on a conversation that ended there, because the user picked it in
     /// Recent or search. Its running Varnick does it. Never sent by anything that runs by itself:

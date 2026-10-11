@@ -893,7 +893,7 @@ final class PeerManager: ObservableObject {
         case .hello:
             return PeerJSON.line(PeerReply(v: PeerProtocol.version, ok: true, paired: noteCaller(request)))
         case .done:
-            // A mark ends nothing, so any Mac in the list may send it, not only the one in control; a device may not.
+            // Who may send it: ADR 0028.
             guard let model else { return starting }
             guard let by = request.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))

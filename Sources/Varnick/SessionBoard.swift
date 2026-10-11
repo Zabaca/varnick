@@ -335,6 +335,11 @@ final class SessionBoard: ObservableObject {
             next.append(card(for: record, standing: .done(at: record.completedAt ?? record.lastUsed),
                              note: model.completedNote(for: record), model))
         }
+        // Completed shows marked panes and the Completed list together, newest mark first; the other columns keep tab order.
+        let doneAt = { (card: Card) -> Date in if case .done(let at) = card.standing { at } else { .distantPast } }
+        let completed = next.enumerated().filter { $0.element.column == .completed }
+            .sorted { doneAt($0.element) != doneAt($1.element) ? doneAt($0.element) > doneAt($1.element) : $0.offset < $1.offset }.map(\.element)
+        next = next.filter { $0.column != .completed } + completed
         if let confirming, !next.contains(where: { $0.id == confirming.id && $0.asksBeforeDone }) { self.confirming = nil }
         let previous = cards
         if next != cards {
