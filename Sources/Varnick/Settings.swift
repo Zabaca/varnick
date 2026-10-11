@@ -70,7 +70,7 @@ struct KeyCombo: Codable, Equatable {
         let status = data.withUnsafeBytes { raw -> OSStatus in
             guard let layout = raw.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return -1 }
             return UCKeyTranslate(layout, UInt16(keyCode), UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
-                                  OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, chars.count, &length, &chars)
+                                  OptionBits(1 << kUCKeyTranslateNoDeadKeysBit), &deadKeys, chars.count, &length, &chars)
         }
         guard status == noErr, length > 0 else { return "?" }
         return String(utf16CodeUnits: chars, count: length).uppercased()
@@ -184,7 +184,7 @@ final class Settings: ObservableObject {
     /// Folder new Claude sessions start in; empty uses VARNICK_CLAUDE_DIR, else the launch folder from a checkout, else the home folder.
     @Published var claudeDirectory: String { didSet { defaults.set(claudeDirectory, forKey: "claudeDirectory") } }
     @Published var skipPermissions: Bool { didSet { defaults.set(skipPermissions, forKey: Self.skipPermissionsKey) } }
-    /// Gives the Claude sessions started or restarted while it is on the look, point and click tools (`ScreenAccess`); off until
+    /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
     @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
     /// Claude and terminal panes run inside zmx and outlive Varnick (ADR 0004). Applies to panes
@@ -547,7 +547,7 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.skipPermissions).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Screen access",
-                                   detail: "Sessions started or restarted while this is on get tools to look at a window, point at things with the arrow and click, on this Mac's screen. What they are shown (a window's title, its controls' names and visible text, and short text read from a picture of it) goes to Anthropic with the session. Clicks happen without asking: the arrow shows on the target for a second first. Every pane already has Varnick's permissions: see SECURITY.md.") {
+                                   detail: "Sessions started or restarted while this is on get tools to look at a window, point at things with the arrow, click, type, drag and move or resize windows, on this Mac's screen. What they are shown (a window's title, its controls' names and visible text, which control has focus, and short text read from a picture of it) goes to Anthropic with the session. Nothing asks before an action: the arrow shows on the target for a second first. Nothing is typed into a password field Varnick can see. Every pane already has Varnick's permissions: see SECURITY.md.") {
                             ScreenPermissionsView(askRestart: askRestart)
                             Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }

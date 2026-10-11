@@ -64,7 +64,8 @@ Anything else leaves only when you turn it on:
 - **Choosing TypeSafe** for the relevance filter sends your searches, and the titles, sites and descriptions of
   their results, to TypeSafe. With Hey Varnick on, so does what you say, and with Point at the screen, the text
   of the window you ask about.
-- **Screen access** lets Claude sessions read the window in front, which goes to Anthropic with the session.
+- **Screen access** lets Claude sessions read the window in front, which goes to Anthropic with the session, and
+  click, type, drag and resize windows for you without asking.
 - **A model server** you name gets your searches, your prompts and the text it embeds, and nothing goes past it.
 
 Everything Varnick reads, records and sends, and what it lets others do, is in

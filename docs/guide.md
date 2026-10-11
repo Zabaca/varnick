@@ -136,18 +136,22 @@ Claude session and shell in its panes gets them too, kept running in zmx or not:
 ## Screen access
 
 Settings › Claude › **Screen access** (off by default) gives the Claude sessions you start or restart in
-Varnick's panes three tools, from an MCP server named `varnick`: `look` at the controls of a window on your Mac,
+Varnick's panes six tools, from an MCP server named `varnick`: `look` at the controls of a window on your Mac,
 `point` at one with the same big arrow Point at the screen draws, signed with the session's name and its
-note, and `click`. A session that hits a setting it can't see can look, show you where to click, or click
+note, `click`, `type` (text and key combos), `drag` between two controls or points, and `window` to move or
+resize one. A session that hits a setting it can't see can look, show you where to click, or do it
 for you. The server is Varnick's own binary (`Varnick --mcp`) and only passes each call on: the running
-Varnick does the reading, drawing and clicking, with the code Hey Varnick uses. It needs Accessibility, and
+Varnick does the reading, drawing and acting, with the code Hey Varnick uses. It needs Accessibility, and
 Screen Recording to read the text of a window that lists nothing or of a Chrome page; Settings asks for
 both.
 
-**A click happens without asking**: the arrow shows on the target for a second first, then the click brings
-its app to the front, and there is no `type`. A session started with Skip permissions has no prompt before a tool at all; one without gets Claude
+**Nothing asks before an action**: the arrow shows on the target for a second first, then the app comes to the
+front (not for `window`) and a click, typing, drag or resize happens. `look` also says which control has focus.
+What `type` refuses, when it stops, and what is and isn't logged: see
+[privacy and security](privacy-and-security.md#screen-access-acts-without-asking). A session
+started with Skip permissions has no prompt before a tool at all; one without gets Claude
 Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while
-still asking for `click` (not checked). A session gains the tools when it starts, so restart a running one
+still asking for `click`, `type`, `drag` and `window` (not checked). A session gains the tools when it starts, so restart a running one
 (⌘⌥R) after turning the switch on; turning it off stops every session's tools at once. It is independent of
 Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
 for what a session is shown.

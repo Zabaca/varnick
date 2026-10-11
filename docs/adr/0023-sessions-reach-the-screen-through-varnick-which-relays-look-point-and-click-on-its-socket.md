@@ -15,7 +15,7 @@ This amends ADR 0019 and 0021. Varnick now reads, points and clicks for sessions
 
 - **No approval prompt.** The Arrow on the target for a second is a signal, not a gate: the user can't stop a click in that second.
 - **A session started with Skip permissions clicks with no prompt at all.** One without gets Claude Code's own prompt before an MCP tool call the user hasn't allowed, and Claude Code's per-tool rules can allow `look` and `point` while still asking for `click`. Inferred, not checked.
-- **There is no `type`,** no named keys or shortcuts, no drag and no scroll.
+- **There is no scroll.** Typing, named keys and shortcuts, and drag were added on 2026-10-10 (Amendments).
 - **One click at a time across all sessions.** A second waits for the first.
 - **Another Mac's session.** While another Mac or a device is in control of a session, its calls are refused: the Arrow would show where nobody is looking.
 - **Never Varnick's own window.** A target in Varnick's process is refused, and so is a posted click at a point that a visible window of Varnick's has its frame over, checked right before the click is posted, after the app has come forward (the Arrow's panel, which covers the display, is not counted). Varnick never moves its panel: a pinned one still over the point refuses the click, and the session asks the user to move or hide it.
@@ -56,3 +56,12 @@ Every process in a Varnick pane gets Varnick's grants (the correction in ADR 001
 - **Nothing is logged but the tool, the outcome's kind, durations and counts.** Never a label, note, window title, app name or session name.
 - **Changing what `look` returns is a privacy change,** needing this ADR, the README, SECURITY.md and the switch's detail amended, as for ADR 0019.
 - **The tools' text is Hey Varnick's:** `ScreenElement.description`, the 255-element cap, the "dimmed" and "under the pointer" marks, no field's value and nothing of a secure field. A fix to the read is a fix to both.
+
+## Amendments
+
+- **2026-10-10, option 06 of `sessions-cant-see-or-act-on-the-screen`: `type`, `drag` and `window`, and a focus line in `look`.** The server has three more tools, built as `click` is: the Arrow on the target for a second first, one action at a time across all sessions, and the switch, the pane, the request's age and the Arrow's generation checked again before acting. Nothing asks, as for `click`, and the request's version stays 1.
+  - **`type`** puts the focus on a control from `look`, or uses the focus the app has, then types `text` and presses `keys` as key events posted to the app in front, never a field's value set through Accessibility. A call refuses while a secure text field has focus, where Varnick can see one (a Chrome page whose tree is hidden, a canvas app, a remote desktop and a virtual machine are the gap, as ADR 0021 accepted for reading), and refuses Varnick's own anywhere-shortcuts, log out, lock screen and Force Quit. Every character and key is checked right before it is posted, and typing stops when Varnick's panel has the keyboard, another app comes forward, the switch goes off or the Arrow is replaced. The text is never logged.
+  - **`drag`** posts a mouse-down, a drag and a mouse-up between two controls or points, with click's refusals at both ends, and lets go on every path.
+  - **`window`** moves or resizes an app's window through Accessibility, with no pointer and no activation.
+  - **`look`** gives the window an id (`w1`), taken only by `point` and `window`, and a line saying which control has focus, by its id or its kind, never its label or value. That is a privacy change, a small one: `docs/privacy-and-security.md`, the README, the guide and the switch's detail say so.
+  - Typing is the strongest tool a session gets: whatever can steer a session can type as the user. Claude Code's per-tool rules can still ask before `type`, `drag` and `window` while allowing `look` and `point` (inferred, not checked). Permissioning stays deferred.
