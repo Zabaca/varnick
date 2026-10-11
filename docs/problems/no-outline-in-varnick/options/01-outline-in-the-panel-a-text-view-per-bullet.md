@@ -1,7 +1,7 @@
 ---
 problem: no-outline-in-varnick
 title: An outline in the panel, each bullet edited in its own text view
-summary: The Outline replaces the panel's content the way the Session board does. ⌘⇧Y, `!outline` or `!wf` shows it. One tree of bullets lives in `outline.json` in the support folder, stored as bullets and placements, so a mirror is one bullet placed twice. SwiftUI draws the rows. Each bullet's text and note are edited in a small AppKit text view, which tells the outline where the caret is, which wrapped line it is on, and whether an input method is composing. The keyboard rules need all three.
+summary: The Outline replaces the panel's content the way the Session board does. ⌘⇧Y, `!outline` or `!wf` shows it. One tree of bullets lives in `outline.json` in the support folder, stored as bullets and placements, so a mirror is one bullet placed twice. SwiftUI draws the rows. Each bullet's text and note are edited in a small AppKit text view, which tells the outline where the caret is, which wrapped line it is on, and whether an input method is composing. The keyboard rules need all three. ⇧↑ and ⇧↓ select whole bullets, which the structure keys, delete, complete, the clipboard and mirrors then act on together.
 status: accepted
 ---
 
@@ -19,6 +19,7 @@ Everything can be done from the keyboard (Keys, below):
 - ⌘] and ⌘[ zoom in and out.
 - ⌘↩ completes a bullet, and ⇧↩ opens its note.
 - ⌘F filters.
+- ⇧↑ and ⇧↓ select whole bullets, for ⇥, ⇧⇥, the move keys, ⌫, ⌘↩, ⌘C, ⌘X and ⌥⌘C to act on together.
 - ⌘Z and ⌘⇧Z undo and redo.
 
 With the mouse, clicking a dot zooms into its bullet, a breadcrumb zooms out to it, and a tag filters to it.
@@ -35,7 +36,7 @@ The rows are SwiftUI. Each row's text and note are edited in a small AppKit text
 ## Trade-offs
 
 - **The keyboard behaves like an outliner's.** ↩ splits a bullet at the caret, and ⌫ at the start joins it onto the bullet above. ↑ and ↓ leave a wrapped bullet only from its first or last line. An ↩ that confirms an input method's composition is the input method's, never a new bullet. Option 02 can do none of these on macOS 14.
-- **Text can't be selected across bullets,** since each bullet is its own text view. Copying several bullets at once isn't in v1. Option 03 is the one that can.
+- **Across bullets, whole bullets are selected, never text,** since each bullet is its own text view. That is WorkFlowy's way, and the user chose it (Selection). Text running from the middle of one bullet into the next can't be selected; option 03 is the one that could.
 - **An AppKit view inside SwiftUI rows is new for Varnick,** which has one read-only text view and no editable one. The view's height has to follow its wrapped text, and nothing in its update may publish to the outline (where-it-breaks, Sessions and tabs).
 - **The panel's fixed size,** as the board has: 760 by 600, about 22 rows at once. The board's resizable alternative was not chosen, and the outline follows the board.
 - **Mirrors are symmetric,** as the user decided. No placement is the original, so deleting any placement removes that one only, and the bullet goes with its last placement. A delete never loses a bullet that still shows elsewhere. This differs from outliners where the original is special.
@@ -62,6 +63,10 @@ The rows are SwiftUI. Each row's text and note are edited in a small AppKit text
 16. As the user, I want a file Varnick can't read left alone and shown to me, so that I can repair it instead of losing my outline.
 17. As the user, I want my outline to stay on this Mac, so that private notes go nowhere.
 18. As the user, I want ⌘Z to undo any change, a delete or a move included, so that a slip costs nothing.
+19. As the user, I want ⇧↑ and ⇧↓ to select several whole bullets, so that I can act on a group the way I act on one.
+20. As the user, I want ⇥, ⇧⇥ and the move keys to act on every selected bullet, and ⌫ and ⌘↩ to delete or complete them all, each undone by one ⌘Z, so that reorganising a list takes one key, not one per bullet.
+21. As the user, I want ⌘C and ⌘X to copy and cut selected bullets as indented text, and an indented list I paste to keep its nesting, so that lists move whole between the outline and other apps.
+22. As the user, I want ⌥⌘C and ⌥⌘V to mirror several bullets at once, so that a group can live in a second list too.
 
 ## Implementation Decisions
 
@@ -75,6 +80,7 @@ These go in CONTEXT.md, in a new **Outline** section:
 - **Filter**: Words typed at the top of the **Outline** that hide every **Bullet** that doesn't match, while keeping each match's ancestors. It looks only inside the bullet zoomed into. Not the **Relevance filter**, which is search's last pass. _Avoid_: search (a `?` query searches **History**), find.
 - **Tag**: A `#word` or `@word` in a **Bullet**'s text or note. Clicking it filters the **Outline** to it. Not a **Project** or an **Agent**, which `#name` and `@name` name in a **Prompt**. _Avoid_: label, hashtag, mention.
 - **Mirror**: A **Bullet** placed in more than one spot in the **Outline**. Each spot has the same text, note, completion and nested bullets, so an edit in one shows in all. Each spot is a placement. None is the original, and the bullet is gone only when its last placement is deleted. (The **Live screen** is never a mirror, which is why that term avoids the word.) _Avoid_: copy, clone, link, reference, original.
+- **Selection**: **Bullets** chosen whole in the **Outline**, siblings next to each other, each with everything nested under it, so that one key acts on all of them. Not text selected inside one bullet, which never runs into the next. _Avoid_: highlight (the **Filter**'s mark on matching words), block, multi-select.
 
 ### The view, copied from the Session board
 
@@ -111,6 +117,7 @@ The outline's own keys are fixed, like the board's. The panel's key monitor give
 - **⇥** nests the bullet as the last bullet under the sibling above, opening that sibling if it was collapsed.
 - **⇧⇥** makes the bullet the next sibling of its parent. The bullets after it stay where they were. At the top of a zoom it stops.
 - **↑ and ↓** go to the row above or below when the caret is on the bullet's first or last wrapped line. Otherwise they move the caret within the bullet.
+- **⇧↑ and ⇧↓** select whole bullets: ⇧↑ when what is selected in the bullet's text starts at its first character, ⇧↓ when it ends at its last (Selection). Elsewhere they select text in the bullet, as now. In a note and in the title they only ever select text.
 - **⌘⇧↑ and ⌘⇧↓** move the bullet, with what's nested under it, among its siblings, and stop at the first or last sibling.
 - **⌘↑ and ⌘↓** collapse and expand. Clicking the disclosure triangle does the same.
 - **⌘] and ⌘[** zoom into the bullet with the caret, and out one level. ⌘, is Settings, so no outline key uses it.
@@ -119,17 +126,18 @@ The outline's own keys are fixed, like the board's. The panel's key monitor give
 - **⌘⇧⌫** deletes the bullet here, with what's nested under it (Mirrors).
 - **⌘F** goes to the filter field. There, ↓ or ↩ goes to the first match.
 - **⌘⇧C** turns Show completed on or off.
-- **⌥⌘C** copies the bullet as a mirror, and **⌥⌘V** places that mirror below the bullet with the caret.
+- **⌥⌘C** copies the bullet, or the bullets selected, as mirrors, and **⌥⌘V** places them below the bullet with the caret, or after the bullets selected.
+- **⌘C, ⌘X and ⌘V** on bullets selected copy, cut and paste them (Copying and pasting bullets). With none selected they go to the text view, as below.
 - **⌘Z and ⌘⇧Z** undo and redo (Undo).
-- **esc** steps back one level: out of the note, else it clears the filter, else it closes the outline.
+- **esc** steps back one level: out of the selection, else out of the note, else it clears the filter, else it closes the outline.
 - **The End session, Mark session done and Restart session keys** (⌘W, ⌘⇧D and ⌘⌥R by default, matched through the user's bindings) are taken and do nothing, as on the board, so none reaches the tab underneath.
 - **While an input method is composing,** the text view gets ↩, ⇥, ↑, ↓ and esc untouched.
-- **Every other key goes on,** first to Varnick's shortcuts and then to the text view.
+- **Every other key goes on,** first to Varnick's shortcuts and then to the text view. While bullets are selected, the outline takes every key but Varnick's shortcuts instead (Selection).
   - The shortcuts that act here are ⌘⇧Y itself, ⌘, ⌘⇧B, ⌘⇧T, ⌘⇧[ and ⌘⇧], and the font keys.
   - The text view gets typing, the caret keys, and ⌘C, ⌘V, ⌘X and ⌘A through the Edit menu.
-- **Pasting several lines** into a bullet's text puts the first line at the caret and each further line in a new bullet below, at the same depth. Blank lines are skipped. A note keeps its line breaks.
+- **Pasting several lines,** or bullets Varnick copied, into a bullet's text adds whole bullets below it, nested as the text is indented (Copying and pasting bullets). One line goes in at the caret. A note keeps its line breaks.
 
-None of the outline's own keys is a Varnick default: checked on 2026-10-10 against every default combo, with the user's overrides empty.
+None of the outline's own keys is a Varnick default: checked on 2026-10-10 against every default combo, with the user's overrides empty. Checked again on 2026-10-11 for Selection's keys, overrides still empty: ⇧↑, ⇧↓, ←, →, ⌫, ⌦, ⌘C and ⌘X are no default. ⌘V is Paste's default. The outline takes it only while bullets are selected; otherwise Paste acts only in a terminal tab, so ⌘V goes on to the text view through the Edit menu, as now.
 
 ### The tree and its file
 
@@ -182,7 +190,8 @@ The format is final from the first ticket, so mirrors arrive later with no chang
 
 **The tree's rules** live in one module, the tree's value type. Everything else edits the tree through it.
 - **Its interface:**
-  - Apply an edit at a row: add, split, join, set the text or note, indent, outdent, move up or down, delete, complete, collapse, or place a mirror. The result is the new tree with where the caret goes, or a refusal.
+  - Apply an edit at a row: add, split, join, set the text or note, indent, outdent, move up or down, delete, complete, collapse, place mirrors, or insert new bullets from a copy or from text. The result is the new tree with where the caret goes, or a refusal.
+  - Indent, outdent, the moves, delete, complete and placing mirrors take a run of sibling rows. The bullet with the caret is a run of one, so the caret and a selection share one rule, and the result also says where the run went.
   - List the visible rows for a zoom, a filter and Show completed.
 - **It takes no clock, file or view,** so `--outline-check` (Testing Decisions) can run its rules on throwaway files, and undo is a stack of its values.
 - **No bullet is ever placed inside itself,** however deep and through any placement. Only indenting and placing a mirror can break this; outdenting and moving among siblings can't. A refused edit beeps, and the header says "A bullet can't go inside itself".
@@ -282,7 +291,8 @@ The file is a second small module, `read` and `write`:
 ### Mirrors
 
 - **Making one.** ⌥⌘C on a bullet remembers it, and the header says "Copied as a mirror" for a moment. ⌥⌘V in another bullet places a mirror of it as the next sibling there.
-  - Placing it inside itself is refused (The tree and its file).
+  - On bullets selected, ⌥⌘C remembers them all, in order ("Copied 3 bullets as mirrors"). ⌥⌘V places them all as next siblings, in that order, after the bullet with the caret or after the last bullet selected, in one undo step.
+  - Placing any inside itself is refused (The tree and its file), and then none is placed. A bullet deleted since the copy is left out; with none left, ⌥⌘V beeps.
   - The copy lasts until the next ⌥⌘C or the end of the launch, and never reaches the system clipboard.
 - **How they look.** Every placement of a bullet with more than one placement has a ringed dot. Its tooltip lists the breadcrumbs of the other placements.
 - **What is shared.** The text, the note, the completion and the nested bullets are shared, live, by every placement. Collapse is each placement's own.
@@ -294,16 +304,88 @@ The file is a second small module, `read` and `write`:
   - Deleting the first placement made and deleting a later one are the same act.
 - **Joining.** ⌫ at the start doesn't join a mirror's text onto the row above.
 
+### Selection
+
+The user's decision of 2026-10-11 (the last section). Whole bullets are selected, WorkFlowy's way: a selection is never text running from one bullet into the next.
+
+- **Starting.** In a bullet's text, not in a note or the title:
+  - ⇧↑ selects the bullet when what is selected in its text starts at the first character, or the bullet is empty. Elsewhere on the first line, ⇧↑ first selects back to the start, as the text view does, so the next ⇧↑ selects the bullet.
+  - ⇧↓ does the same at the end of the text.
+  - The first press selects the bullet with the caret, alone, with everything nested under it.
+- **What a selection is.** A run of sibling bullets that show, next to each other under one parent. Each selected bullet takes everything nested under it, whether it shows or not.
+  - A bullet nested under a selected one is never selected on its own.
+  - Siblings hidden between selected ones (by the filter, or completed with Show completed off) aren't selected, and the selection's edits leave them where they are.
+- **Extending and shrinking.** One end stays where the selection started: the fixed end. The other moves.
+  - Each further ⇧↑ or ⇧↓ moves that end by one bullet, over the siblings that show. Away from the fixed end it adds one; back toward it, it drops one; past it, the selection grows on the other side.
+  - **Climbing to the parent.** When no sibling shows beyond the moving end, the next press that way selects the parent instead: alone, with everything nested under it, and as the new fixed end. The opposite key doesn't climb back down; esc starts again.
+  - At the top level of the zoom, or of Home, it stops and the key does nothing. The title and the top bullet are never selected.
+  - The moving end is scrolled into sight.
+- **How it looks.** Each selected bullet and the rows nested under it have the fill a selected search row has, from the bullet's dot to the right edge, so a selection reads as one block. No caret shows: no text view has the keyboard while bullets are selected, so no input method composes either.
+- **Keys on a selection.** The outline takes every key but Varnick's shortcuts, which act as always (⌘⇧Y, ⌘,, ⌘⇧B, the tab keys, the font keys). The End session, Mark session done and Restart session keys are taken and do nothing, as always.
+  - ⇧↑ and ⇧↓ extend or shrink it.
+  - ⇥ nests the run, in order, as the last bullets under the sibling that shows above its first bullet, and opens that sibling. At the first sibling nothing happens. If any bullet would go inside itself (only a mirror can), none moves and the header says so.
+  - ⇧⇥ makes the run the next siblings of its parent, in order, right after it. The siblings after the run stay where they were. At the top level of the zoom nothing happens.
+  - ⌘⇧↑ and ⌘⇧↓ move the run as one block, in order, past the nearest sibling that shows beyond it. Hidden siblings between selected bullets stay behind. At the first or last sibling nothing happens.
+  - After ⇥, ⇧⇥ and a move, the same bullets are still selected, at their new rows.
+  - ⌫, ⌦ and ⌘⇧⌫ delete every selected placement with what is nested under it (Mirrors). The caret goes where ⌘⇧⌫ on the first selected bullet would put it.
+  - ⌘↩: if every selected bullet is completed, none is any more. Otherwise each that isn't is completed now, and those already completed keep their date. With Show completed off they leave the view, the selection ends, and the caret goes to the next row that shows, as for one bullet.
+  - ⌘C, ⌘X and ⌘V copy, cut and paste (Copying and pasting bullets). ⌥⌘C and ⌥⌘V copy and place mirrors (Mirrors).
+  - ⌘Z and ⌘⇧Z undo and redo (below).
+  - esc ends the selection. The caret goes back into the bullet the selection started from, where it was, while that bullet is still the fixed end; otherwise to the end of the fixed end's text.
+  - ↑ and ← end it with the caret at the start of the first selected bullet's text, and ↓ and → at the end of the last one's.
+  - ⌘F, ⌘[ and ⌘⇧C end it, then do what they do.
+- **Typing while bullets are selected** beeps and changes nothing, and the selection stays. So does every other outline key (↩, ⇧↩, ⌘↑, ⌘↓, ⌘], ⌘A). Bullets selected are not text: a typed letter neither replaces them nor goes into one of them.
+- **Clicks** end the selection first, then do what they do: in a bullet's text the caret goes there, a dot zooms, a triangle collapses, a tag filters, and the header's controls act.
+- **It also ends** when the outline closes, Settings opens over it, the panel hides, or a selected bullet stops showing for any other reason (an undo that can't bring it back, an edit made elsewhere). The caret is then where esc would put it, or, with that bullet gone, where the caret goes back to now. A selection is never saved.
+- **Zoom.** A selection is inside the zoom. Zooming in or out ends it.
+- **Filter.** Only bullets that show can be selected. Under a filter, the selected bullets stay in view through the selection's edits until the filter changes, as the caret's bullet does. ⌘F, or a click in the field, ends the selection.
+- **Completed bullets.** With Show completed off, a hidden completed bullet is selected only by being nested under a selected one. ⌘⇧C ends the selection.
+- **Mirrors.** A selected row is a placement, like the caret's row. ⇥, ⇧⇥, the moves and delete act on the placements selected, never the bullet's other placements. Two placements of one bullet can be selected side by side, and deleting both removes the bullet if they were its last.
+- **Undo.** Each action on a selection is one step: ⇥, ⇧⇥, a move, a delete, ⌘↩, a cut, a paste, and placing mirrors. Extending, shrinking and ending a selection aren't edits, so they aren't undone, as zooming isn't. A step taken with bullets selected keeps the selection: ⌘Z and ⌘⇧Z select the same bullets again when all of them show, and otherwise put the caret back as they do now.
+
+### Copying and pasting bullets
+
+- **Copying.** ⌘C with bullets selected puts them on the system clipboard in two forms: as indented text, which any app can paste, and as Varnick's own copy, which the outline pastes. The header says "Copied 3 bullets" for a moment, and the selection stays. ⌘C on text selected inside one bullet copies that text, as now.
+- **What a copy holds.** Each selected bullet with everything nested under it, shown or not: collapsed, completed and hidden, or hidden by the filter. A cut has to hold everything its delete removes, so a copy holds the same. A mirror nested under a copied bullet is written out at each place it shows, as the rows show it.
+- **Cutting.** ⌘X copies, then deletes as ⌫ does, in one undo step. ⌘Z brings the bullets back, and the clipboard keeps the copy.
+- **The indented text, written:**
+  - one line per bullet: "- " and its text, or a lone "-" for an empty bullet;
+  - two spaces for each level of nesting, with the selected bullets at the left;
+  - a line feed between lines, none after the last;
+  - text and nesting only. Notes, completion and collapse travel in Varnick's own copy.
+- **Indented text, read** from any app, or from the outline once its own copy is gone:
+  - Every line that isn't blank is a bullet. Blank lines are skipped, as now.
+  - A line nests under the nearest line above it that is indented less, and lines indented alike are siblings. How much deeper doesn't matter: a line goes one level at a time. A tab counts as four spaces. A line indented less than every line above it is at the top of the paste.
+  - After the indent, one list marker is dropped: "-", "*", "+" or "•", followed by a space or the end of the line. Numbers ("1.") and checkboxes ("[ ]") stay, as text.
+  - Text the outline wrote reads back with the same text and nesting. Lines with no indent read as siblings, as ticket 01 pasted them.
+- **Varnick's own copy** is a pasteboard type of Varnick's, holding JSON with a version: each bullet's text, note, completion date, whether its placement was collapsed, and the bullets nested under it. It holds no ids.
+  - A paste prefers it to the text.
+  - A version this build doesn't know, or a copy that doesn't decode, falls back to the text.
+  - Both forms are written together, so another app's copy replaces both and a stale own copy can't outlive it.
+- **A paste makes new bullets,** always. A pasted mirror is a copy: a cut and paste of a mirror's placement makes a new bullet, and the other placements keep the old one. ⌥⌘V is how to place a mirror.
+- **Where a paste goes.** Varnick's own copy, or text of more than one line, is pasted as whole bullets:
+  - with bullets selected: after the last one selected, as its next siblings, and the selection ends;
+  - in the title of a zoom: as the first nested bullets;
+  - in an empty bullet with nothing nested, no note and one placement, such as the one ↩ just made: in its place;
+  - in any other bullet's text: below it, as its next siblings after what is nested under it, where ⌥⌘V places a mirror. Its text stays as it is, the text selected in it included.
+  - The caret goes to the end of the last pasted top-level bullet that shows. Completed bullets pasted with Show completed off are hidden, as any are.
+  - Under a filter, the pasted bullets stay in view until the filter changes.
+  - A paste is one undo step.
+- **One line of text,** with no own copy beside it, goes in at the caret, replacing what is selected in the bullet, as now. A note takes any paste as text, line breaks included, as now.
+- **What changes from ticket 01:** several lines pasted into a bullet that isn't empty no longer split it at the caret (the first line at the caret, the text after the caret on the last line). They become bullets below it, and it keeps its text. Pasted into an empty bullet, they come out as before.
+- **One module** writes and reads both forms. It sits beside the tree's value type, takes and returns text and data, and never touches the pasteboard, so `--outline-check` runs it. The outline reads and writes the pasteboard.
+
 ### Undo
 
 - **In v1,** in ticket 02, as the user decided. Without it, ⌘⇧⌫ on a bullet with a hundred nested bullets is lost for good, and `outline.previous.json` only reaches back to the launch.
 - **One stack.** One stack of the tree's values, with the caret's row, for the launch. ⌘Z and ⌘⇧Z are taken by the outline before the Edit menu.
 - **Typing in one bullet is one step** until a second's pause, or until the caret leaves the bullet.
 - **200 steps at most.** The tree is a value, so a step costs a copy of the bullets' dictionary. At outline sizes that is small.
+- **A selection's edits** are one step each, and a step keeps the selection (Selection).
 
 ### Privacy
 
-The outline's text and notes are never logged, and never sent anywhere: no paired Mac, phone, model, search store or reranker. Logs give the kind of failure and counts. The relay doesn't read the file, and the launch snapshot doesn't copy it.
+The outline's text and notes are never logged, and never sent anywhere: no paired Mac, phone, model, search store or reranker. Copying bullets puts their text on the system clipboard only when the user presses ⌘C or ⌘X, as copying text from a bullet already does. Logs give the kind of failure and counts. The relay doesn't read the file, and the launch snapshot doesn't copy it.
 
 ### ADR
 
@@ -317,6 +399,8 @@ The decision gets ADR 0030, written by ticket 01: the outline is one JSON file t
   - It reads a file through the one reader and prints whether it loads, or why not; its version; how many bullets, placements and mirrors it has; and what the rules dropped or recovered.
   - With `<out>`, it writes the tree there through the one writer.
   - It prints no text of any bullet.
+  - On a copy of the tree, it indents and then outdents a run of two sibling bullets, and checks the tree comes back as it was (Selection).
+  - It writes the top-level bullets as indented text and as Varnick's own copy, reads both back, and compares counts and depth: text and nesting for the text, notes and completion as well for the own copy (Copying and pasting bullets).
   - The builder runs it on throwaway files: a missing file, broken JSON, a newer version, a missing bullet, a placement inside itself, a bullet left with no placement, and a mirror whose delete leaves its other placement. It checks that a write and a read give the same counts back.
 - **Checks by hand, after a restart.** Each ticket lists its own. Together they cover:
   - the shortcut, both command names, and esc;
@@ -325,14 +409,18 @@ The decision gets ADR 0030, written by ticket 01: the outline is one JSON file t
   - every key;
   - a restart losing nothing;
   - an unreadable file shown and left alone;
-  - a Japanese input method's ↩ confirming text rather than splitting the bullet.
+  - a Japanese input method's ↩ confirming text rather than splitting the bullet;
+  - selecting bullets, every key on a selection, and copying and pasting bullets through another app.
 
 ## Out of Scope
 
 - Syncing with paired Macs or the phone, and OPML import and export.
 - `?` search finding bullets. It would touch the search store's rules.
 - Placing a mirror by typing to pick its bullet (WorkFlowy's `((`).
-- Dragging bullets with the mouse, and selecting several bullets at once.
+- Dragging bullets with the mouse, and selecting them with it (⇧-click or a drag).
+- ⌘A selecting every bullet, and collapsing, zooming or opening a note on a selection.
+- Notes and completion in the copied text: they travel only in Varnick's own copy.
+- A paste that keeps a mirror a mirror. A pasted bullet is always new; ⌥⌘V places mirrors.
 - Formatting (bold, links), dates, and boards made of bullets.
 - "Delete everywhere" for a mirror.
 - Opening the outline from another app with a global hotkey.
@@ -365,6 +453,12 @@ The decision gets ADR 0030, written by ticket 01: the outline is one JSON file t
   - rows as paths of placements, never bullet ids;
   - the tree's rules living only in its value type;
   - that its text is never logged.
+- **Selection** (decided 2026-10-11) adds:
+  - to Focus and keys: while bullets are selected no text view has the keyboard, and the outline takes every key but Varnick's shortcuts, ⌘V included;
+  - to The outline: a selection is a run of sibling paths, never bullet ids, as the caret's row is. Every edit through it returns the run's new paths, and a selection whose bullets don't all show any more ends;
+  - to The outline: the copied text and Varnick's own copy have one reader and one writer. The own copy is versioned, and a version this build doesn't know falls back to the text.
+
+**Panel access shares the reader.** sessions-cant-read-or-drive-varnick, option 01, gives sessions an `add` that reads indented text and a tree edit `insert` for the bullets it makes. They are this option's reader of indented text and its insert edit, so whichever is built first makes them and the other uses them. That option's "two leading spaces or a tab nest a line" reads the same under this rule.
 
 ## Decided by the user, 2026-10-10
 
@@ -373,3 +467,16 @@ This option is accepted, and options 02 and 03 are rejected. The open questions 
 1. **How text is edited:** this option, an AppKit text view per bullet.
 2. **Deleting mirrors:** every placement is equal. Deleting one removes only that spot, and the bullet goes when its last placement goes (Mirrors). Ticket 07 builds it.
 3. **Undo (⌘Z) is in v1,** in ticket 02 (Undo).
+
+## Decided by the user, 2026-10-11
+
+After hand-testing the shipped outline, the user asked to select several bullets: "Right now, I cannot shift up and select multiple bullets." The coordinator relayed the request and these decisions. They replace v1's line that several bullets couldn't be selected (Trade-offs, Out of Scope).
+
+1. **How a selection starts:** WorkFlowy's way. ⇧↑ at a bullet's first line, or ⇧↓ at its last, selects whole bullets. A selection of whole bullets is not a text selection across bullets.
+2. **What it acts on:** all four offered.
+   - ⇥, ⇧⇥, ⌘⇧↑ and ⌘⇧↓ act on every selected bullet together.
+   - Delete removes them all, and ⌘↩ completes them all, each as one undo step.
+   - ⌘C copies them as indented text and ⌘X cuts them. Pasted indented text keeps its nesting.
+   - ⌥⌘C copies them all as mirrors, and ⌥⌘V places them all.
+
+Selection and Copying and pasting bullets fill in the rest from the outline's existing behaviour. Tickets 08 and 09 build them.
