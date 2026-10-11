@@ -1,8 +1,8 @@
 ---
 problem: sessions-cant-read-or-drive-varnick
 title: Sessions press keys in the panel through its own key path, to hand-test Varnick's views
-summary: This builds on option 01's server, switch and router. A `keys` tool sends text and key combos into Varnick's panel as key events posted inside Varnick's own process. They pass through the panel's key monitor, the view's own key handler and the first responder as the user's keys do, and nothing reaches another app. It works only while the panel is visible and key and the user hasn't typed in it for 2 seconds. The view on screen must take keys: search, the board or the Outline, never a terminal or page tab, Settings, the Restart Varnick card or the split picker. Each view refuses the keys that would end, restart or mark sessions, start one, or turn on the microphone. With `panel` and `outline_read`'s `as_shown`, a session checks what each key did. No grant is needed.
-status: proposed
+summary: Accepted on 2026-10-11 (the user's decision, relayed by the coordinator), to follow option 01. This builds on option 01's server, switch and router. A `keys` tool sends text and key combos into Varnick's panel as key events posted inside Varnick's own process. They pass through the panel's key monitor, the view's own key handler and the first responder as the user's keys do, and nothing reaches another app. It works only while the panel is visible and key and the user hasn't typed in it for 2 seconds. The view on screen must take keys: search, the board or the Outline, never a terminal or page tab, Settings, the Restart Varnick card or the split picker. Each view refuses the keys that would end, restart or mark sessions, start one, or turn on the microphone. With `panel` and `outline_read`'s `as_shown`, a session checks what each key did. No grant is needed.
+status: accepted
 ---
 
 ## Solution
@@ -103,5 +103,8 @@ The first failure stops the call, and the reply says how far it got ("Stopped af
 
 - **It depends on option 01:** its server, switch, router, protocol and `panel` tool.
 - **The Outline's part depends on the Outline's merge.** Search and the board can be hand-tested without it.
-- **Open question:** may `keys` bring the panel up itself? Recommended: no. It would take the keyboard from whatever app the user is in, and while the user talks to the session the panel is already up.
+- **Accepted on 2026-10-11,** to be built after option 01.
+- **Defaults the user didn't answer, which the user can change:**
+  - `keys` never brings the panel up. It works only while the panel is visible and key and the user hasn't typed in it for 2 s. Bringing it up would take the keyboard from whatever app the user is in, and while the user talks to the session the panel is already up.
+  - Search and the board can take keys before the Outline merges. The Outline's part comes after it.
 - **Inferred, not checked:** that posting an event to Varnick's own queue needs no permission, and that it reaches the panel's local key monitor the way a real key does.

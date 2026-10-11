@@ -2,7 +2,8 @@
 problem: sessions-cant-read-or-drive-varnick
 title: Let the screen tools reach Varnick's own panel, as they reach any app
 summary: The baseline, and the least to build. The screen tools stop leaving Varnick out. `look` reads the panel's Accessibility tree, as Hey Varnick already does, and `app: "Varnick"` names it. `click`, `drag` and `type` act on the panel with posted events, refused only over Settings and the Restart Varnick card, and `picture` can capture it. No new tools. But this is the pixels-and-events approach the user asked to move past. `look` never gives a field's value, so the Outline's bullets don't show, and a terminal pane exposes no text. Acting means taking the keyboard and the front. Recommended: not as the answer.
-status: proposed
+status: rejected
+reason: Rejected by the user on 2026-10-11 (relayed by the coordinator). It works through pixels and posted events, the approach the user asked to move past, and it can't read a bullet's text, since the screen tools never read a field's value. Option 01 reads and acts through Varnick's model instead, and option 02 tests the panel's own key path.
 ---
 
 ## Solution
