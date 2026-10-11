@@ -124,6 +124,7 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
             return notPassed(.notAnswering("login check unreadable"))
         }
         guard loggedIn else { return notPassed(.notLoggedIn) }
+        if TextHelper.claudeIsTooOld(versionRun.output) { return notPassed(.notAnswering("claude too old: update Claude Code")) }
         let number = versionRun.output.split(separator: " ").first.map(String.init)
         loginHelp = ["Claude Code" + (number.map { " \($0)" } ?? ""), login.authMethod.map { "logged in with \($0)" }]
             .compactMap { $0 }.joined(separator: ", ")

@@ -98,6 +98,16 @@ enum TextHelper {
     /// and this Mac's model answers.
     static let deadline: TimeInterval = 4
 
+    /// Claude Code older than this ignores the reminders filter and sends every reminder, the account's email address among them.
+    static let minimumClaude = [2, 1, 291]
+
+    /// Whether `claude --version`'s output ("2.1.296 (Claude Code)") names a version below `minimumClaude`. Unreadable is not too old.
+    static func claudeIsTooOld(_ versionOutput: String) -> Bool {
+        let parts = versionOutput.split(whereSeparator: \.isWhitespace).first.map { $0.split(separator: ".").map { Int($0) } } ?? []
+        guard parts.count >= 3, parts.allSatisfy({ $0 != nil }) else { return false }
+        return parts.compactMap { $0 }.lexicographicallyPrecedes(minimumClaude)
+    }
+
     /// `bun` is the build's signed copy, never one from PATH. `agent.js` and the reminders filter are beside the metallib.
     static var bun: URL { ResourceFolder.current.helpers.appendingPathComponent("bun") }
     static var script: URL { ResourceFolder.current.folder.appendingPathComponent("agent.js") }
