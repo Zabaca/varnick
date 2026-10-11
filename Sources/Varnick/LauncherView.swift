@@ -66,6 +66,8 @@ struct LauncherView: View {
                              close: { model.toggleSettings() }, askRestart: { model.askRestart() }, openAppFolders: { model.openAppFolders() })
             } else if model.showingBoard {
                 SessionBoardView(board: model.board) { model.closeBoard() }
+            } else if model.showingOutline {
+                OutlineView(outline: model.outline) { model.closeOutline() }
             } else if let tab = model.activeTab {
                 ClaudePane(model: model, tab: tab)
             } else {

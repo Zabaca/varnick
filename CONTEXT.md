@@ -163,6 +163,16 @@ _Avoid_: Proposal, solution, spec (an accepted option serves as the spec)
 The problem, or the option of a problem, that a **Session** or one of its subagents works on, kept as files in the pane's folder: none (the default, and a state of its own), a problem or an option. Made by writing a problem's files, by `/work`, and by the skills that create work; never read from a transcript. A session whose link names an open option makes the problem Building; a link to a shipped option is not live. A session that ends keeps its links in its saved record and in the search database. A paired Mac's sessions send theirs.
 _Avoid_: Tag, assignment
 
+### Outline
+
+**Outline**:
+The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else. It replaces the panel's content as Settings and the **Session board** do.
+_Avoid_: WorkFlowy (the app it copies), notes, outliner, document
+
+**Bullet**:
+One line of the **Outline**: its text, an optional note under it, whether it is completed, and the bullets nested under it.
+_Avoid_: Item, node, row, entry, task, card
+
 ### Listening
 
 **Listening**:
