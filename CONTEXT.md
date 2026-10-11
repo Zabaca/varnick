@@ -177,6 +177,10 @@ _Avoid_: Item, node, row, entry, task, card
 Showing one **Bullet** as the top of the **Outline**: its text as the title, the bullets nested under it below, and breadcrumbs back up the way the user came in.
 _Avoid_: Focus (a pane's), open, drill down
 
+**Filter**:
+Words typed at the top of the **Outline** that hide every **Bullet** that doesn't match, while keeping each match's ancestors. It looks only inside the bullet zoomed into. Not the **Relevance filter**, which is search's last pass.
+_Avoid_: Search (a `?` query searches **History**), find
+
 **Placement**:
 One spot where a **Bullet** shows: an entry in its parent's list. A bullet's text, note and completion are kept once, however many placements it has.
 _Avoid_: Instance, occurrence, link

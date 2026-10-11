@@ -13,6 +13,7 @@ struct OutlineView: View {
             HStack(spacing: 14) {
                 Image(systemName: "list.bullet.indent").foregroundStyle(.secondary)
                 OutlineCrumbs(outline: outline)
+                OutlineFilterField(outline: outline)
                 if let notice = outline.notice { Text(notice).font(.system(size: 11.5)).foregroundStyle(.orange).lineLimit(1) }
                 Spacer()
                 Button { outline.toggleShowsCompleted() } label: {
@@ -54,6 +55,34 @@ struct OutlineView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The filter (⌘F): the rows follow what is typed; ↓ or ↩ goes to the first match, esc clears it. `Outline.key` takes those keys, since the monitor
+/// sees them before this field does.
+private struct OutlineFilterField: View {
+    @ObservedObject var outline: Outline
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass").font(.system(size: 10)).foregroundStyle(.secondary)
+            TextField("Filter", text: Binding(get: { outline.filterText }, set: { outline.setFilter($0) }))
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5))
+                .focused($focused)
+                .frame(width: 110)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Theme.tileFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        // The caret is in a bullet's text view, so it has to let go first, as search does (`focusSearch`).
+        .onChange(of: outline.filterFocusRequest) { _, _ in
+            DispatchQueue.main.async {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+                focused = true
+            }
+        }
     }
 }
 
@@ -157,7 +186,11 @@ private struct OutlineRows: View {
                         .padding(.vertical, 6)
                     }
                     ForEach(outline.rows) { row in
-                        OutlineRowView(outline: outline, row: row, noteOpen: outline.notePath == row.path).id(row.id)
+                        OutlineRowView(outline: outline, row: row, noteOpen: outline.notePath == row.path,
+                                       highlight: row.matched ? outline.filterWords : []).id(row.id)
+                    }
+                    if outline.rows.isEmpty, !outline.filterWords.isEmpty {
+                        Text("No bullets match").font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.vertical, 6)
                     }
                     // A click below the last bullet puts the caret in it.
                     Color.clear
@@ -181,6 +214,8 @@ private struct OutlineRowView: View {
     let row: OutlineRow
     /// The caret is in this row's note, or it was just opened: the note shows in full, and shows at all while it is empty.
     let noteOpen: Bool
+    /// The filter's words, to mark in the text and the note when this bullet matches.
+    let highlight: [String]
 
     /// What each level of nesting indents by.
     static let indent: CGFloat = 18
@@ -193,10 +228,12 @@ private struct OutlineRowView: View {
             disclosure
             dot
             VStack(alignment: .leading, spacing: 0) {
-                BulletText(outline: outline, path: row.path, text: row.text, kind: .row, completed: row.completed, dimmed: row.dimmed)
+                BulletText(outline: outline, path: row.path, text: row.text, kind: .row, completed: row.completed, dimmed: row.dimmed,
+                           highlight: highlight)
                 // A note shows while it has text, and while it has the caret (empty or not); then it shows in full.
                 if row.note != nil || noteOpen {
-                    BulletText(outline: outline, path: row.path, text: row.note ?? "", kind: .note, dimmed: row.dimmed, expanded: noteOpen)
+                    BulletText(outline: outline, path: row.path, text: row.note ?? "", kind: .note, dimmed: row.dimmed, expanded: noteOpen,
+                               highlight: highlight)
                 }
             }
         }
@@ -251,6 +288,8 @@ private struct BulletText: NSViewRepresentable {
     var dimmed = false
     /// A note with the caret shows in full; the others are cut to two lines.
     var expanded = false
+    /// Filter words to mark in the text.
+    var highlight: [String] = []
 
     func makeCoordinator() -> Coordinator { Coordinator(outline: outline) }
 
@@ -265,7 +304,7 @@ private struct BulletText: NSViewRepresentable {
     func makeNSView(context: Context) -> OutlineTextView {
         let view = OutlineTextView.make(path: path, outline: outline, kind: kind)
         view.delegate = context.coordinator
-        view.applyStyle(completed: completed, dimmed: dimmed)
+        view.applyStyle(completed: completed, dimmed: dimmed, highlight: highlight)
         view.setExpanded(expanded)
         view.setTextQuietly(shown)
         outline.register(view)
@@ -276,7 +315,7 @@ private struct BulletText: NSViewRepresentable {
     /// it is set only once the caret has left (`OutlineTextView.syncFromModel`).
     func updateNSView(_ view: OutlineTextView, context: Context) {
         context.coordinator.outline = outline
-        view.applyStyle(completed: completed, dimmed: dimmed)
+        view.applyStyle(completed: completed, dimmed: dimmed, highlight: highlight)
         view.setExpanded(expanded)
         guard view.window?.firstResponder !== view, view.string != shown else { return }
         view.setTextQuietly(shown)
@@ -351,6 +390,7 @@ final class OutlineTextView: NSTextView {
 
     private var completed = false
     private var dimmed = false
+    private var highlight: [String] = []
     private var expanded = true
 
     /// TextKit 1 on purpose: the caret's line and x come from its layout manager.
@@ -397,10 +437,12 @@ final class OutlineTextView: NSTextView {
     }
 
     /// Struck through and dimmed for a completed bullet, dimmed for what is nested under one: attributes of the text.
-    func applyStyle(completed: Bool, dimmed: Bool) {
-        guard completed != self.completed || dimmed != self.dimmed else { return }
+    func applyStyle(completed: Bool, dimmed: Bool, highlight: [String]) {
+        // Marks are found again each time while there are some: the text may have been typed into since.
+        guard completed != self.completed || dimmed != self.dimmed || highlight != self.highlight || !highlight.isEmpty else { return }
         self.completed = completed
         self.dimmed = dimmed
+        self.highlight = highlight
         restyle()
     }
 
@@ -410,6 +452,20 @@ final class OutlineTextView: NSTextView {
         let whole = NSRange(location: 0, length: (string as NSString).length)
         if completed { textStorage?.addAttribute(.strikethroughStyle, value: strike, range: whole) } else { textStorage?.removeAttribute(.strikethroughStyle, range: whole) }
         typingAttributes[.strikethroughStyle] = completed ? strike : nil
+        // The filter's words, wherever they are in the text, ignoring case and accents.
+        textStorage?.removeAttribute(.backgroundColor, range: whole)
+        typingAttributes[.backgroundColor] = nil
+        let text = string as NSString
+        for word in highlight where !word.isEmpty {
+            var from = 0
+            while from < text.length {
+                let found = text.range(of: word, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                                       range: NSRange(location: from, length: text.length - from))
+                if found.location == NSNotFound { break }
+                textStorage?.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.35), range: found)
+                from = NSMaxRange(found)
+            }
+        }
     }
 
     /// A note with the caret shows in full; without it, two lines ending in "…".

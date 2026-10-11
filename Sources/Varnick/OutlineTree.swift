@@ -41,6 +41,9 @@ struct OutlineRow: Identifiable, Equatable {
     let completed: Bool
     /// Dimmed: this bullet, or one it is nested under, is completed.
     let dimmed: Bool
+    /// Under a filter: the bullet itself matches (the others show only as a match's ancestors, or because the caret is in them). Always true
+    /// with no filter.
+    let matched: Bool
 
     var id: String { path.id }
 }
@@ -192,22 +195,35 @@ struct OutlineTree: Codable, Equatable {
     /// The rows on screen, in order: the bullets nested under the one zoomed into (the top bullet at Home), each level 0 at the zoom's top. A
     /// collapsed placement hides what is nested under it, and a completed bullet is hidden with what is nested under it unless Show completed
     /// is on. A row's path always starts at the top bullet, zoomed or not.
-    func visibleRows() -> [OutlineRow] {
-        var rows: [OutlineRow] = []
+    ///
+    /// With `filter` (see `filterWords`) only the bullets under the zoom that match show, with their ancestors up to the zoom; collapsed ancestors
+    /// show open, and a match's nested bullets show only if they match too. The bullet at `keeping`, and its ancestors, show whether they
+    /// match or not: the one the caret is in.
+    func visibleRows(filter: [String] = [], keeping: OutlinePath? = nil) -> [OutlineRow] {
         let base = effectiveZoom
-        func walk(_ id: String, prefix: [String], onStack: Set<String>, dimmed: Bool) {
-            guard let bullet = bullets[id] else { return }
+        let filtering = !filter.isEmpty
+        func walk(_ id: String, prefix: [String], onStack: Set<String>, dimmed: Bool) -> [OutlineRow] {
+            var rows: [OutlineRow] = []
+            guard let bullet = bullets[id] else { return rows }
             for placement in bullet.children {
                 guard let child = bullets[placement.bullet], !onStack.contains(placement.bullet),
                       showsCompleted || child.completed == nil else { continue }
                 let path = prefix + [placement.id]
-                let collapsed = placement.collapsed == true
+                let collapsed = placement.collapsed == true && !filtering
                 let below = dimmed || child.completed != nil
+                let nested = collapsed ? [] : walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet]), dimmed: below)
+                var matched = true
+                if filtering {
+                    matched = Self.matches(child, filter)
+                    let holdsCaret = keeping?.placements.starts(with: path) ?? false
+                    guard matched || holdsCaret || !nested.isEmpty else { continue }
+                }
                 rows.append(OutlineRow(path: OutlinePath(placements: path), bullet: placement.bullet, depth: path.count - base.count - 1,
                                        text: child.text, hasChildren: !child.children.isEmpty, collapsed: collapsed, note: child.note,
-                                       completed: child.completed != nil, dimmed: below))
-                if !collapsed { walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet]), dimmed: below) }
+                                       completed: child.completed != nil, dimmed: below, matched: matched))
+                rows.append(contentsOf: nested)
             }
+            return rows
         }
         var top = root
         var stack: Set<String> = [root]
@@ -217,8 +233,24 @@ struct OutlineTree: Codable, Equatable {
             stack = Set(bulletsAlong(base) + [root])
             dimmed = bulletsAlong(base).contains { bullets[$0]?.completed != nil }
         }
-        walk(top, prefix: base, onStack: stack, dimmed: dimmed)
-        return rows
+        return walk(top, prefix: base, onStack: stack, dimmed: dimmed)
+    }
+
+    // MARK: Filter
+
+    /// What is typed in the filter, as the words that are looked for: split on spaces, lower case, without accents.
+    static func filterWords(_ query: String) -> [String] {
+        query.split(whereSeparator: \.isWhitespace).map { folded(String($0)) }
+    }
+
+    static func folded(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+    }
+
+    /// A bullet matches when every word is in its text or its note.
+    private static func matches(_ bullet: OutlineBullet, _ words: [String]) -> Bool {
+        let haystack = folded(bullet.text + "\n" + (bullet.note ?? ""))
+        return words.allSatisfy { haystack.contains($0) }
     }
 
     /// Where the caret goes when the row `path` has left the view (completed with Show completed off, or Show completed turned off): the next row

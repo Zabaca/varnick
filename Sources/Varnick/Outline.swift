@@ -34,6 +34,14 @@ final class Outline: ObservableObject {
     @Published private(set) var showsCompleted = false
     /// The row whose note has the caret, or was just opened with ⇧↩: its note shows in full, and shows at all while it is empty.
     @Published private(set) var notePath: OutlinePath?
+    /// What is typed in the header's filter. It belongs to this launch: nothing about it is saved.
+    @Published private(set) var filterText = ""
+    /// Bumped by ⌘F to move the caret into the filter field.
+    @Published private(set) var filterFocusRequest = 0
+    /// The words the filter looks for (`OutlineTree.filterWords`).
+    private(set) var filterWords: [String] = []
+    /// The bullet the caret is in, kept in view under a filter even when it stops matching, until the filter changes.
+    private var filterKeep: OutlinePath?
     /// Asks the view to scroll a row into sight before the caret moves into it.
     @Published private(set) var scrollRequest: ScrollRequest?
     /// A refusal's words, for a moment, in the header.
@@ -97,10 +105,16 @@ final class Outline: ObservableObject {
 
     private func use(_ new: OutlineTree) {
         tree = new
-        rows = new.visibleRows()
+        refreshRows()
         let shown = new.crumbs()
         if shown != crumbs { crumbs = shown }
         if new.showsCompleted != showsCompleted { showsCompleted = new.showsCompleted }
+    }
+
+    /// The rows for the tree, the filter and the bullet the caret is in; published only when they differ.
+    private func refreshRows() {
+        let shown = tree.visibleRows(filter: filterWords, keeping: filterKeep)
+        if shown != rows { rows = shown }
     }
 
     /// The outline closes: a change not yet written is written at once.
@@ -146,6 +160,8 @@ final class Outline: ObservableObject {
             }
             return false
         case .applied(let new, let caret):
+            // A new bullet doesn't match the filter, and the caret is on its way into it.
+            if !filterWords.isEmpty, let caret { filterKeep = caret.path }
             if new != tree {
                 record(caretBefore ?? currentCaret(), typing: typing)
                 use(new)
@@ -208,6 +224,27 @@ final class Outline: ObservableObject {
         } else {
             restoreCaret()
         }
+    }
+
+    // MARK: Filter
+
+    /// Whether the filter field is where the caret is: the only text field in the outline, so a field editor is it.
+    private var filterHasFocus: Bool { (NSApp.keyWindow?.firstResponder as? NSTextView)?.isFieldEditor == true }
+
+    /// ⌘F: the caret goes into the filter field.
+    func focusFilter() { filterFocusRequest += 1 }
+
+    /// The filter's text changed: the rows follow as it is typed, and no bullet is kept in view for the caret any more.
+    func setFilter(_ text: String) {
+        filterText = text
+        filterWords = OutlineTree.filterWords(text)
+        filterKeep = nil
+        refreshRows()
+    }
+
+    /// ↓ or ↩ in the field: the caret goes to the first bullet that matches.
+    private func goToFirstMatch() {
+        if let first = rows.first(where: \.matched) { moveCaret(to: first.path, .offset(Int.max)) }
     }
 
     /// The disclosure triangle. The caret stays where it was.
@@ -273,6 +310,7 @@ final class Outline: ObservableObject {
         // There is always a line to type in: Show completed turned off since may have hidden what the step brings back.
         restored = restored.ensuringBullet(now: Date())
         let before = rows
+        if !filterWords.isEmpty, let caret = step.caret { filterKeep = caret.path }
         use(restored)
         saver.changed(restored)
         if let caret = step.caret, showing(caret.path) {
@@ -307,6 +345,10 @@ final class Outline: ObservableObject {
         activeView = view
         let note = view.field == .note ? view.rowPath : nil
         if notePath != note { notePath = note }
+        if !filterWords.isEmpty, filterKeep != view.rowPath {
+            filterKeep = view.rowPath
+            refreshRows()
+        }
         selectionChanged(view)
     }
 
@@ -447,18 +489,26 @@ final class Outline: ObservableObject {
                 return true
             }
         }
-        let composing = activeView?.hasMarkedText() == true
+        let composing = (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
         let code = Int(event.keyCode)
         if code == kVK_Escape, flags.isEmpty {
             if composing { return false }
-            // One level back: out of a note first, else the outline closes.
-            if let view = activeView, view.field == .note, view.window?.firstResponder === view { leaveNote(view) } else { model?.closeOutline() }
+            // One level back: out of a note, then the filter clears (the caret goes back to its bullet), then the outline closes.
+            if let view = activeView, view.field == .note, view.window?.firstResponder === view {
+                leaveNote(view)
+            } else if filterHasFocus || !filterWords.isEmpty {
+                setFilter("")
+                restoreCaret()
+            } else {
+                model?.closeOutline()
+            }
             return true
         }
         // ⌘Z and ⌘⇧Z are taken even when there is nothing to undo, so the Edit menu's never acts on a text view with no undo of its own.
         let command: NSEvent.ModifierFlags = .command, commandShift: NSEvent.ModifierFlags = [.command, .shift]
         if code == kVK_ANSI_Z, flags == command || flags == commandShift {
-            if composing { return false }
+            // In the filter field they undo its own typing.
+            if composing || filterHasFocus { return false }
             undoOrRedo(redo: flags == commandShift)
             return true
         }
@@ -469,6 +519,15 @@ final class Outline: ObservableObject {
         }
         if code == kVK_ANSI_C, flags == commandShift, load == .ready, !composing {
             toggleShowsCompleted()
+            return true
+        }
+        if code == kVK_ANSI_F, flags == command, load == .ready, !composing {
+            focusFilter()
+            return true
+        }
+        if load == .ready, !composing, filterHasFocus, flags.isEmpty,
+           code == kVK_Return || code == kVK_ANSI_KeypadEnter || code == kVK_DownArrow {
+            goToFirstMatch()
             return true
         }
         guard load == .ready, !composing, let view = activeView, view.window?.firstResponder === view else { return false }
