@@ -80,6 +80,20 @@ else:
         if argument not in schema.get("properties", {}):
             fail("outline_act takes no %s" % argument)
 
+# The keys tool: `text` is a string and `keys` a list of strings, and nothing is required (text, keys or both).
+pressing = [t for t in listed(["--panel"], full=True) if t["name"] == "keys"]
+if not pressing:
+    fail("--panel lists no keys")
+else:
+    schema = pressing[0]["inputSchema"]
+    properties = schema.get("properties", {})
+    if properties.get("text", {}).get("type") != "string":
+        fail("keys' text is %s, not a string" % properties.get("text"))
+    if properties.get("keys", {}).get("type") != "array" or properties["keys"].get("items", {}).get("type") != "string":
+        fail("keys' keys is %s, not a list of strings" % properties.get("keys"))
+    if schema.get("required"):
+        fail("keys requires %s: text, keys or both are enough" % schema.get("required"))
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
 for arguments, name in (([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])

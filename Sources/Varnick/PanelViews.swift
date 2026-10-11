@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 import SwiftTerm
 import VarnickPeer
@@ -7,7 +8,19 @@ import VarnickPeer
 // server lists its tools from the static specs and the router (`PanelAccess`) hands the call over. An adopter is a thin layer over its
 // view's model that returns text or a refusal. Settings never adopts: its switches govern sessions.
 
-protocol PanelAccessView {
+/// A view that can be on the panel when `keys` (option 02) presses a key. It says which keys it refuses: the ones that would end, restart or
+/// mark a session, start one or turn on the microphone, whatever else it will not have a session press. A view that does not say takes none.
+protocol PanelKeyView {
+    /// Why the view refuses this key as it stands now, nil when it takes it. Asked right before the key is sent, so it reads the model's state
+    /// at that moment: an earlier key of the same call may have changed it.
+    @MainActor func refusal(of key: PanelKey) -> String?
+}
+
+extension PanelKeyView {
+    @MainActor func refusal(of key: PanelKey) -> String? { "This view takes no keys from a session" }
+}
+
+protocol PanelAccessView: PanelKeyView {
     /// Names its tools: `board` gives `board_read`.
     static var name: String { get }
     /// `<name>_read`'s description and arguments. A constant the server reads: it asks no instance.
@@ -34,6 +47,19 @@ extension PanelAccessView {
 enum PanelViews {
     /// Every adopter, in the order the server lists their tools. A view joins by adopting the protocol and being added here.
     static let all: [any PanelAccessView.Type] = [BoardPanelView.self, PanePanelView.self, OutlinePanelView.self]
+
+    /// What `keys` presses into: the view on the panel as `LauncherView` picks it, with what lies over it first (the Restart Varnick card, the
+    /// split picker, the tab's rename field). Settings and a tab take none; the search has no tool, so it answers for keys alone.
+    @MainActor static func onScreen(_ model: LauncherModel) -> any PanelKeyView {
+        if model.askingRestart { return NoKeys("The Restart Varnick card is showing: ask the user to answer it first") }
+        if model.pendingSplit != nil { return NoKeys("The split picker is showing: ask the user to answer it first") }
+        if model.renamingTab != nil { return NoKeys("A tab is being renamed: ask the user to finish first") }
+        if model.showingSettings { return NoKeys("Settings is showing: its switches govern sessions, so a session may not press keys there") }
+        if model.showingBoard { return BoardPanelView(model: model) }
+        if model.showingOutline { return OutlinePanelView(model: model) }
+        if model.activeTab != nil { return PanePanelView(model: model) }
+        return SearchPanelKeys(model: model)
+    }
 
     /// The adopter and the kind of tool a name is: `board_read` is the board's read, `board_act` its actions (only if it has any).
     static func find(_ tool: String) -> (view: any PanelAccessView.Type, acts: Bool)? {
@@ -78,6 +104,18 @@ struct BoardPanelView: PanelAccessView {
         case nil, "", "sessions": return sessions(caller: caller)
         case "problems": return try problems(caller: caller)
         default: throw PanelRefusal.bad("tab is sessions or problems")
+        }
+    }
+
+    /// The board takes its arrows, Tab and esc, and ↩ on a card that only shows a pane open here. D and R are Done and Restart: they end or restart
+    /// another session. ↩ elsewhere would resume a session or open a paired Mac's (`SessionBoard.returnRefusal`).
+    @MainActor func refusal(of key: PanelKey) -> String? {
+        guard key.modifiers.isEmpty else { return nil }
+        switch Int(key.keyCode) {
+        case kVK_ANSI_D: return "D marks the selected session done, which ends it"
+        case kVK_ANSI_R: return "R restarts the selected session"
+        case kVK_Return, kVK_ANSI_KeypadEnter: return model.board.returnRefusal()
+        default: return nil
         }
     }
 
@@ -151,6 +189,10 @@ struct PanePanelView: PanelAccessView {
     let model: LauncherModel
 
     @MainActor init(model: LauncherModel) { self.model = model }
+
+    @MainActor func refusal(of key: PanelKey) -> String? {
+        "A tab is showing (a terminal, a page or a file): keys does not type into panes"
+    }
 
     @MainActor func read(_ args: PanelArguments, caller: UUID) throws -> String {
         let target = try PanelAccess.shared.target(args["id"], caller: caller)

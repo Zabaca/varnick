@@ -77,7 +77,8 @@ Anything else leaves only when you turn it on:
   note), the text on the screen of any terminal pane, other sessions' and shells' too, whatever it shows, and your
   Outline's bullets and notes (which are otherwise kept on this Mac only), and can switch the panel to the search, the
   board, the Outline or a pane. They can also edit your Outline without asking: each edit is one ⌘Z step, and the bullet
-  you are typing in goes in as a typed change, around your caret. That goes to Anthropic with the session. It needs no permission.
+  you are typing in goes in as a typed change, around your caret. They can press keys in the panel while it is open and you are not typing in
+  it, but never the ones that end, mark done or restart a session, start one, quit or paste. That goes to Anthropic with the session. It needs no permission.
 - **A model server** you name gets your searches, your prompts and the text it embeds, and nothing goes past it.
 
 Everything Varnick reads, records and sends, and what it lets others do, is in

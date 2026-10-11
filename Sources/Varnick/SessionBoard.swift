@@ -474,6 +474,18 @@ final class SessionBoard: ObservableObject {
         if let selection { open(selection) }
     }
 
+    /// Why a session may not press ↩ now (`keys`, Panel access), nil when it only shows a pane open here or does nothing. `open` resumes an
+    /// ended or Completed session and opens a paired Mac's on its card, so those are a session started; on the Problems tab ↩ opens the
+    /// selected chip's session the same way, and otherwise only unfolds the card.
+    func returnRefusal() -> String? {
+        let id = tab == .problems ? problems.chipSelection : selection
+        guard let id, let card = cards.first(where: { $0.id == id }) else { return nil }
+        if card.column == .completed || card.isEnded || card.hasNoPane {
+            return "↩ on this card would resume a session or open a paired Mac's, which starts one"
+        }
+        return nil
+    }
+
     func open(_ id: UUID) {
         guard let card = cards.first(where: { $0.id == id }) else { return }
         if card.column == .completed {

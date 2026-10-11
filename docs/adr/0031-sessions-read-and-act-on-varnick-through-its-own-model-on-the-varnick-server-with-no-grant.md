@@ -51,6 +51,18 @@ Nothing on this path goes to TypeSafe. The search field's text is never read, on
 - **Indent, move and outdent** use Show completed, and neither the filter, the zoom nor collapsed bullets, because a session reads the tree whole and its ids name tree rows.
 - **It amends ADR 0030:** the Outline was edited by its own keys alone. With Panel access on, a session also edits it, without asking. The file, its format and the rule that it is never written over when unreadable are unchanged. The log holds the tool and the action, never a bullet's text.
 
+## `keys` presses keys into the panel's own key path
+
+Option 02, built after option 01 by the user's order. It decides how Varnick may post events to itself.
+
+- **In-process, to the panel's window.** Each character of `text` and each combo is made as a key-down and key-up (`NSEvent.keyEvent`, for the panel's window number) and handed to `NSApp.sendEvent`, one call per event on the main actor. That runs the panel's key monitor (`main.swift`), the view's handler and the first responder as a user's key does; the screen tools' `CGEvent` is never used, so nothing reaches another app and no permission is involved. `sendEvent` was chosen over `postEvent` because the gate and the event are then one synchronous turn; a probe program checked that local monitors see an event given to either, and that `postEvent` returns a copy (the Outline's queue sends keys again this way) with its timestamp requantized by about 5e-10 s.
+- **Which keys.** A character carries itself and no modifiers; a combo is `ScreenKeys.parse`'s, so `type`'s syntax and limits hold (500 characters with no control or line separator, 10 combos, each refused whole). Both carry the key code of the current layout, since the board and the Outline read key codes and a text field reads characters.
+- **The gate,** checked on the main actor before every event with nothing awaited before the post: the switch and the pane (`mayAct`), the panel visible and key with Varnick the active app (a pinned panel behind another app is key in its own window only), no key of the user's in the last 2 s, and the view on screen. The first failure stops the call and the reply says how far it got. It never brings the panel up.
+- **The user's keys and ours.** The key monitor stamps the user's keys for the 2 s rule; a posted event carries a timestamp that `PanelAccess.postedStamps` holds for a minute, and `noteKey` ignores a key whose timestamp is within 1 µs of one.
+- **Views.** `PanelKeyView`, which `PanelAccessView` refines, has one member, the reason it refuses a key now, nil to take it; a view without it takes none. The search (which has no tool) answers for itself. Tabs, Settings, the Restart Varnick card, the split picker and the rename field take none. Refused in the search: ↩ on a prompt, on a `?` result, on `!listen`, on a Recent session or a paired Mac's row, ⌘↩, and esc (it hides the panel). Refused on the board: D, R, and ↩ on a card that would resume or open a session.
+- **Never pressed in any view,** checked for the whole call before the first key: the End session, Mark session done and Restart session keys as bound, Varnick's anywhere-shortcuts and the system's log out, lock and Force Quit (`ScreenKeys.refusal`), New terminal tab, Settings, ⌘Q, and paste (ADR 0031's reading of the Outline would otherwise send the user's clipboard to Anthropic). Copy and cut are allowed and replace the clipboard.
+- **One action at a time** on `ScreenAccess`'s queue, so a screen `type` and `keys` never interleave. The log holds the tool, the kind and the counts sent of asked.
+
 ## It amends ADR 0023
 
 ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, found in the history of the option (the problem's Today):
@@ -63,7 +75,7 @@ ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, foun
 
 ## Considered Options
 
-- **Send keys through the panel's own key path (option 02, accepted to follow).** It tests key handling and focus, which these tools do not. It needs its own decision about posting events, so it is not part of this one.
+- **Send keys through the panel's own key path (option 02).** Built: `keys`, above. It tests key handling and focus, which the other tools do not.
 - **Let the screen tools into the panel (option 03).** Rejected: it would put Settings within the tools' reach and needs Accessibility.
 - **A command line on the same requests (option 04).** Kept for later.
 - **A second MCP server for these tools.** Rejected: a second process per pane and a second entry on the command line, on the same socket.
@@ -73,6 +85,6 @@ ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, foun
 ## Consequences
 
 - **One more switch, one more server argument.** A session started with only Panel access on lists `panel` and nothing of the screen tools; with both on, both sets.
-- **A hand test through these tools checks the model, not the key path.** How it looks is still a screen picture's job.
+- **A hand test through `show`, `outline_act` and the reads checks the model; `keys` checks the key path.** How it looks is still a screen picture's job.
 - **Adding a view's tools is adopting `PanelAccessView` and one line in the registry.** The router keeps the switch, the pane, the ids, the refusals, the log and the reply.
 - **The Outline's reading and its edits have shipped** (`outline_read` and `outline_act`, above). An edit that lands in the bullet being typed in goes into that text view as a key does (above).

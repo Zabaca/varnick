@@ -36,9 +36,10 @@ enum ScreenKeys {
 
     /// Why the text can't be typed, nil when it can. A text that can't is refused whole, never cut: a session can't read the field to
     /// see where a cut fell.
-    static func problem(withText text: String) -> String? {
+    static func problem(withText text: String, tool: String = "type",
+                        rest: String = "Send the rest in the next call, without an id, which types where this one would have stopped") -> String? {
         guard text.count <= maxCharacters else {
-            return "The text has \(text.count) characters and type takes at most \(maxCharacters). Send the rest in the next call, without an id, which types where this one would have stopped"
+            return "The text has \(text.count) characters and \(tool) takes at most \(maxCharacters). \(rest)"
         }
         let breaks: Set<Unicode.GeneralCategory> = [.control, .lineSeparator, .paragraphSeparator]
         guard !text.unicodeScalars.contains(where: { breaks.contains($0.properties.generalCategory) }) else {
