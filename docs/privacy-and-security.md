@@ -150,10 +150,17 @@ and which of those has the keyboard. They can also read **the session board** (`
 it lists, on this Mac or a paired one, the title (which can be a prompt's first line or a name you gave it), the
 folder, the Mac, the turn and how long, any background work, the card's note, the problem or option it is linked
 to, and for the Problems tab the problems' titles, projects and the sessions on them. A paired Mac's cards are as
-last fetched: the read asks no paired Mac. The search field's mode (the session list, a prompt, a `?` search or a `!`
+last fetched: the read asks no paired Mac. They can also read **the text on the screen of any terminal pane**
+(`pane_read`): another session's, a shell's, or their own. That is whatever the terminal shows at that moment, as
+you would see it: a session's latest exchange, a command's output, a secret that was just printed or typed where it
+echoes. Anything that scrolled off the screen is not read, and a pane showing a card of a session another Mac
+controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only. All
+of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
 It reads no window through Accessibility and needs no permission, and turning the switch off stops every session's
-tools at once. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name or a title.
+tools at once. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's
+text. Reading a pane's screen resizes, writes to and focuses nothing in it. If you don't want what a terminal shows
+sent to Anthropic, leave Panel access off.
 
 ### A model server you name
 

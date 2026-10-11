@@ -15,7 +15,12 @@ A session speaks to Varnick's **model**, not to pixels: the running Varnick answ
 
 ## What a session is shown goes to Anthropic
 
-What a session reads goes to Anthropic with its context and stays in its transcript on this Mac: the panel's state, names and titles of tabs and panes included. Nothing on this path goes to TypeSafe. The search field's text is never read, only its mode. The switch is the user's consent, and its detail says so, as the README and `docs/privacy-and-security.md` do. Each later tool that reads more says so in the same places before it ships.
+What a session reads goes to Anthropic with its context and stays in its transcript on this Mac:
+- the panel's state, names and titles of tabs and panes included (`panel`);
+- for other sessions, what their board card shows: title, folder, Mac, turn and how long, background work, the card's note and work link (`board_read`);
+- **the text on the screen of any terminal pane, other sessions' and shells' included** (`pane_read`). The user chose this on 2026-10-11, beyond the card alone. A screen holds whatever is on it, a session's latest exchange or a shell's output, secrets included. A card's title can be a prompt's first line and a screen shows Claude's latest exchange; nothing beyond that is read: not the scrollback, not a transcript or a prompt that neither the card nor the screen shows, not a page's or a file's contents.
+
+Nothing on this path goes to TypeSafe. The search field's text is never read, only its mode. The switch is the user's consent, and its detail says so, as the README and `docs/privacy-and-security.md` do. Each later tool that reads more says so in the same places before it ships.
 
 ## It amends ADR 0023
 

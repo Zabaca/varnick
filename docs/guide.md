@@ -190,7 +190,10 @@ whether the panel is visible, key and pinned, what it shows (the search and its 
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
 Settings) and what has the keyboard. `board_read` gives the session board's cards by column (Running, Stopped,
 Completed) as the board shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane
-gets an id such as `s1`, the same every time, in both. The tools work through
+gets an id such as `s1`, the same every time, in all of them. `pane_read` gives a pane's kind and title and, for a
+terminal (a Claude session or a shell, this session's own included), the text its screen shows now, never its
+scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or a custom
+app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** The tools work through
 Varnick's own state, so they need no permission, no Accessibility and no Screen Recording. What a session reads goes to
 Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access). A
 session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the switch on; turning it off

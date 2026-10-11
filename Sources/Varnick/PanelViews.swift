@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftTerm
 import VarnickPeer
 
 // The views that give sessions tools (Panel access, ADR 0031). A view adopts `PanelAccessView` and is listed once in `PanelViews`; the
@@ -32,7 +33,7 @@ extension PanelAccessView {
 
 enum PanelViews {
     /// Every adopter, in the order the server lists their tools. A view joins by adopting the protocol and being added here.
-    static let all: [any PanelAccessView.Type] = [BoardPanelView.self]
+    static let all: [any PanelAccessView.Type] = [BoardPanelView.self, PanePanelView.self]
 
     /// The adopter and the kind of tool a name is: `board_read` is the board's read, `board_act` its actions (only if it has any).
     static func find(_ tool: String) -> (view: any PanelAccessView.Type, acts: Bool)? {
@@ -135,5 +136,93 @@ struct BoardPanelView: PanelAccessView {
             }
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+// MARK: The panes
+
+/// `pane_read`: a pane's kind and title, and for a terminal the text its screen shows now. It only reads: the terminal is never resized,
+/// written to or focused, and nothing of its scrollback is read. The text goes to Anthropic with the session, whatever the screen shows.
+struct PanePanelView: PanelAccessView {
+    static let name = "pane"
+    static let readSpec = PanelToolSpec(
+        summary: "Reads a pane: its kind and title, and for a terminal (a Claude session or a shell, this session's own included) the text "
+            + "its screen shows now, trailing blanks and empty lines cut, never its scrollback. A pane that shows a card because another "
+            + "Mac or a device controls its session gives the screen the card holds, with the time of the last one when it is no longer "
+            + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only. "
+            + "The id is a pane's or a board card's from panel or board_read. The screen holds whatever is on it, a session's latest "
+            + "exchange or a shell's output, secrets included, and goes to Anthropic with this session.",
+        properties: ["id": ["type": "string", "description": "A pane's id from panel or board_read (s1…)."]],
+        required: ["id"])
+
+    let model: LauncherModel
+
+    @MainActor init(model: LauncherModel) { self.model = model }
+
+    @MainActor func read(_ args: PanelArguments, caller: UUID) throws -> String {
+        let target = try PanelAccess.shared.target(args["id"], caller: caller)
+        let id = PanelAccess.shared.id(for: target, caller: caller)
+        guard let session = model.tabs.lazy.flatMap(\.sessions).first(where: { $0.id == target }) else {
+            return try card(target, id: id)
+        }
+        let header = "\(id) \(PanelAccess.kindText(session)) \"\(PanelAccess.oneLine(session.label))\"" + (target == caller ? " (this session)" : "")
+        // Only a terminal has a screen to read.
+        guard session.isClaude || session.isShell else { return header + "\nContents are not read: its kind and title only." }
+        if let note = session.awayNote {
+            return header + "\n" + Self.cardScreen(session, note: note)
+        }
+        guard session.started else { return header + "\nnot started" }
+        let rows = Self.rows(of: session.view.getTerminal())
+        return header + "\nScreen now:\n" + (rows.isEmpty ? "(empty)" : rows)
+    }
+
+    /// An id that is no pane in a tab: a card of the board with no pane here, which has no screen on this Mac.
+    @MainActor private func card(_ target: UUID, id: String) throws -> String {
+        guard let card = model.board.cards.first(where: { $0.id == target }) else { throw PanelRefusal.gone }
+        let header = "\(id) Claude \"\(PanelAccess.oneLine(card.title))\""
+        return header + (card.hasNoPane
+            ? "\nA session of a paired Mac with no pane here: its screen is not on this Mac. Opening its card shows it."
+            : "\nNo pane of it is open: it has no screen.")
+    }
+
+    /// What a pane showing a card holds: its live screen, or its last one with the time it stopped, else that it has none.
+    @MainActor private static func cardScreen(_ session: ClaudeSession, note: String) -> String {
+        let screen = session.screen
+        guard screen.serial > 0 else { return "The pane shows a card (\(PanelAccess.oneLine(note))) and has no screen yet." }
+        let text = rows(ofVT: screen.content.text, grid: screen.content.grid)
+        let when = screen.stoppedAt.map { "Last screen at \(time.string(from: $0))" }
+            ?? "Live screen of the session, which another Mac or a device controls"
+        return when + ":\n" + (text.isEmpty ? "(empty)" : text)
+    }
+
+    private static let time: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    // MARK: Rows
+
+    /// The rows a terminal shows now, line by line: its visible region only (`getLine` counts from the top of what is on screen, so a
+    /// terminal scrolled back reads what the user sees, and nothing above it is touched). Trailing blanks and empty rows at the end are cut.
+    static func rows(of terminal: Terminal) -> String {
+        var lines: [String] = []
+        for row in 0..<terminal.rows {
+            let line = terminal.getLine(row: row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? ""
+            lines.append(String(line.reversed().drop(while: { $0.isWhitespace }).reversed()))
+        }
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        return lines.joined(separator: "\n")
+    }
+
+    /// A card's screen is VT text with the grid it was drawn on, so it is drawn into a terminal of its own (as `FrozenTerminalView` draws it)
+    /// and read the same way. Without a grid the width is a guess: wide enough for a line, tall enough for its lines.
+    static func rows(ofVT text: String, grid: PeerGrid?) -> String {
+        var options = TerminalOptions.default
+        options.cols = grid?.cols ?? 200
+        options.rows = grid?.rows ?? max(24, text.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } + 2)
+        let headless = HeadlessTerminal(options: options) { _ in }
+        headless.terminal.feed(text: text)
+        return rows(of: headless.terminal)
     }
 }

@@ -15,6 +15,10 @@ enum PanelRefusal: Error {
     case noPane
     case controlled
     case unknownTool(String)
+    /// An id this session was never given (or none was sent).
+    case unknownID
+    /// An id this session was given, of a pane or card that has since gone.
+    case gone
     /// The arguments are not ones the tool takes.
     case bad(String)
 
@@ -27,6 +31,8 @@ enum PanelRefusal: Error {
         case .noPane: "No Claude session in Varnick's panes on this Mac has this pane id"
         case .controlled: "This session is shown as a card because another Mac or a device is in control of it, so it is not one of this Mac's panes to answer for"
         case .unknownTool(let name): "Unknown tool \(name)"
+        case .unknownID: "No such id. Ids come from panel and board_read (s1…): read one of those first"
+        case .gone: "gone: read again"
         case .bad(let why): why
         }
     }
@@ -40,6 +46,8 @@ enum PanelRefusal: Error {
         case .noPane: "no pane"
         case .controlled: "controlled"
         case .unknownTool: "unknown tool"
+        case .unknownID: "unknown id"
+        case .gone: "gone"
         case .bad: "bad arguments"
         }
     }
@@ -89,6 +97,12 @@ final class PanelAccess {
     /// `target`'s id in the calling pane's table.
     func id(for target: UUID, caller: UUID) -> String {
         tables[caller, default: PanelIDs()].id(for: target)
+    }
+
+    /// The pane or card an id was given for in the calling pane's table; an id never given is refused.
+    func target(_ text: String?, caller: UUID) throws -> UUID {
+        guard let text, let found = tables[caller]?.target(text) else { throw PanelRefusal.unknownID }
+        return found
     }
 
     // MARK: The call
