@@ -52,7 +52,7 @@ The rest are option 01's.
 
 - The arguments and environment above, run directly and never through the shell. The prompt goes on standard input, never as an argument.
 - Never `--bare`, which can't use the subscription. Never Varnick's hook `--settings`, `--session-id` or `--resume`.
-- No `--effort`: Haiku 4.5 refuses an effort setting.
+- The model and the effort follow option 01's: Haiku 5.5, with thinking off and the effort the eval settles.
 - The filter module is Varnick's own drop-all copy, modelled on zbc's `mods/reminders`. It needs Claude Code 2.1.291 or newer.
 - **`--safe-mode` was considered.** It is one flag that turns off CLAUDE.md, plugins, hooks and MCP and keeps auth. Its "installed plugins" may include the `--plugin-dir` filter, its help doesn't say it covers auto-memory or the reminders, and nothing measured it.
 

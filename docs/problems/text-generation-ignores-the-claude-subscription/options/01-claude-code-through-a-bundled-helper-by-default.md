@@ -82,7 +82,7 @@ The default sends nothing by itself. Text generation's only consumer is Hey Varn
   - `mods/reminders` beside it as real files;
   - run as `bun --no-env-file` on `agent.js`.
 - The entry calls `@zabaca/agent`'s `run(prompt, minimalOptions())` with the user's own `claude` as the executable, and streams text as it comes.
-- The model is pinned to Claude Haiku 4.5 (`claude-haiku-4-5`).
+- The model is pinned to Claude Haiku 5.5 (`claude-haiku-5-5`).
 - The reminders filter is zbc's own module, keeping nothing.
 - Claude Code also writes the decide step on Jev's failure path.
 - No `ANTHROPIC_API_KEY` in the helper's environment.
@@ -150,8 +150,8 @@ The default sends nothing by itself. Text generation's only consumer is Hey Varn
   - the attribution header off;
   - every reminder dropped;
   - the SDK's own one-line system prompt;
-  - Haiku 4.5, which is also `minimalOptions()`'s default, set from the request so Varnick pins it in one place.
-- No effort is set: Haiku 4.5 refuses an effort setting.
+  - Haiku 5.5 (`claude-haiku-5-5`), in place of `minimalOptions()`'s own default model, set from the request so Varnick pins it in one place.
+- No effort is set. Haiku 5.5 thinks by default, and turning thinking off is accepted only at effort `high` or below; its default effort is `medium` (the claude-api skill's model notes of 2026-10-06). Whether the call takes thinking off as `minimalOptions()` asks, and whether `low` effort is faster, is for the eval to confirm (still open, below).
 - Spread over them:
   - the user's `claude` as the executable;
   - no session persistence, so nothing is written under `~/.claude/projects` for session search, Recent or project recency to read;
@@ -279,7 +279,7 @@ There is no test target. Verification is `make build` (which must fetch Bun, bui
 
 1. **One process per request, or a warm helper.** Recommended: one `bun` per request in this first cut, unless the eval shows start-up is too slow. A warm helper is one long-lived `bun`, started when Hey Varnick turns on, speaking the same JSON lines with ids. It saves `bun`'s start and the load of `agent.js`, and it can start the `claude` query when "Hey Varnick" is heard and feed it the prompt once the rows are ready. That hides `claude`'s start-up as ElevenLabs' warm-up hides its connection. Each request is still a fresh query, so no request sees another's rows (unlike option 04). The figure to decide on: start-up's share of a call.
 2. **The deadline.** From the eval's figures: the slowest warm answer-sized call, plus a margin. Unmeasured until then.
-3. **Haiku 5.5.** Time `claude-haiku-5-5` in the same eval as the pinned Haiku 4.5. It is the current Haiku in the claude-api skill's model table of 2026-10-06, and it thinks by default. Switching would be a new decision for the user. Whether the subscription's Claude Code serves either id is unverified.
+3. **Thinking off and effort on Haiku 5.5.** The eval confirms that the call runs with thinking off, which Haiku 5.5 accepts only at effort `high` or below, and whether setting `low` effort makes it faster. If thinking can't be turned off, the levers need a change before this ships. Whether the subscription's Claude Code serves `claude-haiku-5-5` is unverified, and the eval's first call shows it.
 
 **Considered and not chosen**
 - **A helper compiled with `bun build --compile`.** This was this option's first design, passed over by the user on 2026-10-10 after the spike. It needs the same one entitlement, but:
