@@ -275,11 +275,11 @@ struct OutlinePanelView: PanelAccessView {
                 "first": ["type": "boolean", "description": "add: put the bullets first under `under` instead of last."],
             ]),
         PanelActionSpec(
-            name: "set_text", summary: "Sets bullet `id`'s text to `text`, one line. Refused \"not yet\" while the user's caret is in that bullet's text.",
+            name: "set_text", summary: "Sets bullet `id`'s text to `text`, one line. Refused \"Read it first\" unless you read this row with outline_read, and \"Changed since you read it: read again\" if its text has changed since (the user's typing included): it replaces the whole text. If the user's caret is in that text it goes in as a typed change, the caret kept at its place, and waits (up to 3 s) while the user is composing.",
             properties: ["id": ["type": "string", "description": "The row (o1…) the action is about, from outline_read."]]),
         PanelActionSpec(
             name: "set_note",
-            summary: "Sets bullet `id`'s note to `note`; empty removes it. Refused \"not yet\" while the user's caret is in that bullet's note.",
+            summary: "Sets bullet `id`'s note to `note`; empty removes it. Refused \"Read it first\" unless you read this row with outline_read, and \"Changed since you read it: read again\" if its note has changed since. If the user's caret is in that note it goes in as a typed change, the caret kept at its place, and waits (up to 3 s) while the user is composing.",
             properties: ["note": ["type": "string", "description": "set_note: the note, with line breaks; empty removes it."]]),
         PanelActionSpec(
             name: "complete", summary: "Marks bullet `id` done (`done` true) or not done (false), acting only when that differs.",
@@ -316,7 +316,8 @@ struct OutlinePanelView: PanelAccessView {
     @MainActor func read(_ args: PanelArguments, caller: UUID) async throws -> String {
         let outline = try await ready()
         let tree = outline.tree
-        let reading = OutlineReading(tree: tree) { PanelAccess.shared.outlineID(for: $0, caller: caller) }
+        var reading = OutlineReading(tree: tree) { PanelAccess.shared.outlineID(for: $0, caller: caller) }
+        reading.listed = { PanelAccess.shared.sawOutline($0, text: $1, note: $2, caller: caller) }
         let text = (args["at"] ?? "").trimmingCharacters(in: .whitespaces)
         let depthText = (args["depth"] ?? "").trimmingCharacters(in: .whitespaces)
         let afterText = (args["after"] ?? "").trimmingCharacters(in: .whitespaces)
@@ -389,6 +390,8 @@ struct OutlinePanelView: PanelAccessView {
         }
 
         let edit: OutlineEdit
+        /// For a text or note: the field, which the session must have read and find unchanged right before the edit.
+        var field: (path: OutlinePath, field: OutlineField)?
         let said: (Outline.SessionOutcome) -> String
         switch action {
         case "add":
@@ -426,6 +429,7 @@ struct OutlinePanelView: PanelAccessView {
             guard let new = args[key] else { throw PanelRefusal.bad(key == "note" ? "note is required (empty removes the note)" : "text is required") }
             if let problem = OutlineActing.problem(withText: new, note: key == "note") { throw PanelRefusal.bad(problem) }
             edit = key == "note" ? .setNote(path, new) : .setText(path, new)
+            field = (path, key == "note" ? .note : .text)
             said = { _ in key == "text" ? "Set the text of \(id(path))." : new.isEmpty ? "Removed the note of \(id(path))." : "Set the note of \(id(path))." }
         case "complete":
             let path = try row("id")
@@ -467,11 +471,14 @@ struct OutlinePanelView: PanelAccessView {
             throw PanelRefusal.bad("action is one of: " + Self.actionSpecs.map(\.name).joined(separator: ", "))
         }
         // Asked again right before the edit, after its waits: a session told "controlled" or cancelled must not have changed the Outline.
-        let done = await outline.performForSession(edit) { !Task.isCancelled && ids.mayAct(caller: caller) }
+        let done = await outline.performForSession(edit, fresh: { tree in
+            field.flatMap { ids.outlineStaleness(of: $0.field, at: $0.path, in: tree, caller: caller) }
+        }, allowed: { !Task.isCancelled && ids.mayAct(caller: caller) })
         if let refusal = done.refusal {
             if refusal == .gone { throw PanelRefusal.gone }
             throw PanelRefusal.refused(refusal.reason)
         }
+        if let field { ids.setOutline(field.field, at: field.path, in: outline.tree, caller: caller) }
         guard done.changed else { return "Already so: nothing changed." }
         return said(done)
     }

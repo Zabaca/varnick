@@ -937,11 +937,12 @@ struct OutlineTree: Codable, Equatable {
     }
 
     /// A note's line breaks as line feeds.
-    private static func cleanNote(_ note: String) -> String {
+    static func cleanNote(_ note: String) -> String {
         note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 
-    private static func oneLine(_ text: String) -> String {
+    /// A bullet's text as one line: each line break a space.
+    static func oneLine(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
     }
 

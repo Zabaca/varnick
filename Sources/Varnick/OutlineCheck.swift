@@ -271,10 +271,129 @@ enum OutlineCheck {
               + "\(OutlineActing.problem(withText: String(repeating: "x", count: OutlineActing.textLimit + 1), note: false) != nil)")
     }
 
+    /// A session's edit to the bullet the user is typing in (`OutlineActing.smallestChange` and `.selection`, which `OutlineTextView.replaceAsKey` runs):
+    /// the part of a text that differs, and where the user's selection goes around it. Fixed sample strings; prints counts and the names of any case
+    /// that fails.
+    private static func typedInCheck() {
+        var failed: [String] = []
+        var cases = 0
+        func expect(_ name: String, _ ok: Bool) {
+            cases += 1
+            if !ok { failed.append(name) }
+        }
+        func change(_ old: String, _ new: String) -> OutlineActing.TextChange? { OutlineActing.smallestChange(from: old, to: new) }
+        func range(_ location: Int, _ length: Int) -> NSRange { NSRange(location: location, length: length) }
+        func changed(_ location: Int, _ length: Int, _ replacement: String) -> OutlineActing.TextChange? {
+            OutlineActing.TextChange(range: range(location, length), replacement: replacement)
+        }
+        expect("one word replaced", change("hello world", "hello there") == changed(6, 5, "there"))
+        expect("the same text", change("same", "same") == nil)
+        expect("an insert", change("ab", "aXYb") == changed(1, 0, "XY"))
+        expect("a delete", change("aXYb", "ab") == changed(1, 2, ""))
+        expect("a repeat at the end", change("aaa", "aa") == changed(2, 1, ""))
+        expect("from empty", change("", "new") == changed(0, 0, "new"))
+        expect("to empty", change("old", "") == changed(0, 3, ""))
+        expect("an emoji changed keeps its pair whole", change("a\u{1F600}b", "a\u{1F601}b") == changed(1, 2, "\u{1F601}"))
+        expect("an emoji changed at the end keeps its pair whole", change("a\u{1F600}", "a\u{1F601}") == changed(1, 2, "\u{1F601}"))
+        expect("a skin tone added takes the whole emoji", change("\u{1F44D}", "\u{1F44D}\u{1F3FD}") == changed(0, 2, "\u{1F44D}\u{1F3FD}"))
+        expect("an accent added takes its letter", change("cafe", "cafe\u{301}") == changed(3, 1, "e\u{301}"))
+        expect("an accent removed takes its letter", change("e\u{301}", "e") == changed(0, 2, "e"))
+        expect("a precomposed letter swapped for a decomposed one", change("\u{E9}", "e\u{301}") == changed(0, 1, "e\u{301}"))
+        // Whatever the pair, the change turns the old text into the new, and both ends of it are on character boundaries in both texts.
+        let samples = ["", "a", "ab", "abc", "hello world", "hello there", "x\u{1F600}y", "x\u{1F601}y", "\u{1F600}\u{1F600}", "\u{1F600}", "e\u{301}", "#tag text",
+                       "text #tag", "\u{1F44D}", "\u{1F44D}\u{1F3FD}", "cafe", "caf\u{E9}", "cafe\u{301}", "\u{1F468}\u{200D}\u{1F469}", "\u{1F1FA}\u{1F1F8}"]
+        func whole(_ text: NSString, _ index: Int) -> Bool {
+            index <= 0 || index >= text.length || text.rangeOfComposedCharacterSequence(at: index).location == index
+        }
+        var everyPair = true, everyEdge = true
+        for old in samples {
+            for new in samples {
+                guard let found = change(old, new) else {
+                    everyPair = everyPair && old == new
+                    continue
+                }
+                everyPair = everyPair && (old as NSString).replacingCharacters(in: found.range, with: found.replacement) == new
+                let end = found.range.location + (found.replacement as NSString).length
+                everyEdge = everyEdge && whole(old as NSString, found.range.location) && whole(old as NSString, NSMaxRange(found.range))
+                    && whole(new as NSString, found.range.location) && whole(new as NSString, end)
+            }
+        }
+        expect("every pair of samples turns the old into the new", everyPair)
+        expect("every pair of samples is changed between character boundaries", everyEdge)
+
+        // A word of 5 replaced by one of 3 (6..<11 of 14), and an insert of 2 at 4.
+        let word = range(6, 5)
+        func after(_ selected: NSRange, _ replaced: NSRange = range(6, 5), _ length: Int = 3) -> NSRange {
+            OutlineActing.selection(selected, afterReplacing: replaced, withLength: length)
+        }
+        expect("a caret before stays", after(range(2, 0)) == range(2, 0))
+        expect("a caret at the start of the range stays", after(range(6, 0)) == range(6, 0))
+        expect("a caret after shifts by the change in length", after(range(14, 0)) == range(12, 0))
+        expect("a caret at the end of the range lands at the end of the new text", after(range(11, 0)) == range(9, 0))
+        expect("a caret inside lands at the end of the new text", after(range(8, 0)) == range(9, 0))
+        expect("a selection before stays", after(range(0, 6)) == range(0, 6))
+        expect("a selection after shifts, its length kept", after(range(11, 3)) == range(9, 3))
+        expect("a selection inside becomes a caret at the end", after(range(8, 1)) == range(9, 0))
+        expect("a selection spanning the change becomes a caret at the end", after(range(3, 10)) == range(9, 0))
+        expect("a selection starting inside and ending after becomes a caret at the end", after(range(8, 6)) == range(9, 0))
+        expect("a selection ending inside and starting before becomes a caret at the end", after(range(2, 7)) == range(9, 0))
+        expect("a longer replacement moves a caret after it out", after(range(14, 0), word, 9) == range(18, 0))
+        expect("a caret at an insertion point stays before it", after(range(4, 0), range(4, 0), 2) == range(4, 0))
+        expect("a caret after an insertion shifts", after(range(5, 0), range(4, 0), 2) == range(7, 0))
+        expect("a selection from an insertion point shifts with the text", after(range(4, 3), range(4, 0), 2) == range(6, 3))
+        expect("a delete leaves a caret inside at the join", after(range(8, 0), word, 0) == range(6, 0))
+        print("typed-in check: \(cases - failed.count) of \(cases) cases as expected" + (failed.isEmpty ? "" : "; NOT as expected: " + failed.joined(separator: ", ")))
+    }
+
+    /// A session may set a text or note only after reading the row and only while it is as read (`OutlineKnowledge`, fed by `OutlineReading.listed`):
+    /// on a small tree of its own. Prints yes or no, never a bullet's text.
+    private static func readBeforeEditCheck() {
+        let at = Date(timeIntervalSince1970: 0)
+        func bullet(_ text: String, note: String? = nil, _ children: [(String, String)] = []) -> OutlineBullet {
+            var made = OutlineBullet(text: text, created: at, changed: at, children: children.map { OutlinePlacement(id: $0.0, bullet: $0.1) })
+            made.note = note
+            return made
+        }
+        let long = String(repeating: "x", count: OutlineReading.textLimit + 50)
+        let tree = OutlineTree(root: "r", bullets: ["r": bullet("", [("p1", "a"), ("p2", "b")]), "a": bullet("one"), "b": bullet(long, note: "n1\nn2")])
+        let a = OutlinePath(placements: ["p1"]), b = OutlinePath(placements: ["p2"]), nowhere = OutlinePath(placements: ["p9"])
+        var known = OutlineKnowledge()
+        func fresh(_ field: OutlineField, _ path: OutlinePath, _ in: OutlineTree) -> OutlineKnowledge.Freshness { known.freshness(of: field, at: path, in: `in`) }
+        let before = fresh(.text, a, tree)
+        var reading = OutlineReading(tree: tree) { $0.id }
+        reading.listed = { known.read($0, text: $1, note: $2) }
+        let read = try? reading.read(from: nil, depth: 0)
+        let cut = read?.text.contains("more characters") == true
+        func ok(_ value: Bool) -> String { value ? "yes" : "NO" }
+        print("read-before-edit check: a row not read yet is unread: \(ok(before == .unread)); after a read both fields of both rows are current: "
+              + "\(ok(fresh(.text, a, tree) == .current && fresh(.note, a, tree) == .current && fresh(.text, b, tree) == .current && fresh(.note, b, tree) == .current)); "
+              + "a text the read cut short is current: \(ok(cut && fresh(.text, b, tree) == .current)); a row the read didn't list is unread: \(ok(fresh(.text, nowhere, tree) == .unread))")
+        var typed = tree
+        typed.bullets["a"]?.text = "one more"
+        typed.bullets["b"]?.note = "n1\nn2\nn3"
+        print("read-before-edit check: typing after the read makes that field changed: \(ok(fresh(.text, a, typed) == .changed && fresh(.note, b, typed) == .changed)), "
+              + "and only that field: \(ok(fresh(.note, a, typed) == .current && fresh(.text, b, typed) == .current)); "
+              + "the refusals say \"\(OutlineKnowledge.Freshness.changed.refusal ?? "")\" and \"\(OutlineKnowledge.Freshness.unread.refusal ?? "")\"")
+        known.set(.text, at: a, in: typed)
+        print("read-before-edit check: after the session sets a text it is current for it: \(ok(fresh(.text, a, typed) == .current)), "
+              + "the note it didn't set is no better known: \(ok(fresh(.note, b, typed) == .changed)); a row gone is changed: "
+              + "\(ok(fresh(.text, OutlinePath(placements: ["p1", "p9"]), typed) == .unread && fresh(.text, a, OutlineTree(root: "r", bullets: ["r": bullet("")])) == .changed))")
+        var other = OutlineKnowledge()
+        var shownReading = OutlineReading(tree: tree) { $0.id }
+        shownReading.listed = { other.read($0, text: $1, note: $2) }
+        let rows = tree.visibleRows()
+        _ = try? shownReading.shown(OutlineReading.Shown(rows: rows, crumbs: [], filterText: "", showsCompleted: false, caret: nil, selection: nil, onScreen: true))
+        print("read-before-edit check: a read of the rows as shown makes them current too: \(ok(rows.count == 2 && other.freshness(of: .text, at: b, in: tree) == .current && other.freshness(of: .text, at: a, in: typed) == .changed))")
+        known.forget()
+        print("read-before-edit check: forgotten, a row is unread again: \(ok(fresh(.text, a, tree) == .unread))")
+    }
+
     /// A session's edits (Panel access) on a copy with the zoom cleared: `add` in each place, and where the user's caret goes. Prints counts and
     /// yes or no, never a bullet's text.
     private static func actCheck(_ tree: OutlineTree) {
         wholeTreeCheck()
+        typedInCheck()
+        readBeforeEditCheck()
         var copy = tree
         copy.zoom = []
         copy.showsCompleted = true

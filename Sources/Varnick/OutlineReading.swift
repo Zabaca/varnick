@@ -9,6 +9,8 @@ struct OutlineReading {
     let tree: OutlineTree
     /// The `o` id of a row's path: the same path always gets the same id.
     let id: (OutlinePath) -> String
+    /// Told of each row a read lists, with the bullet's full text and note (not the cut ones the read shows): what a session has read.
+    var listed: ((OutlinePath, String, String?) -> Void)?
 
     /// The most rows one read lists, then "N more" and the call that continues.
     static let rowLimit = 400
@@ -156,6 +158,7 @@ struct OutlineReading {
     /// One bullet's line and its note's lines under it.
     private func rows(for entry: Entry, indent: Int, places: Int) -> [String] {
         let bullet = entry.bullet
+        listed?(entry.path, bullet.text, bullet.note)
         let short = Shortened(text: bullet.text, note: bullet.note)
         var parts = ["\(id(entry.path)) \(short.quotedText)"]
         if bullet.completed != nil { parts.append("[done]") }
@@ -202,6 +205,7 @@ struct OutlineReading {
         var lines = ["Outline as the user sees it" + (view.onScreen ? "" : " (not showing now: this is what it shows when opened)")]
         lines += state(view)
         if let title = view.crumbs.last, let bullet = tree.bullets[tree.bulletID(at: title.path) ?? ""] {
+            listed?(title.path, bullet.text, bullet.note)
             let short = Shortened(text: bullet.text, note: bullet.note)
             lines += ["Title: \(id(title.path)) \(short.quotedText)" + (bullet.completed != nil ? " [done]" : "") + short.tags] + short.noteLines(indent: 0)
         }
@@ -223,6 +227,7 @@ struct OutlineReading {
     }
 
     private func rows(for row: OutlineRow, places: Int, filtering: Bool) -> [String] {
+        listed?(row.path, row.text, row.note)
         let short = Shortened(text: row.text, note: row.note)
         var parts = ["\(id(row.path)) \(short.quotedText)"]
         if row.completed { parts.append("[done]") } else if row.dimmed { parts.append("(under a done bullet)") }
