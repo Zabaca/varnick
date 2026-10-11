@@ -75,19 +75,29 @@ enum OutlineEdit {
     case delete(OutlinePath)
     /// Several lines pasted over `range`: the first at the caret, each further one in a new bullet below. Blank lines are skipped.
     case paste(OutlinePath, range: Range<Int>, lines: [String])
-    /// ⇥: the last bullet under the sibling above, which opens. `offset` is where the caret was, for the caret that follows the row.
-    case indent(OutlinePath, offset: Int)
+    /// ⇥: the last bullet under the sibling above, which opens. The caret's row is the one edited; it follows the row to its new path.
+    case indent(OutlineCaret)
     /// ⇧⇥: the next sibling of its parent. The siblings after it stay where they were.
-    case outdent(OutlinePath, offset: Int)
+    case outdent(OutlineCaret)
     /// ⌘⇧↑ and ⌘⇧↓ (`by` is -1 or 1): swaps with a sibling, nested bullets and all; refused at the first or last.
-    case move(OutlinePath, by: Int, offset: Int)
+    case move(OutlineCaret, by: Int)
     /// ⌘↑ and ⌘↓: the placement's own state, so it is refused for a bullet with nothing nested.
     case collapse(OutlinePath, Bool)
 }
 
+/// Why an edit changed nothing. Only `insideItself` is said to the user (a beep and a header message); the rest is for whoever reads a check.
+enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
+    case insideItself
+    case other(String)
+
+    init(stringLiteral reason: String) { self = .other(reason) }
+
+    static let insideItselfMessage = "A bullet can't go inside itself"
+}
+
 enum OutlineEditResult: Equatable {
     case applied(OutlineTree, caret: OutlineCaret?)
-    case refused(String)
+    case refused(OutlineRefusal)
 }
 
 struct OutlineTree: Codable, Equatable {
@@ -275,31 +285,31 @@ struct OutlineTree: Codable, Equatable {
                 // No row above: the caret goes to the first row left, the empty one a lone bullet's delete leaves included.
                 return Self.finish(tree, caret: nil, now: now, newID: newID, caretInFirstRow: true)
             }
-        case .indent(let path, let offset):
-            guard let spot = locate(path), spot.index > 0, let above = bullets[spot.parent]?.children[spot.index - 1] else {
-                return .refused("no sibling above")
-            }
-            guard !contains(spot.bullet, descendant: above.bullet) else { return .refused(Self.insideItself) }
+        case .indent(let at):
+            guard let spot = locate(at.path), spot.index > 0, let above = bullets[spot.parent]?.children[spot.index - 1],
+                  let own = at.path.placements.last else { return .refused("no sibling above") }
+            guard !contains(spot.bullet, descendant: above.bullet) else { return .refused(.insideItself) }
             let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index)
             tree.bullets[spot.parent]?.children[spot.index - 1].collapsed = nil
             tree.bullets[spot.parent]?.changed = now
             if let moved { tree.bullets[above.bullet]?.children.append(moved) }
             tree.bullets[above.bullet]?.changed = now
-            caret = OutlineCaret(path: path.parent.appending(above.id).appending(path.placements[path.placements.count - 1]), offset: offset)
-        case .outdent(let path, let offset):
-            guard path.placements.count >= 2, let spot = locate(path), let parent = locate(path.parent) else { return .refused("already at the top") }
+            caret = OutlineCaret(path: at.path.parent.appending(above.id).appending(own), offset: at.offset)
+        case .outdent(let at):
+            guard at.path.placements.count >= 2, let spot = locate(at.path), let parent = locate(at.path.parent),
+                  let own = at.path.placements.last else { return .refused("already at the top") }
             if let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index) {
                 tree.bullets[parent.parent]?.children.insert(moved, at: parent.index + 1)
             }
             tree.bullets[spot.parent]?.changed = now
             tree.bullets[parent.parent]?.changed = now
-            caret = OutlineCaret(path: path.parent.parent.appending(path.placements[path.placements.count - 1]), offset: offset)
-        case .move(let path, let step, let offset):
-            guard let spot = locate(path), let count = bullets[spot.parent]?.children.count,
+            caret = OutlineCaret(path: at.path.parent.parent.appending(own), offset: at.offset)
+        case .move(let at, let step):
+            guard let spot = locate(at.path), let count = bullets[spot.parent]?.children.count,
                   (0..<count).contains(spot.index + step) else { return .refused("first or last") }
             tree.bullets[spot.parent]?.children.swapAt(spot.index, spot.index + step)
             tree.bullets[spot.parent]?.changed = now
-            caret = OutlineCaret(path: path, offset: offset)
+            caret = at
         case .collapse(let path, let collapsed):
             guard let spot = locate(path), bullets[spot.bullet]?.children.isEmpty == false else { return .refused("nothing nested") }
             tree.bullets[spot.parent]?.children[spot.index].collapsed = collapsed ? true : nil
@@ -341,9 +351,6 @@ struct OutlineTree: Codable, Equatable {
         return .applied(done, caret: OutlineCaret(path: first.path, offset: 0))
     }
 
-    /// The refusal that beeps and shows in the header.
-    static let insideItself = "A bullet can't go inside itself"
-
     /// Whether `descendant` is `ancestor` or can be reached from it by placements.
     func contains(_ ancestor: String, descendant: String) -> Bool {
         var seen: Set<String> = []
@@ -358,15 +365,18 @@ struct OutlineTree: Codable, Equatable {
 
     /// How many levels the deepest bullet is down: 1 for bullets directly under the top bullet, 0 for none.
     var deepestLevel: Int {
-        var deepest = 0
-        func walk(_ id: String, level: Int, stack: Set<String>) {
+        // A mirror's bullet is reached once per placement, so each bullet's depth below it is worked out once.
+        var below: [String: Int] = [:]
+        func levels(below id: String, stack: Set<String>) -> Int {
+            if let known = below[id] { return known }
+            var deepest = 0
             for placement in bullets[id]?.children ?? [] where !stack.contains(placement.bullet) {
-                deepest = max(deepest, level)
-                walk(placement.bullet, level: level + 1, stack: stack.union([placement.bullet]))
+                deepest = max(deepest, 1 + levels(below: placement.bullet, stack: stack.union([placement.bullet])))
             }
+            below[id] = deepest
+            return deepest
         }
-        walk(root, level: 1, stack: [root])
-        return deepest
+        return levels(below: root, stack: [root])
     }
 
     private static func oneLine(_ text: String) -> String {

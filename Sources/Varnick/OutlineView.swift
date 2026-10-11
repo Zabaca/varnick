@@ -13,7 +13,7 @@ struct OutlineView: View {
             HStack(spacing: 14) {
                 Image(systemName: "list.bullet.indent").foregroundStyle(.secondary)
                 Text("Outline").font(.system(size: 15, weight: .semibold))
-                if let notice = outline.notice { Text(notice).foregroundStyle(.orange).lineLimit(1) }
+                if let notice = outline.notice { Text(notice).font(.system(size: 11.5)).foregroundStyle(.orange).lineLimit(1) }
                 Spacer()
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
                     .buttonStyle(.plain)
@@ -86,6 +86,9 @@ private struct OutlineRowView: View {
 
     /// What each level of nesting indents by.
     static let indent: CGFloat = 18
+    /// The disclosure triangle's width, and the height of a one-line row's dot and triangle.
+    static let disclosureWidth: CGFloat = 12
+    static let lineHeight: CGFloat = 18
 
     var body: some View {
         HStack(alignment: .top, spacing: 4) {
@@ -105,12 +108,12 @@ private struct OutlineRowView: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(row.collapsed ? 0 : 90))
-                    .frame(width: 12, height: 18)
+                    .frame(width: Self.disclosureWidth, height: Self.lineHeight)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         } else {
-            Color.clear.frame(width: 12, height: 18)
+            Color.clear.frame(width: Self.disclosureWidth, height: Self.lineHeight)
         }
     }
 
@@ -122,7 +125,7 @@ private struct OutlineRowView: View {
                 Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 12, height: 12)
             }
         }
-        .frame(width: 14, height: 18)
+        .frame(width: 14, height: Self.lineHeight)
     }
 }
 
@@ -169,7 +172,7 @@ private struct BulletText: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? OutlineTextView else { return }
-            outline.textChanged(view.rowPath, view.string)
+            outline.textChanged(view.rowPath, view.string, selectionBefore: view.selectionBeforeChange)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -180,7 +183,10 @@ private struct BulletText: NSViewRepresentable {
         /// A bullet is one paragraph.
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
             guard let text = replacementString else { return true }
-            return !text.contains { $0.isNewline }
+            guard !text.contains(where: \.isNewline) else { return false }
+            // Where the selection starts before it changes: where an undo puts the caret back.
+            (textView as? OutlineTextView)?.selectionBeforeChange = textView.selectedRange().location
+            return true
         }
     }
 }
@@ -188,6 +194,8 @@ private struct BulletText: NSViewRepresentable {
 final class OutlineTextView: NSTextView {
     var rowPath = OutlinePath(placements: [])
     weak var outline: Outline?
+    /// Where the selection started before the change the delegate is hearing of.
+    var selectionBeforeChange: Int?
 
     static let font = NSFont.systemFont(ofSize: 13)
 
@@ -206,7 +214,7 @@ final class OutlineTextView: NSTextView {
         view.outline = outline
         view.isRichText = false
         view.importsGraphics = false
-        // The outline's own undo (a later ticket) covers typing and structure in one order.
+        // The outline's own undo covers typing and structure in one order.
         view.allowsUndo = false
         view.drawsBackground = false
         view.isHorizontallyResizable = false
@@ -248,7 +256,10 @@ final class OutlineTextView: NSTextView {
     @MainActor
     override func resignFirstResponder() -> Bool {
         let accepted = super.resignFirstResponder()
-        if accepted { syncFromModel() }
+        if accepted {
+            syncFromModel()
+            outline?.caretLeft()
+        }
         return accepted
     }
 

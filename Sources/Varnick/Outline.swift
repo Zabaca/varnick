@@ -99,6 +99,7 @@ final class Outline: ObservableObject {
         saver.flush()
         pending = nil
         queuedEvents = []
+        typingRun = nil
     }
 
     /// Quit from the menu bar: a change not yet written is written, after any write under way.
@@ -130,9 +131,9 @@ final class Outline: ObservableObject {
         guard load == .ready else { return false }
         switch tree.applying(edit, now: Date()) {
         case .refused(let reason):
-            if reason == OutlineTree.insideItself {
+            if reason == .insideItself {
                 NSSound.beep()
-                say(reason)
+                say(OutlineRefusal.insideItselfMessage)
             }
             return false
         case .applied(let new, let caret):
@@ -146,17 +147,15 @@ final class Outline: ObservableObject {
         }
     }
 
-    /// A text view's text changed: the user typed.
-    func textChanged(_ path: OutlinePath, _ text: String) {
-        // The caret was behind what was typed, or in front of what was deleted.
+    /// A text view's text changed: the user typed. `selectionBefore` is where its selection started before the change (its delegate saw it first).
+    func textChanged(_ path: OutlinePath, _ text: String, selectionBefore: Int?) {
         let length = (tree.text(at: path) ?? "").utf16.count
-        var before: OutlineCaret?
-        if let view = activeView, view.rowPath == path {
-            let delta = text.utf16.count - length
-            before = OutlineCaret(path: path, offset: min(max(view.selectedRange().location - delta, 0), length))
-        }
+        let before = selectionBefore.map { OutlineCaret(path: path, offset: min($0, length)) }
         apply(.setText(path, text), caretBefore: before, typing: true)
     }
+
+    /// The text view with the caret gave up focus: what is typed next is a new step.
+    func caretLeft() { typingRun = nil }
 
     func paste(_ view: OutlineTextView, lines: [String]) {
         let selection = view.selectedRange()
@@ -225,7 +224,7 @@ final class Outline: ObservableObject {
         if let caret = step.caret, rows.contains(where: { $0.path == caret.path }) {
             moveCaret(to: caret.path, .offset(caret.offset))
         } else {
-            remembered = nil
+            if let caret = step.caret { remembered = (caret.path, caret.offset) }
             restoreCaret()
         }
     }
@@ -253,14 +252,26 @@ final class Outline: ObservableObject {
 
     // MARK: Caret
 
-    /// The caret goes back to where it was, or into the first bullet.
+    /// The caret goes back to where it was. A row that is hidden now (a collapsed parent) gives it to the nearest row still showing on its path,
+    /// at the end of its text; a path that is gone gives it to the first bullet.
     func restoreCaret() {
         guard load == .ready else { return }
         if let remembered, rows.contains(where: { $0.path == remembered.path }) {
             moveCaret(to: remembered.path, .offset(remembered.location))
+        } else if let remembered, let near = nearestVisible(remembered.path) {
+            moveCaret(to: near, .offset(Int.max))
         } else if let first = rows.first {
             moveCaret(to: first.path, .offset(Int.max))
         }
+    }
+
+    private func nearestVisible(_ path: OutlinePath) -> OutlinePath? {
+        var near = path.parent
+        while !near.placements.isEmpty {
+            if rows.contains(where: { $0.path == near }) { return near }
+            near = near.parent
+        }
+        return nil
     }
 
     /// A click below the last bullet.
@@ -314,8 +325,8 @@ final class Outline: ObservableObject {
 
     // MARK: Keys
 
-    /// The keys the outline takes, as `SessionBoard.key` does: ↩, ⌫ at the start, ↑, ↓ and esc, and the End session, Mark session done and
-    /// Restart session keys, which do nothing. The rest goes on; while an input method is composing, so does all but those three.
+    /// The keys the outline takes, as `SessionBoard.key` does: the switch below lists them. The End session, Mark session done and Restart
+    /// session keys are taken and do nothing. The rest goes on; while an input method is composing, so does all but those three.
     func key(_ event: NSEvent) -> Bool {
         if let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession || action == .restartSession {
             return true
@@ -347,6 +358,7 @@ final class Outline: ObservableObject {
         guard load == .ready, !composing, let view = activeView, view.window?.firstResponder === view else { return false }
         let selection = view.selectedRange()
         let path = view.rowPath
+        let here = OutlineCaret(path: path, offset: selection.location)
         let atStart = selection.location == 0 && selection.length == 0
         switch (code, flags) {
         case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []):
@@ -356,17 +368,17 @@ final class Outline: ObservableObject {
         case (kVK_Delete, commandShift):
             apply(.delete(path))
         case (kVK_Tab, []):
-            apply(.indent(path, offset: selection.location))
+            apply(.indent(here))
         case (kVK_Tab, .shift):
-            apply(.outdent(path, offset: selection.location))
+            apply(.outdent(here))
         case (kVK_UpArrow, []) where view.caretOnFirstLine:
             return cross(from: view, by: -1)
         case (kVK_DownArrow, []) where view.caretOnLastLine:
             return cross(from: view, by: 1)
         case (kVK_UpArrow, commandShift):
-            apply(.move(path, by: -1, offset: selection.location))
+            apply(.move(here, by: -1))
         case (kVK_DownArrow, commandShift):
-            apply(.move(path, by: 1, offset: selection.location))
+            apply(.move(here, by: 1))
         case (kVK_UpArrow, command):
             apply(.collapse(path, true))
         case (kVK_DownArrow, command):
