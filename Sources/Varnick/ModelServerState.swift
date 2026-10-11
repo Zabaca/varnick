@@ -9,8 +9,7 @@ enum ModelRunOn: String, CaseIterable, Identifiable {
     var title: String { self == .local ? "On this Mac" : "Server" }
 }
 
-/// Where Text generation runs (Settings › Models): the user's own Claude Code, in this process, or on a model server. Claude Code can't
-/// embed, so Search embeddings keeps `ModelRunOn`. Saved as the raw value, so `local` and `server` keep their meaning; a build that
+/// Where Text generation runs (Settings › Models). Claude Code can't embed, so Search embeddings keeps `ModelRunOn`; a build that
 /// predates `claude` reads it as unknown, which gives `local`.
 enum TextRunOn: String, CaseIterable, Identifiable {
     case claude, local, server

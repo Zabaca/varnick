@@ -6,9 +6,8 @@ import VarnickPeer
 
 // MARK: - The environment
 
-/// The environment the text helper and `claude` run with: the one the user's login shell builds, which a pane's `claude` gets too,
-/// read once per launch. Some users' Claude login is something their shell sets up (a credential proxy, a token in the startup
-/// files), and a Varnick started by launchd has none of it. Held in memory only, never logged and never written.
+/// The environment the helper and `claude` run with: the one the user's login shell builds, as a pane's `claude` gets, read once per
+/// launch (a login set up in the shell's startup files isn't Varnick's). In memory only, never logged or written.
 struct ClaudeEnvironment: Sendable, Equatable {
     var variables: [String: String]
     /// The `claude` the shell finds, as a path; nil when there is none.
@@ -38,7 +37,8 @@ struct ClaudeEnvironment: Sendable, Equatable {
     /// NUL-separated, so a value that holds a newline survives. `command -v claude` is asked of the same shell.
     private static let begin = "VARNICK-ENV-BEGIN", end = "VARNICK-ENV-END", done = "VARNICK-ENV-DONE"
     private static let script = "printf '\\n\(begin)\\n'; /usr/bin/env -0; printf '\(end)\\n'; command -v claude; printf '\(done)\\n'"
-    /// A shell that takes longer than this is killed, and Varnick's own environment is used.
+    /// A shell over this is stopped (SIGTERM, which an interactive shell ignores, then SIGKILL a second later: 6 s in all), and Varnick's
+    /// own environment is used. A child its startup files started can outlive it.
     static let shellTimeout: TimeInterval = 5
 
     /// The variables and the `claude` path in a shell's output, nil when the markers aren't there.
@@ -87,15 +87,13 @@ struct ClaudeEnvironment: Sendable, Equatable {
 
 // MARK: - The helper
 
-/// One request to the text helper: `bun` running `agent.js`, which drives the user's `claude` through the Agent SDK with no tools,
-/// none of the user's settings, no transcript saved and one request to Anthropic (TextHelper/agent.ts). Varnick decides everything
-/// the request holds; the helper answers in JSON lines on standard output.
+/// The text helper: `bun` running `agent.js` (TextHelper/agent.ts), which drives the user's `claude` through the Agent SDK. Varnick
+/// decides everything a request holds; the helper answers in JSON lines on standard output.
 enum TextHelper {
     /// Pinned in one place; Claude Haiku 5.5.
     static let model = "claude-haiku-5-5"
-    /// From the start of `bun` to the `result`. A normal reply takes 1.2 to 1.35 s, and a login that fails makes `claude` retry for
-    /// minutes instead of failing, so this is a few seconds: far below the retries, well above a reply. Past it the call is killed
-    /// and this Mac's model answers.
+    /// From the start of `bun` to the `result`: a reply takes 1.3 s and under 2 s at worst (eval phase 2), and a failing login retries
+    /// for minutes. Past it the call is killed and this Mac's model answers.
     static let deadline: TimeInterval = 4
 
     /// Claude Code older than this ignores the reminders filter and sends every reminder, the account's email address among them.
@@ -240,10 +238,8 @@ enum TextHelper {
         var exitStatus: Int32?
     }
 
-    /// Runs `bun --no-env-file` on `agent.js` in the empty working folder, with the request on its input, which is then closed.
-    /// `--no-env-file` keeps Bun from loading a `.env` into an environment that goes on to `claude`; `--no-install` keeps it from
-    /// ever fetching a package. Cancel and the deadline send SIGTERM, on which the helper stops `claude`, and SIGKILL a second later.
-    /// Returns when the `result` arrives, not when the helper has stopped `claude`; a cancel or the deadline waits for the process.
+    /// Runs `bun --no-env-file --no-install` on `agent.js` in the empty working folder with the request on its input. Returns when
+    /// the `result` arrives, not when `claude` has stopped; a cancel or the deadline (SIGTERM, SIGKILL a second later) waits for it.
     static func run(_ prompt: String, claude: String, environment: [String: String]) async -> Outcome {
         let clock = ContinuousClock()
         let began = clock.now

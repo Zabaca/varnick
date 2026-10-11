@@ -8,9 +8,8 @@ import SwiftUI
 
 // MARK: - What the app knows of Claude Code
 
-/// Claude Code as Text generation's writer: whether the user's `claude` is found and logged in, the last call's verdict, and the
-/// minute a failure rests it. In memory only, worked out again each launch. Nothing is asked of Anthropic before a call or a Check:
-/// `claude auth status` and `--version` run on this Mac.
+/// Claude Code as Text generation's writer: `claude` found and logged in, the last call's verdict, the minute a failure rests it.
+/// In memory only. Nothing is asked of Anthropic before a call or a Check: `claude auth status` and `--version` run on this Mac.
 @MainActor
 final class ClaudeCodeState: ObservableObject, TextGenerating {
     enum Status: Equatable {
@@ -156,9 +155,8 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
         }
     }
 
-    /// Before a request: the local check, when it has never run, or failed and has rested. `mayWait` is false when this Mac's model
-    /// can answer meanwhile: a check after a failure then runs in the background, so a login that fails (and makes the check wait out
-    /// its deadline) costs no request a wait. The first check is always waited for, and so is any when nothing else can answer.
+    /// Before a request: the local check, when it never ran or failed and has rested. Without `mayWait` (this Mac's model can
+    /// answer) a recheck runs in the background, so a failing login costs no request a wait; the first check is always waited for.
     func prepareForUse(mayWait: Bool = true) async {
         if let checking {
             if mayWait || !hasChecked { await checking.value }

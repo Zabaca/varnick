@@ -42,10 +42,7 @@ enum Subprocess {
     /// pipe held open for its whole life (never `/dev/null`), which is how a far command learns this side is
     /// gone. Cancel closes the input, terminates after 1 s and kills after 2 s. The result has the status and
     /// the tail of the error output, never the output.
-    ///
-    /// With `input`, the command is a one-shot: the data is written and the input closed at once, a cancel or `deadline` (seconds
-    /// from the start; `timedOut` in the result) sends SIGTERM straight away and SIGKILL a second later, and `directory` is its
-    /// working folder. The text helper is run so.
+    /// With `input` it is a one-shot (the text helper): written and closed at once, SIGTERM straight away on a cancel or `deadline`.
     @concurrent static func stream(_ executable: String, _ arguments: [String], environment: [String: String],
                                    input: Data? = nil, directory: URL? = nil, deadline: TimeInterval? = nil,
                                    onOutput: @escaping @Sendable (Data) -> Void) async -> ProcessResult {

@@ -334,9 +334,8 @@ final class Settings: ObservableObject {
         defaults.set(FileManager.default.fileExists(atPath: SessionStore.fileURL.path), forKey: skipPermissionsKey)
     }
 
-    /// Stores `local` once for Text generation when it was never chosen and this Mac already answers with its model (Hey Varnick is on,
-    /// or Gemma is installed): Claude Code is the default for new installs only, and a default worked out on each read would move
-    /// under the user later. Otherwise the key stays absent and reads as Claude Code. Runs beside `storeSkipPermissionsIfAbsent`.
+    /// Stores `local` once for an install that never chose Text generation but already answers with Gemma (Hey Varnick on, or Gemma
+    /// installed): Claude Code is the default for new installs only. Runs beside `storeSkipPermissionsIfAbsent`.
     static func storeTextGenerationIfAbsent() {
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: textGenerationRunOnKey) == nil else { return }

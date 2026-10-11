@@ -18,11 +18,8 @@ struct TextGeneration {
     let server: ModelServerState
     let claude: ClaudeCodeState
 
-    /// One reply for work the user waits on (a spoken request), by the interactive rule of `ModelServerState.place`: the chosen
-    /// writer when it isn't known to have failed, otherwise this Mac's installed model. A server is checked first on its first use
-    /// in a launch, and Claude Code's local check (`claude` found and logged in) runs first when it hasn't. One that fails rests, and
-    /// the request runs again on this Mac's model; `because` then says why Claude Code didn't answer. Throws
-    /// `TextGenerator.Failure.notReady` when nothing can answer.
+    /// One reply for work the user waits on, by `ModelServerState.place`'s interactive rule: the chosen writer unless it failed, else
+    /// this Mac's model (`because` says why Claude Code didn't answer). Throws `TextGenerator.Failure.notReady` when nothing can.
     func generateNow(_ prompt: String, maxTokens: Int) async throws -> (text: String, place: ModelPlace, because: String?) {
         let active = Settings.shared.activeTextGeneration
         func pick() -> (writer: any TextGenerating, place: ModelPlace)? {
