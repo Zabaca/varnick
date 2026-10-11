@@ -44,6 +44,11 @@ function failureOf(error: unknown): Failure {
   return { kind: 'error' }
 }
 
+/** Whether a retrying request is retrying a login or an account that will not work, however many times it tries. */
+function isLoginError(error: string, status: number | null): boolean {
+  return ['authentication_failed', 'oauth_org_not_allowed', 'billing_error'].includes(error) || status === 401 || status === 403
+}
+
 async function answer(request: Request): Promise<void> {
   const hooksFile = `${request.filter}/hooks/hooks.json`
   // `claude` skips a plugin path that does not exist with only a log line and runs without the filter, which would quietly
@@ -84,9 +89,9 @@ async function answer(request: Request): Promise<void> {
             if (message.ttft_ms !== undefined) firstTokenMs = message.ttft_ms
           } else if (message.type === 'assistant' && message.error) {
             failure ??= { kind: message.error }
-          } else if (message.type === 'system' && message.subtype === 'api_retry') {
-            // A request that fails and retries (a login that does not work retries for minutes) would pass Varnick's deadline
-            // anyway: end it now, so Gemma answers sooner.
+          } else if (message.type === 'system' && message.subtype === 'api_retry' && isLoginError(message.error, message.error_status)) {
+            // A login that does not work retries for minutes, far past Varnick's deadline: end it now, so Gemma answers sooner.
+            // Any other retry (overloaded, a server error, a rate limit) goes on under the deadline.
             failure ??= { kind: `retrying: ${message.error}` }
             killChildren()
             abortController.abort()

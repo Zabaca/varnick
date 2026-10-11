@@ -21,8 +21,11 @@ helper() {
   (cd "$work/cwd" && "$build/bun" --no-env-file --no-install "$build/agent.js" < "$1" > "$2" 2> "$work/stderr")
 }
 
+# with VAR=value command ...: the variable for that command only (a shell may keep an assignment made before a function)
+with() { ( export "$1"; shift; "$@" ); }
+
 request "$fake" "$build/mods/reminders" > "$work/ok.json"
-FAKE_CLAUDE_LOG="$work/fake.log" helper "$work/ok.json" "$work/ok.out"
+with FAKE_CLAUDE_LOG="$work/fake.log" helper "$work/ok.json" "$work/ok.out"
 grep -q '"type":"text","text":"OK"' "$work/ok.out" && grep -q '"type":"result","ok":true,"text":"OK"' "$work/ok.out" && ok "a request is answered in pieces and a result" || bad "a request is answered"
 [ -z "$(grep -v '^{' "$work/ok.out")" ] && [ ! -s "$work/stderr" ] && ok "standard output holds JSON lines only, standard error nothing" || bad "standard output or error carries more than JSON lines"
 grep -q -- '--no-session-persistence' "$work/fake.log" && grep -q -- '"--tools", ""' "$work/fake.log" && grep -q -- "--plugin-dir\", \"$build/mods/reminders" "$work/fake.log" \
@@ -40,11 +43,14 @@ request "/no/such/claude" "$build/mods/reminders" > "$work/noclaude.json"
 helper "$work/noclaude.json" "$work/noclaude.out"
 grep -q '"kind":"claude did not start"' "$work/noclaude.out" && ok "a claude that is not there" || bad "a claude that is not there"
 
-FAKE_CLAUDE_RETRY=1 helper "$work/ok.json" "$work/retry.out"
+with FAKE_CLAUDE_RETRY=1 helper "$work/ok.json" "$work/retry.out"
 grep -q '"kind":"retrying: authentication_failed"' "$work/retry.out" && ok "a retrying login fails at once, with its kind" || bad "a retrying login"
 pgrep -f fake-claude.py > /dev/null && bad "a claude was left after the retry" || ok "no claude left after the retry"
 
-FAKE_CLAUDE_HANG=1 helper "$work/ok.json" "$work/hang.out" &
+with FAKE_CLAUDE_TRANSIENT=1 helper "$work/ok.json" "$work/transient.out"
+grep -q '"type":"result","ok":true,"text":"OK"' "$work/transient.out" && ok "a retry for an overloaded API goes on and succeeds" || bad "a transient retry"
+
+with FAKE_CLAUDE_HANG=1 helper "$work/ok.json" "$work/hang.out" &
 pid=$!
 sleep 2
 pkill -TERM -f "$build/agent.js"
