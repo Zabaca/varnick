@@ -223,7 +223,7 @@ Screen access (ADR 0023) gives the sessions started or restarted while it is on 
   its context, so you type it yourself.
 - **Some combos are refused:** Varnick's own shortcuts that work anywhere (show or hide, pin, Listening), and macOS's
   log out, lock screen and Force Quit. Every other combo goes to the app in front as if you pressed it, ⌘Q and ⌘W
-  included.
+  included. A click or drag on the menu bar can still reach Apple menu › Lock Screen or Log Out.
 - **Typing stops** when you turn the switch off, bring up Varnick's panel, or another app comes forward.
 - **Varnick's log never holds what a session typed.** It holds the tool, the outcome's kind, how many characters
   and keys went, and durations.

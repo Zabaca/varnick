@@ -10,22 +10,26 @@ enum ScreenKeys {
     /// One event's Unicode string holds at most 20 UTF-16 units.
     static let maxUnits = 20
 
-    /// A character's key-down and key-up are posted this far apart in time: tuned by hand to the fastest pace TextEdit, a field in a
-    /// Chrome page and Terminal all keep up with (where-it-breaks.md, Screen access). If it has to be slower, `maxCharacters`
-    /// shrinks so the text still takes at most `maxCharacters × characterPace` = 2.5 s.
+    /// The wait after each character's events, before the next: tuned by hand to the fastest pace TextEdit, a field in a Chrome page
+    /// and Terminal all keep up with (where-it-breaks.md, Screen access). If it has to be slower, `maxCharacters` shrinks so the text
+    /// still takes at most 2.5 s.
     static let characterPace: Duration = .milliseconds(5)
     /// A combo's key is held this long, and then the next thing waits `comboPace` in all.
     static let comboHold: Duration = .milliseconds(10)
     static let comboPace: Duration = .milliseconds(50)
-    /// The most a call's own typing takes: the longest text and ten combos.
-    static let longestTyping = 4
 
-    /// The most a combo's check off the main actor waits (the keyboard's owner, with a 0.1 s timeout).
-    static let comboCheck: Duration = .milliseconds(100)
+    /// The most a combo's check off the main actor waits: the keyboard's owner and the focus are read side by side, each call 0.1 s.
+    static let comboCheck: Duration = .milliseconds(200)
 
     /// How long a call's text and keys take, which its age limit is shortened by.
     static func duration(characters: Int, keys: Int) -> Duration {
         characterPace * characters + (comboPace + comboCheck) * keys
+    }
+
+    /// The most a call's own typing takes, in whole seconds: the longest text and ten combos.
+    static var longestTyping: Int {
+        let longest = duration(characters: maxCharacters, keys: maxKeys).components
+        return Int(longest.seconds) + (longest.attoseconds > 0 ? 1 : 0)
     }
 
     // MARK: Text
@@ -84,7 +88,10 @@ enum ScreenKeys {
         }
         guard !rest.isEmpty else { return nil }
         if let code = names[rest.lowercased()] { return KeyCombo(keyCode: code, modifiers) }
-        guard rest.count == 1, let character = rest.first, let key = layoutKey(for: character) else { return nil }
+        // With ⌘ held the layout may differ (Dvorak–QWERTY ⌘ types the QWERTY letters), and a ⌘ combo is looked up as the keys are pressed.
+        guard rest.count == 1, let character = rest.first, let key = layoutKey(for: character, command: modifiers.contains(.command)) else {
+            return nil
+        }
         if key.shift { modifiers.insert(.shift) }
         return KeyCombo(keyCode: key.code, modifiers)
     }
@@ -112,15 +119,16 @@ enum ScreenKeys {
     /// The key that types a character on the current layout, with whether it needs ⇧. A letter is its key whatever its case. Nil when
     /// no key types it. The layout is the current one, else the current ASCII-capable one when the current is an input method.
     @MainActor
-    private static func layoutKey(for character: Character) -> (code: Int, shift: Bool)? {
+    private static func layoutKey(for character: Character, command: Bool) -> (code: Int, shift: Bool)? {
         guard let layout = layoutData() else { return nil }
         let wanted = String(character)
         var shifted: Int?
         for code in 0..<128 where !keypad.contains(code) {
-            if let plain = translate(layout, code, shift: false) {
+            if let plain = translate(layout, code, shift: false, command: command) {
                 if plain == wanted || (character.isLetter && plain.lowercased() == wanted.lowercased()) { return (code, false) }
             }
-            if shifted == nil, translate(layout, code, shift: true) == wanted { shifted = code }
+            // Shifted without ⌘: with ⌘ held a layout ignores ⇧ and names the unshifted character.
+            if shifted == nil, translate(layout, code, shift: true, command: false) == wanted { shifted = code }
         }
         return shifted.map { ($0, true) }
     }
@@ -136,15 +144,15 @@ enum ScreenKeys {
         return nil
     }
 
-    private static func translate(_ layout: Data, _ code: Int, shift: Bool) -> String? {
+    private static func translate(_ layout: Data, _ code: Int, shift: Bool, command: Bool) -> String? {
         var dead: UInt32 = 0
         var characters = [UniChar](repeating: 0, count: 4)
         var length = 0
-        let state = shift ? UInt32((shiftKey >> 8) & 0xFF) : 0
+        let state = (shift ? UInt32((shiftKey >> 8) & 0xFF) : 0) | (command ? UInt32((cmdKey >> 8) & 0xFF) : 0)
         let status = layout.withUnsafeBytes { raw -> OSStatus in
             guard let table = raw.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return -1 }
             return UCKeyTranslate(table, UInt16(code), UInt16(kUCKeyActionDown), state, UInt32(LMGetKbdType()),
-                                  OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, characters.count, &length, &characters)
+                                  OptionBits(1 << kUCKeyTranslateNoDeadKeysBit), &dead, characters.count, &length, &characters)
         }
         guard status == noErr, length > 0 else { return nil }
         let text = String(utf16CodeUnits: characters, count: length)
@@ -165,19 +173,24 @@ enum ScreenKeys {
         }
     }
 
-    /// A combo as a key-down and key-up with its modifiers as the events' flags: the modifiers are never pressed as keys of their own,
-    /// so none is left held down.
-    static func post(_ combo: KeyCombo) async {
+    /// A combo's key-down, with its modifiers as the event's flags: the modifiers are never pressed as keys of their own, so none is
+    /// left held down. Synchronous, so the caller's checks and the event have nothing awaited between; `release` always follows.
+    static func press(_ combo: KeyCombo) {
+        post(combo, down: true)
+    }
+
+    static func release(_ combo: KeyCombo) {
+        post(combo, down: false)
+    }
+
+    private static func post(_ combo: KeyCombo, down: Bool) {
         var flags: CGEventFlags = []
         if combo.flags.contains(.command) { flags.insert(.maskCommand) }
         if combo.flags.contains(.shift) { flags.insert(.maskShift) }
         if combo.flags.contains(.option) { flags.insert(.maskAlternate) }
         if combo.flags.contains(.control) { flags.insert(.maskControl) }
-        for down in [true, false] {
-            let event = CGEvent(keyboardEventSource: nil, virtualKey: combo.keyCode, keyDown: down)
-            event?.flags = flags
-            event?.post(tap: .cghidEventTap)
-            if down { try? await Task.sleep(for: comboHold) }
-        }
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: combo.keyCode, keyDown: down)
+        event?.flags = flags
+        event?.post(tap: .cghidEventTap)
     }
 }

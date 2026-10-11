@@ -11,6 +11,9 @@ extension ScreenAccess {
     /// as `click` does at `staleAfter` (9 s, then about 4.75 s). Another wait or read after the last check shrinks the limit.
     static let dragLimit: Duration = .seconds(7)
     static let windowLimit: Duration = .seconds(9)
+    /// Typing's own limit, asked before every character and key: the relay gives up at 15 s, so a character or key is posted only if
+    /// the call is younger than this less the typing still to do.
+    static let typingDeadline: Duration = .milliseconds(13_500)
 
     /// A drag's timing, tuned by hand: the button is down this long before it moves, the pointer then travels the line in steps, and
     /// it rests at the end before the button goes up.
@@ -68,6 +71,10 @@ extension ScreenAccess {
         var drawn: Int?
         var typed = 0, pressed = 0, selected = false
         let asked = characters.count
+        // What typing is still to do from here, which each check's age limit gives back.
+        func remaining() -> Duration {
+            ScreenKeys.duration(characters: asked - typed, keys: combos.count - pressed + (selectAll != nil && !selected ? 1 : 0))
+        }
         do {
             try stillAllowed(paneText: paneText, arrived: arrived, limit: limit)
             var steps: [String] = []
@@ -122,28 +129,23 @@ extension ScreenAccess {
             if replace, !focus.takesSelectAll {
                 throw ScreenRefusal.bad("The focus is on something that takes no typing, so select all would select all of it. Click a field first, or leave replace out")
             }
+            // Spotlight or a system panel can hold the keyboard while this app is in front: nothing goes to it.
+            try await keyboardIsWith(app)
 
             if let selectAll {
-                try checkedToType(app: app, arrow: drawn, paneText: paneText, arrived: arrived)
-                await ScreenKeys.post(selectAll)
+                try await pressChecked(selectAll, app: app, arrow: drawn, paneText: paneText, arrived: arrived, remaining: remaining())
                 selected = true
-                try? await Task.sleep(for: ScreenKeys.comboPace)
             }
             for character in characters {
                 // Nothing awaited between the check and the events.
-                try checkedToType(app: app, arrow: drawn, paneText: paneText, arrived: arrived)
+                try checkedToType(app: app, arrow: drawn, paneText: paneText, arrived: arrived, remaining: remaining())
                 ScreenKeys.post(character)
                 typed += 1
                 try? await Task.sleep(for: ScreenKeys.characterPace)
             }
             for combo in combos {
-                // A combo can hand the keyboard to another process (Spotlight, a system panel) or move the focus into a password field.
-                if let owner = await ScreenReader.keyboardOwner(), owner != app.processIdentifier { throw ScreenRefusal.keyboardElsewhere }
-                if await ScreenReader.focus(pid: app.processIdentifier).isSecure { throw ScreenRefusal.password }
-                try checkedToType(app: app, arrow: drawn, paneText: paneText, arrived: arrived)
-                await ScreenKeys.post(combo)
+                try await pressChecked(combo, app: app, arrow: drawn, paneText: paneText, arrived: arrived, remaining: remaining())
                 pressed += 1
-                try? await Task.sleep(for: ScreenKeys.comboPace - ScreenKeys.comboHold)
             }
             ArrowOverlay.shared.hide(after: Self.clickLinger)
 
@@ -200,11 +202,34 @@ extension ScreenAccess {
         try? await Task.sleep(for: .milliseconds(100))
     }
 
+    /// Whether the app is the one with the keyboard system-wide.
+    private func keyboardIsWith(_ app: NSRunningApplication) async throws {
+        guard let owner = await ScreenReader.keyboardOwner() else { throw ScreenRefusal.keyboardUnknown }
+        guard owner == app.processIdentifier else { throw ScreenRefusal.keyboardElsewhere }
+    }
+
+    /// One key combo. A combo can hand the keyboard to another process (Spotlight, a system panel) or move the focus into a password
+    /// field, so both are read first, side by side, off the main actor. The checks then run and the key-down is posted with nothing
+    /// awaited between; the key-up always follows.
+    private func pressChecked(_ combo: KeyCombo, app: NSRunningApplication, arrow: Int?, paneText: String,
+                              arrived: ContinuousClock.Instant, remaining: Duration) async throws {
+        async let keyboard: Void = keyboardIsWith(app)
+        async let focus = ScreenReader.focus(pid: app.processIdentifier, timeout: 0.1, light: true)
+        try await keyboard
+        if await focus.isSecure { throw ScreenRefusal.password }
+        try checkedToType(app: app, arrow: arrow, paneText: paneText, arrived: arrived, remaining: remaining)
+        ScreenKeys.press(combo)
+        try? await Task.sleep(for: ScreenKeys.comboHold)
+        ScreenKeys.release(combo)
+        try? await Task.sleep(for: ScreenKeys.comboPace - ScreenKeys.comboHold)
+    }
+
     /// Run on the main actor right before a character or a key is posted, with nothing awaited between: the switch and the pane, the
-    /// app still in front, no window of Varnick's with the keyboard (its panel is nonactivating, so it can take the keyboard while
-    /// another app stays in front), and the Arrow up still this call's.
-    private func checkedToType(app: NSRunningApplication, arrow: Int?, paneText: String, arrived: ContinuousClock.Instant) throws {
-        try stillAllowed(paneText: paneText, arrived: arrived, limit: nil)
+    /// call's age, the app still in front, no window of Varnick's with the keyboard (its panel is nonactivating, so it can take the
+    /// keyboard while another app stays in front), and the Arrow up still this call's.
+    private func checkedToType(app: NSRunningApplication, arrow: Int?, paneText: String, arrived: ContinuousClock.Instant,
+                               remaining: Duration) throws {
+        try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.typingDeadline - remaining)
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { throw ScreenRefusal.leftFront }
         guard !NSApplication.shared.windows.contains(where: { $0.isVisible && $0.isKeyWindow && !ArrowOverlay.shared.owns($0) }) else {
             throw ScreenRefusal.varnickKey
@@ -317,6 +342,7 @@ extension ScreenAccess {
             Self.postMouse(.mouseMoved, at: begin.point)
             try? await Task.sleep(for: .milliseconds(50))
             try Self.checkedToPost(at: begin.point, frontmost: startApp, arrow: drawn)
+            try checkedToRelease(at: finish.point, endApp: endApp, arrow: drawn, paneText: paneText, arrived: arrived)
             Self.postMouse(.leftMouseDown, at: begin.point)
             down = true
             // The button is let go on every path from here, a refusal included: back where it began unless it got to the end.
@@ -421,17 +447,23 @@ extension ScreenAccess {
             // Never Varnick's: `application(named:)` skips it, and a window id of its own can't come from `look`, but the pid is checked.
             guard let pid = ScreenReader.pid(of: window) else { throw ScreenRefusal.gone }
             guard pid != ProcessInfo.processInfo.processIdentifier else { throw ScreenRefusal.varnickTarget }
-            switch await ScreenReader.refusal(for: window, moving: position != nil, resizing: size != nil) {
-            case .fullScreen?: throw ScreenRefusal.bad("That window is in full screen")
-            case .minimized?: throw ScreenRefusal.bad("That window is minimized")
-            case .cantMove?: throw ScreenRefusal.bad("That window can't be moved")
-            case .cantResize?: throw ScreenRefusal.bad("That window can't be resized")
-            case nil: break
+            // What stops a window changing, and whether its title bar stays reachable: asked now, for the Arrow, and again after the lead.
+            func checked() async throws -> CGRect {
+                switch await ScreenReader.refusal(for: window, moving: position != nil, resizing: size != nil) {
+                case .fullScreen?: throw ScreenRefusal.bad("That window is in full screen")
+                case .minimized?: throw ScreenRefusal.bad("That window is minimized")
+                case .cantMove?: throw ScreenRefusal.bad("That window can't be moved")
+                case .cantResize?: throw ScreenRefusal.bad("That window can't be resized")
+                case nil: break
+                }
+                guard let now = await ScreenReader.frame(ofWindow: window) else { throw ScreenRefusal.gone }
+                // Its title bar is where the user takes hold of it: some of it must be on a display.
+                guard Self.titleBarReachable(CGRect(origin: position ?? now.origin, size: size ?? now.size)) else {
+                    throw ScreenRefusal.bad("That would put the window's title bar off every display")
+                }
+                return now
             }
-            guard let now = await ScreenReader.frame(ofWindow: window) else { throw ScreenRefusal.gone }
-            let wanted = CGRect(origin: position ?? now.origin, size: size ?? now.size)
-            // Its title bar is where the user takes hold of it: some of it must be on a display.
-            guard Self.titleBarReachable(wanted) else { throw ScreenRefusal.bad("That would put the window's title bar off every display") }
+            let now = try await checked()
 
             let moving = position.map { "to \(Int($0.x.rounded())), \(Int($0.y.rounded()))" }
             let resizing = size.map { "to \(Int($0.width.rounded())) × \(Int($0.height.rounded()))" }
@@ -445,6 +477,7 @@ extension ScreenAccess {
             guard ArrowOverlay.shared.show(frame: now, note: "\(name)\n\(sign)") else { throw ScreenRefusal.offDisplay }
             drawn = ArrowOverlay.shared.generation
             try? await Task.sleep(for: Self.clickLead)
+            _ = try await checked()
             try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.windowLimit)
             guard ArrowOverlay.shared.generation == drawn else { throw ScreenRefusal.replaced }
 

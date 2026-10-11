@@ -146,9 +146,8 @@ both.
 
 **Nothing asks before an action**: the arrow shows on the target for a second first, then the app comes to the
 front (not for `window`) and a click, typing, drag or resize happens. `look` also says which control has focus.
-`type` never reads a field back, so it can't be checked from `look`: `replace` selects the field first, so it ends
-up holding only the text. It refuses while a password field has focus, and refuses Varnick's own shortcuts, log
-out, lock screen and Force Quit; typing stops if you bring up Varnick's panel or turn the switch off. A session
+What `type` refuses, when it stops, and what is and isn't logged: see
+[privacy and security](privacy-and-security.md#screen-access-acts-without-asking). A session
 started with Skip permissions has no prompt before a tool at all; one without gets Claude
 Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while
 still asking for `click`, `type`, `drag` and `window` (not checked). A session gains the tools when it starts, so restart a running one

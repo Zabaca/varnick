@@ -46,6 +46,8 @@ indirect enum ScreenRefusal: Error {
     case varnickKey
     /// The keyboard is with another app than the one typed into.
     case keyboardElsewhere
+    /// Accessibility did not say who has the keyboard in time.
+    case keyboardUnknown
     /// Refused once the call was under way: what was done by then, and the counts for the log.
     case stopped(ScreenRefusal, String, String)
 
@@ -77,6 +79,7 @@ indirect enum ScreenRefusal: Error {
         case .password: "A password field has focus. Varnick doesn't type into one: ask the user"
         case .varnickKey: "A window of Varnick's own has the keyboard, which a session may not type into. Ask the user to put it away"
         case .keyboardElsewhere: "The keyboard is with another app than the one being typed into"
+        case .keyboardUnknown: "Couldn't tell which app has the keyboard in time, so nothing more is typed"
         case .stopped(let why, let done, _): why.message + ". " + done
         }
     }
@@ -109,6 +112,7 @@ indirect enum ScreenRefusal: Error {
         case .password: "password field"
         case .varnickKey: "Varnick key"
         case .keyboardElsewhere: "keyboard elsewhere"
+        case .keyboardUnknown: "keyboard unknown"
         case .stopped(let why, _, _): why.logKind
         }
     }
@@ -144,7 +148,7 @@ final class ScreenAccess {
     /// A click still waiting, leading or bringing its app forward this long after its request arrived is dropped: the relay gives up
     /// at 15 s, and the reads and the press after the last check can take several seconds (where-it-breaks.md, Screen access). Each of
     /// `type`, `drag` and `window` has its own limit for the same reason.
-    nonisolated static let staleAfter: Duration = .seconds(9)
+    static let staleAfter: Duration = .seconds(9)
     /// How far a control's centre may move from where the arrow was drawn before the arrow is drawn again on it.
     static let arrowFollows: CGFloat = 2
     /// A press that opens a dialog can block, so it waits longer than the walk's reads.
@@ -224,7 +228,7 @@ final class ScreenAccess {
 
     /// What can change while a call waits for its turn or leads: the switch, the pane (closed, or another Mac in control now), and
     /// whether the relay is still waiting. `limit` is the call's age limit; nil for a check that is no longer about the relay.
-    func stillAllowed(paneText: String, arrived: ContinuousClock.Instant, limit: Duration? = ScreenAccess.staleAfter) throws {
+    func stillAllowed(paneText: String, arrived: ContinuousClock.Instant, limit: Duration?) throws {
         guard Settings.shared.screenAccess else { throw ScreenRefusal.off }
         guard let model = PeerManager.shared.model else { throw ScreenRefusal.starting }
         _ = try pane(paneText, in: model)
@@ -382,7 +386,7 @@ final class ScreenAccess {
         // The arrow's generation once it is drawn: when another arrow has replaced it, the user is not looking at this click's target.
         var drawn: Int?
         do {
-            try stillAllowed(paneText: paneText, arrived: arrived)
+            try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.staleAfter)
             let sign: String, shown: CGRect
             switch aim {
             case .target(let id, let target):
@@ -396,7 +400,7 @@ final class ScreenAccess {
             guard ArrowOverlay.shared.show(frame: shown, note: sign) else { throw ScreenRefusal.offDisplay }
             drawn = ArrowOverlay.shared.generation
             try? await Task.sleep(for: Self.clickLead)
-            try stillAllowed(paneText: paneText, arrived: arrived)
+            try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.staleAfter)
             guard ArrowOverlay.shared.generation == drawn else { throw ScreenRefusal.replaced }
 
             // The click's own app in front first: the first click on a window of an app that is not in front only brings it forward.
@@ -414,7 +418,7 @@ final class ScreenAccess {
                 }
             }
             // The wait above can be long: the age, the switch, the pane and the arrow are asked again, last before the reads and the click.
-            try stillAllowed(paneText: paneText, arrived: arrived)
+            try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.staleAfter)
             guard ArrowOverlay.shared.generation == drawn else { throw ScreenRefusal.replaced }
 
             let done: String

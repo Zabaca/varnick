@@ -70,7 +70,7 @@ struct KeyCombo: Codable, Equatable {
         let status = data.withUnsafeBytes { raw -> OSStatus in
             guard let layout = raw.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return -1 }
             return UCKeyTranslate(layout, UInt16(keyCode), UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
-                                  OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, chars.count, &length, &chars)
+                                  OptionBits(1 << kUCKeyTranslateNoDeadKeysBit), &deadKeys, chars.count, &length, &chars)
         }
         guard status == noErr, length > 0 else { return "?" }
         return String(utf16CodeUnits: chars, count: length).uppercased()
