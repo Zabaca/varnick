@@ -304,6 +304,11 @@ status: accepted
   - The build order: the server and router, `panel`, `show`, `board_read` and `pane_read` go on main first, and the Outline's parts after the Outline merges.
   - `keys` (option 02) never brings the panel up.
 
+**Added while building ticket 06 (2026-10-11)**
+- **Limits:** `add` takes at most 1000 lines, and its reply lists at most 100 new ids, naming the call that reads the rest.
+- **The caret's landing:** an edit that moves the user's caret is refused when the caret hasn't landed within 1 s, so a slow view never leaves an edit half placed.
+- **Open:** a session's move, indent or outdent of a row inside the user's whole-bullet selection ends that selection; the caret goes to the nearest row instead of the selection following the rows.
+
 **Considered, not taken**
 - **Sessions editing `outline.json` themselves.** ADR 0030 makes Varnick its one writer. A running Varnick saves over the file, and its undo stack would know nothing of the change.
 - **A second MCP server for these tools.** It would be a second process per pane and a second entry on the command line, on the same socket.
