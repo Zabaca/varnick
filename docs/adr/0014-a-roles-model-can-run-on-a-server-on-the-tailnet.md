@@ -8,3 +8,4 @@ Search embeddings and Text generation can each run on an OpenAI-compatible serve
 - Varnick depends on services it may not own. A change of embedding model shows as a failed Check, never as wrong vectors; an absent server shows as a fallback or a wait.
 - No new dependency: the requests use URLSession (`ModelServer.post` is the one path, and it follows no redirect). MLX isn't touched on the server path, and a build without `mlx.metallib` can use a server.
 - A server for Text generation has to answer in `message.content`, which a model that thinks first at the server does not. Varnick reads that as the server not answering.
+- Amended by ADR 0029: "over a cloud provider" no longer holds for Text generation. The choice is Claude Code, On this Mac or Server, and the fallback rule extends to Claude Code: when it fails, the interactive request runs again on this Mac's installed model.

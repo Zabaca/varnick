@@ -118,6 +118,15 @@ permissions) and pick one of your account's voices in the same Voice list. That 
 ElevenLabs ([privacy and security](privacy-and-security.md#elevenlabs)). The installed voice you had stays as the
 Fallback voice and speaks when ElevenLabs fails or takes more than 1.5 seconds to start.
 
+With Text generation on **Claude Code** (Settings › Models; the default for a new install, while installs that already
+answered with Gemma stay on On this Mac), your own `claude` writes Hey Varnick's answers on your Claude subscription,
+with Claude Haiku: no tools, none of your settings, hooks, plugins, CLAUDE.md or memory, and no transcript saved, so
+these calls never show as sessions. Turning Hey Varnick on needs `claude` found and logged in (Settings › Models
+shows it, and Check times a call); no model has to download. That sends what you say and the few results it reads
+to Anthropic ([privacy and security](privacy-and-security.md#anthropic-through-text-generation)), and each answer
+counts toward your plan's usage limits. When Claude Code can't answer, or takes more than a few seconds, Gemma writes the text
+if you have installed it (the **Fallback on this Mac** row), and Claude Code rests for a minute.
+
 ## Point at the screen
 
 With Hey Varnick on, Settings › Listening › **Point at the screen** lets you ask about what is in front of
@@ -231,12 +240,13 @@ These download from Hugging Face when you ask (Settings), and run on this Mac wi
 | Model | Used for | Download |
 |---|---|---|
 | Qwen3-Embedding-0.6B (8-bit) | Search by meaning | about 650 MB |
-| Gemma 4 E2B (4-bit) | Hey Varnick's answers | about 3.6 GB |
+| Gemma 4 E2B (4-bit) | Hey Varnick's answers, when Text generation is On this Mac, and its fallback when Claude Code can't answer | about 3.6 GB |
 
 Their licences are in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
 Each of these two can instead run on a model server on your tailnet (Settings › Models › Server);
-[privacy and security](privacy-and-security.md#a-model-server-you-name) says what that sends.
+[privacy and security](privacy-and-security.md#a-model-server-you-name) says what that sends. Text generation can also
+run as your own Claude Code, which is its default for a new install and needs no download.
 
 "On this Mac" is also a choice for the relevance filter. It runs a small checkpoint distilled from
 TypeSafe's judgments on a person's own history, and that checkpoint is not published: the choice needs

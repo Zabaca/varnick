@@ -292,7 +292,7 @@ final class SpokenRequests {
             let failure = error as? SpokenPipeline.Failure
             let cause = failure?.underlying ?? error
             NSLog("Varnick: spoken request failed at \(failure?.step.rawValue ?? "-"): \(cause.logKind)")
-            saying = cause is TextGenerator.Failure ? Self.unavailable : "I couldn't answer that."
+            saying = cause is TextGenerator.Failure ? Self.unavailable(model.textGeneration.claude) : "I couldn't answer that."
         }
         guard !Task.isCancelled else { return }
 
@@ -371,11 +371,14 @@ final class SpokenRequests {
             + "(\(text.recognised) lines, \(text.candidates) kept), "
     }
 
-    /// Nothing could write the text: no model installed and no server answering.
-    private static var unavailable: String {
+    /// Nothing could write the text: no model installed, no server answering, and Claude Code missing, logged out or failing.
+    private static func unavailable(_ claude: ClaudeCodeState) -> String {
         let active = Settings.shared.activeTextGeneration
-        return active.runOn == .server && !active.address.isEmpty
-            ? "The text generation server isn't answering." : "Text generation isn't set up."
+        switch active.runOn {
+        case .server where !active.address.isEmpty: return "The text generation server isn't answering."
+        case .claude where claude.isFailing: return "Claude Code isn't answering."
+        default: return "Text generation isn't set up."
+        }
     }
 
     /// What Varnick said goes into today's transcript, beside the request already there as a `[mic]` line. A default nobody was

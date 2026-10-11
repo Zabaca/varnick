@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let textGenerator = TextGenerator()
     let embeddingServer = ModelServerState.forEmbeddings()
     let textGenerationServer = ModelServerState.forTextGeneration()
+    let claudeCode = ClaudeCodeState()
     private var syncing = false
     private var syncAgain = false
 
@@ -84,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         model = LauncherModel(store: store, embedder: embedder, localReranker: localReranker, textGenerator: textGenerator,
-                              embeddingServer: embeddingServer, textGenerationServer: textGenerationServer)
+                              embeddingServer: embeddingServer, textGenerationServer: textGenerationServer, claudeCode: claudeCode)
     }
 
     /// Chrome history into the search database, now and every minute.
@@ -122,9 +123,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationDidFinishLaunching(_ note: Notification) {
         Settings.storeSkipPermissionsIfAbsent()
+        Settings.storeTextGenerationIfAbsent()
         PaneFolder.migrateOldScratchFolder()
         makeModel()
         spoken = SpokenRequests(model: model)
+        // Claude Code's login shell is read once per launch, off the main thread, so a first request doesn't wait for it. With Hey
+        // Varnick on, its local check runs too: nothing is sent, and the first request finds it done.
+        if Settings.shared.activeTextGeneration.runOn == .claude {
+            if Settings.shared.heyVarnick { Task { await claudeCode.checkLogin() } } else { claudeCode.prepare() }
+        }
         model.cleanUpAfterLastRun()
         // Catalog apps whose release changed, once the saved tabs say which apps panes run. Not when they didn't load: last run's
         // app servers may still be running in zmx with no restored pane to show for them, as the sweep above also assumes.
@@ -644,7 +651,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--search"), i + 1 < CommandLine
 }
 
 /// `--generate` reads a file of text, prints what `run` returns and exits, following Text generation's choice.
-/// Nothing is downloaded, and a server is asked straight away with no Check.
+/// Nothing is downloaded, a server is asked straight away with no Check, and Claude Code is called with no fallback.
 func runTextCommand(_ run: @escaping @MainActor (String, any TextGenerating, String) async throws -> String) {
     guard let i = CommandLine.arguments.firstIndex(of: "--generate"), i + 1 < CommandLine.arguments.count else { return }
     MainActor.assumeIsolated {
@@ -657,6 +664,9 @@ func runTextCommand(_ run: @escaping @MainActor (String, any TextGenerating, Str
             let generator: any TextGenerating
             let place: String
             switch active.runOn {
+            case .claude:
+                generator = ClaudeCodeState()
+                place = "Claude Code"
             case .local:
                 let local = TextGenerator()
                 guard local.isReady else { print("Text generation isn't installed: \(local.state)"); exit(1) }
@@ -683,16 +693,26 @@ func runTextCommand(_ run: @escaping @MainActor (String, any TextGenerating, Str
 }
 
 // `Varnick --generate <file>` sends the file's text as one user message and prints the reply, where it was made and the times:
-// the load too on this Mac, which a server doesn't have.
+// the load too on this Mac, which a server doesn't have. With Claude Code: the shell read, and the call split into `bun`'s start, the
+// time to the result and the API's share, which says whether a deadline or a warm helper is worth it.
 runTextCommand { text, generator, place in
     let clock = ContinuousClock()
     var times = ""
     if let local = generator as? TextGenerator {
         times = "load \(try await clock.measure { _ = try await local.loaded() }), "
     }
+    // The login shell is read once, here, as at launch.
+    if let claude = generator as? ClaudeCodeState {
+        times = "shell \(await clock.measure { _ = await claude.environment() }), "
+    }
     var reply = ""
     let generation = try await clock.measure { reply = try await generator.generate(text, maxTokens: 512) }
-    return "\(reply)\nmade on \(place): \(times)generation \(generation)"
+    var split = ""
+    if let outcome = (generator as? ClaudeCodeState)?.lastOutcome {
+        split = " (start-up to the request read \(outcome.startup.map { "\($0)" } ?? "-"), start to the result \(outcome.total), "
+            + "API \(outcome.apiMs.map { String(format: "%.0f ms", $0) } ?? "-"))"
+    }
+    return "\(reply)\nmade on \(place): \(times)generation \(generation)\(split)"
 }
 
 // `Varnick --ask <file>` treats the file's text as a spoken request (what follows "Hey Varnick") and prints what each of its three
@@ -710,6 +730,8 @@ if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.ar
             .flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil }
         let draw = CommandLine.arguments.contains("--draw")
         Task { @MainActor in
+            // The login shell is read once, here, as at launch, so it doesn't land in the decide step's figure.
+            if Settings.shared.activeTextGeneration.runOn == .claude { await delegate.claudeCode.checkLogin() }
             exit(await SpokenCommand.run(file: CommandLine.arguments[i + 1], restartAfter: restartAfter, app: app, draw: draw,
                                          model: delegate.model))
         }

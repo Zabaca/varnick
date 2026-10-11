@@ -157,7 +157,7 @@ final class LauncherModel: ObservableObject {
     let textGenerator: TextGenerator
     /// The Check of Search embeddings' model server (Settings › Models).
     let embeddingServer: ModelServerState
-    /// Who writes text for a spoken request: this Mac's Gemma or Text generation's model server.
+    /// Who writes text for a spoken request: Claude Code, this Mac's Gemma or Text generation's model server.
     let textGeneration: TextGeneration
     /// The ranking behind a `?` search and a spoken request (ADR 0017), built at each use from what Settings and the
     /// panel's state say now.
@@ -274,13 +274,13 @@ final class LauncherModel: ObservableObject {
     private static let promptMatchLimit = 1000
 
     init(store: FavoritesStore, embedder: Embedder, localReranker: LocalReranker, textGenerator: TextGenerator,
-         embeddingServer: ModelServerState, textGenerationServer: ModelServerState) {
+         embeddingServer: ModelServerState, textGenerationServer: ModelServerState, claudeCode: ClaudeCodeState) {
         self.store = store
         self.baseEmbedder = embedder
         self.localReranker = localReranker
         self.textGenerator = textGenerator
         self.embeddingServer = embeddingServer
-        self.textGeneration = TextGeneration(local: textGenerator, server: textGenerationServer)
+        self.textGeneration = TextGeneration(local: textGenerator, server: textGenerationServer, claude: claudeCode)
         board.model = self
         restoreSessions()
         // Scanned before the first prompt so `#name` resolves straight away, and again when
