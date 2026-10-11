@@ -2,7 +2,7 @@
 problem: sessions-cant-read-or-drive-varnick
 title: Panel access, Varnick's own tools on the `varnick` server, that read and act through each view's model
 summary: Accepted on 2026-10-11 (the user's decision, relayed by the coordinator). A new switch beside Screen access, Panel access, is in Settings › Claude and off by default. Claude sessions started while it is on get tools for Varnick itself, on the same `varnick` MCP server. `panel` says what the panel shows and where the focus and the caret are. `show` opens a view or runs a `!` Command, never `!listen`, without bringing the panel up. Each view that adopts a small protocol gets a `<view>_read` tool, and a `<view>_act` tool if it has actions, both listed from one registry. The Session board reads its cards, and `pane_read` gives any pane's terminal screen as text. The Outline reads its tree, or the rows as the user sees them. It edits bullets through its own edits and undo stack, including the bullet the user is typing in: that change goes into the text view as a key would, around the user's caret. Nothing goes through Accessibility, no event is posted, and no grant is needed. The Outline's parts wait for the Outline to merge.
-status: accepted
+status: shipped
 ---
 
 ## Solution

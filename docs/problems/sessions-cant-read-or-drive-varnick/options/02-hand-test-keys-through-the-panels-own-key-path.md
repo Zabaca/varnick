@@ -2,7 +2,7 @@
 problem: sessions-cant-read-or-drive-varnick
 title: Sessions press keys in the panel through its own key path, to hand-test Varnick's views
 summary: Accepted on 2026-10-11 (the user's decision, relayed by the coordinator), to follow option 01. This builds on option 01's server, switch and router. A `keys` tool sends text and key combos into Varnick's panel as key events handed to Varnick's own event dispatch (`NSApp.sendEvent`). They pass through the panel's key monitor, the view's own key handler and the first responder as the user's keys do, and nothing reaches another app. It works only while the panel is visible and key and the user hasn't typed in it for 2 seconds. The view on screen must take keys: search, the board or the Outline, never a terminal or page tab, Settings, the Restart Varnick card or the split picker. Each view refuses the keys that would end, restart or mark sessions, start one, or turn on the microphone. With `panel` and `outline_read`'s `as_shown`, a session checks what each key did. No grant is needed.
-status: accepted
+status: shipped
 ---
 
 ## Solution

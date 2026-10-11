@@ -2,7 +2,7 @@
 problem: no-outline-in-varnick
 title: An outline in the panel, each bullet edited in its own text view
 summary: The Outline replaces the panel's content the way the Session board does. ⌘⇧Y, `!outline` or `!wf` shows it. One tree of bullets lives in `outline.json` in the support folder, stored as bullets and placements, so a mirror is one bullet placed twice. SwiftUI draws the rows. Each bullet's text and note are edited in a small AppKit text view, which tells the outline where the caret is, which wrapped line it is on, and whether an input method is composing. The keyboard rules need all three. ⇧↑ and ⇧↓ select whole bullets, which the structure keys, delete, complete, the clipboard and mirrors then act on together.
-status: accepted
+status: shipped
 ---
 
 ## Solution
