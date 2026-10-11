@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - View
@@ -70,7 +71,8 @@ private struct OutlineRows: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.vertical, 8)
             }
-            .onReceive(outline.$scrollRequest) { request in
+            // The publisher sends before the value and the rows change, so the scroll waits a turn for the new row.
+            .onReceive(outline.$scrollRequest.receive(on: DispatchQueue.main)) { request in
                 if let request { proxy.scrollTo(request.row) }
             }
         }
@@ -99,9 +101,8 @@ private struct OutlineRowView: View {
 
 // MARK: - Text view
 
-/// A bullet's text: a small AppKit text view with no scroll view and no border, wrapping at the row's width. Edits reach the outline through the
-/// delegate. It exists because a SwiftUI field can't tell the outline where the caret is, which wrapped line it is on, or whether an input method is
-/// composing (docs/problems/no-outline-in-varnick, option 01).
+/// A bullet's text: a small AppKit text view, wrapping at the row's width. A SwiftUI field can't tell the outline where the caret is, which
+/// wrapped line it is on, or whether an input method is composing.
 private struct BulletText: NSViewRepresentable {
     let outline: Outline
     let row: OutlineRow

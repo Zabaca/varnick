@@ -743,9 +743,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--embed-check") {
     }
 }
 
-// `Varnick --outline-check <file> [<out>]` reads an outline file through the Outline's one reader and prints whether it loads, its counts and what
-// was repaired; with `<out>` it writes the tree there and reads it back (see OutlineCheck). It touches only the paths it is given, never
-// the support folder or `Settings.shared` (where-it-breaks, The rename), and exits.
+// `Varnick --outline-check <file> [<out>]`: see OutlineCheck. It touches only the paths it is given (where-it-breaks, The rename) and exits.
 if let i = CommandLine.arguments.firstIndex(of: "--outline-check") {
     exit(OutlineCheck.run(Array(CommandLine.arguments.dropFirst(i + 1))))
 }

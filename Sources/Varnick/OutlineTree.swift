@@ -369,10 +369,14 @@ struct OutlineTree: Codable, Equatable {
             }
         }
         walk(root, stack: [root])
-        let placed = Set(tree.bullets.values.flatMap { $0.children.map(\.bullet) }).union([root])
-        let orphans = ids.filter { !placed.contains($0) }
-            .sorted { (tree.bullets[$0]?.created ?? now, $0) < (tree.bullets[$1]?.created ?? now, $1) }
-        for orphan in orphans { walk(orphan, stack: [orphan]) }
+        func placed() -> Set<String> { Set(tree.bullets.values.flatMap { $0.children.map(\.bullet) }).union([root]) }
+        func oldestFirst(_ list: [String]) -> [String] {
+            list.sorted { (tree.bullets[$0]?.created ?? now, $0) < (tree.bullets[$1]?.created ?? now, $1) }
+        }
+        // Bullets nothing places, then what is left: loops the top bullet can't reach, each broken where the walk comes back to its start.
+        for orphan in oldestFirst(ids.filter { !placed().contains($0) }) { walk(orphan, stack: [orphan]) }
+        while let next = oldestFirst(ids.filter { !done.contains($0) }).first { walk(next, stack: [next]) }
+        let orphans = oldestFirst(ids.filter { !placed().contains($0) })
         if !orphans.isEmpty {
             let recovered = newID()
             tree.bullets[recovered] = OutlineBullet(text: "Recovered", created: now, changed: now,

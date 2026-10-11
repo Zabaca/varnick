@@ -173,6 +173,14 @@ _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 One line of the **Outline**: its text, an optional note under it, whether it is completed, and the bullets nested under it.
 _Avoid_: Item, node, row, entry, task, card
 
+**Placement**:
+One spot where a **Bullet** shows: an entry in its parent's list. A bullet's text, note and completion are kept once, however many placements it has.
+_Avoid_: Instance, occurrence, link
+
+**Mirror**:
+A **Bullet** with more than one **Placement**, so an edit in one spot shows in all. None is the original: deleting a placement removes only that spot, and the bullet is gone with its last. Not the **Live screen**, which avoids the word.
+_Avoid_: Copy, clone, reference, original
+
 ### Listening
 
 **Listening**:

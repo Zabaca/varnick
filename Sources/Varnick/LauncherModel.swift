@@ -2028,7 +2028,7 @@ final class LauncherModel: ObservableObject {
                 ? "Couldn't resume \"\(session.label)\" (code \(code.map(String.init) ?? "?"))."
                 : "Claude exited immediately (code \(code.map(String.init) ?? "?")). Is `claude` installed and logged in?"
             query = prompt
-            focusToken += 1
+            focusSearchField()
         } else if !tabs.isEmpty {
             // Like closing a tab: show the neighbour.
             activate(tabs[min(index, tabs.count - 1)], keepingBoard: true)
@@ -2271,7 +2271,7 @@ final class LauncherModel: ObservableObject {
         }
         activeTab = nil
         reset()
-        focusToken += 1
+        focusSearchField()
         refreshPeerOpenSessions(minInterval: 5)
         refreshPeerRecent(minInterval: 5)
     }
@@ -2306,9 +2306,14 @@ final class LauncherModel: ObservableObject {
         focusShown()
     }
 
+    /// The search field takes focus, or the caret goes back into its bullet while the outline shows over the search.
+    private func focusSearchField() {
+        if showingOutline { outline.restoreCaret() } else { focusToken += 1 }
+    }
+
     /// The tab on screen takes focus, or the search field when none shows.
     private func focusShown() {
-        if let tab = activeTab { tab.focus(tab.focused) } else { focusToken += 1 }
+        if let tab = activeTab { tab.focus(tab.focused) } else { focusSearchField() }
     }
 
     /// ⌘⇧B: the board in place of the current view; again (or esc) goes back. From Settings it closes
@@ -2351,7 +2356,8 @@ final class LauncherModel: ObservableObject {
         pendingSplit = nil
         if showingSettings {
             showingSettings = false
-            return showOutline()
+            // Settings opened over the outline: its views are new, so the caret goes back in.
+            return showingOutline ? outline.restoreCaret() : showOutline()
         }
         if showingOutline { closeOutline() } else { showOutline() }
     }

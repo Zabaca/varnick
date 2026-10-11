@@ -9,9 +9,8 @@ enum OutlineCaretPlace {
     case x(CGFloat, bottom: Bool)
 }
 
-/// The Outline (docs/problems/no-outline-in-varnick, option 01): one tree of bullets in `outline.json`, shown in place of the panel's
-/// content like the session board. It is an object of its own so that typing never publishes the launcher's model, which resizes the panel
-/// on every change it publishes. The tree's rules are `OutlineTree`'s, the file's are `OutlineFile`'s; this holds the state between them.
+/// The Outline (ADR 0030): one tree of bullets in `outline.json`, shown in place of the panel's content like the session board. An object of
+/// its own, so typing never publishes the launcher's model, which resizes the panel on every change; the rules are `OutlineTree`'s and `OutlineFile`'s.
 @MainActor
 final class Outline: ObservableObject {
     enum Load: Equatable {
@@ -173,13 +172,17 @@ final class Outline: ObservableObject {
         if let last = rows.last { moveCaret(to: last.path, .offset(Int.max)) }
     }
 
-    /// Scrolls to the row, then moves the caret into its text view a tick later: nothing in a view's update moves the first responder, and a
-    /// row off screen has no text view until it is scrolled to.
+    /// Scrolls to the row, then moves the caret into its text view a tick later: no view update moves the first responder, and a row
+    /// off screen has no text view until it is scrolled to.
     private func moveCaret(to path: OutlinePath, _ place: OutlineCaretPlace) {
         pending = (path, place)
+        scroll(to: path)
+        attemptPlace(tries: 0)
+    }
+
+    private func scroll(to path: OutlinePath) {
         scrollSerial += 1
         scrollRequest = ScrollRequest(row: path.id, serial: scrollSerial)
-        attemptPlace(tries: 0)
     }
 
     private func attemptPlace(tries: Int) {
@@ -196,8 +199,12 @@ final class Outline: ObservableObject {
             view.place(request.place)
             landed()
         } else if tries < 10 {
+            // The row may not have been built when the first scroll was asked for (a new row below a full panel).
+            scroll(to: request.path)
             attemptPlace(tries: tries + 1)
         } else {
+            // Gave up: the old view must not keep text the tree no longer has there, or the next key would write it back.
+            activeView?.syncFromModel()
             landed()
         }
     }
@@ -211,18 +218,21 @@ final class Outline: ObservableObject {
 
     // MARK: Keys
 
-    /// The keys the outline takes, as `SessionBoard.key` does: ↩ splits the bullet at the caret, ⌫ at its start deletes it when empty or joins it
-    /// onto the row above, ↑ and ↓ leave a bullet from its first or last line, esc closes, and the End session, Mark session done and Restart
-    /// session keys are taken and do nothing. Anything else goes on. While an input method is composing, the text view gets every key but those three.
+    /// The keys the outline takes, as `SessionBoard.key` does: ↩, ⌫ at the start, ↑, ↓ and esc, and the End session, Mark session done and
+    /// Restart session keys, which do nothing. The rest goes on; while an input method is composing, so does all but those three.
     func key(_ event: NSEvent) -> Bool {
         if let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession || action == .restartSession {
             return true
         }
         let flags = event.modifierFlags.intersection(KeyCombo.relevant)
-        // The caret is on its way to another bullet: what is typed meanwhile waits for it.
-        if pending != nil, flags.isSubset(of: .shift) {
-            queuedEvents.append(event)
-            return true
+        // The caret is on its way to another bullet: what is typed meanwhile waits for it, ⌘V and ⌥ keys included. A shortcut other than
+        // Paste (⌘⇧Y, ⌘,) still acts.
+        if pending != nil {
+            let shortcut = Settings.shared.action(for: event)
+            if shortcut == nil || shortcut == .paste {
+                queuedEvents.append(event)
+                return true
+            }
         }
         guard flags.isEmpty else { return false }
         let composing = activeView?.hasMarkedText() == true
@@ -256,9 +266,8 @@ final class Outline: ObservableObject {
     }
 }
 
-/// Writes the tree: half a second after the last change, at once when asked, and at Quit. Encoded and written off the main actor, one write at a
-/// time; a newer copy replaces one whose write hasn't started. Only ever told of changes while the file is readable, so it never writes over one
-/// that isn't.
+/// Writes the tree half a second after the last change, when asked, and at Quit, off the main actor and one write at a time; a newer copy
+/// replaces one that hasn't started. It hears of changes only while the file is readable, so it never writes over one that isn't.
 @MainActor
 final class OutlineSaver {
     /// The queue runs one write at a time, in order, so a Quit that waits on it never lets an older copy land over a newer one.
@@ -270,8 +279,12 @@ final class OutlineSaver {
         /// Returns why it failed, never any text.
         func write(_ tree: OutlineTree, to url: URL) -> String? {
             if !keptPrevious {
-                keptPrevious = true
-                try? OutlineFile.keepPrevious(of: url)
+                do {
+                    try OutlineFile.keepPrevious(of: url)
+                    keptPrevious = true
+                } catch {
+                    NSLog("Varnick: outline.previous.json couldn't be written: \(error)")
+                }
             }
             do {
                 try OutlineFile.write(tree, to: url)
@@ -292,9 +305,13 @@ final class OutlineSaver {
 
     func changed(_ tree: OutlineTree) {
         pending = tree
+        arm(after: .milliseconds(500))
+    }
+
+    private func arm(after delay: Duration) {
         timer?.cancel()
         timer = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             self?.timer = nil
             self?.flush()
@@ -320,6 +337,8 @@ final class OutlineSaver {
         if let failure {
             NSLog("Varnick: outline.json couldn't be saved: \(failure)")
             pending = pending ?? tree
+            // Tried again, but slowly: a disk that stays full shouldn't fill the log.
+            arm(after: .seconds(5))
         } else if pending != nil, timer == nil {
             flush()
         }

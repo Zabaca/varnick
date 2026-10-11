@@ -10,12 +10,11 @@ enum OutlineCheck {
         let placements: Int
         let mirrors: Int
 
-        /// What would be saved: the top bullet isn't counted, and neither is anything it can't reach.
+        /// Everything the tree holds but the top bullet, reachable or not: a save drops what the top bullet can't reach, so the round trip shows it.
         init(_ tree: OutlineTree) {
-            let kept = tree.pruned()
-            bullets = kept.bullets.count - 1
-            placements = kept.placementTotal
-            mirrors = kept.mirrorCount
+            bullets = tree.bullets.count - 1
+            placements = tree.placementTotal
+            mirrors = tree.mirrorCount
         }
 
         var description: String { "\(bullets) bullets, \(placements) placements, \(mirrors) mirrors" }

@@ -1,6 +1,7 @@
 import Foundation
+import VarnickPeer
 
-/// `outline.json`: the one reader and the one writer of the Outline's file. Foundation only and the path is passed in, so
+/// `outline.json`: the one reader and the one writer of the Outline's file. The path is passed in, so
 /// `--outline-check` runs it on throwaway files and never touches the support folder.
 enum OutlineFile {
     enum ReadResult: Equatable {
@@ -49,49 +50,15 @@ enum OutlineFile {
         return try encoder.encode(tree.pruned()) + Data("\n".utf8)
     }
 
-    struct WriteError: Error, CustomStringConvertible {
-        let description: String
-    }
-
-    /// Anything that can't be reached from the top bullet is dropped. Written to a temporary file in the same folder, made owner-only,
-    /// then renamed into place, as `DeviceList.save` does: a reader sees the old file or the new one.
+    /// Anything the top bullet can't reach is dropped. Atomic and owner-only, as `DeviceList.save` writes (`OwnerOnlyFile`).
     static func write(_ tree: OutlineTree, to url: URL) throws {
-        try write(data: try encoded(tree), to: url)
+        try OwnerOnlyFile.replace(url, with: try encoded(tree))
     }
 
-    static func write(data: Data, to url: URL) throws {
-        let folder = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let temporary = folder.appendingPathComponent(".\(url.lastPathComponent).\(getpid()).tmp")
-        unlink(temporary.path)
-        let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { throw WriteError(description: "\(temporary.lastPathComponent) couldn't be created (errno \(errno))") }
-        var offset = 0
-        let wrote = data.withUnsafeBytes { bytes -> Bool in
-            while offset < bytes.count {
-                let count = Darwin.write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
-                if count > 0 {
-                    offset += count
-                } else if count < 0, errno == EINTR {
-                    continue
-                } else {
-                    return false
-                }
-            }
-            return true
-        }
-        close(descriptor)
-        guard wrote, rename(temporary.path, url.path) == 0 else {
-            let code = errno
-            unlink(temporary.path)
-            throw WriteError(description: "\(url.lastPathComponent) couldn't be written (errno \(code))")
-        }
-    }
-
-    /// Copies the file as it is to `outline.previous.json` beside it, once per launch before the first write. Nothing when there is no file.
+    /// Copies the file as it is to `outline.previous.json` beside it, once per launch before the first write. Nothing to copy when there is no file.
     static func keepPrevious(of url: URL) throws {
-        guard let data = try? Data(contentsOf: url) else { return }
-        try write(data: data, to: url.deletingLastPathComponent().appendingPathComponent(previousName))
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try OwnerOnlyFile.replace(url.deletingLastPathComponent().appendingPathComponent(previousName), with: try Data(contentsOf: url))
     }
 
     /// Start a new outline: the file we couldn't read moves aside, named by the time, and the next write makes a fresh one.
