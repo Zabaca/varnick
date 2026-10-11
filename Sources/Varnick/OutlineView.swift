@@ -175,7 +175,7 @@ private struct OutlineRows: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // The zoomed bullet's own text, above what is nested under it.
                     if let title = outline.crumbs.last {
-                        RowTexts(outline: outline, path: title.path, text: title.text, kind: .title, note: title.note,
+                        BulletTexts(outline: outline, path: title.path, text: title.text, kind: .title, note: title.note,
                                  noteOpen: outline.notePath == title.path, completed: title.completed, dimmed: title.completed)
                             .id(title.id)
                             .padding(.vertical, 6)
@@ -206,7 +206,7 @@ private struct OutlineRows: View {
 
 /// A bullet's text (or the title's) and, under it, its note. A note shows while it has text, and while it has the caret (empty or not); then it
 /// shows in full.
-private struct RowTexts: View {
+private struct BulletTexts: View {
     let outline: Outline
     let path: OutlinePath
     let text: String
@@ -247,7 +247,7 @@ private struct OutlineRowView: View {
         HStack(alignment: .top, spacing: 4) {
             disclosure
             dot
-            RowTexts(outline: outline, path: row.path, text: row.text, kind: .row, note: row.note, noteOpen: noteOpen,
+            BulletTexts(outline: outline, path: row.path, text: row.text, kind: .row, note: row.note, noteOpen: noteOpen,
                      completed: row.completed, dimmed: row.dimmed, highlight: highlight)
         }
         .padding(.leading, CGFloat(row.depth) * Self.indent)
@@ -381,10 +381,21 @@ final class OutlineTextView: NSTextView {
             }
         }
 
-        var color: NSColor { self == .note ? .secondaryLabelColor : .labelColor }
+        var color: NSColor {
+            switch self {
+            case .row, .title: .labelColor
+            case .note: .secondaryLabelColor
+            }
+        }
 
         /// What tells its view apart from the others with the same path.
-        var registryPrefix: String { self == .title ? "title:" : self == .note ? "note:" : "" }
+        var registryPrefix: String {
+            switch self {
+            case .row: ""
+            case .title: "title:"
+            case .note: "note:"
+            }
+        }
     }
     private(set) var kind = Kind.row
     var isTitle: Bool { kind == .title }
@@ -394,6 +405,9 @@ final class OutlineTextView: NSTextView {
         kind.registryPrefix + path.id
     }
     var registryKey: String { Self.registryKey(rowPath, kind: kind) }
+
+    /// How much of its colour a dimmed (completed) bullet keeps.
+    private static let dimAlpha: CGFloat = 0.45
 
     private var completed = false
     private var dimmed = false
@@ -458,21 +472,21 @@ final class OutlineTextView: NSTextView {
     private func restyle() {
         restyleWaiting = hasMarkedText()
         guard !restyleWaiting else { return }
-        textColor = dimmed ? kind.color.withAlphaComponent(0.45) : kind.color
+        textColor = dimmed ? kind.color.withAlphaComponent(Self.dimAlpha) : kind.color
         let strike = NSUnderlineStyle.single.rawValue
         let whole = NSRange(location: 0, length: (string as NSString).length)
         if completed { textStorage?.addAttribute(.strikethroughStyle, value: strike, range: whole) } else { textStorage?.removeAttribute(.strikethroughStyle, range: whole) }
         typingAttributes[.strikethroughStyle] = completed ? strike : nil
         // Tags in the accent colour (dimmed with the rest of a completed bullet).
         let tags = OutlineTags.ranges(in: string)
-        for tag in tags { textStorage?.addAttribute(.foregroundColor, value: NSColor(Theme.tag).withAlphaComponent(dimmed ? 0.45 : 1), range: tag) }
+        for tag in tags { textStorage?.addAttribute(.foregroundColor, value: NSColor(Theme.tag).withAlphaComponent(dimmed ? Self.dimAlpha : 1), range: tag) }
         // The filter's words, wherever they are in the text, ignoring case and accents; a tag word marks that tag only.
         textStorage?.removeAttribute(.backgroundColor, range: whole)
         typingAttributes[.backgroundColor] = nil
         let text = string as NSString
         for word in highlight where !word.isEmpty {
             if OutlineTags.isTagWord(word) {
-                for tag in tags where OutlineTree.folded(text.substring(with: tag)) == word {
+                for tag in tags where OutlineTags.key(text.substring(with: tag)) == word {
                     textStorage?.addAttribute(.backgroundColor, value: NSColor(Theme.highlight), range: tag)
                 }
                 continue
@@ -491,6 +505,13 @@ final class OutlineTextView: NSTextView {
     override func didChangeText() {
         super.didChangeText()
         restyle()
+    }
+
+    /// The window makes a view first responder before it sees the mouse-down, so a click on a tag here is refused it: no caret moves in.
+    override var acceptsFirstResponder: Bool {
+        if let event = NSApp.currentEvent, event.type == .leftMouseDown, event.window === window,
+           tag(at: convert(event.locationInWindow, from: nil)) != nil { return false }
+        return super.acceptsFirstResponder
     }
 
     /// A click on a tag filters by it, and places no caret.
@@ -534,7 +555,11 @@ final class OutlineTextView: NSTextView {
         guard !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               layoutManager.truncatedGlyphRange(inLineFragmentForGlyphAt: last).location == NSNotFound else { return }
         let used = layoutManager.lineFragmentUsedRect(forGlyphAt: last, effectiveRange: nil)
-        ("…" as NSString).draw(at: NSPoint(x: used.maxX, y: used.minY), withAttributes: [.font: kind.font, .foregroundColor: textColor ?? kind.color])
+        let attributes: [NSAttributedString.Key: Any] = [.font: kind.font, .foregroundColor: textColor ?? kind.color]
+        let ellipsis = "…" as NSString
+        // On a line that fills the width it goes back inside the bounds.
+        ellipsis.draw(at: NSPoint(x: min(used.maxX, bounds.width - ellipsis.size(withAttributes: attributes).width), y: used.minY),
+                      withAttributes: attributes)
     }
 
     /// Takes the tree's text once the caret has left, since the outline never sets the text of the view that has it.
@@ -547,6 +572,8 @@ final class OutlineTextView: NSTextView {
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
         if accepted {
+            // Laid out in full now, so a caret placed on its last line is on a line that shows.
+            setExpanded(true)
             outline?.caretEntered(self)
         }
         return accepted

@@ -115,6 +115,7 @@ final class Outline: ObservableObject {
 
     private func use(_ new: OutlineTree) {
         tree = new
+        if foldCache.count > new.bullets.count + 100 { foldCache.retain(Set(new.bullets.keys)) }
         refreshRows()
         let shown = new.crumbs()
         if shown != crumbs { crumbs = shown }
@@ -255,7 +256,7 @@ final class Outline: ObservableObject {
     /// A click on a tag: the filter gains it, or loses it if it has it. The caret stays where it was, in a bullet that stays in view.
     func toggleTag(_ tag: String) {
         var words = filterText.split(whereSeparator: \.isWhitespace).map(String.init)
-        if let at = words.firstIndex(where: { OutlineTree.folded($0) == OutlineTree.folded(tag) }) { words.remove(at: at) } else { words.append(tag) }
+        if let at = words.firstIndex(where: { OutlineTags.same($0, tag) }) { words.remove(at: at) } else { words.append(tag) }
         setFilter(words.joined(separator: " "))
         if let view = activeView { keep(view.rowPath) }
     }

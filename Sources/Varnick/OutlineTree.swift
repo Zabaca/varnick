@@ -121,8 +121,6 @@ enum OutlineEdit {
 /// Why an edit changed nothing. A refusal with a `message` is said to the user (a beep and a header message); the rest is for whoever reads a check.
 enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     case insideItself
-    /// A delete that would take bullets with it that the filter, or Show completed, hides.
-    case hiddenChildren
     case other(String)
 
     init(stringLiteral reason: String) { self = .other(reason) }
@@ -130,7 +128,6 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     var message: String? {
         switch self {
         case .insideItself: "A bullet can't go inside itself"
-        case .hiddenChildren: "Bullets under it are hidden: clear the filter or show completed first"
         case .other: nil
         }
     }
@@ -153,18 +150,24 @@ enum OutlineTags {
         var found: [NSRange] = []
         var offset = 0
         var previous: Unicode.Scalar?
-        var start: (offset: Int, length: Int)?
+        // `good` is the length up to the last letter or digit: a tag doesn't end in `-` or `_`.
+        var start: (offset: Int, length: Int, good: Int)?
         func close() {
-            if let open = start, open.length > 1 { found.append(NSRange(location: open.offset, length: open.length)) }
+            if let open = start, open.good > 1 { found.append(NSRange(location: open.offset, length: open.good)) }
             start = nil
         }
         for scalar in text.unicodeScalars {
             let width = scalar.utf16.count
             if start != nil {
-                if isNameCharacter(scalar) { start?.length += width } else { close() }
+                if isNameCharacter(scalar) {
+                    start?.length += width
+                    if CharacterSet.alphanumerics.contains(scalar), let length = start?.length { start?.good = length }
+                } else {
+                    close()
+                }
             }
             if start == nil, scalar == "#" || scalar == "@", previous.map({ $0 == "(" || CharacterSet.whitespacesAndNewlines.contains($0) }) ?? true {
-                start = (offset, width)
+                start = (offset, width, width)
             }
             previous = scalar
             offset += width
@@ -173,14 +176,25 @@ enum OutlineTags {
         return found
     }
 
-    /// The tags in `text`, folded for matching (`OutlineTree.folded`), with their `#` or `@`.
-    static func folded(in text: String) -> Set<String> {
+    /// How two tags are compared, here and wherever it matters: by case only, so `#work` is `#Work`, and `#cafe` is not `#café`.
+    static func key(_ tag: String) -> String { tag.folding(options: .caseInsensitive, locale: nil) }
+
+    /// The keys of the tags in `text`.
+    static func keys(in text: String) -> Set<String> {
         let units = text as NSString
-        return Set(ranges(in: text).map { OutlineTree.folded(units.substring(with: $0)) })
+        return Set(ranges(in: text).map { key(units.substring(with: $0)) })
     }
 
-    /// A filter word that names a tag: it starts with `#` or `@` and has a name.
-    static func isTagWord(_ word: String) -> Bool { word.count > 1 && (word.hasPrefix("#") || word.hasPrefix("@")) }
+    /// The tag a typed word is, without what trails it (`#work,`); nil when the word starts with no tag.
+    static func tag(of word: String) -> String? {
+        ranges(in: word).first { $0.location == 0 }.map { (word as NSString).substring(with: $0) }
+    }
+
+    /// Whether two words name the same tag.
+    static func same(_ a: String, _ b: String) -> Bool { key(tag(of: a) ?? a) == key(tag(of: b) ?? b) }
+
+    /// A filter word (as `OutlineTree.filterWords` leaves it) that is a tag, whole.
+    static func isTagWord(_ word: String) -> Bool { ranges(in: word) == [NSRange(location: 0, length: (word as NSString).length)] }
 
     private static func isNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
         scalar == "_" || scalar == "-" || CharacterSet.alphanumerics.contains(scalar)
@@ -198,6 +212,11 @@ final class OutlineFoldCache {
 
     private var entries: [String: Entry] = [:]
 
+    var count: Int { entries.count }
+
+    /// Forgets the bullets that are gone.
+    func retain(_ ids: Set<String>) { entries = entries.filter { ids.contains($0.key) } }
+
     func entry(_ id: String, _ bullet: OutlineBullet) -> Entry {
         if let entry = entries[id], entry.text == bullet.text, entry.note == bullet.note { return entry }
         let entry = Self.make(bullet)
@@ -207,7 +226,7 @@ final class OutlineFoldCache {
 
     static func make(_ bullet: OutlineBullet) -> Entry {
         let both = bullet.text + "\n" + (bullet.note ?? "")
-        return Entry(text: bullet.text, note: bullet.note, folded: OutlineTree.folded(both), tags: OutlineTags.folded(in: both))
+        return Entry(text: bullet.text, note: bullet.note, folded: OutlineTree.folded(both), tags: OutlineTags.keys(in: both))
     }
 }
 
@@ -323,8 +342,9 @@ struct OutlineTree: Codable, Equatable {
     // MARK: Filter
 
     /// What is typed in the filter, as the words that are looked for: split on spaces, lower case, without accents.
+    /// A word that is a tag is kept as a tag key (accents matter in a tag), the rest folded.
     static func filterWords(_ query: String) -> [String] {
-        query.split(whereSeparator: \.isWhitespace).map { folded(String($0)) }
+        query.split(whereSeparator: \.isWhitespace).map { word in OutlineTags.tag(of: String(word)).map(OutlineTags.key) ?? folded(String(word)) }
     }
 
     /// How words are told apart in the filter, here and where the text views mark them.
@@ -543,12 +563,6 @@ struct OutlineTree: Codable, Equatable {
         case .delete(let path):
             guard let spot = locate(path) else { return .refused("no such row") }
             let rows = visibleRows(scope)
-            let shown = Set(rows.map(\.path))
-            // What the filter, or Show completed, hides goes with it, unseen: refused.
-            let hidesChildren = (bullets[spot.bullet]?.children ?? []).contains { child in
-                scope.filter.isEmpty ? (!showsCompleted && bullets[child.bullet]?.completed != nil) : !shown.contains(path.appending(child.id))
-            }
-            guard !hidesChildren else { return .refused(.hiddenChildren) }
             let at = rows.firstIndex { $0.path == path }
             tree.removePlacement(at: spot, now: now)
             if let at, at > 0 {
@@ -586,11 +600,18 @@ struct OutlineTree: Codable, Equatable {
             tree.bullets[spot.bullet]?.changed = now
             caret = OutlineCaret(path: path.appending(tree.insertNew(text: tail, at: 0, in: spot.bullet, now: now, newID: newID)), offset: 0)
         case .indent(let at):
-            guard let spot = locate(at.path), spot.index > 0, let above = bullets[spot.parent]?.children[spot.index - 1],
-                  let own = at.path.placements.last else { return .refused("no sibling above") }
+            // Under the nearest sibling above that shows (one a filter, or Show completed, hides is stepped over).
+            guard let spot = locate(at.path), let siblings = bullets[spot.parent]?.children, let own = at.path.placements.last else {
+                return .refused("no such row")
+            }
+            let shown = Set(visibleRows(scope).map(\.path))
+            var index = spot.index - 1
+            while index >= 0, !shown.contains(at.path.parent.appending(siblings[index].id)) { index -= 1 }
+            guard index >= 0 else { return .refused("no sibling above") }
+            let above = siblings[index]
             guard !contains(spot.bullet, descendant: above.bullet) else { return .refused(.insideItself) }
             let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index)
-            tree.bullets[spot.parent]?.children[spot.index - 1].collapsed = nil
+            tree.bullets[spot.parent]?.children[index].collapsed = nil
             tree.bullets[spot.parent]?.changed = now
             if let moved { tree.bullets[above.bullet]?.children.append(moved) }
             tree.bullets[above.bullet]?.changed = now

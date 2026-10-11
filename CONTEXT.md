@@ -182,7 +182,7 @@ Words typed at the top of the **Outline** that hide every **Bullet** that doesn'
 _Avoid_: Search (a `?` query searches **History**), find
 
 **Tag**:
-A `#word` or `@word` in a **Bullet**'s text or note. Clicking it filters the **Outline** to it. Not a **Project** or an **Agent**, which `#name` and `@name` name in a **Prompt**.
+A `#word` or `@word` in a **Bullet**'s text or note. Clicking it filters the **Outline** to it, and clicking it again takes it out of the filter. Not a **Project** or an **Agent**, which `#name` and `@name` name in a **Prompt**.
 _Avoid_: Label, hashtag, mention
 
 **Placement**:
