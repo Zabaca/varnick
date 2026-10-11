@@ -209,23 +209,39 @@ final class Outline: ObservableObject {
     /// beeps and says so in the header.
     @discardableResult
     private func apply(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false) -> OutlineRefusal? {
-        guard load == .ready else { return "not ready" }
-        switch tree.applying(edit, now: Date(), scope: scope) {
+        applyEdit(edit, caretBefore: caretBefore, typing: typing).refusal
+    }
+
+    /// What an edit did: its refusal, or the caret and the new rows it returned (which the keys follow; a session's edit may not).
+    private struct Applied {
+        var refusal: OutlineRefusal?
+        var caret: OutlineCaret?
+        var run: [OutlinePath] = []
+    }
+
+    /// `apply`, with the edit's own caret handed back. With `forSession` (Panel access) the edit is the same, on the same undo stack, but it
+    /// doesn't follow the edit's caret, scroll, beep, say anything in the header, keep its rows in view under a filter, or end the user's
+    /// selection itself: `performForSession` decides where the user's caret goes. `scope` is what the edit works with, the user's own when
+    /// left out.
+    private func applyEdit(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false, forSession: Bool = false,
+                           scope: OutlineScope? = nil) -> Applied {
+        guard load == .ready else { return Applied(refusal: "not ready") }
+        switch tree.applying(edit, now: Date(), scope: scope ?? self.scope) {
         case .refused(let reason):
-            if let message = reason.message {
+            if !forSession, let message = reason.message {
                 NSSound.beep()
                 say(message)
             }
-            return reason
+            return Applied(refusal: reason)
         case .applied(let new, let caret, let run):
             // A new bullet doesn't match the filter, and the caret is on its way into it.
-            if let caret { keep(caret.path) }
+            if !forSession, let caret { keep(caret.path) }
             let held = selection
             if new != tree {
                 record(caretBefore ?? currentCaret(), typing: typing)
-                if !filterWords.isEmpty { filterKept.formUnion(run) }
+                if !forSession, !filterWords.isEmpty { filterKept.formUnion(run) }
                 // The selection follows the run to its new rows before they show, or ends when the caret is to go somewhere.
-                if let held {
+                if !forSession, let held {
                     if let caret {
                         remembered = caret
                         dropSelection()
@@ -241,11 +257,11 @@ final class Outline: ObservableObject {
                 // Nothing to put the caret in: an insert whose bullets are all hidden may have taken the place of the bullet that had it.
                 var inserted = false
                 if case .insert = edit { inserted = true }
-                if held != nil || inserted, selection == nil, caret == nil { restoreCaret() }
-                if let moving = selection?.moving { scroll(to: moving) }
+                if !forSession, held != nil || inserted, selection == nil, caret == nil { restoreCaret() }
+                if !forSession, let moving = selection?.moving { scroll(to: moving) }
             }
-            if let caret { moveCaret(to: caret.path, field: caret.field, .offset(caret.offset)) }
-            return nil
+            if !forSession, let caret { moveCaret(to: caret.path, field: caret.field, .offset(caret.offset)) }
+            return Applied(refusal: nil, caret: caret, run: run)
         }
     }
 
@@ -255,6 +271,90 @@ final class Outline: ObservableObject {
         let length = (content(of: view) ?? "").utf16.count
         let before = selectionBefore.map { OutlineCaret(path: view.rowPath, offset: min($0, length), field: field) }
         apply(field == .note ? .setNote(view.rowPath, view.string) : .setText(view.rowPath, view.string), caretBefore: before, typing: true)
+    }
+
+    // MARK: A session's edits (Panel access)
+
+    /// What a session's edit did. `refusal` is a sentence for the session; with none, `changed` says whether the tree differs, and `run` and
+    /// `caret` are the tree edit's own (the new rows of an insert, the placement of a mirror).
+    struct SessionOutcome {
+        var refusal: String?
+        var changed = false
+        var run: [OutlinePath] = []
+        var caret: OutlineCaret?
+    }
+
+    /// The text view the user is typing in: the one with the caret, while no bullets are selected.
+    private var caretView: OutlineTextView? {
+        guard selection == nil, let view = activeView, view.window?.firstResponder === view else { return nil }
+        return view
+    }
+
+    /// Waits main-queue turns until `done`, for at most `timeout`; false if it never was.
+    private func wait(_ timeout: Duration, until done: () -> Bool) async -> Bool {
+        let end = ContinuousClock.now + timeout
+        while !done() {
+            if ContinuousClock.now >= end { return false }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return true
+    }
+
+    /// One edit for a session, on the same undo stack as the keys' (one step, which ends the user's typing run and keeps the user's caret, so
+    /// ⌘Z puts everything back together). It never sets the text of the view with the caret, so a text or note edit to the field the caret is in
+    /// is refused here ("not yet": ticket 07 goes through the view). The user's caret moves only as the keys would move it
+    /// (`OutlineActing.caretMove`); an edit that doesn't touch its row leaves it, and the view's text, alone. `allowed` is asked again after the
+    /// waits, so a switch turned off meanwhile applies nothing.
+    func performForSession(_ edit: OutlineEdit, allowed: () -> Bool) async -> SessionOutcome {
+        guard load == .ready else { return SessionOutcome(refusal: load.problem ?? "the outline isn't ready") }
+        // The caret on its way to a row lands first, and an input method composing in the caret's bullet finishes (its marked text isn't in the
+        // tree yet, and a move would take the view away).
+        guard await wait(.seconds(1), until: { pending == nil }) else {
+            return SessionOutcome(refusal: "The user's caret is still moving to another bullet: try again")
+        }
+        guard await wait(.seconds(3), until: { caretView?.hasMarkedText() != true }) else {
+            return SessionOutcome(refusal: "The user is composing text in a bullet: try again")
+        }
+        guard allowed(), load == .ready else { return SessionOutcome(refusal: "Panel access was turned off, or the outline closed, while this waited") }
+        if let view = caretView, let target = Self.textTarget(of: edit),
+           view.field == target.field, tree.bulletID(at: target.path) != nil, tree.bulletID(at: target.path) == tree.bulletID(at: view.rowPath) {
+            return SessionOutcome(refusal: "Not yet: the user's caret is in that bullet's \(target.field == .note ? "note" : "text"), and a session can't change it there")
+        }
+        let user = selection == nil ? currentCaret() : nil
+        let live = caretView != nil
+        let before = tree
+        let done = applyEdit(edit, typing: false, forSession: true, scope: OutlineActing.ignoresFilter(edit) ? OutlineScope() : nil)
+        if let refusal = done.refusal { return SessionOutcome(refusal: refusal.reason) }
+        guard tree != before else { return SessionOutcome() }
+        if let user {
+            let showingNow: (OutlinePath) -> Bool = { self.showing($0) }
+            switch OutlineActing.caretMove(of: user, edit: edit, moved: done.run, editCaret: done.caret, showing: showingNow) {
+            case .stay:
+                break
+            case .to(let target):
+                place(target, live: live)
+            case .nearest:
+                if let near = nearestVisible(user.path) ?? rows.first?.path ?? crumbs.last?.path {
+                    place(OutlineCaret(path: near, offset: (tree.text(at: near) ?? "").utf16.count), live: live)
+                }
+            }
+        }
+        return SessionOutcome(changed: true, run: done.run, caret: done.caret)
+    }
+
+    /// The row and field a text or note edit changes.
+    private static func textTarget(of edit: OutlineEdit) -> (path: OutlinePath, field: OutlineField)? {
+        switch edit {
+        case .setText(let path, _): (path, .text)
+        case .setNote(let path, _): (path, .note)
+        default: nil
+        }
+    }
+
+    /// The model's caret goes to `target`; the text view's too, but only if a bullet had the caret, as the keys do it.
+    private func place(_ target: OutlineCaret, live: Bool) {
+        remembered = target
+        if live { moveCaret(to: target.path, field: usable(target, in: tree), .offset(target.offset)) }
     }
 
     /// The text view with the caret gave up focus: what is typed next is a new step, and a note that no longer has the caret is cut short again

@@ -25,6 +25,8 @@ enum PanelRefusal: Error {
     case bad(String)
     /// The Outline can't be read from its file (unreadable, newer, or still loading); the message is the Outline's own reason.
     case outlineUnavailable(String)
+    /// An edit that changed nothing, with the reason: the tree's own refusal, or the user's caret being in the way.
+    case refused(String)
 
     @MainActor var message: String {
         switch self {
@@ -40,6 +42,7 @@ enum PanelRefusal: Error {
         case .problemsOff: "The Problems board is off: the user can turn it on in Settings › Experimental"
         case .bad(let why): why
         case .outlineUnavailable(let why): why
+        case .refused(let why): "Nothing was changed: \(why)"
         }
     }
 
@@ -57,6 +60,7 @@ enum PanelRefusal: Error {
         case .problemsOff: "problems off"
         case .bad: "bad arguments"
         case .outlineUnavailable: "outline unavailable"
+        case .refused: "edit refused"
         }
     }
 }

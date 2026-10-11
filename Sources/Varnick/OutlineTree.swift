@@ -116,8 +116,10 @@ struct OutlineRun: Equatable {
 enum OutlineInsertion: Equatable {
     /// As the next siblings of the row, after what is nested under it.
     case after(OutlinePath)
-    /// First among the bullets nested under the row: the title of a zoom.
+    /// First among the bullets nested under the row: the title of a zoom. No placements is Home.
     case firstUnder(OutlinePath)
+    /// Last among the bullets nested under the row (Home when it has no placements): a session's `add`.
+    case lastUnder(OutlinePath)
     /// In the place of the row, which must be an empty bullet with nothing nested, no note and one placement (`OutlineTree.canReplace`).
     case replacing(OutlinePath)
 }
@@ -148,8 +150,9 @@ enum OutlineEdit {
     case join(OutlinePath)
     /// These placements only, each with whatever is nested under it. A bullet goes when its last placement goes.
     case delete(OutlineRun)
-    /// New bullets made from a paste (panel access's `insert` is to be this edit): the drafts, with new ids, `created` and `changed` now, and completion and collapse
-    /// as the drafts have them. The caret goes to the end of the last top-level one that shows; the result's run is the new top-level paths.
+    /// New bullets made from a paste, or from a session's `add` (Panel access's one new edit): the drafts, with new ids, `created` and `changed` now, and
+    /// completion and collapse as the drafts have them. The caret goes to the end of the last top-level one that shows; the result's run is the new
+    /// top-level paths.
     case insert([OutlineDraft], at: OutlineInsertion)
     /// ↩ in the title of a zoom: the text after the caret moves into a new first nested bullet; at the start of a non-empty title the new
     /// bullet is empty. The caret goes into it.
@@ -184,6 +187,14 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
         switch self {
         case .insideItself: "A bullet can't go inside itself"
         case .other: nil
+        }
+    }
+
+    /// Why, in words for whoever asked for the edit (a session's reply).
+    var reason: String {
+        switch self {
+        case .insideItself: "a bullet can't go inside itself"
+        case .other(let why): why
         }
     }
 }
@@ -810,8 +821,11 @@ struct OutlineTree: Codable, Equatable {
                 guard let spot = locate(path) else { return .refused("no such row") }
                 target = (spot.parent, path.parent, spot.index + 1)
             case .firstUnder(let path):
-                guard let spot = locate(path) else { return .refused("no such row") }
-                target = (spot.bullet, path, 0)
+                guard let parent = container(path) else { return .refused("no such row") }
+                target = (parent, path, 0)
+            case .lastUnder(let path):
+                guard let parent = container(path) else { return .refused("no such row") }
+                target = (parent, path, bullets[parent]?.children.count ?? 0)
             case .replacing(let path):
                 guard canReplace(path), let spot = locate(path) else { return .refused("not an empty bullet") }
                 tree.bullets[spot.parent]?.children.remove(at: spot.index)
@@ -919,6 +933,9 @@ struct OutlineTree: Codable, Equatable {
         guard !isTitle(path), let spot = locate(path), let bullet = bullets[spot.bullet] else { return false }
         return bullet.text.isEmpty && (bullet.note ?? "").isEmpty && bullet.children.isEmpty && placementCount(of: spot.bullet) == 1
     }
+
+    /// The bullet whose list a row's nested bullets are in: the top bullet for Home (no placements).
+    private func container(_ path: OutlinePath) -> String? { path.placements.isEmpty ? root : locate(path)?.bullet }
 
     /// The placement a row is, with its own collapsed state.
     func placement(at path: OutlinePath) -> OutlinePlacement? {

@@ -169,6 +169,11 @@ transcript on this Mac. The read loads `outline.json` as showing the Outline wou
 Varnick can't read is refused. Varnick's log holds a count of lines, never a bullet's text or a filter word. If you
 don't want your bullets sent to Anthropic, leave Panel access off.
 
+A session can also change your Outline (`outline_act`) without asking: add bullets, edit a bullet's text or note, complete,
+delete, move, indent, outdent, collapse or mirror one. Each change goes through the Outline's own edits and is one step of
+your undo (⌘Z), and the bullet you are typing in keeps your caret and your text. Varnick's log holds the action and a count
+of lines, never a bullet's text. If you don't want a session to change your Outline, leave Panel access off.
+
 A session can also change what the panel shows (`show`): the search, the board, the Problems tab, the Outline, a pane's tab, or a
 `!` command (`!transcript`, `!kanban`, `!problems`, `!outline`), the same changes your keys make. It never shows, hides or pins the
 panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is

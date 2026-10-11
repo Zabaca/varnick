@@ -239,8 +239,9 @@ struct PanePanelView: PanelAccessView {
 
 // MARK: The Outline
 
-/// `outline_read`: the Outline's bullets as text with ids, from the model and never a text view, whether or not it shows (ADR 0031).
-/// Its first read loads the file without showing anything, and it never writes.
+/// `outline_read` and `outline_act`: the Outline's bullets as text with ids, from the model and never a text view, whether or not it shows
+/// (ADR 0031), and its edits, through the Outline's own `apply` and undo stack. The first call loads the file without showing anything; a
+/// read never writes.
 struct OutlinePanelView: PanelAccessView {
     static let name = "outline"
     static let readSpec = PanelToolSpec(
@@ -261,11 +262,46 @@ struct OutlinePanelView: PanelAccessView {
             "after": ["type": "string", "description": "A row's id from the last row a read listed: continue the same walk from the row after it, with the same at, depth or as_shown."],
         ])
 
+    static let actionSpecs: [PanelActionSpec] = [
+        PanelActionSpec(
+            name: "add",
+            summary: "New bullets from `text`: one line, or several, where two spaces or a tab of indent nest a line under the one above and a leading "
+                + "\"- \" is dropped (at most \(OutlineActing.addLimit) lines). Under `under` (Home when left out), last by default, or first with "
+                + "`first`, or right after `after`. One edit. The reply lists the new rows' ids.",
+            properties: [
+                "text": ["type": "string", "description": "add: the bullets as indented lines. set_text: the bullet's new text, one line."],
+                "under": ["type": "string", "description": "add: the row (o1…) the bullets go under, or Home. Left out: after's parent, else Home."],
+                "after": ["type": "string", "description": "add: a row (o1…) under `under` to put the bullets after. mirror: the row the mirror goes after, as its next sibling."],
+                "first": ["type": "boolean", "description": "add: put the bullets first under `under` instead of last."],
+            ]),
+        PanelActionSpec(
+            name: "set_text", summary: "Sets bullet `id`'s text to `text`, one line. Refused \"not yet\" while the user's caret is in that bullet's text.",
+            properties: ["id": ["type": "string", "description": "The row (o1…) the action is about, from outline_read."]]),
+        PanelActionSpec(
+            name: "set_note",
+            summary: "Sets bullet `id`'s note to `note`; empty removes it. Refused \"not yet\" while the user's caret is in that bullet's note.",
+            properties: ["note": ["type": "string", "description": "set_note: the note, with line breaks; empty removes it."]]),
+        PanelActionSpec(
+            name: "complete", summary: "Marks bullet `id` done (`done` true) or not done (false), acting only when that differs.",
+            properties: ["done": ["type": "boolean", "description": "complete: whether the bullet is done."]]),
+        PanelActionSpec(name: "delete", summary: "Deletes this place of bullet `id` and everything nested under it.", properties: [:]),
+        PanelActionSpec(
+            name: "move", summary: "Moves bullet `id` with what is nested under it past the next sibling the user's view shows, up (-1) or down (1).",
+            properties: ["by": ["type": "integer", "enum": [-1, 1], "description": "move: -1 for up, 1 for down."]]),
+        PanelActionSpec(name: "indent", summary: "Makes bullet `id` the last one nested under the sibling above it.", properties: [:]),
+        PanelActionSpec(name: "outdent", summary: "Makes bullet `id` the next sibling of its parent.", properties: [:]),
+        PanelActionSpec(
+            name: "collapse", summary: "Collapses (`collapsed` true) or opens (false) the place of bullet `id`; it needs bullets nested in it.",
+            properties: ["collapsed": ["type": "boolean", "description": "collapse: true to collapse, false to open."]]),
+        PanelActionSpec(name: "mirror", summary: "Places bullet `id` again, as a mirror, as the next sibling of the row `after`.", properties: [:]),
+    ]
+
     let model: LauncherModel
 
     @MainActor init(model: LauncherModel) { self.model = model }
 
-    @MainActor func read(_ args: PanelArguments, caller: UUID) async throws -> String {
+    /// The Outline with its file read, or why a session can't use it now (the same words for a read and an edit).
+    @MainActor fileprivate func ready() async throws -> Outline {
         let outline = model.outline
         await outline.loadForSession()
         // The load may have waited: the switch can have been turned off meanwhile.
@@ -274,6 +310,11 @@ struct OutlinePanelView: PanelAccessView {
             throw PanelRefusal.outlineUnavailable("The outline isn't available: \(problem)." + (outline.load == .loading
                 ? " Try again." : " Varnick never writes over it; the user can deal with it in the Outline."))
         }
+        return outline
+    }
+
+    @MainActor func read(_ args: PanelArguments, caller: UUID) async throws -> String {
+        let outline = try await ready()
         let tree = outline.tree
         let reading = OutlineReading(tree: tree) { PanelAccess.shared.outlineID(for: $0, caller: caller) }
         let text = (args["at"] ?? "").trimmingCharacters(in: .whitespaces)
@@ -308,5 +349,116 @@ struct OutlinePanelView: PanelAccessView {
             // `after` is no row of this read: it left the tree, or the rows on screen changed since.
             throw PanelRefusal.gone
         }
+    }
+
+    // MARK: Acting
+
+    /// One edit, through the Outline's own edits and undo stack (`Outline.performForSession`). A refused edit changes nothing and says why.
+    @MainActor func perform(_ action: String, _ args: PanelArguments, caller: UUID) async throws -> String {
+        let outline = try await ready()
+        let ids = PanelAccess.shared
+        func text(_ key: String) -> String { (args[key] ?? "").trimmingCharacters(in: .whitespaces) }
+        /// The row an id names, which must still lead somewhere.
+        func row(_ key: String) throws -> OutlinePath {
+            guard !text(key).isEmpty else { throw PanelRefusal.bad("\(key) is a row's id (o1…) from outline_read") }
+            let path = try ids.outlinePath(text(key), caller: caller)
+            guard outline.tree.bulletID(at: path) != nil else { throw PanelRefusal.gone }
+            return path
+        }
+        func flag(_ key: String) throws -> Bool? {
+            switch text(key).lowercased() {
+            case "": return nil
+            case "true": return true
+            case "false": return false
+            default: throw PanelRefusal.bad("\(key) is true or false")
+            }
+        }
+        func id(_ path: OutlinePath) -> String { ids.outlineID(for: path, caller: caller) }
+        func quoted(_ text: String) -> String { OutlineReading.quoted(text, limit: OutlineReading.crumbLimit) }
+
+        let edit: OutlineEdit
+        let said: (Outline.SessionOutcome) -> String
+        switch action {
+        case "add":
+            guard let lines = args["text"] else { throw PanelRefusal.bad("text is required: one or more lines, indented to nest") }
+            let made = OutlineActing.drafts(ofAdd: lines)
+            if let problem = made.problem { throw PanelRefusal.bad(problem) }
+            let first = try flag("first") ?? false
+            let home = OutlinePath(placements: [])
+            let underGiven = !text("under").isEmpty
+            var under = ["", "home"].contains(text("under").lowercased()) ? home : try row("under")
+            let place: OutlineInsertion
+            if !text("after").isEmpty {
+                guard !first else { throw PanelRefusal.bad("give first or after, not both") }
+                let after = try row("after")
+                guard !underGiven || after.parent == under else { throw PanelRefusal.bad("after is not one of the bullets nested under `under`") }
+                under = after.parent
+                place = .after(after)
+            } else {
+                place = first ? .firstUnder(under) : .lastUnder(under)
+            }
+            // A collapsed place keeps what is added to it out of the user's view.
+            let hidden = !under.placements.isEmpty && outline.tree.placement(at: under)?.collapsed == true
+            let parent = under.placements.isEmpty ? "Home" : id(under) + " " + quoted(outline.tree.text(at: under) ?? "")
+            edit = .insert(made.drafts, at: place)
+            said = { done in
+                let (rows, more) = OutlineActing.newRows(of: done.run, in: outline.tree)
+                var lines = ["Added \(rows.count + more) bullet\(rows.count + more == 1 ? "" : "s") under \(parent)"
+                             + (hidden ? " (collapsed: the user's view hides them)" : "") + ":"]
+                for row in rows { lines.append(String(repeating: "  ", count: row.depth + 1) + id(row.path) + " " + quoted(row.text)) }
+                if more > 0 { lines.append("  … and \(more) more: read them with outline_read") }
+                return lines.joined(separator: "\n")
+            }
+        case "set_text":
+            let path = try row("id")
+            guard let new = args["text"] else { throw PanelRefusal.bad("text is required") }
+            guard !new.contains(where: \.isNewline) else { throw PanelRefusal.bad("a bullet's text is one line: use add for several bullets") }
+            edit = .setText(path, new)
+            said = { _ in "Set the text of \(id(path))." }
+        case "set_note":
+            let path = try row("id")
+            guard let new = args["note"] else { throw PanelRefusal.bad("note is required (empty removes the note)") }
+            edit = .setNote(path, new)
+            said = { _ in new.isEmpty ? "Removed the note of \(id(path))." : "Set the note of \(id(path))." }
+        case "complete":
+            let path = try row("id")
+            guard let done = try flag("done") else { throw PanelRefusal.bad("done is true or false") }
+            let isDone = outline.tree.bulletID(at: path).flatMap { outline.tree.bullets[$0]?.completed } != nil
+            guard isDone != done else { return "\(id(path)) is already \(done ? "done" : "not done"): nothing changed." }
+            edit = .complete(OutlineRun(path))
+            said = { _ in "Marked \(id(path)) \(done ? "done" : "not done")." }
+        case "delete":
+            let path = try row("id")
+            edit = .delete(OutlineRun(path))
+            said = { _ in "Deleted \(id(path)) and everything nested under it: their ids are gone." }
+        case "move":
+            let path = try row("id")
+            guard let step = Int(text("by")), step == 1 || step == -1 else { throw PanelRefusal.bad("by is -1 or 1") }
+            edit = .move(OutlineRun(path), by: step)
+            said = { done in "Moved \(id(path)) \(step < 0 ? "up" : "down"); it is \(done.run.first.map(id) ?? "?") now. Read again for the ids of what is nested under it." }
+        case "indent", "outdent":
+            let path = try row("id")
+            edit = action == "indent" ? .indent(OutlineRun(path)) : .outdent(OutlineRun(path))
+            said = { done in "\(action == "indent" ? "Indented" : "Outdented") \(id(path)); it is \(done.run.first.map(id) ?? "?") now. Read again for the ids of what is nested under it." }
+        case "collapse":
+            let path = try row("id")
+            guard let collapsed = try flag("collapsed") else { throw PanelRefusal.bad("collapsed is true or false") }
+            edit = .collapse(path, collapsed)
+            said = { _ in "\(collapsed ? "Collapsed" : "Opened") \(id(path))." }
+        case "mirror":
+            let path = try row("id"), after = try row("after")
+            guard let bullet = outline.tree.bulletID(at: path) else { throw PanelRefusal.gone }
+            edit = .placeMirror(after: after, bullets: [bullet])
+            said = { done in "Placed a mirror of \(id(path)) after \(id(after)); the new row is \(done.caret.map { id($0.path) } ?? "?")." }
+        default:
+            throw PanelRefusal.bad("action is one of: " + Self.actionSpecs.map(\.name).joined(separator: ", "))
+        }
+        let done = await outline.performForSession(edit) { Settings.shared.panelAccess }
+        if let refusal = done.refusal {
+            if refusal == "no such row" { throw PanelRefusal.gone }
+            throw PanelRefusal.refused(refusal)
+        }
+        guard done.changed else { return "Already so: nothing changed." }
+        return said(done)
     }
 }
