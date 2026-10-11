@@ -12,6 +12,8 @@ enum Theme {
     static let hairline = Color.primary.opacity(0.08)
     static let selection = Color.primary.opacity(0.09)
     static let tileFill = Color.primary.opacity(0.06)
+    /// A word the outline's filter found.
+    static let highlight = Color.yellow.opacity(0.35)
     /// Text on a filled accent or orange badge.
     static let onAccent = Color.black.opacity(0.85)
 

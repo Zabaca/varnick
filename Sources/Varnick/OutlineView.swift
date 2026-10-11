@@ -175,19 +175,14 @@ private struct OutlineRows: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // The zoomed bullet's own text, above what is nested under it.
                     if let title = outline.crumbs.last {
-                        VStack(alignment: .leading, spacing: 0) {
-                            BulletText(outline: outline, path: title.path, text: title.text, kind: .title, completed: title.completed)
-                            if title.note != nil || outline.notePath == title.path {
-                                BulletText(outline: outline, path: title.path, text: title.note ?? "", kind: .note, dimmed: title.completed,
-                                           expanded: outline.notePath == title.path)
-                            }
-                        }
-                        .id(title.id)
-                        .padding(.vertical, 6)
+                        RowTexts(outline: outline, path: title.path, text: title.text, kind: .title, note: title.note,
+                                 noteOpen: outline.notePath == title.path, completed: title.completed, dimmed: title.completed)
+                            .id(title.id)
+                            .padding(.vertical, 6)
                     }
                     ForEach(outline.rows) { row in
                         OutlineRowView(outline: outline, row: row, noteOpen: outline.notePath == row.path,
-                                       highlight: row.matched ? outline.filterWords : []).id(row.id)
+                                       highlight: row.matched ? outline.filterWords : [], filtering: !outline.filterWords.isEmpty).id(row.id)
                     }
                     if outline.rows.isEmpty, !outline.filterWords.isEmpty {
                         Text("No bullets match").font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.vertical, 6)
@@ -209,6 +204,29 @@ private struct OutlineRows: View {
     }
 }
 
+/// A bullet's text (or the title's) and, under it, its note. A note shows while it has text, and while it has the caret (empty or not); then it
+/// shows in full.
+private struct RowTexts: View {
+    let outline: Outline
+    let path: OutlinePath
+    let text: String
+    let kind: OutlineTextView.Kind
+    let note: String?
+    let noteOpen: Bool
+    var completed = false
+    var dimmed = false
+    var highlight: [String] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            BulletText(outline: outline, path: path, text: text, kind: kind, completed: completed, dimmed: dimmed, highlight: highlight)
+            if note != nil || noteOpen {
+                BulletText(outline: outline, path: path, text: note ?? "", kind: .note, dimmed: dimmed, expanded: noteOpen, highlight: highlight)
+            }
+        }
+    }
+}
+
 private struct OutlineRowView: View {
     let outline: Outline
     let row: OutlineRow
@@ -216,6 +234,8 @@ private struct OutlineRowView: View {
     let noteOpen: Bool
     /// The filter's words, to mark in the text and the note when this bullet matches.
     let highlight: [String]
+    /// A filter is on: every ancestor shows open, so there is no triangle to click.
+    let filtering: Bool
 
     /// What each level of nesting indents by.
     static let indent: CGFloat = 18
@@ -227,15 +247,8 @@ private struct OutlineRowView: View {
         HStack(alignment: .top, spacing: 4) {
             disclosure
             dot
-            VStack(alignment: .leading, spacing: 0) {
-                BulletText(outline: outline, path: row.path, text: row.text, kind: .row, completed: row.completed, dimmed: row.dimmed,
-                           highlight: highlight)
-                // A note shows while it has text, and while it has the caret (empty or not); then it shows in full.
-                if row.note != nil || noteOpen {
-                    BulletText(outline: outline, path: row.path, text: row.note ?? "", kind: .note, dimmed: row.dimmed, expanded: noteOpen,
-                               highlight: highlight)
-                }
-            }
+            RowTexts(outline: outline, path: row.path, text: row.text, kind: .row, note: row.note, noteOpen: noteOpen,
+                     completed: row.completed, dimmed: row.dimmed, highlight: highlight)
         }
         .padding(.leading, CGFloat(row.depth) * Self.indent)
         .padding(.vertical, 2)
@@ -243,7 +256,7 @@ private struct OutlineRowView: View {
 
     /// A triangle on a bullet with bullets nested under it; the space is kept on the others so the dots line up.
     @ViewBuilder private var disclosure: some View {
-        if row.hasChildren {
+        if row.hasChildren, !filtering {
             Button { outline.toggleCollapse(row.path) } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 8, weight: .bold))
@@ -293,20 +306,12 @@ private struct BulletText: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(outline: outline) }
 
-    /// A note without the caret shows two lines. The layout ends the second in "…" when it wraps; a third line break it can't see, so that adds
-    /// the "…" itself, to what is shown only: the note's text view sets the full text back when the caret comes (`syncFromModel`).
-    private var shown: String {
-        guard kind == .note, !expanded else { return text }
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        return lines.count > 2 ? lines[0] + "\n" + lines[1] + "…" : text
-    }
-
     func makeNSView(context: Context) -> OutlineTextView {
         let view = OutlineTextView.make(path: path, outline: outline, kind: kind)
         view.delegate = context.coordinator
         view.applyStyle(completed: completed, dimmed: dimmed, highlight: highlight)
         view.setExpanded(expanded)
-        view.setTextQuietly(shown)
+        view.setTextQuietly(text)
         outline.register(view)
         return view
     }
@@ -317,8 +322,8 @@ private struct BulletText: NSViewRepresentable {
         context.coordinator.outline = outline
         view.applyStyle(completed: completed, dimmed: dimmed, highlight: highlight)
         view.setExpanded(expanded)
-        guard view.window?.firstResponder !== view, view.string != shown else { return }
-        view.setTextQuietly(shown)
+        guard view.window?.firstResponder !== view, view.string != text else { return }
+        view.setTextQuietly(text)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: OutlineTextView, context: Context) -> CGSize? {
@@ -363,7 +368,6 @@ final class OutlineTextView: NSTextView {
     /// Where the selection started before the change the delegate is hearing of.
     var selectionBeforeChange: Int?
 
-
     /// A bullet's text, its note under it, or the text of the bullet zoomed into. The title has the path of the row it was zoomed from, and a
     /// note the path of its bullet, so the three are told apart by this.
     enum Kind {
@@ -378,13 +382,16 @@ final class OutlineTextView: NSTextView {
         }
 
         var color: NSColor { self == .note ? .secondaryLabelColor : .labelColor }
+
+        /// What tells its view apart from the others with the same path.
+        var registryPrefix: String { self == .title ? "title:" : self == .note ? "note:" : "" }
     }
     private(set) var kind = Kind.row
     var isTitle: Bool { kind == .title }
     var field: OutlineField { kind == .note ? .note : .text }
 
     static func registryKey(_ path: OutlinePath, kind: Kind) -> String {
-        (kind == .title ? "title:" : kind == .note ? "note:" : "") + path.id
+        kind.registryPrefix + path.id
     }
     var registryKey: String { Self.registryKey(rowPath, kind: kind) }
 
@@ -392,6 +399,8 @@ final class OutlineTextView: NSTextView {
     private var dimmed = false
     private var highlight: [String] = []
     private var expanded = true
+    /// An input method was composing when the style last changed; its marked text is left alone until it is done.
+    private var restyleWaiting = false
 
     /// TextKit 1 on purpose: the caret's line and x come from its layout manager.
     @MainActor
@@ -439,7 +448,7 @@ final class OutlineTextView: NSTextView {
     /// Struck through and dimmed for a completed bullet, dimmed for what is nested under one: attributes of the text.
     func applyStyle(completed: Bool, dimmed: Bool, highlight: [String]) {
         // Marks are found again each time while there are some: the text may have been typed into since.
-        guard completed != self.completed || dimmed != self.dimmed || highlight != self.highlight || !highlight.isEmpty else { return }
+        guard completed != self.completed || dimmed != self.dimmed || highlight != self.highlight || !highlight.isEmpty || restyleWaiting else { return }
         self.completed = completed
         self.dimmed = dimmed
         self.highlight = highlight
@@ -447,6 +456,8 @@ final class OutlineTextView: NSTextView {
     }
 
     private func restyle() {
+        restyleWaiting = hasMarkedText()
+        guard !restyleWaiting else { return }
         textColor = dimmed ? kind.color.withAlphaComponent(0.45) : kind.color
         let strike = NSUnderlineStyle.single.rawValue
         let whole = NSRange(location: 0, length: (string as NSString).length)
@@ -459,10 +470,9 @@ final class OutlineTextView: NSTextView {
         for word in highlight where !word.isEmpty {
             var from = 0
             while from < text.length {
-                let found = text.range(of: word, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
-                                       range: NSRange(location: from, length: text.length - from))
+                let found = text.range(of: word, options: OutlineTree.matchOptions, range: NSRange(location: from, length: text.length - from))
                 if found.location == NSNotFound { break }
-                textStorage?.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.35), range: found)
+                textStorage?.addAttribute(.backgroundColor, value: NSColor(Theme.highlight), range: found)
                 from = NSMaxRange(found)
             }
         }
@@ -478,6 +488,21 @@ final class OutlineTextView: NSTextView {
         needsDisplay = true
     }
 
+    /// A cut-short note ends in "…" when more is hidden. The layout puts it there itself when the second line wraps; when that line ends at a line
+    /// break the text goes on past it unmarked, so it is drawn here, after the last laid-out line.
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard kind == .note, !expanded, let layoutManager, let textContainer else { return }
+        let laidOut = layoutManager.glyphRange(for: textContainer)
+        guard laidOut.length > 0, NSMaxRange(laidOut) < layoutManager.numberOfGlyphs else { return }
+        let rest = (string as NSString).substring(from: layoutManager.characterIndexForGlyph(at: NSMaxRange(laidOut)))
+        let last = NSMaxRange(laidOut) - 1
+        guard !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              layoutManager.truncatedGlyphRange(inLineFragmentForGlyphAt: last).location == NSNotFound else { return }
+        let used = layoutManager.lineFragmentUsedRect(forGlyphAt: last, effectiveRange: nil)
+        ("…" as NSString).draw(at: NSPoint(x: used.maxX, y: used.minY), withAttributes: [.font: kind.font, .foregroundColor: textColor ?? kind.color])
+    }
+
     /// Takes the tree's text once the caret has left, since the outline never sets the text of the view that has it.
     @MainActor
     func syncFromModel() {
@@ -488,8 +513,6 @@ final class OutlineTextView: NSTextView {
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
         if accepted {
-            // A note shows two lines (and a "…" of its own) until now.
-            if kind == .note { syncFromModel() }
             outline?.caretEntered(self)
         }
         return accepted

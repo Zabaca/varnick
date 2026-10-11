@@ -118,14 +118,42 @@ enum OutlineEdit {
     case collapse(OutlinePath, Bool)
 }
 
-/// Why an edit changed nothing. Only `insideItself` is said to the user (a beep and a header message); the rest is for whoever reads a check.
+/// Why an edit changed nothing. A refusal with a `message` is said to the user (a beep and a header message); the rest is for whoever reads a check.
 enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     case insideItself
+    /// A delete that would take bullets with it that the filter, or Show completed, hides.
+    case hiddenChildren
     case other(String)
 
     init(stringLiteral reason: String) { self = .other(reason) }
 
-    static let insideItselfMessage = "A bullet can't go inside itself"
+    var message: String? {
+        switch self {
+        case .insideItself: "A bullet can't go inside itself"
+        case .hiddenChildren: "Bullets under it are hidden: clear the filter or show completed first"
+        case .other: nil
+        }
+    }
+}
+
+/// What the rows on screen depend on besides the tree: the filter's words, the bullets kept in view for the caret, and the folded texts.
+struct OutlineScope {
+    var filter: [String] = []
+    /// Bullets that show under a filter whether they match or not: every one the caret has been in since the filter last changed.
+    var keeping: Set<OutlinePath> = []
+    var cache: OutlineFoldCache?
+}
+
+/// Each bullet's text and note folded for matching, worked out once per change instead of once per keystroke in the filter.
+final class OutlineFoldCache {
+    private var entries: [String: (text: String, note: String?, folded: String)] = [:]
+
+    func folded(_ id: String, _ bullet: OutlineBullet) -> String {
+        if let entry = entries[id], entry.text == bullet.text, entry.note == bullet.note { return entry.folded }
+        let folded = OutlineTree.folded(bullet.text + "\n" + (bullet.note ?? ""))
+        entries[id] = (bullet.text, bullet.note, folded)
+        return folded
+    }
 }
 
 extension OutlineEdit {
@@ -197,10 +225,11 @@ struct OutlineTree: Codable, Equatable {
     /// is on. A row's path always starts at the top bullet, zoomed or not.
     ///
     /// With `filter` (see `filterWords`) only the bullets under the zoom that match show, with their ancestors up to the zoom; collapsed ancestors
-    /// show open, and a match's nested bullets show only if they match too. The bullet at `keeping`, and its ancestors, show whether they
-    /// match or not: the one the caret is in.
-    func visibleRows(filter: [String] = [], keeping: OutlinePath? = nil) -> [OutlineRow] {
+    /// show open, and a match's nested bullets show only if they match too. The bullets in `keeping`, and their ancestors, show whether they
+    /// match or not: the ones the caret has been in.
+    func visibleRows(_ scope: OutlineScope = OutlineScope()) -> [OutlineRow] {
         let base = effectiveZoom
+        let filter = scope.filter
         let filtering = !filter.isEmpty
         func walk(_ id: String, prefix: [String], onStack: Set<String>, dimmed: Bool) -> [OutlineRow] {
             var rows: [OutlineRow] = []
@@ -214,8 +243,8 @@ struct OutlineTree: Codable, Equatable {
                 let nested = collapsed ? [] : walk(placement.bullet, prefix: path, onStack: onStack.union([placement.bullet]), dimmed: below)
                 var matched = true
                 if filtering {
-                    matched = Self.matches(child, filter)
-                    let holdsCaret = keeping?.placements.starts(with: path) ?? false
+                    matched = Self.matches(child, id: placement.bullet, filter, cache: scope.cache)
+                    let holdsCaret = scope.keeping.contains { $0.placements.starts(with: path) }
                     guard matched || holdsCaret || !nested.isEmpty else { continue }
                 }
                 rows.append(OutlineRow(path: OutlinePath(placements: path), bullet: placement.bullet, depth: path.count - base.count - 1,
@@ -243,20 +272,21 @@ struct OutlineTree: Codable, Equatable {
         query.split(whereSeparator: \.isWhitespace).map { folded(String($0)) }
     }
 
-    static func folded(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
-    }
+    /// How words are told apart in the filter, here and where the text views mark them.
+    static let matchOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]
+
+    static func folded(_ text: String) -> String { text.folding(options: matchOptions, locale: nil) }
 
     /// A bullet matches when every word is in its text or its note.
-    private static func matches(_ bullet: OutlineBullet, _ words: [String]) -> Bool {
-        let haystack = folded(bullet.text + "\n" + (bullet.note ?? ""))
+    private static func matches(_ bullet: OutlineBullet, id: String, _ words: [String], cache: OutlineFoldCache?) -> Bool {
+        let haystack = cache?.folded(id, bullet) ?? folded(bullet.text + "\n" + (bullet.note ?? ""))
         return words.allSatisfy { haystack.contains($0) }
     }
 
     /// Where the caret goes when the row `path` has left the view (completed with Show completed off, or Show completed turned off): the next row
     /// that still shows, else the one before it, else the title. Nil while the row still shows. `before` is the rows as they were.
-    func caretAfterHiding(_ path: OutlinePath, from before: [OutlineRow]) -> OutlineCaret? {
-        let after = visibleRows()
+    func caretAfterHiding(_ path: OutlinePath, from before: [OutlineRow], scope: OutlineScope = OutlineScope()) -> OutlineCaret? {
+        let after = visibleRows(scope)
         guard !isTitle(path), !after.contains(where: { $0.path == path }) else { return nil }
         let index = before.firstIndex { $0.path == path } ?? 0
         let shown = Set(after.map(\.path))
@@ -385,11 +415,13 @@ struct OutlineTree: Codable, Equatable {
     // MARK: Editing
 
     /// One edit at a row. The result is the new tree and where the caret goes (nil: it stays), or a refusal that changes nothing.
-    func applying(_ edit: OutlineEdit, now: Date, newID: () -> String = OutlineTree.newID) -> OutlineEditResult {
+    ///
+    /// `scope` is what is on screen: the row above, the next row and the siblings an edit works with are the ones the user can see.
+    func applying(_ edit: OutlineEdit, now: Date, newID: () -> String = OutlineTree.newID, scope: OutlineScope = OutlineScope()) -> OutlineEditResult {
         // The title is the bullet zoomed into: its text can be edited, but it can't be moved, joined or deleted from inside the zoom.
         if let target = edit.restructuredPath, isTitle(target) { return .refused("the title") }
         // ↩ in the title adds the first nested bullet.
-        if case .split(let path, let range) = edit, isTitle(path) { return applying(.addFirstChild(path, range: range), now: now, newID: newID) }
+        if case .split(let path, let range) = edit, isTitle(path) { return applying(.addFirstChild(path, range: range), now: now, newID: newID, scope: scope) }
         var tree = self
         let caret: OutlineCaret?
         switch edit {
@@ -424,7 +456,7 @@ struct OutlineTree: Codable, Equatable {
         case .join(let path):
             guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
             guard bullet.children.isEmpty else { return .refused("bullets are nested under it") }
-            let rows = visibleRows()
+            let rows = visibleRows(scope)
             guard let at = rows.firstIndex(where: { $0.path == path }) else { return .refused("no such row") }
             // The row above: the one before in the list, or for the first nested bullet of a zoom its title.
             var above: (path: OutlinePath, bullet: String, text: String)?
@@ -454,7 +486,13 @@ struct OutlineTree: Codable, Equatable {
             }
         case .delete(let path):
             guard let spot = locate(path) else { return .refused("no such row") }
-            let rows = visibleRows()
+            let rows = visibleRows(scope)
+            let shown = Set(rows.map(\.path))
+            // What the filter, or Show completed, hides goes with it, unseen: refused.
+            let hidesChildren = (bullets[spot.bullet]?.children ?? []).contains { child in
+                scope.filter.isEmpty ? (!showsCompleted && bullets[child.bullet]?.completed != nil) : !shown.contains(path.appending(child.id))
+            }
+            guard !hidesChildren else { return .refused(.hiddenChildren) }
             let at = rows.firstIndex { $0.path == path }
             tree.removePlacement(at: spot, now: now)
             if let at, at > 0 {
@@ -467,11 +505,11 @@ struct OutlineTree: Codable, Equatable {
             }
         case .complete(let at):
             guard let spot = locate(at.path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
-            let before = visibleRows()
+            let before = visibleRows(scope)
             tree.bullets[spot.bullet]?.completed = bullet.completed == nil ? now : nil
             tree.bullets[spot.bullet]?.changed = now
             guard case .applied(let done, _) = Self.finish(tree, caret: nil, now: now, newID: newID) else { return .refused("no such row") }
-            return .applied(done, caret: done.caretAfterHiding(at.path, from: before))
+            return .applied(done, caret: done.caretAfterHiding(at.path, from: before, scope: scope))
         case .setNote(let path, let note):
             guard let spot = locate(path) else { return .refused("no such row") }
             let clean = note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -512,9 +550,15 @@ struct OutlineTree: Codable, Equatable {
             tree.bullets[parent.parent]?.changed = now
             caret = OutlineCaret(path: at.path.parent.parent.appending(own), offset: at.offset)
         case .move(let at, let step):
-            guard let spot = locate(at.path), let count = bullets[spot.parent]?.children.count,
-                  (0..<count).contains(spot.index + step) else { return .refused("first or last") }
-            tree.bullets[spot.parent]?.children.swapAt(spot.index, spot.index + step)
+            // Past the nearest sibling that shows: hidden ones (by a filter, or completed) are stepped over.
+            guard let spot = locate(at.path), let siblings = bullets[spot.parent]?.children else { return .refused("no such row") }
+            let shown = Set(visibleRows(scope).map(\.path))
+            var target = spot.index + step
+            while siblings.indices.contains(target), !shown.contains(at.path.parent.appending(siblings[target].id)) { target += step }
+            guard siblings.indices.contains(target), let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index) else {
+                return .refused("first or last")
+            }
+            tree.bullets[spot.parent]?.children.insert(moved, at: target)
             tree.bullets[spot.parent]?.changed = now
             caret = at
         case .collapse(let path, let collapsed):

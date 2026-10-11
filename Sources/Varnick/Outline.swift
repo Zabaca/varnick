@@ -40,8 +40,13 @@ final class Outline: ObservableObject {
     @Published private(set) var filterFocusRequest = 0
     /// The words the filter looks for (`OutlineTree.filterWords`).
     private(set) var filterWords: [String] = []
-    /// The bullet the caret is in, kept in view under a filter even when it stops matching, until the filter changes.
-    private var filterKeep: OutlinePath?
+    /// The bullets the caret has been in, kept in view under a filter even when they stop matching, until the filter changes: rows never
+    /// vanish under the caret, or from under a click.
+    private var filterKept: Set<OutlinePath> = []
+    private let foldCache = OutlineFoldCache()
+
+    /// What the rows depend on besides the tree.
+    private var scope: OutlineScope { OutlineScope(filter: filterWords, keeping: filterKept, cache: foldCache) }
     /// Asks the view to scroll a row into sight before the caret moves into it.
     @Published private(set) var scrollRequest: ScrollRequest?
     /// A refusal's words, for a moment, in the header.
@@ -57,7 +62,12 @@ final class Outline: ObservableObject {
     private var views: [String: WeakView] = [:]
     private(set) weak var activeView: OutlineTextView?
     private var remembered: OutlineCaret?
-    private var pending: (path: OutlinePath, field: OutlineField, place: OutlineCaretPlace)?
+    private struct CaretTarget {
+        let path: OutlinePath
+        let field: OutlineField
+        let place: OutlineCaretPlace
+    }
+    private var pending: CaretTarget?
     /// Keys that arrive while the caret is on its way to another bullet; they are sent again once it has landed.
     private var queuedEvents: [NSEvent] = []
     private var undoStack: [Step] = []
@@ -113,7 +123,7 @@ final class Outline: ObservableObject {
 
     /// The rows for the tree, the filter and the bullet the caret is in; published only when they differ.
     private func refreshRows() {
-        let shown = tree.visibleRows(filter: filterWords, keeping: filterKeep)
+        let shown = tree.visibleRows(scope)
         if shown != rows { rows = shown }
     }
 
@@ -152,16 +162,16 @@ final class Outline: ObservableObject {
     @discardableResult
     private func apply(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false) -> Bool {
         guard load == .ready else { return false }
-        switch tree.applying(edit, now: Date()) {
+        switch tree.applying(edit, now: Date(), scope: scope) {
         case .refused(let reason):
-            if reason == .insideItself {
+            if let message = reason.message {
                 NSSound.beep()
-                say(OutlineRefusal.insideItselfMessage)
+                say(message)
             }
             return false
         case .applied(let new, let caret):
             // A new bullet doesn't match the filter, and the caret is on its way into it.
-            if !filterWords.isEmpty, let caret { filterKeep = caret.path }
+            if let caret { keep(caret.path) }
             if new != tree {
                 record(caretBefore ?? currentCaret(), typing: typing)
                 use(new)
@@ -219,7 +229,7 @@ final class Outline: ObservableObject {
         new = new.ensuringBullet(now: Date())
         let before = rows
         setView(new)
-        if let remembered, let moved = new.caretAfterHiding(remembered.path, from: before) {
+        if let remembered, let moved = new.caretAfterHiding(remembered.path, from: before, scope: scope) {
             moveCaret(to: moved.path, .offset(moved.offset))
         } else {
             restoreCaret()
@@ -238,7 +248,13 @@ final class Outline: ObservableObject {
     func setFilter(_ text: String) {
         filterText = text
         filterWords = OutlineTree.filterWords(text)
-        filterKeep = nil
+        filterKept = []
+        refreshRows()
+    }
+
+    /// Under a filter, the bullet the caret is in or goes to stays in view, matching or not.
+    private func keep(_ path: OutlinePath) {
+        guard !filterWords.isEmpty, filterKept.insert(path).inserted else { return }
         refreshRows()
     }
 
@@ -249,7 +265,7 @@ final class Outline: ObservableObject {
 
     /// The disclosure triangle. The caret stays where it was.
     func toggleCollapse(_ path: OutlinePath) {
-        guard let row = rows.first(where: { $0.path == path }) else { return }
+        guard filterWords.isEmpty, let row = rows.first(where: { $0.path == path }) else { return }
         apply(.collapse(path, !row.collapsed))
         restoreCaret()
     }
@@ -310,12 +326,12 @@ final class Outline: ObservableObject {
         // There is always a line to type in: Show completed turned off since may have hidden what the step brings back.
         restored = restored.ensuringBullet(now: Date())
         let before = rows
-        if !filterWords.isEmpty, let caret = step.caret { filterKeep = caret.path }
+        if let caret = step.caret { keep(caret.path) }
         use(restored)
         saver.changed(restored)
         if let caret = step.caret, showing(caret.path) {
             moveCaret(to: caret.path, field: usable(caret, in: restored), .offset(caret.offset))
-        } else if let caret = step.caret, let moved = restored.caretAfterHiding(caret.path, from: before) {
+        } else if let caret = step.caret, let moved = restored.caretAfterHiding(caret.path, from: before, scope: scope) {
             moveCaret(to: moved.path, .offset(moved.offset))
         } else {
             restoreCaret()
@@ -345,10 +361,7 @@ final class Outline: ObservableObject {
         activeView = view
         let note = view.field == .note ? view.rowPath : nil
         if notePath != note { notePath = note }
-        if !filterWords.isEmpty, filterKeep != view.rowPath {
-            filterKeep = view.rowPath
-            refreshRows()
-        }
+        keep(view.rowPath)
         selectionChanged(view)
     }
 
@@ -427,7 +440,8 @@ final class Outline: ObservableObject {
     /// Scrolls to the row, then moves the caret into its text view a tick later: no view update moves the first responder, and a row
     /// off screen has no text view until it is scrolled to.
     private func moveCaret(to path: OutlinePath, field: OutlineField = .text, _ place: OutlineCaretPlace) {
-        pending = (path, field, place)
+        keep(path)
+        pending = CaretTarget(path: path, field: field, place: place)
         scroll(to: path)
         attemptPlace(tries: 0)
     }
@@ -496,7 +510,7 @@ final class Outline: ObservableObject {
             // One level back: out of a note, then the filter clears (the caret goes back to its bullet), then the outline closes.
             if let view = activeView, view.field == .note, view.window?.firstResponder === view {
                 leaveNote(view)
-            } else if filterHasFocus || !filterWords.isEmpty {
+            } else if filterHasFocus || !filterText.isEmpty {
                 setFilter("")
                 restoreCaret()
             } else {
@@ -598,9 +612,10 @@ final class Outline: ObservableObject {
         case (kVK_DownArrow, commandShift):
             apply(.move(here, by: 1))
         case (kVK_UpArrow, command):
-            apply(.collapse(path, true))
+            // Under a filter every ancestor shows open, so a collapse would save a state nothing on screen shows.
+            if filterWords.isEmpty { apply(.collapse(path, true)) }
         case (kVK_DownArrow, command):
-            apply(.collapse(path, false))
+            if filterWords.isEmpty { apply(.collapse(path, false)) }
         default:
             return false
         }
