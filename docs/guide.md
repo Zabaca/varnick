@@ -156,6 +156,12 @@ window, typed text included, which the listing leaves out, and goes to Anthropic
 fields Varnick can see are painted black first; the ones it can't see are listed in
 [privacy and security](privacy-and-security.md#anthropic-through-screen-access).
 
+`look` with `screen` returns an image of every display instead, or with `display` and a number, of one; `rect`
+crops them. The reply lists the displays with their frames, and says each image's area and pixels per point, so
+a session can turn a place in an image into a point to click. It lists no controls unless an app is named too. It
+needs Screen Recording. **Nothing in it is hidden:** it shows everything on those displays, Varnick's own window
+and other sessions, what you typed and any password field, and goes to Anthropic with the session.
+
 **Nothing asks before an action**: the arrow shows on the target for a second first, then the app comes to the
 front (not for `window`) and a click, typing, drag or resize happens. `look` also says which control has focus.
 What `type` refuses, when it stops, and what is and isn't logged: see

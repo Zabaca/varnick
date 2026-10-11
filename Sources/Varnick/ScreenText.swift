@@ -88,12 +88,18 @@ enum ScreenText {
         case noWindow
         case timedOut
         case capture(code: Int)
+        /// A screen look named a display that isn't there; `count` are.
+        case noDisplay(count: Int)
+        /// A screen look's area reaches none of the chosen displays.
+        case outsideDisplays
 
         var logKind: String {
             switch self {
             case .noWindow: "no window"
             case .timedOut: "timed out"
             case .capture(let code): "capture failed (\(code))"
+            case .noDisplay: "no display"
+            case .outsideDisplays: "outside displays"
             }
         }
     }
@@ -110,7 +116,8 @@ enum ScreenText {
     }
 
     /// `work`'s result, `Failure.timedOut` after `limit`, or a cancellation, whichever comes first.
-    private static func withinLimit<Value: Sendable>(_ work: @escaping @Sendable () async throws -> Value) async throws -> Value {
+    private static func withinLimit<Value: Sendable>(_ limit: Duration = limit,
+                                                     _ work: @escaping @Sendable () async throws -> Value) async throws -> Value {
         let race = Race<Value>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -166,6 +173,78 @@ enum ScreenText {
             lock.unlock()
             running?.cancel()
             waiting?.resume(with: outcome)
+        }
+    }
+
+    /// Capture of all the displays gives up after this: each is a bigger image than a window.
+    static let screensLimit: Duration = .seconds(5)
+
+    /// A display as a session's `look` numbers it: the main display is 1, then the others left to right and top to bottom.
+    struct Display: Sendable {
+        var number: Int
+        /// In screen points, the origin at the top left of the main display, as Accessibility's frames are.
+        var frame: CGRect
+        var isMain: Bool
+    }
+
+    /// Every display, and a picture of each one chosen.
+    struct Screens: @unchecked Sendable {
+        var displays: [Display]
+        var shots: [(display: Display, image: CGImage)]
+    }
+
+    /// Pictures of the displays (`display` is one's number; nil is all) that `crop` (screen points) reaches, nothing excluded or
+    /// painted over. The caller has checked `hasAccess`.
+    static func screens(display: Int?, crop: CGRect?) async throws -> Screens {
+        try await withinLimit(screensLimit) { try await captureDisplays(display: display, crop: crop) }
+    }
+
+    private static func captureDisplays(display: Int?, crop: CGRect?) async throws -> Screens {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            let main = CGMainDisplayID()
+            // The bounds from Quartz, which are the Accessibility frames' coordinates.
+            let listed = content.displays.map { (screen: $0, frame: CGDisplayBounds($0.displayID), isMain: $0.displayID == main) }
+            let ordered = displayOrder(of: listed.map { ($0.frame, $0.isMain) }).map { listed[$0] }
+            let all = ordered.enumerated().map { Display(number: $0.offset + 1, frame: $0.element.frame, isMain: $0.element.isMain) }
+            if let display { guard all.indices.contains(display - 1) else { throw Failure.noDisplay(count: all.count) } }
+            let chosen = ordered.indices.filter { index in
+                if let display, index != display - 1 { return false }
+                guard let crop else { return true }
+                let shared = all[index].frame.intersection(crop)
+                return !shared.isNull && shared.width >= 1 && shared.height >= 1
+            }
+            guard !chosen.isEmpty else { throw Failure.outsideDisplays }
+            var shots: [(display: Display, image: CGImage)] = []
+            for index in chosen {
+                let filter = SCContentFilter(display: ordered[index].screen, excludingWindows: [])
+                let configuration = SCStreamConfiguration()
+                let scale = CGFloat(filter.pointPixelScale)
+                configuration.width = Int((all[index].frame.width * scale).rounded())
+                configuration.height = Int((all[index].frame.height * scale).rounded())
+                configuration.showsCursor = false
+                let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+                try Task.checkCancellation()
+                shots.append((all[index], image))
+            }
+            return Screens(displays: all, shots: shots)
+        } catch let failure as Failure {
+            throw failure
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw Failure.capture(code: (error as NSError).code)
+        }
+    }
+
+    /// The order displays are numbered in, as indices into `displays`: the main display first, then by left edge and top edge.
+    static func displayOrder(of displays: [(frame: CGRect, isMain: Bool)]) -> [Int] {
+        displays.indices.sorted { a, b in
+            let (first, second) = (displays[a], displays[b])
+            if first.isMain != second.isMain { return first.isMain }
+            if first.frame.minX != second.frame.minX { return first.frame.minX < second.frame.minX }
+            if first.frame.minY != second.frame.minY { return first.frame.minY < second.frame.minY }
+            return a < b
         }
     }
 
