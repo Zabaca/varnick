@@ -88,15 +88,35 @@ final class Outline: ObservableObject {
 
     // MARK: Showing
 
-    /// The outline shows. The file is read the first time in a launch, off the main actor.
-    func appear() {
-        guard load == .notLoaded else { return restoreCaret() }
+    /// The outline shows. The file is read the first time in a launch, off the main actor. With `focusing` false (a session's `show` while the
+    /// panel doesn't have the keyboard) the caret is neither moved nor placed, now or when the file arrives.
+    func appear(focusing: Bool = true) {
+        if focusing { focusesOnLoad = true }
+        guard load == .notLoaded else {
+            if focusing { restoreCaret() }
+            return
+        }
+        startLoading()
+    }
+
+    /// Whether the file's arrival puts the caret in a bullet: not when a session loaded it or showed the outline while the panel lacked the keyboard.
+    private var focusesOnLoad = false
+    private var loadTask: Task<Void, Never>?
+
+    private func startLoading() {
         load = .loading
         let url = fileURL
-        Task { [weak self] in
+        loadTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) { OutlineFile.read(at: url) }.value
             self?.loaded(result)
         }
+    }
+
+    /// A session's read (Panel access) needs the file read, as showing the outline would: the first call in a launch reads it, off the main
+    /// actor, without showing the outline or moving the caret; a call that arrives while it is being read waits for it. Reading never writes.
+    func loadForSession() async {
+        if load == .notLoaded { startLoading() }
+        await loadTask?.value
     }
 
     private func loaded(_ result: OutlineFile.ReadResult) {
@@ -119,7 +139,7 @@ final class Outline: ObservableObject {
             return
         }
         load = .ready
-        if model?.showingOutline == true { restoreCaret() }
+        if model?.showingOutline == true, focusesOnLoad { restoreCaret() }
     }
 
     private func use(_ new: OutlineTree) {
@@ -516,9 +536,17 @@ final class Outline: ObservableObject {
 
     // MARK: Caret
 
+    /// Where the caret is, for a session's read (Panel access): the model's own record, kept up to date as the caret moves, and never asked of
+    /// a text view. `inBullet` is whether a bullet's text or note has the caret now; if not it is where it last was.
+    var caretForSessions: (caret: OutlineCaret, inBullet: Bool)? {
+        remembered.map { ($0, activeView != nil && selection == nil) }
+    }
+
     /// The caret goes back to where it was. A row that is hidden now (a collapsed parent) gives it to the nearest row still showing on its path,
     /// at the end of its text; a path that is gone gives it to the first bullet.
     func restoreCaret() {
+        // Asked for while the file is still being read (the panel came up after a session showed the outline): the caret goes in when it arrives.
+        if load == .loading { focusesOnLoad = true }
         guard load == .ready else { return }
         endSelection()
         if let remembered, showing(remembered.path) {

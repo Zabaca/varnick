@@ -162,8 +162,15 @@ tools at once. Varnick's log holds the tool, the outcome's kind, a count of line
 text. Reading a pane's screen resizes, writes to and focuses nothing in it. If you don't want what a terminal shows
 sent to Anthropic, leave Panel access off.
 
-A session can also change what the panel shows (`show`): the search, the board, the Problems tab, a pane's tab, or a
-`!` command (`!transcript`, `!kanban`, `!problems`), the same changes your keys make. It never shows, hides or pins the
+They can also read **your Outline** (`outline_read`), which is otherwise kept in a file on this Mac and nowhere else:
+every bullet's text and note and whether it is completed, collapsed or a mirror, from Home or from a bullet down, or the
+rows as you see them with your zoom, filter and caret. All of it goes to Anthropic with the session and stays in its
+transcript on this Mac. The read loads `outline.json` as showing the Outline would and never writes it, and a file
+Varnick can't read is refused. Varnick's log holds a count of lines, never a bullet's text or a filter word. If you
+don't want your bullets sent to Anthropic, leave Panel access off.
+
+A session can also change what the panel shows (`show`): the search, the board, the Problems tab, the Outline, a pane's tab, or a
+`!` command (`!transcript`, `!kanban`, `!problems`, `!outline`), the same changes your keys make. It never shows, hides or pins the
 panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is
 refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel. It sends no key and posts no event.
 

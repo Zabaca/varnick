@@ -188,21 +188,27 @@ Settings › Claude › **Panel access** (off by default, and independent of Scr
 you start or restart in Varnick's panes tools for Varnick itself, from the same `varnick` MCP server. `panel` says
 whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
-Settings) and what has the keyboard. `board_read` gives the session board's cards by column (Running, Stopped,
+the Outline, with its zoom, filter and caret; Settings) and what has the keyboard. `board_read` gives the session board's cards by column (Running, Stopped,
 Completed) as the board shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane
 gets an id such as `s1`, the same every time, in all of them. `pane_read` gives a pane's kind and title and, for a
 terminal (a Claude session or a shell, this session's own included), the text its screen shows now, never its
 scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or a custom
-app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.**
+app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** `outline_read` gives
+your Outline's bullets: by default the tree from Home, or
+from a bullet, three levels down (`depth` 0 for all), with each bullet's id (`o1`, the same every time), text, whether it
+is done, collapsed or a mirror, its tags and its note, and which ones your view hides; with `as_shown`, the rows exactly
+as you see them, with your zoom, your filter, Show completed, the caret and the selected bullets. It reads whether or not
+the Outline is showing, at most 400 rows at a time, and never writes the file; if `outline.json` can't be read it is
+refused. **Your bullets and notes go to Anthropic with the session**, though they are otherwise kept on this Mac only.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
-board or problems (the Problems tab, while that switch is on), `pane` an id from `panel` or `board_read` (shows
-that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`).
+board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows
+that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`, `outline`).
 It never shows, hides or pins the panel: with the panel hidden, what it showed is there the next time you open it.
 It never runs `!listen`, which turns on the microphone. It never takes the keyboard from the app you are in, never clears what you typed in the search, and is refused while
 Settings, the Restart Varnick card or the split picker shows, for two seconds after you press a key in the panel,
-and, with the panel hidden, for a pane's tab or while a terminal is on screen. The outline isn't available to
-sessions yet. The tools work through
+and, with the panel hidden, for a pane's tab or while a terminal is on screen. Showing the Outline puts the caret in a
+bullet only if the panel already has the keyboard. The tools work through
 Varnick's own state, so they need no permission, no Accessibility and no Screen Recording. What a session reads goes to
 Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access). A
 session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the switch on; turning it off

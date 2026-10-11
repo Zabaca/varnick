@@ -119,6 +119,47 @@ enum OutlineCheck {
         print("clipboard check: the built-in indented text reads as \(DraftCounts(OutlineClipboard.drafts(fromText: sample)))")
     }
 
+    /// What a session's read (Panel access) makes of the tree: the same read twice gives the same text with the same ids, reading everything lists
+    /// as many rows as the tree shows with Show completed on and no zoom, and the rows on screen are listed as they are. Prints counts only.
+    private static func readCheck(_ tree: OutlineTree) {
+        var numbers: [String: Int] = [:]
+        let id: (OutlinePath) -> String = { path in
+            let number = numbers[path.id] ?? numbers.count + 1
+            numbers[path.id] = number
+            return "o\(number)"
+        }
+        let reading = OutlineReading(tree: tree, id: id)
+        let first = reading.read(from: nil, depth: 3)
+        let second = reading.read(from: nil, depth: 3)
+        print("read check: from Home, 3 levels: \(first.rows) rows, \(first.more) more, same text and ids on a second read: \(first == second)")
+        var everything = tree
+        everything.zoom = []
+        everything.showsCompleted = true
+        // The screen hides what is nested in a collapsed bullet; the read lists it.
+        for key in Array(everything.bullets.keys) {
+            for at in everything.bullets[key]?.children.indices ?? 0..<0 { everything.bullets[key]?.children[at].collapsed = nil }
+        }
+        let total = everything.visibleRows().count
+        let all = OutlineReading(tree: everything, id: id).read(from: nil, depth: 0)
+        print("read check: all levels: \(all.rows) rows listed and \(all.more) more for \(total) rows in the tree "
+              + "(the cap is \(OutlineReading.rowLimit)): \(all.rows + all.more == total ? "adds up" : "DOES NOT ADD UP")")
+        if let row = tree.visibleRows().first(where: \.hasChildren) {
+            let below = reading.read(from: row.path, depth: 0)
+            print("read check: from a bullet with bullets nested in it: \(below.rows) rows, the bullet first: \(below.text.contains("\n\(id(row.path)) \""))")
+        }
+        let rows = tree.visibleRows()
+        let view = OutlineReading.Shown(rows: rows, crumbs: tree.crumbs(), filterText: "", showsCompleted: tree.showsCompleted, caret: nil,
+                                        selection: nil, onScreen: true)
+        let shown = reading.shown(view)
+        print("read check: as shown: \(shown.rows) of \(rows.count) rows on screen listed, \(shown.more) more")
+        var big = tree
+        if let top = big.bullets[big.root]?.children.first?.bullet {
+            big.bullets[top]?.note = String(repeating: "line\n", count: 500)
+            let cut = OutlineReading(tree: big, id: id).read(from: nil, depth: 1)
+            print("read check: a note of 501 lines is cut to \(OutlineReading.noteLines) lines: \(cut.text.contains("(\(501 - OutlineReading.noteLines) more lines)"))")
+        }
+    }
+
     static func run(_ arguments: [String]) -> Int32 {
         let paths = arguments.filter { !$0.hasPrefix("--") }
         guard let file = paths.first else {
@@ -147,6 +188,7 @@ enum OutlineCheck {
         mirrorCheck(tree)
         runCheck(tree)
         clipboardCheck(tree)
+        readCheck(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {
