@@ -67,5 +67,5 @@ As option 01.
 ## Further Notes
 
 - **Passed over by the user on 2026-10-10** for option 01, the bundled helper. The reasons: the copied flags would drift from zbc, the reminders filter is untested from the CLI, and there is no path to a warm session.
-- **When to come back to it:** Anthropic's agreements turn out not to allow shipping the Agent SDK inside Varnick (option 01, open question 8), or the helper can't be signed and notarized.
+- **When to come back to it:** Anthropic's agreements turn out not to allow shipping the Agent SDK inside Varnick. The user decided to build option 01 now and read them before the first release that ships the SDK, with this option as the way back. (The signing spike of 2026-10-10 showed the bundled Bun signs and notarizes with one entitlement, so signing is not a reason.)
 - **Read, not run:** the flags, from `claude` 2.1.296's help and the Agent SDK 0.3.291's mapping. **Inferred:** the JSON result's field names, and that the CLI has no token-budget flag.

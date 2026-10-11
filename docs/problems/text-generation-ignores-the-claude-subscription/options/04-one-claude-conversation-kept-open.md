@@ -12,7 +12,7 @@ When Hey Varnick turns on with Claude Code chosen, Varnick starts one `claude` s
 ## Trade-offs
 
 - **No start-up per request.** That saves the share of each call spent starting the helper and `claude`, which is unmeasured.
-- **Requests share a conversation.** Every answer is written with the earlier requests and their rows in context. That can colour an answer (a source named before turns up again), and the input grows with each request until the restart or a compaction. Clearing between requests is unverified with streamed input. Restarting after every request is option 01's warm helper, which starts a fresh query per request (option 01, open question 4).
+- **Requests share a conversation.** Every answer is written with the earlier requests and their rows in context. That can colour an answer (a source named before turns up again), and the input grows with each request until the restart or a compaction. Clearing between requests is unverified with streamed input. Restarting after every request is option 01's warm helper, which starts a fresh query per request (option 01, still-open question 1).
 - **A process to watch all day.** It can crash, outlive a logout, run an old binary after Claude Code updates itself, and hold memory while Hey Varnick sits idle for hours (unmeasured).
 - **Cancel is harder.** Stopping one answer must not end the session, or the next request pays the start-up again.
 - The data, the limits and the fallback are option 01's.
