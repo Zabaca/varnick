@@ -112,6 +112,16 @@ struct OutlineRun: Equatable {
     init(_ paths: [OutlinePath]) { self.paths = paths }
 }
 
+/// Where an insert of new bullets goes.
+enum OutlineInsertion: Equatable {
+    /// As the next siblings of the row, after what is nested under it.
+    case after(OutlinePath)
+    /// First among the bullets nested under the row: the title of a zoom.
+    case firstUnder(OutlinePath)
+    /// In the place of the row, which must be an empty bullet with nothing nested, no note and one placement (`OutlineTree.canReplace`).
+    case replacing(OutlinePath)
+}
+
 /// Bullets selected whole (Selection in `CONTEXT.md`): a run of the sibling rows that show, next to each other under one parent, each with
 /// everything nested under it. `fixed` stays where the selection started; `moving` is the end the shift keys move. Paths, never bullet ids,
 /// like the caret's row.
@@ -141,8 +151,9 @@ enum OutlineEdit {
     case join(OutlinePath)
     /// These placements only, each with whatever is nested under it. A bullet goes when its last placement goes.
     case delete(OutlineRun)
-    /// Several lines pasted over `range`: the first at the caret, each further one in a new bullet below. Blank lines are skipped.
-    case paste(OutlinePath, range: Range<Int>, lines: [String])
+    /// New bullets made from a paste (or panel access's `add`): the drafts, with new ids, `created` and `changed` now, and completion and collapse
+    /// as the drafts have them. The caret goes to the end of the last top-level one that shows; the result's run is the new top-level paths.
+    case insert([OutlineDraft], at: OutlineInsertion)
     /// ↩ in the title of a zoom: the text after the caret moves into a new first nested bullet; at the start of a non-empty title the new
     /// bullet is empty. The caret goes into it.
     case addFirstChild(OutlinePath, range: Range<Int>)
@@ -286,7 +297,8 @@ extension OutlineEdit {
         switch self {
         case .addBelow(let path), .addAbove(let path), .join(let path): [path]
         case .indent(let run), .outdent(let run), .move(let run, _), .complete(let run), .delete(let run): run.paths
-        case .setText, .setNote, .split, .paste, .addFirstChild, .collapse, .placeMirror: []
+        case .insert(_, .after(let path)), .insert(_, .replacing(let path)): [path]
+        case .setText, .setNote, .split, .insert, .addFirstChild, .collapse, .placeMirror: []
         }
     }
 
@@ -792,34 +804,31 @@ struct OutlineTree: Codable, Equatable {
             guard tree != self else { return .applied(self, caret: nil) }
             tree.bullets[spot.parent]?.changed = now
             caret = nil
-        case .paste(let path, let range, let lines):
-            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
-            let pasted = lines.map(Self.oneLine).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            guard let first = pasted.first else { return .refused("nothing to paste") }
-            let length = bullet.text.utf16.count
-            let low = min(max(range.lowerBound, 0), length), high = min(max(range.upperBound, low), length)
-            let head = bullet.text.utf16Slice(0..<low) + first
-            let tail = bullet.text.utf16Slice(high..<length)
-            guard pasted.count > 1 else {
-                tree.bullets[spot.bullet]?.text = head + tail
-                tree.bullets[spot.bullet]?.changed = now
-                return Self.finish(tree, caret: OutlineCaret(path: path, offset: head.utf16.count), now: now, newID: newID)
+        case .insert(let drafts, let place):
+            guard !drafts.isEmpty else { return .refused("nothing to insert") }
+            let target: (parent: String, path: OutlinePath, index: Int)
+            switch place {
+            case .after(let path):
+                guard let spot = locate(path) else { return .refused("no such row") }
+                target = (spot.parent, path.parent, spot.index + 1)
+            case .firstUnder(let path):
+                guard let spot = locate(path) else { return .refused("no such row") }
+                target = (spot.bullet, path, 0)
+            case .replacing(let path):
+                guard canReplace(path), let spot = locate(path) else { return .refused("not an empty bullet") }
+                tree.bullets[spot.parent]?.children.remove(at: spot.index)
+                target = (spot.parent, path.parent, spot.index)
             }
-            tree.bullets[spot.bullet]?.text = head
-            tree.bullets[spot.bullet]?.changed = now
-            // The further lines go below the bullet, or at the top of what is nested under the title of a zoom.
-            let onTitle = isTitle(path)
-            let into = onTitle ? spot.bullet : spot.parent
-            let before = onTitle ? path : path.parent
-            var index = onTitle ? -1 : spot.index
-            var last = path
-            for (n, line) in pasted.dropFirst().enumerated() {
-                index += 1
-                let text = n == pasted.count - 2 ? line + tail : line
-                let placement = tree.insertNew(text: text, at: index, in: into, now: now, newID: newID)
-                last = before.appending(placement)
+            let placements = drafts.map { tree.make($0, now: now, newID: newID) }
+            tree.bullets[target.parent]?.children.insert(contentsOf: placements, at: target.index)
+            tree.bullets[target.parent]?.changed = now
+            moved = placements.map { target.path.appending($0.id) }
+            // The end of the last top-level bullet pasted that shows (a completed one is hidden with Show completed off).
+            if let last = drafts.indices.last(where: { showsCompleted || drafts[$0].completed == nil }) {
+                caret = OutlineCaret(path: moved[last], offset: Self.oneLine(drafts[last].text).utf16.count)
+            } else {
+                caret = nil
             }
-            caret = OutlineCaret(path: last, offset: pasted[pasted.count - 1].utf16.count)
         }
         return Self.finish(tree, caret: caret, run: moved, now: now, newID: newID)
     }
@@ -892,6 +901,27 @@ struct OutlineTree: Codable, Equatable {
 
     private static func oneLine(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+    }
+
+    /// Whether the row is an empty bullet with nothing nested, no note and no other placement: what a paste takes the place of.
+    func canReplace(_ path: OutlinePath) -> Bool {
+        guard !isTitle(path), let spot = locate(path), let bullet = bullets[spot.bullet] else { return false }
+        return bullet.text.isEmpty && (bullet.note ?? "").isEmpty && bullet.children.isEmpty && placementCount(of: spot.bullet) == 1
+    }
+
+    /// The placement a row is, with its own collapsed state.
+    func placement(at path: OutlinePath) -> OutlinePlacement? {
+        locate(path).flatMap { bullets[$0.parent]?.children[$0.index] }
+    }
+
+    /// The bullets of a draft and the ones nested in it, made new; returns its placement.
+    private mutating func make(_ draft: OutlineDraft, now: Date, newID: () -> String) -> OutlinePlacement {
+        let bullet = newID(), placement = newID()
+        let children = draft.children.map { make($0, now: now, newID: newID) }
+        let note = (draft.note ?? "").replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        bullets[bullet] = OutlineBullet(text: Self.oneLine(draft.text), note: note.isEmpty ? nil : note, completed: draft.completed,
+                                        created: now, changed: now, children: children)
+        return OutlinePlacement(id: placement, bullet: bullet, collapsed: draft.collapsed && !children.isEmpty ? true : nil)
     }
 
     /// A new bullet and its placement at `index` in `parent`'s list; returns the placement's id.

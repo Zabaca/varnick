@@ -76,6 +76,49 @@ enum OutlineCheck {
               + "\(shape(back) == shape(copy) ? "back as it was" : "NOT back as it was")")
     }
 
+    /// What a list of drafts holds, as counts.
+    private struct DraftCounts: Equatable, CustomStringConvertible {
+        let bullets: Int
+        let deepest: Int
+        let notes: Int
+        let completed: Int
+
+        init(_ drafts: [OutlineDraft]) {
+            func levels(_ drafts: [OutlineDraft]) -> Int { drafts.isEmpty ? 0 : 1 + (drafts.map { levels($0.children) }.max() ?? 0) }
+            func total(_ drafts: [OutlineDraft], _ keep: (OutlineDraft) -> Bool) -> Int {
+                drafts.reduce(0) { $0 + (keep($1) ? 1 : 0) + total($1.children, keep) }
+            }
+            bullets = total(drafts) { _ in true }
+            deepest = levels(drafts)
+            notes = total(drafts) { $0.note != nil }
+            completed = total(drafts) { $0.completed != nil }
+        }
+
+        var description: String { "\(bullets) bullets, deepest level \(deepest), \(notes) notes, \(completed) completed" }
+    }
+
+    /// Writes the top-level bullets, from Home, in both clipboard forms and reads each back; then reads a built-in sample of indented text.
+    /// Prints counts only.
+    private static func clipboardCheck(_ tree: OutlineTree) {
+        let top = (tree.bullets[tree.root]?.children ?? []).map { OutlinePath(placements: [$0.id]) }
+        let drafts = OutlineClipboard.drafts(of: top, in: tree)
+        let original = DraftCounts(drafts)
+        let fromText = DraftCounts(OutlineClipboard.drafts(fromText: OutlineClipboard.text(of: drafts)))
+        let fromOwn = OutlineClipboard.data(of: drafts).flatMap(OutlineClipboard.drafts(fromData:)).map(DraftCounts.init)
+        print("clipboard check: \(top.count) top-level bullets copy as \(original)")
+        print("clipboard check: indented text reads back with the same bullet count: \(fromText.bullets == original.bullets), "
+              + "the same deepest level: \(fromText.deepest == original.deepest)")
+        if let fromOwn {
+            print("clipboard check: Varnick's own copy reads back with the same bullet count: \(fromOwn.bullets == original.bullets), "
+                  + "the same deepest level: \(fromOwn.deepest == original.deepest), the same notes: \(fromOwn.notes == original.notes), "
+                  + "the same completed: \(fromOwn.completed == original.completed)")
+        } else {
+            print("clipboard check: Varnick's own copy does not read back")
+        }
+        let sample = "- one\n\t- tab child\n    * four-space child\n        + deeper\n1. numbered\n\n- two\n  • bullet character\n-\n"
+        print("clipboard check: the built-in indented text reads as \(DraftCounts(OutlineClipboard.drafts(fromText: sample)))")
+    }
+
     static func run(_ arguments: [String]) -> Int32 {
         let paths = arguments.filter { !$0.hasPrefix("--") }
         guard let file = paths.first else {
@@ -103,6 +146,7 @@ enum OutlineCheck {
         }
         mirrorCheck(tree)
         runCheck(tree)
+        clipboardCheck(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {

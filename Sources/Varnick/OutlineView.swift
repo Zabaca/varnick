@@ -659,18 +659,15 @@ final class OutlineTextView: NSTextView {
     override func insertTab(_ sender: Any?) {}
     override func insertBacktab(_ sender: Any?) {}
 
-    /// Several lines become several bullets (the outline places them); one line is typed in as it is.
+    /// Varnick's own copy, or several lines, become whole bullets (the outline makes them, below this one); one line is typed in as it is.
     @MainActor
     override func paste(_ sender: Any?) {
         // A note keeps its line breaks.
         if kind == .note { return super.paste(sender) }
-        guard let string = NSPasteboard.general.string(forType: .string) else { return }
-        let lines = string.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        if lines.count > 1 {
-            outline?.paste(self, lines: lines)
-        } else if let line = lines.first {
-            insertText(line, replacementRange: selectedRange())
-        }
+        if outline?.pasteBullets(into: self) == true { return }
+        let lines = NSPasteboard.general.string(forType: .string)?.components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        if let line = lines?.first { insertText(line, replacementRange: selectedRange()) }
     }
 
     override func pasteAsPlainText(_ sender: Any?) { paste(sender) }

@@ -207,7 +207,10 @@ final class Outline: ObservableObject {
                 }
                 use(new)
                 saver.changed(new)
-                if held != nil, selection == nil, caret == nil { restoreCaret() }
+                // Nothing to put the caret in: an insert whose bullets are all hidden may have taken the place of the bullet that had it.
+                var inserted = false
+                if case .insert = edit { inserted = true }
+                if held != nil || inserted, selection == nil, caret == nil { restoreCaret() }
                 if let moving = selection?.moving { scroll(to: moving) }
             }
             if let caret { moveCaret(to: caret.path, field: caret.field, .offset(caret.offset)) }
@@ -238,9 +241,56 @@ final class Outline: ObservableObject {
         }
     }
 
-    func paste(_ view: OutlineTextView, lines: [String]) {
-        let selection = view.selectedRange()
-        apply(.paste(view.rowPath, range: selection.location..<NSMaxRange(selection), lines: lines))
+    // MARK: Clipboard
+
+    private static let ownType = NSPasteboard.PasteboardType(OutlineClipboard.pasteboardType)
+
+    /// Copies the bullets at `paths` to the system clipboard, in the two forms together so that another app's copy replaces both: as indented
+    /// text, and as Varnick's own copy. Says how many in the header. Never logs the text.
+    @discardableResult
+    private func copy(_ paths: [OutlinePath]) -> Bool {
+        let drafts = OutlineClipboard.drafts(of: paths, in: tree)
+        guard !drafts.isEmpty else { return false }
+        let board = NSPasteboard.general
+        let own = OutlineClipboard.data(of: drafts)
+        board.declareTypes(own == nil ? [.string] : [.string, Self.ownType], owner: nil)
+        board.setString(OutlineClipboard.text(of: drafts), forType: .string)
+        if let own { board.setData(own, forType: Self.ownType) }
+        say(drafts.count == 1 ? "Copied 1 bullet" : "Copied \(drafts.count) bullets")
+        return true
+    }
+
+    /// ⌘X on bullets selected: the copy, then the delete of the run, in one undo step (the delete's).
+    private func cut(_ paths: [OutlinePath]) {
+        guard copy(paths) else { return }
+        apply(.delete(OutlineRun(paths)))
+    }
+
+    /// What a paste makes, from the clipboard: Varnick's own copy first (a version this build doesn't know, or data that doesn't decode, goes by
+    /// the text), then indented text. `minimumLines` is how many lines the text needs to count as bullets.
+    private func pastedBullets(minimumLines: Int) -> [OutlineDraft]? {
+        let board = NSPasteboard.general
+        if let data = board.data(forType: Self.ownType), let drafts = OutlineClipboard.drafts(fromData: data), !drafts.isEmpty { return drafts }
+        guard let text = board.string(forType: .string), OutlineClipboard.lineCount(of: text) >= minimumLines else { return nil }
+        let drafts = OutlineClipboard.drafts(fromText: text)
+        return drafts.isEmpty ? nil : drafts
+    }
+
+    /// ⌘V on bullets selected: whole bullets after the last one selected, even for one line of text.
+    private func pasteAfterSelection(_ paths: [OutlinePath]) {
+        guard let last = paths.last, let drafts = pastedBullets(minimumLines: 1) else { return NSSound.beep() }
+        apply(.insert(drafts, at: .after(last)))
+    }
+
+    /// ⌘V in a bullet's text (`OutlineTextView.paste`): Varnick's own copy, or several lines, become whole bullets. Returns whether it did; if
+    /// not, the text view puts one line in at the caret. The bullets take the place of an empty bullet, go first under a title, and otherwise
+    /// go below the bullet, which keeps its text.
+    func pasteBullets(into view: OutlineTextView) -> Bool {
+        guard load == .ready, let drafts = pastedBullets(minimumLines: 2) else { return false }
+        let path = view.rowPath
+        let place: OutlineInsertion = tree.isTitle(path) ? .firstUnder(path) : tree.canReplace(path) ? .replacing(path) : .after(path)
+        apply(.insert(drafts, at: place))
+        return true
     }
 
     /// ⌥⌘C: the bullet under the caret, or the bullets selected, are remembered, to be placed again as mirrors.
@@ -629,12 +679,23 @@ final class Outline: ObservableObject {
     /// A key while bullets are selected. Varnick's shortcuts go on, as does nothing else: any key not listed beeps and changes nothing.
     private func selectionKey(_ event: NSEvent, _ held: OutlineSelection) -> Bool {
         // The Paste shortcut's key is the outline's here; every other shortcut acts as always.
-        if let shortcut = Settings.shared.action(for: event), shortcut != .paste { return false }
+        let shortcut = Settings.shared.action(for: event)
+        if let shortcut, shortcut != .paste { return false }
         let flags = event.modifierFlags.intersection(KeyCombo.relevant)
         let command: NSEvent.ModifierFlags = .command, commandShift: NSEvent.ModifierFlags = [.command, .shift]
         let code = Int(event.keyCode)
         let run = OutlineRun(held.run)
+        if shortcut == .paste {
+            pasteAfterSelection(held.run)
+            return true
+        }
         switch (code, flags) {
+        case (kVK_ANSI_C, command):
+            copy(held.run)
+        case (kVK_ANSI_X, command):
+            cut(held.run)
+        case (kVK_ANSI_V, command):
+            pasteAfterSelection(held.run)
         case (kVK_Escape, []):
             restoreCaret()
         case (kVK_UpArrow, []), (kVK_LeftArrow, []):
