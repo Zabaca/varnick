@@ -170,7 +170,7 @@ _Avoid_: Tag, assignment
 ### Outline
 
 **Outline**:
-The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic). It replaces the panel's content as Settings and the **Session board** do.
+The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic, and can edit it without asking). It replaces the panel's content as Settings and the **Session board** do.
 _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 
 **Bullet**:
@@ -240,5 +240,5 @@ The setting (Settings › Claude, off by default) that gives the Claude **Sessio
 _Avoid_: Computer use, remote control
 
 **Panel access**:
-The setting (Settings › Claude, under **Screen access**, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, tools to read what the panel shows, the **Session board**'s cards, the panes' terminal screens and the **Outline**'s bullets, and to change what the panel shows, through Varnick's own model, with no permission. What a session reads goes to Anthropic with it; see [ADR 0031](docs/adr/0031-sessions-read-and-act-on-varnick-through-its-own-model-on-the-varnick-server-with-no-grant.md).
+The setting (Settings › Claude, under **Screen access**, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, tools to read what the panel shows, the **Session board**'s cards, the panes' terminal screens and the **Outline**'s bullets, to change what the panel shows, and to edit the Outline without asking (each edit one undo step; the bullet being typed in is refused for now), through Varnick's own model, with no permission. What a session reads goes to Anthropic with it; see [ADR 0031](docs/adr/0031-sessions-read-and-act-on-varnick-through-its-own-model-on-the-varnick-server-with-no-grant.md).
 _Avoid_: Screen access (any app's window, through Accessibility), API, automation

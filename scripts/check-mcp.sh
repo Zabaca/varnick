@@ -35,7 +35,7 @@ def talk(arguments, messages):
     return replies
 
 
-def listed(arguments):
+def listed(arguments, full=False):
     replies = talk(arguments, [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -51,7 +51,7 @@ def listed(arguments):
     for tool in tools:
         if tool.get("inputSchema", {}).get("type") != "object" or not tool.get("description"):
             fail("%s: %s has no description or object schema" % (arguments, tool["name"]))
-    return names
+    return tools if full else names
 
 
 none, only_screen, only_panel, both = listed([]), listed(["--screen"]), listed(["--panel"]), listed(["--screen", "--panel"])
@@ -66,6 +66,19 @@ if set(only_panel) & set(screen):
     fail("--panel lists a screen tool: %s" % sorted(set(only_panel) & set(screen)))
 if both != screen + only_panel:
     fail("both sets list %s, not the screen tools then Panel access's" % both)
+
+# The Outline's act tool: one tool with an `action` that names every edit, and the arguments the actions share.
+actions = ["add", "set_text", "set_note", "complete", "delete", "move", "indent", "outdent", "collapse", "mirror"]
+act = [t for t in listed(["--panel"], full=True) if t["name"] == "outline_act"]
+if not act:
+    fail("--panel lists no outline_act")
+else:
+    schema = act[0]["inputSchema"]
+    if schema.get("properties", {}).get("action", {}).get("enum") != actions or schema.get("required") != ["action"]:
+        fail("outline_act's action is %s, required %s" % (schema.get("properties", {}).get("action"), schema.get("required")))
+    for argument in ("id", "text", "note", "under", "after", "first", "done", "by", "collapsed"):
+        if argument not in schema.get("properties", {}):
+            fail("outline_act takes no %s" % argument)
 
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
 for arguments, name in (([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours")):

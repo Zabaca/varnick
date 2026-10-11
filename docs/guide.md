@@ -200,6 +200,10 @@ is done, collapsed or a mirror, its tags and its note, and which ones your view 
 as you see them, with your zoom, your filter, Show completed, the caret and the selected bullets. It reads whether or not
 the Outline is showing, at most 400 rows at a time, and never writes the file; if `outline.json` can't be read it is
 refused. **Your bullets and notes go to Anthropic with the session**, though they are otherwise kept on this Mac only.
+`outline_act` edits the Outline **without asking**: it adds bullets (indented lines nest), sets a bullet's text or note,
+completes, deletes, moves, indents, outdents, collapses or mirrors one, through the Outline's own edits. Each is one step
+of your undo, so ⌘Z takes it back, and your caret stays where it was in the text unless the edit moves or removes its
+row, when it goes where the same key would put it. For now it won't change the text or note of the bullet your caret is in.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
 board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows

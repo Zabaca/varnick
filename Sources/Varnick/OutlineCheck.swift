@@ -212,6 +212,153 @@ enum OutlineCheck {
         print("read check: an after that is not a row of the read is refused: \(gone)")
     }
 
+    /// The edits a session makes on rows the user's view doesn't show, on a small tree of its own: the user's scope refuses them (outside the
+    /// zoom, under a collapsed bullet), the whole-tree scope does them. Also set-done, and the delete of what the user is zoomed into.
+    private static func wholeTreeCheck() {
+        let at = Date(timeIntervalSince1970: 0)
+        func bullet(_ text: String, _ children: [(String, String)] = []) -> OutlineBullet {
+            OutlineBullet(text: text, created: at, changed: at, children: children.map { OutlinePlacement(id: $0.0, bullet: $0.1) })
+        }
+        // Home: a, b (d, e), c, zoomed into b. The collapsed case below collapses b's place instead.
+        var tree = OutlineTree(root: "r", bullets: ["r": bullet("", [("pa", "a"), ("pb", "b"), ("pc", "c")]), "a": bullet("a"),
+                                                    "b": bullet("b", [("pd", "d"), ("pe", "e")]), "c": bullet("c"), "d": bullet("d"), "e": bullet("e")])
+        tree.zoom = ["pb"]
+        let wholeTree = OutlineScope(wholeTree: true)
+        func result(_ edit: OutlineEdit, _ scope: OutlineScope?, on start: OutlineTree) -> String {
+            switch start.applying(edit, now: at, scope: scope ?? OutlineScope()) {
+            case .applied: "done"
+            case .refused(let why): "refused (\(why.reason))"
+            }
+        }
+        let pc = OutlinePath(placements: ["pc"]), pe = OutlinePath(placements: ["pb", "pe"])
+        print("act check: with the user zoomed into a bullet, indenting a row outside the zoom: the user's scope \(result(.indent(OutlineRun(pc)), nil, on: tree)), "
+              + "the whole tree \(result(.indent(OutlineRun(pc)), wholeTree, on: tree))")
+        var collapsed = tree
+        collapsed.zoom = []
+        collapsed.bullets["r"]?.children[1].collapsed = true
+        print("act check: with the parent collapsed, moving a row nested in it: the user's scope \(result(.move(OutlineRun(pe), by: -1), nil, on: collapsed)), "
+              + "the whole tree \(result(.move(OutlineRun(pe), by: -1), wholeTree, on: collapsed))")
+        print("act check: outdenting a row at the top of the zoom: the user's scope \(result(.outdent(OutlineRun(pe)), nil, on: tree)), "
+              + "the whole tree \(result(.outdent(OutlineRun(pe)), wholeTree, on: tree))")
+        print("act check: deleting the bullet zoomed into: \(result(.delete(OutlineRun(OutlinePath(placements: ["pb"]))), nil, on: tree))")
+        var deeper = tree
+        deeper.bullets["e"]?.children = [OutlinePlacement(id: "pf", bullet: "f")]
+        deeper.bullets["f"] = bullet("f")
+        deeper.zoom = ["pb", "pe"]
+        print("act check: deleting a bullet the zoomed-into one is nested in: \(result(.delete(OutlineRun(OutlinePath(placements: ["pb"]))), nil, on: deeper))")
+        deeper.zoom = ["pb", "pe", "pf"]
+        print("act check: zoomed into a bullet nested in others, indenting or outdenting a bullet the zoom runs through is refused: "
+              + "\(result(.indent(OutlineRun(pe)), wholeTree, on: deeper)), \(result(.outdent(OutlineRun(pe)), wholeTree, on: deeper)); "
+              + "a row the zoom doesn't run through is not: \(result(.indent(OutlineRun(pc)), wholeTree, on: deeper))")
+        // A mirror: bullet m is placed at Home and under n, so completing the Home place is completing the caret's bullet.
+        var mirrored = OutlineTree(root: "r", bullets: ["r": bullet("", [("p1", "m"), ("p2", "n"), ("p4", "o")]), "m": bullet("m"),
+                                                        "n": bullet("n", [("p3", "m")]), "o": bullet("o")])
+        mirrored.zoom = []
+        let caretRow = OutlinePath(placements: ["p2", "p3"])
+        func touches(_ edit: OutlineEdit) -> Bool { OutlineActing.touches(edit, row: caretRow, in: mirrored) }
+        print("act check: a complete of another place of the caret's bullet, or of its parent, touches the caret's row: "
+              + "\(touches(.setDone(OutlinePath(placements: ["p1"]), true))), \(touches(.complete(OutlineRun(OutlinePath(placements: ["p1"]))))), "
+              + "\(touches(.setDone(OutlinePath(placements: ["p2"]), true))); an unrelated bullet does not: \(touches(.setDone(OutlinePath(placements: ["p4"]), true)))")
+        print("act check: an add whose text is too long, or has U+2028 in a line, is refused: "
+              + "\(OutlineActing.drafts(ofAdd: "- " + String(repeating: "x", count: OutlineActing.textLimit + 1)).problem != nil), "
+              + "\(OutlineActing.problem(withText: "a\u{2028}b", note: false) != nil)")
+        var done = tree
+        if case .applied(let next, _, _) = tree.applying(.setDone(pe, true), now: at) { done = next }
+        let twice = done.applying(.setDone(pe, true), now: at)
+        print("act check: set done marks a bullet done: \(done.bullets["e"]?.completed != nil), and again changes nothing: \(twice == .applied(done, caret: nil))")
+        print("act check: a text with a tab is refused: \(OutlineActing.problem(withText: "a\tb", note: false) != nil), a note with line breaks is not: "
+              + "\(OutlineActing.problem(withText: "a\nb", note: true) == nil), a text too long is refused: "
+              + "\(OutlineActing.problem(withText: String(repeating: "x", count: OutlineActing.textLimit + 1), note: false) != nil)")
+    }
+
+    /// A session's edits (Panel access) on a copy with the zoom cleared: `add` in each place, and where the user's caret goes. Prints counts and
+    /// yes or no, never a bullet's text.
+    private static func actCheck(_ tree: OutlineTree) {
+        wholeTreeCheck()
+        var copy = tree
+        copy.zoom = []
+        copy.showsCompleted = true
+        let now = Date()
+        let home = OutlinePath(placements: [])
+        func ok(_ value: Bool) -> String { value ? "yes" : "NO" }
+        func applied(_ edit: OutlineEdit, to start: OutlineTree) -> (tree: OutlineTree, caret: OutlineCaret?, run: [OutlinePath])? {
+            guard case .applied(let done, let caret, let run) = start.applying(edit, now: now) else { return nil }
+            return (done, caret, run)
+        }
+
+        let sample = "- one\n  - two\n    - three\n\t- four\n- five"
+        let made = OutlineActing.drafts(ofAdd: sample)
+        guard made.problem == nil, let added = applied(.insert(made.drafts, at: .lastUnder(home)), to: copy) else {
+            return print("act check: an add of indented lines was refused")
+        }
+        let listed = OutlineActing.newRows(of: added.run, in: added.tree)
+        let rowsBefore = copy.visibleRows().count
+        let oldKept = (copy.bullets[copy.root]?.children ?? []).map(\.id)
+        let newRoot = (added.tree.bullets[added.tree.root]?.children ?? []).map(\.id)
+        let untouched = copy.bullets.allSatisfy { key, bullet in key == copy.root || added.tree.bullets[key]?.children == bullet.children }
+        print("act check: an add of 5 indented lines under Home made \(added.run.count) top-level and \(listed.rows.count) new bullets "
+              + "(\(listed.rows.map(\.depth).map(String.init).joined(separator: ","))), \(added.tree.visibleRows().count - rowsBefore) new rows showing, "
+              + "last under Home: \(ok(Array(newRoot.prefix(oldKept.count)) == oldKept)), the other bullets' placements untouched: \(ok(untouched))")
+        print("act check: the new ids are all different: \(ok(Set(listed.rows.map(\.path.id)).count == listed.rows.count))")
+        let restored = copy.keepingView(of: added.tree)
+        print("act check: the tree before the add, put back as an undo puts it (the view kept), has the shape and counts it had: \(ok(shape(restored) == shape(copy) && Counts(restored) == Counts(copy)))")
+        print("act check: more lines than the limit, and none, are refused: \(ok(OutlineActing.drafts(ofAdd: String(repeating: "x\n", count: OutlineActing.addLimit + 1)).problem != nil && OutlineActing.drafts(ofAdd: " \n").problem != nil))")
+
+        if let first = applied(.insert(made.drafts, at: .firstUnder(home)), to: copy) {
+            let ids = (first.tree.bullets[first.tree.root]?.children ?? []).map(\.id)
+            print("act check: first under Home puts the new bullets first: \(ok(Array(ids.prefix(first.run.count)).map { [$0] } == first.run.map(\.placements)))")
+        }
+        let rows = copy.visibleRows()
+        if let leaf = rows.first(where: { !$0.hasChildren }), let under = applied(.insert(made.drafts, at: .lastUnder(leaf.path)), to: copy) {
+            let count = under.tree.bulletID(at: leaf.path).flatMap { under.tree.bullets[$0]?.children.count }
+            print("act check: under a bullet with nothing nested: \(count ?? -1) top-level bullets nested in it, ids under its own path: \(ok(under.run.allSatisfy { $0.parent == leaf.path }))")
+        }
+        if let mid = rows.first(where: { copy.bulletID(at: $0.path) != nil }), let after = applied(.insert(made.drafts, at: .after(mid.path)), to: copy) {
+            let siblings = rows.filter { $0.path.parent == mid.path.parent }.count
+            let found = after.tree.visibleRows().filter { $0.path.parent == mid.path.parent && $0.depth == mid.depth }.count
+            print("act check: after a bullet: \(found - siblings) new siblings, the first one right after it: \(ok(after.run.first.map { $0.parent == mid.path.parent } ?? false))")
+        }
+
+        // The user's caret.
+        let groups = Dictionary(grouping: rows, by: \.path.parent)
+        func showing(in tree: OutlineTree) -> (OutlinePath) -> Bool {
+            let shown = Set(tree.visibleRows().map(\.path))
+            return { shown.contains($0) }
+        }
+        let caretCheck = rows.lazy.compactMap { row -> (OutlineRow, OutlineRow)? in
+            // A bullet with a sibling above, which has bullets nested in it: a caret in the nested one.
+            guard let siblings = groups[row.path.parent], let at = siblings.firstIndex(where: { $0.path == row.path }), at >= 1,
+                  let child = rows.first(where: { $0.path.parent == row.path }) else { return nil }
+            return (row, child)
+        }.first
+        if let (row, child) = caretCheck, let moved = applied(.indent(OutlineRun(row.path)), to: copy) {
+            let own = OutlineActing.caretMove(of: OutlineCaret(path: row.path, offset: 2), edit: .indent(OutlineRun(row.path)), moved: moved.run,
+                                              editCaret: moved.caret, showing: showing(in: moved.tree))
+            let nested = OutlineActing.caretMove(of: OutlineCaret(path: child.path, offset: 3, field: .note), edit: .indent(OutlineRun(row.path)),
+                                                 moved: moved.run, editCaret: moved.caret, showing: showing(in: moved.tree))
+            let wantedOwn = OutlineCaret(path: moved.run[0], offset: 2)
+            let wantedNested = OutlineCaret(path: moved.run[0].appending(child.path.placements.last ?? ""), offset: 3, field: .note)
+            print("act check: indent: the caret in the row follows it, same offset: \(ok(own == .to(wantedOwn))); the caret in a bullet nested in it follows, same field and offset: \(ok(nested == .to(wantedNested)))")
+            if let removed = applied(.delete(OutlineRun(row.path)), to: copy) {
+                let result = OutlineActing.caretMove(of: OutlineCaret(path: child.path, offset: 0), edit: .delete(OutlineRun(row.path)), moved: removed.run,
+                                                     editCaret: removed.caret, showing: showing(in: removed.tree))
+                let own = OutlineActing.caretMove(of: OutlineCaret(path: row.path, offset: 0), edit: .delete(OutlineRun(row.path)), moved: removed.run,
+                                                  editCaret: removed.caret, showing: showing(in: removed.tree))
+                print("act check: delete: the caret in a bullet nested in the row goes to the nearest row showing: \(ok(result == .nearest)); the caret in the row itself goes where the key puts it: \(ok(removed.caret.map { own == .to($0) } ?? false))")
+            }
+            if let collapsed = applied(.collapse(row.path, true), to: copy) {
+                let result = OutlineActing.caretMove(of: OutlineCaret(path: child.path, offset: 0), edit: .collapse(row.path, true), moved: collapsed.run,
+                                                     editCaret: collapsed.caret, showing: showing(in: collapsed.tree))
+                print("act check: collapse: the caret in a bullet nested in the row goes to the nearest row showing: \(ok(result == .nearest))")
+            }
+            let beside = OutlineActing.caretMove(of: OutlineCaret(path: row.path, offset: 1), edit: .insert(made.drafts, at: .after(row.path)), moved: [],
+                                                 editCaret: nil, showing: showing(in: copy))
+            print("act check: an add leaves the caret where it is: \(ok(beside == .stay))")
+        } else {
+            print("act check: caret: no bullet with a sibling above and bullets nested in it")
+        }
+    }
+
     static func run(_ arguments: [String]) -> Int32 {
         let paths = arguments.filter { !$0.hasPrefix("--") }
         guard let file = paths.first else {
@@ -241,6 +388,7 @@ enum OutlineCheck {
         runCheck(tree)
         clipboardCheck(tree)
         readCheck(tree)
+        actCheck(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {
