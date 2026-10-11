@@ -48,7 +48,7 @@ final class Outline: ObservableObject {
     private struct WeakView { weak var value: OutlineTextView? }
     private var views: [String: WeakView] = [:]
     private(set) weak var activeView: OutlineTextView?
-    private var remembered: (path: OutlinePath, location: Int, field: OutlineField)?
+    private var remembered: OutlineCaret?
     private var pending: (path: OutlinePath, field: OutlineField, place: OutlineCaretPlace)?
     /// Keys that arrive while the caret is on its way to another bullet; they are sent again once it has landed.
     private var queuedEvents: [NSEvent] = []
@@ -168,9 +168,11 @@ final class Outline: ObservableObject {
     /// (or gone, if it is empty). A view being removed resigns during a SwiftUI update, so that waits a turn.
     func caretLeft(_ view: OutlineTextView) {
         typingRun = nil
+        if activeView === view { activeView = nil }
         guard view.field == .note else { return }
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
+                // Unless the caret has gone into that note again, it is cut short again.
                 guard let self, self.notePath == view.rowPath, self.activeView?.field != .note || self.activeView?.rowPath != view.rowPath else { return }
                 self.notePath = nil
             }
@@ -198,8 +200,14 @@ final class Outline: ObservableObject {
         guard load == .ready else { return }
         var new = tree
         new.showsCompleted.toggle()
-        setView(new.ensuringBullet(now: Date()))
-        restoreCaret()
+        new = new.ensuringBullet(now: Date())
+        let before = rows
+        setView(new)
+        if let remembered, let moved = new.caretAfterHiding(remembered.path, from: before) {
+            moveCaret(to: moved.path, .offset(moved.offset))
+        } else {
+            restoreCaret()
+        }
     }
 
     /// The disclosure triangle. The caret stays where it was.
@@ -237,7 +245,7 @@ final class Outline: ObservableObject {
         if let view = activeView, view.window?.firstResponder === view {
             return OutlineCaret(path: view.rowPath, offset: view.selectedRange().location, field: view.field)
         }
-        return remembered.map { OutlineCaret(path: $0.path, offset: $0.location, field: $0.field) }
+        return remembered
     }
 
     /// Puts the tree as it is, with the caret, on the undo stack before an edit changes it. A new edit ends the redo line.
@@ -262,16 +270,23 @@ final class Outline: ObservableObject {
         // Moving about isn't an edit: the zoom stays, unless the caret's row is outside it.
         var restored = step.tree.keepingView(of: tree)
         if let caret = step.caret { restored = restored.zoomShowing(caret.path) }
+        // There is always a line to type in: Show completed turned off since may have hidden what the step brings back.
+        restored = restored.ensuringBullet(now: Date())
+        let before = rows
         use(restored)
         saver.changed(restored)
         if let caret = step.caret, showing(caret.path) {
-            // A note that the restored tree doesn't have can't hold the caret.
-            let field: OutlineField = caret.field == .note && (restored.note(at: caret.path) ?? "").isEmpty ? .text : caret.field
-            moveCaret(to: caret.path, field: field, .offset(caret.offset))
+            moveCaret(to: caret.path, field: usable(caret, in: restored), .offset(caret.offset))
+        } else if let caret = step.caret, let moved = restored.caretAfterHiding(caret.path, from: before) {
+            moveCaret(to: moved.path, .offset(moved.offset))
         } else {
-            if let caret = step.caret { remembered = (caret.path, caret.offset, .text) }
             restoreCaret()
         }
+    }
+
+    /// The field a caret can go back to: a note that is gone or empty (emptied, undone) can't hold it.
+    private func usable(_ caret: OutlineCaret, in tree: OutlineTree) -> OutlineField {
+        caret.field == .note && !(tree.note(at: caret.path) ?? "").isEmpty ? .note : .text
     }
 
     /// What a text view shows, from the tree: the bullet's text or its note.
@@ -297,7 +312,7 @@ final class Outline: ObservableObject {
 
     func selectionChanged(_ view: OutlineTextView) {
         guard view === activeView else { return }
-        remembered = (view.rowPath, view.selectedRange().location, view.field)
+        remembered = OutlineCaret(path: view.rowPath, offset: view.selectedRange().location, field: view.field)
     }
 
     // MARK: Caret
@@ -307,9 +322,7 @@ final class Outline: ObservableObject {
     func restoreCaret() {
         guard load == .ready else { return }
         if let remembered, showing(remembered.path) {
-            // A note that has gone since (emptied, or undone) can't hold the caret.
-            let note = remembered.field == .note && !(tree.note(at: remembered.path) ?? "").isEmpty
-            moveCaret(to: remembered.path, field: note ? .note : .text, .offset(remembered.location))
+            moveCaret(to: remembered.path, field: usable(remembered, in: tree), .offset(remembered.offset))
         } else if let remembered, let near = nearestVisible(remembered.path) {
             moveCaret(to: near, .offset(Int.max))
         } else if let first = rows.first?.path ?? crumbs.last?.path {
@@ -359,6 +372,11 @@ final class Outline: ObservableObject {
         saver.changed(changed)
     }
 
+    /// The last breadcrumb: the caret goes into the title.
+    func focusTitle() {
+        if let title = crumbs.last { moveCaret(to: title.path, .offset(Int.max)) }
+    }
+
     /// A click below the last bullet.
     func focusLast() {
         if let last = rows.last?.path ?? crumbs.last?.path { moveCaret(to: last, .offset(Int.max)) }
@@ -386,7 +404,8 @@ final class Outline: ObservableObject {
     private func tryPlace(tries: Int) {
         guard let request = pending else { return }
         // The title and the row it was zoomed from share a path, so a view counts only if it is the one the path now means.
-        let key = OutlineTextView.registryKey(request.path, isTitle: tree.isTitle(request.path), field: request.field)
+        let kind: OutlineTextView.Kind = request.field == .note ? .note : tree.isTitle(request.path) ? .title : .row
+        let key = OutlineTextView.registryKey(request.path, kind: kind)
         if let view = views[key]?.value, let window = view.window {
             view.syncFromModel()
             window.makeFirstResponder(view)
@@ -481,10 +500,12 @@ final class Outline: ObservableObject {
             case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []):
                 apply(.addFirstChild(path, range: selection.location..<NSMaxRange(selection)))
             case (kVK_Delete, []) where atStart, (kVK_Delete, commandShift), (kVK_Tab, []), (kVK_Tab, .shift),
-                 (kVK_Return, command), (kVK_ANSI_KeypadEnter, command), (kVK_Return, .shift), (kVK_ANSI_KeypadEnter, .shift),
+                 (kVK_Return, command), (kVK_ANSI_KeypadEnter, command),
                  (kVK_UpArrow, command), (kVK_DownArrow, command), (kVK_UpArrow, commandShift), (kVK_DownArrow, commandShift),
                  (kVK_ANSI_RightBracket, command):
                 break
+            case (kVK_Return, .shift), (kVK_ANSI_KeypadEnter, .shift):
+                openNote(path)
             case (kVK_DownArrow, []) where view.caretOnLastLine:
                 return cross(from: view, by: 1)
             default:
@@ -529,10 +550,18 @@ final class Outline: ObservableObject {
 
     /// ↑ or ↓ out of the first or last line of a bullet, into the row above or below.
     private func cross(from view: OutlineTextView, by step: Int) -> Bool {
+        func hasNote(_ path: OutlinePath) -> Bool { !(tree.note(at: path) ?? "").isEmpty }
+        // Down from a bullet with a note goes into the note first.
+        if step > 0, view.field == .text, hasNote(view.rowPath) {
+            moveCaret(to: view.rowPath, field: .note, .x(view.caretX(), bottom: false))
+            return true
+        }
         // The title, when zoomed, comes before the rows.
         let order = (crumbs.last.map { [$0.path] } ?? []) + rows.map(\.path)
         guard let at = order.firstIndex(of: view.rowPath), order.indices.contains(at + step) else { return false }
-        moveCaret(to: order[at + step], .x(view.caretX(), bottom: step < 0))
+        let target = order[at + step]
+        // Up into a bullet with a note lands in the note's last line.
+        moveCaret(to: target, field: step < 0 && hasNote(target) ? .note : .text, .x(view.caretX(), bottom: step < 0))
         return true
     }
 }

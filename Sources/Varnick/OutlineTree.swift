@@ -67,6 +67,8 @@ struct OutlineRepairs: Equatable {
 struct OutlineCrumb: Identifiable, Equatable {
     let path: OutlinePath
     let text: String
+    let note: String?
+    let completed: Bool
 
     var id: String { path.id }
 }
@@ -219,6 +221,23 @@ struct OutlineTree: Codable, Equatable {
         return rows
     }
 
+    /// Where the caret goes when the row `path` has left the view (completed with Show completed off, or Show completed turned off): the next row
+    /// that still shows, else the one before it, else the title. Nil while the row still shows. `before` is the rows as they were.
+    func caretAfterHiding(_ path: OutlinePath, from before: [OutlineRow]) -> OutlineCaret? {
+        let after = visibleRows()
+        guard !isTitle(path), !after.contains(where: { $0.path == path }) else { return nil }
+        let index = before.firstIndex { $0.path == path } ?? 0
+        let shown = Set(after.map(\.path))
+        if let next = before[min(index + 1, before.count)...].first(where: { shown.contains($0.path) }) {
+            return OutlineCaret(path: next.path, offset: 0)
+        } else if let previous = before[..<index].last(where: { shown.contains($0.path) }) {
+            return OutlineCaret(path: previous.path, offset: previous.text.utf16.count)
+        } else if let title = crumbs().last {
+            return OutlineCaret(path: title.path, offset: title.text.utf16.count)
+        }
+        return after.first.map { OutlineCaret(path: $0.path, offset: 0) }
+    }
+
     func note(at path: OutlinePath) -> String? { locate(path).flatMap { bullets[$0.bullet]?.note } }
 
     // MARK: Zoom
@@ -250,7 +269,8 @@ struct OutlineTree: Codable, Equatable {
     func crumbs() -> [OutlineCrumb] {
         let along = bulletsAlong(effectiveZoom)
         return along.indices.map { i in
-            OutlineCrumb(path: OutlinePath(placements: Array(effectiveZoom[0...i])), text: bullets[along[i]]?.text ?? "")
+            OutlineCrumb(path: OutlinePath(placements: Array(effectiveZoom[0...i])), text: bullets[along[i]]?.text ?? "",
+                         note: bullets[along[i]]?.note, completed: bullets[along[i]]?.completed != nil)
         }
     }
 
@@ -292,6 +312,10 @@ struct OutlineTree: Codable, Equatable {
         for bullet in bullets.values { for placement in bullet.children { counts[placement.bullet, default: 0] += 1 } }
         return counts.values.filter { $0 > 1 }.count
     }
+
+    var noteCount: Int { bullets.values.filter { $0.note?.isEmpty == false }.count }
+
+    var completedCount: Int { bullets.values.filter { $0.completed != nil }.count }
 
     var placementTotal: Int { bullets.values.reduce(0) { $0 + $1.children.count } }
 
@@ -415,19 +439,7 @@ struct OutlineTree: Codable, Equatable {
             tree.bullets[spot.bullet]?.completed = bullet.completed == nil ? now : nil
             tree.bullets[spot.bullet]?.changed = now
             guard case .applied(let done, _) = Self.finish(tree, caret: nil, now: now, newID: newID) else { return .refused("no such row") }
-            let after = done.visibleRows()
-            guard !after.contains(where: { $0.path == at.path }) else { return .applied(done, caret: nil) }
-            // It left the view: the caret goes to the next row that shows, else the one before it, else the title.
-            let index = before.firstIndex { $0.path == at.path } ?? 0
-            let shown = Set(after.map(\.path))
-            if let next = before[min(index + 1, before.count)...].first(where: { shown.contains($0.path) }) {
-                return .applied(done, caret: OutlineCaret(path: next.path, offset: 0))
-            } else if let previous = before[..<index].last(where: { shown.contains($0.path) }) {
-                return .applied(done, caret: OutlineCaret(path: previous.path, offset: previous.text.utf16.count))
-            } else if let title = done.crumbs().last {
-                return .applied(done, caret: OutlineCaret(path: title.path, offset: title.text.utf16.count))
-            }
-            return .applied(done, caret: after.first.map { OutlineCaret(path: $0.path, offset: 0) })
+            return .applied(done, caret: done.caretAfterHiding(at.path, from: before))
         case .setNote(let path, let note):
             guard let spot = locate(path) else { return .refused("no such row") }
             let clean = note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")

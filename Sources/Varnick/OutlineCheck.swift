@@ -22,8 +22,8 @@ enum OutlineCheck {
             mirrors = tree.mirrorCount
             deepest = tree.deepestLevel
             zoom = tree.effectiveZoom.count
-            notes = tree.bullets.values.filter { $0.note?.isEmpty == false }.count
-            completed = tree.bullets.values.filter { $0.completed != nil }.count
+            notes = tree.noteCount
+            completed = tree.completedCount
             showsCompleted = tree.showsCompleted
         }
 
