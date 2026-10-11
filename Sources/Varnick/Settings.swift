@@ -210,10 +210,10 @@ final class Settings: ObservableObject {
     @Published private(set) var elevenLabsVoices: [ElevenLabs.Voice] {
         didSet { defaults.set(try? JSONEncoder().encode(elevenLabsVoices), forKey: "elevenLabsVoices") }
     }
-    /// Why the last line wasn't spoken by ElevenLabs, and why the voice list couldn't be fetched. In memory only: the first clears
-    /// when a line plays from ElevenLabs again, the second when a list is fetched.
-    @Published var elevenLabsNote: String?
-    @Published private(set) var elevenLabsListNote: String?
+    /// The last ElevenLabs failure, a line's or the voice list's, whichever came later; shown under the Voice picker, in memory only.
+    /// A line that plays from ElevenLabs clears it, and a fetched list clears it only if the list's failure put it there.
+    @Published private(set) var elevenLabsNote: String?
+    private var elevenLabsNoteIsFromList = false
     /// Answers a mic phrase that starts "Hey Varnick" aloud, while Listening is on (ADR 0015); off until turned on.
     @Published var heyVarnick: Bool { didSet { defaults.set(heyVarnick, forKey: "heyVarnick") } }
     /// Lets a spoken request point at the screen: Varnick reads the focused window's controls and draws an arrow (ADR 0019); off
@@ -421,7 +421,6 @@ final class Settings: ObservableObject {
             Keychain.delete(ElevenLabs.keyAccount)
             elevenLabsKeyInKeychain = false
             elevenLabsNote = nil
-            elevenLabsListNote = nil
             return
         }
         do {
@@ -439,14 +438,22 @@ final class Settings: ObservableObject {
     func refreshElevenLabsVoices() async {
         guard elevenLabsKeyInKeychain else { return }
         do {
-            elevenLabsVoices = try await ElevenLabs.voices()
-            elevenLabsListNote = nil
+            let voices = try await ElevenLabs.voices()
+            guard !Task.isCancelled else { return }
+            elevenLabsVoices = voices
+            if elevenLabsNoteIsFromList { elevenLabsNote = nil }
         } catch is CancellationError {
             return
         } catch {
-            guard elevenLabsKeyInKeychain else { return }
-            elevenLabsListNote = (error as? ElevenLabs.Failure)?.note ?? "ElevenLabs not answering"
+            guard !Task.isCancelled, elevenLabsKeyInKeychain else { return }
+            noteElevenLabs((error as? ElevenLabs.Failure)?.note ?? "ElevenLabs not answering", fromList: true)
         }
+    }
+
+    /// Sets, or with nil clears, `elevenLabsNote`.
+    func noteElevenLabs(_ note: String?, fromList: Bool = false) {
+        elevenLabsNote = note
+        elevenLabsNoteIsFromList = fromList && note != nil
     }
 
     /// While neither relevance key is stored, a key added or removed in Settings moves the switch with it, so a new
@@ -678,18 +685,19 @@ struct SettingsView: View {
                         SettingRow(title: "Voice",
                                    detail: "What Varnick speaks in. An ElevenLabs voice sends every line Varnick speaks to ElevenLabs, answers included, which can repeat words of your request and name your pages, sessions and folders; the voices installed on this Mac send nothing.") {
                             VStack(alignment: .trailing, spacing: 4) {
-                                if let note = settings.elevenLabsListNote ?? settings.elevenLabsNote {
-                                    Text(note).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
-                                }
                                 if !settings.elevenLabsKeyInKeychain {
                                     Button("ElevenLabs voices: add a key in Settings › Models") { sectionID = SettingsSection.models.rawValue }
                                         .buttonStyle(.link)
                                         .font(.system(size: 12))
                                 }
                                 VoicePicker(settings: settings)
+                                if let note = settings.elevenLabsNote {
+                                    Text(note).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
+                                }
                             }
                         }
-                        if !settings.elevenLabsVoice.isEmpty {
+                        // With no key the installed voice is the main voice, and the Voice row above is its picker.
+                        if settings.speaksInElevenLabs {
                             SettingRow(title: "Fallback voice", detail: "Speaks on this Mac when ElevenLabs fails or is slow.") {
                                 InstalledVoicePicker(settings: settings)
                             }
@@ -854,7 +862,7 @@ struct SettingsView: View {
                             }
                         }
                         SettingRow(title: "ElevenLabs",
-                                   detail: "Speaks Hey Varnick's answers in an ElevenLabs voice, chosen in Settings › Listening. The key needs the Text to Speech and Voices Read permissions. Kept in the macOS Keychain.") {
+                                   detail: "Speaks Hey Varnick's answers in an ElevenLabs voice, chosen in Settings › Listening. The key needs the Text to Speech and Voices Read permissions. With a key saved, Varnick asks ElevenLabs for your voices (the request carries only the key). Kept in the macOS Keychain.") {
                             if let error = settings.elevenLabsKeyError {
                                 Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
                             }

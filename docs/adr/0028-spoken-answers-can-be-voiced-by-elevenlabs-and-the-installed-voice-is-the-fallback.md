@@ -6,7 +6,7 @@ Decisions: ElevenLabs speaks with Flash v2.5 only, pinned in code, with no model
 
 ## Considered Options
 
-- **Multilingual v2, or a model picker:** rejected. Multilingual v2's first audio took about 1.46 s in the spike, which leaves nothing under the fallback's deadline.
+- **Multilingual v2, or a model picker:** rejected. Multilingual v2's first audio, measured on the user's machine (figures kept locally), left nothing under the fallback's deadline.
 - **The ElevenLabs Agents platform:** rejected. It runs the whole conversation on ElevenLabs' side, the user's audio and the model that answers included, against ADR 0015's rule that Text generation answers on this Mac or the user's own server.
 - **Always falling back to "System default":** rejected. It would lose the voice the user chose before.
 - **Keep-alive requests all day:** rejected. A request to `GET /v1/voices/{id}` when "Hey Varnick" is heard opens the connection in time for the answer and sends nothing while Hey Varnick is idle.
@@ -14,7 +14,8 @@ Decisions: ElevenLabs speaks with Flash v2.5 only, pinned in code, with no model
 
 ## Consequences
 
-- **The answer's text leaves the Mac,** with an ElevenLabs voice chosen and a key saved: every line Varnick speaks, the voice's id and the key. An answer names pages, sites, descriptions, session titles and folders, and can repeat words of the request. Never audio from the Mac, rows, or the request except as the answer repeats it. The installed voices send nothing, and are what speaks with no ElevenLabs voice chosen or no key. `docs/privacy-and-security.md` says so.
+- **The key leaves the Mac, alone, once it is saved:** to list the account's voices when it is saved and when Settings › Listening opens. Saving it is the consent to that request.
+- **The answer's text leaves the Mac,** with an ElevenLabs voice chosen and a key saved: every line Varnick speaks, the voice's id and the key. An answer names pages, sites, descriptions, session titles and folders, and can repeat words of the request. Never audio from the Mac, rows, or the request except as the answer repeats it. The installed voices send no line, and are what speaks with no ElevenLabs voice chosen or no key. `docs/privacy-and-security.md` says so.
 - **Varnick must still never hear itself.** ElevenLabs audio plays only through `SpeechPlayback` inside `Speaker.speak`, and the span opens before the request and closes after the last sound, the fallback's included. (Amends ADR 0015's "rendered by the system synthesizer".)
 - **The mic is deaf a little longer:** up to 1.5 s more than before when ElevenLabs is slow, since the span covers the wait.
 - **A line is spoken once in each voice at most.** A stream that breaks after sound began stops what played and repeats the whole line in the installed voice. A stopped line goes to no fallback.

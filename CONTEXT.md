@@ -177,6 +177,10 @@ _Avoid_: Log, recording
 "Hey Varnick" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**.
 _Avoid_: Hotword, trigger
 
+**Fallback voice**:
+The voice installed on this Mac that speaks a line when an ElevenLabs voice is chosen and ElevenLabs fails or is slow. It is the same setting that holds the installed voice otherwise, kept when an ElevenLabs voice is picked.
+_Avoid_: Backup voice
+
 **Spoken request**:
 What the user says after the **Wake phrase**. It is answered aloud from **History**, **Bookmark**s and **Session**s. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query

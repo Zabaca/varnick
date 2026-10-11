@@ -52,10 +52,8 @@ struct Speech {
     var by: String
 }
 
-/// Varnick's voice. An ElevenLabs voice, when one is chosen and a key saved, is streamed and played by Varnick's own audio
-/// engine; otherwise, or when ElevenLabs fails, the system synthesizer renders the speech to buffers and Varnick plays them
-/// itself. Either way the sound comes from this process, which the system audio tap leaves out (ADR 0015, 0028). A voice that
-/// renders nothing is spoken by the synthesizer directly instead.
+/// Varnick's voice: ElevenLabs when chosen, else (or on its failure) the system synthesizer, whose buffers Varnick plays itself.
+/// Either way the sound comes from this process, which the audio tap leaves out (ADR 0015, 0028).
 @MainActor
 final class Speaker {
     static let shared = Speaker()
@@ -73,43 +71,73 @@ final class Speaker {
     func speak(_ text: String) async -> Speech {
         stop()
         let stopsAtStart = stops
+        let settings = Settings.shared
+        // The key is read before the span opens: a Keychain prompt must not hold it open.
+        let viaElevenLabs = settings.speaksInElevenLabs
+        let key = viaElevenLabs ? await ElevenLabs.apiKey() : nil
+        guard stops == stopsAtStart else { return Speech(first: nil, by: "stopped") }
         let token = SpeechSpans.shared.began()
         defer { SpeechSpans.shared.ended(token) }
 
         var by = "installed voice"
-        let settings = Settings.shared
-        if settings.speaksInElevenLabs {
-            let playback = SpeechPlayback()
-            self.playback = playback
-            let voice = settings.elevenLabsVoice
-            let request = Task { await ElevenLabs.speak(text, voice: voice, into: playback) }
-            elevenLabs = request
-            let outcome = await withTaskCancellationHandler { await request.value } onCancel: { request.cancel() }
-            elevenLabs = nil
-            switch outcome {
-            case .played(let sent):
-                await playback.finished()
-                if self.playback === playback { self.playback = nil }
-                guard stops == stopsAtStart else { return Speech(first: playback.firstSound, by: "stopped") }
-                settings.elevenLabsNote = nil
-                let first = playback.firstSound
-                return Speech(first: first, by: "ElevenLabs, first audio \(first.map { $0.timeIntervalSince(sent).secondsText } ?? "-")")
-            case .cancelled:
-                playback.stop()
-                if self.playback === playback { self.playback = nil }
-                return Speech(first: nil, by: "stopped")
-            case .failed(let failure):
-                // Sound may have begun: stop it, and speak the whole line again in the installed voice.
-                playback.stop()
-                if self.playback === playback { self.playback = nil }
-                guard stops == stopsAtStart else { return Speech(first: nil, by: "stopped") }
-                settings.elevenLabsNote = failure.note
-                NSLog("Varnick: ElevenLabs failed (\(failure.logKind)); speaking in the installed voice")
-                by = "installed voice (ElevenLabs: \(failure.logKind))"
+        if viaElevenLabs {
+            switch await speakInElevenLabs(text, key: key, voice: settings.elevenLabsVoice, stopsAtStart: stopsAtStart) {
+            case .spoke(let speech): return speech
+            case .stopped: return Speech(first: nil, by: "stopped")
+            case .failed(let kind): by = "installed voice (ElevenLabs: \(kind))"
             }
         }
         return Speech(first: await speakInstalled(text, stopsAtStart: stopsAtStart), by: by)
     }
+
+    private enum Attempt {
+        case spoke(Speech)
+        case stopped
+        /// The line is yet to be spoken in the installed voice; the kind is for the timing line.
+        case failed(String)
+    }
+
+    private func speakInElevenLabs(_ text: String, key: String?, voice: String, stopsAtStart: Int) async -> Attempt {
+        let settings = Settings.shared
+        let playback = SpeechPlayback()
+        self.playback = playback
+        // Sound may have begun: stop it, so a failed line is never heard over the fallback.
+        func end() {
+            playback.stop()
+            if self.playback === playback { self.playback = nil }
+        }
+        var outcome = ElevenLabs.Outcome.failed(.noKey)
+        if let key {
+            let request = Task { await ElevenLabs.speak(text, voice: voice, key: key, into: playback) }
+            elevenLabs = request
+            outcome = await withTaskCancellationHandler { await request.value } onCancel: { request.cancel() }
+            // A newer speak may have replaced the handle meanwhile.
+            if elevenLabs == request { elevenLabs = nil }
+        }
+        switch outcome {
+        case .played(let sent):
+            await playback.finished()
+            end()
+            guard stops == stopsAtStart else { return .stopped }
+            // The engine can fail to start, which leaves the line silent.
+            guard let first = playback.firstSound else {
+                NSLog("Varnick: ElevenLabs audio didn't play; speaking in the installed voice")
+                return .failed("no sound")
+            }
+            settings.noteElevenLabs(nil)
+            return .spoke(Speech(first: first, by: "ElevenLabs, first audio \(first.timeIntervalSince(sent).secondsText)"))
+        case .cancelled:
+            end()
+            return .stopped
+        case .failed(let failure):
+            end()
+            guard stops == stopsAtStart else { return .stopped }
+            settings.noteElevenLabs(failure.note)
+            NSLog("Varnick: ElevenLabs failed (\(failure.logKind)); speaking in the installed voice")
+            return .failed(failure.logKind)
+        }
+    }
+
 
     /// Opens the connection to ElevenLabs when "Hey Varnick" is heard, so it is warm by the time the answer is written.
     func warmUp() {
@@ -284,9 +312,9 @@ struct VoicePicker: View {
 
     var body: some View {
         let installed = SpokenVoices.installed()
-        // Without a key the list isn't offered, but a voice chosen before stays shown by its last known name.
+        // Without a key the installed voice speaks, so the picker shows it; the ElevenLabs choice is kept for when a key is saved.
         let offered = settings.elevenLabsKeyInKeychain ? settings.elevenLabsVoices : []
-        let chosen = settings.elevenLabsVoice
+        let chosen = settings.speaksInElevenLabs ? settings.elevenLabsVoice : ""
         Picker("", selection: Binding(
             get: { chosen.isEmpty ? settings.voice : Self.prefix + chosen },
             set: { tag in

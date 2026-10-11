@@ -68,9 +68,10 @@ None of this goes to a model server.
 
 ### ElevenLabs
 
-Choosing an ElevenLabs voice in Settings › Listening › Voice (with a key saved under Settings › Models › Keys) is
-consent to send every line Varnick speaks to ElevenLabs. To keep it private, leave the voice on one installed
-on this Mac, which is the default: then nothing is sent.
+Saving an ElevenLabs key under Settings › Models › Keys lets Varnick ask ElevenLabs for your account's voices, when
+you save it and whenever Settings › Listening opens; that request carries only the key. Choosing one of those
+voices in Settings › Listening › Voice is consent to send every line Varnick speaks to ElevenLabs. To keep the
+lines private, leave the voice on one installed on this Mac, which is the default: then no line is sent.
 
 - **What is spoken.** The text of each line, with the voice's id and the key. An answer names pages, sites,
   page descriptions, session titles and folders, and what your prompts said, and can repeat words of your request.
@@ -80,8 +81,8 @@ on this Mac, which is the default: then nothing is sent.
   connection open when the answer is spoken. It carries the voice's id and the key and nothing of yours.
 - **The fallback.** When ElevenLabs fails, is slow or can't be reached, the line is spoken again in the installed
   voice you chose before, on this Mac.
-- **The key** is kept in the macOS Keychain and goes only to ElevenLabs, in a request header. Varnick never reads
-  it from the environment or a file, and never logs it or what it speaks.
+- **The key** is kept in the macOS Keychain and goes only to ElevenLabs, in a request header, and no redirect is
+  followed. Varnick never reads it from the environment or a file, and never logs it or what it speaks.
 
 ### Anthropic, through Screen access
 

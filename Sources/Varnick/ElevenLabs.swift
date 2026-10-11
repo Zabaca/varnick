@@ -1,25 +1,39 @@
 import AVFoundation
 import Foundation
 
-/// ElevenLabs as the voice Varnick speaks in (ADR 0028). `Speaker.speak` streams each line from it as raw PCM and plays the buffers
-/// on its own engine; any failure, or no audio within `deadline`, hands the line to the installed voice. The key is read from the
-/// Keychain when a request is sent, and goes only in the `xi-api-key` header. Nothing sent or received is logged.
+/// ElevenLabs as the voice Varnick speaks in (ADR 0028): each line streams as raw PCM into Varnick's own engine, and the installed
+/// voice takes over on a failure or after `deadline`. Nothing sent or received is logged; the key goes only in `xi-api-key`.
 enum ElevenLabs {
-    /// The Keychain account of the key (Settings › Models › Keys). No environment variable and no `.env`: a key picked up from a
-    /// file would send every spoken line to a third party without the user having chosen an ElevenLabs voice.
+    /// The Keychain account of the key (Settings › Models › Keys); ADR 0028 says why it is never read from a file or the environment.
     static let keyAccount = "ELEVENLABS_API_KEY"
-    /// Pinned, with no picker: Multilingual v2's first audio (about 1.46 s) leaves no room under `deadline`.
+    /// Pinned, with no picker (ADR 0028).
     static let pinnedModel = "eleven_flash_v2_5"
     /// First audio, and then each stretch of bytes, must come within this, or the line is spoken in the installed voice.
     static let deadline: TimeInterval = 1.5
     private static let host = "https://api.elevenlabs.io"
 
-    /// One kept session, so the voice list, the warm-up and every line share its connections.
+    /// One kept session, so the voice list, the warm-up and every line share its connections. It follows no redirect, so the key
+    /// never goes to another host.
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10
-        return URLSession(configuration: config)
+        return URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
     }()
+
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    /// The saved key. Reading can make macOS ask the user, so callers read it before any clock starts and off the main actor.
+    static func apiKey() async -> String? { savedKey() }
+
+    private static func savedKey() -> String? {
+        guard let key = Keychain.read(keyAccount), !key.isEmpty else { return nil }
+        return key
+    }
 
     struct Voice: Codable, Equatable, Identifiable {
         let id: String
@@ -59,13 +73,15 @@ enum ElevenLabs {
         }
     }
 
-    /// A reply that isn't 200, sorted by the `detail.status` ElevenLabs gives (a key without a permission is a 401 too, and says which).
+    /// A reply that isn't 200, sorted by the `detail.status` ElevenLabs gives (a key without a permission is a 401 too, and says
+    /// which). Only a recognised invalid-key status says the key was refused; any other reply shows as its status code.
     static func failure(status: Int, body: Data) -> Failure {
         let detail = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["detail"] as? [String: Any]
         switch detail?["status"] as? String {
         case "missing_permissions"?: return .missingPermission(permission(in: detail?["message"] as? String))
         case "quota_exceeded"?: return .outOfCharacters
-        default: return status == 401 ? .invalidKey : .status(status)
+        case "invalid_api_key"?: return .invalidKey
+        default: return .status(status)
         }
     }
 
@@ -95,7 +111,7 @@ enum ElevenLabs {
 
     /// The account's voices, premade or not. Throws a `Failure`, or `CancellationError`.
     static func voices() async throws -> [Voice] {
-        guard let key = Keychain.read(keyAccount), !key.isEmpty, let request = request("/v1/voices", key: key) else {
+        guard let key = savedKey(), let request = request("/v1/voices", key: key) else {
             throw Failure.noKey
         }
         let data: Data
@@ -127,7 +143,7 @@ enum ElevenLabs {
     /// Opens the connection ahead of the answer: `GET /v1/voices/{id}` needs only Voices Read, uses no characters and carries
     /// nothing of the user's. The reply is ignored; a failure logs only its kind.
     static func warm(voice: String) async {
-        guard let key = Keychain.read(keyAccount), !key.isEmpty, let request = request("/v1/voices/\(pathComponent(voice))", key: key) else { return }
+        guard let key = savedKey(), let request = request("/v1/voices/\(pathComponent(voice))", key: key) else { return }
         do {
             let (_, response) = try await session.data(for: request)
             if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 { NSLog("Varnick: ElevenLabs warm-up: status \(status)") }
@@ -146,12 +162,13 @@ enum ElevenLabs {
         case cancelled
     }
 
-    /// Streams `text` in `voice` into `playback`. The caller stops the playback when this fails, since sound may have begun.
-    static func speak(_ text: String, voice: String, into playback: SpeechPlayback) async -> Outcome {
+    /// Streams `text` in `voice` into `playback`, with a `key` read beforehand. The caller stops the playback when this fails,
+    /// since sound may have begun.
+    static func speak(_ text: String, voice: String, key: String, into playback: SpeechPlayback) async -> Outcome {
         let sent = Date()
         let watch = Watch(sent: sent)
         return await withTaskGroup(of: Outcome?.self) { group in
-            group.addTask { await stream(text, voice: voice, sent: sent, watch: watch, into: playback) }
+            group.addTask { await stream(text, voice: voice, key: key, watch: watch, into: playback) }
             group.addTask { await watch.expire() }
             var result = Outcome.cancelled
             for await outcome in group {
@@ -162,8 +179,7 @@ enum ElevenLabs {
         }
     }
 
-    private static func stream(_ text: String, voice: String, sent: Date, watch: Watch, into playback: SpeechPlayback) async -> Outcome? {
-        guard let key = Keychain.read(keyAccount), !key.isEmpty else { return .failed(.noKey) }
+    private static func stream(_ text: String, voice: String, key: String, watch: Watch, into playback: SpeechPlayback) async -> Outcome? {
         guard let body = try? JSONSerialization.data(withJSONObject: ["text": text, "model_id": pinnedModel]),
               let request = request("/v1/text-to-speech/\(pathComponent(voice))/stream?output_format=pcm_24000",
                                     key: key, method: "POST", body: body)
@@ -172,6 +188,8 @@ enum ElevenLabs {
             let (bytes, response) = try await session.bytes(for: request)
             guard let status = (response as? HTTPURLResponse)?.statusCode else { return .failed(.notAnswering("no response")) }
             guard status == 200 else {
+                // A slow error body is still an error with this status, not a slow line.
+                watch.know(status: status)
                 var reply = Data()
                 for try await byte in bytes {
                     reply.append(byte)
@@ -195,7 +213,7 @@ enum ElevenLabs {
             guard heard else { return .failed(.noAudio) }
             // An empty buffer ends the speech, as the synthesizer's last callback does.
             if let end = AVAudioPCMBuffer(pcmFormat: PCMBuffering.format, frameCapacity: 1) { playback.add(end) }
-            return .played(sent: sent)
+            return .played(sent: watch.sent)
         } catch {
             if Task.isCancelled { return .cancelled }
             return .failed(.notAnswering(error.logKind))
@@ -205,8 +223,9 @@ enum ElevenLabs {
     /// Gives up on a line that sends no audio within `deadline` of the request, or goes quiet for that long once it has begun.
     private final class Watch: @unchecked Sendable {
         private let lock = NSLock()
-        private let sent: Date
+        let sent: Date
         private var last: Date?
+        private var status: Int?
 
         init(sent: Date) { self.sent = sent }
 
@@ -216,17 +235,26 @@ enum ElevenLabs {
             lock.unlock()
         }
 
-        private func quiet() -> TimeInterval {
+        /// An error reply's status is in: if its body is slow, the failure is that status, not "slow".
+        func know(status: Int) {
             lock.lock()
-            defer { lock.unlock() }
-            return Date().timeIntervalSince(last ?? sent)
+            self.status = status
+            lock.unlock()
         }
 
-        /// The `.slow` failure when the time is up; nil when cancelled first.
+        /// How long it has been quiet, and the error status if one came.
+        private func state() -> (quiet: TimeInterval, status: Int?) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (Date().timeIntervalSince(last ?? sent), status)
+        }
+
+        /// The failure when the time is up; nil when cancelled first.
         func expire() async -> Outcome? {
             while true {
                 do { try await Task.sleep(for: .milliseconds(50)) } catch { return nil }
-                if quiet() >= ElevenLabs.deadline { return .failed(.slow) }
+                let now = state()
+                if now.quiet >= ElevenLabs.deadline { return .failed(now.status.map { ElevenLabs.failure(status: $0, body: Data()) } ?? .slow) }
             }
         }
     }
