@@ -713,7 +713,7 @@ struct OutlineTree: Codable, Equatable {
         case .delete(let run):
             guard let run = resolve(run) else { return .refused(.gone) }
             // The bullet zoomed into, or one it is nested in, can't go while the user is inside it (the title itself is refused above).
-            if run.items.contains(where: { effectiveZoom.starts(with: $0.path.placements) }) { return .refused("the user is zoomed into it") }
+            if holdsZoom(run.items.map(\.path)) { return .refused("the user is zoomed into it") }
             let rows = visibleRows(scope)
             let at = rows.firstIndex { $0.path == run.items[0].path }
             run.remove(from: &tree)
@@ -780,6 +780,7 @@ struct OutlineTree: Codable, Equatable {
         case .indent(let asked):
             // Under the nearest sibling above the run that shows (one a filter, or Show completed, hides is stepped over).
             guard let run = resolve(asked), let siblings = bullets[run.parent]?.children else { return .refused(.gone) }
+            if holdsZoom(run.items.map(\.path)) { return .refused("the user is zoomed into it") }
             let shown = Set(visibleRows(scope).map(\.path))
             var index = run.items[0].index - 1
             while index >= 0, !shown.contains(run.parentPath.appending(siblings[index].id)) { index -= 1 }
@@ -799,6 +800,7 @@ struct OutlineTree: Codable, Equatable {
                   let parent = locate(run.parentPath) else {
                 return .refused("already at the top")
             }
+            if holdsZoom(run.items.map(\.path)) { return .refused("the user is zoomed into it") }
             run.remove(from: &tree)
             tree.bullets[parent.parent]?.children.insert(contentsOf: run.items.map(\.placement), at: parent.index + 1)
             tree.bullets[run.parent]?.changed = now
@@ -942,6 +944,10 @@ struct OutlineTree: Codable, Equatable {
     private static func oneLine(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
     }
+
+    /// Whether the zoom runs through one of these rows (the bullet zoomed into, or one it is nested in): moving or removing it breaks the zoom path,
+    /// which `finish` resets to Home and an undo doesn't bring back.
+    private func holdsZoom(_ paths: [OutlinePath]) -> Bool { paths.contains { effectiveZoom.starts(with: $0.placements) } }
 
     /// Whether the row is an empty bullet with nothing nested, no note and no other placement: what a paste takes the place of.
     func canReplace(_ path: OutlinePath) -> Bool {

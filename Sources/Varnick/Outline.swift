@@ -306,7 +306,7 @@ final class Outline: ObservableObject {
             return SessionOutcome(refusal: "The user's caret is still moving to another bullet: try again")
         }
         // Marked text isn't in the tree yet, and a move or a delete of its row would take the view away: those edits wait for it.
-        if let row = caretView?.rowPath, OutlineActing.touches(edit, row: row) {
+        if let row = caretView?.rowPath, OutlineActing.touches(edit, row: row, in: tree) {
             guard await wait(.seconds(3), until: { caretView?.hasMarkedText() != true }) else {
                 return SessionOutcome(refusal: "The user is composing text in a bullet: try again")
             }

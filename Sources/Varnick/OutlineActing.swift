@@ -51,14 +51,23 @@ enum OutlineActing {
     }
 
     /// Whether the edit changes the caret's row or one above it on its path: only then does it matter that an input method is composing there.
-    static func touches(_ edit: OutlineEdit, row path: OutlinePath) -> Bool {
+    /// Done-ness belongs to the bullet, so a complete of any placement of the caret's bullet, or of one of its ancestors, counts.
+    static func touches(_ edit: OutlineEdit, row path: OutlinePath, in tree: OutlineTree) -> Bool {
         let paths: [OutlinePath]
         switch edit {
-        case .indent(let run), .outdent(let run), .move(let run, _), .complete(let run), .delete(let run): paths = run.paths
-        case .setDone(let target, _), .collapse(let target, _): paths = [target]
+        case .indent(let run), .outdent(let run), .move(let run, _), .delete(let run): paths = run.paths
+        case .collapse(let target, _): paths = [target]
+        case .complete(let run): return run.paths.contains { shares($0, with: path, in: tree) }
+        case .setDone(let target, _): return shares(target, with: path, in: tree)
         default: paths = []
         }
         return paths.contains { isPrefix($0, of: path) }
+    }
+
+    /// Whether `target`'s bullet is the bullet of any row along `path`, the row itself included.
+    private static func shares(_ target: OutlinePath, with path: OutlinePath, in tree: OutlineTree) -> Bool {
+        guard let wanted = tree.bulletID(at: target) else { return false }
+        return path.placements.indices.contains { tree.bulletID(at: OutlinePath(placements: Array(path.placements.prefix($0 + 1)))) == wanted }
     }
 
     /// Whether the edit goes by the siblings in the whole tree, with Show completed and nothing else: indent, move and outdent. A session reads
@@ -74,9 +83,10 @@ enum OutlineActing {
     static func problem(withText text: String, note: Bool) -> String? {
         let limit = note ? noteLimit : textLimit
         guard text.count <= limit else { return "that is \(text.count) characters: \(note ? "a note" : "a bullet's text") takes at most \(limit)" }
+        // A bullet's text also refuses what a text view takes as a line break (U+2028, U+2029, U+0085).
         let bad = text.unicodeScalars.contains { scalar in
             (scalar.value < 0x20 && !(note && (scalar == "\n" || scalar == "\r"))) || scalar.value == 0x7f
-        }
+        } || (!note && text.contains(where: \.isNewline))
         if bad { return note ? "a note can't hold tabs or other control characters" : "a bullet's text is one line with no tabs or other control characters: use add for several bullets" }
         return nil
     }
@@ -86,7 +96,15 @@ enum OutlineActing {
         let lines = OutlineClipboard.lineCount(of: text)
         guard lines > 0 else { return ([], "text has no lines to add") }
         guard lines <= addLimit else { return ([], "text has \(lines) lines: add at most \(addLimit) at a time") }
-        return (OutlineClipboard.drafts(fromText: text), nil)
+        let drafts = OutlineClipboard.drafts(fromText: text)
+        func problem(in drafts: [OutlineDraft]) -> String? {
+            for draft in drafts {
+                if let found = self.problem(withText: draft.text, note: false) ?? draft.note.flatMap({ self.problem(withText: $0, note: true) })
+                    ?? problem(in: draft.children) { return found }
+            }
+            return nil
+        }
+        return (drafts, problem(in: drafts))
     }
 
     /// The new rows an `add` made, in the outline's order, each with its depth under the top-level ones (`tops` are the paths the insert

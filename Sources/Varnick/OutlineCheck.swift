@@ -246,6 +246,22 @@ enum OutlineCheck {
         deeper.bullets["f"] = bullet("f")
         deeper.zoom = ["pb", "pe"]
         print("act check: deleting a bullet the zoomed-into one is nested in: \(result(.delete(OutlineRun(OutlinePath(placements: ["pb"]))), nil, on: deeper))")
+        deeper.zoom = ["pb", "pe", "pf"]
+        print("act check: zoomed into a bullet nested in others, indenting or outdenting a bullet the zoom runs through is refused: "
+              + "\(result(.indent(OutlineRun(pe)), wholeTree, on: deeper)), \(result(.outdent(OutlineRun(pe)), wholeTree, on: deeper)); "
+              + "a row the zoom doesn't run through is not: \(result(.indent(OutlineRun(pc)), wholeTree, on: deeper))")
+        // A mirror: bullet m is placed at Home and under n, so completing the Home place is completing the caret's bullet.
+        var mirrored = OutlineTree(root: "r", bullets: ["r": bullet("", [("p1", "m"), ("p2", "n"), ("p4", "o")]), "m": bullet("m"),
+                                                        "n": bullet("n", [("p3", "m")]), "o": bullet("o")])
+        mirrored.zoom = []
+        let caretRow = OutlinePath(placements: ["p2", "p3"])
+        func touches(_ edit: OutlineEdit) -> Bool { OutlineActing.touches(edit, row: caretRow, in: mirrored) }
+        print("act check: a complete of another place of the caret's bullet, or of its parent, touches the caret's row: "
+              + "\(touches(.setDone(OutlinePath(placements: ["p1"]), true))), \(touches(.complete(OutlineRun(OutlinePath(placements: ["p1"]))))), "
+              + "\(touches(.setDone(OutlinePath(placements: ["p2"]), true))); an unrelated bullet does not: \(touches(.setDone(OutlinePath(placements: ["p4"]), true)))")
+        print("act check: an add whose text is too long, or has U+2028 in a line, is refused: "
+              + "\(OutlineActing.drafts(ofAdd: "- " + String(repeating: "x", count: OutlineActing.textLimit + 1)).problem != nil), "
+              + "\(OutlineActing.problem(withText: "a\u{2028}b", note: false) != nil)")
         var done = tree
         if case .applied(let next, _, _) = tree.applying(.setDone(pe, true), now: at) { done = next }
         let twice = done.applying(.setDone(pe, true), now: at)
