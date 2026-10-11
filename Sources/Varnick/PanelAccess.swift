@@ -23,6 +23,8 @@ enum PanelRefusal: Error {
     case problemsOff
     /// The arguments are not ones the tool takes.
     case bad(String)
+    /// The Outline can't be read from its file (unreadable, newer, or still loading); the message is the Outline's own reason.
+    case outlineUnavailable(String)
 
     @MainActor var message: String {
         switch self {
@@ -33,10 +35,11 @@ enum PanelRefusal: Error {
         case .noPane: "No Claude session in Varnick's panes on this Mac has this pane id"
         case .controlled: "This session is shown as a card because another Mac or a device is in control of it, so it is not one of this Mac's panes to answer for"
         case .unknownTool(let name): "Unknown tool \(name)"
-        case .unknownID: "No such id. Ids come from panel and board_read (s1…): read one of those first"
+        case .unknownID: "No such id. Ids come from panel, board_read and outline_read (s1… for panes and cards, o1… for the Outline's rows): read one of those first"
         case .gone: "gone: read again"
         case .problemsOff: "The Problems board is off: the user can turn it on in Settings › Experimental"
         case .bad(let why): why
+        case .outlineUnavailable(let why): why
         }
     }
 
@@ -53,33 +56,38 @@ enum PanelRefusal: Error {
         case .gone: "gone"
         case .problemsOff: "problems off"
         case .bad: "bad arguments"
+        case .outlineUnavailable: "outline unavailable"
         }
     }
 }
 
-/// The ids a pane has been given in the replies, `s1`, `s2`…: the same pane gets the same id at every read, and a new one the next
-/// number. A card of the board and a pane share the table, since a card's id is a pane's.
-struct PanelIDs {
-    private var numbers: [UUID: Int] = [:]
-    private var targets: [Int: UUID] = [:]
+/// The ids of one kind that a pane has been given in the replies: `s1`, `s2`… for panes and cards (a card's id is a pane's, so they share
+/// one table) and `o1`… for the Outline's rows (one for each row path). The same target gets the same id at every read, and a new one the
+/// next number. A target that has since gone keeps its number.
+struct PanelIDs<Target: Hashable> {
+    let prefix: Character
+    private var numbers: [Target: Int] = [:]
+    private var targets: [Int: Target] = [:]
     private var last = 0
 
-    mutating func id(for target: UUID) -> String {
-        if let number = numbers[target] { return "s\(number)" }
+    init(prefix: Character) { self.prefix = prefix }
+
+    mutating func id(for target: Target) -> String {
+        if let number = numbers[target] { return "\(prefix)\(number)" }
         last += 1
         numbers[target] = last
         targets[last] = target
-        return "s\(last)"
+        return "\(prefix)\(last)"
     }
 
-    /// The pane an id was given for; nil for one never given.
-    func target(_ text: String) -> UUID? {
+    /// What an id was given for; nil for one never given.
+    func target(_ text: String) -> Target? {
         let word = text.trimmingCharacters(in: .whitespaces).lowercased()
-        guard word.hasPrefix("s"), let number = Int(word.dropFirst()) else { return nil }
+        guard word.hasPrefix(String(prefix)), let number = Int(word.dropFirst()) else { return nil }
         return targets[number]
     }
 
-    /// The mappings go and the numbers keep counting, so an id given before is never given to another pane.
+    /// The mappings go and the numbers keep counting, so an id given before is never given to another target.
     mutating func forget() {
         numbers = [:]
         targets = [:]
@@ -99,23 +107,37 @@ final class PanelAccess {
     func noteKey() { lastKey = .now }
 
     /// Each calling pane's ids: held in memory only, kept for the pane's life, and dropped once it has gone or the switch is off.
-    private var tables: [UUID: PanelIDs] = [:]
+    private var tables: [UUID: PanelIDs<UUID>] = [:]
+    /// The same for the Outline's rows (`o` ids), per calling pane.
+    private var outlineTables: [UUID: PanelIDs<OutlinePath>] = [:]
 
     /// Turning the switch off: every id stops meaning anything at once.
     func switchedOff() {
         for caller in tables.keys { tables[caller]?.forget() }
+        for caller in outlineTables.keys { outlineTables[caller]?.forget() }
     }
 
     // MARK: Ids
 
     /// `target`'s id in the calling pane's table.
     func id(for target: UUID, caller: UUID) -> String {
-        tables[caller, default: PanelIDs()].id(for: target)
+        tables[caller, default: PanelIDs(prefix: "s")].id(for: target)
     }
 
     /// The pane or card an id was given for in the calling pane's table; an id never given is refused.
     func target(_ text: String?, caller: UUID) throws -> UUID {
         guard let text, let found = tables[caller]?.target(text) else { throw PanelRefusal.unknownID }
+        return found
+    }
+
+    /// A row's id in the calling pane's table.
+    func outlineID(for path: OutlinePath, caller: UUID) -> String {
+        outlineTables[caller, default: PanelIDs(prefix: "o")].id(for: path)
+    }
+
+    /// The row path an `o` id was given for in the calling pane's table; an id never given is refused.
+    func outlinePath(_ text: String?, caller: UUID) throws -> OutlinePath {
+        guard let text, let found = outlineTables[caller]?.target(text) else { throw PanelRefusal.unknownID }
         return found
     }
 
@@ -172,7 +194,13 @@ final class PanelAccess {
         // A registered view's tools: the router has done everything but the view's own part.
         guard let (type, acts) = PanelViews.find(request.tool) else { throw PanelRefusal.unknownTool(request.tool) }
         let view = type.init(model: model)
-        guard acts else { return Answered(text: try view.read(request.args, caller: caller)) }
+        guard acts else {
+            let text = try await view.read(request.args, caller: caller)
+            // A read may have waited (the Outline's file): the switch and the pane can have changed meanwhile.
+            guard Settings.shared.panelAccess else { throw PanelRefusal.off }
+            _ = try callingPane(request.pane, in: model)
+            return Answered(text: text)
+        }
         guard let action = request.args["action"], type.actionSpecs.contains(where: { $0.name == action }) else {
             throw PanelRefusal.bad("action is one of: " + type.actionSpecs.map(\.name).joined(separator: ", "))
         }
@@ -194,9 +222,10 @@ final class PanelAccess {
 
     /// Tables of panes that have gone are dropped.
     private func prune(in model: LauncherModel) {
-        guard !tables.isEmpty else { return }
+        guard !tables.isEmpty || !outlineTables.isEmpty else { return }
         let open = Set(model.tabs.flatMap { $0.sessions.map(\.id) })
         tables = tables.filter { open.contains($0.key) }
+        outlineTables = outlineTables.filter { open.contains($0.key) }
     }
 
     // MARK: show
@@ -210,6 +239,9 @@ final class PanelAccess {
         }
         let window = panelWindow
         let visible = window?.isVisible == true
+        // The keyboard moves only if the panel already has it, and Varnick is the active app: a pinned panel behind another app is key in its
+        // own window only, and a focus change there would bring Varnick up over the app the user is typing in.
+        let key = window?.isKeyWindow == true && NSApp.isActive
         // A tab coming up or going away under a hidden panel is not proven to leave every terminal's size alone: only a visible panel gets it.
         var opensTab = false
         // Resolved before anything changes, so a refusal leaves the panel as it was.
@@ -218,7 +250,6 @@ final class PanelAccess {
         case "view":
             switch value.lowercased() {
             case "search":
-                let key = window?.isKeyWindow == true
                 act = {
                     model.hideBoard()
                     model.hideOutline()
@@ -230,8 +261,9 @@ final class PanelAccess {
             case "problems":
                 guard Settings.shared.problemsBoard else { throw PanelRefusal.problemsOff }
                 act = { model.showBoard(.problems) }
-            case "outline": throw PanelRefusal.bad(Self.outlineNotYet)
-            default: throw PanelRefusal.bad("view is search, board or problems")
+            // The caret goes into a bullet only if the panel has the keyboard already; the file is read as showing it would.
+            case "outline": act = { model.showOutline(focusing: key) }
+            default: throw PanelRefusal.bad("view is search, board, problems or outline")
             }
         case "pane":
             let target = try self.target(value, caller: caller)
@@ -246,15 +278,14 @@ final class PanelAccess {
         default:
             let name = String(value.lowercased().drop(while: { $0 == "!" }))
             guard let command = LauncherCommand.allCases.first(where: { $0.names.contains(name) }) else {
-                let known = LauncherCommand.available.filter { $0 != .listen && $0 != .outline }.map(\.rawValue)
+                let known = LauncherCommand.available.filter { $0 != .listen }.map(\.rawValue)
                 throw PanelRefusal.bad("No such command. These are: " + known.joined(separator: ", "))
             }
             // It turns on the microphone.
             guard command != .listen else { throw PanelRefusal.bad("A session may not run !listen: it turns on the microphone") }
-            guard command != .outline else { throw PanelRefusal.bad(Self.outlineNotYet) }
             guard LauncherCommand.available.contains(command) else { throw PanelRefusal.problemsOff }
             opensTab = command == .transcript
-            act = { model.run(command, clearingQuery: false) }
+            act = { model.run(command, clearingQuery: false, focusing: key) }
         }
         // The user's own state comes first: what shows over the view, then their typing.
         if model.showingSettings { throw PanelRefusal.bad("Settings is showing: ask the user to close it first") }
@@ -267,15 +298,24 @@ final class PanelAccess {
             throw PanelRefusal.bad("The panel is hidden, and Varnick doesn't swap a terminal's tab under a hidden panel: ask the user to open the panel first")
         }
         act()
-        let showing = panelText(model, caller: caller).split(separator: "\n").first { $0.hasPrefix("Showing:") }.map(String.init) ?? "Shown."
-        return (showing + (visible ? "" : " The panel is hidden, so this is there when the user opens it."), kind)
+        let showing = Self.showingBlock(of: panelText(model, caller: caller)) ?? "Shown."
+        return (showing + (visible ? "" : "\nThe panel is hidden, so this is there when the user opens it."), kind)
     }
 
-    private static let outlineNotYet = "The outline is not available to sessions yet"
+    /// The "Showing:" line of `panel`'s text with the indented lines under it (a tab's panes), as `panel` gives them: not the line alone.
+    private static func showingBlock(of text: String) -> String? {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("Showing:") }) else { return nil }
+        let rest = lines[(start + 1)...].prefix { $0.hasPrefix(" ") }
+        return ([lines[start]] + rest).joined(separator: "\n")
+    }
 
     // MARK: panel
 
     private var panelWindow: LauncherPanel? { NSApp.windows.first { $0 is LauncherPanel } as? LauncherPanel }
+
+    /// Whether the panel is up and key: only then can a bullet have the caret.
+    var panelHasKeyboard: Bool { panelWindow.map { $0.isVisible && $0.isKeyWindow } ?? false }
 
     /// What the panel shows, in the order the view picks it (`LauncherView`), and what has the keyboard (the order the key monitor and
     /// the cards give it). Never the search field's text.
@@ -292,7 +332,7 @@ final class PanelAccess {
             lines += boardLines(model, caller: caller)
             focus = "the session board"
         } else if model.showingOutline {
-            lines.append("Showing: the outline")
+            lines += outlineLines(model, caller: caller)
             focus = "the outline"
         } else if let tab = model.activeTab {
             lines += tabLines(tab, caller: caller)
@@ -342,6 +382,16 @@ final class PanelAccess {
         if pane.isShell { return "terminal" }
         if pane.isLiveTranscript { return "transcript" }
         return "Claude"
+    }
+
+    /// The Outline: its zoom's crumbs, the filter's words, Show completed, the caret and the selection, from the model and never a text view. The
+    /// bullets themselves are `outline_read`'s. While the file is not read yet, or can't be, it says so (it loads when the Outline shows).
+    private func outlineLines(_ model: LauncherModel, caller: UUID) -> [String] {
+        let outline = model.outline
+        if let problem = outline.load.problem { return ["Showing: the outline (\(problem))"] }
+        let reading = OutlineReading(tree: outline.tree) { self.outlineID(for: $0, caller: caller) }
+        let view = outline.shownForSessions(panelHasKeyboard: panelHasKeyboard, onScreen: true)
+        return ["Showing: the outline"] + reading.state(view).map { "  " + $0 }
     }
 
     /// The board: its tab and the selected card.

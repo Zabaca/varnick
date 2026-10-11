@@ -100,8 +100,8 @@ enum PanelMCP {
         return tool("\(name)_act", PanelToolSpec(summary: "One change to the \(name), by `action`. \(lines)", properties: properties, required: ["action"]))
     }
 
-    /// The commands a session may run: all but `listen`, which turns on the microphone, and `outline`, until the Outline adopts the protocol.
-    private static let commands = LauncherCommand.allCases.filter { $0 != .listen && $0 != .outline }.map(\.rawValue).joined(separator: ", ")
+    /// The commands a session may run: all but `listen`, which turns on the microphone.
+    private static let commands = LauncherCommand.allCases.filter { $0 != .listen }.map(\.rawValue).joined(separator: ", ")
 
     private static let show = tool("show", PanelToolSpec(
         summary: "Changes what Varnick's panel shows, the way its keys do, and never whether it shows: it does not bring the panel up, hide or "
@@ -110,16 +110,16 @@ enum PanelMCP {
             + "shows, for a moment after the user pressed a key in the panel, and, with the panel hidden, for a pane or a command that "
             + "opens a tab, or while a tab shows.",
         properties: [
-            "view": ["type": "string", "enum": ["search", "board", "problems"],
-                     "description": "Show the search, the session board, or the board's Problems tab (only while the Problems board switch is on)."],
+            "view": ["type": "string", "enum": ["search", "board", "problems", "outline"],
+                     "description": "Show the search, the session board, the board's Problems tab (only while the Problems board switch is on) or the Outline (also !wf). Showing the Outline puts the caret in a bullet only if the panel already has the keyboard."],
             "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused."],
-            "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs). Not listen: it turns on the microphone."],
+            "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs, outline is also wf). Not listen: it turns on the microphone."],
         ]))
 
     private static let panel = tool("panel", PanelToolSpec(
         summary: "Says what Varnick's panel shows now, and where the keyboard focus is. Whether the panel is visible, key and pinned; what it "
             + "shows: the search (its mode, and whether its field is empty, never its text), a tab with its panes (each with an id such as s1, "
-            + "its kind and title, which has focus and which is this session), the session board with its tab and selected card, Settings, "
+            + "its kind and title, which has focus and which is this session), the session board with its tab and selected card, the Outline with its zoom, filter and caret, Settings, "
             + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives, and show, board_read and pane_read use the same ids.",
         properties: [:]))
 }

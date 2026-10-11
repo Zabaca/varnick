@@ -16,8 +16,9 @@ protocol PanelAccessView {
     static var actionSpecs: [PanelActionSpec] { get }
 
     @MainActor init(model: LauncherModel)
-    /// The view's state as text, with ids from the calling pane's table (`PanelAccess.id(for:caller:)`).
-    @MainActor func read(_ args: PanelArguments, caller: UUID) throws -> String
+    /// The view's state as text, with ids from the calling pane's table (`PanelAccess.id(for:caller:)`). It may wait, as the Outline's first
+    /// read does for its file; a view that reads only what it holds need not.
+    @MainActor func read(_ args: PanelArguments, caller: UUID) async throws -> String
     /// One action by name, through the same model functions the view's keys call. It returns what was done, or a refusal. It may wait.
     @MainActor func perform(_ action: String, _ args: PanelArguments, caller: UUID) async throws -> String
 }
@@ -32,7 +33,7 @@ extension PanelAccessView {
 
 enum PanelViews {
     /// Every adopter, in the order the server lists their tools. A view joins by adopting the protocol and being added here.
-    static let all: [any PanelAccessView.Type] = [BoardPanelView.self, PanePanelView.self]
+    static let all: [any PanelAccessView.Type] = [BoardPanelView.self, PanePanelView.self, OutlinePanelView.self]
 
     /// The adopter and the kind of tool a name is: `board_read` is the board's read, `board_act` its actions (only if it has any).
     static func find(_ tool: String) -> (view: any PanelAccessView.Type, acts: Bool)? {
@@ -233,5 +234,79 @@ struct PanePanelView: PanelAccessView {
         let headless = HeadlessTerminal(options: options) { _ in }
         headless.terminal.feed(text: text)
         return rows(of: headless.terminal)
+    }
+}
+
+// MARK: The Outline
+
+/// `outline_read`: the Outline's bullets as text with ids, from the model and never a text view, whether or not it shows (ADR 0031).
+/// Its first read loads the file without showing anything, and it never writes.
+struct OutlinePanelView: PanelAccessView {
+    static let name = "outline"
+    static let readSpec = PanelToolSpec(
+        summary: "Reads the user's Outline (the bullets they keep on this Mac), whether or not it is showing. By default the tree from Home, "
+            + "or from the bullet `at`, `depth` levels down (3 by default, 0 for all), the user's zoom and filter not applied: one line per "
+            + "bullet, indented by depth, with its id (o1…), its text in quotes, [done], why the user's view hides it (hidden:), (collapsed) "
+            + "and how many are nested past the depth, (mirror, N places) for a bullet placed in several spots, its tags, and its note's "
+            + "lines under it after a bar. With `as_shown`, the rows exactly as the user sees them instead: the zoom, the filter, Show "
+            + "completed, each row's depth and path, the title, the caret (row, text or note, UTF-16 offset) and the selected bullets. At "
+            + "most 400 rows a call, then \"N more: call outline_read with after: oX\": give `after` that id, and the same `at`, `depth` "
+            + "or `as_shown`, to continue the same walk from the row after it. An id stays the same for the life of this session while its "
+            + "place in the tree does; one that no longer leads anywhere is \"gone: read again\". Refused while the file can't be read or "
+            + "is from a newer Varnick, and nothing is ever written. The bullets and notes go to Anthropic with this session.",
+        properties: [
+            "at": ["type": "string", "description": "A row's id (o1…) from outline_read or panel: read from that bullet down. Home when left out."],
+            "depth": ["type": "integer", "description": "How many levels down to read: 3 by default, 0 for all of them. Not with as_shown."],
+            "as_shown": ["type": "boolean", "description": "The rows as the user sees them now (their zoom, filter and Show completed), with the caret and the selection."],
+            "after": ["type": "string", "description": "A row's id from the last row a read listed: continue the same walk from the row after it, with the same at, depth or as_shown."],
+        ])
+
+    let model: LauncherModel
+
+    @MainActor init(model: LauncherModel) { self.model = model }
+
+    @MainActor func read(_ args: PanelArguments, caller: UUID) async throws -> String {
+        let outline = model.outline
+        await outline.loadForSession()
+        // The load may have waited: the switch can have been turned off meanwhile.
+        guard Settings.shared.panelAccess else { throw PanelRefusal.off }
+        if let problem = outline.load.problem {
+            throw PanelRefusal.outlineUnavailable("The outline isn't available: \(problem)." + (outline.load == .loading
+                ? " Try again." : " Varnick never writes over it; the user can deal with it in the Outline."))
+        }
+        let tree = outline.tree
+        let reading = OutlineReading(tree: tree) { PanelAccess.shared.outlineID(for: $0, caller: caller) }
+        let text = (args["at"] ?? "").trimmingCharacters(in: .whitespaces)
+        let depthText = (args["depth"] ?? "").trimmingCharacters(in: .whitespaces)
+        let afterText = (args["after"] ?? "").trimmingCharacters(in: .whitespaces)
+        // An id given for a path that has since left the tree (deleted, or moved under another parent) is gone; one never given is not an id.
+        let after = try afterText.isEmpty ? nil : PanelAccess.shared.outlinePath(afterText, caller: caller)
+        do {
+            switch (args["as_shown"] ?? "").lowercased() {
+            case "true":
+                guard text.isEmpty, depthText.isEmpty else {
+                    throw PanelRefusal.bad("as_shown reads the rows on screen from the zoom: at and depth don't apply to it")
+                }
+                let shown = outline.shownForSessions(panelHasKeyboard: PanelAccess.shared.panelHasKeyboard, onScreen: model.showingOutline)
+                return try reading.shown(shown, after: after).text
+            case "", "false": break
+            default: throw PanelRefusal.bad("as_shown is true or false")
+            }
+            var depth = 3
+            if !depthText.isEmpty {
+                guard let given = Int(depthText), given >= 0 else { throw PanelRefusal.bad("depth is a number of levels, 0 or more (0 for all)") }
+                depth = given
+            }
+            var start: OutlinePath?
+            if !text.isEmpty, text.lowercased() != "home" {
+                let path = try PanelAccess.shared.outlinePath(text, caller: caller)
+                guard tree.bulletID(at: path) != nil else { throw PanelRefusal.gone }
+                start = path
+            }
+            return try reading.read(from: start, depth: depth, after: after).text
+        } catch is OutlineReading.Gone {
+            // `after` is no row of this read: it left the tree, or the rows on screen changed since.
+            throw PanelRefusal.gone
+        }
     }
 }

@@ -1004,9 +1004,9 @@ final class LauncherModel: ObservableObject {
         run(shown[commandSelection])
     }
 
-    /// A command as ↩ on its row runs it, and as `show` runs one for a session (`PanelAccess`): one function, so both behave the same.
-    /// ↩ clears the `!` it was typed in; a session's `show` leaves what the user typed alone.
-    func run(_ command: LauncherCommand, clearingQuery: Bool = true) {
+    /// A command as ↩ on its row runs it and as a session's `show` runs it (`PanelAccess`); `show` leaves the query alone and passes
+    /// `focusing` false when the panel lacks the keyboard, so the outline shows with no caret.
+    func run(_ command: LauncherCommand, clearingQuery: Bool = true, focusing: Bool = true) {
         switch command {
         case .listen: Listener.shared.toggle()
         case .transcript: openTranscript()
@@ -1018,7 +1018,7 @@ final class LauncherModel: ObservableObject {
             showBoard(.problems)
         case .outline:
             if clearingQuery { query = "" }
-            showOutline()
+            showOutline(focusing: focusing)
         }
     }
 
@@ -2369,13 +2369,14 @@ final class LauncherModel: ObservableObject {
         if showingOutline { closeOutline() } else { showOutline() }
     }
 
-    /// The board and the outline never show together: showing either closes the other.
-    func showOutline() {
+    /// The board and the outline never show together: showing either closes the other. `focusing` false shows it without placing the caret in
+    /// a bullet, which is what a session's `show` does unless the panel already has the keyboard.
+    func showOutline(focusing: Bool = true) {
         pendingSplit = nil
         hideBoard()
         guard !showingOutline else { return }
         showingOutline = true
-        outline.appear()
+        outline.appear(focusing: focusing)
     }
 
     /// Back to the tab underneath, focused, or to search with focus in the field.

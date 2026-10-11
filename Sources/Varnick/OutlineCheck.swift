@@ -119,6 +119,99 @@ enum OutlineCheck {
         print("clipboard check: the built-in indented text reads as \(DraftCounts(OutlineClipboard.drafts(fromText: sample)))")
     }
 
+    /// What a session's read (Panel access) makes of the tree: the same read twice gives the same text with the same ids, reading everything lists
+    /// as many rows as the tree shows with Show completed on and no zoom, the rows on screen are listed as they are, and a read cut off at the row
+    /// cap continues, call after call, until every row has been listed once. Prints counts only.
+    private static func readCheck(_ tree: OutlineTree) {
+        var numbers: [String: Int] = [:]
+        let id: (OutlinePath) -> String = { path in
+            let number = numbers[path.id] ?? numbers.count + 1
+            numbers[path.id] = number
+            return "o\(number)"
+        }
+        let reading = OutlineReading(tree: tree, id: id)
+        guard let first = try? reading.read(from: nil, depth: 3), let second = try? reading.read(from: nil, depth: 3) else {
+            return print("read check: a read was refused")
+        }
+        print("read check: from Home, 3 levels: \(first.rows) rows, \(first.more) more, same text and ids on a second read: \(first == second)")
+        var everything = tree
+        everything.zoom = []
+        everything.showsCompleted = true
+        // The screen hides what is nested in a collapsed bullet; the read lists it.
+        for key in Array(everything.bullets.keys) {
+            for at in everything.bullets[key]?.children.indices ?? 0..<0 { everything.bullets[key]?.children[at].collapsed = nil }
+        }
+        let total = everything.visibleRows().count
+        if let all = try? OutlineReading(tree: everything, id: id).read(from: nil, depth: 0) {
+            print("read check: all levels: \(all.rows) rows listed and \(all.more) more for \(total) rows in the tree "
+                  + "(the cap is \(OutlineReading.rowLimit)): \(all.rows + all.more == total ? "adds up" : "DOES NOT ADD UP")")
+        }
+        if let row = tree.visibleRows().first(where: \.hasChildren), let below = try? reading.read(from: row.path, depth: 0) {
+            print("read check: from a bullet with bullets nested in it: \(below.rows) rows, the bullet first: \(below.text.contains("\n\(id(row.path)) \""))")
+        }
+        let rows = tree.visibleRows()
+        let view = OutlineReading.Shown(rows: rows, crumbs: tree.crumbs(), filterText: "", showsCompleted: tree.showsCompleted, caret: nil,
+                                        selection: nil, onScreen: true)
+        if let shown = try? reading.shown(view) {
+            print("read check: as shown: \(shown.rows) of \(rows.count) rows on screen listed, \(shown.more) more")
+        }
+        var big = tree
+        if let top = big.bullets[big.root]?.children.first?.bullet {
+            big.bullets[top]?.note = String(repeating: "line\n", count: 500)
+            if let cut = try? OutlineReading(tree: big, id: id).read(from: nil, depth: 1) {
+                print("read check: a note of 501 lines is cut to \(OutlineReading.noteLines) lines: \(cut.text.contains("(\(501 - OutlineReading.noteLines) more lines)"))")
+            }
+        }
+        continuationCheck(everything)
+    }
+
+    /// Adds enough top-level bullets to pass the row cap several times, then follows each read's "call outline_read with after: oX" until the
+    /// rows run out: each row must be listed once, in the tree read and in the rows on screen.
+    private static func continuationCheck(_ tree: OutlineTree) {
+        var wide = tree
+        let now = Date()
+        for i in 0..<(OutlineReading.rowLimit * 2 + 50) {
+            wide.bullets["wide\(i)"] = OutlineBullet(text: "wide", created: now, changed: now, children: [])
+            wide.bullets[wide.root]?.children.append(OutlinePlacement(id: "wide-p\(i)", bullet: "wide\(i)"))
+        }
+        var paths: [String: OutlinePath] = [:]
+        var numbers: [String: Int] = [:]
+        let reading = OutlineReading(tree: wide) { path in
+            let number = numbers[path.id] ?? numbers.count + 1
+            numbers[path.id] = number
+            paths["o\(number)"] = path
+            return "o\(number)"
+        }
+        let rows = wide.visibleRows()
+        let view = OutlineReading.Shown(rows: rows, crumbs: [], filterText: "", showsCompleted: true, caret: nil, selection: nil, onScreen: true)
+        func follow(_ read: (OutlinePath?) throws -> OutlineReading.Result) -> (reads: Int, listed: Int)? {
+            var after: OutlinePath?
+            var reads = 0, listed = 0
+            while reads < 20 {
+                guard let result = try? read(after) else { return nil }
+                reads += 1
+                listed += result.rows
+                guard result.more > 0 else { return (reads, listed) }
+                guard let hint = result.text.components(separatedBy: "after: ").last?.prefix(while: { $0.isLetter || $0.isNumber }),
+                      let next = paths[String(hint)] else { return nil }
+                after = next
+            }
+            return nil
+        }
+        if let walked = follow({ try reading.read(from: nil, depth: 0, after: $0) }) {
+            print("read check: \(rows.count) rows read in \(walked.reads) calls following the hint: \(walked.listed == rows.count ? "each once" : "NOT each once (\(walked.listed))")")
+        } else {
+            print("read check: following the tree read's hint failed")
+        }
+        if let walked = follow({ try reading.shown(view, after: $0) }) {
+            print("read check: \(rows.count) rows on screen read in \(walked.reads) calls following the hint: \(walked.listed == rows.count ? "each once" : "NOT each once (\(walked.listed))")")
+        } else {
+            print("read check: following the as_shown hint failed")
+        }
+        let gone = (try? reading.read(from: nil, depth: 0, after: OutlinePath(placements: ["nowhere"]))) == nil
+        print("read check: an after that is not a row of the read is refused: \(gone)")
+    }
+
     static func run(_ arguments: [String]) -> Int32 {
         let paths = arguments.filter { !$0.hasPrefix("--") }
         guard let file = paths.first else {
@@ -147,6 +240,7 @@ enum OutlineCheck {
         mirrorCheck(tree)
         runCheck(tree)
         clipboardCheck(tree)
+        readCheck(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {

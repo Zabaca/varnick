@@ -15,8 +15,9 @@ A session speaks to Varnick's **model**, not to pixels: the running Varnick answ
 
 ## `show` changes what the panel shows, never whether it shows
 
-- **Through the model's own functions** (`showSearch`, `showBoard`, `showPane`, and the one function that runs a `!` Command, which `runCommand` calls too), so the panel's height, the focus and "never the board and a tab together" follow their own rules. The same changes the keys make, with no key sent and no event posted.
+- **Through the model's own functions** (`showSearch`, `showBoard`, `showOutline`, `showPane`, and the one function that runs a `!` Command, which `runCommand` calls too), so the panel's height, the focus and "never the board and a tab together" follow their own rules. The same changes the keys make, with no key sent and no event posted.
 - **It never shows, hides, pins or activates the panel.** With the panel hidden, the view is there the next time the user opens it, and the reply says so. A session must not bring Varnick up in front of an app the user is working in.
+- **The Outline** is shown by `view: outline` and `command: outline` (or `wf`) through `showOutline(focusing:)`. The caret goes into a bullet only if the panel is key and Varnick is the active app, the rule `showSearch(focusing:)` follows; otherwise the Outline appears with no caret, and the file's arrival places none. It shows over the search, a board or a tab as the board does, and a hidden panel gets it for the next time like any view.
 - **It takes no keyboard and clears nothing the user typed.** A pinned panel behind another app stays behind it, and a half-typed query survives. With the panel hidden, a tab is not swapped in or out (a pane's tab, `!transcript`, or any call while a terminal is on screen): that is not proven to leave every terminal's size alone.
 - **`!listen` is refused:** it turns on the microphone. `!problems` works only while the Problems board switch is on, as the key does.
 - **The user's own state wins.** It is refused while Settings, the Restart Varnick card or the split picker shows, and for two seconds after a key the user pressed in the panel (the key monitor stamps the time and returns what it did before). Settings is where the controls that govern sessions are, so a session can neither open it nor change it.
@@ -28,7 +29,18 @@ What a session reads goes to Anthropic with its context and stays in its transcr
 - for other sessions, what their board card shows: title, folder, Mac, turn and how long, background work, the card's note and work link (`board_read`);
 - **the text on the screen of any terminal pane, other sessions' and shells' included** (`pane_read`). The user chose this on 2026-10-11, beyond the card alone. A screen holds whatever is on it, a session's latest exchange or a shell's output, secrets included. A card's title can be a prompt's first line and a screen shows Claude's latest exchange; nothing beyond that is read: not the scrollback, not a transcript or a prompt that neither the card nor the screen shows, not a page's or a file's contents.
 
+- **the Outline's bullets and notes** (`outline_read`, below), which ADR 0030 had as "on this Mac only".
+
 Nothing on this path goes to TypeSafe. The search field's text is never read, only its mode. The switch is the user's consent, and its detail says so, as the README and `docs/privacy-and-security.md` do. Each later tool that reads more says so in the same places before it ships.
+
+## `outline_read` reads the Outline's model, and amends ADR 0030
+
+- **What it reads.** The tree from Home or from a bullet, `depth` levels down (3 by default, 0 for all), or with `as_shown` the rows as the user sees them (the zoom's crumbs, the filter's words, Show completed, each row's depth and path, the caret as a row, text or note and a UTF-16 offset, the selected bullets). It reads `Outline`'s model and the tree, never a text view, so the caret is the model's record of it.
+- **Whether or not the Outline shows.** The first call in a launch reads `outline.json` as showing the Outline would, off the main actor, with no panel and no focus; a call that arrives while it loads waits for it. While the file is unreadable or from a newer Varnick every call is refused with the Outline's own reason, and the file is never written: reading calls nothing that saves.
+- **Ids.** `o1`, `o2`…, per calling pane and in memory like `s` ids, one for each row path, so a row keeps its id from read to read; a path that has left the tree is "gone: read again". An edit that moves a row changes its path, so it gets a new id.
+- **Bounded, and continued.** 400 rows a call, about 60,000 characters, a bullet's text cut at 500 characters, a note at 30 lines of 300, at most 10 tags of 40 characters (taken from the cut text, not the whole), and a "nested" count that stops at "1000+". A read that stops at the cap ends with the exact call that continues it, "N more: call outline_read with after: o12" (and the same `at` and `depth`, or `as_shown: true`): `after` takes a row id and continues the same walk from the row after it, for the tree read and for the rows as shown, so every row can be reached. The `as_shown` hint never points at the default read, which ignores the zoom and the filter. An `after` that is no row of the read (it left the tree, or the rows on screen changed) is "gone: read again".
+- **`panel` and `show`** say the Outline's zoom, filter and caret; the log holds none of it (the tool, a kind, a count of lines).
+- **It amends ADR 0030:** the Outline's bullets were "local only", kept in a file on this Mac and nowhere else. With Panel access on, a session that reads them sends them to Anthropic with its context, and they stay in its transcript on this Mac. The file itself, its format and the rule that it is never written over when unreadable are unchanged. Nothing reaches a paired Mac, the phone or TypeSafe.
 
 ## It amends ADR 0023
 
@@ -54,4 +66,4 @@ ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, foun
 - **One more switch, one more server argument.** A session started with only Panel access on lists `panel` and nothing of the screen tools; with both on, both sets.
 - **A hand test through these tools checks the model, not the key path.** How it looks is still a screen picture's job.
 - **Adding a view's tools is adopting `PanelAccessView` and one line in the registry.** The router keeps the switch, the pane, the ids, the refusals, the log and the reply.
-- **Not decided here, and amended when they ship:** the Outline's part (it waits for the Outline to merge, and amends ADR 0030: its bullets go to Anthropic with a session that reads them, and a session's edit can land in the bullet being typed in).
+- **The Outline's reading has shipped** (`outline_read`, above). **Not decided here, and amended when it ships:** the Outline's edits (`outline_act`), including an edit that lands in the bullet being typed in.

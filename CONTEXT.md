@@ -42,6 +42,10 @@ _Avoid_: Turn (what Claude is doing now), chunk (the sync embeds in chunks)
 What Claude is doing in a **Session** right now: working, waiting for the user's next prompt, waiting in the middle of a turn on a permission dialog, a question, a plan to approve or an MCP server's request, or background (the turn ended with background agents, busy teammates, workflows or shells still running, which start Claude's next turn when they end).
 _Avoid_: Status, state, running (a session "runs" while its zmx session is alive)
 
+**Panel**:
+Varnick's one floating window, shown and hidden with its show/hide shortcut and pinnable, that shows one view at a time: the search, a **Tab** of **Pane**s, the **Session board** or the **Outline**, with Settings over it.
+_Avoid_: Window (another app's, which **Screen access** reaches), popup
+
 **Session board**:
 The panel's view of the Claude panes on this Mac and the sessions open on paired Macs, each as a **board card** in one of three columns by **Turn**: Running (working or background), Stopped (everything else, marked when Claude waits on the user mid-turn, and below the live cards the **ended cards** of sessions whose pane closed without Done, or that a paired Mac's Recent says closed there after this Mac listed them open, kept until the user marks them done or opens them) and Completed (reached only by Done, and shared between the paired Macs through each session's host: ADR 0028). It replaces the panel's content as Settings does. Beside Sessions it has a Problems tab, while Settings › Experimental › Problems board is on: a card per problem of the projects that keep `docs/problems`, in Backlog, Decided, Building, Shipped or Closed by what the problem and option files say, the branches tied to options and the **Work links** of live sessions, not by **Turn**, with a chip for each session that worked on it.
 _Avoid_: Kanban (the command's name), dashboard; "card" alone, which is a pane's **Card**
@@ -166,7 +170,7 @@ _Avoid_: Tag, assignment
 ### Outline
 
 **Outline**:
-The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else. It replaces the panel's content as Settings and the **Session board** do.
+The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic). It replaces the panel's content as Settings and the **Session board** do.
 _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 
 **Bullet**:
@@ -236,5 +240,5 @@ The setting (Settings › Claude, off by default) that gives the Claude **Sessio
 _Avoid_: Computer use, remote control
 
 **Panel access**:
-The setting (Settings › Claude, under **Screen access**, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, tools to read what the panel shows, the **Session board**'s cards and the panes' terminal screens, and to change what the panel shows, through Varnick's own model, with no permission. What a session reads goes to Anthropic with it; see [ADR 0031](docs/adr/0031-sessions-read-and-act-on-varnick-through-its-own-model-on-the-varnick-server-with-no-grant.md).
+The setting (Settings › Claude, under **Screen access**, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, tools to read what the panel shows, the **Session board**'s cards, the panes' terminal screens and the **Outline**'s bullets, and to change what the panel shows, through Varnick's own model, with no permission. What a session reads goes to Anthropic with it; see [ADR 0031](docs/adr/0031-sessions-read-and-act-on-varnick-through-its-own-model-on-the-varnick-server-with-no-grant.md).
 _Avoid_: Screen access (any app's window, through Accessibility), API, automation
