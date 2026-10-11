@@ -163,7 +163,7 @@ status: accepted
   - `text`: one line, or several. Two leading spaces or a tab nest a line under the one above, and a leading "- " is dropped.
   - `under`: an id, or Home when it is left out.
   - Where: `after` an id, or `first`; last by default.
-  - It is one new tree edit, `insert`, and the only change to `OutlineTree`'s rules. A bullet it adds is new, so it can't end up inside itself.
+  - It is one new tree edit, `insert`. A bullet it adds is new, so it can't end up inside itself. Building ticket 06 changed `OutlineTree`'s rules in three more ways: a whole-tree scope for sessions' indent, move and outdent (no zoom, no collapse, only Show completed), outdent stopping at Home rather than the zoom's top, and a refusal to delete, indent or outdent the bullet zoomed into or one it sits inside.
   - The reply gives the new rows' ids.
 - **The keys' own edits:**
   - `set_text`: one line;
