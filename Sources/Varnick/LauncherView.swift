@@ -63,6 +63,7 @@ struct LauncherView: View {
             if model.showingSettings {
                 SettingsView(embedder: model.baseEmbedder, localReranker: model.localReranker, textGenerator: model.textGenerator,
                              embeddingServer: model.embeddingServer, textGenerationServer: model.textGeneration.server,
+                             claudeCode: model.textGeneration.claude,
                              close: { model.toggleSettings() }, askRestart: { model.askRestart() }, openAppFolders: { model.openAppFolders() })
             } else if model.showingBoard {
                 SessionBoardView(board: model.board) { model.closeBoard() }

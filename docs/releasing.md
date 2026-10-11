@@ -11,6 +11,10 @@ and [0026](adr/0026-varnick-ships-on-a-disk-image-and-moves-itself-to-applicatio
   key file; [`Makefile.local.example`](../Makefile.local.example) shows both. Use the key file when the screen is locked, because the
   keychain profile cannot be read then. Neither goes in a tracked file or a message.
 - `uv` is on the PATH: the disk image is built with dmgbuild, which `uvx` runs.
+- **Anthropic's legal agreements are read** (https://code.claude.com/docs/en/legal-and-compliance) before the first release that
+  ships the Agent SDK, which `agent.js` in the app contains (ADR 0029; its licence is in `THIRD_PARTY_NOTICES.md`). Option 02 of
+  `docs/problems/text-generation-ignores-the-claude-subscription/` is the way back if they don't allow it.
+- `TextHelper/check.sh` passes against the build.
 
 ## 2. Build
 

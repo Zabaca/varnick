@@ -451,8 +451,8 @@ enum SpokenPipeline {
         var screen: ScreenLook?
         /// What Jev said, when it decided; `--ask` prints it.
         var route: SpokenRouter.Route?
-        /// Where Text generation wrote the answer.
-        var answeredAt: ModelPlace?
+        /// Where Text generation wrote the answer; this Mac's model after Claude Code failed names the failure's kind.
+        var answeredAt: String?
         /// How long the relevance filter took, and who filtered or why nobody did ("off", "sessions only", "no TypeSafe key", …);
         /// "<who> failed: <kind>" leaves the pages in their fused order.
         var filter: Duration = .zero
@@ -468,10 +468,10 @@ enum SpokenPipeline {
     /// One reply from Text generation. A cancelled local generation ends early and returns what it had, so a cancel is checked
     /// for here rather than read as an answer.
     private static func generate(_ prompt: String, _ maxTokens: Int, on model: LauncherModel,
-                                 places: inout [ModelPlace]) async throws -> String {
+                                 places: inout [String]) async throws -> String {
         let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens)
         try Task.checkCancellation()
-        places.append(reply.place)
+        places.append(reply.because.map { "\(reply.place) after Claude Code failed: \($0)" } ?? "\(reply.place)")
         return reply.text
     }
 
@@ -479,7 +479,7 @@ enum SpokenPipeline {
     /// is still being collected; throws `CancellationError` when more speech cancels it.
     static func prepare(_ request: String, on model: LauncherModel, screen: ScreenOptions? = nil) async throws -> Run {
         let screen = screen ?? ScreenOptions()
-        var textPlaces: [ModelPlace] = []
+        var textPlaces: [String] = []
 
         guard !SpokenText.cleaned(request).isEmpty else {
             return Run(plan: SpokenText.Plan(source: .any, query: "", readable: false), rows: [], outcome: .nothingToSearch, decide: .zero)
@@ -705,7 +705,7 @@ enum SpokenPipeline {
         var run = prepared
         guard !run.rows.isEmpty else { return run }
 
-        var textPlaces: [ModelPlace] = []
+        var textPlaces: [String] = []
         let began = ContinuousClock.now
         let rows = SpokenText.describe(run.rows, macName: { PeerManager.shared.name(of: $0) })
         do {

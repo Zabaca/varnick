@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- What the hardened runtime lets the bundled bun (the text helper's runtime) do beyond its default, and nothing else. Add an entitlement only for a failure seen, with a comment saying which. -->
+<plist version="1.0">
+<dict>
+	<!-- JavaScriptCore's JIT memory. Without it the runtime refuses the JIT, JSC falls back to its interpreter (about twice as slow) and loses SharedArrayBuffer, and the Agent SDK fails at import with "SharedArrayBuffer is not defined". Bun's own binary carries four more (unsigned executable memory, no executable page protection, dyld environment variables, no library validation); none is needed. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>

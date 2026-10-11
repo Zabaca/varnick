@@ -2,7 +2,7 @@
 problem: text-generation-ignores-the-claude-subscription
 title: Claude Code writes Text generation's text on the user's subscription, through Varnick's bundled Bun, by default, with this Mac's Gemma as the fallback
 summary: Settings › Models › Text generation gains a third choice, Claude Code, and it becomes the default for new installs. Each text Varnick asks for goes to the text helper. That is a copy of `bun` shipped in Varnick.app, running `agent.js`, which `bun build` makes from TypeScript that calls zbc's `@zabaca/agent` (`run` with `minimalOptions()`). The helper drives the user's own `claude`, logged in as their panes are, with the environment their login shell builds, which Varnick reads once at launch. The call uses Claude Haiku 5.5, with no tools, none of the user's settings, hooks, plugins, MCP servers, CLAUDE.md or memory, Claude Code's reminders dropped, no transcript saved, and one request to Anthropic, and the text streams back as it is written. When `claude` is missing, logged out, fails or passes a deadline of a few seconds, this Mac's Gemma writes the text if it is installed. With Hey Varnick on, what the user asks and the rows read go to Anthropic. Hey Varnick is off by default and its detail says this, so turning it on is the consent. Installs already answering with Gemma keep On this Mac.
-status: accepted
+status: shipped
 ---
 
 ## Solution

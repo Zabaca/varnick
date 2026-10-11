@@ -9,8 +9,24 @@ enum ModelRunOn: String, CaseIterable, Identifiable {
     var title: String { self == .local ? "On this Mac" : "Server" }
 }
 
+/// Where Text generation runs (Settings › Models). Claude Code can't embed, so Search embeddings keeps `ModelRunOn`; a build that
+/// predates `claude` reads it as unknown, which gives `local`.
+enum TextRunOn: String, CaseIterable, Identifiable {
+    case claude, local, server
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .claude: "Claude Code"
+        case .local: "On this Mac"
+        case .server: "Server"
+        }
+    }
+}
+
 /// A role's choice in effect: where it runs, and for Server which address and model.
 typealias ServerChoice = (runOn: ModelRunOn, address: String, model: String)
+typealias TextChoice = (runOn: TextRunOn, address: String, model: String)
 
 /// What a Check found, as Settings shows it. Both roles word their checks the same way.
 struct ServerVerdict: Equatable {
@@ -27,8 +43,8 @@ struct ServerVerdict: Equatable {
     var help: String?
 }
 
-/// Where a role's model answered: this Mac's, the server's, or this Mac's because the server isn't answering.
-enum ModelPlace: Equatable { case thisMac, server, fallback }
+/// Where a role's model answered: this Mac's, the server's, Claude Code, or this Mac's because the server or Claude Code isn't answering.
+enum ModelPlace: Equatable { case thisMac, server, claudeCode, fallback }
 
 /// One role's model server as the app knows it: the last Check for the address and model in effect, and when it passed or
 /// didn't answer. In memory only, so each launch checks again, and nothing is sent until something asks.
@@ -104,6 +120,16 @@ final class ModelServerState: ObservableObject {
         guard runOn == .server else { return thisMacReady ? .thisMac : nil }
         if hasAddress, interactive ? (!isBlocked && !isResting) : isPassing { return .server }
         return interactive && thisMacReady ? .fallback : nil
+    }
+
+    /// The same rule for Text generation, which Claude Code joins: Claude Code when its local check passed and it isn't resting
+    /// after a failure, else this Mac's installed model, else nothing. Only for work the user waits on.
+    func place(_ runOn: TextRunOn, hasAddress: Bool, claudeUsable: Bool, thisMacReady: Bool) -> ModelPlace? {
+        switch runOn {
+        case .claude: claudeUsable ? .claudeCode : thisMacReady ? .fallback : nil
+        case .local: place(.local, hasAddress: hasAddress, thisMacReady: thisMacReady, interactive: true)
+        case .server: place(.server, hasAddress: hasAddress, thisMacReady: thisMacReady, interactive: true)
+        }
     }
 
     /// Sent when the user asks for a Check (Check pressed, or the address or model submitted), after it has started.

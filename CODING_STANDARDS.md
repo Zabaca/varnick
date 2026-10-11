@@ -19,4 +19,4 @@ How Varnick code is written. `varnick-builder` follows these; `varnick-reviewer`
 
 - Match the surrounding code. Doc comments (`///`) say why or what a user sees, in one or two lines; no comments that restate the code.
 - Names follow what's there (`record`, `session`, `tab`).
-- Keep changes as small as the feature allows — no drive-by refactors, no new abstractions for a single use, no new dependencies (SwiftTerm, plus mlx-swift, mlx-swift-lm and swift-transformers for embeddings, reranking and text generation; see ADRs 0003, 0006 and 0012; zmx, a prebuilt binary `make build` fetches, see ADR 0004).
+- Keep changes as small as the feature allows — no drive-by refactors, no new abstractions for a single use, no new dependencies (SwiftTerm, plus mlx-swift, mlx-swift-lm and swift-transformers for embeddings, reranking and text generation; see ADRs 0003, 0006 and 0012; zmx, a prebuilt binary `make build` fetches, see ADR 0004; Bun, fetched the same way, with `@zabaca/agent` and the Agent SDK bundled into the text helper, see ADR 0029).
