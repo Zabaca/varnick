@@ -6,6 +6,7 @@ The rule is across machines and the protocol encodes it (version 20), so it is h
 - **A new `done` request** marks a session on its host, or takes the mark off, and ends nothing. Any Mac the host lists may send it, not only the one in control, since a mark is not an end. A device may not.
 - **The host keeps the mark** in its Completed if the session has ended there, on the pane's own record if it is still open (so the pane is a Completed card there, "Still open here"), and on the session's record on a headless host.
 - **The host's `sessions` listing and its Recent entries carry the mark** (`doneAge`, `done`). A Mac puts what its host marks into Completed, and takes out of Completed the marks it flagged as the host's when the host lists that session, or its conversation, open without one.
+- **Opening a session again takes its mark off,** wherever the host keeps it: a resume clears the mark on the conversation's ended records, and a clear (`mark` false) also takes an ended session out of the host's Completed.
 - **A Done the host can't take** (asleep, Varnick not running there, no longer listing this Mac) stays on this Mac only, as every mark was, and its card says "Done on this Mac only". Nothing sends it again, and marks made before the upgrade are not sent.
 
 ## Considered Options
