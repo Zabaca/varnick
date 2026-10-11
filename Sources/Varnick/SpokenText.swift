@@ -16,13 +16,12 @@ enum SpokenText {
     ]
 
     /// What follows "hey varnick" in `text`, or nil when it doesn't wake Varnick; empty when nothing follows. "Hey" (or "hay") within
-    /// the first three words, then one word that is the whole of a `namePatterns` entry; a fragment ("nick") or a lookalike never wakes.
-    /// varnet, varney and barnick came from real-voice misses; the 864-phrase sound-alike result was measured on the old pattern and
-    /// must be rerun. History: where-it-breaks.md, Listening and spoken requests.
+    /// the first three words, or "a" as the first word (Apple's "A varnick"), then one word that is the whole of a `namePatterns`
+    /// entry; a fragment ("nick") or a lookalike never wakes. What was measured, and what was not: where-it-breaks.md, Listening.
     static func request(in text: String) -> String? {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         let tokens = words.map(token)
-        for i in 0..<min(3, max(0, tokens.count - 1)) where tokens[i] == "hey" || tokens[i] == "hay" {
+        for i in 0..<min(3, max(0, tokens.count - 1)) where tokens[i] == "hey" || tokens[i] == "hay" || (i == 0 && tokens[i] == "a") {
             guard namePatterns.contains(where: { tokens[i + 1].range(of: $0, options: .regularExpression) != nil }) else { continue }
             let rest = i + 2
             let request = words[rest...].joined(separator: " ")
