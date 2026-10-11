@@ -78,7 +78,7 @@ struct KeyCombo: Codable, Equatable {
 }
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-    case toggleLauncher, pinLauncher, toggleListening, settings
+    case toggleLauncher, pinLauncher, toggleListening, settings, outline
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
     case webAddress, webReload
@@ -95,6 +95,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .pinLauncher: "Pin Varnick (keep open when focus leaves)"
         case .toggleListening: "Start / stop Listening (anywhere)"
         case .settings: "Settings"
+        case .outline: "Show / hide outline"
         case .backToSearch: "Back to search / new session"
         case .newTerminalTab: "New terminal tab"
         case .renameTab: "Rename tab"
@@ -124,7 +125,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var group: String {
         switch self {
-        case .toggleLauncher, .pinLauncher, .toggleListening, .settings: "Varnick"
+        case .toggleLauncher, .pinLauncher, .toggleListening, .settings, .outline: "Varnick"
         case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight: "Splits"
         case .webAddress, .webReload: "Web"
@@ -138,6 +139,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .pinLauncher: KeyCombo(keyCode: kVK_Space, [.control, .shift])
         case .toggleListening: KeyCombo(keyCode: kVK_ANSI_L, [.control, .option])
         case .settings: KeyCombo(keyCode: kVK_ANSI_Comma, .command)
+        case .outline: KeyCombo(keyCode: kVK_ANSI_Y, [.command, .shift])
         case .backToSearch: KeyCombo(keyCode: kVK_ANSI_N, .command)
         case .newTerminalTab: KeyCombo(keyCode: kVK_ANSI_T, [.command, .shift])
         case .renameTab: KeyCombo(keyCode: kVK_ANSI_R, [.command, .shift])

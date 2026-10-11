@@ -12,6 +12,12 @@ enum Theme {
     static let hairline = Color.primary.opacity(0.08)
     static let selection = Color.primary.opacity(0.09)
     static let tileFill = Color.primary.opacity(0.06)
+    /// A word the outline's filter found.
+    static let highlight = Color.yellow.opacity(0.35)
+    /// A `#tag` or `@tag` in the outline.
+    static let tag = Color.accentColor
+    /// The ring on the dot of a mirror.
+    static let mirror = Color.accentColor
     /// Text on a filled accent or orange badge.
     static let onAccent = Color.black.opacity(0.85)
 
@@ -67,6 +73,8 @@ struct LauncherView: View {
                              close: { model.toggleSettings() }, askRestart: { model.askRestart() }, openAppFolders: { model.openAppFolders() })
             } else if model.showingBoard {
                 SessionBoardView(board: model.board) { model.closeBoard() }
+            } else if model.showingOutline {
+                OutlineView(outline: model.outline) { model.closeOutline() }
             } else if let tab = model.activeTab {
                 ClaudePane(model: model, tab: tab)
             } else {

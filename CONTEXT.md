@@ -115,11 +115,11 @@ _Avoid_: Owner, leader (zmx's word)
 
 **Live screen**:
 The session's screen as its host's zmx has it, sent to the card of the Mac that isn't in control while the card is shown, and to the session view of a **Device**'s **Phone page** that isn't in control while the page is visible, as it changes. It is drawn at the grid of the Mac or Device in control, scaled to fit the pane (on the phone, the width, with pinch to zoom), and is read-only: it takes no input.
-_Avoid_: Mirror, stream, live view
+_Avoid_: Mirror (an Outline term, see **Mirror**), stream, live view
 
 **Frozen screen**:
 The last **live screen** kept in the card while it isn't updating: the pane was hidden, or the link is down or reconnecting. Marked "Last screen at HH:MM".
-_Avoid_: Mirror
+_Avoid_: Mirror (an Outline term, see **Mirror**)
 
 **Take over**:
 Moving control of a session to the Mac or **Device** that asks: relabel it, detach every client, attach. Offered on the card. Opening a paired Mac's open session, from the session list or from ↩ on a Recent or search row, shows the card first, so control moves only when the user presses Take over.
@@ -162,6 +162,40 @@ _Avoid_: Proposal, solution, spec (an accepted option serves as the spec)
 **Work link**:
 The problem, or the option of a problem, that a **Session** or one of its subagents works on, kept as files in the pane's folder: none (the default, and a state of its own), a problem or an option. Made by writing a problem's files, by `/work`, and by the skills that create work; never read from a transcript. A session whose link names an open option makes the problem Building; a link to a shipped option is not live. A session that ends keeps its links in its saved record and in the search database. A paired Mac's sessions send theirs.
 _Avoid_: Tag, assignment
+
+### Outline
+
+**Outline**:
+The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else. It replaces the panel's content as Settings and the **Session board** do.
+_Avoid_: WorkFlowy (the app it copies), notes, outliner, document
+
+**Bullet**:
+One line of the **Outline**: its text, an optional note under it, whether it is completed, and the bullets nested under it. A completed bullet is struck through, and hidden unless Show completed is on. (Not the board's Completed column, which holds sessions marked Done.)
+_Avoid_: Item, node, row, entry, task, card
+
+**Zoom**:
+Showing one **Bullet** as the top of the **Outline**: its text as the title, the bullets nested under it below, and breadcrumbs back up the way the user came in.
+_Avoid_: Focus (a pane's), open, drill down
+
+**Filter**:
+Words typed at the top of the **Outline** that hide every **Bullet** that doesn't match, while keeping each match's ancestors. It looks only inside the bullet zoomed into. Not the **Relevance filter**, which is search's last pass.
+_Avoid_: Search (a `?` query searches **History**), find
+
+**Tag**:
+A `#word` or `@word` in a **Bullet**'s text or note. Clicking it filters the **Outline** to it, and clicking it again takes it out of the filter. Not a **Project** or an **Agent**, which `#name` and `@name` name in a **Prompt**.
+_Avoid_: Label, hashtag, mention
+
+**Placement**:
+One spot where a **Bullet** shows: an entry in its parent's list. A bullet's text, note and completion are kept once, however many placements it has.
+_Avoid_: Instance, occurrence, link
+
+**Mirror**:
+A **Bullet** with more than one **Placement**, so an edit in one spot shows in all. Collapse is each placement's own. None is the original: deleting a placement removes only that spot, and the bullet is gone with its last. Not the **Live screen**, which avoids the word.
+_Avoid_: Copy, clone, link, reference, original
+
+**Selection**:
+**Bullet**s chosen whole in the **Outline**: siblings next to each other, each with everything nested under it, so that one key acts on all of them. Not text selected inside one bullet, which never runs into the next.
+_Avoid_: Highlight (the **Filter**'s mark on matching words), block, multi-select
 
 ### Listening
 
