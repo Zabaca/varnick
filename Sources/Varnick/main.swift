@@ -193,6 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.model.answerPaneQuestion(event) { return nil }
             // The board takes its keys, and the End session key, before the shortcuts: ⌘W never reaches the tab underneath.
             if self.model.showingBoard, !self.model.showingSettings, self.model.board.key(event) { return nil }
+            // So does the outline, and it too takes the End session key: ⌘W never reaches the tab underneath.
+            if self.model.showingOutline, !self.model.showingSettings, self.model.outline.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
             return self.perform(action) ? nil : event
         }
@@ -275,6 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .nextTab: model.cycleSession(1)
         case .toggleFiles where inSession: model.toggleFiles()
         case .sessionBoard: model.toggleBoard()
+        case .outline: model.toggleOutline()
         case .splitSideBySide where inSession: model.split(.sideBySide)
         case .splitStacked where inSession: model.split(.stacked)
         case .splitSideBySideOther where inSession: model.askSplit(.sideBySide)
@@ -320,6 +323,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Save open tabs as they are; the claude processes die with the app, unless they run in zmx.
         PeerManager.shared.stop()
         model.saveSessions()
+        // The outline's last change, after any write under way (a signal stop saves nothing: at most the last half second is lost).
+        model.outline.saveForQuit()
         model.quitting = true
         model.stopAppServers()
     }
@@ -374,8 +379,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func bringToFront() {
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-        // A tab under the board or Settings isn't on screen, so it doesn't take focus.
-        if model.showsTerminal, let session = model.activeSession { session.focus() } else { model.focusToken += 1 }
+        // A tab under the board, the outline or Settings isn't on screen, so it doesn't take focus. The outline puts the caret back in its bullet.
+        if model.showsTerminal, let session = model.activeSession {
+            session.focus()
+        } else if model.showingOutline, !model.showingSettings {
+            model.outline.restoreCaret()
+        } else {
+            model.focusToken += 1
+        }
         model.panelDidShow()
     }
 
@@ -752,6 +763,11 @@ if let i = CommandLine.arguments.firstIndex(of: "--embed-check") {
         Task { @MainActor in exit(await EmbedCommands.check(Array(CommandLine.arguments.dropFirst(i + 1)))) }
         RunLoop.main.run()
     }
+}
+
+// `Varnick --outline-check <file> [<out>]`: see OutlineCheck. It touches only the paths it is given (where-it-breaks, The rename) and exits.
+if let i = CommandLine.arguments.firstIndex(of: "--outline-check") {
+    exit(OutlineCheck.run(Array(CommandLine.arguments.dropFirst(i + 1))))
 }
 
 // `Varnick --rerank-eval <checkpoint> <eval> <reference> [<output>] [--max-diff <bar>]` checks the local relevance model against
