@@ -45,7 +45,7 @@ ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(SIGN_SHORT)
 ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
 # bun carries Bun.entitlements: allow-jit and nothing else. Ad hoc, it keeps the signature it was fetched with, as zmx does.
 BUN_SIGNER_STAMP = .build/release/bun.signer.$(SIGN_SHORT)
-BUN_CODESIGN = codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Bun.entitlements -i $(BUN_IDENTIFIER)
+BUN_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Bun.entitlements -i $(BUN_IDENTIFIER))
 # Matches Varnick's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
 # names it, which would kill a session that should survive.
