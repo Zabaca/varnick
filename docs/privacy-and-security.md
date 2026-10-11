@@ -105,6 +105,14 @@ show. The reply says when it reached only part of a window. The picture needs Sc
 holds its kind, pixel size and byte count, never what it shows. If you don't want what is on a window sent to
 Anthropic, leave Screen access off, or close the window first.
 
+A session can also ask for a picture of **every display, or of one** (`look` with `screen` or `display`, or one area
+of them). **Nothing is hidden in it.** It shows everything on those displays: Varnick's own window, with other
+sessions' text, whatever you typed, and every password field, because Varnick reads none of the windows on a
+screen and so can't find their fields to paint black. It goes to Anthropic with the session and stays in its
+transcript on this Mac. The reply says nothing was blacked out. It needs Screen Recording. The log holds the number
+of pictures and each one's kind, pixel size and byte count, never what they show. If you don't want your screen sent
+to Anthropic, leave Screen access off, or close what you don't want seen first.
+
 ### A model server you name
 
 With Server chosen for Search embeddings or Text generation (Settings › Models), Varnick sends the server the
@@ -262,7 +270,8 @@ Screen access (ADR 0023) gives the sessions started or restarted while it is on 
   and the running Varnick answers. A paired Mac or a device can't send one: the peer relay refuses it. Any
   process of yours on this Mac can, naming any pane's id; the id is a label, not a credential.
 - **`look` can return a picture of a window,** which takes nothing from the screen but that window (see above for
-  what it shows and what is hidden).
+  what it shows and what is hidden), **or of the whole screen,** which takes everything on it and hides nothing
+  (see above).
 - **Varnick's own window is refused,** and so is a session another Mac or a device is in control of. Turning the
   switch off refuses every call at once. `window` moves no pointer and brings no app forward.
 

@@ -29,6 +29,11 @@ struct ScreenArguments: Codable {
     var text: Text?
     /// `look`'s flag for a picture of the window, with `rect` to crop it.
     var picture: Bool?
+    /// `look`'s flag for a picture of every display; `display` asks for one and needs no flag.
+    var screen: Bool?
+    var display: Int?
+    /// Set by the relay when `display` was sent and is not a whole number, so the app refuses the call instead of taking every display.
+    var displayUnreadable: Bool?
     var id: String?
     var rect: Rect?
     /// Set by the relay when `rect` was sent and could not be read, so the app refuses the call instead of acting as if there were none.
@@ -157,6 +162,14 @@ struct ScreenArguments: Codable {
         }
         replace = Self.flag(values, .replace)
         picture = Self.flag(values, .picture)
+        screen = Self.flag(values, .screen)
+        if values.contains(.display), (try? values.decodeNil(forKey: .display)) != true {
+            if let number = Self.number(values, .display), number.rounded() == number, abs(number) < 1e6 {
+                display = Int(number)
+            } else {
+                displayUnreadable = true
+            }
+        }
         from = try? values.decodeIfPresent(Spot.self, forKey: .from)
         to = try? values.decodeIfPresent(Spot.self, forKey: .to)
         position = try? values.decodeIfPresent(Point.self, forKey: .position)
@@ -184,15 +197,17 @@ struct ScreenArguments: Codable {
         return (try? values.decodeIfPresent(String.self, forKey: key)).flatMap { Double($0) }
     }
 
-    private enum CodingKeys: String, CodingKey { case app, text, picture, id, rect, rectUnreadable, note, at, keys, replace, from, to, position, size }
+    private enum CodingKeys: String, CodingKey { case app, text, picture, screen, display, displayUnreadable, id, rect, rectUnreadable, note, at, keys, replace, from, to, position, size }
 }
 
-/// The reply line: the call's text, whether it was a refusal or a failure, and for a `look` that asked for one, a picture. An older
-/// Varnick sends no picture and an older server ignores one, so the request's version is unchanged.
+/// The reply line: the call's text, whether it was a refusal or a failure, and for a `look` that asked for them, a picture of the
+/// window or one per display. An older Varnick sends no pictures and an older server ignores them, so the request's version is unchanged.
 struct ScreenReply: Codable {
     var text: String
     var isError: Bool
     var image: Image?
+    /// A screen look's pictures, in the order its text names them.
+    var images: [Image]?
 
     /// A picture as MCP carries it: base64 data and its mime type.
     struct Image: Codable {
@@ -257,12 +272,19 @@ enum ScreenMCP {
              + "(at most about \(ScreenPicture.longSide) pixels on the long side), and the text says which part of the screen it shows. The "
              + "image shows everything on the window, typed text included, and goes to Anthropic with this session: ask for it only when the "
              + "listing is not enough. Password fields Varnick can see are painted black; one it cannot see (a Chrome page's, a remote "
-             + "desktop's) is not.",
+             + "desktop's) is not. With `screen` it returns an image of every display instead, or with `display` of one: the text lists "
+             + "the displays by number with their frames, and says each image's area in screen points and its pixels per point, so a "
+             + "place in an image maps back to a point for click and point. It lists no controls unless `app` is also named, and leaves "
+             + "the last look's ids as they were. Nothing is blacked out: it shows everything on every display, Varnick's own window and "
+             + "other sessions included, typed text and password fields included, and goes to Anthropic with this session. Ask for it "
+             + "only when one window's listing and picture are not enough.",
              properties: [
                 "app": ["type": "string", "description": "The app to look at, by name. Omit for the app the user is working in."],
                 "text": ["type": "boolean", "description": "Also read the window's text from a picture of it, even when its controls are listed."],
                 "picture": ["type": "boolean", "description": "Also return an image of the window. Needs Screen Recording."],
-                "rect": ["type": "object", "description": "With `picture`: only this area of the window, in screen points, the origin at the top left of the main display.",
+                "screen": ["type": "boolean", "description": "Return an image of every display instead of the window's. Needs Screen Recording."],
+                "display": ["type": "integer", "description": "Return an image of this display only, by the number in the text's Displays list (1 is the main display). Needs no `screen`."],
+                "rect": ["type": "object", "description": "With `picture`, `screen` or `display`: only this area, in screen points, the origin at the top left of the main display. A display it does not reach is left out.",
                          "properties": ["x": ["type": "number"], "y": ["type": "number"], "width": ["type": "number"], "height": ["type": "number"]],
                          "required": ["x", "y", "width", "height"]],
              ]),
@@ -362,7 +384,9 @@ enum ScreenMCP {
                 .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
             let reply = ask(requestLine(pane: pane, tool: name, arguments: arguments))
             var content: [[String: Any]] = [["type": "text", "text": reply.text]]
-            if let image = reply.image { content.append(["type": "image", "data": image.data, "mimeType": image.mimeType]) }
+            for image in (reply.image.map { [$0] } ?? []) + (reply.images ?? []) {
+                content.append(["type": "image", "data": image.data, "mimeType": image.mimeType])
+            }
             return success(id: id, ["content": content, "isError": reply.isError])
         default:
             return failure(id: id, code: -32601, "Method not found")

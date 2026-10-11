@@ -144,6 +144,8 @@ struct Done {
     var counts = ""
     /// A `look`'s picture.
     var image: ScreenReply.Image?
+    /// A screen `look`'s pictures.
+    var images: [ScreenReply.Image]?
 }
 
 /// Answers the screen tools for the panes' sessions. Reads, presses and posted events run off the main actor, as `ScreenReader.read`
@@ -195,7 +197,7 @@ final class ScreenAccess {
             guard let request = PeerJSON.decode(ScreenRequest.self, from: line) else { throw ScreenRefusal.unreadable }
             tool = ScreenTool(rawValue: request.tool)
             let done = try await run(request, tool: tool, arrived: arrived)
-            reply = ScreenReply(text: done.text, isError: false, image: done.image)
+            reply = ScreenReply(text: done.text, isError: false, image: done.image, images: done.images)
             counts = done.counts
         } catch let refusal as ScreenRefusal {
             kind = refusal.logKind
@@ -274,19 +276,112 @@ final class ScreenAccess {
 
     // MARK: look
 
+    /// The area a `rect` asks for, nil when none was sent. One that was sent and can't be read is refused, not dropped.
+    private func cropArea(_ args: ScreenArguments) throws -> CGRect? {
+        guard args.rectUnreadable != true else { throw ScreenRefusal.bad(Self.unreadableRect) }
+        guard let rect = args.rect?.frame else { return nil }
+        guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
+            throw ScreenRefusal.bad("The rectangle needs a positive width and height")
+        }
+        return rect
+    }
+
     private func look(_ args: ScreenArguments, pane: UUID) async throws -> Done {
+        guard args.screen == true || args.display != nil || args.displayUnreadable == true else {
+            return try await lookWindow(args, pane: pane)
+        }
+        // Early, so a refusal costs no read.
+        guard ScreenText.hasAccess else { throw ScreenRefusal.noScreenRecording }
+        guard args.displayUnreadable != true, args.display.map({ $0 >= 1 }) ?? true else {
+            throw ScreenRefusal.bad("The display needs a whole number from the Displays list, 1 or more")
+        }
+        let crop = try cropArea(args)
+        // The listing is the window's, only when an app is named; the pictures include the window, so none is taken of it alone.
+        var window: Done?
+        if let named = args.app?.trimmingCharacters(in: .whitespaces), !named.isEmpty {
+            var windowArgs = args
+            windowArgs.picture = nil
+            windowArgs.rect = nil
+            windowArgs.rectUnreadable = nil
+            window = try await lookWindow(windowArgs, pane: pane)
+        }
+        let shown = try await screenPictures(display: args.display, crop: crop, textBytes: window?.text.utf8.count ?? 0)
+        let text = ([window?.text, shown.text].compactMap { $0 }).joined(separator: "\n")
+        return Done(text: text, counts: ([window?.counts, shown.counts].compactMap { $0 }).filter { !$0.isEmpty }.joined(separator: ", "),
+                    images: shown.images)
+    }
+
+    /// One picture per display chosen, with the Displays list and what the pictures show and hide. Nothing is painted black: Varnick
+    /// read none of the windows on the screen, and its own are in the pictures. Pictures are made one at a time, each given an equal share
+    /// of what is left under the socket's cap.
+    private func screenPictures(display: Int?, crop: CGRect?, textBytes: Int) async throws -> (text: String, counts: String, images: [ScreenReply.Image]) {
+        let screens: ScreenText.Screens
+        do {
+            screens = try await ScreenText.screens(display: display, crop: crop)
+        } catch {
+            try Task.checkCancellation()
+            switch error {
+            case ScreenText.Failure.noDisplay(let count):
+                throw ScreenRefusal.noPicture("there is no display \(display ?? 0): the Mac has \(count)", error.logKind)
+            case ScreenText.Failure.outsideDisplays:
+                throw ScreenRefusal.noPicture("that area is outside the display\(display == nil ? "s" : "")", error.logKind)
+            default:
+                throw ScreenRefusal.noPicture("the screen couldn't be captured (\(error.logKind))", error.logKind)
+            }
+        }
+        try Task.checkCancellation()
+        let count = screens.shots.count
+        // The text that follows the pictures is not known yet: room for the list and a few lines for each.
+        let total = ScreenPicture.maxBytes(textBytes: textBytes + 600 + 300 * screens.displays.count, count: count)
+        let startingLongSide = ScreenPicture.startingLongSide(forCount: count)
+        let made: [(display: ScreenText.Display, picture: ScreenPicture.Made)]
+        do {
+            made = try await Task.detached(priority: .userInitiated) {
+                var made: [(display: ScreenText.Display, picture: ScreenPicture.Made)] = []
+                var left = total
+                for (index, shot) in screens.shots.enumerated() {
+                    do {
+                        let picture = try ScreenPicture.make(ScreenText.Capture(image: shot.image, window: shot.display.frame), secure: [],
+                                                             windowWas: nil, crop: crop, maxBytes: left / (count - index),
+                                                             longSide: startingLongSide)
+                        left -= picture.data.count
+                        made.append((shot.display, picture))
+                    } catch ScreenPicture.Failure.outsideWindow {
+                        // A sliver of the area that holds no whole pixel of this display.
+                        continue
+                    }
+                }
+                return made
+            }.value
+        } catch let failure as ScreenPicture.Failure {
+            throw ScreenRefusal.noPicture(failure.message, "picture \(failure)")
+        }
+        guard !made.isEmpty else { throw ScreenRefusal.noPicture("that area is outside the displays", "outside displays") }
+
+        var lines = ["Displays:"]
+        for display in screens.displays {
+            lines.append("\(display.number)  \(display.isMain ? "main display, " : "")frame \(Self.describe(display.frame))")
+        }
+        for (index, item) in made.enumerated() {
+            let picture = item.picture
+            lines.append("Picture \(index + 1) of \(made.count): display \(item.display.number), \(picture.kind.uppercased()), "
+                         + "\(picture.width)x\(picture.height) pixels, of the area \(Self.describe(picture.area)) in screen points "
+                         + "(\(String(format: "%.2f", picture.pixelsPerPoint)) pixels per point).")
+        }
+        lines.append("Nothing was blacked out: the pictures show everything on those displays, including Varnick's own window and "
+                     + "other sessions, what was typed, and any password field.")
+        let counts = "pictures \(made.count)" + made.map { ", \($0.picture.kind) \($0.picture.width)x\($0.picture.height) \($0.picture.data.count) bytes" }.joined()
+        let images = made.map { ScreenReply.Image(data: $0.picture.data.base64EncodedString(), mimeType: $0.picture.mimeType) }
+        return (lines.joined(separator: "\n"), counts, images)
+    }
+
+    private func lookWindow(_ args: ScreenArguments, pane: UUID) async throws -> Done {
         // Early, so a refusal costs no read.
         let wantsPicture = args.picture == true
         var crop: CGRect?
         if wantsPicture {
             guard ScreenText.hasAccess else { throw ScreenRefusal.noScreenRecording }
-            guard args.rectUnreadable != true else { throw ScreenRefusal.bad(Self.unreadableRect) }
-            if let rect = args.rect?.frame {
-                guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
-                    throw ScreenRefusal.bad("The rectangle needs a positive width and height")
-                }
-                crop = rect
-            }
+            crop = try cropArea(args)
         }
         let app: NSRunningApplication
         if let named = args.app?.trimmingCharacters(in: .whitespaces), !named.isEmpty {

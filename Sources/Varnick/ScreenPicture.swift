@@ -7,16 +7,28 @@ import UniformTypeIdentifiers
 enum ScreenPicture {
     /// The long side, in pixels, that a picture is scaled down to: the size Claude reads without shrinking it again.
     static let longSide = 1568
+    /// The least a display's picture starts at, however many displays share a reply.
+    static let screenLongSideFloor = 640
     static let jpegQuality: CGFloat = 0.8
     /// Painted black around a secure field's frame, in points, for frames that are a little off.
     static let blackoutMargin: CGFloat = 4
     /// What a reply keeps for everything but the picture, before the text's own size: the JSON around it.
     static let replyHeadroom = 20_000
 
+    /// What each picture of a reply adds besides its base64: the JSON around it.
+    static let imageOverhead = 200
+
     /// The most bytes of picture that fit a reply with `textBytes` of text under the socket's line cap: base64 is four thirds, and
-    /// the text counts twice for the escapes JSON may add.
-    static func maxBytes(textBytes: Int) -> Int {
-        max(0, PeerSocket.maxLine - replyHeadroom - 2 * textBytes) / 4 * 3
+    /// the text counts twice for the escapes JSON may add. With `count` pictures, the total of all of them.
+    static func maxBytes(textBytes: Int, count: Int = 1) -> Int {
+        max(0, PeerSocket.maxLine - replyHeadroom - count * imageOverhead - 2 * textBytes) / 4 * 3
+    }
+
+    /// The long side a display's picture starts at when `count` displays share a reply: all together about the pixels of one picture
+    /// at `longSide`, and not under `screenLongSideFloor`. The fit loop goes smaller still when the bytes need it.
+    static func startingLongSide(forCount count: Int) -> Int {
+        guard count > 1 else { return longSide }
+        return max(screenLongSideFloor, Int((Double(longSide) / Double(count).squareRoot()).rounded()))
     }
 
     /// A picture ready to send, and what to tell the session of it.
@@ -53,8 +65,10 @@ enum ScreenPicture {
 
     /// Makes the picture of `capture`. `secure` are frames read from the window when it was at `was` (nil when unknown): they follow
     /// the window to where it was captured, and a window that changed size has none to follow, which fails the call rather than
-    /// risk a field in the picture. `crop` is an area in screen points. The picture is at most `maxBytes`.
-    static func make(_ capture: ScreenText.Capture, secure: [CGRect], windowWas was: CGRect?, crop: CGRect?, maxBytes: Int) throws -> Made {
+    /// risk a field in the picture. `crop` is an area in screen points. The picture is at most `maxBytes`, and starts with its long side
+    /// at most `longSide` pixels. A display is a `capture` whose `window` is its frame, with no `secure` frames.
+    static func make(_ capture: ScreenText.Capture, secure: [CGRect], windowWas was: CGRect?, crop: CGRect?, maxBytes: Int,
+                     longSide: Int = ScreenPicture.longSide) throws -> Made {
         let window = capture.window
         let image = capture.image
         guard window.width >= 1, window.height >= 1, image.width > 0, image.height > 0 else { throw Failure.encoding }
@@ -74,7 +88,7 @@ enum ScreenPicture {
         let hidden = frames.filter { $0.insetBy(dx: -blackoutMargin, dy: -blackoutMargin).intersects(area) }
 
         // The first size is the one asked for; a picture over the cap is made again at lower quality, then smaller.
-        let base = scale(for: source.size)
+        let base = scale(for: source.size, longSide: longSide)
         let attempts: [(scale: CGFloat, quality: CGFloat)] = [
             (base, jpegQuality), (base, 0.6), (base, 0.45),
             (base * 0.75, 0.6), (base * 0.55, 0.5), (base * 0.4, 0.45), (base * 0.25, 0.4),
@@ -101,7 +115,7 @@ enum ScreenPicture {
     // MARK: Pure parts
 
     /// The factor that brings the long side of `size` to `longSide` pixels; 1 for a picture that is already smaller.
-    static func scale(for size: CGSize) -> CGFloat {
+    static func scale(for size: CGSize, longSide: Int = ScreenPicture.longSide) -> CGFloat {
         let long = max(size.width, size.height)
         return long > CGFloat(longSide) ? CGFloat(longSide) / long : 1
     }
