@@ -22,6 +22,19 @@ ZMX_VERSION := 0.8.1
 ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
 ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
+# The text helper (ADR 0029) runs on a plain Bun, pinned like zmx and fetched by `make build`: the same binary builds agent.js and ships
+# in Varnick.app. A Bun release is the build tool and the runtime both, so bumping this changes what runs on the user's Mac.
+BUN_VERSION := 1.3.14
+BUN_SHA256 := d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620
+BUN_URL := https://github.com/oven-sh/bun/releases/download/bun-v$(BUN_VERSION)/bun-darwin-aarch64.zip
+BUN_STAMP := .build/release/bun.$(BUN_SHA256)
+BUN_IDENTIFIER := $(LABEL).bun
+# The helper's source and its build: TextHelper/ is bundled to one file with `bun build` (no --compile), and the reminders filter of
+# @zabaca/agent is copied beside it as real files, since `claude` can't read a path inside a compiled binary.
+TEXT_HELPER_DIR := TextHelper
+AGENT_JS := .build/release/agent.js
+AGENT_MODS := .build/release/mods
+
 # What the build signs with: a certificate's SHA-1, or - for ad hoc. `build` resolves it once and hands it to the sub-makes.
 SIGN_ID ?= -
 # Which signature the zmx in place carries, so a new identity (or the first one) re-signs it without fetching again.
@@ -30,6 +43,9 @@ SIGN_SHORT = $(if $(filter -,$(SIGN_ID)),adhoc,$(shell printf '%.8s' '$(SIGN_ID)
 ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(SIGN_SHORT)
 # The secure timestamp is left out: only notarization needs it, and it calls Apple on every build.
 ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
+# bun carries Bun.entitlements: allow-jit and nothing else. Ad hoc, it keeps the signature it was fetched with, as zmx does.
+BUN_SIGNER_STAMP = .build/release/bun.signer.$(SIGN_SHORT)
+BUN_CODESIGN = codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Bun.entitlements -i $(BUN_IDENTIFIER)
 # Matches Varnick's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
 # names it, which would kill a session that should survive.
@@ -65,7 +81,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx
+.PHONY: build build-steps cutover-check check-apps apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -96,7 +112,8 @@ build-steps:
 	@id=$$(scripts/signing-identity.sh) || exit 1; \
 	  if [ "$$id" = - ] && [ "$$SIGN_IDENTITY" != - ] && ls .build/release/zmx.signer.* 2>/dev/null | grep -qv 'zmx\.signer\.adhoc$$'; then \
 	    echo "error: signing: this checkout has been signed with an identity, and none is usable now. Fix the keychain, or set SIGN_IDENTITY=- to sign ad hoc on purpose." >&2; exit 1; fi; \
-	  $(MAKE) --no-print-directory sign-varnick sign-zmx SIGN_ID="$$id"
+	  $(MAKE) --no-print-directory sign-varnick sign-zmx sign-bun SIGN_ID="$$id"
+	@$(MAKE) --no-print-directory text-helper
 	@$(MAKE) --no-print-directory phone-page
 	@$(MAKE) --no-print-directory apps-catalog
 	@$(MAKE) --no-print-directory build-stamp
@@ -117,6 +134,29 @@ ifneq ($(SIGN_ID),-)
 endif
 	@test -f $(ZMX_STAMP) || $(MAKE) --no-print-directory $(ZMX_STAMP)
 	@test -f $(ZMX_SIGNER_STAMP) || $(MAKE) --no-print-directory $(ZMX_SIGNER_STAMP)
+
+sign-bun:
+ifneq ($(SIGN_ID),-)
+	@if [ ! -f $(BUN_SIGNER_STAMP) ] && [ -f .build/release/bun.signer.$(SIGN_ID) ]; then mv -f .build/release/bun.signer.$(SIGN_ID) $(BUN_SIGNER_STAMP); fi
+endif
+	@test -f $(BUN_STAMP) || $(MAKE) --no-print-directory $(BUN_STAMP)
+	@test -f $(BUN_SIGNER_STAMP) || $(MAKE) --no-print-directory $(BUN_SIGNER_STAMP)
+
+# agent.js and the reminders filter next to it. The packages install from the committed lockfile (frozen), without the Agent SDK's
+# optional native Claude Code packages, which the helper never uses (it drives the user's own claude). Each file is written by rename,
+# so a request during a build never reads half a file.
+text-helper: $(AGENT_JS) $(AGENT_MODS)/reminders
+
+$(AGENT_JS): $(TEXT_HELPER_DIR)/agent.ts $(TEXT_HELPER_DIR)/package.json $(TEXT_HELPER_DIR)/bun.lock $(BUN_STAMP)
+	.build/release/bun install --cwd $(TEXT_HELPER_DIR) --frozen-lockfile --omit optional
+	.build/release/bun build $(TEXT_HELPER_DIR)/agent.ts --target=bun --outfile=$@.tmp
+	mv -f $@.tmp $@
+
+# Only the filter's own files: its tests and tsconfig stay behind.
+$(AGENT_MODS)/reminders: $(AGENT_JS)
+	mkdir -p $(AGENT_MODS)/reminders
+	rsync -a --delete --exclude 'tests/' --exclude 'tsconfig.json' $(TEXT_HELPER_DIR)/node_modules/@zabaca/agent/mods/reminders/ $(AGENT_MODS)/reminders/
+	@touch $@
 
 phone-page:
 	mkdir -p $(PHONE_PAGE_DIR)
@@ -173,6 +213,31 @@ $(ZMX_SIGNER_STAMP):
 	  mv -f .build/zmx-fetch/zmx .build/release/zmx && rm -rf .build/zmx-fetch; \
 	fi
 	rm -f .build/release/zmx.signer.*
+	@touch $@
+
+# bun is fetched, checked against its pinned hash and signed in the fetch folder, then moved into place by rename, as zmx is. Without an
+# identity it keeps the signature Oven gave it.
+$(BUN_STAMP):
+	rm -rf .build/bun-fetch && mkdir -p .build/bun-fetch
+	curl -sfL -o .build/bun-fetch/bun.zip $(BUN_URL)
+	echo "$(BUN_SHA256)  .build/bun-fetch/bun.zip" | shasum -a 256 -c -
+	unzip -q -j .build/bun-fetch/bun.zip bun-darwin-aarch64/bun -d .build/bun-fetch
+	chmod +x .build/bun-fetch/bun
+	@if [ "$(SIGN_ID)" != - ]; then $(BUN_CODESIGN) .build/bun-fetch/bun && codesign --verify --strict .build/bun-fetch/bun; fi
+	mv -f .build/bun-fetch/bun .build/release/bun
+	rm -rf .build/bun-fetch .build/release/bun.*
+	@touch $@ $(BUN_SIGNER_STAMP)
+
+# The same release signed by another identity (or by the first one): nothing is fetched again.
+$(BUN_SIGNER_STAMP):
+	@if [ "$(SIGN_ID)" = - ] && ! ls .build/release/bun.signer.* >/dev/null 2>&1; then \
+	  echo "bun: keeps the signature it was fetched with"; \
+	else \
+	  rm -rf .build/bun-fetch && mkdir -p .build/bun-fetch && cp .build/release/bun .build/bun-fetch/bun && \
+	  $(BUN_CODESIGN) .build/bun-fetch/bun && codesign --verify --strict .build/bun-fetch/bun && \
+	  mv -f .build/bun-fetch/bun .build/release/bun && rm -rf .build/bun-fetch; \
+	fi
+	rm -f .build/release/bun.signer.*
 	@touch $@
 
 # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
@@ -285,14 +350,18 @@ app-guard:
 	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
 	    echo "error: app: a published build comes from main, with HEAD in origin/main as last fetched; CHECK_BUILD=1 builds anything else, without the zip" >&2; exit 1; fi; fi
 
-# Signing is inside out, never --deep: zmx first, then the bundle with the entitlements and the identifier. Both carry the
-# secure timestamp that only notarization needs. Lines that name the identity start with @.
+# Signing is inside out, never --deep: zmx and bun first (bun with its own identifier and entitlements), then the bundle with its
+# entitlements and identifier. All carry the secure timestamp that only notarization needs. Lines that name the identity start with @.
 app-bundle: app-guard
 	@$(MAKE) --no-print-directory build
 	rm -rf $(APP) $(APP_DIR)/Varnick.iconset
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp -c .build/release/Varnick $(APP)/Contents/MacOS/Varnick
 	cp -c .build/release/zmx $(APP)/Contents/MacOS/zmx
+	mkdir -p $(APP)/Contents/Helpers
+	cp -c .build/release/bun $(APP)/Contents/Helpers/bun
+	cp -c .build/release/agent.js $(APP)/Contents/Resources/agent.js
+	rsync -a .build/release/mods/ $(APP)/Contents/Resources/mods/ --exclude '.DS_Store'
 	cp -c .build/release/mlx.metallib $(APP)/Contents/Resources/mlx.metallib
 	rsync -a PhonePage/ $(APP)/Contents/Resources/PhonePage/ --exclude '.DS_Store' --exclude '*.test.ts' --exclude 'fixtures/'
 	scripts/copy-catalog.sh $(CURDIR)/$(APP)/Contents/Resources/apps
@@ -317,6 +386,7 @@ app-bundle: app-guard
 	plutil -lint $(APP)/Contents/Info.plist
 	@id=$$(scripts/signing-identity.sh --developer-id 2>/dev/null) || { echo "error: app: no Developer ID Application identity" >&2; exit 1; }; \
 	  codesign -f -s "$$id" -o runtime --timestamp $(APP)/Contents/MacOS/zmx || exit 1; \
+	  codesign -f -s "$$id" -o runtime --timestamp --entitlements Bun.entitlements -i $(BUN_IDENTIFIER) $(APP)/Contents/Helpers/bun || exit 1; \
 	  codesign -f -s "$$id" -o runtime --timestamp --entitlements Varnick.entitlements -i $(LABEL) $(APP) || exit 1
 	codesign --verify --deep --strict --verbose=2 $(APP)
 

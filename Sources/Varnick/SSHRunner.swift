@@ -42,11 +42,16 @@ enum Subprocess {
     /// pipe held open for its whole life (never `/dev/null`), which is how a far command learns this side is
     /// gone. Cancel closes the input, terminates after 1 s and kills after 2 s. The result has the status and
     /// the tail of the error output, never the output.
+    ///
+    /// With `input`, the command is a one-shot: the data is written and the input closed at once, a cancel or `deadline` (seconds
+    /// from the start; `timedOut` in the result) sends SIGTERM straight away and SIGKILL a second later, and `directory` is its
+    /// working folder. The text helper is run so.
     @concurrent static func stream(_ executable: String, _ arguments: [String], environment: [String: String],
+                                   input: Data? = nil, directory: URL? = nil, deadline: TimeInterval? = nil,
                                    onOutput: @escaping @Sendable (Data) -> Void) async -> ProcessResult {
-        let job = Stream(executable, arguments, environment, onOutput)
+        let job = Stream(executable, arguments, environment, input: input, directory: directory, onOutput)
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in job.start(continuation) }
+            await withCheckedContinuation { continuation in job.start(continuation, deadline: deadline) }
         } onCancel: {
             job.cancel()
         }
@@ -121,19 +126,27 @@ enum Subprocess {
         private var started = false, cancelled = false, inputClosed = false
         private var exited = false, outputClosed = false, errorClosed = false, finished = false
         private var outReader: PipeReader?, errReader: PipeReader?
+        /// A one-shot's input, written once the process runs. The write is on a thread of its own and the descriptor is closed
+        /// only after it, so a close never lands on a descriptor the write is using.
+        private let input: Data?
+        private var writing = false
 
-        init(_ executable: String, _ arguments: [String], _ environment: [String: String],
+        init(_ executable: String, _ arguments: [String], _ environment: [String: String], input: Data?, directory: URL?,
              _ onOutput: @escaping @Sendable (Data) -> Void) {
             self.onOutput = onOutput
+            self.input = input
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = arguments
             process.environment = environment
+            process.currentDirectoryURL = directory
             process.standardInput = stdin
             process.standardOutput = stdout
             process.standardError = stderr
+            // A write to a process that has gone fails with an error instead of ending Varnick with SIGPIPE.
+            _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         }
 
-        func start(_ continuation: CheckedContinuation<ProcessResult, Never>) {
+        func start(_ continuation: CheckedContinuation<ProcessResult, Never>, deadline: TimeInterval? = nil) {
             lock.lock()
             self.continuation = continuation
             started = true
@@ -150,7 +163,23 @@ enum Subprocess {
                 lock.lock()
                 result.launchFailed = true
                 lock.unlock()
-                finish()
+                return finish()
+            }
+            if let input { write(input) }
+            if let deadline { queue.asyncAfter(deadline: .now() + deadline) { [weak self] in self?.cancel(timedOut: true) } }
+        }
+
+        /// A one-shot's request: all of it, then the end of input.
+        private func write(_ data: Data) {
+            lock.lock()
+            writing = true
+            lock.unlock()
+            DispatchQueue.global().async { [self] in
+                try? stdin.fileHandleForWriting.write(contentsOf: data)
+                lock.lock()
+                writing = false
+                lock.unlock()
+                closeInput()
             }
         }
 
@@ -189,27 +218,30 @@ enum Subprocess {
             }
         }
 
+        /// Not while the request is being written: the write closes it when it is done.
         private func closeInput() {
             lock.lock()
-            let close = !inputClosed
-            inputClosed = true
+            let close = !inputClosed && !writing
+            if close { inputClosed = true }
             lock.unlock()
             if close { try? stdin.fileHandleForWriting.close() }
         }
 
-        func cancel() {
+        func cancel(timedOut: Bool = false) {
             lock.lock()
             cancelled = true
             let running = started && !finished && !exited
-            if running { result.cancelled = true }
+            if running, !result.cancelled, !result.timedOut { if timedOut { result.timedOut = true } else { result.cancelled = true } }
             lock.unlock()
             guard running else { return }
             closeInput()
-            queue.asyncAfter(deadline: .now() + 1) { [weak self] in
+            // A one-shot has nothing to wind down: it is asked to stop at once.
+            let stopAfter = input == nil ? 1.0 : 0.0
+            queue.asyncAfter(deadline: .now() + stopAfter) { [weak self] in
                 guard let self, self.process.isRunning else { return }
                 self.process.terminate()
             }
-            queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            queue.asyncAfter(deadline: .now() + stopAfter + 1) { [weak self] in
                 guard let self else { return }
                 if self.process.isRunning { kill(self.process.processIdentifier, SIGKILL) }
                 self.finish()
