@@ -730,6 +730,8 @@ if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.ar
             .flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil }
         let draw = CommandLine.arguments.contains("--draw")
         Task { @MainActor in
+            // The login shell is read once, here, as at launch, so it doesn't land in the decide step's figure.
+            if Settings.shared.activeTextGeneration.runOn == .claude { await delegate.claudeCode.checkLogin() }
             exit(await SpokenCommand.run(file: CommandLine.arguments[i + 1], restartAfter: restartAfter, app: app, draw: draw,
                                          model: delegate.model))
         }
