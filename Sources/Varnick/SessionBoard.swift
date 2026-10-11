@@ -333,8 +333,13 @@ final class SessionBoard: ObservableObject {
         }
         for record in model.completed where paired(record) {
             next.append(card(for: record, standing: .done(at: record.completedAt ?? record.lastUsed),
-                             note: model.stillOpenOn(record).map { "Still open on " + $0 }, model))
+                             note: model.completedNote(for: record), model))
         }
+        // Completed shows marked panes and the Completed list together, newest mark first; the other columns keep tab order.
+        let doneAt = { (card: Card) -> Date in if case .done(let at) = card.standing { at } else { .distantPast } }
+        let completed = next.enumerated().filter { $0.element.column == .completed }
+            .sorted { doneAt($0.element) != doneAt($1.element) ? doneAt($0.element) > doneAt($1.element) : $0.offset < $1.offset }.map(\.element)
+        next = next.filter { $0.column != .completed } + completed
         if let confirming, !next.contains(where: { $0.id == confirming.id && $0.asksBeforeDone }) { self.confirming = nil }
         let previous = cards
         if next != cards {
@@ -362,7 +367,12 @@ final class SessionBoard: ObservableObject {
 
     private func card(for pane: ClaudeSession, in tab: ClaudeTab, _ model: LauncherModel) -> Card {
         let standing: Card.Standing
-        if !pane.started, !pane.isOnPeer, !hasZmxSession(pane) {
+        // Marked done while open (ADR 0028): by another Mac on a session that runs here, or by the host of one that runs there. It sits
+        // in Completed, and ↩ shows the pane and takes the mark off.
+        let marked = model.doneMark(of: pane)
+        if let marked {
+            standing = .done(at: marked)
+        } else if !pane.started, !pane.isOnPeer, !hasZmxSession(pane) {
             standing = .resumes   // whatever its file says: a session killed mid-turn leaves working behind
         } else if let turn = pane.turn {
             standing = .turn(turn.turn, since: turn.since)
@@ -376,7 +386,7 @@ final class SessionBoard: ObservableObject {
                     folder: pane.record.folderName,
                     standing: standing,
                     background: pane.turn?.background ?? BackgroundWork(),
-                    note: pane.awayNote,
+                    note: marked == nil ? pane.awayNote : "Still open here",
                     work: pane.work,
                     foreign: pane.isOnPeer)
     }

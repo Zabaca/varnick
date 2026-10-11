@@ -16,6 +16,7 @@ extension HeadlessPeerHost {
         case .start: return .reply(start(request, by: by))
         case .resume: return .reply(resumeConversation(request, by: by))
         case .end: return .reply(end(request, by: by))
+        case .done: return .reply(done(request))
         case .projects: return .reply(projects())
         case .agents: return .reply(agents(folder: request.folder))
         default: return .reply(.failure("The request isn't one a host answers"))
@@ -75,10 +76,12 @@ extension HeadlessPeerHost {
         case .start(let conversation):
             guard let before = claim.before else { return .failure("That session has no record on \(name)") }
             // Labelled for the Mac that asked, with the record's own origin.
-            var lost = before
-            lost.conversation = conversation
             reply = launch(before, control: by, origin: before.origin, resuming: conversation) {
-                _ = try? state.update(id) { if $0.ended == nil, $0.starting == true { $0 = lost } }
+                // Only what the claim changed goes back, so a mark made or cleared during the start stays.
+                _ = try? state.update(id) {
+                    guard $0.ended == nil, $0.starting == true else { return }
+                    ($0.starting, $0.bootID, $0.started, $0.conversation) = (before.starting, before.bootID, before.started, conversation)
+                }
             }
             if reply.ok { reply.resume = .started }
         }
@@ -109,6 +112,10 @@ extension HeadlessPeerHost {
         do {
             switch try state.add(record, refusing: { records in
                 HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: StateFolder.conversations(of: records))
+            }, alongside: { records in
+                // Open again, so its ended records lose their mark, as a Mac's Completed drops an open conversation (ADR 0028).
+                let conversations = StateFolder.conversations(of: records)
+                for index in records.indices where conversations[records[index].id] == conversation { records[index].done = nil }
             }) {
             case .exists: return taken
             case .refused: return .failure("That session is open on \(name): take it over from the list")
@@ -146,6 +153,24 @@ extension HeadlessPeerHost {
             reply.released = true
         }
         return reply
+    }
+
+    // MARK: done
+
+    /// `done`: sets the record's done date, or with `mark` false clears it, and ends nothing. A Mac host's equivalent is
+    /// `LauncherModel.hostDone`. A mark already there keeps its date.
+    private func done(_ request: PeerRequest) -> PeerReply {
+        guard let session = request.session, let id = Zmx.paneID(session) else { return .failure("Not a Varnick session name") }
+        state.reconcile()
+        let mark = request.mark ?? true
+        do {
+            let found = try state.update(id.uuidString.lowercased()) { record in
+                if !mark { record.done = nil } else if record.done == nil { record.done = Date() }
+            }
+            return found ? .success() : .failure("That session isn't on \(name)")
+        } catch {
+            return stateFailure(error)
+        }
     }
 
     // MARK: lists
@@ -193,6 +218,7 @@ extension HeadlessPeerHost {
         let named = records.compactMap { record in UUID(uuidString: record.id).map { (record: record, uuid: $0) } }
         let statuses = Zmx.statuses(of: named.map { Zmx.sessionName($0.uuid) })
         var reply = PeerReply.success()
+        let now = Date()
         reply.open = named.compactMap { record, uuid in
             let session = Zmx.sessionName(uuid)
             guard let status = statuses[session], status.running else { return nil }
@@ -202,7 +228,8 @@ extension HeadlessPeerHost {
             let found = PeerTurn.read(for: uuid)
             return PeerOpenSession(session: session, title: title, folder: folder, agent: record.agent,
                                    conversation: conversation == record.id ? nil : conversation, control: status.control, clients: status.clients,
-                                   turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: uuid))
+                                   turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: uuid),
+                                   doneAge: record.done.map { Int(max(0, now.timeIntervalSince($0))) })
         }
         return reply
     }
@@ -228,7 +255,8 @@ extension HeadlessPeerHost {
             let title = TranscriptReader.title(directory: folder, conversation: conversation) ?? Self.firstLine(of: record.prompt) ?? ""
             return PeerRecentSession(conversation: conversation, title: title, folder: folder, agent: record.agent,
                                      last: Int64((record.ended ?? Date()).timeIntervalSince1970),
-                                     session: UUID(uuidString: record.id).map(Zmx.sessionName))
+                                     session: UUID(uuidString: record.id).map(Zmx.sessionName),
+                                     done: record.done.map { Int64($0.timeIntervalSince1970) })
         }
         return reply
     }

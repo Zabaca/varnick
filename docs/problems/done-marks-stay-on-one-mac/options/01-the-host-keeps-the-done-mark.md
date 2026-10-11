@@ -2,7 +2,7 @@
 problem: done-marks-stay-on-one-mac
 title: The session's host keeps its done mark, and every Mac reads it from there
 summary: A session's done mark belongs to its host, the machine its zmx session runs on. Done on another Mac's session sends a new `done` request to that host, which marks the session without ending anything: in Completed if it has ended there, on the pane's own record if it is still open. The host's `sessions` listing and its Recent entries carry the mark (a protocol bump), and every paired Mac puts a session its host marks in Completed, with "Still open on…" while it runs. Opening a still-open session from Completed clears the mark on its host. A headless host keeps the mark on its own session records. A Done the host can't take stays on that Mac only, as today, and its card says so.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -173,3 +173,12 @@ Every session has one host, which never changes. This option makes the host the 
   2. Should a Mac take in marks for sessions it never had on its board (a host's marked Recent entries, its marked open sessions)? **Recommended: yes,** so Completed reads the same on every Mac. They are done already, so they ask nothing of the user. The alternative needs each Mac to remember which sessions it listed, as ended cards do.
   3. Should a Done its host couldn't take be sent again the next time that host answers? **Recommended: no, for now.** If the session was opened there meanwhile, a late mark would put live work back in Completed, and telling which came first needs both Macs to keep times for it. The card's note says the mark is this Mac's only.
   4. Should marks made before the upgrade be sent to their hosts once? **Recommended: no,** for the same reason as 3. There are at most 20, each says "Done on this Mac only", and ↩ then Done marks one on its host.
+
+## Decided by the user, 2026-10-10
+
+This option is accepted. The four open questions are answered with the recommendations above:
+
+1. **A new turn in a session still open on its host does not clear the mark,** for now. Marks leave only by an open or a resume.
+2. **A Mac takes in marks for sessions it never had on its board:** a host's marked Recent entries and its marked open sessions both go into Completed.
+3. **A Done its host couldn't take is not sent again** when the host answers later. The card keeps "Done on this Mac only".
+4. **Marks made before the upgrade are not sent to their hosts.** Each shows "Done on this Mac only".

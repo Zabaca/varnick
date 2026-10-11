@@ -4,7 +4,7 @@ import VarnickPeer
 // The Mac's side of the relay (`PeerRelay`, in VarnickPeer): what only this Mac knows. The relay runs as
 // `Varnick --peer <base64 request>`, which `PeerLink` keeps the link for.
 
-/// This Mac as a `PeerHost`: its identity and peer list from UserDefaults, `start`, `resume`, `end`,
+/// This Mac as a `PeerHost`: its identity and peer list from UserDefaults, `start`, `resume`, `end`, `done`,
 /// `projects` and `agents` by the running Varnick over its socket, and the rest from `sessions.json` and
 /// the search database, which work with Varnick not running.
 struct MacPeerHost: PeerHost {
@@ -184,7 +184,7 @@ enum PeerOpenSessions {
     }
 
     /// Those whose zmx session runs, so taking one over has something to attach to.
-    static func list(in state: SessionStore.State, statuses: [String: PeerSessionStatus]) -> [PeerOpenSession] {
+    static func list(in state: SessionStore.State, statuses: [String: PeerSessionStatus], now: Date = Date()) -> [PeerOpenSession] {
         candidates(in: state).compactMap { record in
             let name = Zmx.sessionName(record.id)
             guard let status = statuses[name], status.running else { return nil }
@@ -192,7 +192,8 @@ enum PeerOpenSessions {
             let found = PeerTurn.read(for: record.id)
             return PeerOpenSession(session: name, title: title.isEmpty ? "New session" : title, folder: record.directory,
                            agent: record.agent, conversation: record.conversation, control: status.control,
-                           clients: status.clients, turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: record.id))
+                           clients: status.clients, turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: record.id),
+                           doneAge: record.completedAt.map { Int(max(0, now.timeIntervalSince($0))) })
         }
     }
 }
@@ -200,13 +201,15 @@ enum PeerOpenSessions {
 /// Which of a Mac's ended sessions a peer's Recent lists.
 enum PeerRecentSessions {
     /// This Mac's own Claude sessions with a transcript to resume (a session it holds for another
-    /// Mac is that Mac's to offer), newest first as saved.
+    /// Mac is that Mac's to offer), newest first as saved. The mark of an ended one is read from Completed by pane id: Recent's own
+    /// copies carry none (ADR 0028).
     static func list(in state: SessionStore.State) -> [PeerRecentSession] {
-        state.recent.filter { $0.isClaude && $0.host == nil && $0.transcriptExists }.map { record in
+        let marks = Dictionary((state.completed ?? []).compactMap { record in record.completedAt.map { (record.id, $0) } }) { first, _ in first }
+        return state.recent.filter { $0.isClaude && $0.host == nil && $0.transcriptExists }.map { record in
             let title = record.title.isEmpty ? String(record.prompt.split(whereSeparator: \.isNewline).first?.prefix(80) ?? "") : record.title
             return PeerRecentSession(conversation: record.conversationID, title: title, folder: record.directory,
                                      agent: record.agent, last: Int64(record.lastUsed.timeIntervalSince1970),
-                                     session: Zmx.sessionName(record.id))
+                                     session: Zmx.sessionName(record.id), done: marks[record.id].map { Int64($0.timeIntervalSince1970) })
         }
     }
 }

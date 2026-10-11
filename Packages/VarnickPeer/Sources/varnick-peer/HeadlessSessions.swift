@@ -24,6 +24,8 @@ struct HeadlessSession: Codable, Equatable {
     var ended: Date?
     /// True from the record's first save until `start` has handed the session over.
     var starting: Bool?
+    /// When a Mac marked the session done (`done`), running or ended: the one place a headless host keeps the mark. Nil: not marked.
+    var done: Date?
 
     /// The conversation claude is on: the hook's last report, else the one saved, else the session's own id.
     func conversationID(reported: String?) -> String { reported ?? conversation ?? id }
@@ -79,12 +81,14 @@ extension StateFolder {
 
     /// Saves a new record unless one has that id, or `refusing` says no to the records there are. The checks
     /// and the save are one step under the lock, so two starts with one id, or two resumes of one conversation,
-    /// can't both go on.
-    func add(_ session: HeadlessSession, refusing: ([HeadlessSession]) -> Bool = { _ in false }) throws -> Added {
+    /// can't both go on. `alongside` changes the other records in that same save.
+    func add(_ session: HeadlessSession, refusing: ([HeadlessSession]) -> Bool = { _ in false },
+             alongside: (inout [HeadlessSession]) -> Void = { _ in }) throws -> Added {
         try locked(exclusive: true) {
             var sessions = try readSessions()
             guard !sessions.contains(where: { $0.id == session.id }) else { return .exists }
             guard !refusing(sessions) else { return .refused }
+            alongside(&sessions)
             sessions.append(session)
             try writeSessions(sessions)
             return .added

@@ -822,6 +822,23 @@ final class PeerManager: ObservableObject {
         }
     }
 
+    /// Marks a session done on its host, or with `mark` false takes the mark off, and ends nothing (ADR 0028). Whether the host took it:
+    /// a failure is only logged, and nothing sends it again.
+    func done(session id: UUID, on host: String, mark: Bool) async -> Bool {
+        guard status[host] != .removedThisMac else { return false }
+        var request = PeerRequest(.done)
+        request.by = PeerIdentity.id
+        request.session = Zmx.sessionName(id)
+        request.mark = mark
+        switch await send(request, to: host) {
+        case .failure(let refusal):
+            NSLog("Varnick: couldn't \(mark ? "mark" : "unmark") \(Zmx.sessionName(id)) done on \(self.name(of: host)): \(refusal.message)")
+            return false
+        case .success:
+            return true
+        }
+    }
+
     struct Refusal: Error {
         var message: String
         /// The Mac has taken this one out of its list.
@@ -875,6 +892,13 @@ final class PeerManager: ObservableObject {
         switch request.op {
         case .hello:
             return PeerJSON.line(PeerReply(v: PeerProtocol.version, ok: true, paired: noteCaller(request)))
+        case .done:
+            // Who may send it: ADR 0028.
+            guard let model else { return starting }
+            guard let by = request.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {
+                return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))
+            }
+            return PeerJSON.line(await model.hostDone(request))
         case .start, .resume, .end:
             guard let model else { return starting }
             // Both change what runs here, so only for a Mac in the list, or a device (read from the file the

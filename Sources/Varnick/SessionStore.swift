@@ -57,9 +57,11 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// a peer asked for follows the peer's. Nil follows the setting.
     var skipPermissions: Bool?
 
-    /// When Done on the session board closed it, on its copy in Completed. Optional so older saved
-    /// records still load; nil everywhere else.
+    /// When it was marked done: on a Completed copy, by Done or its host; on a Claude pane here, by another Mac (ADR 0028). Optional so older files load.
     var completedAt: Date?
+
+    /// On a Completed copy of another Mac's session: its host holds the mark too. Without it the mark is this Mac's only. Optional so older files load.
+    var hostHoldsDone: Bool?
 
     /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
     /// their chips. On a record with a `host` they are that host's last report, with `group/name` as the repository (`PeerWork`). Optional so
