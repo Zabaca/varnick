@@ -270,6 +270,8 @@ final class ScreenAccess {
         return try target(id, pane: pane)
     }
 
+    private static let unreadableRect = "The rectangle needs numbers x, y, width and height"
+
     // MARK: look
 
     private func look(_ args: ScreenArguments, pane: UUID) async throws -> Done {
@@ -278,6 +280,7 @@ final class ScreenAccess {
         var crop: CGRect?
         if wantsPicture {
             guard ScreenText.hasAccess else { throw ScreenRefusal.noScreenRecording }
+            guard args.rectUnreadable != true else { throw ScreenRefusal.bad(Self.unreadableRect) }
             if let rect = args.rect?.frame {
                 guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
                     throw ScreenRefusal.bad("The rectangle needs a positive width and height")
@@ -301,7 +304,7 @@ final class ScreenAccess {
         // The picture's text, when the window lists nothing, Chrome hides its page, or the session asked for it.
         var text: ScreenText.WindowText?
         var notes: [String] = []
-        if reading.elements.isEmpty || reading.chromeBlind || args.asksForPicture {
+        if reading.elements.isEmpty || reading.chromeBlind || args.asksForText {
             if reading.chromeBlind, reading.emptyWebArea == nil {
                 // Without the page's frame its lines can't be told from the tab titles and the toolbar's.
                 notes.append("Text was not read from a picture: the page's frame is unknown.")
@@ -354,6 +357,12 @@ final class ScreenAccess {
             notes.append("Picture: \(made.kind.uppercased()), \(made.width)x\(made.height) pixels, of the area \(Self.describe(made.area)) in screen points "
                          + "(\(String(format: "%.2f", made.pixelsPerPoint)) pixels per point).")
             if made.hidden > 0 { notes.append("\(made.hidden) password field\(made.hidden == 1 ? "" : "s") in it painted black.") }
+            if reading.walkCutShort || reading.chromeBlind {
+                // Not "none": the window's controls were only partly reached, so a password field may be in the picture.
+                notes.append("Varnick reached only part of this window's controls, so a password field may be in the picture.")
+            } else if made.hidden == 0 {
+                notes.append("No password fields seen in it.")
+            }
             counts += ", picture \(made.kind) \(made.width)x\(made.height) \(made.data.count) bytes, hidden \(made.hidden)"
         }
         targets[pane] = table
@@ -404,6 +413,8 @@ final class ScreenAccess {
             frame = now
             fallback = target.note
             aimed = id.lowercased()
+        } else if args.rectUnreadable == true {
+            throw ScreenRefusal.bad(Self.unreadableRect)
         } else if let rect = args.rect?.frame {
             guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
                 throw ScreenRefusal.bad("The rectangle needs a positive width and height")

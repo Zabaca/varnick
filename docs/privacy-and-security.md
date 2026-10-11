@@ -81,8 +81,9 @@ A session can also ask for a **picture** of the window (`look` with `picture`, o
 everything on the window, including what you typed into a field, which the listing leaves out, and it goes to
 Anthropic with the session and stays in its transcript on this Mac. Varnick paints black the password fields it
 can see before it sends the picture. It can't see one where the app doesn't report it (a Chrome page whose tree
-is hidden, a canvas app, a remote desktop, a virtual machine), in a window with more controls than it reads, or
-where an app shows a password in a plain field, and those show. The picture needs Screen Recording. Varnick's log
+is hidden, a canvas app, a remote desktop, a virtual machine), in a window with more controls than it reads,
+where an app shows a password in a plain field ("show password"), or in a field that has no frame, and those
+show. The reply says when it reached only part of a window. The picture needs Screen Recording. Varnick's log
 holds its kind, pixel size and byte count, never what it shows. If you don't want what is on a window sent to
 Anthropic, leave Screen access off, or close the window first.
 

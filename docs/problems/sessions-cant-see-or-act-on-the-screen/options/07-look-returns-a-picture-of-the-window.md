@@ -19,7 +19,8 @@ The running Varnick takes the picture, as it does everything. The relay only pas
   - A session that only needs controls and short labels should not ask for a picture; the tool's description says so.
 - **Password fields are hidden where Varnick can see them, and shown where it can't.**
   - The same walk `look` does finds the secure text fields, and their frames are painted black before the picture is encoded.
-  - The gaps are the ones ADR 0021 accepted for reading and option 06 accepted for typing: a Chrome page whose tree is hidden, a canvas app, a remote desktop, a virtual machine. Also a window the walk's limits cut short, a password the app shows in a plain field ("show password"), and a field whose frame the app doesn't report.
+  - The gaps are the ones ADR 0021 accepted for reading and option 06 accepted for typing, and a few more (a walk cut short, a password shown in a plain field). The privacy doc lists them once.
+  - When nothing is hidden the reply says "no password fields seen", unless the walk was cut short or Chrome hid its page, where it says it could not tell.
 - **The picture is a little behind the walk.** The fields were found a moment before the capture. If the window moved, their frames move with it; if it changed size, the call is refused rather than guess.
 - **A picture costs the session tokens and Varnick a second capture** when the session also asks for `text`. Taken as two captures, since one pipeline for both would change the text step Hey Varnick shares.
 
@@ -46,7 +47,8 @@ The running Varnick takes the picture, as it does everything. The relay only pas
 - **The reply** gets an image beside its text: an MCP image content item with the base64 data and the mime type. The picture's pixel size, the part of the screen it shows, and how many password fields were hidden are in the text.
 - **The log** holds the picture's kind, pixel size and byte count, and how many fields were hidden. Never the picture, a title or a label.
 - **The request's version stays 1.** The reply gets an optional field, and the new arguments are ignored by an older Varnick, which answers with the listing alone. Peers are untouched: a screen request still has no `op`.
-- **Docs.** ADR 0023's amendment, `docs/privacy-and-security.md`, the guide, the README's line, the Screen access switch's detail in Settings, the Screen access term in CONTEXT.md, and where-it-breaks.md, which says plainly that a picture shows everything on the window, typed text included, and goes to Anthropic with the session.
+- **A `rect` that was sent and can't be read is refused,** not dropped: a dropped one would return the whole window. Numbers as text, and the rectangle as JSON text, are read.
+- **Docs.** ADR 0023's amendment, the privacy and security doc (which holds the one list of the black-out's gaps), the guide, the README's line, the Screen access switch's detail in Settings, the glossary's Screen access term, and the where-it-breaks doc, which says plainly that a picture shows everything on the window, typed text included, and goes to Anthropic with the session.
 
 ## Testing Decisions
 
@@ -73,9 +75,9 @@ The running Varnick takes the picture, as it does everything. The relay only pas
 ## Further Notes
 
 - **Accepted on 2026-10-10** at the user's request, relayed by the coordinator: "can we just build it". Written with the build, on the same branch; the user can change any decision here.
-- **Decided while writing:**
+- **Decided while writing (and after review):**
   - **One tool, one more argument,** not a tool of its own: a picture is a view of the same window the listing describes.
-  - **A walk that was cut short is not a refusal.** The gap is recorded instead, as for a hidden Chrome page.
+  - **A walk that was cut short is not a refusal.** The gap is recorded and the reply says it, as for a hidden Chrome page.
   - **The cap stays,** since the picture can be made to fit it.
   - **No version bump.**
 - **Unverified:** how often a real window's secure fields are missed by the walk's limits (3000 nodes, one second); whether Claude Code limits an image in a tool result below the socket's cap.

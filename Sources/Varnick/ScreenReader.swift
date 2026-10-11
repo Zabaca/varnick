@@ -29,6 +29,8 @@ enum ScreenReader {
         /// The frames of the secure text fields the walk met, and of the focused one when it is secure: what a picture of the window
         /// (`ScreenPicture`) paints black. Never sent.
         var secureFrames: [CGRect] = []
+        /// The walk ended on its node or time limit with part of the window unvisited, so a secure field may have been missed.
+        var walkCutShort = false
         /// The biggest web area with nothing in it that has a frame, which is where a Chrome page's text is.
         var emptyWebArea: CGRect?
         /// Which control has the app's focus, for a session's `look`. Hey Varnick's read ignores it.
@@ -213,7 +215,11 @@ enum ScreenReader {
             return element
         }
         reading.entryFrames += walk.entryFrames
-        reading.secureFrames += walk.secureFrames
+        // The focused field is usually met by the walk too: one frame each.
+        for frame in walk.secureFrames where !reading.secureFrames.contains(where: { $0.integral == frame.integral }) {
+            reading.secureFrames.append(frame)
+        }
+        reading.walkCutShort = walk.cutShort
         reading.chromeBlind = walk.sawEmptyWebArea && isChromium(bundle: bundle)
         reading.emptyWebArea = walk.emptyWebArea
         if let focus, let focusValues {
@@ -399,13 +405,16 @@ enum ScreenReader {
         var emptyWebArea: CGRect?
         var entryFrames: [CGRect] = []
         var secureFrames: [CGRect] = []
+        /// The node or time limit ended the walk with nodes unvisited.
+        var cutShort = false
         var window = CGRect.infinite
 
         var outOfBudget: Bool { nodes >= ScreenReader.maxNodes || ContinuousClock.now >= deadline }
 
         mutating func run(window root: AXUIElement) {
             var stack = [Node(element: root, depth: 0, path: [])]
-            while let node = stack.popLast(), !outOfBudget {
+            while let node = stack.popLast() {
+                if outOfBudget { cutShort = true; break }
                 stack.append(contentsOf: visit(node).reversed())
             }
         }

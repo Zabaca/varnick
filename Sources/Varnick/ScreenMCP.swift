@@ -31,6 +31,8 @@ struct ScreenArguments: Codable {
     var picture: Bool?
     var id: String?
     var rect: Rect?
+    /// Set by the relay when `rect` was sent and could not be read, so the app refuses the call instead of acting as if there were none.
+    var rectUnreadable: Bool?
     var note: String?
     var at: Point?
     var keys: [String]?
@@ -47,6 +49,18 @@ struct ScreenArguments: Codable {
         var height: Double
 
         var frame: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+
+        /// Numbers or numbers as text, as a model sends them.
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            guard let x = ScreenArguments.number(values, .x), let y = ScreenArguments.number(values, .y),
+                  let width = ScreenArguments.number(values, .width), let height = ScreenArguments.number(values, .height) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not a rectangle"))
+            }
+            (self.x, self.y, self.width, self.height) = (x, y, width, height)
+        }
+
+        private enum CodingKeys: String, CodingKey { case x, y, width, height }
     }
 
     struct Point: Codable {
@@ -124,7 +138,16 @@ struct ScreenArguments: Codable {
         app = try? values.decodeIfPresent(String.self, forKey: .app)
         id = try? values.decodeIfPresent(String.self, forKey: .id)
         note = try? values.decodeIfPresent(String.self, forKey: .note)
-        rect = try? values.decodeIfPresent(Rect.self, forKey: .rect)
+        if values.contains(.rect), (try? values.decodeNil(forKey: .rect)) != true {
+            // The rectangle as an object, or as JSON text.
+            if let found = try? values.decode(Rect.self, forKey: .rect) {
+                rect = found
+            } else if let text = try? values.decode(String.self, forKey: .rect), let found = try? JSONDecoder().decode(Rect.self, from: Data(text.utf8)) {
+                rect = found
+            } else {
+                rectUnreadable = true
+            }
+        }
         at = try? values.decodeIfPresent(Point.self, forKey: .at)
         text = try? values.decodeIfPresent(Text.self, forKey: .text)
         if let list = try? values.decodeIfPresent([String].self, forKey: .keys) {
@@ -132,29 +155,27 @@ struct ScreenArguments: Codable {
         } else if let one = try? values.decodeIfPresent(String.self, forKey: .keys) {
             keys = one.split(whereSeparator: \.isWhitespace).map(String.init)
         }
-        if let flag = try? values.decodeIfPresent(Bool.self, forKey: .replace) {
-            replace = flag
-        } else if let word = try? values.decodeIfPresent(String.self, forKey: .replace) {
-            replace = word.lowercased() == "true"
-        }
-        if let flag = try? values.decodeIfPresent(Bool.self, forKey: .picture) {
-            picture = flag
-        } else if let word = try? values.decodeIfPresent(String.self, forKey: .picture) {
-            picture = word.lowercased() == "true"
-        }
+        replace = Self.flag(values, .replace)
+        picture = Self.flag(values, .picture)
         from = try? values.decodeIfPresent(Spot.self, forKey: .from)
         to = try? values.decodeIfPresent(Spot.self, forKey: .to)
         position = try? values.decodeIfPresent(Point.self, forKey: .position)
         size = try? values.decodeIfPresent(Size.self, forKey: .size)
     }
 
-    /// `look`'s flag: `true`, or `"true"` as a model sends it.
-    var asksForPicture: Bool {
+    /// `look`'s `text` flag (read the window's text from a picture): `true`, or `"true"` as a model sends it.
+    var asksForText: Bool {
         switch text {
         case .flag(let flag)?: flag
         case .words(let word)?: word.lowercased() == "true"
         case nil: false
         }
+    }
+
+    /// A boolean or `"true"`, nil when absent or neither.
+    private static func flag<Key>(_ values: KeyedDecodingContainer<Key>, _ key: Key) -> Bool? {
+        if let flag = try? values.decodeIfPresent(Bool.self, forKey: key) { return flag }
+        return (try? values.decodeIfPresent(String.self, forKey: key)).map { $0.lowercased() == "true" }
     }
 
     /// A number or a number as text, for the points a model sends.
@@ -163,7 +184,7 @@ struct ScreenArguments: Codable {
         return (try? values.decodeIfPresent(String.self, forKey: key)).flatMap { Double($0) }
     }
 
-    private enum CodingKeys: String, CodingKey { case app, text, picture, id, rect, note, at, keys, replace, from, to, position, size }
+    private enum CodingKeys: String, CodingKey { case app, text, picture, id, rect, rectUnreadable, note, at, keys, replace, from, to, position, size }
 }
 
 /// The reply line: the call's text, whether it was a refusal or a failure, and for a `look` that asked for one, a picture. An older

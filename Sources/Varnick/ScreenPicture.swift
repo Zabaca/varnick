@@ -2,10 +2,8 @@ import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 
-/// A picture of a window for a session's `look` (ADR 0023, option 07 of `sessions-cant-see-or-act-on-the-screen`): the capture the
-/// text step makes (`ScreenText.capture`), cut to an area when asked, with the secure text fields the walk found painted black,
-/// scaled and encoded to fit the socket. It shows everything else on the window, typed text included, and goes to Anthropic with the
-/// session: what that means is in where-it-breaks.md, Screen access.
+/// A session's `look` picture (ADR 0023): the text step's capture, cropped, secure fields painted black, sized to fit the socket.
+/// What it shows and hides is in where-it-breaks.md, Screen access.
 enum ScreenPicture {
     /// The long side, in pixels, that a picture is scaled down to: the size Claude reads without shrinking it again.
     static let longSide = 1568
@@ -62,11 +60,9 @@ enum ScreenPicture {
         guard window.width >= 1, window.height >= 1, image.width > 0, image.height > 0 else { throw Failure.encoding }
         let imageSize = CGSize(width: image.width, height: image.height)
 
-        let frames = try secure.map { frame -> CGRect in
-            guard let was else { return frame }
-            guard let moved = ScreenGeometry.moved(frame, from: was, to: window) else { throw Failure.windowChanged }
-            return moved
-        }
+        // Whether or not there is a field to follow: a window of another size is not the one that was read.
+        if let was, !ScreenGeometry.sameSize(was, window) { throw Failure.windowChanged }
+        let frames = secure.map { frame in was.flatMap { ScreenGeometry.moved(frame, from: $0, to: window) } ?? frame }
 
         let wanted = crop.map { $0.intersection(window) } ?? window
         guard !wanted.isNull, wanted.width >= 1, wanted.height >= 1 else { throw Failure.outsideWindow }
