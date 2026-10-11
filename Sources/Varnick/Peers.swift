@@ -876,6 +876,10 @@ final class PeerManager: ObservableObject {
         if head.op == nil, PeerJSON.decode(ScreenRequestHead.self, from: line)?.screen != nil {
             return await ScreenAccess.shared.answer(line)
         }
+        // A panel request (ADR 0031) is told apart the same way, by its own key.
+        if head.op == nil, PeerJSON.decode(PanelRequestHead.self, from: line)?.panel != nil {
+            return await PanelAccess.shared.answer(line)
+        }
         // `upgrade` and `restart` are read before the version (the relay does the same), and only for a Mac in the list: not a device.
         if let op = head.op.flatMap(PeerOp.init), PeerProtocol.answersAnyVersion(op) {
             guard let by = head.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {

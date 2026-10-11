@@ -227,6 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // Turning Screen access off ends the sessions' tools at once, with no restart: each call reads the switch.
             Settings.shared.$screenAccess.dropFirst().removeDuplicates()
                 .sink { on in if !on { ScreenAccess.shared.switchedOff() } },
+            // The same for Panel access: its ids go with the switch.
+            Settings.shared.$panelAccess.dropFirst().removeDuplicates()
+                .sink { on in if !on { PanelAccess.shared.switchedOff() } },
             Listener.shared.$state
                 .sink { [weak self] state in self?.showListening(state) },
             // The phone page's server follows its setting; `apply` reads the setting itself, once didSet has run.
@@ -514,12 +517,13 @@ if let i = CommandLine.arguments.firstIndex(of: "--peer"), i + 1 < CommandLine.a
     exit(PeerRelay.run(CommandLine.arguments[i + 1], host: MacPeerHost()))
 }
 
-// `Varnick --mcp --pane <id>` is the MCP server a Claude pane starts with when Screen access is on (`ScreenMCP`): JSON-RPC on
-// standard input and output, each tool call one line on the peer socket. It never reads or acts. Like `--peer`, it runs before
-// anything of the app starts, and it exits when its input ends.
+// `Varnick --mcp --pane <id> [--screen] [--panel]` is the MCP server a Claude pane starts with when Screen access or Panel access is on
+// (`ScreenMCP`): JSON-RPC on standard input and output, each tool call one line on the peer socket. The arguments name the sets of tools
+// it lists (the screen tools when none is named). It never reads or acts. Like `--peer`, it runs before anything of the app starts, and
+// it exits when its input ends.
 if CommandLine.arguments.contains("--mcp") {
     let pane = CommandLine.arguments.firstIndex(of: "--pane").flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil } ?? ""
-    exit(ScreenMCP.run(pane: pane))
+    exit(ScreenMCP.run(pane: pane, sets: ScreenMCP.Sets(arguments: CommandLine.arguments)))
 }
 
 // Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): every command-line mode (`MacNotMoved`) refuses on a Mac still running Launchy.

@@ -20,6 +20,8 @@ is, and [`docs/guide.md`](docs/guide.md) what it needs.
   Publishing the files as a release is a separate step by hand: [`docs/releasing.md`](docs/releasing.md).
 - **`bun test`**, run in `PhonePage/`, tests the Phone page's server and its page.
 - **`make check-apps`** checks every entry of the catalog in `apps/`, offline. `make app` runs it first.
+- **`make check-mcp`** checks, after `make build`, what `Varnick --mcp` lists for each set of tools and what it refuses,
+  with no running Varnick.
 - **There is no Swift test target.** Swift changes are checked by `make build` and then by hand in a running
   Varnick; say in your change what you checked and what you didn't.
 

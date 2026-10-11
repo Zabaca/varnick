@@ -54,7 +54,7 @@ To build it yourself instead, see [`building.md`](building.md).
   runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
-- **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, the
+- **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
   Phone page and the Problems board (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
@@ -181,6 +181,18 @@ still asking for `click`, `type`, `drag` and `window` (not checked). A session g
 (⌘⌥R) after turning the switch on; turning it off stops every session's tools at once. It is independent of
 Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
 for what a session is shown.
+
+## Panel access
+
+Settings › Claude › **Panel access** (off by default, and independent of Screen access) gives the Claude sessions
+you start or restart in Varnick's panes tools for Varnick itself, from the same `varnick` MCP server. `panel` says
+whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
+tab and its panes, with this session marked and the focused pane; the session board and its selected card;
+Settings) and what has the keyboard. Each pane gets an id such as `s1`, the same every time. The tools work through
+Varnick's own state, so they need no permission, no Accessibility and no Screen Recording. What a session reads goes to
+Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access). A
+session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the switch on; turning it off
+stops every session's tools at once.
 
 ## Custom apps
 

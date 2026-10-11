@@ -140,6 +140,17 @@ transcript on this Mac. The reply says nothing was blacked out. It needs Screen 
 of pictures and each one's kind, pixel size and byte count, never what they show. If you don't want your screen sent
 to Anthropic, leave Screen access off, or close what you don't want seen first.
 
+### Anthropic, through Panel access
+
+With Panel access on (off by default), the Claude sessions started or restarted after you turn it on can read what
+Varnick's panel shows, through Varnick itself (ADR 0031). What they read goes to Anthropic with the session and stays
+in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of
+the tab and panes in it (the session board's selected card, Settings or the Restart Varnick card when one is up);
+and which of those has the keyboard. The search field's mode (the session list, a prompt, a `?` search or a `!`
+command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
+It reads no window through Accessibility and needs no permission, and turning the switch off stops every session's
+tools at once. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name or a title.
+
 ### A model server you name
 
 With Server chosen for Search embeddings or Text generation (Settings › Models), Varnick sends the server the
