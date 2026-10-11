@@ -457,7 +457,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     /// The account's login shell from the account record, not `$SHELL`, which a launchd-started Varnick may not carry.
     /// Only zsh, bash and sh run the POSIX script; any other shell, or a recorded one not executable, gets `/bin/zsh`.
-    private static var claudeShell: String {
+    /// The text helper reads its environment from the same shell (`ClaudeEnvironment`).
+    static var claudeShell: String {
         guard let entry = getpwuid(getuid()), let shell = entry.pointee.pw_shell.map({ String(cString: $0) }),
               ["zsh", "bash", "sh"].contains((shell as NSString).lastPathComponent),
               FileManager.default.isExecutableFile(atPath: shell) else { return "/bin/zsh" }

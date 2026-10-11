@@ -32,15 +32,16 @@ final class TextGenerator: ObservableObject {
     /// Download again beside Retry.
     @Published private(set) var failedToLoad = false
 
-    private let directory = URL.applicationSupportDirectory
+    private static let directory = URL.applicationSupportDirectory
         .appending(components: "Varnick", "models", "gemma-4-e2b-it-4bit")
+    private var directory: URL { Self.directory }
     private var container: ModelContainer?
     private var loading: Task<ModelContainer, Error>?
     private var idleTimer: Task<Void, Never>?
 
     /// Only checks that the files exist: this runs on the main thread at launch, and touches no MLX.
     init() {
-        state = !MLXRuntime.hasMetalLibrary ? .unavailable : Self.installed(directory) ? .ready : .missing
+        state = !MLXRuntime.hasMetalLibrary ? .unavailable : Self.installed(Self.directory) ? .ready : .missing
     }
 
     private static func installed(_ directory: URL) -> Bool {
@@ -48,6 +49,9 @@ final class TextGenerator: ObservableObject {
     }
 
     var isReady: Bool { state == .ready }
+
+    /// The model is on disk, without a generator: Settings tells an install that already answers with it at launch.
+    static var isInstalled: Bool { installed(directory) }
 
     // MARK: Download
 
