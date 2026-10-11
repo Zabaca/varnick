@@ -2,8 +2,9 @@ import Foundation
 import VarnickPeer
 
 // Screen access for sessions, the relay half (ADR 0023): `Varnick --mcp --pane <id>` is the MCP server a Claude pane starts with when
-// Settings › Claude › Screen access is on. It turns each tool call into one line on the peer socket and prints the reply. It never
-// reads or acts: the running Varnick does, in `ScreenAccess`. The request and reply types are both halves'.
+// Settings › Claude › Screen access or Panel access (`PanelMCP`, ADR 0031) is on. It turns each tool call into one line on the peer
+// socket and prints the reply. It never reads or acts: the running Varnick does, in `ScreenAccess` and `PanelAccess`. The request and
+// reply types are both halves'.
 
 /// One tool call as it travels on the socket. It has no `op`, which is how the app tells it from a peer's request: the peer relay
 /// refuses any line without a known `op` and passes the app only lines that carry one, so no Mac or device can send this.
@@ -231,11 +232,34 @@ enum ScreenMCP {
 
     // MARK: The command line
 
+    /// The sets of tools a server lists, as its arguments name them.
+    struct Sets: OptionSet {
+        let rawValue: Int
+        static let screen = Sets(rawValue: 1)
+        static let panel = Sets(rawValue: 2)
+
+        static let screenArgument = "--screen"
+        static let panelArgument = "--panel"
+
+        /// With none named, the screen tools alone: a session started before Panel access keeps the tools it had.
+        init(arguments: [String]) {
+            var found: Sets = []
+            if arguments.contains(Self.screenArgument) { found.insert(.screen) }
+            if arguments.contains(Self.panelArgument) { found.insert(.panel) }
+            self = found.isEmpty ? .screen : found
+        }
+
+        init(rawValue: Int) { self.rawValue = rawValue }
+    }
+
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
-    /// id as an argument so nothing depends on claude passing its environment on.
-    static func configuration(pane: UUID) -> String {
+    /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
+    /// on for. Nil with both off.
+    static func configuration(pane: UUID, screen: Bool, panel: Bool) -> String? {
+        guard screen || panel else { return nil }
         let server: [String: Any] = ["type": "stdio", "command": PeerLink.mcpCommand,
-                                     "args": ["--mcp", "--pane", pane.uuidString.lowercased()]]
+                                     "args": ["--mcp", "--pane", pane.uuidString.lowercased()]
+                                        + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])]
         let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": ["varnick": server]], options: [.sortedKeys, .withoutEscapingSlashes])
         return data.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
@@ -352,17 +376,22 @@ enum ScreenMCP {
 
     // MARK: The server
 
+    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's.
+    static func tools(for sets: Sets) -> [[String: Any]] {
+        (sets.contains(.screen) ? tools : []) + (sets.contains(.panel) ? PanelMCP.tools : [])
+    }
+
     /// Runs until standard input ends; the exit status is 0.
-    static func run(pane: String) -> Int32 {
+    static func run(pane: String, sets: Sets) -> Int32 {
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
-            if let reply = answer(line, pane: pane) { write(reply) }
+            if let reply = answer(line, pane: pane, sets: sets) { write(reply) }
         }
         return 0
     }
 
     /// The reply to one JSON-RPC message; nil for a notification, which is never answered, and for what can't be answered.
-    static func answer(_ line: String, pane: String, ask: (String) -> ScreenReply = ScreenMCP.ask) -> [String: Any]? {
+    static func answer(_ line: String, pane: String, sets: Sets = .screen, ask: (String) -> ScreenReply = ScreenMCP.ask) -> [String: Any]? {
         guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)), let message = object as? [String: Any] else {
             return failure(id: NSNull(), code: -32700, "Parse error")
         }
@@ -376,16 +405,21 @@ enum ScreenMCP {
                                     "capabilities": ["tools": [String: Any]()],
                                     "serverInfo": ["name": "varnick", "version": "1"]])
         case "tools/list":
-            return success(id: id, ["tools": tools])
+            return success(id: id, ["tools": tools(for: sets)])
         case "ping":
             return success(id: id, [:])
         case "tools/call":
-            guard let name = params["name"] as? String, ScreenTool(rawValue: name) != nil else {
+            guard let name = params["name"] as? String else { return failure(id: id, code: -32602, "Unknown tool") }
+            let reply: ScreenReply
+            if ScreenTool(rawValue: name) != nil, sets.contains(.screen) {
+                let arguments = (params["arguments"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                    .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
+                reply = ask(requestLine(pane: pane, tool: name, arguments: arguments))
+            } else if sets.contains(.panel), PanelMCP.names.contains(name) {
+                reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: params["arguments"] as? [String: Any])))
+            } else {
                 return failure(id: id, code: -32602, "Unknown tool")
             }
-            let arguments = (params["arguments"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
-                .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
-            let reply = ask(requestLine(pane: pane, tool: name, arguments: arguments))
             var content: [[String: Any]] = [["type": "text", "text": reply.text]]
             for image in (reply.image.map { [$0] } ?? []) + (reply.images ?? []) {
                 content.append(["type": "image", "data": image.data, "mimeType": image.mimeType])
@@ -408,7 +442,7 @@ enum ScreenMCP {
     static func ask(_ line: String) -> ScreenReply {
         guard let answer = PeerSocket.request(line, timeout: callTimeout) else {
             return PeerSocket.isAnswering()
-                ? ScreenReply(text: "Varnick didn't answer within \(Int(callTimeout)) seconds. Look again to see what happened.", isError: true)
+                ? ScreenReply(text: "Varnick didn't answer within \(Int(callTimeout)) seconds. Check what happened before calling again.", isError: true)
                 : ScreenReply(text: "Varnick isn't running", isError: true)
         }
         return PeerJSON.decode(ScreenReply.self, from: answer) ?? ScreenReply(text: "Varnick's answer wasn't readable", isError: true)

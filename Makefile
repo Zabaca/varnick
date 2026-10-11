@@ -81,7 +81,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -170,6 +170,12 @@ apps-catalog:
 APPS ?= apps
 check-apps:
 	@scripts/check-apps.sh $(APPS)
+
+# What `Varnick --mcp` lists for each set of tools, with no running Varnick (scripts/check-mcp.sh). After `make build`;
+# `make check-mcp BIN=<binary>` checks another build.
+BIN ?= .build/release/Varnick
+check-mcp:
+	@scripts/check-mcp.sh $(BIN)
 
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.

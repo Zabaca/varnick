@@ -72,6 +72,9 @@ Anything else leaves only when you turn it on:
 - **Screen access** lets Claude sessions read the window in front, or take a picture of it (which shows everything
   on it, typed text included), which goes to Anthropic with the session, and click, type, drag and resize windows
   for you without asking. A picture of your whole screen includes Varnick's own window and every password field.
+- **Panel access** lets Claude sessions read what Varnick's own panel shows: whether it is open, which tab, pane or
+  board is in it, which has the keyboard, the session board's cards (every session's title, folder, turn and
+  note) and the text on the screen of any terminal pane, other sessions' and shells' too, whatever it shows, and can switch the panel to the search, the board or a pane. That goes to Anthropic with the session. It needs no permission.
 - **A model server** you name gets your searches, your prompts and the text it embeds, and nothing goes past it.
 
 Everything Varnick reads, records and sends, and what it lets others do, is in

@@ -140,6 +140,33 @@ transcript on this Mac. The reply says nothing was blacked out. It needs Screen 
 of pictures and each one's kind, pixel size and byte count, never what they show. If you don't want your screen sent
 to Anthropic, leave Screen access off, or close what you don't want seen first.
 
+### Anthropic, through Panel access
+
+With Panel access on (off by default), the Claude sessions started or restarted after you turn it on can read what
+Varnick's panel shows, through Varnick itself (ADR 0031). What they read goes to Anthropic with the session and stays
+in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of
+the tab and panes in it (the session board's selected card, Settings or the Restart Varnick card when one is up);
+and which of those has the keyboard. They can also read **the session board** (`board_read`): for every session
+it lists, on this Mac or a paired one, the title (which can be a prompt's first line or a name you gave it), the
+folder, the Mac, the turn and how long, any background work, the card's note, the problem or option it is linked
+to, and for the Problems tab the problems' titles, projects and the sessions on them. A paired Mac's cards are as
+last fetched: the read asks no paired Mac. They can also read **the text on the screen of any terminal pane**
+(`pane_read`): another session's, a shell's, or their own. That is whatever the terminal shows at that moment, as
+you would see it: a session's latest exchange, a command's output, a secret that was just printed or typed where it
+echoes. Only the live screen is read, wherever you have scrolled to, and anything that scrolled off it is not read, and a pane showing a card of a session another Mac
+controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only. All
+of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
+command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
+It reads no window through Accessibility and needs no permission, and turning the switch off stops every session's
+tools at once. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's
+text. Reading a pane's screen resizes, writes to and focuses nothing in it. If you don't want what a terminal shows
+sent to Anthropic, leave Panel access off.
+
+A session can also change what the panel shows (`show`): the search, the board, the Problems tab, a pane's tab, or a
+`!` command (`!transcript`, `!kanban`, `!problems`), the same changes your keys make. It never shows, hides or pins the
+panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is
+refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel. It sends no key and posts no event.
+
 ### A model server you name
 
 With Server chosen for Search embeddings or Text generation (Settings › Models), Varnick sends the server the

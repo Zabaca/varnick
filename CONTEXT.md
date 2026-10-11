@@ -230,3 +230,7 @@ _Avoid_: Highlight, cursor, annotation, overlay
 **Screen access**:
 The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, six tools: `look` at a window's controls (and which one has focus, and with `picture` an image of it, password fields painted black, or with `screen` or `display` an image of every display or one, nothing blacked out), `point` at one with the **Arrow**, `click`, `type`, `drag` and `window` (move or resize). The running Varnick does the work under its own permissions, with the code a **Spoken request** uses, and an action happens without asking, the **Arrow** showing on its target for a second first and the app brought to the front (not for `window`). What a session is shown, a picture included (which shows everything on the window or the displays, typed text too), goes to Anthropic with it.
 _Avoid_: Computer use, remote control
+
+**Panel access**:
+The setting (Settings › Claude, under **Screen access**, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, tools to read what the panel shows, the **Session board**'s cards and the panes' terminal screens, and to change what the panel shows, through Varnick's own model, with no permission. What a session reads goes to Anthropic with it; see [ADR 0031](docs/adr/0031-sessions-read-and-act-on-varnick-through-its-own-model-on-the-varnick-server-with-no-grant.md).
+_Avoid_: Screen access (any app's window, through Accessibility), API, automation

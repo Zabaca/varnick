@@ -1001,17 +1001,23 @@ final class LauncherModel: ObservableObject {
     func runCommand() {
         let shown = commands
         guard shown.indices.contains(commandSelection) else { return NSSound.beep() }
-        switch shown[commandSelection] {
+        run(shown[commandSelection])
+    }
+
+    /// A command as ↩ on its row runs it, and as `show` runs one for a session (`PanelAccess`): one function, so both behave the same.
+    /// ↩ clears the `!` it was typed in; a session's `show` leaves what the user typed alone.
+    func run(_ command: LauncherCommand, clearingQuery: Bool = true) {
+        switch command {
         case .listen: Listener.shared.toggle()
         case .transcript: openTranscript()
         case .kanban:
-            query = ""
+            if clearingQuery { query = "" }
             showBoard(.sessions)
         case .problems:
-            query = ""
+            if clearingQuery { query = "" }
             showBoard(.problems)
         case .outline:
-            query = ""
+            if clearingQuery { query = "" }
             showOutline()
         }
     }
@@ -2263,15 +2269,15 @@ final class LauncherModel: ObservableObject {
         if showsTerminal { tab.focus(tab.focused) }
     }
 
-    /// Back to search without ending anything (⌘N).
-    func showSearch() {
+    /// Back to search without ending anything (⌘N). A session's `show` passes `focusing: false` unless the panel already has the keyboard.
+    func showSearch(focusing: Bool = true) {
         pendingSplit = nil
         if let active = activeTab, let i = tabs.firstIndex(where: { $0 === active }) {
             sessionSelection = i
         }
         activeTab = nil
         reset()
-        focusSearchField()
+        if focusing { focusSearchField() }
         refreshPeerOpenSessions(minInterval: 5)
         refreshPeerRecent(minInterval: 5)
     }
@@ -2307,7 +2313,7 @@ final class LauncherModel: ObservableObject {
     }
 
     /// The search field takes focus, or the caret goes back into its bullet while the outline shows over the search.
-    private func focusSearchField() {
+    func focusSearchField() {
         if showingOutline { outline.restoreCaret() } else { focusToken += 1 }
     }
 
@@ -2334,7 +2340,8 @@ final class LauncherModel: ObservableObject {
         if let tab { board.show(tab) }
         guard !showingBoard else { return }
         showingBoard = true
-        board.appear()
+        // A hidden panel reads and asks nothing; `panelDidShow` calls it when the panel comes up.
+        if SessionBoard.panelIsVisible { board.appear() }
     }
 
     /// Back to the tab underneath, focused, or to search with focus in the field.
@@ -2344,8 +2351,8 @@ final class LauncherModel: ObservableObject {
         focusShown()
     }
 
-    /// Closes the board without moving focus, for a caller that is about to focus a pane itself.
-    private func hideBoard() {
+    /// Closes the board without moving focus, for a caller that is about to focus a pane or the search itself.
+    func hideBoard() {
         guard showingBoard else { return }
         showingBoard = false
         board.close()
@@ -2378,8 +2385,8 @@ final class LauncherModel: ObservableObject {
         focusShown()
     }
 
-    /// Closes the outline without moving focus, for a caller that is about to focus a pane itself.
-    private func hideOutline() {
+    /// Closes the outline without moving focus, for a caller that is about to focus a pane or the search itself.
+    func hideOutline() {
         guard showingOutline else { return }
         showingOutline = false
         outline.close()

@@ -177,6 +177,7 @@ final class Settings: ObservableObject {
     nonisolated static let keepSessionsRunningKey = "keepSessionsRunning"
     static let skipPermissionsKey = "skipPermissions"
     static let screenAccessKey = "screenAccess"
+    static let panelAccessKey = "panelAccess"
     static let relevanceFilterOnKey = "relevanceFilterOn"
     static let relevanceFilterKey = "relevanceFilter"
     static let defaultFontSize: Double = 12.5
@@ -189,6 +190,10 @@ final class Settings: ObservableObject {
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
     @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
+    /// Gives the Claude sessions started or restarted while it is on tools for Varnick itself (`PanelAccess`): what its panel shows,
+    /// through Varnick's own model, with no permission. Off until turned on; read at every call, so turning it off stops running sessions
+    /// too. Independent of Screen access.
+    @Published var panelAccess: Bool { didSet { defaults.set(panelAccess, forKey: Self.panelAccessKey) } }
     /// Claude and terminal panes run inside zmx and outlive Varnick (ADR 0004). Applies to panes
     /// started after it changes; use `Zmx.isEnabled` to act on it, since the binary may be missing.
     @Published var keepSessionsRunning: Bool { didSet { defaults.set(keepSessionsRunning, forKey: Self.keepSessionsRunningKey) } }
@@ -354,6 +359,7 @@ final class Settings: ObservableObject {
         claudeDirectory = defaults.string(forKey: "claudeDirectory") ?? ""
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
+        panelAccess = defaults.bool(forKey: Self.panelAccessKey)
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
@@ -639,6 +645,10 @@ struct SettingsView: View {
                                    detail: "Sessions started or restarted while this is on get tools to look at a window, point at things with the arrow, click, type, drag and move or resize windows, on this Mac's screen. What they are shown (a window's title, its controls' names and visible text, which control has focus, and short text read from a picture of it) goes to Anthropic with the session. So does a picture of the window when they ask for one: it shows everything on the window, including what you typed, with password fields Varnick can see painted black. A picture of the screen, which they can also ask for, shows everything on every display or the one asked for: Varnick's own window and other sessions, what you typed, and password fields, none of it blacked out. Nothing asks before an action: the arrow shows on the target for a second first. Nothing is typed into a password field Varnick can see. Every pane already has Varnick's permissions: see SECURITY.md.") {
                             ScreenPermissionsView(askRestart: askRestart)
                             Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        }
+                        SettingRow(title: "Panel access",
+                                   detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. And they can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. It works through Varnick itself and needs no permission.") {
+                            Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Keep sessions running",
                                    detail: "Claude and terminal panes keep running when Varnick restarts, quits or crashes, and reconnect when it is back. Closing a pane ends it.") {

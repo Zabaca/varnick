@@ -63,7 +63,7 @@ indirect enum ScreenRefusal: Error {
         case .noScreenRecording: "No picture was taken: \(Self.screenRecordingWords)."
         case .noPicture(let why, _): "No picture was taken: \(why)."
         case .unreadable: "Varnick couldn't read the request"
-        case .versionDiffers: "Restart this session\(Self.restartKeys.map { " (\($0))" } ?? "") to update Varnick's tools"
+        case .versionDiffers: Self.restartThisSession
         case .off: "Screen access is off in Varnick's Settings › Claude"
         case .noAccessibility: "Varnick doesn't have Accessibility. Ask the user to grant it in Varnick's Settings › Claude, under Screen access"
         case .starting: "Varnick is still starting"
@@ -134,8 +134,28 @@ indirect enum ScreenRefusal: Error {
         return ""
     }
 
-    /// The restart shortcut as the user has it bound; nil when unbound.
-    @MainActor private static var restartKeys: String? { Settings.shared.combo(.restartSession)?.label }
+    /// What a server from another launch is told, by Screen access and Panel access alike.
+    @MainActor static var restartThisSession: String {
+        "Restart this session\(Settings.shared.combo(.restartSession).map { " (\($0.label))" } ?? "") to update Varnick's tools"
+    }
+}
+
+/// The pane a session's tool call comes from, for Screen access and Panel access alike: a Claude pane on this Mac, which no other Mac or
+/// device controls (it would show a card, with no screen of its own).
+enum CallingPane {
+    case found(id: UUID, tab: ClaudeTab, session: ClaudeSession)
+    case missing
+    case controlled
+
+    @MainActor static func find(_ text: String, in model: LauncherModel) -> CallingPane {
+        guard let id = UUID(uuidString: text) else { return .missing }
+        for tab in model.tabs {
+            guard let session = tab.sessions.first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) else { continue }
+            if case .controlled = session.away { return .controlled }
+            return .found(id: id, tab: tab, session: session)
+        }
+        return .missing
+    }
 }
 
 /// What a tool did: the text the session reads, and counts for the log.
@@ -233,13 +253,12 @@ final class ScreenAccess {
 
     /// The Claude pane on this Mac with that id, and its name as the session board's card has it.
     private func pane(_ text: String, in model: LauncherModel) throws -> (UUID, String) {
-        guard let id = UUID(uuidString: text) else { throw ScreenRefusal.noPane }
-        for tab in model.tabs {
-            guard let session = tab.sessions.first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) else { continue }
-            if case .controlled = session.away { throw ScreenRefusal.controlled }
+        switch CallingPane.find(text, in: model) {
+        case .found(let id, let tab, let session):
             return (id, String(ScreenElements.cleaned(tab.boardTitle(of: session)).prefix(Self.signName)))
+        case .missing: throw ScreenRefusal.noPane
+        case .controlled: throw ScreenRefusal.controlled
         }
-        throw ScreenRefusal.noPane
     }
 
     /// What can change while a call waits for its turn or leads: the switch, the pane (closed, or another Mac in control now), and
