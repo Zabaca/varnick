@@ -78,12 +78,18 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
 
     /// The login shell's environment, read once (and again after `claude` failed to start, since an update can move the file).
     func environment() async -> ClaudeEnvironment {
-        if reading == nil {
+        let task: Task<ClaudeEnvironment, Never>
+        if let reading {
+            task = reading
+        } else {
             let shell = ClaudeSession.claudeShell, start = Self.shellStart()
-            reading = Task { await ClaudeEnvironment.read(shell: shell, start: start) }
+            task = Task { await ClaudeEnvironment.read(shell: shell, start: start) }
+            reading = task
         }
-        let found = await reading!.value
-        environmentNote = found.shellFailure == nil ? nil : "Couldn't read your shell's environment; using Varnick's own"
+        let found = await task.value
+        if !Task.isCancelled {
+            environmentNote = found.shellFailure == nil ? nil : "Couldn't read your shell's environment; using Varnick's own"
+        }
         return found
     }
 
@@ -111,7 +117,10 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
         async let auth = Subprocess.run(claude, ["auth", "status", "--json"], environment: found.variables, timeout: Self.loginCheckTimeout)
         async let version = Subprocess.run(claude, ["--version"], environment: found.variables, timeout: Self.loginCheckTimeout)
         let (authRun, versionRun) = await (auth, version)
-        if authRun.launchFailed { return notPassed(.notFound) }
+        // Nothing is written for a check that was cancelled; the status goes back to what it was.
+        guard !Task.isCancelled else { status = loginPassed ? .loggedIn : .notChecked; return }
+        // A `claude` that can't be started may have moved: the shell is read again at the next check.
+        if authRun.launchFailed { reading = nil; return notPassed(.notFound) }
         if authRun.timedOut { return notPassed(.notAnswering("login check timed out")) }
         struct Auth: Decodable {
             var loggedIn: Bool?
@@ -168,6 +177,7 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
         guard let claude = found.claude else { throw Failure(kind: "claude not found") }
         guard TextHelper.isInstalled else { throw Failure(kind: "text helper missing") }
         let outcome = await TextHelper.run(prompt, claude: claude, environment: found.variables)
+        try Task.checkCancellation()
         lastOutcome = outcome
         switch outcome.end {
         case .cancelled:
@@ -192,7 +202,10 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
     func failed(_ failure: Failure) {
         failureKind = failure.kind
         restingSince = Date()
-        if failure.kind.contains("authentication_failed") || failure.kind.contains("oauth_org_not_allowed") {
+        if failure.kind.contains("oauth_org_not_allowed") {
+            loginPassed = false
+            status = .notAnswering("this account isn't allowed to use Claude Code")
+        } else if failure.kind.contains("authentication_failed") {
             loginPassed = false
             status = .notLoggedIn
         } else if failure.kind == "claude not found" || failure.kind == "claude did not start" {
