@@ -105,8 +105,11 @@ enum ScreenKeys {
         if own.contains(where: { Settings.shared.combo($0) == combo }) {
             return "\(combo.label) is one of Varnick's own shortcuts, which a session may not press"
         }
-        let system = [KeyCombo(keyCode: kVK_ANSI_Q, [.command, .shift]), KeyCombo(keyCode: kVK_ANSI_Q, [.command, .shift, .option]),
-                      KeyCombo(keyCode: kVK_ANSI_Q, [.command, .control]), KeyCombo(keyCode: kVK_Escape, [.command, .option])]
+        // Log out and lock follow the Q the user sees, so the key that types q on the current layout (with ⌘ held, as `parse` reads it) is
+        // refused as well as the US Q key's code, which the system may bind by position. Force Quit's esc is on every layout.
+        let logOut: [NSEvent.ModifierFlags] = [[.command, .shift], [.command, .shift, .option], [.command, .control]]
+        let qKeys = Set([kVK_ANSI_Q] + (layoutKey(for: "q", command: true).map { [$0.code] } ?? []))
+        let system = qKeys.flatMap { code in logOut.map { KeyCombo(keyCode: code, $0) } } + [KeyCombo(keyCode: kVK_Escape, [.command, .option])]
         if system.contains(combo) { return "\(combo.label) would log the user out, lock the screen or open Force Quit, which a session may not press" }
         return nil
     }
