@@ -153,7 +153,7 @@ to, and for the Problems tab the problems' titles, projects and the sessions on 
 last fetched: the read asks no paired Mac. They can also read **the text on the screen of any terminal pane**
 (`pane_read`): another session's, a shell's, or their own. That is whatever the terminal shows at that moment, as
 you would see it: a session's latest exchange, a command's output, a secret that was just printed or typed where it
-echoes. Anything that scrolled off the screen is not read, and a pane showing a card of a session another Mac
+echoes. Only the live screen is read, wherever you have scrolled to, and anything that scrolled off it is not read, and a pane showing a card of a session another Mac
 controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
@@ -164,8 +164,8 @@ sent to Anthropic, leave Panel access off.
 
 A session can also change what the panel shows (`show`): the search, the board, the Problems tab, a pane's tab, or a
 `!` command (`!transcript`, `!kanban`, `!problems`), the same changes your keys make. It never shows, hides or pins the
-panel, never turns on Listening (`!listen` is refused), and is refused while Settings or a dialog of Varnick's shows
-and for two seconds after a key you pressed in the panel. It sends no key and posts no event.
+panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is
+refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel. It sends no key and posts no event.
 
 ### A model server you name
 

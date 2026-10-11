@@ -442,7 +442,7 @@ enum ScreenMCP {
     static func ask(_ line: String) -> ScreenReply {
         guard let answer = PeerSocket.request(line, timeout: callTimeout) else {
             return PeerSocket.isAnswering()
-                ? ScreenReply(text: "Varnick didn't answer within \(Int(callTimeout)) seconds. Look again to see what happened.", isError: true)
+                ? ScreenReply(text: "Varnick didn't answer within \(Int(callTimeout)) seconds. Check what happened before calling again.", isError: true)
                 : ScreenReply(text: "Varnick isn't running", isError: true)
         }
         return PeerJSON.decode(ScreenReply.self, from: answer) ?? ScreenReply(text: "Varnick's answer wasn't readable", isError: true)

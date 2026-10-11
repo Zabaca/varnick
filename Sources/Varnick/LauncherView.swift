@@ -163,7 +163,8 @@ struct LauncherView: View {
     private func focusSearch() {
         DispatchQueue.main.async {
             if let panel = NSApp.windows.first(where: { $0 is LauncherPanel }), panel.isVisible {
-                panel.makeKey()
+                // Not while another app is the active one: a pinned panel taking the key window would take the keyboard from it.
+                if NSApp.isActive { panel.makeKey() }
                 panel.makeFirstResponder(nil)
             }
             focused = true

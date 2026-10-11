@@ -199,8 +199,10 @@ app, its kind and title only. **A terminal's screen holds whatever is on it, sec
 board or problems (the Problems tab, while that switch is on), `pane` an id from `panel` or `board_read` (shows
 that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`).
 It never shows, hides or pins the panel: with the panel hidden, what it showed is there the next time you open it.
-It never runs `!listen`, which turns on the microphone. It is refused while Settings, the Restart Varnick card or
-the split picker shows, and for two seconds after you press a key in the panel. The tools work through
+It never runs `!listen`, which turns on the microphone. It never takes the keyboard from the app you are in, never clears what you typed in the search, and is refused while
+Settings, the Restart Varnick card or the split picker shows, for two seconds after you press a key in the panel,
+and, with the panel hidden, for a pane's tab or while a terminal is on screen. The outline isn't available to
+sessions yet. The tools work through
 Varnick's own state, so they need no permission, no Accessibility and no Screen Recording. What a session reads goes to
 Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access). A
 session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the switch on; turning it off

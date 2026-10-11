@@ -142,6 +142,13 @@ final class SessionBoard: ObservableObject {
 
         var mark: String? { turn?.mark }
 
+        /// The problem or option the session works on, `slug/NN` or `slug`: its own record now, else the last link it logged or kept.
+        var workText: String? {
+            let session = workSession
+            guard let link = session.live.first(where: { $0.agentID == nil })?.link ?? session.links.last else { return nil }
+            return link.number.map { "\(link.slug)/\(String(format: "%02d", $0))" } ?? link.slug
+        }
+
         /// "Working 12m", "Waiting 4m", "1 background agent 3m", "Turn not known" with when it was last used, "Resumes when opened",
         /// "Ended 4m ago", or on a Completed card "Done 4m ago".
         func turnText(at now: Date) -> String {

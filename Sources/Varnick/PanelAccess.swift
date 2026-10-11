@@ -19,13 +19,15 @@ enum PanelRefusal: Error {
     case unknownID
     /// An id this session was given, of a pane or card that has since gone.
     case gone
+    /// The Problems board switch (Settings › Experimental) is off.
+    case problemsOff
     /// The arguments are not ones the tool takes.
     case bad(String)
 
     @MainActor var message: String {
         switch self {
         case .unreadable: "Varnick couldn't read the request"
-        case .versionDiffers: "Restart this session\(Self.restartKeys.map { " (\($0))" } ?? "") to update Varnick's tools"
+        case .versionDiffers: ScreenRefusal.restartThisSession
         case .off: "Panel access is off in Varnick's Settings › Claude"
         case .starting: "Varnick is still starting"
         case .noPane: "No Claude session in Varnick's panes on this Mac has this pane id"
@@ -33,6 +35,7 @@ enum PanelRefusal: Error {
         case .unknownTool(let name): "Unknown tool \(name)"
         case .unknownID: "No such id. Ids come from panel and board_read (s1…): read one of those first"
         case .gone: "gone: read again"
+        case .problemsOff: "The Problems board is off: the user can turn it on in Settings › Experimental"
         case .bad(let why): why
         }
     }
@@ -48,38 +51,42 @@ enum PanelRefusal: Error {
         case .unknownTool: "unknown tool"
         case .unknownID: "unknown id"
         case .gone: "gone"
+        case .problemsOff: "problems off"
         case .bad: "bad arguments"
         }
     }
-
-    /// The restart shortcut as the user has it bound; nil when unbound.
-    @MainActor private static var restartKeys: String? { Settings.shared.combo(.restartSession)?.label }
 }
 
 /// The ids a pane has been given in the replies, `s1`, `s2`…: the same pane gets the same id at every read, and a new one the next
 /// number. A card of the board and a pane share the table, since a card's id is a pane's.
 struct PanelIDs {
     private var numbers: [UUID: Int] = [:]
-    private var found: [Int: UUID] = [:]
+    private var targets: [Int: UUID] = [:]
+    private var last = 0
 
     mutating func id(for target: UUID) -> String {
         if let number = numbers[target] { return "s\(number)" }
-        let number = found.count + 1
-        numbers[target] = number
-        found[number] = target
-        return "s\(number)"
+        last += 1
+        numbers[target] = last
+        targets[last] = target
+        return "s\(last)"
     }
 
     /// The pane an id was given for; nil for one never given.
     func target(_ text: String) -> UUID? {
         let word = text.trimmingCharacters(in: .whitespaces).lowercased()
         guard word.hasPrefix("s"), let number = Int(word.dropFirst()) else { return nil }
-        return found[number]
+        return targets[number]
+    }
+
+    /// The mappings go and the numbers keep counting, so an id given before is never given to another pane.
+    mutating func forget() {
+        numbers = [:]
+        targets = [:]
     }
 }
 
-/// Answers the panel tools for the panes' sessions. Everything runs on the main actor: the model is read where it lives, and the id
-/// tables are held here.
+/// Answers the panel tools for the panes' sessions, on the main actor, and holds the id tables.
 @MainActor
 final class PanelAccess {
     static let shared = PanelAccess()
@@ -94,9 +101,9 @@ final class PanelAccess {
     /// Each calling pane's ids: held in memory only, kept for the pane's life, and dropped once it has gone or the switch is off.
     private var tables: [UUID: PanelIDs] = [:]
 
-    /// Turning the switch off: every id goes at once.
+    /// Turning the switch off: every id stops meaning anything at once.
     func switchedOff() {
-        tables = [:]
+        for caller in tables.keys { tables[caller]?.forget() }
     }
 
     // MARK: Ids
@@ -174,7 +181,11 @@ final class PanelAccess {
         guard let action = request.args["action"], type.actionSpecs.contains(where: { $0.name == action }) else {
             throw PanelRefusal.bad("action is one of: " + type.actionSpecs.map(\.name).joined(separator: ", "))
         }
-        return Answered(text: try await view.perform(action, request.args, caller: caller), action: action)
+        let text = try await view.perform(action, request.args, caller: caller)
+        // The action may have waited: the switch and the pane can have changed meanwhile.
+        guard Settings.shared.panelAccess else { throw PanelRefusal.off }
+        guard case .found = CallingPane.find(request.pane, in: model) else { throw PanelRefusal.noPane }
+        return Answered(text: text, action: action)
     }
 
     /// Tables of panes that have gone are dropped.
@@ -186,26 +197,36 @@ final class PanelAccess {
 
     // MARK: show
 
-    /// Changes what the panel shows through the model's own functions (`showSearch`, `showBoard`, `activate`/`showPane` and the one that
-    /// runs a command), so the panel's height, the focus and "never the board and a tab together" follow their own rules. It never shows,
-    /// hides, pins or activates the panel. Returns the reply and the kind of the argument it acted on, for the log.
+    /// Changes the view through the model's own functions; never shows, hides, pins or activates the panel, takes the keyboard or clears a
+    /// query. Returns the reply and the kind of the argument acted on, for the log.
     private func show(_ args: PanelArguments, _ model: LauncherModel, caller: UUID) throws -> (String, String) {
         let given = ["view", "pane", "command"].filter { !(args[$0] ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
         guard given.count == 1, let kind = given.first, let value = args[kind]?.trimmingCharacters(in: .whitespaces) else {
             throw PanelRefusal.bad("Give one of view, pane or command")
         }
+        let window = panelWindow
+        let visible = window?.isVisible == true
+        // A tab coming up or going away under a hidden panel is not proven to leave every terminal's size alone: only a visible panel gets it.
+        var opensTab = false
         // Resolved before anything changes, so a refusal leaves the panel as it was.
         let act: () -> Void
         switch kind {
         case "view":
             switch value.lowercased() {
             case "search":
-                // Already there: showing it again would clear what the user typed.
-                act = { if model.activeTab != nil || model.showingBoard { model.hideBoard(); model.showSearch() } }
+                let key = window?.isKeyWindow == true
+                act = {
+                    model.hideBoard()
+                    model.hideOutline()
+                    // With a tab showing the search takes its place; with none it is already underneath and its query stays. The keyboard
+                    // moves to it only if the panel already has the keyboard.
+                    if model.activeTab != nil { model.showSearch(focusing: key) } else if key { model.focusSearchField() }
+                }
             case "board": act = { model.showBoard(.sessions) }
             case "problems":
-                guard Settings.shared.problemsBoard else { throw PanelRefusal.bad("The Problems board is off: the user can turn it on in Settings › Experimental") }
+                guard Settings.shared.problemsBoard else { throw PanelRefusal.problemsOff }
                 act = { model.showBoard(.problems) }
+            case "outline": throw PanelRefusal.bad(Self.outlineNotYet)
             default: throw PanelRefusal.bad("view is search, board or problems")
             }
         case "pane":
@@ -216,18 +237,20 @@ final class PanelAccess {
                 }
                 throw PanelRefusal.gone
             }
+            opensTab = true
             act = { model.showPane(target) }
         default:
-            let name = value.lowercased().drop(while: { $0 == "!" })
-            guard let command = LauncherCommand.allCases.first(where: { $0.names.contains(String(name)) }) else {
-                throw PanelRefusal.bad("No such command. These are: transcript, kanban (also tabs) or problems")
+            let name = String(value.lowercased().drop(while: { $0 == "!" }))
+            guard let command = LauncherCommand.allCases.first(where: { $0.names.contains(name) }) else {
+                let known = LauncherCommand.available.filter { $0 != .listen && $0 != .outline }.map(\.rawValue)
+                throw PanelRefusal.bad("No such command. These are: " + known.joined(separator: ", "))
             }
             // It turns on the microphone.
             guard command != .listen else { throw PanelRefusal.bad("A session may not run !listen: it turns on the microphone") }
-            guard LauncherCommand.available.contains(command) else {
-                throw PanelRefusal.bad("The Problems board is off: the user can turn it on in Settings › Experimental")
-            }
-            act = { model.run(command) }
+            guard command != .outline else { throw PanelRefusal.bad(Self.outlineNotYet) }
+            guard LauncherCommand.available.contains(command) else { throw PanelRefusal.problemsOff }
+            opensTab = command == .transcript
+            act = { model.run(command, clearingQuery: false) }
         }
         // The user's own state comes first: what shows over the view, then their typing.
         if model.showingSettings { throw PanelRefusal.bad("Settings is showing: ask the user to close it first") }
@@ -236,11 +259,15 @@ final class PanelAccess {
         if let lastKey, lastKey.duration(to: .now) < Self.typingQuiet {
             throw PanelRefusal.bad("The user pressed a key in the panel a moment ago and may be typing there: try again in a few seconds")
         }
+        if !visible, opensTab || model.showsTerminal {
+            throw PanelRefusal.bad("The panel is hidden, and Varnick doesn't swap a terminal's tab under a hidden panel: ask the user to open the panel first")
+        }
         act()
         let showing = panelText(model, caller: caller).split(separator: "\n").first { $0.hasPrefix("Showing:") }.map(String.init) ?? "Shown."
-        let hidden = panelWindow?.isVisible == true ? "" : " The panel is hidden, so this is there when the user opens it."
-        return (showing + hidden, kind)
+        return (showing + (visible ? "" : " The panel is hidden, so this is there when the user opens it."), kind)
     }
+
+    private static let outlineNotYet = "The outline is not available to sessions yet"
 
     // MARK: panel
 
@@ -260,6 +287,9 @@ final class PanelAccess {
         } else if model.showingBoard {
             lines += boardLines(model, caller: caller)
             focus = "the session board"
+        } else if model.showingOutline {
+            lines.append("Showing: the outline")
+            focus = "the outline"
         } else if let tab = model.activeTab {
             lines += tabLines(tab, caller: caller)
             focus = tab.focused.id == caller ? "the pane of this session" : "the pane \(id(for: tab.focused.id, caller: caller))"

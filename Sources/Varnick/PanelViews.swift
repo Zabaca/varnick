@@ -4,9 +4,8 @@ import SwiftTerm
 import VarnickPeer
 
 // The views that give sessions tools (Panel access, ADR 0031). A view adopts `PanelAccessView` and is listed once in `PanelViews`; the
-// server lists its `<name>_read` tool, and `<name>_act` if it has actions, from the static specs, and the router (`PanelAccess`) hands
-// the call to it. The router keeps the switch, the pane, the ids, the refusals, the log and the reply: an adopter is a thin layer over
-// its view's model that returns text or a refusal. Settings never adopts: its switches govern sessions.
+// server lists its tools from the static specs and the router (`PanelAccess`) hands the call over. An adopter is a thin layer over its
+// view's model that returns text or a refusal. Settings never adopts: its switches govern sessions.
 
 protocol PanelAccessView {
     /// Names its tools: `board` gives `board_read`.
@@ -96,29 +95,22 @@ struct BoardPanelView: PanelAccessView {
 
     @MainActor private func line(_ card: SessionBoard.Card, caller: UUID, now: Date) -> String {
         var parts = ["\(PanelAccess.shared.id(for: card.id, caller: caller)) \"\(PanelAccess.oneLine(card.title))\""]
-        parts.append(PanelAccess.oneLine(card.folder, limit: 60))
+        parts.append(PanelAccess.oneLine(card.pills.project ?? card.folder, limit: 60))
         if card.foreign, let host = card.hostName { parts.append("on " + PanelAccess.oneLine(host, limit: 40)) }
         parts.append(card.turnText(at: now))
         // A background turn's text already counts its work.
         if !card.background.isEmpty, card.turn != .background { parts.append(card.background.text) }
         if let mark = card.mark { parts.append(mark) }
         if let note = card.note { parts.append("note: " + PanelAccess.oneLine(note)) }
-        if let link = Self.workLink(card) { parts.append("work: " + link) }
+        if let work = card.workText { parts.append("work: " + work) }
         if card.id == caller { parts.append("this session") }
         return parts.joined(separator: " · ")
     }
 
-    /// The problem or option a card's session works on: its own record now, else the last the log or the saved record holds.
-    private static func workLink(_ card: SessionBoard.Card) -> String? {
-        let link = card.work?.live.first { $0.agentID == nil }?.link ?? card.work?.history.last ?? card.archived.last
-        guard let link else { return nil }
-        return link.number.map { "\(link.slug)/\(String(format: "%02d", $0))" } ?? link.slug
-    }
-
     @MainActor private func problems(caller: UUID) throws -> String {
-        guard Settings.shared.problemsBoard else {
-            throw PanelRefusal.bad("The Problems board is off: the user can turn it on in Settings › Experimental")
-        }
+        guard Settings.shared.problemsBoard else { throw PanelRefusal.problemsOff }
+        // The chips come from the Sessions cards.
+        model.board.refresh()
         let board = model.board.problems
         // The board's own read, off the main actor and only while the tab shows: a hidden tab holds what it last read, or nothing yet.
         guard board.loaded else { return "Session board, Problems tab: not read yet. It reads the projects' problems when the tab is shown." }
@@ -189,7 +181,8 @@ struct PanePanelView: PanelAccessView {
     @MainActor private static func cardScreen(_ session: ClaudeSession, note: String) -> String {
         let screen = session.screen
         guard screen.serial > 0 else { return "The pane shows a card (\(PanelAccess.oneLine(note))) and has no screen yet." }
-        let text = rows(ofVT: screen.content.text, grid: screen.content.grid)
+        let terminal = session.view.getTerminal()
+        let text = rows(ofVT: screen.content.text, grid: screen.content.grid, fallback: (terminal.cols, terminal.rows))
         let when = screen.stoppedAt.map { "Last screen at \(time.string(from: $0))" }
             ?? "Live screen of the session, which another Mac or a device controls"
         return when + ":\n" + (text.isEmpty ? "(empty)" : text)
@@ -203,24 +196,38 @@ struct PanePanelView: PanelAccessView {
 
     // MARK: Rows
 
-    /// The rows a terminal shows now, line by line: its visible region only (`getLine` counts from the top of what is on screen, so a
-    /// terminal scrolled back reads what the user sees, and nothing above it is touched). Trailing blanks and empty rows at the end are cut.
+    /// The live screen: the last `rows` lines of the buffer, wherever the user has scrolled to (`getLine` counts from the scrolled
+    /// position, which would read scrollback). Trailing blanks and empty rows at the end are cut.
     static func rows(of terminal: Terminal) -> String {
+        let end = Self.endOfBuffer(terminal)
         var lines: [String] = []
-        for row in 0..<terminal.rows {
-            let line = terminal.getLine(row: row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? ""
+        for row in max(0, end - terminal.rows)..<end {
+            let line = terminal.getScrollInvariantLine(row: row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? ""
             lines.append(String(line.reversed().drop(while: { $0.isWhitespace }).reversed()))
         }
         while lines.last?.isEmpty == true { lines.removeLast() }
         return lines.joined(separator: "\n")
     }
 
+    /// One past the last line of the buffer, found by asking `getScrollInvariantLine`, since SwiftTerm doesn't expose the count.
+    private static func endOfBuffer(_ terminal: Terminal) -> Int {
+        guard terminal.getScrollInvariantLine(row: 0) != nil else { return terminal.rows }
+        var low = 0, high = max(terminal.rows, 1)
+        while terminal.getScrollInvariantLine(row: high) != nil, high < 1 << 24 { low = high; high *= 2 }
+        // `low` has a line and `high` has none.
+        while high - low > 1 {
+            let middle = (low + high) / 2
+            if terminal.getScrollInvariantLine(row: middle) != nil { low = middle } else { high = middle }
+        }
+        return high
+    }
+
     /// A card's screen is VT text with the grid it was drawn on, so it is drawn into a terminal of its own (as `FrozenTerminalView` draws it)
-    /// and read the same way. Without a grid the width is a guess: wide enough for a line, tall enough for its lines.
-    static func rows(ofVT text: String, grid: PeerGrid?) -> String {
+    /// and read the same way. Without a grid, the size is the pane's own terminal's, so only the last screenful comes back.
+    static func rows(ofVT text: String, grid: PeerGrid?, fallback: (cols: Int, rows: Int)) -> String {
         var options = TerminalOptions.default
-        options.cols = grid?.cols ?? 200
-        options.rows = grid?.rows ?? max(24, text.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } + 2)
+        options.cols = grid?.cols ?? fallback.cols
+        options.rows = grid?.rows ?? fallback.rows
         let headless = HeadlessTerminal(options: options) { _ in }
         headless.terminal.feed(text: text)
         return rows(of: headless.terminal)

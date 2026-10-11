@@ -63,7 +63,7 @@ indirect enum ScreenRefusal: Error {
         case .noScreenRecording: "No picture was taken: \(Self.screenRecordingWords)."
         case .noPicture(let why, _): "No picture was taken: \(why)."
         case .unreadable: "Varnick couldn't read the request"
-        case .versionDiffers: "Restart this session\(Self.restartKeys.map { " (\($0))" } ?? "") to update Varnick's tools"
+        case .versionDiffers: Self.restartThisSession
         case .off: "Screen access is off in Varnick's Settings › Claude"
         case .noAccessibility: "Varnick doesn't have Accessibility. Ask the user to grant it in Varnick's Settings › Claude, under Screen access"
         case .starting: "Varnick is still starting"
@@ -134,8 +134,10 @@ indirect enum ScreenRefusal: Error {
         return ""
     }
 
-    /// The restart shortcut as the user has it bound; nil when unbound.
-    @MainActor private static var restartKeys: String? { Settings.shared.combo(.restartSession)?.label }
+    /// What a server from another launch is told, by Screen access and Panel access alike.
+    @MainActor static var restartThisSession: String {
+        "Restart this session\(Settings.shared.combo(.restartSession).map { " (\($0.label))" } ?? "") to update Varnick's tools"
+    }
 }
 
 /// The pane a session's tool call comes from, for Screen access and Panel access alike: a Claude pane on this Mac, which no other Mac or

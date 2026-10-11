@@ -55,6 +55,7 @@ Every process in a Varnick pane gets Varnick's grants (the correction in ADR 001
 - **A click brings its app forward first, then clicks.** The first click on a window of an app that is not in front only focuses it, so Varnick activates the app and raises the window before it presses or posts, and refuses ("Nothing was clicked") if the app is not frontmost within a second. Varnick's panel hides when it loses key, unless it is pinned. A click at a point also moves the pointer there.
 - **Nothing is logged but the tool, the outcome's kind, durations and counts.** Never a label, note, window title, app name or session name.
 - **Changing what `look` returns is a privacy change,** needing this ADR, the README, SECURITY.md and the switch's detail amended, as for ADR 0019.
+- Amended by ADR 0031: "Never Varnick's own window" has its reason now (a session that could click the panel could approve its own actions, and Settings holds the controls that govern sessions), and the rule stands. Panel access gives sessions tools for Varnick through its model instead, with no grant.
 - **The tools' text is Hey Varnick's:** `ScreenElement.description`, the 255-element cap, the "dimmed" and "under the pointer" marks, no field's value and nothing of a secure field. A fix to the read is a fix to both.
 
 ## Amendments

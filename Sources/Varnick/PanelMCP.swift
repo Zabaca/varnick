@@ -100,15 +100,20 @@ enum PanelMCP {
         return tool("\(name)_act", PanelToolSpec(summary: "One change to the \(name), by `action`. \(lines)", properties: properties, required: ["action"]))
     }
 
+    /// The commands a session may run: all but `listen`, which turns on the microphone, and `outline`, until the Outline adopts the protocol.
+    private static let commands = LauncherCommand.allCases.filter { $0 != .listen && $0 != .outline }.map(\.rawValue).joined(separator: ", ")
+
     private static let show = tool("show", PanelToolSpec(
         summary: "Changes what Varnick's panel shows, the way its keys do, and never whether it shows: it does not bring the panel up, hide or "
-            + "pin it, and with the panel hidden the view is there when the user opens it. Give one of `view`, `pane` or `command`. Refused "
-            + "while Settings, the Restart Varnick card or the split picker shows, and for a moment after the user pressed a key in the panel.",
+            + "pin it, and with the panel hidden the view is there when the user opens it. Give one of `view`, `pane` or `command`. It leaves "
+            + "what the user typed alone and never takes the keyboard. Refused while Settings, the Restart Varnick card or the split picker "
+            + "shows, for a moment after the user pressed a key in the panel, and, with the panel hidden, for a pane or a command that "
+            + "opens a tab, or while a tab shows.",
         properties: [
             "view": ["type": "string", "enum": ["search", "board", "problems"],
                      "description": "Show the search, the session board, or the board's Problems tab (only while the Problems board switch is on)."],
             "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused."],
-            "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: transcript, kanban (also tabs) or problems. Not listen: it turns on the microphone."],
+            "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs). Not listen: it turns on the microphone."],
         ]))
 
     private static let panel = tool("panel", PanelToolSpec(
