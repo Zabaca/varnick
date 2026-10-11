@@ -7,23 +7,22 @@ import Foundation
 enum SpokenText {
     // MARK: The wake phrase
 
-    /// The words the transcriber writes for "Varnick"; the whole token must match.
-    private static let namePattern = "^[vw][ao][rl]?[nld][iea](c|ck|k|g)$"
+    /// The words the transcriber writes for "Varnick"; the whole token must match one pattern. A b start goes only with -ick, -ik
+    /// and -ic, and -ey, -y and -et only with a v start, so "Barney" never matches.
+    private static let namePatterns = [
+        "^[vw][ao][rl]?[nld][iea](c|ck|k|g)$",
+        "^v[ao]rn(et|ey|ie|y)$",
+        "^b[ao]rn(ick|ik|ic)$",
+    ]
 
-    /// What follows "hey varnick" in `text`, or nil when `text` doesn't wake Varnick; empty when nothing follows. "Hey" (or "hay")
-    /// beginning within the first three words, then one word that is the whole of `namePattern`, ignoring case and punctuation.
-    /// A fragment of the name alone ("nick", "Hey Nick") never wakes it, nor does a word that merely resembles it (Warwick,
-    /// Barney, Varun, varnish). The pattern is the spellings the transcriber was seen to write for "Varnick" (varnik most often,
-    /// then varnick, vanik, valnik, varnig, vardik, vonic and the like), measured with synthesized speech only; real-voice
-    /// recordings pending. On clean clips it missed 35% against 57.5% for "Hey Launchy", and more in heavy noise; none of 864
-    /// sound-alike phrases woke it, against 41 for "Hey Launchy". A candidate, untested on real speech: also take "a" for "hey"
-    /// right before such a word, since "Hey Varnick" was often written "A varnick". Docs:
-    /// docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "Wake phrase".
+    /// What follows "hey varnick" in `text`, or nil when it doesn't wake Varnick; empty when nothing follows. "Hey" (or "hay") within
+    /// the first three words, or "a" as the first word (Apple's "A varnick"), then one word that is the whole of a `namePatterns`
+    /// entry; a fragment ("nick") or a lookalike never wakes. What was measured, and what was not: where-it-breaks.md, Listening.
     static func request(in text: String) -> String? {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         let tokens = words.map(token)
-        for i in 0..<min(3, max(0, tokens.count - 1)) where tokens[i] == "hey" || tokens[i] == "hay" {
-            guard tokens[i + 1].range(of: namePattern, options: .regularExpression) != nil else { continue }
+        for i in 0..<min(3, max(0, tokens.count - 1)) where tokens[i] == "hey" || tokens[i] == "hay" || (i == 0 && tokens[i] == "a") {
+            guard namePatterns.contains(where: { tokens[i + 1].range(of: $0, options: .regularExpression) != nil }) else { continue }
             let rest = i + 2
             let request = words[rest...].joined(separator: " ")
             return String(request.drop { $0.isWhitespace || ",.:;!?-–—".contains($0) })

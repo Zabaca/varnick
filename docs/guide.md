@@ -112,6 +112,12 @@ Listening transcribes your microphone and what the Mac plays, on this Mac, into 
 (`Varnick/transcripts/` under Application Support). It is off at each launch and needs macOS 26. macOS asks for
 the microphone and system audio permissions the first time.
 
+Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,
+save an ElevenLabs API key under Settings › Models › Keys (it needs the Text to Speech and Voices Read
+permissions) and pick one of your account's voices in the same Voice list. That sends everything Varnick speaks to
+ElevenLabs ([privacy and security](privacy-and-security.md#elevenlabs)). The installed voice you had stays as the
+Fallback voice and speaks when ElevenLabs fails or takes more than 1.5 seconds to start.
+
 ## Point at the screen
 
 With Hey Varnick on, Settings › Listening › **Point at the screen** lets you ask about what is in front of

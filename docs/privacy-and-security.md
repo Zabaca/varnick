@@ -66,6 +66,24 @@ Mac** or leave it off (it is off by default): then none of this happens.
 
 None of this goes to a model server.
 
+### ElevenLabs
+
+Saving an ElevenLabs key under Settings › Models › Keys lets Varnick ask ElevenLabs for your account's voices, when
+you save it and whenever Settings › Listening opens; that request carries only the key. Choosing one of those
+voices in Settings › Listening › Voice is consent to send every line Varnick speaks to ElevenLabs. To keep the
+lines private, leave the voice on one installed on this Mac, which is the default: then no line is sent.
+
+- **What is spoken.** The text of each line, with the voice's id and the key. An answer names pages, sites,
+  page descriptions, session titles and folders, and what your prompts said, and can repeat words of your request.
+  The fixed lines ("I couldn't answer that.") go too. Never audio from your Mac, or the rows themselves except as
+  an answer repeats them.
+- **The warm-up.** When "Hey Varnick" is heard, Varnick asks ElevenLabs for the chosen voice, to have the
+  connection open when the answer is spoken. It carries the voice's id and the key and nothing of yours.
+- **The fallback.** When ElevenLabs fails, is slow or can't be reached, the line is spoken again in the installed
+  voice you chose before, on this Mac.
+- **The key** is kept in the macOS Keychain and goes only to ElevenLabs, in a request header, and no redirect is
+  followed. Varnick never reads it from the environment or a file, and never logs it or what it speaks.
+
 ### Anthropic, through Screen access
 
 With Screen access on (off by default), the Claude sessions started or restarted after you turn it on can read
