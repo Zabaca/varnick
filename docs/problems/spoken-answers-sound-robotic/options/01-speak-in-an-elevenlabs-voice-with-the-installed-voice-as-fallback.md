@@ -2,7 +2,7 @@
 problem: spoken-answers-sound-robotic
 title: Speak answers in an ElevenLabs voice, with the installed voice as fallback
 summary: An ElevenLabs key is entered in Settings › Models › Keys and kept in the Keychain. Settings › Listening › Voice then lists the account's ElevenLabs voices beside the installed ones. With one chosen, Varnick streams each line it speaks from ElevenLabs' Flash v2.5 as raw PCM and plays it on its own audio engine, where the synthesizer's buffers play today, so the sound still comes from Varnick's process and Varnick still never hears itself. One kept connection, warmed when "Hey Varnick" is heard, puts the first sound about a quarter of a second after the request. If ElevenLabs fails, or sends no audio within 1.5 s, the line is spoken in the installed voice, so an answer is never lost. Choosing an ElevenLabs voice is consent to send every line Varnick speaks to ElevenLabs.
-status: proposed
+status: accepted
 ---
 
 ## Solution
