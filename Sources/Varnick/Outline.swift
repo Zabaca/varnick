@@ -46,6 +46,8 @@ final class Outline: ObservableObject {
     private let foldCache = OutlineFoldCache()
     /// The bullet ⌥⌘C copied, to be placed again by ⌥⌘V: held here for the launch, never on the system clipboard.
     private var mirrorToPlace: String?
+    /// The other places of the mirrors on screen, worked out once per tree: the dot's tooltip asks on every redraw.
+    private var placesCache: [OutlinePath: OutlinePlaces] = [:]
 
     /// What the rows depend on besides the tree.
     private var scope: OutlineScope { OutlineScope(filter: filterWords, keeping: filterKept, cache: foldCache) }
@@ -117,7 +119,8 @@ final class Outline: ObservableObject {
 
     private func use(_ new: OutlineTree) {
         tree = new
-        if foldCache.count > new.bullets.count + 100 { foldCache.retain(Set(new.bullets.keys)) }
+        foldCache.prune(toBulletsIn: new.bullets)
+        placesCache = [:]
         refreshRows()
         let shown = new.crumbs()
         if shown != crumbs { crumbs = shown }
@@ -163,17 +166,15 @@ final class Outline: ObservableObject {
     /// Applies one edit to the tree and puts it on the undo stack. A refusal changes nothing; one that would put a bullet inside itself also
     /// beeps and says so in the header.
     @discardableResult
-    private func apply(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false, beepOnRefusal: Bool = false) -> Bool {
-        guard load == .ready else { return false }
+    private func apply(_ edit: OutlineEdit, caretBefore: OutlineCaret? = nil, typing: Bool = false) -> OutlineRefusal? {
+        guard load == .ready else { return "not ready" }
         switch tree.applying(edit, now: Date(), scope: scope) {
         case .refused(let reason):
             if let message = reason.message {
                 NSSound.beep()
                 say(message)
-            } else if beepOnRefusal {
-                NSSound.beep()
             }
-            return false
+            return reason
         case .applied(let new, let caret):
             // A new bullet doesn't match the filter, and the caret is on its way into it.
             if let caret { keep(caret.path) }
@@ -183,7 +184,7 @@ final class Outline: ObservableObject {
                 saver.changed(new)
             }
             if let caret { moveCaret(to: caret.path, field: caret.field, .offset(caret.offset)) }
-            return true
+            return nil
         }
     }
 
@@ -225,13 +226,16 @@ final class Outline: ObservableObject {
     /// ⌥⌘V: a mirror of the copied bullet, below the bullet that has the caret. A bullet that is gone, or would end up inside itself, is refused.
     private func placeMirror(after path: OutlinePath) {
         guard let bullet = mirrorToPlace else { return NSSound.beep() }
-        apply(.placeMirror(after: path, bullet: bullet), beepOnRefusal: true)
+        // A refusal with a message has said so; one without (the bullet is gone, or this is nowhere to put it) still beeps.
+        if let refusal = apply(.placeMirror(after: path, bullet: bullet)), refusal.message == nil { NSSound.beep() }
     }
 
-    /// What the dot of a row that is a mirror says: where the bullet is placed besides here.
-    func placesTooltip(for row: OutlineRow) -> String {
-        let others = tree.otherPlaces(of: row.path)
-        return others.isEmpty ? "A mirror" : "Also in:\n" + others.joined(separator: "\n")
+    /// Where a mirror is placed besides at `path`.
+    func places(of path: OutlinePath) -> OutlinePlaces {
+        if let known = placesCache[path] { return known }
+        let places = tree.otherPlaces(of: path)
+        placesCache[path] = places
+        return places
     }
 
     /// ⇧↩ in a bullet: its note opens, empty if it has none, with the caret in it.

@@ -16,6 +16,8 @@ enum Theme {
     static let highlight = Color.yellow.opacity(0.35)
     /// A `#tag` or `@tag` in the outline.
     static let tag = Color.accentColor
+    /// The ring on the dot of a mirror.
+    static let mirror = Color.accentColor
     /// Text on a filled accent or orange badge.
     static let onAccent = Color.black.opacity(0.85)
 

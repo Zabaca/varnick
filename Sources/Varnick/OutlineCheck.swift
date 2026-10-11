@@ -34,8 +34,11 @@ enum OutlineCheck {
     /// On a copy of the tree, deletes the placements of the first mirror one at a time: the bullet must stay while any placement is left and
     /// go with the last. Prints counts only.
     private static func mirrorCheck(_ tree: OutlineTree) {
-        guard let (id, count) = tree.placementCounts().sorted(by: { $0.key < $1.key }).first(where: { $0.value > 1 }) else { return }
+        guard let (id, count) = tree.placementCounts().sorted(by: { $0.key < $1.key }).first(where: { $0.value > 1 }) else {
+            return print("mirror check: no mirror")
+        }
         var copy = tree
+        copy.zoom = []
         var steps: [String] = []
         for _ in 1...count {
             guard let path = copy.placementPaths(of: id, limit: 1).first,

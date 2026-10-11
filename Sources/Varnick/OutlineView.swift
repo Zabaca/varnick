@@ -109,7 +109,16 @@ private struct OutlineCrumbs: View {
         }
     }
 
-    private func clipped(_ text: String) -> String {
+    /// What a mirror's dot says: the other places, each as Home and the crumbs down to its parent.
+    static func tooltip(_ places: OutlinePlaces) -> String {
+        guard !places.named.isEmpty else { return "A mirror" }
+        let lines = places.named.map { (["Home"] + $0.map { clipped($0.text) }).joined(separator: " › ") }
+        return (["Also in:"] + lines + (places.more > 0 ? ["and \(places.more) more"] : [])).joined(separator: "\n")
+    }
+
+    private func clipped(_ text: String) -> String { Self.clipped(text) }
+
+    static func clipped(_ text: String) -> String {
         text.isEmpty ? "(empty)" : text.count > Self.longest ? String(text.prefix(Self.longest)) + "…" : text
     }
 
@@ -176,7 +185,7 @@ private struct OutlineRows: View {
                     // The zoomed bullet's own text, above what is nested under it.
                     if let title = outline.crumbs.last {
                         BulletTexts(outline: outline, path: title.path, text: title.text, kind: .title, note: title.note,
-                                 noteOpen: outline.notePath == title.path, completed: title.completed, dimmed: title.completed)
+                                    noteOpen: outline.notePath == title.path, completed: title.completed, dimmed: title.completed)
                             .id(title.id)
                             .padding(.vertical, 6)
                     }
@@ -248,7 +257,7 @@ private struct OutlineRowView: View {
             disclosure
             dot
             BulletTexts(outline: outline, path: row.path, text: row.text, kind: .row, note: row.note, noteOpen: noteOpen,
-                     completed: row.completed, dimmed: row.dimmed, highlight: highlight)
+                        completed: row.completed, dimmed: row.dimmed, highlight: highlight)
         }
         .padding(.leading, CGFloat(row.depth) * Self.indent)
         .padding(.vertical, 2)
@@ -278,7 +287,7 @@ private struct OutlineRowView: View {
             ZStack {
                 Circle().fill(Color.secondary).frame(width: 5, height: 5)
                 if row.mirrored {
-                    Circle().strokeBorder(Theme.tag, lineWidth: 1).frame(width: 9, height: 9)
+                    Circle().strokeBorder(Theme.mirror, lineWidth: 1).frame(width: 9, height: 9)
                 }
                 if row.hasChildren, row.collapsed {
                     Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 13, height: 13)
@@ -288,7 +297,7 @@ private struct OutlineRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(row.mirrored ? outline.placesTooltip(for: row) : "")
+        .help(row.mirrored ? OutlineCrumbs.tooltip(outline.places(of: row.path)) : "")
     }
 }
 

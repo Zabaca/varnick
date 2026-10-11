@@ -115,11 +115,11 @@ _Avoid_: Owner, leader (zmx's word)
 
 **Live screen**:
 The session's screen as its host's zmx has it, sent to the card of the Mac that isn't in control while the card is shown, and to the session view of a **Device**'s **Phone page** that isn't in control while the page is visible, as it changes. It is drawn at the grid of the Mac or Device in control, scaled to fit the pane (on the phone, the width, with pinch to zoom), and is read-only: it takes no input.
-_Avoid_: Mirror, stream, live view
+_Avoid_: Mirror (an Outline term, see **Mirror**), stream, live view
 
 **Frozen screen**:
 The last **live screen** kept in the card while it isn't updating: the pane was hidden, or the link is down or reconnecting. Marked "Last screen at HH:MM".
-_Avoid_: Mirror
+_Avoid_: Mirror (an Outline term, see **Mirror**)
 
 **Take over**:
 Moving control of a session to the Mac or **Device** that asks: relabel it, detach every client, attach. Offered on the card. Opening a paired Mac's open session, from the session list or from ↩ on a Recent or search row, shows the card first, so control moves only when the user presses Take over.
@@ -191,7 +191,7 @@ _Avoid_: Instance, occurrence, link
 
 **Mirror**:
 A **Bullet** with more than one **Placement**, so an edit in one spot shows in all. Collapse is each placement's own. None is the original: deleting a placement removes only that spot, and the bullet is gone with its last. Not the **Live screen**, which avoids the word.
-_Avoid_: Copy, clone, reference, original
+_Avoid_: Copy, clone, link, reference, original
 
 ### Listening
 
