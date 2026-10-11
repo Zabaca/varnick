@@ -15,11 +15,13 @@ final class SpokenRequests {
     /// `SpokenText.maxRequestCharacters`.
     static let maxSeconds: TimeInterval = 20
     /// How long a request waits, with no new result, before it is taken as said. Speech that goes on (a volatile result) puts it off.
-    static let hold: TimeInterval = 1.0
-    /// How long after speech begins its first volatile result shows up, which the wait for a request allows past its end.
+    static let hold: TimeInterval = 0.5
+    /// How long after speech begins its first volatile result shows up, which the wait for a request after the wake phrase alone
+    /// allows past its deadline. The hold does not cover it: a request already collecting is put off by the volatile result itself.
     static let volatileLatency: TimeInterval = 1.0
-    /// How recently volatile speech must have been heard for a final result to be still to come.
-    static let speechSettle: TimeInterval = hold + 1.5
+    /// How recently volatile speech must have been heard for a final result to be still to come (finals arrive 1 to 2 s after the
+    /// speech). Not tied to `hold`: it was `hold + 1.5`, which was 2.5 s, and stays 2.5 s.
+    static let speechSettle: TimeInterval = 2.5
 
     private struct Request {
         var text: String
@@ -91,6 +93,9 @@ final class SpokenRequests {
             guard phrase.isFinal, let rest = SpokenText.request(in: phrase.text) else { return }
             // A short system sound: the request can follow.
             NSSound(named: "Tink")?.play()
+            // The request is sent after the hold and the answer's writing, usually time enough to open the connection to ElevenLabs.
+            // A cold connection can still be opening then; the 1.5 s deadline counts from when the line's request is sent.
+            Speaker.shared.warmUp()
             if rest.isEmpty {
                 wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
             } else {
@@ -310,7 +315,8 @@ final class SpokenRequests {
         }
         record(saying)
         let speaking = Date()
-        let first = await Speaker.shared.speak(saying)
+        let speech = await Speaker.shared.speak(saying)
+        let first = speech.first
         if drawn, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
 
         // For the latency check: where the time went, as durations, places and kinds only.
@@ -328,6 +334,7 @@ final class SpokenRequests {
               + Self.arrowTiming(pointed: pointing != nil, reread: reread, drawing: drawing, drawn: drawn,
                                  upAfterSpeech: arrowUp.map { $0.timeIntervalSince(request.lastEnd) })
               + "speaking began \(speaking.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
+              + "voice \(speech.by), "
               + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "
               + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended, "
               + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")

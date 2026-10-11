@@ -66,14 +66,52 @@ Mac** or leave it off (it is off by default): then none of this happens.
 
 None of this goes to a model server.
 
+### ElevenLabs
+
+Saving an ElevenLabs key under Settings › Models › Keys lets Varnick ask ElevenLabs for your account's voices, when
+you save it and whenever Settings › Listening opens; that request carries only the key. Choosing one of those
+voices in Settings › Listening › Voice is consent to send every line Varnick speaks to ElevenLabs. To keep the
+lines private, leave the voice on one installed on this Mac, which is the default: then no line is sent.
+
+- **What is spoken.** The text of each line, with the voice's id and the key. An answer names pages, sites,
+  page descriptions, session titles and folders, and what your prompts said, and can repeat words of your request.
+  The fixed lines ("I couldn't answer that.") go too. Never audio from your Mac, or the rows themselves except as
+  an answer repeats them.
+- **The warm-up.** When "Hey Varnick" is heard, Varnick asks ElevenLabs for the chosen voice, to have the
+  connection open when the answer is spoken. It carries the voice's id and the key and nothing of yours.
+- **The fallback.** When ElevenLabs fails, is slow or can't be reached, the line is spoken again in the installed
+  voice you chose before, on this Mac.
+- **The key** is kept in the macOS Keychain and goes only to ElevenLabs, in a request header, and no redirect is
+  followed. Varnick never reads it from the environment or a file, and never logs it or what it speaks.
+
 ### Anthropic, through Screen access
 
 With Screen access on (off by default), the Claude sessions started or restarted after you turn it on can read
 the window in front, or one they name. What they read goes to Anthropic with the session and stays in its
 transcript on this Mac: the window's title, its first 255 controls' label, kind and nearby text and, for a
-window that lists nothing or a Chrome page, its short lines read from a picture (the same limits as above). The
-same caveat holds: typed text of 6 words or fewer in a field Varnick can't place may be among the lines. Nothing
-on this path goes to TypeSafe. Varnick's own panel is never read.
+window that lists nothing or a Chrome page, its short lines read from a picture (the same limits as above), and
+which control has the keyboard focus, by its id or its kind ("a text field that isn't listed", "a password
+field"), never its label or what it holds. The same caveat holds: typed text of 6 words or fewer in a field
+Varnick can't place may be among the lines. Nothing on this path goes to TypeSafe. Varnick's own panel is never
+read.
+
+A session can also ask for a **picture** of the window (`look` with `picture`, or one area of it). A picture shows
+everything on the window, including what you typed into a field, which the listing leaves out, and it goes to
+Anthropic with the session and stays in its transcript on this Mac. Varnick paints black the password fields it
+can see before it sends the picture. It can't see one where the app doesn't report it (a Chrome page whose tree
+is hidden, a canvas app, a remote desktop, a virtual machine), in a window with more controls than it reads,
+where an app shows a password in a plain field ("show password"), or in a field that has no frame, and those
+show. The reply says when it reached only part of a window. The picture needs Screen Recording. Varnick's log
+holds its kind, pixel size and byte count, never what it shows. If you don't want what is on a window sent to
+Anthropic, leave Screen access off, or close the window first.
+
+A session can also ask for a picture of **every display, or of one** (`look` with `screen` or `display`, or one area
+of them). **Nothing is hidden in it.** It shows everything on those displays: Varnick's own window, with other
+sessions' text, whatever you typed, and every password field, because Varnick reads none of the windows on a
+screen and so can't find their fields to paint black. It goes to Anthropic with the session and stays in its
+transcript on this Mac. The reply says nothing was blacked out. It needs Screen Recording. The log holds the number
+of pictures and each one's kind, pixel size and byte count, never what they show. If you don't want your screen sent
+to Anthropic, leave Screen access off, or close what you don't want seen first.
 
 ### A model server you name
 
@@ -200,23 +238,43 @@ may also ask again after some weeks whether Varnick may keep recording (not veri
 Point at the screen itself only reads the window in front, and only when you ask about the screen. The arrow it draws can't
 take focus or clicks, and goes by itself.
 
-### Screen access clicks without asking
+### Screen access acts without asking
 
 Screen access (ADR 0023) gives the sessions started or restarted while it is on a `varnick` MCP server with
-`look`, `point` and `click`.
+`look`, `point`, `click`, `type`, `drag` and `window`.
 
-- **A session can click for you, and nothing asks.** The arrow shows on the target for a second, then the click
-  brings its app to the front and happens: no approval prompt, no per-pane switch, no list of apps to keep out. There is no `type`. A session
-  with Skip permissions gets no prompt from Claude Code either; one without gets Claude Code's own prompt for an
-  MCP tool you haven't allowed (inferred, not checked). Whatever can steer a session can then click as you.
+- **A session can click, type, drag and move windows for you, and nothing asks.** The arrow shows on the target
+  for a second, then the app comes to the front (not for `window`) and the action happens: no approval prompt, no
+  per-pane switch, no list of apps to keep out. A session with Skip permissions gets no prompt from Claude Code
+  either; one without gets Claude Code's own prompt for an MCP tool you haven't allowed (inferred, not checked).
+  Whatever can steer a session (a page it read, a file, a message) can then act as you. Typing is the strongest:
+  it can type a command into a terminal, a message into a chat or a form's fields.
+- **Typing is made of key events, and a field's value is never set.** The app sees keystrokes as if you typed
+  them, in the app in front. `look` never reads what a field holds, so a session can't check what it typed except
+  by selecting the field's contents first and typing over them.
+- **Nothing is typed or pressed while a password field has focus,** where Varnick can see one. It can't where the
+  app doesn't report it: a Chrome page whose tree is hidden, a canvas app, a remote desktop or a virtual machine.
+  A session can type into a password field there, as ADR 0021 accepted for reading. Varnick can't tell a password
+  you meant to give from one a session found in a file or a page, and what a session types goes to Anthropic with
+  its context, so you type it yourself.
+- **Some combos are refused:** Varnick's own shortcuts that work anywhere (show or hide, pin, Listening), and macOS's
+  log out, lock screen and Force Quit. Every other combo goes to the app in front as if you pressed it, ⌘Q and ⌘W
+  included. A click or drag on the menu bar can still reach Apple menu › Lock Screen or Log Out.
+- **Typing stops** when you turn the switch off, bring up Varnick's panel, or another app comes forward.
+- **Varnick's log never holds what a session typed.** It holds the tool, the outcome's kind, how many characters
+  and keys went, and durations.
 - **It adds little today,** because every pane already has the permissions (above): a session could already use
   `osascript`, `screencapture` or its own code. Screen access gives it a supported way with an arrow and a
   switch, not a boundary.
 - **The server only relays.** `Varnick --mcp` sends each call as one line on a socket only your account can open,
   and the running Varnick answers. A paired Mac or a device can't send one: the peer relay refuses it. Any
   process of yours on this Mac can, naming any pane's id; the id is a label, not a credential.
-- **Varnick's own window is refused,** and so is a session another Mac or a device is in control of. Turning the
-  switch off refuses every call at once.
+- **`look` can return a picture of a window,** which takes nothing from the screen but that window (see above for
+  what it shows and what is hidden), **or of the whole screen,** which takes everything on it and hides nothing
+  (see above).
+- **Varnick's own window is refused for reading controls and for actions,** though not in a picture of the screen
+  (above), and so is a session another Mac or a device is in control of. Turning the
+  switch off refuses every call at once. `window` moves no pointer and brings no app forward.
 
 ### The downloaded app moves itself to Applications
 

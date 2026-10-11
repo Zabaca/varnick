@@ -205,8 +205,13 @@ enum ScreenGeometry {
     /// `box` carried along with its window from `was` to `now`; nil when the window changed size, since the box no longer
     /// means anything.
     static func moved(_ box: CGRect, from was: CGRect, to now: CGRect) -> CGRect? {
-        guard abs(was.width - now.width) <= 2, abs(was.height - now.height) <= 2 else { return nil }
+        guard sameSize(was, now) else { return nil }
         return box.offsetBy(dx: now.minX - was.minX, dy: now.minY - was.minY)
+    }
+
+    /// Whether two frames of a window are one size, to within 2 points.
+    static func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.width - b.width) <= 2 && abs(a.height - b.height) <= 2
     }
 }
 

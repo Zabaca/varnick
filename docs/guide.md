@@ -112,6 +112,12 @@ Listening transcribes your microphone and what the Mac plays, on this Mac, into 
 (`Varnick/transcripts/` under Application Support). It is off at each launch and needs macOS 26. macOS asks for
 the microphone and system audio permissions the first time.
 
+Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,
+save an ElevenLabs API key under Settings › Models › Keys (it needs the Text to Speech and Voices Read
+permissions) and pick one of your account's voices in the same Voice list. That sends everything Varnick speaks to
+ElevenLabs ([privacy and security](privacy-and-security.md#elevenlabs)). The installed voice you had stays as the
+Fallback voice and speaks when ElevenLabs fails or takes more than 1.5 seconds to start.
+
 ## Point at the screen
 
 With Hey Varnick on, Settings › Listening › **Point at the screen** lets you ask about what is in front of
@@ -136,18 +142,33 @@ Claude session and shell in its panes gets them too, kept running in zmx or not:
 ## Screen access
 
 Settings › Claude › **Screen access** (off by default) gives the Claude sessions you start or restart in
-Varnick's panes three tools, from an MCP server named `varnick`: `look` at the controls of a window on your Mac,
+Varnick's panes six tools, from an MCP server named `varnick`: `look` at the controls of a window on your Mac,
 `point` at one with the same big arrow Point at the screen draws, signed with the session's name and its
-note, and `click`. A session that hits a setting it can't see can look, show you where to click, or click
+note, `click`, `type` (text and key combos), `drag` between two controls or points, and `window` to move or
+resize one. A session that hits a setting it can't see can look, show you where to click, or do it
 for you. The server is Varnick's own binary (`Varnick --mcp`) and only passes each call on: the running
-Varnick does the reading, drawing and clicking, with the code Hey Varnick uses. It needs Accessibility, and
-Screen Recording to read the text of a window that lists nothing or of a Chrome page; Settings asks for
-both.
+Varnick does the reading, drawing and acting, with the code Hey Varnick uses. It needs Accessibility, and
+Screen Recording to read the text of a window that lists nothing or of a Chrome page, or to return a picture;
+Settings asks for both.
 
-**A click happens without asking**: the arrow shows on the target for a second first, then the click brings
-its app to the front, and there is no `type`. A session started with Skip permissions has no prompt before a tool at all; one without gets Claude
+`look` with `picture` also returns an image of the window (or of one area of it). It shows everything on the
+window, typed text included, which the listing leaves out, and goes to Anthropic with the session. Password
+fields Varnick can see are painted black first; the ones it can't see are listed in
+[privacy and security](privacy-and-security.md#anthropic-through-screen-access).
+
+`look` with `screen` returns an image of every display instead, or with `display` and a number, of one; `rect`
+crops them. The reply lists the displays with their frames, and says each image's area and pixels per point, so
+a session can turn a place in an image into a point to click. It lists no controls unless an app is named too. It
+needs Screen Recording. **Nothing in it is hidden:** it shows everything on those displays, Varnick's own window
+and other sessions, what you typed and any password field, and goes to Anthropic with the session.
+
+**Nothing asks before an action**: the arrow shows on the target for a second first, then the app comes to the
+front (not for `window`) and a click, typing, drag or resize happens. `look` also says which control has focus.
+What `type` refuses, when it stops, and what is and isn't logged: see
+[privacy and security](privacy-and-security.md#screen-access-acts-without-asking). A session
+started with Skip permissions has no prompt before a tool at all; one without gets Claude
 Code's own prompt for a tool you haven't allowed, and its per-tool rules can allow `look` and `point` while
-still asking for `click` (not checked). A session gains the tools when it starts, so restart a running one
+still asking for `click`, `type`, `drag` and `window` (not checked). A session gains the tools when it starts, so restart a running one
 (⌘⌥R) after turning the switch on; turning it off stops every session's tools at once. It is independent of
 Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
 for what a session is shown.

@@ -3,9 +3,10 @@ import ApplicationServices
 import Foundation
 import VarnickPeer
 
-// Screen access for sessions (ADR 0023), the running Varnick's half: the answers to the `look`, `point` and `click` calls a pane's
-// `Varnick --mcp` relays (`ScreenMCP`). They are done here, in this process under its own grants, with the code Hey Varnick points
-// with: `ScreenReader`, `ScreenText` and `ArrowOverlay`. What a session may be shown is in where-it-breaks.md, Screen access.
+// Screen access for sessions (ADR 0023), the running Varnick's half: the answers to the `look`, `point`, `click`, `type`, `drag` and
+// `window` calls a pane's `Varnick --mcp` relays (`ScreenMCP`); the last three are in ScreenInput.swift. They are done here, in this
+// process under its own grants, with the code Hey Varnick points with: `ScreenReader`, `ScreenText` and `ArrowOverlay`. What a session
+// may be shown is in where-it-breaks.md, Screen access.
 
 /// Why a call did nothing. The message is the session's to act on; the log names only the kind.
 indirect enum ScreenRefusal: Error {
@@ -32,16 +33,35 @@ indirect enum ScreenRefusal: Error {
     case overlapped
     /// A window of Varnick's own is at the point to click.
     case covered
-    /// The click waited so long for its turn that the relay has given up on it.
+    /// The call waited so long for its turn that the relay has given up on it.
     case late
-    /// Another arrow was drawn over this click's.
+    /// Another arrow was drawn over this call's.
     case replaced
     case bad(String)
-    /// Refused once the click was under way, which says so.
-    case stopped(ScreenRefusal)
+    /// The app brought forward is no longer in front, so what is typed would go elsewhere.
+    case leftFront
+    /// A secure text field has focus: nothing is typed or pressed.
+    case password
+    /// A window of Varnick's own has the keyboard, so typing would go into it.
+    case varnickKey
+    /// The keyboard is with another app than the one typed into.
+    case keyboardElsewhere
+    /// Accessibility did not say who has the keyboard in time.
+    case keyboardUnknown
+    /// Refused once the call was under way: what was done by then, and the counts for the log.
+    case stopped(ScreenRefusal, String, String)
+    /// A picture was asked for and Varnick does not have Screen Recording.
+    case noScreenRecording
+    /// A picture was asked for and could not be made: the reason, and its kind for the log.
+    case noPicture(String, String)
+
+    /// Said of a missing Screen Recording grant, by the text step's note and by a picture's refusal.
+    static let screenRecordingWords = "Varnick doesn't have Screen Recording (the user can grant it in Settings › Claude, under Screen access)"
 
     @MainActor var message: String {
         switch self {
+        case .noScreenRecording: "No picture was taken: \(Self.screenRecordingWords)."
+        case .noPicture(let why, _): "No picture was taken: \(why)."
         case .unreadable: "Varnick couldn't read the request"
         case .versionDiffers: "Restart this session\(Self.restartKeys.map { " (\($0))" } ?? "") to update Varnick's tools"
         case .off: "Screen access is off in Varnick's Settings › Claude"
@@ -56,15 +76,20 @@ indirect enum ScreenRefusal: Error {
         case .noApp(let name): "No running app named \(name)"
         case .noWindow(let name): "\(name) has no window to look at"
         case .offDisplay: "That is on no display"
-        case .noPostAccess: "macOS hasn't let Varnick post clicks. Ask the user to grant Accessibility in Varnick's Settings › Claude, under Screen access"
+        case .noPostAccess: "macOS hasn't let Varnick post clicks or keys. Ask the user to grant Accessibility in Varnick's Settings › Claude, under Screen access"
         case .notFront: "The app did not come to the front when Varnick asked, so a click would only have focused it"
         case .unplaced: "Couldn't tell where the page is: look again"
         case .overlapped: "Another window is over that point, so the click would not land on the target"
         case .covered: "A window of Varnick's own is at that point, which a session may not click. Ask the user to move or hide it"
-        case .late: "The click waited too long for its turn"
-        case .replaced: "Another arrow was drawn over this click's"
+        case .late: "The call waited too long for its turn"
+        case .replaced: "Another arrow was drawn over this call's"
         case .bad(let why): why
-        case .stopped(let why): why.message + ". Nothing was clicked"
+        case .leftFront: "The app is no longer in front"
+        case .password: "A password field has focus. Varnick doesn't type into one: ask the user"
+        case .varnickKey: "A window of Varnick's own has the keyboard, which a session may not type into. Ask the user to put it away"
+        case .keyboardElsewhere: "The keyboard is with another app than the one being typed into"
+        case .keyboardUnknown: "Couldn't tell which app has the keyboard in time, so nothing more is typed"
+        case .stopped(let why, let done, _): why.message + ". " + done
         }
     }
 
@@ -92,8 +117,21 @@ indirect enum ScreenRefusal: Error {
         case .late: "late"
         case .replaced: "replaced"
         case .bad: "bad arguments"
-        case .stopped(let why): why.logKind
+        case .leftFront: "left front"
+        case .password: "password field"
+        case .varnickKey: "Varnick key"
+        case .keyboardElsewhere: "keyboard elsewhere"
+        case .keyboardUnknown: "keyboard unknown"
+        case .stopped(let why, _, _): why.logKind
+        case .noScreenRecording: "no Screen Recording"
+        case .noPicture(_, let kind): kind
         }
+    }
+
+    /// Counts of what a call that stopped partway did, for the log.
+    var logCounts: String {
+        if case .stopped(_, _, let counts) = self { return counts }
+        return ""
     }
 
     /// The restart shortcut as the user has it bound; nil when unbound.
@@ -101,25 +139,30 @@ indirect enum ScreenRefusal: Error {
 }
 
 /// What a tool did: the text the session reads, and counts for the log.
-private struct Done {
+struct Done {
     var text: String
     var counts = ""
+    /// A `look`'s picture.
+    var image: ScreenReply.Image?
+    /// A screen `look`'s pictures.
+    var images: [ScreenReply.Image]?
 }
 
 /// Answers the screen tools for the panes' sessions. Reads, presses and posted events run off the main actor, as `ScreenReader.read`
-/// does; this type holds the id tables and the one-click-at-a-time queue.
+/// does; this type holds the id tables and the one-action-at-a-time queue.
 @MainActor
 final class ScreenAccess {
     static let shared = ScreenAccess()
 
-    /// How long the Arrow shows on a click's target before the click: long enough to see it fade in and read the sign.
+    /// How long the Arrow shows on an action's target before it: long enough to see it fade in and read the sign.
     nonisolated static let clickLead: Duration = .seconds(1)
     static let clickLinger: TimeInterval = 2
     /// How long a click waits for the app it asked to come forward to be in front, and then lets it settle before posting.
     static let frontWait: Duration = .seconds(1)
     static let frontSettle: Duration = .milliseconds(150)
     /// A click still waiting, leading or bringing its app forward this long after its request arrived is dropped: the relay gives up
-    /// at 15 s, and the reads and the press after the last check can take several seconds (where-it-breaks.md, Screen access).
+    /// at 15 s, and the reads and the press after the last check can take several seconds (where-it-breaks.md, Screen access). Each of
+    /// `type`, `drag` and `window` has its own limit for the same reason.
     static let staleAfter: Duration = .seconds(9)
     /// How far a control's centre may move from where the arrow was drawn before the arrow is drawn again on it.
     static let arrowFollows: CGFloat = 2
@@ -130,7 +173,7 @@ final class ScreenAccess {
 
     /// Each pane's targets from its last `look`: replaced by the next one, held in memory only, and dropped once the pane has gone.
     private var targets: [UUID: [String: ScreenTarget]] = [:]
-    private var clicking = false
+    private var acting = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
     /// Turning the switch off: every id and any Arrow of ours goes at once.
@@ -154,16 +197,18 @@ final class ScreenAccess {
             guard let request = PeerJSON.decode(ScreenRequest.self, from: line) else { throw ScreenRefusal.unreadable }
             tool = ScreenTool(rawValue: request.tool)
             let done = try await run(request, tool: tool, arrived: arrived)
-            reply = ScreenReply(text: done.text, isError: false)
+            reply = ScreenReply(text: done.text, isError: false, image: done.image, images: done.images)
             counts = done.counts
         } catch let refusal as ScreenRefusal {
             kind = refusal.logKind
+            counts = refusal.logCounts
             reply = ScreenReply(text: refusal.message, isError: true)
         } catch {
             kind = "failed"
             reply = ScreenReply(text: "The call failed inside Varnick", isError: true)
         }
-        // Only the tool, the outcome's kind, durations and counts: never a label, note, title, app name, session name or the request's own words.
+        // Only the tool, the outcome's kind, durations and counts (a picture's kind, pixel size and byte count among them): never a label,
+        // note, title, app name, session name, the request's own words or anything a picture showed.
         NSLog("Varnick: screen %@ %@%@ [%.2f s]", tool?.rawValue ?? "-", kind, counts.isEmpty ? "" : " (\(counts))",
               arrived.duration(to: .now).seconds)
         return PeerJSON.line(reply)
@@ -179,6 +224,9 @@ final class ScreenAccess {
         case .look: return try await look(request.args, pane: id)
         case .point: return try await point(request.args, pane: id, name: name)
         case .click: return try await click(request.args, paneText: request.pane, pane: id, name: name, arrived: arrived)
+        case .type: return try await type(request.args, paneText: request.pane, pane: id, name: name, arrived: arrived)
+        case .drag: return try await drag(request.args, paneText: request.pane, pane: id, name: name, arrived: arrived)
+        case .window: return try await window(request.args, paneText: request.pane, pane: id, name: name, arrived: arrived)
         case nil: throw ScreenRefusal.bad("Unknown tool \(request.tool)")
         }
     }
@@ -194,13 +242,13 @@ final class ScreenAccess {
         throw ScreenRefusal.noPane
     }
 
-    /// What can change while a click waits for its turn or leads: the switch, the pane (closed, or another Mac in control now), and
-    /// whether the relay is still waiting.
-    private func stillAllowed(paneText: String, arrived: ContinuousClock.Instant) throws {
+    /// What can change while a call waits for its turn or leads: the switch, the pane (closed, or another Mac in control now), and
+    /// whether the relay is still waiting. `limit` is the call's age limit; nil for a check that is no longer about the relay.
+    func stillAllowed(paneText: String, arrived: ContinuousClock.Instant, limit: Duration?) throws {
         guard Settings.shared.screenAccess else { throw ScreenRefusal.off }
         guard let model = PeerManager.shared.model else { throw ScreenRefusal.starting }
         _ = try pane(paneText, in: model)
-        guard arrived.duration(to: .now) < Self.staleAfter else { throw ScreenRefusal.late }
+        if let limit { guard arrived.duration(to: .now) < limit else { throw ScreenRefusal.late } }
     }
 
     private func prune(in model: LauncherModel) {
@@ -209,15 +257,138 @@ final class ScreenAccess {
         targets = targets.filter { open.contains($0.key) }
     }
 
-    private func target(_ id: String, pane: UUID) throws -> ScreenTarget {
+    func target(_ id: String, pane: UUID) throws -> ScreenTarget {
         guard let target = targets[pane]?[id.trimmingCharacters(in: .whitespaces).lowercased()] else { throw ScreenRefusal.lookFirst }
         guard !ScreenReader.isVarnick(target) else { throw ScreenRefusal.varnickTarget }
         return target
     }
 
+    /// Whether an id is a window's (`w1`): only `point` and `window` take one.
+    static func isWindowID(_ id: String) -> Bool { id.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("w") }
+
+    /// A control's or recognised text's target, for `click`, `type` and `drag`: a window's id is refused.
+    func controlTarget(_ id: String, pane: UUID) throws -> ScreenTarget {
+        guard !Self.isWindowID(id) else { throw ScreenRefusal.bad("That is a window: use window, or an id of a control") }
+        return try target(id, pane: pane)
+    }
+
+    private static let unreadableRect = "The rectangle needs numbers x, y, width and height"
+
     // MARK: look
 
+    /// The area a `rect` asks for, nil when none was sent. One that was sent and can't be read is refused, not dropped.
+    private func cropArea(_ args: ScreenArguments) throws -> CGRect? {
+        guard args.rectUnreadable != true else { throw ScreenRefusal.bad(Self.unreadableRect) }
+        guard let rect = args.rect?.frame else { return nil }
+        guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
+            throw ScreenRefusal.bad("The rectangle needs a positive width and height")
+        }
+        return rect
+    }
+
     private func look(_ args: ScreenArguments, pane: UUID) async throws -> Done {
+        guard args.screen == true || args.display != nil || args.displayUnreadable == true else {
+            let (done, table) = try await lookWindow(args)
+            targets[pane] = table
+            return done
+        }
+        // Early, so a refusal costs no read.
+        guard ScreenText.hasAccess else { throw ScreenRefusal.noScreenRecording }
+        guard args.displayUnreadable != true, args.display.map({ $0 >= 1 }) ?? true else {
+            throw ScreenRefusal.bad("The display needs a whole number from the Displays list, 1 or more")
+        }
+        let crop = try cropArea(args)
+        // The listing is the window's, only when an app is named; the pictures include the window, so none is taken of it alone.
+        var window: (done: Done, table: [String: ScreenTarget])?
+        if let named = args.app?.trimmingCharacters(in: .whitespaces), !named.isEmpty {
+            var windowArgs = args
+            windowArgs.picture = nil
+            windowArgs.rect = nil
+            windowArgs.rectUnreadable = nil
+            window = try await lookWindow(windowArgs)
+        }
+        let shown = try await screenPictures(display: args.display, crop: crop, textBytes: window?.done.text.utf8.count ?? 0)
+        guard let window else { return shown }
+        // Only now, so a refused screen part leaves the ids of the last look standing, as a refused picture does.
+        targets[pane] = window.table
+        return Done(text: window.done.text + "\n" + shown.text, counts: window.done.counts + ", " + shown.counts, images: shown.images)
+    }
+
+    /// What the text after the pictures can take, so the pictures leave room for it: the Displays list and a line for each picture.
+    private static let screenTextReserve = 600
+    private static let screenTextPerDisplay = 300
+
+    /// One picture per display chosen, each given an equal share of what is left under the socket's cap. Nothing is painted black.
+    private func screenPictures(display: Int?, crop: CGRect?, textBytes: Int) async throws -> Done {
+        let screens: ScreenText.Screens
+        do {
+            screens = try await ScreenText.screens(display: display, crop: crop)
+        } catch {
+            try Task.checkCancellation()
+            switch error {
+            case ScreenText.Failure.noDisplay(let count):
+                throw ScreenRefusal.noPicture("there is no display \(display ?? 0): the Mac has \(count)", error.logKind)
+            case ScreenText.Failure.outsideDisplays:
+                throw ScreenRefusal.noPicture("that area is outside the display\(display == nil ? "s" : "")", error.logKind)
+            default:
+                throw ScreenRefusal.noPicture("the screen couldn't be captured (\(error.logKind))", error.logKind)
+            }
+        }
+        try Task.checkCancellation()
+        let count = screens.shots.count
+        let total = ScreenPicture.maxBytes(textBytes: textBytes + Self.screenTextReserve + Self.screenTextPerDisplay * screens.displays.count,
+                                           count: count)
+        let startingLongSide = ScreenPicture.startingLongSide(forCount: count)
+        let made: [(display: ScreenText.Display, picture: ScreenPicture.Made)]
+        do {
+            made = try await Task.detached(priority: .userInitiated) {
+                var made: [(display: ScreenText.Display, picture: ScreenPicture.Made)] = []
+                var left = total
+                for (index, shot) in screens.shots.enumerated() {
+                    do {
+                        let picture = try ScreenPicture.make(ScreenText.Capture(image: shot.image, window: shot.display.frame), secure: [],
+                                                             windowWas: nil, crop: crop, maxBytes: left / (count - index),
+                                                             longSide: startingLongSide)
+                        left -= picture.data.count
+                        made.append((shot.display, picture))
+                    } catch ScreenPicture.Failure.outsideWindow {
+                        // A sliver of the area that holds no whole pixel of this display.
+                        continue
+                    }
+                }
+                return made
+            }.value
+        } catch let failure as ScreenPicture.Failure {
+            throw ScreenRefusal.noPicture(failure.message, "picture \(failure)")
+        }
+        guard !made.isEmpty else { throw ScreenRefusal.noPicture("that area is outside the displays", "outside displays") }
+
+        var lines = ["Displays:"]
+        for display in screens.displays {
+            lines.append("\(display.number)  \(display.isMain ? "main display, " : "")frame \(Self.describe(display.frame))")
+        }
+        for (index, item) in made.enumerated() {
+            let picture = item.picture
+            lines.append("Picture \(index + 1) of \(made.count): display \(item.display.number), \(picture.kind.uppercased()), "
+                         + "\(picture.width)x\(picture.height) pixels, of the area \(Self.describe(picture.area)) in screen points "
+                         + "(\(String(format: "%.2f", picture.pixelsPerPoint)) pixels per point).")
+        }
+        lines.append("Nothing was blacked out: the pictures show everything on those displays, including Varnick's own window and "
+                     + "other sessions, what was typed, and any password field.")
+        let counts = "pictures \(made.count)" + made.map { ", \($0.picture.kind) \($0.picture.width)x\($0.picture.height) \($0.picture.data.count) bytes" }.joined()
+        let images = made.map { ScreenReply.Image(data: $0.picture.data.base64EncodedString(), mimeType: $0.picture.mimeType) }
+        return Done(text: lines.joined(separator: "\n"), counts: counts, images: images)
+    }
+
+    /// A window's listing and its ids, which the caller keeps once the whole reply is made.
+    private func lookWindow(_ args: ScreenArguments) async throws -> (Done, [String: ScreenTarget]) {
+        // Early, so a refusal costs no read.
+        let wantsPicture = args.picture == true
+        var crop: CGRect?
+        if wantsPicture {
+            guard ScreenText.hasAccess else { throw ScreenRefusal.noScreenRecording }
+            crop = try cropArea(args)
+        }
         let app: NSRunningApplication
         if let named = args.app?.trimmingCharacters(in: .whitespaces), !named.isEmpty {
             guard let found = ScreenReader.application(named: named) else { throw ScreenRefusal.noApp(named) }
@@ -234,7 +405,7 @@ final class ScreenAccess {
         // The picture's text, when the window lists nothing, Chrome hides its page, or the session asked for it.
         var text: ScreenText.WindowText?
         var notes: [String] = []
-        if reading.elements.isEmpty || reading.chromeBlind || args.text == true {
+        if reading.elements.isEmpty || reading.chromeBlind || args.asksForText {
             if reading.chromeBlind, reading.emptyWebArea == nil {
                 // Without the page's frame its lines can't be told from the tab titles and the toolbar's.
                 notes.append("Text was not read from a picture: the page's frame is unknown.")
@@ -243,7 +414,7 @@ final class ScreenAccess {
                                                            within: reading.chromeBlind ? reading.emptyWebArea : nil, pointer: pointer)
                 if let skipped = found.look.skipped {
                     notes.append(skipped == "no Screen Recording"
-                                 ? "Text was not read from a picture: Varnick doesn't have Screen Recording (the user can grant it in Settings › Claude, under Screen access)."
+                                 ? "Text was not read from a picture: \(ScreenRefusal.screenRecordingWords)."
                                  : "Text was not read from a picture: \(skipped).")
                 } else {
                     text = found
@@ -252,7 +423,11 @@ final class ScreenAccess {
         }
 
         var table: [String: ScreenTarget] = [:]
-        var lines = ["\(appName), window \"\(reading.windowTitle)\", frame \(Self.describe(reading.windowFrame ?? .zero))"]
+        // The window's own id, taken by `point` and `window`.
+        if let window = reading.window {
+            table["w1"] = ScreenTarget(reference: window, frame: reading.windowFrame ?? .zero, note: "Here's the window.", description: "window")
+        }
+        var lines = ["w1  \(appName), window \"\(reading.windowTitle)\", frame \(Self.describe(reading.windowFrame ?? .zero))"]
         for (index, element) in reading.elements.enumerated() {
             let id = "e\(index + 1)"
             table[id] = ScreenTarget(reference: element.reference, frame: element.frame, note: ScreenElements.note(for: element),
@@ -266,14 +441,64 @@ final class ScreenAccess {
                                      description: element.description, window: reading.window, windowFrame: text?.window)
             lines.append("\(id)  \"\(element.label)\" (text on screen)  \(Self.describe(element.frame))")
         }
+        lines.append(Self.focusLine(reading.focus))
         if reading.elements.count >= ScreenElements.maxListed {
             notes.append("Only the first \(ScreenElements.maxListed) controls are listed.")
         }
         if reading.elements.isEmpty, text?.lines.isEmpty ?? true {
             notes.append("Nothing is listed in this window.")
         }
-        targets[pane] = table
-        return Done(text: (lines + notes).joined(separator: "\n"), counts: "elements \(reading.elements.count), text lines \(text?.lines.count ?? 0)")
+        var counts = "elements \(reading.elements.count), text lines \(text?.lines.count ?? 0)"
+        var image: ScreenReply.Image?
+        if wantsPicture {
+            // After the list, so the picture is made to fit what else the reply holds.
+            let listing = (lines + notes).joined(separator: "\n")
+            let made = try await picture(of: reading, pid: app.processIdentifier, crop: crop, textBytes: listing.utf8.count)
+            image = ScreenReply.Image(data: made.data.base64EncodedString(), mimeType: made.mimeType)
+            notes.append("Picture: \(made.kind.uppercased()), \(made.width)x\(made.height) pixels, of the area \(Self.describe(made.area)) in screen points "
+                         + "(\(String(format: "%.2f", made.pixelsPerPoint)) pixels per point).")
+            if made.hidden > 0 { notes.append("\(made.hidden) password field\(made.hidden == 1 ? "" : "s") in it painted black.") }
+            if reading.walkCutShort || reading.chromeBlind {
+                // Not "none": the window's controls were only partly reached, so a password field may be in the picture.
+                notes.append("Varnick reached only part of this window's controls, so a password field may be in the picture.")
+            } else if made.hidden == 0 {
+                notes.append("No password fields seen in it.")
+            }
+            counts += ", picture \(made.kind) \(made.width)x\(made.height) \(made.data.count) bytes, hidden \(made.hidden)"
+        }
+        return (Done(text: (lines + notes).joined(separator: "\n"), counts: counts, image: image), table)
+    }
+
+    /// The window `look` read, as a picture (`ScreenPicture`), off the main actor. Password fields the walk found are painted black.
+    private func picture(of reading: ScreenReader.Reading, pid: pid_t, crop: CGRect?, textBytes: Int) async throws -> ScreenPicture.Made {
+        guard let frame = reading.windowFrame else { throw ScreenRefusal.noPicture("the window's frame couldn't be read", "no window frame") }
+        let capture: ScreenText.Capture
+        do {
+            capture = try await ScreenText.capture(pid: pid, near: frame)
+        } catch {
+            try Task.checkCancellation()
+            throw ScreenRefusal.noPicture("the window couldn't be captured (\(error.logKind))", error.logKind)
+        }
+        try Task.checkCancellation()
+        let secure = reading.secureFrames
+        let limit = ScreenPicture.maxBytes(textBytes: textBytes)
+        do {
+            return try await Task.detached(priority: .userInitiated) {
+                try ScreenPicture.make(capture, secure: secure, windowWas: frame, crop: crop, maxBytes: limit)
+            }.value
+        } catch let failure as ScreenPicture.Failure {
+            throw ScreenRefusal.noPicture(failure.message, "picture \(failure)")
+        }
+    }
+
+    /// Which control has focus: its id, else its kind. Never a label or a value.
+    private static func focusLine(_ focus: ScreenReader.Focus) -> String {
+        switch focus {
+        case .none: return "Focus: none"
+        case .listed(let index): return "Focus: e\(index + 1)"
+        case .password: return "Focus: a password field"
+        case .unlisted(let kind): return "Focus: \("aeiou".contains(kind.first ?? "x") ? "an" : "a") \(kind) that isn't listed"
+        }
     }
 
     // MARK: point
@@ -288,6 +513,8 @@ final class ScreenAccess {
             frame = now
             fallback = target.note
             aimed = id.lowercased()
+        } else if args.rectUnreadable == true {
+            throw ScreenRefusal.bad(Self.unreadableRect)
         } else if let rect = args.rect?.frame {
             guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
                 throw ScreenRefusal.bad("The rectangle needs a positive width and height")
@@ -312,7 +539,7 @@ final class ScreenAccess {
         }
         let aim: Aim
         if let id = args.id {
-            aim = .target(id.lowercased(), try target(id, pane: pane))
+            aim = .target(id.lowercased(), try controlTarget(id, pane: pane))
         } else if let at = args.at?.point {
             guard at.x.isFinite, at.y.isFinite, Self.onDisplay(at) else { throw ScreenRefusal.offDisplay }
             // Early, so a refusal waits for nothing; it is asked again right before the click.
@@ -323,14 +550,14 @@ final class ScreenAccess {
             throw ScreenRefusal.bad("Give an id from the last look, or a point `at`")
         }
 
-        // One click at a time across all sessions: a second waits for the first to finish.
+        // One action at a time across all sessions: a second waits for the first to finish.
         await acquire()
         defer { release() }
 
         // The arrow's generation once it is drawn: when another arrow has replaced it, the user is not looking at this click's target.
         var drawn: Int?
         do {
-            try stillAllowed(paneText: paneText, arrived: arrived)
+            try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.staleAfter)
             let sign: String, shown: CGRect
             switch aim {
             case .target(let id, let target):
@@ -344,7 +571,7 @@ final class ScreenAccess {
             guard ArrowOverlay.shared.show(frame: shown, note: sign) else { throw ScreenRefusal.offDisplay }
             drawn = ArrowOverlay.shared.generation
             try? await Task.sleep(for: Self.clickLead)
-            try stillAllowed(paneText: paneText, arrived: arrived)
+            try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.staleAfter)
             guard ArrowOverlay.shared.generation == drawn else { throw ScreenRefusal.replaced }
 
             // The click's own app in front first: the first click on a window of an app that is not in front only brings it forward.
@@ -362,7 +589,7 @@ final class ScreenAccess {
                 }
             }
             // The wait above can be long: the age, the switch, the pane and the arrow are asked again, last before the reads and the click.
-            try stillAllowed(paneText: paneText, arrived: arrived)
+            try stillAllowed(paneText: paneText, arrived: arrived, limit: Self.staleAfter)
             guard ArrowOverlay.shared.generation == drawn else { throw ScreenRefusal.replaced }
 
             let done: String
@@ -400,22 +627,22 @@ final class ScreenAccess {
             return Done(text: done + ". Look again to see what happened.")
         } catch let refusal as ScreenRefusal {
             if let drawn, ArrowOverlay.shared.generation == drawn { ArrowOverlay.shared.hide() }
-            throw ScreenRefusal.stopped(refusal)
+            throw ScreenRefusal.stopped(refusal, "Nothing was clicked", "")
         }
     }
 
-    private func acquire() async {
-        if clicking {
+    func acquire() async {
+        if acting {
             await withCheckedContinuation { waiting.append($0) }
         } else {
-            clicking = true
+            acting = true
         }
     }
 
-    /// Hands the turn to the next click, if one waits, without letting a third in between.
-    private func release() {
+    /// Hands the turn to the next action, if one waits, without letting a third in between.
+    func release() {
         if waiting.isEmpty {
-            clicking = false
+            acting = false
         } else {
             waiting.removeFirst().resume()
         }
@@ -424,7 +651,7 @@ final class ScreenAccess {
     // MARK: The click itself
 
     /// The app a target is in, never Varnick.
-    private static func owner(of target: ScreenTarget) -> NSRunningApplication? {
+    static func owner(of target: ScreenTarget) -> NSRunningApplication? {
         guard let element = (target.reference ?? target.window)?.element else { return nil }
         var pid: pid_t = 0
         guard AXUIElementGetPid(element, &pid) == .success, pid != ProcessInfo.processInfo.processIdentifier else { return nil }
@@ -432,7 +659,7 @@ final class ScreenAccess {
     }
 
     /// The owner and layer of the front-most window at the point other than Varnick's, which `varnickCovers` answers for.
-    private static func frontWindow(at point: CGPoint) -> (pid: pid_t, layer: Int)? {
+    static func frontWindow(at point: CGPoint) -> (pid: pid_t, layer: Int)? {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         for window in windows {
@@ -447,7 +674,7 @@ final class ScreenAccess {
 
     /// The app of the window in front at the point, when that is an ordinary window of a regular app. Nil where something else is in
     /// front (the menu bar, the Dock, a menu): activating an app there would only get in the way.
-    private static func appUnder(_ point: CGPoint) -> NSRunningApplication? {
+    static func appUnder(_ point: CGPoint) -> NSRunningApplication? {
         guard let front = frontWindow(at: point), front.layer == 0, let app = NSRunningApplication(processIdentifier: front.pid),
               app.activationPolicy == .regular else { return nil }
         return app
@@ -455,7 +682,7 @@ final class ScreenAccess {
 
     /// Activates the app and raises the window, then waits for it to be frontmost and settle. Varnick's panel hides as it does when
     /// the user clicks elsewhere, unless it is pinned: a pinned one that covers the click's point still refuses it.
-    private static func bringForward(_ app: NSRunningApplication, raising window: AXReference?) async throws {
+    static func bringForward(_ app: NSRunningApplication, raising window: AXReference?) async throws {
         let pid = app.processIdentifier
         let deadline = ContinuousClock.now.advanced(by: frontWait)
         NSApp.yieldActivation(to: app)
@@ -471,7 +698,7 @@ final class ScreenAccess {
     /// Run on the main actor right before a click is posted, with nothing awaited between: the app brought forward (`app`; nil for a
     /// point where none was) is still in front and is what is at the point, Varnick's own windows are not over it, and the arrow up
     /// is still this click's.
-    private static func checkedToPost(at point: CGPoint, frontmost app: NSRunningApplication?, arrow: Int?) throws {
+    static func checkedToPost(at point: CGPoint, frontmost app: NSRunningApplication?, arrow: Int?) throws {
         if let app {
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { throw ScreenRefusal.notFront }
             guard frontWindow(at: point)?.pid == app.processIdentifier else { throw ScreenRefusal.overlapped }
@@ -485,7 +712,7 @@ final class ScreenAccess {
 
     /// Whether a visible window of Varnick's own covers the point (Accessibility coordinates), the arrow's panel not counted: it covers
     /// the whole display and ignores the mouse. Any frame counts, whatever is above it: a pinned panel under another window still refuses.
-    private static func varnickCovers(_ point: CGPoint) -> Bool {
+    static func varnickCovers(_ point: CGPoint) -> Bool {
         let appKit = ScreenGeometry.accessibility(point, mainDisplayHeight: ScreenGeometry.mainDisplayHeight)
         return NSApplication.shared.windows.contains {
             $0.isVisible && $0.alphaValue > 0 && !ArrowOverlay.shared.owns($0) && $0.frame.contains(appKit)
@@ -516,7 +743,7 @@ final class ScreenAccess {
     }
 
     /// A left mouse-down and mouse-up at the HID level; the pointer moves to the point and stays there.
-    private nonisolated static func leftClick(at point: CGPoint) async {
+    nonisolated static func leftClick(at point: CGPoint) async {
         await Task.detached {
             func post(_ type: CGEventType) {
                 let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
@@ -531,13 +758,13 @@ final class ScreenAccess {
         }.value
     }
 
-    private static func onDisplay(_ point: CGPoint) -> Bool {
+    static func onDisplay(_ point: CGPoint) -> Bool {
         let appKit = ScreenGeometry.accessibility(point, mainDisplayHeight: ScreenGeometry.mainDisplayHeight)
         return NSScreen.screens.contains { $0.frame.contains(appKit) }
     }
 
     /// A frame as the replies give it: "x,y wxh", in points.
-    private static func describe(_ frame: CGRect) -> String {
+    static func describe(_ frame: CGRect) -> String {
         "\(Int(frame.minX.rounded())),\(Int(frame.minY.rounded())) \(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
     }
 }

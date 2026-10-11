@@ -44,15 +44,19 @@ enum PeerSocket {
         return fd
     }
 
+    /// The longest line read, a request or a reply. A screen reply that carries a picture is held under it (`ScreenPicture.maxBytes`).
+    static let maxLine = 1_000_000
+
     /// One line, up to the newline or the end of the stream; nil when nothing came.
     fileprivate static func readLine(_ fd: Int32) -> String? {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
-        while data.count < 1_000_000 {
+        while data.count < maxLine {
             let count = read(fd, &buffer, buffer.count)
             if count <= 0 { break }
             data.append(contentsOf: buffer[0..<count])
-            if data.contains(UInt8(ascii: "\n")) { break }
+            // Only what just came: scanning all of a picture's reply again for each chunk would be quadratic.
+            if buffer[0..<count].contains(UInt8(ascii: "\n")) { break }
         }
         guard !data.isEmpty else { return nil }
         return String(decoding: data, as: UTF8.self).split(separator: "\n", maxSplits: 1).first.map(String.init)

@@ -177,6 +177,10 @@ _Avoid_: Log, recording
 "Hey Varnick" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**.
 _Avoid_: Hotword, trigger
 
+**Fallback voice**:
+The voice installed on this Mac that speaks a line when an ElevenLabs voice is chosen and ElevenLabs fails or is slow. It is the same setting that holds the installed voice otherwise, kept when an ElevenLabs voice is picked.
+_Avoid_: Backup voice
+
 **Spoken request**:
 What the user says after the **Wake phrase**. It is answered aloud from **History**, **Bookmark**s and **Session**s. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
@@ -186,5 +190,5 @@ What Varnick draws over the screen to point at the thing a **Spoken request** as
 _Avoid_: Highlight, cursor, annotation, overlay
 
 **Screen access**:
-The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, three tools: `look` at a window's controls, `point` at one with the **Arrow**, and `click`. The running Varnick does the work under its own permissions, with the code a **Spoken request** uses, and a click happens without asking, the **Arrow** showing on its target for a second first and the app brought to the front. What a session is shown goes to Anthropic with it.
+The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, six tools: `look` at a window's controls (and which one has focus, and with `picture` an image of it, password fields painted black, or with `screen` or `display` an image of every display or one, nothing blacked out), `point` at one with the **Arrow**, `click`, `type`, `drag` and `window` (move or resize). The running Varnick does the work under its own permissions, with the code a **Spoken request** uses, and an action happens without asking, the **Arrow** showing on its target for a second first and the app brought to the front (not for `window`). What a session is shown, a picture included (which shows everything on the window or the displays, typed text too), goes to Anthropic with it.
 _Avoid_: Computer use, remote control

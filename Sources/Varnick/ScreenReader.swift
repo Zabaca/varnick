@@ -4,7 +4,7 @@ import Foundation
 
 /// Reads the elements of the focused window through Accessibility, in this process under Varnick's own grant (ADR 0019). It never
 /// goes through a helper, a script or a pane: those run under zmx, and a grant to zmx would reach every session it hosts.
-/// No image is made. What an element may hold is in where-it-breaks.md, Pointing at the screen.
+/// No image is made here (a session's picture is `ScreenPicture`, which only reads the secure fields' frames from this). What an element may hold is in where-it-breaks.md, Pointing at the screen.
 enum ScreenReader {
     // Limits, tuned by hand. A hung app costs only the budget.
     static let budget: Duration = .seconds(1)
@@ -26,8 +26,27 @@ enum ScreenReader {
         /// The frames of the text fields, text areas, combo boxes, search fields and secure fields the walk met, and of the field
         /// that has focus: recognised lines inside them are what a person typed and are dropped. Never sent.
         var entryFrames: [CGRect] = []
+        /// The frames of the secure text fields the walk met, and of the focused one when it is secure: what a picture of the window
+        /// (`ScreenPicture`) paints black. Never sent.
+        var secureFrames: [CGRect] = []
+        /// The walk ended on its node or time limit with part of the window unvisited, so a secure field may have been missed.
+        var walkCutShort = false
         /// The biggest web area with nothing in it that has a frame, which is where a Chrome page's text is.
         var emptyWebArea: CGRect?
+        /// Which control has the app's focus, for a session's `look`. Hey Varnick's read ignores it.
+        var focus = Focus.none
+    }
+
+    /// Where the app's focus is, by what a session may know of it: never a label or a value.
+    enum Focus: Equatable {
+        /// The app reports no focused element.
+        case none
+        /// A listed control, or one inside a listed control within four levels: an index into `Reading.elements`.
+        case listed(Int)
+        /// A control the list lacks, by its kind as macOS names it ("text field").
+        case unlisted(String)
+        /// A secure text field, which the walk never lists.
+        case password
     }
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
@@ -178,10 +197,12 @@ enum ScreenReader {
         reading.window = AXReference(window)
         reading.windowFrame = frame(of: window)
         // The field with focus may be outside what the walk reaches, and is where a person is typing.
-        if let focus = attribute(app, kAXFocusedUIElementAttribute).flatMap(asElement),
-           case let values = multiple(focus, [kAXRoleAttribute, kAXSubroleAttribute]),
-           isEntry(role: values[0] as? String ?? "", subrole: values[1] as? String ?? ""), let focusFrame = frame(of: focus) {
+        let focus = attribute(app, kAXFocusedUIElementAttribute).flatMap(asElement)
+        let focusValues = focus.map { multiple($0, [kAXRoleAttribute, kAXSubroleAttribute]) }
+        if let focus, let focusValues,
+           isEntry(role: focusValues[0] as? String ?? "", subrole: focusValues[1] as? String ?? ""), let focusFrame = frame(of: focus) {
             reading.entryFrames.append(focusFrame)
+            if focusValues[1] as? String == "AXSecureTextField" { reading.secureFrames.append(focusFrame) }
         }
         var walk = Walk(deadline: deadline)
         walk.run(window: window)
@@ -194,10 +215,52 @@ enum ScreenReader {
             return element
         }
         reading.entryFrames += walk.entryFrames
+        // The focused field is usually met by the walk too: one frame each.
+        for frame in walk.secureFrames where !reading.secureFrames.contains(where: { $0.integral == frame.integral }) {
+            reading.secureFrames.append(frame)
+        }
+        reading.walkCutShort = walk.cutShort
         reading.chromeBlind = walk.sawEmptyWebArea && isChromium(bundle: bundle)
         reading.emptyWebArea = walk.emptyWebArea
+        if let focus, let focusValues {
+            reading.focus = matchedFocus(focus, values: focusValues, among: reading.elements, deadline: deadline)
+        }
         reading.duration = began.duration(to: clock.now)
         return reading
+    }
+
+    /// The focused element as a session is told of it: the listed control it is or sits inside within four levels, else its kind.
+    private static func matchedFocus(_ focus: AXUIElement, values: [CFTypeRef?], among elements: [ScreenElement],
+                                     deadline: ContinuousClock.Instant) -> Focus {
+        if values[1] as? String == "AXSecureTextField" { return .password }
+        let chain = ancestry(of: focus, levels: 4, deadline: deadline)
+        for candidate in chain {
+            if let index = elements.firstIndex(where: { $0.reference.map { CFEqual($0.element, candidate) } ?? false }) { return .listed(index) }
+        }
+        return .unlisted(kind(role: values[0] as? String ?? "", subrole: values[1] as? String ?? ""))
+    }
+
+    /// The element and its parents, up to `levels` of them in all, while there is time.
+    fileprivate static func ancestry(of element: AXUIElement, levels: Int, deadline: ContinuousClock.Instant? = nil) -> [AXUIElement] {
+        var chain = [element]
+        while chain.count < levels, deadline.map({ ContinuousClock.now < $0 }) ?? true,
+              let parent = attribute(chain[chain.count - 1], kAXParentAttribute).flatMap(asElement) {
+            chain.append(parent)
+        }
+        return chain
+    }
+
+    /// The roles `look` names a focused control by. Never the app's own role description, which a web page can set to anything.
+    private static let namedKinds: [String: String] = [
+        "AXTextField": "text field", "AXTextArea": "text area", "AXComboBox": "combo box", "AXWebArea": "web area", "AXList": "list",
+        "AXTable": "table", "AXOutline": "outline", "AXButton": "button", "AXCheckBox": "checkbox", "AXRadioButton": "radio button",
+        "AXPopUpButton": "pop-up button", "AXSlider": "slider", "AXGroup": "group", "AXScrollArea": "scroll area", "AXStaticText": "text",
+        "AXImage": "image", "AXMenuItem": "menu item", "AXTabGroup": "tab group", "AXWindow": "window", "AXRow": "row", "AXCell": "cell",
+        "AXLink": "link", "AXToolbar": "toolbar",
+    ]
+
+    fileprivate static func kind(role: String, subrole: String) -> String {
+        subrole == "AXSearchField" ? "search field" : namedKinds[role] ?? "control"
     }
 
     /// Where `target` is now, off the main actor: its element's frame, or for recognised text its box carried along with a window
@@ -341,13 +404,17 @@ enum ScreenReader {
         var sawEmptyWebArea = false
         var emptyWebArea: CGRect?
         var entryFrames: [CGRect] = []
+        var secureFrames: [CGRect] = []
+        /// The node or time limit ended the walk with nodes unvisited.
+        var cutShort = false
         var window = CGRect.infinite
 
         var outOfBudget: Bool { nodes >= ScreenReader.maxNodes || ContinuousClock.now >= deadline }
 
         mutating func run(window root: AXUIElement) {
             var stack = [Node(element: root, depth: 0, path: [])]
-            while let node = stack.popLast(), !outOfBudget {
+            while let node = stack.popLast() {
+                if outOfBudget { cutShort = true; break }
                 stack.append(contentsOf: visit(node).reversed())
             }
         }
@@ -367,6 +434,7 @@ enum ScreenReader {
                 if let frame, emptyWebArea == nil || frame.width * frame.height > emptyWebArea!.width * emptyWebArea!.height { emptyWebArea = frame }
             }
             if entry, let frame { entryFrames.append(frame) }
+            if subrole == "AXSecureTextField", let frame { secureFrames.append(frame) }
             // Nothing of a secure field is read but where it is (text recognition drops what lies in it, ADR 0021).
             guard subrole != "AXSecureTextField" else { return [] }
             if node.depth == 0 { window = frame ?? .infinite }
@@ -478,5 +546,160 @@ enum ScreenReader {
     fileprivate static func name(_ parts: [String?], isText: Bool) -> String {
         let order = isText ? [parts[0], parts[1], parts[2], parts[4]] : [parts[0], parts[1], parts[4]]
         return order.compactMap { $0 }.map(ScreenElements.cleaned).first { !$0.isEmpty } ?? ""
+    }
+}
+
+// MARK: Focus, the keyboard and windows, for what a session types, drags and moves
+
+extension ScreenReader {
+    /// What the app reports as focused, read again for `type`, off the main actor.
+    struct FocusRead: Sendable {
+        /// Nil when the app reports no focused element.
+        var element: AXReference?
+        var role = ""
+        var subrole = ""
+        /// The element and its parents up to four levels, to tell whether the focus is a control and not just near it.
+        var chain: [AXReference] = []
+        var frame: CGRect?
+        /// The app's focused window, else its main one: where the Arrow goes when nothing is focused.
+        var windowFrame: CGRect?
+
+        var isSecure: Bool { subrole == "AXSecureTextField" }
+
+        /// Whether ⌘A in it selects only what a person typed: a text field, text area, combo box, search field or web area. Focus the
+        /// app doesn't report passes, as the app may take typing without saying so; a list, a table or a window does not.
+        var takesSelectAll: Bool {
+            element == nil || ["AXTextField", "AXTextArea", "AXComboBox", "AXWebArea"].contains(role) || subrole == "AXSearchField"
+        }
+
+        func isInside(_ reference: AXReference) -> Bool { chain.contains { CFEqual($0.element, reference.element) } }
+    }
+
+    /// `light` reads only the focused element's role and subrole, in two calls of `timeout` each: the check before a key, which
+    /// can't afford the window, the frame and the parents.
+    static func focus(pid: pid_t, timeout: Float = callTimeout, light: Bool = false) async -> FocusRead {
+        await Task.detached(priority: .userInitiated) { () -> FocusRead in
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, timeout)
+            var read = FocusRead()
+            if !light, let window = attribute(app, kAXFocusedWindowAttribute).flatMap(asElement) ?? attribute(app, kAXMainWindowAttribute).flatMap(asElement) {
+                read.windowFrame = frame(of: window)
+            }
+            guard let element = attribute(app, kAXFocusedUIElementAttribute).flatMap(asElement) else { return read }
+            AXUIElementSetMessagingTimeout(element, timeout)
+            let values = multiple(element, [kAXRoleAttribute, kAXSubroleAttribute])
+            read.element = AXReference(element)
+            read.role = values[0] as? String ?? ""
+            read.subrole = values[1] as? String ?? ""
+            if !light {
+                read.frame = frame(of: element)
+                read.chain = ancestry(of: element, levels: 4).map(AXReference.init)
+            }
+            return read
+        }.value
+    }
+
+    /// The pid of the app that has the keyboard system-wide, nil when it isn't answered within 0.1 s (a caller refuses then). Another
+    /// process's nonactivating panel (Spotlight's) can have it while this app is still in front. The system-wide element's timeout is
+    /// the default for every element, so it is left alone and the wait is a race: a read that outlives it ends under that timeout.
+    static func keyboardOwner() async -> pid_t? {
+        await withCheckedContinuation { continuation in
+            let first = FirstAnswer(continuation)
+            DispatchQueue.global(qos: .userInitiated).async {
+                let system = AXUIElementCreateSystemWide()
+                var pid: pid_t = 0
+                guard let focused = attribute(system, kAXFocusedApplicationAttribute).flatMap(asElement),
+                      AXUIElementGetPid(focused, &pid) == .success else { return first.answer(nil) }
+                first.answer(pid)
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { first.answer(nil) }
+        }
+    }
+
+    /// Resumes its continuation with whichever answer comes first.
+    private final class FirstAnswer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<pid_t?, Never>?
+
+        init(_ continuation: CheckedContinuation<pid_t?, Never>) { self.continuation = continuation }
+
+        func answer(_ pid: pid_t?) {
+            lock.lock()
+            let waiting = continuation
+            continuation = nil
+            lock.unlock()
+            waiting?.resume(returning: pid)
+        }
+    }
+
+    /// Sets the Accessibility focus of a control, with the press's timeout. Whether it took is for `focus(pid:)` to say.
+    static func setFocus(of reference: AXReference) async {
+        await Task.detached {
+            AXUIElementSetMessagingTimeout(reference.element, ScreenAccess.pressTimeout)
+            _ = AXUIElementSetAttributeValue(reference.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        }.value
+    }
+
+    // MARK: Windows
+
+    /// The app's focused window, else its main one, as `read` takes it.
+    static func window(ofApp pid: pid_t) async -> AXReference? {
+        await Task.detached { () -> AXReference? in
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, callTimeout)
+            return (attribute(app, kAXFocusedWindowAttribute).flatMap(asElement) ?? attribute(app, kAXMainWindowAttribute).flatMap(asElement))
+                .map(AXReference.init)
+        }.value
+    }
+
+    static func pid(of reference: AXReference) -> pid_t? {
+        var pid: pid_t = 0
+        return AXUIElementGetPid(reference.element, &pid) == .success ? pid : nil
+    }
+
+    static func frame(ofWindow window: AXReference) async -> CGRect? {
+        await Task.detached { frame(of: window.element) }.value
+    }
+
+    /// What stops a window being moved or resized.
+    enum WindowRefusal {
+        case fullScreen, minimized, cantMove, cantResize
+    }
+
+    static func refusal(for window: AXReference, moving: Bool, resizing: Bool) async -> WindowRefusal? {
+        await Task.detached { () -> WindowRefusal? in
+            let element = window.element
+            AXUIElementSetMessagingTimeout(element, callTimeout)
+            if attribute(element, "AXFullScreen") as? Bool == true { return .fullScreen }
+            if attribute(element, kAXMinimizedAttribute) as? Bool == true { return .minimized }
+            func settable(_ name: String) -> Bool {
+                var settable: DarwinBoolean = false
+                return AXUIElementIsAttributeSettable(element, name as CFString, &settable) == .success && settable.boolValue
+            }
+            if moving, !settable(kAXPositionAttribute) { return .cantMove }
+            if resizing, !settable(kAXSizeAttribute) { return .cantResize }
+            return nil
+        }.value
+    }
+
+    /// Sets the window's size, then its position, then its size again when both are given: macOS keeps a window on its display, so
+    /// a size that doesn't fit at the old place, or a place that doesn't fit the old size, would otherwise be cut. Each setting has the
+    /// press's timeout. The first error, if any.
+    static func set(_ window: AXReference, position: CGPoint?, size: CGSize?) async -> AXError {
+        await Task.detached { () -> AXError in
+            let element = window.element
+            AXUIElementSetMessagingTimeout(element, ScreenAccess.pressTimeout)
+            var first = AXError.success
+            func apply(_ name: String, _ value: AXValue?) {
+                guard let value else { return }
+                let result = AXUIElementSetAttributeValue(element, name as CFString, value)
+                if first == .success { first = result }
+            }
+            func sized() -> AXValue? { size.flatMap { var extent = $0; return AXValueCreate(.cgSize, &extent) } }
+            apply(kAXSizeAttribute, sized())
+            apply(kAXPositionAttribute, position.flatMap { var origin = $0; return AXValueCreate(.cgPoint, &origin) })
+            if position != nil { apply(kAXSizeAttribute, sized()) }
+            return first
+        }.value
     }
 }

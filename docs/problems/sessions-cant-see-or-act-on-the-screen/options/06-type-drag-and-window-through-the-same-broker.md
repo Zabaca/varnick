@@ -2,7 +2,7 @@
 problem: sessions-cant-see-or-act-on-the-screen
 title: Sessions also type, drag and move or resize windows, through option 01's broker with click's checks
 summary: Accepted on 2026-10-10 at the user's request. The `varnick` server gets three more tools, each built the way `click` is. The Arrow shows on the target for a second first, one action runs at a time across all sessions, and the switch, the pane, the request's age and the Arrow's generation are checked again before acting. Nothing goes into Varnick's own windows. `type` puts the focus on a control from `look`, or uses the focus the app has, then types text and key combos as posted key events. It never sets a field's value, refuses while a password field has focus, and never logs the text. `drag` posts a mouse-down, a drag and a mouse-up between two controls or points, with click's refusals at both ends. `window` moves or resizes an app's window through Accessibility, with no pointer and no activation. `look` also gives the window an id and says which control has focus. Permissioning stays deferred, as for option 01.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -274,6 +274,7 @@ Nothing asks before any of them, as for `click`.
   - **Only the drag's start app comes forward.**
   - **No version bump.**
   - **Four of macOS's combos refused,** besides Varnick's own.
+- **A click or drag on the menu bar can still reach Apple menu › Lock Screen or Log Out.** The four refused combos cover only keys. Known, accepted for now.
 - **Permissioning stays deferred,** as for option 01. Every pane process still gets Varnick's grants (`panes-share-launchys-permissions`), so a session could type with `osascript` or its own code. These tools add the Arrow first, the switch, the checks and one implementation.
 - **Measured on 2026-10-10, relayed by the coordinator.** A Varnick started from a terminal (cmux) with `make run` or the restart script is attributed to that terminal by macOS. So it gets the terminal's permissions: Screen Recording was on, through cmux, and Accessibility was off. Every pane's process inherits the same. Starting it through its LaunchAgent fixed it. The finding is recorded in `panes-share-launchys-permissions` option 01's Further Notes, since it is that problem's mechanism one level up.
 - **ADR, on acceptance, not yet written** (the planner writes only problems): ADR 0023's dated amendment (Docs, above).
