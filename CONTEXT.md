@@ -193,6 +193,10 @@ _Avoid_: Instance, occurrence, link
 A **Bullet** with more than one **Placement**, so an edit in one spot shows in all. Collapse is each placement's own. None is the original: deleting a placement removes only that spot, and the bullet is gone with its last. Not the **Live screen**, which avoids the word.
 _Avoid_: Copy, clone, link, reference, original
 
+**Selection**:
+**Bullet**s chosen whole in the **Outline**: siblings next to each other, each with everything nested under it, so that one key acts on all of them. Not text selected inside one bullet, which never runs into the next.
+_Avoid_: Highlight (the **Filter**'s mark on matching words), block, multi-select
+
 ### Listening
 
 **Listening**:

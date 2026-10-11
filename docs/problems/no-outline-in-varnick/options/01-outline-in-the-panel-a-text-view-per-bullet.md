@@ -37,6 +37,7 @@ The rows are SwiftUI. Each row's text and note are edited in a small AppKit text
 
 - **The keyboard behaves like an outliner's.** ↩ splits a bullet at the caret, and ⌫ at the start joins it onto the bullet above. ↑ and ↓ leave a wrapped bullet only from its first or last line. An ↩ that confirms an input method's composition is the input method's, never a new bullet. Option 02 can do none of these on macOS 14.
 - **Across bullets, whole bullets are selected, never text,** since each bullet is its own text view. That is WorkFlowy's way, and the user chose it (Selection). Text running from the middle of one bullet into the next can't be selected; option 03 is the one that could.
+- **⇧↑ and ⇧↓ no longer select text within a bullet's first and last lines,** as the user decided: there they select the bullet. ⇧← and ⇧→ (with ⌥ or ⌘ to go by word or to the line's end) and the mouse still select text there, and ⇧↑ and ⇧↓ still do on the lines between.
 - **An AppKit view inside SwiftUI rows is new for Varnick,** which has one read-only text view and no editable one. The view's height has to follow its wrapped text, and nothing in its update may publish to the outline (where-it-breaks, Sessions and tabs).
 - **The panel's fixed size,** as the board has: 760 by 600, about 22 rows at once. The board's resizable alternative was not chosen, and the outline follows the board.
 - **Mirrors are symmetric,** as the user decided. No placement is the original, so deleting any placement removes that one only, and the bullet goes with its last placement. A delete never loses a bullet that still shows elsewhere. This differs from outliners where the original is special.
@@ -117,7 +118,7 @@ The outline's own keys are fixed, like the board's. The panel's key monitor give
 - **⇥** nests the bullet as the last bullet under the sibling above, opening that sibling if it was collapsed.
 - **⇧⇥** makes the bullet the next sibling of its parent. The bullets after it stay where they were. At the top of a zoom it stops.
 - **↑ and ↓** go to the row above or below when the caret is on the bullet's first or last wrapped line. Otherwise they move the caret within the bullet.
-- **⇧↑ and ⇧↓** select whole bullets: ⇧↑ when what is selected in the bullet's text starts at its first character, ⇧↓ when it ends at its last (Selection). Elsewhere they select text in the bullet, as now. In a note and in the title they only ever select text.
+- **⇧↑ and ⇧↓** select whole bullets: ⇧↑ anywhere on the bullet's first wrapped line, ⇧↓ anywhere on its last (Selection). On the lines between they select text, as now. In a note and in the title they only ever select text.
 - **⌘⇧↑ and ⌘⇧↓** move the bullet, with what's nested under it, among its siblings, and stop at the first or last sibling.
 - **⌘↑ and ⌘↓** collapse and expand. Clicking the disclosure triangle does the same.
 - **⌘] and ⌘[** zoom into the bullet with the caret, and out one level. ⌘, is Settings, so no outline key uses it.
@@ -309,8 +310,9 @@ The file is a second small module, `read` and `write`:
 The user's decision of 2026-10-11 (the last section). Whole bullets are selected, WorkFlowy's way: a selection is never text running from one bullet into the next.
 
 - **Starting.** In a bullet's text, not in a note or the title:
-  - ⇧↑ selects the bullet when what is selected in its text starts at the first character, or the bullet is empty. Elsewhere on the first line, ⇧↑ first selects back to the start, as the text view does, so the next ⇧↑ selects the bullet.
-  - ⇧↓ does the same at the end of the text.
+  - ⇧↑ anywhere on the bullet's first wrapped line selects the bullet at once, and ⇧↓ anywhere on its last. In a bullet of one line, both always do.
+  - **With text already selected in the bullet,** the end of the text selection that the shift keys move decides, as the caret does without one. ⇧↑ selects the bullet when that end is on the first line, and ⇧↓ when it is on the last. Otherwise the key grows or shrinks the text selection, as now. So text selected with ⇧← on the first line becomes the bullet at the next ⇧↑, while text grown downward with ⇧↓ from the first line of a wrapped bullet shrinks again with ⇧↑. When the moving end can't be told (text selected with the mouse), ⇧↑ goes by the selection's start and ⇧↓ by its end, as ↑ and ↓ do.
+  - The text selection is dropped when the bullet is selected.
   - The first press selects the bullet with the caret, alone, with everything nested under it.
 - **What a selection is.** A run of sibling bullets that show, next to each other under one parent. Each selected bullet takes everything nested under it, whether it shows or not.
   - A bullet nested under a selected one is never selected on its own.
@@ -479,4 +481,12 @@ After hand-testing the shipped outline, the user asked to select several bullets
    - ⌘C copies them as indented text and ⌘X cuts them. Pasted indented text keeps its nesting.
    - ⌥⌘C copies them all as mirrors, and ⌥⌘V places them all.
 
-Selection and Copying and pasting bullets fill in the rest from the outline's existing behaviour. Tickets 08 and 09 build them.
+Answered later the same day, on the planner's questions:
+
+3. **⇧↑ anywhere on a bullet's first line selects the whole bullet at once,** and ⇧↓ anywhere on its last line. The planner's two presses (text to the start first, then the bullet) are not used. The cost is in Trade-offs, and a text selection already begun is in Selection › Starting.
+4. **Typing while bullets are selected** beeps and changes nothing.
+5. **Several lines pasted into a bullet that isn't empty** become new bullets below it, and the bullet's text isn't split.
+6. **Notes reach the clipboard only in Varnick's own copy,** never in the indented text.
+7. **The planner's other choices stand as defaults:** everything else in Selection and Copying and pasting bullets.
+
+Tickets 08 and 09 build them.
