@@ -21,7 +21,7 @@ Each meaning lives in one place; everywhere else points to it. Agents in `.claud
 ## Working here
 
 - Build and run through the `Makefile` (`make build`, `make run`): it also codesigns and fetches the prebuilt `mlx.metallib` that plain `swift build` lacks.
-- Restarting Varnick ends every Claude session open in it, possibly the one you're running in. `make run` restarts it however it was started. `launchctl kickstart -k` restarts only an instance the LaunchAgent started, and beside one `make run` started it starts a second Varnick. Leave restarts to the user unless they ask for one.
+- Restarts are the user's call unless they ask for one. Restart with `make run` (builds first) or `scripts/restart.sh`: both start Varnick through launchd, so it holds its own macOS permissions rather than the terminal's (`docs/agents/where-it-breaks.md`, Signing). Claude sessions survive a restart and reconnect while Keep sessions running is on; with it off, they end.
 - No test target yet: verification is `make build`, then checking by hand after a restart.
 
 ## Coding standards
