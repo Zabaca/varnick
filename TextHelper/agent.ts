@@ -23,17 +23,26 @@ console.log = console.info = console.debug = () => {}
 const controllers = new Set<AbortController>()
 const children = new Set<ChildProcess>()
 
-/** No `claude` may outlive a request that was cancelled, timed out or failed: killed outright, not asked to wind down. */
+/** `claude` rewrites shared state (`~/.claude.json`, under a lock) as it starts and stops, so it is asked to stop, not killed. */
+const stopGrace = 600
+
 function killChildren(): void {
   for (const child of children) child.kill('SIGKILL')
 }
+/** No `claude` may outlive a request that was cancelled, timed out or failed: SIGTERM, then SIGKILL for any left after the grace. */
+async function stopChildren(): Promise<void> {
+  for (const child of children) child.kill('SIGTERM')
+  const until = Date.now() + stopGrace
+  while (children.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 20))
+  killChildren()
+}
+// The last resort, when this process goes without having stopped them.
 process.on('exit', killChildren)
 
 // Varnick sends SIGTERM when a request is cancelled or passes its deadline, and kills this process a second later.
 process.on('SIGTERM', () => {
-  killChildren()
   for (const controller of controllers) controller.abort()
-  setTimeout(() => process.exit(143), 100)
+  void stopChildren().then(() => process.exit(143))
 })
 
 /** What went wrong, as a kind that is safe to log: never the SDK's message, which can hold what was said. */
@@ -94,7 +103,7 @@ async function answer(request: Request): Promise<void> {
             // A login that does not work retries for minutes, far past Varnick's deadline: end it now, so Gemma answers sooner.
             // Any other retry (overloaded, a server error, a rate limit) goes on under the deadline.
             failure ??= { kind: `retrying: ${message.error}` }
-            killChildren()
+            void stopChildren()
             abortController.abort()
           } else if (message.type === 'result') {
             reported = { durationMs: message.duration_ms, apiMs: message.duration_api_ms }
