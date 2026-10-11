@@ -42,11 +42,81 @@ enum OutlineCheck {
         var steps: [String] = []
         for _ in 1...count {
             guard let path = copy.placementPaths(of: id, limit: 1).first,
-                  case .applied(let next, _) = copy.applying(.delete(path), now: Date()) else { break }
+                  case .applied(let next, _, _) = copy.applying(.delete(OutlineRun(path)), now: Date()) else { break }
             copy = next
             steps.append("\(copy.placementCounts()[id] ?? 0) left, bullet \(copy.bullets[id] == nil ? "gone" : "kept")")
         }
         print("mirror check: a bullet with \(count) placements, deleting them one by one: " + steps.joined(separator: "; "))
+    }
+
+    /// What a bullet's placements are, in order, for every bullet: the tree's shape without its dates or its text.
+    private static func shape(_ tree: OutlineTree) -> [String: [String]] { tree.bullets.mapValues { $0.children.map(\.id) } }
+
+    /// On a copy of the tree with the zoom cleared, finds a run of two sibling bullets with a sibling above, indents it and then outdents it.
+    /// Prints whether the counts and the tree's shape are as they were. Prints counts only.
+    private static func runCheck(_ tree: OutlineTree) {
+        var copy = tree
+        copy.zoom = []
+        copy.showsCompleted = true
+        let rows = copy.visibleRows().map(\.path)
+        let groups = Dictionary(grouping: rows, by: \.parent)
+        let found = rows.lazy.compactMap { path -> [OutlinePath]? in
+            guard let siblings = groups[path.parent], let at = siblings.firstIndex(of: path), at >= 1, at + 1 < siblings.count else { return nil }
+            return [siblings[at], siblings[at + 1]]
+        }.first
+        guard let run = found else { return print("run check: no run of two bullets with a sibling above") }
+        guard case .applied(let indented, _, let nested) = copy.applying(.indent(OutlineRun(run)), now: Date()) else {
+            return print("run check: indenting the run was refused")
+        }
+        guard case .applied(let back, _, _) = indented.applying(.outdent(OutlineRun(nested)), now: Date()) else {
+            return print("run check: outdenting the run was refused")
+        }
+        print("run check: a run of 2 sibling bullets indented, then outdented: counts "
+              + "\(Counts(back) == Counts(copy) ? "unchanged" : "CHANGED"), tree "
+              + "\(shape(back) == shape(copy) ? "back as it was" : "NOT back as it was")")
+    }
+
+    /// What a list of drafts holds, as counts.
+    private struct DraftCounts: Equatable, CustomStringConvertible {
+        let bullets: Int
+        let deepest: Int
+        let notes: Int
+        let completed: Int
+
+        init(_ drafts: [OutlineDraft]) {
+            func levels(_ drafts: [OutlineDraft]) -> Int { drafts.isEmpty ? 0 : 1 + (drafts.map { levels($0.children) }.max() ?? 0) }
+            func total(_ drafts: [OutlineDraft], _ keep: (OutlineDraft) -> Bool) -> Int {
+                drafts.reduce(0) { $0 + (keep($1) ? 1 : 0) + total($1.children, keep) }
+            }
+            bullets = total(drafts) { _ in true }
+            deepest = levels(drafts)
+            notes = total(drafts) { $0.note != nil }
+            completed = total(drafts) { $0.completed != nil }
+        }
+
+        var description: String { "\(bullets) bullets, deepest level \(deepest), \(notes) notes, \(completed) completed" }
+    }
+
+    /// Writes the top-level bullets, from Home, in both clipboard forms and reads each back; then reads a built-in sample of indented text.
+    /// Prints counts only.
+    private static func clipboardCheck(_ tree: OutlineTree) {
+        let top = (tree.bullets[tree.root]?.children ?? []).map { OutlinePath(placements: [$0.id]) }
+        let (drafts, cutShort) = OutlineClipboard.drafts(of: top, in: tree)
+        let original = DraftCounts(drafts)
+        let fromText = DraftCounts(OutlineClipboard.drafts(fromText: OutlineClipboard.text(of: drafts)))
+        let fromOwn = OutlineClipboard.data(of: drafts).flatMap(OutlineClipboard.drafts(fromData:)).map(DraftCounts.init)
+        print("clipboard check: \(top.count) top-level bullets copy as \(original)\(cutShort ? ", cut short" : "")")
+        print("clipboard check: indented text reads back with the same bullet count: \(fromText.bullets == original.bullets), "
+              + "the same deepest level: \(fromText.deepest == original.deepest)")
+        if let fromOwn {
+            print("clipboard check: Varnick's own copy reads back with the same bullet count: \(fromOwn.bullets == original.bullets), "
+                  + "the same deepest level: \(fromOwn.deepest == original.deepest), the same notes: \(fromOwn.notes == original.notes), "
+                  + "the same completed: \(fromOwn.completed == original.completed)")
+        } else {
+            print("clipboard check: Varnick's own copy does not read back")
+        }
+        let sample = "- one\n\t- tab child\n    * four-space child\n        + deeper\n1. numbered\n\n- two\n  • bullet character\n-\n"
+        print("clipboard check: the built-in indented text reads as \(DraftCounts(OutlineClipboard.drafts(fromText: sample)))")
     }
 
     static func run(_ arguments: [String]) -> Int32 {
@@ -75,6 +145,8 @@ enum OutlineCheck {
             tree = loaded
         }
         mirrorCheck(tree)
+        runCheck(tree)
+        clipboardCheck(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {

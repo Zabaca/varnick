@@ -96,6 +96,47 @@ struct OutlineCaret: Equatable {
     var field = OutlineField.text
 }
 
+/// The rows an edit acts on: sibling placements under one parent. The caret's row is a run of one that remembers the caret's offset, so the
+/// edit hands the caret back at the row's new path; a selection's run has none, and the edit hands back the run's new paths instead.
+struct OutlineRun: Equatable {
+    var paths: [OutlinePath]
+    var caretOffset: Int?
+
+    init(_ caret: OutlineCaret) {
+        paths = [caret.path]
+        caretOffset = caret.offset
+    }
+
+    init(_ path: OutlinePath) { paths = [path] }
+
+    init(_ paths: [OutlinePath]) { self.paths = paths }
+}
+
+/// Where an insert of new bullets goes.
+enum OutlineInsertion: Equatable {
+    /// As the next siblings of the row, after what is nested under it.
+    case after(OutlinePath)
+    /// First among the bullets nested under the row: the title of a zoom.
+    case firstUnder(OutlinePath)
+    /// In the place of the row, which must be an empty bullet with nothing nested, no note and one placement (`OutlineTree.canReplace`).
+    case replacing(OutlinePath)
+}
+
+/// Bullets selected whole (Selection in `CONTEXT.md`): a run of the sibling rows that show, next to each other under one parent, each with
+/// everything nested under it. `fixed` stays where the selection started; `moving` is the end the shift keys move. Paths, never bullet ids,
+/// like the caret's row.
+struct OutlineSelection: Equatable {
+    var run: [OutlinePath]
+    var fixed: OutlinePath
+    var moving: OutlinePath
+
+    /// The same selection at the paths an edit moved the run to, which come in the run's order.
+    func following(_ moved: [OutlinePath]) -> OutlineSelection? {
+        guard moved.count == run.count, let f = run.firstIndex(of: fixed), let m = run.firstIndex(of: moving) else { return nil }
+        return OutlineSelection(run: moved, fixed: moved[f], moving: moved[m])
+    }
+}
+
 enum OutlineEdit {
     case setText(OutlinePath, String)
     case addBelow(OutlinePath)
@@ -105,25 +146,29 @@ enum OutlineEdit {
     /// ⌫ at the start: an empty bullet with nothing nested is deleted; otherwise the text joins onto the row above, when the bullet has
     /// nothing nested, no note and no other placement.
     case join(OutlinePath)
-    /// This placement only, with whatever is nested under it. The bullet goes when its last placement goes.
-    case delete(OutlinePath)
-    /// Several lines pasted over `range`: the first at the caret, each further one in a new bullet below. Blank lines are skipped.
-    case paste(OutlinePath, range: Range<Int>, lines: [String])
+    /// These placements only, each with whatever is nested under it. A bullet goes when its last placement goes.
+    case delete(OutlineRun)
+    /// New bullets made from a paste (panel access's `insert` is to be this edit): the drafts, with new ids, `created` and `changed` now, and completion and collapse
+    /// as the drafts have them. The caret goes to the end of the last top-level one that shows; the result's run is the new top-level paths.
+    case insert([OutlineDraft], at: OutlineInsertion)
     /// ↩ in the title of a zoom: the text after the caret moves into a new first nested bullet; at the start of a non-empty title the new
     /// bullet is empty. The caret goes into it.
     case addFirstChild(OutlinePath, range: Range<Int>)
-    /// ⌥⌘V: a new placement of `bullet`, the next sibling of the row at `path`. Refused when the bullet would end up inside itself.
-    case placeMirror(after: OutlinePath, bullet: String)
-    /// ⌘↩: sets `completed` to now, or clears it. With Show completed off the bullet leaves the view and the caret goes to the next row showing.
-    case complete(OutlineCaret)
+    /// ⌥⌘V: new placements of `bullets`, in order, the next siblings of the row at `after` (the first nested ones under a title). A bullet that
+    /// is gone is left out; refused when none is left, or when any would end up inside itself.
+    case placeMirror(after: OutlinePath, bullets: [String])
+    /// ⌘↩: if every bullet is completed, clears them; otherwise stamps the ones that aren't, now. With Show completed off they leave the view
+    /// and the caret goes to the next row showing.
+    case complete(OutlineRun)
     /// The note under a bullet; empty removes it.
     case setNote(OutlinePath, String)
-    /// ⇥: the last bullet under the sibling above, which opens. The caret's row is the one edited; it follows the row to its new path.
-    case indent(OutlineCaret)
-    /// ⇧⇥: the next sibling of its parent. The siblings after it stay where they were.
-    case outdent(OutlineCaret)
-    /// ⌘⇧↑ and ⌘⇧↓ (`by` is -1 or 1): swaps with a sibling, nested bullets and all; refused at the first or last.
-    case move(OutlineCaret, by: Int)
+    /// ⇥: the run goes last under the sibling above that shows, in order, and that sibling opens. The caret follows its row to the new path.
+    case indent(OutlineRun)
+    /// ⇧⇥: the run becomes the next siblings of its parent, in order. The siblings after it stay where they were.
+    case outdent(OutlineRun)
+    /// ⌘⇧↑ and ⌘⇧↓ (`by` is -1 or 1): the run goes, as a block, past the nearest sibling that shows beyond it, nested bullets and all; refused at
+    /// the first or last.
+    case move(OutlineRun, by: Int)
     /// ⌘↑ and ⌘↓: the placement's own state, so it is refused for a bullet with nothing nested.
     case collapse(OutlinePath, Bool)
 }
@@ -244,18 +289,28 @@ final class OutlineFoldCache {
 }
 
 extension OutlineEdit {
-    /// The row an edit moves, joins, deletes, completes or adds beside; nil for edits that only change what is in a bullet.
-    fileprivate var restructuredPath: OutlinePath? {
+    /// The rows an edit moves, joins, deletes, completes or adds beside; none for edits that only change what is in a bullet.
+    fileprivate var restructuredPaths: [OutlinePath] {
         switch self {
-        case .addBelow(let path), .addAbove(let path), .join(let path), .delete(let path): path
-        case .indent(let at), .outdent(let at), .move(let at, _), .complete(let at): at.path
-        case .setText, .setNote, .split, .paste, .addFirstChild, .collapse, .placeMirror: nil
+        case .addBelow(let path), .addAbove(let path), .join(let path): [path]
+        case .indent(let run), .outdent(let run), .move(let run, _), .complete(let run), .delete(let run): run.paths
+        case .insert(_, .after(let path)), .insert(_, .replacing(let path)): [path]
+        case .setText, .setNote, .split, .insert, .addFirstChild, .collapse, .placeMirror: []
+        }
+    }
+
+    /// Whether an edit made on a selection leaves the same bullets selected, at the paths it returns (the other edits end the selection).
+    var keepsSelection: Bool {
+        switch self {
+        case .indent, .outdent, .move, .complete: true
+        default: false
         }
     }
 }
 
 enum OutlineEditResult: Equatable {
-    case applied(OutlineTree, caret: OutlineCaret?)
+    /// `run` is where a run edit moved its rows, in order: for a selection to follow, and for a filter to keep in view.
+    case applied(OutlineTree, caret: OutlineCaret?, run: [OutlinePath] = [])
     case refused(OutlineRefusal)
 }
 
@@ -389,6 +444,29 @@ struct OutlineTree: Codable, Equatable {
             return OutlineCaret(path: title.path, offset: title.text.utf16.count)
         }
         return after.first.map { OutlineCaret(path: $0.path, offset: 0) }
+    }
+
+    // MARK: Selection
+
+    /// The bullet at `path` selected alone, with everything nested under it; nil when it isn't a row that shows (the title never is).
+    func selecting(_ path: OutlinePath, scope: OutlineScope = OutlineScope()) -> OutlineSelection? {
+        guard visibleRows(scope).contains(where: { $0.path == path }) else { return nil }
+        return OutlineSelection(run: [path], fixed: path, moving: path)
+    }
+
+    /// The moving end goes one sibling that shows up (`step` -1) or down (1): the run is every sibling that shows between it and the fixed end.
+    /// With no sibling beyond, the parent is selected alone instead and becomes the fixed end. Nil at the top level of the zoom, where it stops.
+    func extending(_ selection: OutlineSelection, by step: Int, scope: OutlineScope = OutlineScope()) -> OutlineSelection? {
+        let rows = visibleRows(scope).map(\.path)
+        let parent = selection.moving.parent
+        let siblings = rows.filter { $0.parent == parent }
+        guard let at = siblings.firstIndex(of: selection.moving) else { return nil }
+        let next = at + step
+        if siblings.indices.contains(next) {
+            guard let fixed = siblings.firstIndex(of: selection.fixed) else { return nil }
+            return OutlineSelection(run: Array(siblings[min(fixed, next)...max(fixed, next)]), fixed: selection.fixed, moving: siblings[next])
+        }
+        return rows.contains(parent) ? OutlineSelection(run: [parent], fixed: parent, moving: parent) : nil
     }
 
     func note(at path: OutlinePath) -> String? { locate(path).flatMap { bullets[$0.bullet]?.note } }
@@ -547,11 +625,12 @@ struct OutlineTree: Codable, Equatable {
     /// `scope` is what is on screen: the row above, the next row and the siblings an edit works with are the ones the user can see.
     func applying(_ edit: OutlineEdit, now: Date, newID: () -> String = OutlineTree.newID, scope: OutlineScope = OutlineScope()) -> OutlineEditResult {
         // The title is the bullet zoomed into: its text can be edited, but it can't be moved, joined or deleted from inside the zoom.
-        if let target = edit.restructuredPath, isTitle(target) { return .refused("the title") }
+        if edit.restructuredPaths.contains(where: isTitle) { return .refused("the title") }
         // ↩ in the title adds the first nested bullet.
         if case .split(let path, let range) = edit, isTitle(path) { return applying(.addFirstChild(path, range: range), now: now, newID: newID, scope: scope) }
         var tree = self
         let caret: OutlineCaret?
+        var moved: [OutlinePath] = []
         switch edit {
         case .setText(let path, let text):
             guard let spot = locate(path) else { return .refused("no such row") }
@@ -612,11 +691,12 @@ struct OutlineTree: Codable, Equatable {
                 tree.removePlacement(at: spot, now: now)
                 caret = OutlineCaret(path: above.path, offset: above.text.utf16.count)
             }
-        case .delete(let path):
-            guard let spot = locate(path) else { return .refused("no such row") }
+        case .delete(let run):
+            guard let run = resolve(run) else { return .refused("no such row") }
             let rows = visibleRows(scope)
-            let at = rows.firstIndex { $0.path == path }
-            tree.removePlacement(at: spot, now: now)
+            let at = rows.firstIndex { $0.path == run.items[0].path }
+            run.remove(from: &tree)
+            tree.bullets[run.parent]?.changed = now
             if let at, at > 0 {
                 caret = OutlineCaret(path: rows[at - 1].path, offset: rows[at - 1].text.utf16.count)
             } else if let title = crumbs().last {
@@ -625,26 +705,37 @@ struct OutlineTree: Codable, Equatable {
                 // No row above: the caret goes to the first row left, the empty one a lone bullet's delete leaves included.
                 return Self.finish(tree, caret: nil, now: now, newID: newID, caretInFirstRow: true)
             }
-        case .placeMirror(let path, let bullet):
-            guard let spot = locate(path), let mirrored = bullets[bullet] else { return .refused("that bullet is gone") }
+        case .placeMirror(let path, let wanted):
+            guard let spot = locate(path) else { return .refused("no such row") }
+            let mirrored = wanted.filter { bullets[$0] != nil }
+            guard let lastBullet = mirrored.last else { return .refused("that bullet is gone") }
             // Below a row, or at the top of what is nested under the title. Not into the bullet itself, nor anything nested under it (through
-            // any placement).
+            // any placement): if any would go, none does.
             let parent = isTitle(path) ? spot.bullet : spot.parent
-            guard !contains(bullet, descendant: parent) else { return .refused(.insideItself) }
-            let placement = OutlinePlacement(id: newID(), bullet: bullet)
-            tree.bullets[parent]?.children.insert(placement, at: isTitle(path) ? 0 : spot.index + 1)
+            guard !mirrored.contains(where: { contains($0, descendant: parent) }) else { return .refused(.insideItself) }
+            let placements = mirrored.map { OutlinePlacement(id: newID(), bullet: $0) }
+            tree.bullets[parent]?.children.insert(contentsOf: placements, at: isTitle(path) ? 0 : spot.index + 1)
             tree.bullets[parent]?.changed = now
-            caret = OutlineCaret(path: (isTitle(path) ? path : path.parent).appending(placement.id), offset: mirrored.text.utf16.count)
-        case .complete(let at):
-            guard let spot = locate(at.path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
+            caret = OutlineCaret(path: (isTitle(path) ? path : path.parent).appending(placements[placements.count - 1].id),
+                                 offset: bullets[lastBullet]?.text.utf16.count ?? 0)
+        case .complete(let asked):
+            guard let run = resolve(asked), let last = run.items.last else { return .refused("no such row") }
             let before = visibleRows(scope)
-            tree.bullets[spot.bullet]?.completed = bullet.completed == nil ? now : nil
-            tree.bullets[spot.bullet]?.changed = now
-            guard case .applied(let done, _) = Self.finish(tree, caret: nil, now: now, newID: newID) else { return .refused("no such row") }
-            return .applied(done, caret: done.caretAfterHiding(at.path, from: before, scope: scope))
+            // All completed: clear them. Otherwise the ones that aren't are stamped now, and the others keep their date.
+            let everyOne = run.items.allSatisfy { bullets[$0.placement.bullet]?.completed != nil }
+            for item in run.items {
+                let id = item.placement.bullet
+                guard everyOne || tree.bullets[id]?.completed == nil else { continue }
+                tree.bullets[id]?.completed = everyOne ? nil : now
+                tree.bullets[id]?.changed = now
+            }
+            guard case .applied(let done, _, _) = Self.finish(tree, caret: nil, now: now, newID: newID) else { return .refused("no such row") }
+            // With Show completed off they leave the view: the caret goes on to the next row, and nothing stays selected.
+            if let landing = done.caretAfterHiding(last.path, from: before, scope: scope) { return .applied(done, caret: landing) }
+            return .applied(done, caret: nil, run: run.items.map(\.path))
         case .setNote(let path, let note):
             guard let spot = locate(path) else { return .refused("no such row") }
-            let clean = note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            let clean = Self.cleanNote(note)
             let new = clean.isEmpty ? nil : clean
             guard bullets[spot.bullet]?.note != new else { return .applied(self, caret: nil) }
             tree.bullets[spot.bullet]?.note = new
@@ -661,89 +752,129 @@ struct OutlineTree: Codable, Equatable {
             }
             tree.bullets[spot.bullet]?.changed = now
             caret = OutlineCaret(path: path.appending(tree.insertNew(text: tail, at: 0, in: spot.bullet, now: now, newID: newID)), offset: 0)
-        case .indent(let at):
-            // Under the nearest sibling above that shows (one a filter, or Show completed, hides is stepped over).
-            guard let spot = locate(at.path), let siblings = bullets[spot.parent]?.children, let own = at.path.placements.last else {
+        case .indent(let asked):
+            // Under the nearest sibling above the run that shows (one a filter, or Show completed, hides is stepped over).
+            guard let run = resolve(asked), let siblings = bullets[run.parent]?.children else { return .refused("no such row") }
+            let shown = Set(visibleRows(scope).map(\.path))
+            var index = run.items[0].index - 1
+            while index >= 0, !shown.contains(run.parentPath.appending(siblings[index].id)) { index -= 1 }
+            guard index >= 0 else { return .refused("no sibling above") }
+            let above = siblings[index]
+            guard !run.items.contains(where: { contains($0.placement.bullet, descendant: above.bullet) }) else { return .refused(.insideItself) }
+            run.remove(from: &tree)
+            tree.bullets[run.parent]?.children[index].collapsed = nil
+            tree.bullets[run.parent]?.changed = now
+            tree.bullets[above.bullet]?.children.append(contentsOf: run.items.map(\.placement))
+            tree.bullets[above.bullet]?.changed = now
+            moved = run.items.map { run.parentPath.appending(above.id).appending($0.placement.id) }
+            caret = run.caret(at: moved)
+        case .outdent(let asked):
+            // Stops at the top level of the zoom.
+            guard let run = resolve(asked), run.parentPath.placements.count > effectiveZoom.count, let parent = locate(run.parentPath) else {
+                return .refused("already at the top")
+            }
+            run.remove(from: &tree)
+            tree.bullets[parent.parent]?.children.insert(contentsOf: run.items.map(\.placement), at: parent.index + 1)
+            tree.bullets[run.parent]?.changed = now
+            tree.bullets[parent.parent]?.changed = now
+            moved = run.items.map { run.parentPath.parent.appending($0.placement.id) }
+            caret = run.caret(at: moved)
+        case .move(let asked, let step):
+            // The run goes as a block past the nearest sibling that shows beyond it: hidden ones (by a filter, or completed) are stepped over,
+            // and any between selected bullets stay behind.
+            guard let run = resolve(asked), let siblings = bullets[run.parent]?.children, let first = run.items.first, let last = run.items.last else {
                 return .refused("no such row")
             }
             let shown = Set(visibleRows(scope).map(\.path))
-            var index = spot.index - 1
-            while index >= 0, !shown.contains(at.path.parent.appending(siblings[index].id)) { index -= 1 }
-            guard index >= 0 else { return .refused("no sibling above") }
-            let above = siblings[index]
-            guard !contains(spot.bullet, descendant: above.bullet) else { return .refused(.insideItself) }
-            let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index)
-            tree.bullets[spot.parent]?.children[index].collapsed = nil
-            tree.bullets[spot.parent]?.changed = now
-            if let moved { tree.bullets[above.bullet]?.children.append(moved) }
-            tree.bullets[above.bullet]?.changed = now
-            caret = OutlineCaret(path: at.path.parent.appending(above.id).appending(own), offset: at.offset)
-        case .outdent(let at):
-            // Stops at the top level of the zoom.
-            guard at.path.placements.count - effectiveZoom.count >= 2, let spot = locate(at.path), let parent = locate(at.path.parent),
-                  let own = at.path.placements.last else { return .refused("already at the top") }
-            if let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index) {
-                tree.bullets[parent.parent]?.children.insert(moved, at: parent.index + 1)
-            }
-            tree.bullets[spot.parent]?.changed = now
-            tree.bullets[parent.parent]?.changed = now
-            caret = OutlineCaret(path: at.path.parent.parent.appending(own), offset: at.offset)
-        case .move(let at, let step):
-            // Past the nearest sibling that shows: hidden ones (by a filter, or completed) are stepped over.
-            guard let spot = locate(at.path), let siblings = bullets[spot.parent]?.children else { return .refused("no such row") }
-            let shown = Set(visibleRows(scope).map(\.path))
-            var target = spot.index + step
-            while siblings.indices.contains(target), !shown.contains(at.path.parent.appending(siblings[target].id)) { target += step }
-            guard siblings.indices.contains(target), let moved = tree.bullets[spot.parent]?.children.remove(at: spot.index) else {
-                return .refused("first or last")
-            }
-            tree.bullets[spot.parent]?.children.insert(moved, at: target)
-            tree.bullets[spot.parent]?.changed = now
-            caret = at
+            var target = step < 0 ? first.index + step : last.index + step
+            while siblings.indices.contains(target), !shown.contains(run.parentPath.appending(siblings[target].id)) { target += step }
+            guard siblings.indices.contains(target) else { return .refused("first or last") }
+            run.remove(from: &tree)
+            // Where the sibling it passes stands once the run is out of the list.
+            let landing = step < 0 ? target : target - run.items.count + 1
+            tree.bullets[run.parent]?.children.insert(contentsOf: run.items.map(\.placement), at: landing)
+            tree.bullets[run.parent]?.changed = now
+            moved = run.items.map(\.path)
+            caret = run.caret(at: moved)
         case .collapse(let path, let collapsed):
             guard let spot = locate(path), bullets[spot.bullet]?.children.isEmpty == false else { return .refused("nothing nested") }
             tree.bullets[spot.parent]?.children[spot.index].collapsed = collapsed ? true : nil
             guard tree != self else { return .applied(self, caret: nil) }
             tree.bullets[spot.parent]?.changed = now
             caret = nil
-        case .paste(let path, let range, let lines):
-            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused("no such row") }
-            let pasted = lines.map(Self.oneLine).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            guard let first = pasted.first else { return .refused("nothing to paste") }
-            let length = bullet.text.utf16.count
-            let low = min(max(range.lowerBound, 0), length), high = min(max(range.upperBound, low), length)
-            let head = bullet.text.utf16Slice(0..<low) + first
-            let tail = bullet.text.utf16Slice(high..<length)
-            guard pasted.count > 1 else {
-                tree.bullets[spot.bullet]?.text = head + tail
-                tree.bullets[spot.bullet]?.changed = now
-                return Self.finish(tree, caret: OutlineCaret(path: path, offset: head.utf16.count), now: now, newID: newID)
+        case .insert(let drafts, let place):
+            guard !drafts.isEmpty else { return .refused("nothing to insert") }
+            let target: (parent: String, path: OutlinePath, index: Int)
+            switch place {
+            case .after(let path):
+                guard let spot = locate(path) else { return .refused("no such row") }
+                target = (spot.parent, path.parent, spot.index + 1)
+            case .firstUnder(let path):
+                guard let spot = locate(path) else { return .refused("no such row") }
+                target = (spot.bullet, path, 0)
+            case .replacing(let path):
+                guard canReplace(path), let spot = locate(path) else { return .refused("not an empty bullet") }
+                tree.bullets[spot.parent]?.children.remove(at: spot.index)
+                target = (spot.parent, path.parent, spot.index)
             }
-            tree.bullets[spot.bullet]?.text = head
-            tree.bullets[spot.bullet]?.changed = now
-            // The further lines go below the bullet, or at the top of what is nested under the title of a zoom.
-            let onTitle = isTitle(path)
-            let into = onTitle ? spot.bullet : spot.parent
-            let before = onTitle ? path : path.parent
-            var index = onTitle ? -1 : spot.index
-            var last = path
-            for (n, line) in pasted.dropFirst().enumerated() {
-                index += 1
-                let text = n == pasted.count - 2 ? line + tail : line
-                let placement = tree.insertNew(text: text, at: index, in: into, now: now, newID: newID)
-                last = before.appending(placement)
+            let placements = drafts.map { tree.make($0, now: now, newID: newID) }
+            tree.bullets[target.parent]?.children.insert(contentsOf: placements, at: target.index)
+            tree.bullets[target.parent]?.changed = now
+            moved = placements.map { target.path.appending($0.id) }
+            // The end of the last top-level bullet pasted that shows (a completed one is hidden with Show completed off).
+            if let last = drafts.indices.last(where: { showsCompleted || drafts[$0].completed == nil }) {
+                caret = OutlineCaret(path: moved[last], offset: Self.oneLine(drafts[last].text).utf16.count)
+            } else {
+                caret = nil
             }
-            caret = OutlineCaret(path: last, offset: pasted[pasted.count - 1].utf16.count)
         }
-        return Self.finish(tree, caret: caret, now: now, newID: newID)
+        return Self.finish(tree, caret: caret, run: moved, now: now, newID: newID)
     }
 
-    private static func finish(_ tree: OutlineTree, caret: OutlineCaret?, now: Date, newID: () -> String,
+    private static func finish(_ tree: OutlineTree, caret: OutlineCaret?, run: [OutlinePath] = [], now: Date, newID: () -> String,
                                caretInFirstRow: Bool = false) -> OutlineEditResult {
         var done = tree.pruned().ensuringBullet(now: now, newID: newID)
         if !done.zoomLeads { done.zoom = [] }
-        guard caretInFirstRow, let first = done.visibleRows().first else { return .applied(done, caret: caret) }
-        return .applied(done, caret: OutlineCaret(path: first.path, offset: 0))
+        guard caretInFirstRow, let first = done.visibleRows().first else { return .applied(done, caret: caret, run: run) }
+        return .applied(done, caret: OutlineCaret(path: first.path, offset: 0), run: run)
+    }
+
+    /// A run of sibling rows looked up: the bullet and path they are under, and each placement with its index there, in the list's order.
+    private struct ResolvedRun {
+        struct Item {
+            let index: Int
+            let placement: OutlinePlacement
+            let path: OutlinePath
+        }
+
+        let parentPath: OutlinePath
+        let parent: String
+        let items: [Item]
+        let caretOffset: Int?
+
+        /// Takes the run's placements out of their parent's list; whoever calls this puts them somewhere, or drops them.
+        func remove(from tree: inout OutlineTree) {
+            for item in items.reversed() { tree.bullets[parent]?.children.remove(at: item.index) }
+        }
+
+        /// Where the caret goes when the run was the caret's row: at the first of `paths`, the run's new places, in the offset it had.
+        func caret(at paths: [OutlinePath]) -> OutlineCaret? { caretOffset.map { OutlineCaret(path: paths[0], offset: $0) } }
+    }
+
+    /// The run's placements, or nil when a path leads nowhere or the rows aren't all under one parent.
+    private func resolve(_ run: OutlineRun) -> ResolvedRun? {
+        guard let first = run.paths.first else { return nil }
+        let parentPath = first.parent
+        var items: [ResolvedRun.Item] = []
+        var parent: String?
+        for path in run.paths {
+            guard path.parent == parentPath, let spot = locate(path), parent == nil || parent == spot.parent,
+                  let placement = bullets[spot.parent]?.children[spot.index], !items.contains(where: { $0.index == spot.index }) else { return nil }
+            parent = spot.parent
+            items.append(ResolvedRun.Item(index: spot.index, placement: placement, path: path))
+        }
+        guard let parent else { return nil }
+        return ResolvedRun(parentPath: parentPath, parent: parent, items: items.sorted { $0.index < $1.index }, caretOffset: run.caretOffset)
     }
 
     /// Whether `descendant` is `ancestor` or can be reached from it by placements.
@@ -774,8 +905,34 @@ struct OutlineTree: Codable, Equatable {
         return levels(below: root, stack: [root])
     }
 
+    /// A note's line breaks as line feeds.
+    private static func cleanNote(_ note: String) -> String {
+        note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
     private static func oneLine(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+    }
+
+    /// Whether the row is an empty bullet with nothing nested, no note and no other placement: what a paste takes the place of.
+    func canReplace(_ path: OutlinePath) -> Bool {
+        guard !isTitle(path), let spot = locate(path), let bullet = bullets[spot.bullet] else { return false }
+        return bullet.text.isEmpty && (bullet.note ?? "").isEmpty && bullet.children.isEmpty && placementCount(of: spot.bullet) == 1
+    }
+
+    /// The placement a row is, with its own collapsed state.
+    func placement(at path: OutlinePath) -> OutlinePlacement? {
+        locate(path).flatMap { bullets[$0.parent]?.children[$0.index] }
+    }
+
+    /// The bullets of a draft and the ones nested in it, made new; returns its placement.
+    private mutating func make(_ draft: OutlineDraft, now: Date, newID: () -> String) -> OutlinePlacement {
+        let bullet = newID(), placement = newID()
+        let children = draft.children.map { make($0, now: now, newID: newID) }
+        let note = Self.cleanNote(draft.note ?? "")
+        bullets[bullet] = OutlineBullet(text: Self.oneLine(draft.text), note: note.isEmpty ? nil : note, completed: draft.completed,
+                                        created: now, changed: now, children: children)
+        return OutlinePlacement(id: placement, bullet: bullet, collapsed: draft.collapsed && !children.isEmpty ? true : nil)
     }
 
     /// A new bullet and its placement at `index` in `parent`'s list; returns the placement's id.

@@ -21,3 +21,4 @@ The rules that keep the file safe:
 - **A hand edit made while Varnick runs is overwritten** at the next save: the file isn't watched.
 - **Anything unreachable from the top bullet is dropped when the tree is saved.** Deleting a placement drops whatever was only under it.
 - **A bullet's text is never logged.** Logs and `Varnick --outline-check <file> [<out>]` give counts and reasons.
+- **Amended 2026-10-11: Varnick's own copy** (the clipboard form of copied bullets, `OutlineClipboard`) is versioned apart from this file: JSON with `version: 1`, holding no ids, in the pasteboard type `com.zabaca.varnick.outline`. A paste reads it only when it knows the version, and otherwise falls back to the indented text beside it. It never reaches the file, and the file's version is unchanged.
