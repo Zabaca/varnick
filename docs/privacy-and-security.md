@@ -71,9 +71,11 @@ None of this goes to a model server.
 With Screen access on (off by default), the Claude sessions started or restarted after you turn it on can read
 the window in front, or one they name. What they read goes to Anthropic with the session and stays in its
 transcript on this Mac: the window's title, its first 255 controls' label, kind and nearby text and, for a
-window that lists nothing or a Chrome page, its short lines read from a picture (the same limits as above). The
-same caveat holds: typed text of 6 words or fewer in a field Varnick can't place may be among the lines. Nothing
-on this path goes to TypeSafe. Varnick's own panel is never read.
+window that lists nothing or a Chrome page, its short lines read from a picture (the same limits as above), and
+which control has the keyboard focus, by its id or its kind ("a text field that isn't listed", "a password
+field"), never its label or what it holds. The same caveat holds: typed text of 6 words or fewer in a field
+Varnick can't place may be among the lines. Nothing on this path goes to TypeSafe. Varnick's own panel is never
+read.
 
 ### A model server you name
 
@@ -200,15 +202,31 @@ may also ask again after some weeks whether Varnick may keep recording (not veri
 Point at the screen itself only reads the window in front, and only when you ask about the screen. The arrow it draws can't
 take focus or clicks, and goes by itself.
 
-### Screen access clicks without asking
+### Screen access acts without asking
 
 Screen access (ADR 0023) gives the sessions started or restarted while it is on a `varnick` MCP server with
-`look`, `point` and `click`.
+`look`, `point`, `click`, `type`, `drag` and `window`.
 
-- **A session can click for you, and nothing asks.** The arrow shows on the target for a second, then the click
-  brings its app to the front and happens: no approval prompt, no per-pane switch, no list of apps to keep out. There is no `type`. A session
-  with Skip permissions gets no prompt from Claude Code either; one without gets Claude Code's own prompt for an
-  MCP tool you haven't allowed (inferred, not checked). Whatever can steer a session can then click as you.
+- **A session can click, type, drag and move windows for you, and nothing asks.** The arrow shows on the target
+  for a second, then the app comes to the front (not for `window`) and the action happens: no approval prompt, no
+  per-pane switch, no list of apps to keep out. A session with Skip permissions gets no prompt from Claude Code
+  either; one without gets Claude Code's own prompt for an MCP tool you haven't allowed (inferred, not checked).
+  Whatever can steer a session (a page it read, a file, a message) can then act as you. Typing is the strongest:
+  it can type a command into a terminal, a message into a chat or a form's fields.
+- **Typing is made of key events, and a field's value is never set.** The app sees keystrokes as if you typed
+  them, in the app in front. `look` never reads what a field holds, so a session can't check what it typed except
+  by selecting the field's contents first and typing over them.
+- **Nothing is typed or pressed while a password field has focus,** where Varnick can see one. It can't where the
+  app doesn't report it: a Chrome page whose tree is hidden, a canvas app, a remote desktop or a virtual machine.
+  A session can type into a password field there, as ADR 0021 accepted for reading. Varnick can't tell a password
+  you meant to give from one a session found in a file or a page, and what a session types goes to Anthropic with
+  its context, so you type it yourself.
+- **Some combos are refused:** Varnick's own shortcuts that work anywhere (show or hide, pin, Listening), and macOS's
+  log out, lock screen and Force Quit. Every other combo goes to the app in front as if you pressed it, ⌘Q and ⌘W
+  included.
+- **Typing stops** when you turn the switch off, bring up Varnick's panel, or another app comes forward.
+- **Varnick's log never holds what a session typed.** It holds the tool, the outcome's kind, how many characters
+  and keys went, and durations.
 - **It adds little today,** because every pane already has the permissions (above): a session could already use
   `osascript`, `screencapture` or its own code. Screen access gives it a supported way with an arrow and a
   switch, not a boundary.
@@ -216,7 +234,7 @@ Screen access (ADR 0023) gives the sessions started or restarted while it is on 
   and the running Varnick answers. A paired Mac or a device can't send one: the peer relay refuses it. Any
   process of yours on this Mac can, naming any pane's id; the id is a label, not a credential.
 - **Varnick's own window is refused,** and so is a session another Mac or a device is in control of. Turning the
-  switch off refuses every call at once.
+  switch off refuses every call at once. `window` moves no pointer and brings no app forward.
 
 ### The downloaded app moves itself to Applications
 

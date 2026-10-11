@@ -186,5 +186,5 @@ What Varnick draws over the screen to point at the thing a **Spoken request** as
 _Avoid_: Highlight, cursor, annotation, overlay
 
 **Screen access**:
-The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, three tools: `look` at a window's controls, `point` at one with the **Arrow**, and `click`. The running Varnick does the work under its own permissions, with the code a **Spoken request** uses, and a click happens without asking, the **Arrow** showing on its target for a second first and the app brought to the front. What a session is shown goes to Anthropic with it.
+The setting (Settings › Claude, off by default) that gives the Claude **Session**s in Varnick's panes, started or restarted while it is on, six tools: `look` at a window's controls (and which one has focus), `point` at one with the **Arrow**, `click`, `type`, `drag` and `window` (move or resize). The running Varnick does the work under its own permissions, with the code a **Spoken request** uses, and an action happens without asking, the **Arrow** showing on its target for a second first and the app brought to the front (not for `window`). What a session is shown goes to Anthropic with it.
 _Avoid_: Computer use, remote control
