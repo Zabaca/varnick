@@ -1,7 +1,7 @@
 ---
 problem: sessions-cant-read-or-drive-varnick
 title: Sessions press keys in the panel through its own key path, to hand-test Varnick's views
-summary: Accepted on 2026-10-11 (the user's decision, relayed by the coordinator), to follow option 01. This builds on option 01's server, switch and router. A `keys` tool sends text and key combos into Varnick's panel as key events posted inside Varnick's own process. They pass through the panel's key monitor, the view's own key handler and the first responder as the user's keys do, and nothing reaches another app. It works only while the panel is visible and key and the user hasn't typed in it for 2 seconds. The view on screen must take keys: search, the board or the Outline, never a terminal or page tab, Settings, the Restart Varnick card or the split picker. Each view refuses the keys that would end, restart or mark sessions, start one, or turn on the microphone. With `panel` and `outline_read`'s `as_shown`, a session checks what each key did. No grant is needed.
+summary: Accepted on 2026-10-11 (the user's decision, relayed by the coordinator), to follow option 01. This builds on option 01's server, switch and router. A `keys` tool sends text and key combos into Varnick's panel as key events handed to Varnick's own event dispatch (`NSApp.sendEvent`). They pass through the panel's key monitor, the view's own key handler and the first responder as the user's keys do, and nothing reaches another app. It works only while the panel is visible and key and the user hasn't typed in it for 2 seconds. The view on screen must take keys: search, the board or the Outline, never a terminal or page tab, Settings, the Restart Varnick card or the split picker. Each view refuses the keys that would end, restart or mark sessions, start one, or turn on the microphone. With `panel` and `outline_read`'s `as_shown`, a session checks what each key did. No grant is needed.
 status: accepted
 ---
 
@@ -13,7 +13,7 @@ status: accepted
 |---|---|---|
 | `keys` | `text`, `keys` | Types `text`, then presses `keys` in order, into the view the panel shows, as the user would. The combos follow the screen tool `type`'s syntax (`cmd+z`, `shift+Tab`, `Return`). It reports what it sent, never what happened: `panel` and the view's `_read` show that. |
 
-The events are made in Varnick and posted to its own event queue, addressed to the panel's window. So the panel's key monitor sees them first, and the view's `key` handler (`Outline.key`, `SessionBoard.key`) or the first responder acts on them, exactly as on a real key. Nothing is posted at the system level, so nothing can reach another app, and no permission is involved.
+The events are made in Varnick and handed to `NSApp.sendEvent`, addressed to the panel's window. So the panel's key monitor sees them first, and the view's `key` handler (`Outline.key`, `SessionBoard.key`) or the first responder acts on them, exactly as on a real key. Nothing is sent at the system level, so nothing can reach another app, and no permission is involved.
 
 ## Trade-offs
 
@@ -34,8 +34,8 @@ The events are made in Varnick and posted to its own event queue, addressed to t
 
 **Delivery**
 - **Building the events.** A key-down and key-up pair per character or combo, made for the panel's window. A character carries itself and no modifiers, as the screen tool `type`'s characters do. A combo is read against the current layout by `ScreenKeys.parse`, shared with `type`.
-- **Posting them** in order on Varnick's own event queue, one at a time, each after the last has been handled, at `type`'s pace.
-- **The limits are `type`'s:** at most 500 characters with no control or line-separator character, and at most 20 combos, each refused whole, never cut.
+- **Sending them** in order through `NSApp.sendEvent`, one at a time, each after the last has been handled, at `type`'s pace.
+- **The limits are `type`'s:** at most 500 characters with no control or line-separator character, and at most 10 combos, each refused whole, never cut.
 - **One action at a time across all sessions,** on `ScreenAccess`'s queue, so a screen `type` and `keys` never interleave.
 
 **The gate,** checked on the main actor before every event, with nothing awaited between the check and the post:

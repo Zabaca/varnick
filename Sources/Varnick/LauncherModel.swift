@@ -723,7 +723,7 @@ final class LauncherModel: ObservableObject {
 
         semanticStatus = embedder != nil && !q.isEmpty ? .pending : .off
         if semanticStatus == .off, !q.isEmpty, !ranking.hasKeywordMatches {
-            NSLog("Varnick: no results for \"\(q)\", semantic off: store embeddings \(store.hasEmbeddings), model \"\(store.embeddingModel)\", run on \(Settings.shared.activeEmbeddings.runOn.rawValue), this Mac's embedder \(baseEmbedder.state), server \(embeddingServer.status)")
+            NSLog("Varnick: no results, semantic off: store embeddings \(store.hasEmbeddings), model \"\(store.embeddingModel)\", run on \(Settings.shared.activeEmbeddings.runOn.rawValue), this Mac's embedder \(baseEmbedder.state), server \(embeddingServer.status)")
         }
         let judge = search.judge(for: q)
         rerankStatus = judge != nil ? .pending : .off
@@ -744,7 +744,7 @@ final class LauncherModel: ObservableObject {
                         self.semanticVia = meaning.source
                         self.semanticStatus = .ok
                         if self.results.isEmpty {
-                            NSLog("Varnick: no results for \"\(q)\": keyword \(withMeaning.keywordPages.count), semantic \(meaning.pages), query dims \(meaning.queryDimensions), store dims \(self.store.dims), embedder \(meaning.source)")
+                            NSLog("Varnick: no results: keyword \(withMeaning.keywordPages.count), semantic \(meaning.pages), query dims \(meaning.queryDimensions), store dims \(self.store.dims), embedder \(meaning.source)")
                         }
                     } else {
                         // The server failed and this Mac has no model to fall back on: keyword only, with the help saying why.

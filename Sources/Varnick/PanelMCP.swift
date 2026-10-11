@@ -41,7 +41,7 @@ enum PanelMCP {
     /// The tools of the set, as `tools/list` gives them: `panel`, then each registered view's, built from the views' own static specs so a
     /// view joins by adopting the protocol (`PanelViews`) with no change here.
     static var tools: [[String: Any]] {
-        [panel, show] + PanelViews.all.flatMap { view in
+        [panel, show, keys] + PanelViews.all.flatMap { view in
             var list = [tool("\(view.name)_read", view.readSpec)]
             if !view.actionSpecs.isEmpty { list.append(actTool(view.name, view.actionSpecs)) }
             return list
@@ -114,6 +114,23 @@ enum PanelMCP {
                      "description": "Show the search, the session board, the board's Problems tab (only while the Problems board switch is on) or the Outline (also !wf). Showing the Outline puts the caret in a bullet only if the panel already has the keyboard."],
             "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused."],
             "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs, outline is also wf). Not listen: it turns on the microphone."],
+        ]))
+
+    private static let keys = tool("keys", PanelToolSpec(
+        summary: "Types `text`, then presses `keys` in order, into the view Varnick's panel shows, as the user's own keys go: through the panel's "
+            + "key monitor and the view's key handler, inside Varnick (nothing reaches another app). It works only while the panel is up with the "
+            + "keyboard, which it never brings about, the view on screen is the search, the session board or the Outline, and the user has not pressed a key "
+            + "in the panel for \(Int(PanelAccess.typingQuiet.components.seconds)) seconds; each key is checked as it comes, so the call can stop partway (the reply says how far it got). Refused before anything is "
+            + "sent: the keys that end, mark done or restart a session, Varnick's own shortcuts, a new terminal, Settings, quit, paste, and ⌃ with a letter (a control character). "
+            + "Refused by the view as it stands when the key comes: in the search, ↩ on a prompt (it starts a session), on !listen, on a ? result "
+            + "or on a session to resume, and esc (it hides the panel); on the board, D and R, and ↩ on a card that is not a pane open here. "
+            + "Never with a tab, Settings, the Restart Varnick card or the split picker showing. Text is at most \(ScreenKeys.maxCharacters) "
+            + "characters with no line break or tab; keys are at most \(ScreenKeys.maxKeys), such as Return, Tab, shift+Tab, cmd+z, Down. It "
+            + "reports what it sent, never what happened: read `panel`, `board_read` or `outline_read` with `as_shown` afterwards.",
+        properties: [
+            "text": ["type": "string", "description": "What to type, at most \(ScreenKeys.maxCharacters) characters, no line breaks or tabs."],
+            "keys": ["type": "array", "items": ["type": "string"],
+                     "description": "Key combos to press in order after the text, at most \(ScreenKeys.maxKeys): modifiers (cmd, ctrl, opt, shift) and one key joined by +, such as Down, Return, shift+Tab or cmd+z."],
         ]))
 
     private static let panel = tool("panel", PanelToolSpec(

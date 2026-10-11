@@ -51,6 +51,15 @@ Nothing on this path goes to TypeSafe. The search field's text is never read, on
 - **Indent, move and outdent** use Show completed, and neither the filter, the zoom nor collapsed bullets, because a session reads the tree whole and its ids name tree rows.
 - **It amends ADR 0030:** the Outline was edited by its own keys alone. With Panel access on, a session also edits it, without asking. The file, its format and the rule that it is never written over when unreadable are unchanged. The log holds the tool and the action, never a bullet's text.
 
+## `keys` presses keys into the panel's own key path
+
+Option 02, built after option 01 by the user's order. It decides how Varnick may send events to itself.
+
+- **In-process, to the panel's window.** Each character of `text` and each combo is made as a key-down and key-up for the panel's window and handed to `NSApp.sendEvent` on the main actor. That runs the panel's key monitor, the view's handler and the first responder as a user's key does. No `CGEvent` is made, so nothing reaches another app and no permission is involved. `sendEvent`, not `postEvent`, so the gate and the event are one synchronous turn.
+- **Gated before every event.** The switch and the pane, the panel visible and key with Varnick active, no key of the user's in the last 2 s, and the view on screen. The first failure stops the call and the reply says how far it got. It never brings the panel up. The user's keys and ours are told apart by a stamp on ours (where-it-breaks, Panel access).
+- **Views say what they refuse.** `PanelKeyView`, which `PanelAccessView` refines, has one member, the reason a view refuses a key now, nil to take it; a view without it takes none. Tabs, Settings and the overlays take none. The search, the board and the Outline answer, and some keys are refused in every view: those that end, restart or mark a session, start one, turn on the microphone, quit or paste. The lists, and why each is there, are in where-it-breaks, Panel access.
+- **One action at a time** on `ScreenAccess`'s queue, so a screen `type` and `keys` never interleave. The limits are `type`'s. The log holds the tool, the kind and counts, never the keys.
+
 ## It amends ADR 0023
 
 ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, found in the history of the option (the problem's Today):
@@ -63,7 +72,7 @@ ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, foun
 
 ## Considered Options
 
-- **Send keys through the panel's own key path (option 02, accepted to follow).** It tests key handling and focus, which these tools do not. It needs its own decision about posting events, so it is not part of this one.
+- **Send keys through the panel's own key path (option 02).** Built: `keys`, above. It tests key handling and focus, which the other tools do not.
 - **Let the screen tools into the panel (option 03).** Rejected: it would put Settings within the tools' reach and needs Accessibility.
 - **A command line on the same requests (option 04).** Kept for later.
 - **A second MCP server for these tools.** Rejected: a second process per pane and a second entry on the command line, on the same socket.
@@ -73,6 +82,6 @@ ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, foun
 ## Consequences
 
 - **One more switch, one more server argument.** A session started with only Panel access on lists `panel` and nothing of the screen tools; with both on, both sets.
-- **A hand test through these tools checks the model, not the key path.** How it looks is still a screen picture's job.
+- **A hand test through `show`, `outline_act` and the reads checks the model; `keys` checks the key path.** How it looks is still a screen picture's job.
 - **Adding a view's tools is adopting `PanelAccessView` and one line in the registry.** The router keeps the switch, the pane, the ids, the refusals, the log and the reply.
 - **The Outline's reading and its edits have shipped** (`outline_read` and `outline_act`, above). An edit that lands in the bullet being typed in goes into that text view as a key does (above).

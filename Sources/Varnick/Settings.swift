@@ -526,8 +526,10 @@ final class Settings: ObservableObject {
     func resetAllShortcuts() { overrides = [:] }
 
     /// The local action for a key press. ⌘= also answers to ⌘+ (⇧=), the way it's labelled.
-    func action(for event: NSEvent) -> ShortcutAction? {
-        let pressed = KeyCombo(event)
+    func action(for event: NSEvent) -> ShortcutAction? { action(for: KeyCombo(event)) }
+
+    /// The shortcut a key would run, as the panel's key monitor matches it (`keys` asks this before it presses one).
+    func action(for pressed: KeyCombo) -> ShortcutAction? {
         let local = ShortcutAction.allCases.filter { !$0.isGlobal }
         if let hit = local.first(where: { combo($0) == pressed }) { return hit }
         if pressed.flags.contains(.shift), Int(pressed.keyCode) == kVK_ANSI_Equal {
@@ -647,7 +649,7 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Panel access",
-                                   detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. And they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. It works through Varnick itself and needs no permission.") {
+                                   detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. And they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. And they can press keys in the panel, as your own keys go, while it is open and you are not typing in it (never the keys that end, mark done or restart a session, start one, quit or paste). It works through Varnick itself and needs no permission.") {
                             Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Keep sessions running",

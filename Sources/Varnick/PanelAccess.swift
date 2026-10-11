@@ -27,6 +27,10 @@ enum PanelRefusal: Error {
     case outlineUnavailable(String)
     /// An edit that changed nothing, with the reason: the tree's own refusal, or the user's caret being in the way.
     case refused(String)
+    /// `keys` sent nothing, with the reason.
+    case keysRefused(String)
+    /// `keys` sent some of its characters and keys and then stopped, with the reason.
+    case keysStopped(String, sent: PanelKeyCount, asked: PanelKeyCount)
 
     @MainActor var message: String {
         switch self {
@@ -43,7 +47,15 @@ enum PanelRefusal: Error {
         case .bad(let why): why
         case .outlineUnavailable(let why): why
         case .refused(let why): "Nothing was changed: \(why)"
+        case .keysRefused(let why): "Nothing was sent: \(why)"
+        case .keysStopped(let why, let sent, let asked): "Stopped after sending \(sent.of(asked)): \(why)"
         }
+    }
+
+    /// Counts for the log: how far a `keys` call got, never what it pressed.
+    var logCounts: String {
+        if case .keysStopped(_, let sent, let asked) = self { return sent.of(asked) }
+        return ""
     }
 
     var logKind: String {
@@ -61,6 +73,8 @@ enum PanelRefusal: Error {
         case .bad: "bad arguments"
         case .outlineUnavailable: "outline unavailable"
         case .refused: "edit refused"
+        case .keysRefused: "keys refused"
+        case .keysStopped: "keys stopped"
         }
     }
 }
@@ -104,11 +118,26 @@ final class PanelAccess {
     static let shared = PanelAccess()
 
     /// How long after a key the user pressed in the panel `show` is refused: they are typing there.
-    static let typingQuiet: Duration = .seconds(2)
+    nonisolated static let typingQuiet: Duration = .seconds(2)
     private var lastKey: ContinuousClock.Instant?
 
-    /// The panel's key monitor says a key came in. Only the time is kept.
-    func noteKey() { lastKey = .now }
+    /// The panel's key monitor says a key came in. Only the time is kept, and only for the user's: one `keys` posted (`PanelKeys`, told by the
+    /// stamp it gave the event, which survives a re-post) is not.
+    func noteKey(_ event: NSEvent) {
+        if isPosted(event) { return }
+        lastKey = .now
+    }
+
+    /// Whether `keys` made this key (or the copy `postEvent` hands on), by its stamp.
+    func isPosted(_ event: NSEvent) -> Bool {
+        postedStamps.contains { abs($0 - event.timestamp) < PanelKeys.stampTolerance }
+    }
+
+    /// The timestamps of the key-downs `keys` made, kept a minute so the Outline's queued keys, sent again later, are still known.
+    var postedStamps: [TimeInterval] = []
+
+    /// Whether the user pressed a key in the panel within `typingQuiet`.
+    var userTypedRecently: Bool { lastKey.map { $0.duration(to: .now) < Self.typingQuiet } ?? false }
 
     /// Each calling pane's ids: held in memory only, kept for the pane's life, and dropped once it has gone or the switch is off.
     private var tables: [UUID: PanelIDs<UUID>] = [:]
@@ -178,13 +207,14 @@ final class PanelAccess {
             guard head.panel == PanelRequest.version else { throw PanelRefusal.versionDiffers }
             guard let request = PeerJSON.decode(PanelRequest.self, from: line) else { throw PanelRefusal.unreadable }
             tool = PanelMCP.names.contains(request.tool) ? request.tool : "-"
-            let done = try await run(request)
+            let done = try await run(request, arrived: arrived)
             action = done.action.map { " " + $0 } ?? ""
             // Counts only: the lines of the reply, never what they say.
-            counts = "\(done.text.split(separator: "\n", omittingEmptySubsequences: false).count) lines"
+            counts = done.counts ?? "\(done.text.split(separator: "\n", omittingEmptySubsequences: false).count) lines"
             reply = ScreenReply(text: done.text, isError: false)
         } catch let refusal as PanelRefusal {
             kind = refusal.logKind
+            counts = refusal.logCounts
             reply = ScreenReply(text: refusal.message, isError: true)
         } catch {
             kind = "failed"
@@ -197,13 +227,15 @@ final class PanelAccess {
     }
 
     /// What a call did: the text the session reads, and the action when a view's `_act` made one.
-    private struct Answered {
+    struct Answered {
         var text: String
         var action: String?
+        /// The log's counts when they are not the reply's lines.
+        var counts: String?
     }
 
     /// In order: the switch, Varnick starting, the pane, then the tool.
-    private func run(_ request: PanelRequest) async throws -> Answered {
+    private func run(_ request: PanelRequest, arrived: ContinuousClock.Instant) async throws -> Answered {
         guard Settings.shared.panelAccess else { throw PanelRefusal.off }
         guard let model = PeerManager.shared.model else { throw PanelRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
@@ -213,6 +245,7 @@ final class PanelAccess {
             let (text, kind) = try show(request.args, model, caller: caller)
             return Answered(text: text, action: kind)
         }
+        if request.tool == "keys" { return try await keys(request.args, model, caller: caller, arrived: arrived) }
         // A registered view's tools: the router has done everything but the view's own part.
         guard let (type, acts) = PanelViews.find(request.tool) else { throw PanelRefusal.unknownTool(request.tool) }
         let view = type.init(model: model)
@@ -343,7 +376,7 @@ final class PanelAccess {
 
     // MARK: panel
 
-    private var panelWindow: LauncherPanel? { NSApp.windows.first { $0 is LauncherPanel } as? LauncherPanel }
+    var panelWindow: LauncherPanel? { NSApp.windows.first { $0 is LauncherPanel } as? LauncherPanel }
 
     /// Whether the panel is up and key: only then can a bullet have the caret.
     var panelHasKeyboard: Bool { panelWindow.map { $0.isVisible && $0.isKeyWindow } ?? false }

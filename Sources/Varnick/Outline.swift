@@ -89,6 +89,8 @@ final class Outline: ObservableObject {
     private var pending: CaretTarget?
     /// Keys that arrive while the caret is on its way to another bullet; they are sent again once it has landed.
     private var queuedEvents: [NSEvent] = []
+    /// How many of those `landed` has posted again and `key` has not yet seen, so a session's `keys` does not send the next key ahead of them.
+    private var replaying = 0
     private var undoStack: [Step] = []
     private var redoStack: [Step] = []
     private var typingRun: (path: OutlinePath, field: OutlineField, last: Date)?
@@ -179,6 +181,7 @@ final class Outline: ObservableObject {
         saver.flush()
         pending = nil
         queuedEvents = []
+        replaying = 0
         typingRun = nil
         focusesOnLoad = false
     }
@@ -298,6 +301,15 @@ final class Outline: ObservableObject {
             try? await Task.sleep(for: .milliseconds(20))
         }
         return true
+    }
+
+    /// After a key a session's `keys` sent: waits until the caret has landed where the key sent it and the keys queued meanwhile were sent again
+    /// and handled (`queuedEvents`, `landed`), so the next key follows them and is not handled ahead of them. False after a second, or when the
+    /// call is cancelled; the count of keys still on their way is dropped then, since they may never come.
+    func keysSettled() async -> Bool {
+        let settled = await wait(.seconds(1), until: { pending == nil && queuedEvents.isEmpty && replaying == 0 })
+        if !settled { replaying = 0 }
+        return settled
     }
 
     /// One edit for a session: one undo step on the keys' stack, the user's caret moved only as `OutlineActing.caretMove` says, and never the
@@ -809,6 +821,7 @@ final class Outline: ObservableObject {
         pending = nil
         let queued = queuedEvents
         queuedEvents = []
+        replaying += queued.count
         for event in queued.reversed() { NSApp.postEvent(event, atStart: true) }
     }
 
@@ -932,6 +945,7 @@ final class Outline: ObservableObject {
     /// The keys the outline takes, as `SessionBoard.key` does: the switch below lists them. The End session, Mark session done and Restart
     /// session keys are taken and do nothing. The rest goes on; while an input method is composing, so does all but those three.
     func key(_ event: NSEvent) -> Bool {
+        if replaying > 0 { replaying -= 1 }
         if let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession || action == .restartSession {
             return true
         }
