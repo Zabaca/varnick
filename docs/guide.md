@@ -193,7 +193,14 @@ Completed) as the board shows them, or with `tab: problems` the Problems tab's, 
 gets an id such as `s1`, the same every time, in all of them. `pane_read` gives a pane's kind and title and, for a
 terminal (a Claude session or a shell, this session's own included), the text its screen shows now, never its
 scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or a custom
-app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** The tools work through
+app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.**
+
+`show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
+board or problems (the Problems tab, while that switch is on), `pane` an id from `panel` or `board_read` (shows
+that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`).
+It never shows, hides or pins the panel: with the panel hidden, what it showed is there the next time you open it.
+It never runs `!listen`, which turns on the microphone. It is refused while Settings, the Restart Varnick card or
+the split picker shows, and for two seconds after you press a key in the panel. The tools work through
 Varnick's own state, so they need no permission, no Accessibility and no Screen Recording. What a session reads goes to
 Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access). A
 session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the switch on; turning it off

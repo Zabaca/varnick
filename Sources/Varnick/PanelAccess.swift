@@ -84,6 +84,13 @@ struct PanelIDs {
 final class PanelAccess {
     static let shared = PanelAccess()
 
+    /// How long after a key the user pressed in the panel `show` is refused: they are typing there.
+    static let typingQuiet: Duration = .seconds(2)
+    private var lastKey: ContinuousClock.Instant?
+
+    /// The panel's key monitor says a key came in. Only the time is kept.
+    func noteKey() { lastKey = .now }
+
     /// Each calling pane's ids: held in memory only, kept for the pane's life, and dropped once it has gone or the switch is off.
     private var tables: [UUID: PanelIDs] = [:]
 
@@ -156,6 +163,10 @@ final class PanelAccess {
         }
         prune(in: model)
         if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }
+        if request.tool == "show" {
+            let (text, kind) = try show(request.args, model, caller: caller)
+            return Answered(text: text, action: kind)
+        }
         // A registered view's tools: the router has done everything but the view's own part.
         guard let (type, acts) = PanelViews.find(request.tool) else { throw PanelRefusal.unknownTool(request.tool) }
         let view = type.init(model: model)
@@ -171,6 +182,64 @@ final class PanelAccess {
         guard !tables.isEmpty else { return }
         let open = Set(model.tabs.flatMap { $0.sessions.map(\.id) })
         tables = tables.filter { open.contains($0.key) }
+    }
+
+    // MARK: show
+
+    /// Changes what the panel shows through the model's own functions (`showSearch`, `showBoard`, `activate`/`showPane` and the one that
+    /// runs a command), so the panel's height, the focus and "never the board and a tab together" follow their own rules. It never shows,
+    /// hides, pins or activates the panel. Returns the reply and the kind of the argument it acted on, for the log.
+    private func show(_ args: PanelArguments, _ model: LauncherModel, caller: UUID) throws -> (String, String) {
+        let given = ["view", "pane", "command"].filter { !(args[$0] ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+        guard given.count == 1, let kind = given.first, let value = args[kind]?.trimmingCharacters(in: .whitespaces) else {
+            throw PanelRefusal.bad("Give one of view, pane or command")
+        }
+        // Resolved before anything changes, so a refusal leaves the panel as it was.
+        let act: () -> Void
+        switch kind {
+        case "view":
+            switch value.lowercased() {
+            case "search":
+                // Already there: showing it again would clear what the user typed.
+                act = { if model.activeTab != nil || model.showingBoard { model.hideBoard(); model.showSearch() } }
+            case "board": act = { model.showBoard(.sessions) }
+            case "problems":
+                guard Settings.shared.problemsBoard else { throw PanelRefusal.bad("The Problems board is off: the user can turn it on in Settings › Experimental") }
+                act = { model.showBoard(.problems) }
+            default: throw PanelRefusal.bad("view is search, board or problems")
+            }
+        case "pane":
+            let target = try self.target(value, caller: caller)
+            guard model.tabs.contains(where: { $0.sessions.contains { $0.id == target } }) else {
+                if model.board.cards.contains(where: { $0.id == target }) {
+                    throw PanelRefusal.bad("That is a card with no pane open in a tab, so there is no tab to show")
+                }
+                throw PanelRefusal.gone
+            }
+            act = { model.showPane(target) }
+        default:
+            let name = value.lowercased().drop(while: { $0 == "!" })
+            guard let command = LauncherCommand.allCases.first(where: { $0.names.contains(String(name)) }) else {
+                throw PanelRefusal.bad("No such command. These are: transcript, kanban (also tabs) or problems")
+            }
+            // It turns on the microphone.
+            guard command != .listen else { throw PanelRefusal.bad("A session may not run !listen: it turns on the microphone") }
+            guard LauncherCommand.available.contains(command) else {
+                throw PanelRefusal.bad("The Problems board is off: the user can turn it on in Settings › Experimental")
+            }
+            act = { model.run(command) }
+        }
+        // The user's own state comes first: what shows over the view, then their typing.
+        if model.showingSettings { throw PanelRefusal.bad("Settings is showing: ask the user to close it first") }
+        if model.askingRestart { throw PanelRefusal.bad("The Restart Varnick card is showing: ask the user to answer it first") }
+        if model.pendingSplit != nil { throw PanelRefusal.bad("The split picker is showing: ask the user to answer it first") }
+        if let lastKey, lastKey.duration(to: .now) < Self.typingQuiet {
+            throw PanelRefusal.bad("The user pressed a key in the panel a moment ago and may be typing there: try again in a few seconds")
+        }
+        act()
+        let showing = panelText(model, caller: caller).split(separator: "\n").first { $0.hasPrefix("Showing:") }.map(String.init) ?? "Shown."
+        let hidden = panelWindow?.isVisible == true ? "" : " The panel is hidden, so this is there when the user opens it."
+        return (showing + hidden, kind)
     }
 
     // MARK: panel

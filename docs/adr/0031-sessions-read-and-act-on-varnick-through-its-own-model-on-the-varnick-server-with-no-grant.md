@@ -13,6 +13,13 @@ A session speaks to Varnick's **model**, not to pixels: the running Varnick answ
 - **Ids.** A pane is `s1`, `s2`…, kept per calling pane for that pane's life, held in memory, dropped when the pane has gone or the switch is off.
 - **The log** holds the tool, the outcome's kind, a count of lines and the duration. Never a title, a name or any text of a reply.
 
+## `show` changes what the panel shows, never whether it shows
+
+- **Through the model's own functions** (`showSearch`, `showBoard`, `showPane`, and the one function that runs a `!` Command, which `runCommand` calls too), so the panel's height, the focus and "never the board and a tab together" follow their own rules. The same changes the keys make, with no key sent and no event posted.
+- **It never shows, hides, pins or activates the panel.** With the panel hidden, the view is there the next time the user opens it, and the reply says so. A session must not bring Varnick up in front of an app the user is working in.
+- **`!listen` is refused:** it turns on the microphone. `!problems` works only while the Problems board switch is on, as the key does.
+- **The user's own state wins.** It is refused while Settings, the Restart Varnick card or the split picker shows, and for two seconds after a key the user pressed in the panel (the key monitor stamps the time and returns what it did before). Settings is where the controls that govern sessions are, so a session can neither open it nor change it.
+
 ## What a session is shown goes to Anthropic
 
 What a session reads goes to Anthropic with its context and stays in its transcript on this Mac:

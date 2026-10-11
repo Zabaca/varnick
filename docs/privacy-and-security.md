@@ -162,6 +162,11 @@ tools at once. Varnick's log holds the tool, the outcome's kind, a count of line
 text. Reading a pane's screen resizes, writes to and focuses nothing in it. If you don't want what a terminal shows
 sent to Anthropic, leave Panel access off.
 
+A session can also change what the panel shows (`show`): the search, the board, the Problems tab, a pane's tab, or a
+`!` command (`!transcript`, `!kanban`, `!problems`), the same changes your keys make. It never shows, hides or pins the
+panel, never turns on Listening (`!listen` is refused), and is refused while Settings or a dialog of Varnick's shows
+and for two seconds after a key you pressed in the panel. It sends no key and posts no event.
+
 ### A model server you name
 
 With Server chosen for Search embeddings or Text generation (Settings › Models), Varnick sends the server the

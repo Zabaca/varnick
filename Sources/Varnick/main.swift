@@ -173,6 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Shortcuts (Settings › Shortcuts), caught before the terminal view swallows them.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.panel else { return event }
+            // Only the time of the key, so a session's `show` (Panel access) leaves the user typing here alone; what is returned for any key is unchanged.
+            PanelAccess.shared.noteKey()
             let settings = Settings.shared
             if settings.recording != nil {
                 settings.record(event)

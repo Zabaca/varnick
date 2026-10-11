@@ -41,7 +41,7 @@ enum PanelMCP {
     /// The tools of the set, as `tools/list` gives them: `panel`, then each registered view's, built from the views' own static specs so a
     /// view joins by adopting the protocol (`PanelViews`) with no change here.
     static var tools: [[String: Any]] {
-        [panel] + PanelViews.all.flatMap { view in
+        [panel, show] + PanelViews.all.flatMap { view in
             var list = [tool("\(view.name)_read", view.readSpec)]
             if !view.actionSpecs.isEmpty { list.append(actTool(view.name, view.actionSpecs)) }
             return list
@@ -100,10 +100,21 @@ enum PanelMCP {
         return tool("\(name)_act", PanelToolSpec(summary: "One change to the \(name), by `action`. \(lines)", properties: properties, required: ["action"]))
     }
 
+    private static let show = tool("show", PanelToolSpec(
+        summary: "Changes what Varnick's panel shows, the way its keys do, and never whether it shows: it does not bring the panel up, hide or "
+            + "pin it, and with the panel hidden the view is there when the user opens it. Give one of `view`, `pane` or `command`. Refused "
+            + "while Settings, the Restart Varnick card or the split picker shows, and for a moment after the user pressed a key in the panel.",
+        properties: [
+            "view": ["type": "string", "enum": ["search", "board", "problems"],
+                     "description": "Show the search, the session board, or the board's Problems tab (only while the Problems board switch is on)."],
+            "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused."],
+            "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: transcript, kanban (also tabs) or problems. Not listen: it turns on the microphone."],
+        ]))
+
     private static let panel = tool("panel", PanelToolSpec(
         summary: "Says what Varnick's panel shows now, and where the keyboard focus is. Whether the panel is visible, key and pinned; what it "
             + "shows: the search (its mode, and whether its field is empty, never its text), a tab with its panes (each with an id such as s1, "
             + "its kind and title, which has focus and which is this session), the session board with its tab and selected card, Settings, "
-            + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives, and board_read and pane_read use the same ids.",
+            + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives, and show, board_read and pane_read use the same ids.",
         properties: [:]))
 }

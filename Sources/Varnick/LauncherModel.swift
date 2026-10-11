@@ -995,7 +995,12 @@ final class LauncherModel: ObservableObject {
     func runCommand() {
         let shown = commands
         guard shown.indices.contains(commandSelection) else { return NSSound.beep() }
-        switch shown[commandSelection] {
+        run(shown[commandSelection])
+    }
+
+    /// A command as ↩ on its row runs it, and as `show` runs one for a session (`PanelAccess`): one function, so both behave the same.
+    func run(_ command: LauncherCommand) {
+        switch command {
         case .listen: Listener.shared.toggle()
         case .transcript: openTranscript()
         case .kanban:
@@ -2324,8 +2329,8 @@ final class LauncherModel: ObservableObject {
         focusShown()
     }
 
-    /// Closes the board without moving focus, for a caller that is about to focus a pane itself.
-    private func hideBoard() {
+    /// Closes the board without moving focus, for a caller that is about to focus a pane or the search itself.
+    func hideBoard() {
         guard showingBoard else { return }
         showingBoard = false
         board.close()
