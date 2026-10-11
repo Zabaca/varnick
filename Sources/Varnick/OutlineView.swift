@@ -113,7 +113,7 @@ private struct OutlineCrumbs: View {
                     }
                 case .gap:
                     separator
-                    Text("…").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text("…").font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -125,7 +125,7 @@ private struct OutlineCrumbs: View {
     }
 
     private func link(_ text: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) { Text(text).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1) }
+        Button(action: action) { Text(text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1) }
             .buttonStyle(.plain)
     }
 }
@@ -139,8 +139,7 @@ private struct OutlineRows: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // The zoomed bullet's own text, above what is nested under it.
                     if let title = outline.crumbs.last {
-                        BulletText(outline: outline, row: OutlineRow(path: title.path, bullet: "", depth: 0, text: title.text,
-                                                                     hasChildren: false, collapsed: false), isTitle: true)
+                        BulletText(outline: outline, path: title.path, text: title.text, isTitle: true)
                             .id(title.id)
                             .padding(.vertical, 6)
                     }
@@ -178,7 +177,7 @@ private struct OutlineRowView: View {
         HStack(alignment: .top, spacing: 4) {
             disclosure
             dot
-            BulletText(outline: outline, row: row)
+            BulletText(outline: outline, path: row.path, text: row.text)
         }
         .padding(.leading, CGFloat(row.depth) * Self.indent)
         .padding(.vertical, 2)
@@ -223,16 +222,17 @@ private struct OutlineRowView: View {
 /// wrapped line it is on, or whether an input method is composing.
 private struct BulletText: NSViewRepresentable {
     let outline: Outline
-    let row: OutlineRow
+    let path: OutlinePath
+    let text: String
     /// The text of the bullet zoomed into, set large above the rows.
     var isTitle = false
 
     func makeCoordinator() -> Coordinator { Coordinator(outline: outline) }
 
     func makeNSView(context: Context) -> OutlineTextView {
-        let view = OutlineTextView.make(path: row.path, outline: outline, font: isTitle ? OutlineTextView.titleFont : OutlineTextView.font)
+        let view = OutlineTextView.make(path: path, outline: outline, isTitle: isTitle)
         view.delegate = context.coordinator
-        view.setTextQuietly(row.text)
+        view.setTextQuietly(text)
         outline.register(view)
         return view
     }
@@ -241,8 +241,8 @@ private struct BulletText: NSViewRepresentable {
     /// it is set only once the caret has left (`OutlineTextView.syncFromModel`).
     func updateNSView(_ view: OutlineTextView, context: Context) {
         context.coordinator.outline = outline
-        guard view.window?.firstResponder !== view, view.string != row.text else { return }
-        view.setTextQuietly(row.text)
+        guard view.window?.firstResponder !== view, view.string != text else { return }
+        view.setTextQuietly(text)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: OutlineTextView, context: Context) -> CGSize? {
@@ -289,11 +289,16 @@ final class OutlineTextView: NSTextView {
 
     static let font = NSFont.systemFont(ofSize: 13)
     static let titleFont = NSFont.systemFont(ofSize: 20, weight: .semibold)
-    private var bulletFont = OutlineTextView.font
+    private var rowFont = OutlineTextView.font
+    /// The text of the bullet zoomed into. It has the path of the row it was zoomed from, so the two are told apart by this.
+    private(set) var isTitle = false
+
+    static func registryKey(_ path: OutlinePath, isTitle: Bool) -> String { (isTitle ? "title:" : "") + path.id }
+    var registryKey: String { Self.registryKey(rowPath, isTitle: isTitle) }
 
     /// TextKit 1 on purpose: the caret's line and x come from its layout manager.
     @MainActor
-    static func make(path: OutlinePath, outline: Outline, font: NSFont) -> OutlineTextView {
+    static func make(path: OutlinePath, outline: Outline, isTitle: Bool) -> OutlineTextView {
         let storage = NSTextStorage()
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude))
@@ -312,8 +317,9 @@ final class OutlineTextView: NSTextView {
         view.isHorizontallyResizable = false
         view.isVerticallyResizable = false
         view.textContainerInset = .zero
-        view.bulletFont = font
-        view.font = font
+        view.isTitle = isTitle
+        view.rowFont = isTitle ? titleFont : font
+        view.font = view.rowFont
         view.textColor = .labelColor
         view.focusRingType = .none
         view.isAutomaticQuoteSubstitutionEnabled = false
@@ -382,7 +388,7 @@ final class OutlineTextView: NSTextView {
     // MARK: Layout
 
     private var lineHeight: CGFloat {
-        layoutManager?.defaultLineHeight(for: bulletFont) ?? 16
+        layoutManager?.defaultLineHeight(for: rowFont) ?? 16
     }
 
     /// The height the text needs at `width`.

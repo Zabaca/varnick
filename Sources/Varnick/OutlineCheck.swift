@@ -21,7 +21,7 @@ enum OutlineCheck {
             zoom = tree.effectiveZoom.count
         }
 
-        var description: String { "\(bullets) bullets, \(placements) placements, \(mirrors) mirrors, deepest level \(deepest)" }
+        var description: String { "\(bullets) bullets, \(placements) placements, \(mirrors) mirrors, deepest level \(deepest), zoomed \(zoom) deep" }
     }
 
     static func run(_ arguments: [String]) -> Int32 {
@@ -44,7 +44,7 @@ enum OutlineCheck {
             print("newer: version \(version), this Varnick reads \(OutlineTree.currentVersion)")
             return 1
         case .loaded(let loaded, let repairs):
-            print("loaded: version \(loaded.version), \(Counts(loaded)), zoomed \(loaded.effectiveZoom.count) deep")
+            print("loaded: version \(loaded.version), \(Counts(loaded))")
             print("repaired: \(repairs.missingBullets) missing bullets, \(repairs.insideItself) inside itself, \(repairs.recovered) recovered, "
                   + "\(repairs.duplicatePlacements) repeated ids, \(repairs.unreachable) unreachable, zoom \(repairs.zoomLost ? "reset to Home" : "kept")")
             tree = loaded

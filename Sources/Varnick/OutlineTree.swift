@@ -130,7 +130,7 @@ struct OutlineTree: Codable, Equatable {
     var version = OutlineTree.currentVersion
     var root: String
     var bullets: [String: OutlineBullet]
-    /// The placements the user last zoomed through (a later ticket); kept as read.
+    /// The placements the user last zoomed through; Home when empty or when they lead nowhere.
     var zoom: [String] = []
     var showsCompleted = false
 
@@ -206,6 +206,12 @@ struct OutlineTree: Codable, Equatable {
     /// The zoom, or Home when it leads nowhere (a bullet deleted, a file edited by hand).
     var effectiveZoom: [String] { zoomLeads ? zoom : [] }
 
+    /// Whether `path` is the title: the row of the bullet zoomed into, which shows above the rows. Never true at Home.
+    func isTitle(_ path: OutlinePath) -> Bool {
+        let zoomed = effectiveZoom
+        return !zoomed.isEmpty && path.placements == zoomed
+    }
+
     private func bulletsAlong(_ placements: [String]) -> [String] {
         var parent = root
         var found: [String] = []
@@ -241,13 +247,11 @@ struct OutlineTree: Codable, Equatable {
         return tree
     }
 
-    /// Zoomed out as far as it takes for `path` to be on screen: where the zoom and the path part ways.
+    /// Zoomed out as far as it takes for `path` to be on screen, as a row or as the title: where the zoom and the path part ways.
     func zoomShowing(_ path: OutlinePath) -> OutlineTree {
         var tree = self
         var kept = 0
         while kept < zoom.count, kept < path.placements.count, zoom[kept] == path.placements[kept] { kept += 1 }
-        // A path that is a bullet zoomed through shows as a row one level up.
-        if kept == path.placements.count, kept < zoom.count { kept = max(kept - 1, 0) }
         tree.zoom = Array(zoom.prefix(kept))
         return tree
     }
@@ -304,7 +308,9 @@ struct OutlineTree: Codable, Equatable {
     /// One edit at a row. The result is the new tree and where the caret goes (nil: it stays), or a refusal that changes nothing.
     func applying(_ edit: OutlineEdit, now: Date, newID: () -> String = OutlineTree.newID) -> OutlineEditResult {
         // The title is the bullet zoomed into: its text can be edited, but it can't be moved, joined or deleted from inside the zoom.
-        if !zoom.isEmpty, let target = edit.restructuredPath, target.placements == effectiveZoom { return .refused("the title") }
+        if let target = edit.restructuredPath, isTitle(target) { return .refused("the title") }
+        // ↩ in the title adds the first nested bullet.
+        if case .split(let path, let range) = edit, isTitle(path) { return applying(.addFirstChild(path, range: range), now: now, newID: newID) }
         var tree = self
         let caret: OutlineCaret?
         switch edit {
@@ -341,12 +347,17 @@ struct OutlineTree: Codable, Equatable {
             guard bullet.children.isEmpty else { return .refused("bullets are nested under it") }
             let rows = visibleRows()
             guard let at = rows.firstIndex(where: { $0.path == path }) else { return .refused("no such row") }
+            // The row above: the one before in the list, or for the first nested bullet of a zoom its title.
+            var above: (path: OutlinePath, bullet: String, text: String)?
+            if at > 0 {
+                above = (rows[at - 1].path, rows[at - 1].bullet, rows[at - 1].text)
+            } else if let title = crumbs().last, let zoomed = locate(title.path) {
+                above = (title.path, zoomed.bullet, title.text)
+            }
             if bullet.text.isEmpty, bullet.note?.isEmpty ?? true {
                 // Nothing to keep: gone, with the caret at the end of the row above, or at the start of the next when there is none.
-                if at > 0 {
-                    caret = OutlineCaret(path: rows[at - 1].path, offset: rows[at - 1].text.utf16.count)
-                } else if let title = crumbs().last {
-                    caret = OutlineCaret(path: title.path, offset: title.text.utf16.count)
+                if let above {
+                    caret = OutlineCaret(path: above.path, offset: above.text.utf16.count)
                 } else if rows.count > 1 {
                     caret = OutlineCaret(path: rows[1].path, offset: 0)
                 } else {
@@ -354,15 +365,13 @@ struct OutlineTree: Codable, Equatable {
                 }
                 tree.removePlacement(at: spot, now: now)
             } else {
-                guard at > 0 else { return .refused("nothing above") }
+                guard let above, above.bullet != spot.bullet else { return .refused("nothing above") }
                 guard placementCount(of: spot.bullet) == 1 else { return .refused("it has other placements") }
                 guard bullet.note?.isEmpty ?? true else { return .refused("it has a note") }
-                let above = rows[at - 1]
-                guard above.bullet != spot.bullet, let aboveText = bullets[above.bullet]?.text else { return .refused("nothing above") }
-                tree.bullets[above.bullet]?.text = aboveText + bullet.text
+                tree.bullets[above.bullet]?.text = above.text + bullet.text
                 tree.bullets[above.bullet]?.changed = now
                 tree.removePlacement(at: spot, now: now)
-                caret = OutlineCaret(path: above.path, offset: aboveText.utf16.count)
+                caret = OutlineCaret(path: above.path, offset: above.text.utf16.count)
             }
         case .delete(let path):
             guard let spot = locate(path) else { return .refused("no such row") }
@@ -436,7 +445,7 @@ struct OutlineTree: Codable, Equatable {
             tree.bullets[spot.bullet]?.text = head
             tree.bullets[spot.bullet]?.changed = now
             // The further lines go below the bullet, or at the top of what is nested under the title of a zoom.
-            let onTitle = !zoom.isEmpty && path.placements == effectiveZoom
+            let onTitle = isTitle(path)
             let into = onTitle ? spot.bullet : spot.parent
             let before = onTitle ? path : path.parent
             var index = onTitle ? -1 : spot.index

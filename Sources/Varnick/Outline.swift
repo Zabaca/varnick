@@ -75,7 +75,7 @@ final class Outline: ObservableObject {
             use(OutlineTree.empty(now: now))
         case .loaded(let tree, let repairs):
             if !repairs.isEmpty {
-                NSLog("Varnick: outline.json repaired: \(repairs.missingBullets) missing, \(repairs.insideItself) inside itself, \(repairs.recovered) recovered, \(repairs.duplicatePlacements) repeated ids, \(repairs.unreachable) unreachable")
+                NSLog("Varnick: outline.json repaired: \(repairs.missingBullets) missing, \(repairs.insideItself) inside itself, \(repairs.recovered) recovered, \(repairs.duplicatePlacements) repeated ids, \(repairs.unreachable) unreachable, zoom reset: \(repairs.zoomLost)")
             }
             use(tree.ensuringBullet(now: now))
         case .unreadable(let reason):
@@ -240,10 +240,10 @@ final class Outline: ObservableObject {
 
     // MARK: Text views
 
-    func register(_ view: OutlineTextView) { views[view.rowPath.id] = WeakView(value: view) }
+    func register(_ view: OutlineTextView) { views[view.registryKey] = WeakView(value: view) }
 
     func unregister(_ view: OutlineTextView) {
-        if views[view.rowPath.id]?.value === view { views[view.rowPath.id] = nil }
+        if views[view.registryKey]?.value === view { views[view.registryKey] = nil }
     }
 
     func caretEntered(_ view: OutlineTextView) {
@@ -283,7 +283,7 @@ final class Outline: ObservableObject {
 
     /// Whether a row is on screen: under the zoom, or the title.
     private func showing(_ path: OutlinePath) -> Bool {
-        (path == zoomPath && !crumbs.isEmpty) || rows.contains { $0.path == path }
+        tree.isTitle(path) || rows.contains { $0.path == path }
     }
 
     // MARK: Zoom
@@ -340,7 +340,8 @@ final class Outline: ObservableObject {
 
     private func tryPlace(tries: Int) {
         guard let request = pending else { return }
-        if let view = views[request.path.id]?.value, let window = view.window {
+        // The title and the row it was zoomed from share a path, so a view counts only if it is the one the path now means.
+        if let view = views[OutlineTextView.registryKey(request.path, isTitle: tree.isTitle(request.path))]?.value, let window = view.window {
             view.syncFromModel()
             window.makeFirstResponder(view)
             view.place(request.place)
@@ -395,17 +396,18 @@ final class Outline: ObservableObject {
             undoOrRedo(redo: flags == commandShift)
             return true
         }
+        // ⌘[ needs no bullet to have the caret.
+        if code == kVK_ANSI_LeftBracket, flags == command, load == .ready, !composing {
+            zoomOut(to: tree.effectiveZoom.count - 1)
+            return true
+        }
         guard load == .ready, !composing, let view = activeView, view.window?.firstResponder === view else { return false }
         let selection = view.selectedRange()
         let path = view.rowPath
         let here = OutlineCaret(path: path, offset: selection.location)
         let atStart = selection.location == 0 && selection.length == 0
-        if code == kVK_ANSI_LeftBracket, flags == command {
-            zoomOut(to: tree.effectiveZoom.count - 1)
-            return true
-        }
         // The title of a zoom is the zoomed bullet itself: ↩ adds its first nested bullet, and nothing here moves, joins or deletes it.
-        if path == zoomPath, !tree.effectiveZoom.isEmpty {
+        if tree.isTitle(path) {
             switch (code, flags) {
             case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []):
                 apply(.addFirstChild(path, range: selection.location..<NSMaxRange(selection)))
