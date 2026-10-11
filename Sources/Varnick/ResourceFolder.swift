@@ -1,6 +1,6 @@
 import Foundation
 
-/// Where Varnick's own files are (the metallib, the Phone page, the build stamp), so one binary runs from a checkout's build
+/// Where Varnick's own files are (the metallib, the Phone page, the build stamp, the text helper), so one binary runs from a checkout's build
 /// folder or inside Varnick.app. Foundation only, so a harness compiles it alone (where-it-breaks, Peers).
 enum ResourceFolder {
     struct Place: Equatable {
@@ -10,6 +10,11 @@ enum ResourceFolder {
 
         /// The `.app` itself, when `inBundle` (Contents/Resources is two levels in).
         var bundle: URL? { inBundle ? folder.deletingLastPathComponent().deletingLastPathComponent() : nil }
+
+        /// Where the signed `bun` is: the bundle's `Contents/Helpers`, else beside the binary, where `make build` puts it.
+        var helpers: URL {
+            bundle.map { $0.appendingPathComponent("Contents/Helpers", isDirectory: true) } ?? folder
+        }
     }
 
     /// This process's, from its executable with links resolved: the relay runs through the `varnick-peer` link, and `Bundle.main` answers

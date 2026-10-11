@@ -232,8 +232,10 @@ final class Settings: ObservableObject {
     @Published var searchEmbeddingsRunOn: ModelRunOn { didSet { defaults.set(searchEmbeddingsRunOn.rawValue, forKey: "searchEmbeddingsRunOn") } }
     @Published var embeddingServerAddress: String { didSet { defaults.set(embeddingServerAddress, forKey: "embeddingServer") } }
     @Published var embeddingServerModel: String { didSet { defaults.set(embeddingServerModel, forKey: "embeddingServerModel") } }
-    /// Where Text generation runs (Settings › Models), and the model server's address and model for Server.
-    @Published var textGenerationRunOn: ModelRunOn { didSet { defaults.set(textGenerationRunOn.rawValue, forKey: "textGenerationRunOn") } }
+    /// Where Text generation runs (Settings › Models), and the model server's address and model for Server. Absent reads as Claude
+    /// Code (ADR 0029); `storeTextGenerationIfAbsent` keeps the installs that already answer with this Mac's model on `local`.
+    @Published var textGenerationRunOn: TextRunOn { didSet { defaults.set(textGenerationRunOn.rawValue, forKey: Self.textGenerationRunOnKey) } }
+    static let textGenerationRunOnKey = "textGenerationRunOn"
     @Published var textGenerationServerAddress: String { didSet { defaults.set(textGenerationServerAddress, forKey: "textGenerationServer") } }
     @Published var textGenerationServerModel: String { didSet { defaults.set(textGenerationServerModel, forKey: "textGenerationServerModel") } }
     /// Whether the relevance filter runs (Settings › Search). Searches read it each time, so a change applies to the next search.
@@ -300,10 +302,17 @@ final class Settings: ObservableObject {
                     model: embeddingServerModel, defaultModel: Self.defaultEmbeddingServerModel)
     }
 
-    /// Where the next text is written, overridden by VARNICK_TEXT_GENERATION the same way.
-    var activeTextGeneration: ServerChoice {
-        Self.choice(env: "VARNICK_TEXT_GENERATION", saved: textGenerationRunOn, address: textGenerationServerAddress,
-                    model: textGenerationServerModel, defaultModel: ServerGenerator.defaultModel)
+    /// Where the next text is written, overridden by VARNICK_TEXT_GENERATION the same way, and by `claude`: Claude Code.
+    var activeTextGeneration: TextChoice {
+        let server = Self.choice(env: "VARNICK_TEXT_GENERATION", saved: .local, address: textGenerationServerAddress,
+                                 model: textGenerationServerModel, defaultModel: ServerGenerator.defaultModel)
+        switch ProcessInfo.processInfo.environment["VARNICK_TEXT_GENERATION"]?.trimmingCharacters(in: .whitespaces) {
+        case "claude": return (.claude, server.address, server.model)
+        case "local": return (.local, server.address, server.model)
+        case "server": return (.server, server.address, server.model)
+        case let given? where given.lowercased().hasPrefix("http"): return (.server, server.address, server.model)
+        default: return (textGenerationRunOn, server.address, server.model)
+        }
     }
 
     private static func choice(env: String, saved: ModelRunOn, address: String, model: String, defaultModel: String) -> ServerChoice {
@@ -325,6 +334,16 @@ final class Settings: ObservableObject {
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: skipPermissionsKey) == nil else { return }
         defaults.set(FileManager.default.fileExists(atPath: SessionStore.fileURL.path), forKey: skipPermissionsKey)
+    }
+
+    /// Stores `local` once for an install that never chose Text generation but already answers with Gemma (Hey Varnick on, or Gemma
+    /// installed): Claude Code is the default for new installs only. Runs beside `storeSkipPermissionsIfAbsent`.
+    static func storeTextGenerationIfAbsent() {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: textGenerationRunOnKey) == nil else { return }
+        if defaults.bool(forKey: "heyVarnick") || TextGenerator.isInstalled {
+            defaults.set(TextRunOn.local.rawValue, forKey: textGenerationRunOnKey)
+        }
     }
 
     private var neitherRelevanceKeyStored: Bool {
@@ -350,7 +369,7 @@ final class Settings: ObservableObject {
         searchEmbeddingsRunOn = defaults.string(forKey: "searchEmbeddingsRunOn").flatMap(ModelRunOn.init) ?? .local
         embeddingServerAddress = defaults.string(forKey: "embeddingServer") ?? ""
         embeddingServerModel = defaults.string(forKey: "embeddingServerModel") ?? Self.defaultEmbeddingServerModel
-        textGenerationRunOn = defaults.string(forKey: "textGenerationRunOn").flatMap(ModelRunOn.init) ?? .local
+        textGenerationRunOn = defaults.string(forKey: Self.textGenerationRunOnKey).flatMap(TextRunOn.init) ?? .claude
         textGenerationServerAddress = defaults.string(forKey: "textGenerationServer") ?? ""
         textGenerationServerModel = defaults.string(forKey: "textGenerationServerModel") ?? ServerGenerator.defaultModel
         modelServerKeyInKeychain = Keychain.exists(ModelServer.keyAccount)
@@ -543,6 +562,7 @@ struct SettingsView: View {
     @ObservedObject var textGenerator: TextGenerator
     @ObservedObject var embeddingServer: ModelServerState
     @ObservedObject var textGenerationServer: ModelServerState
+    @ObservedObject var claudeCode: ClaudeCodeState
     let close: () -> Void
     /// Opens the Restart Varnick card (`LauncherModel.askRestart`): a restart without a build.
     let askRestart: () -> Void
@@ -658,11 +678,13 @@ struct SettingsView: View {
                         }
                         case .listening:
                         SettingRow(title: "Hey Varnick",
-                                   detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. Varnick answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
+                                   detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. Varnick answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads go to Anthropic to write the answer. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
                             if Listener.shared.state.isUnavailable {
                                 Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if let need = textGenerationNeed {
                                 modelsLink(need)
+                            } else if textGenerationFallsBack {
+                                modelsLink("Using this Mac's model")
                             }
                             Toggle("", isOn: $settings.heyVarnick).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.heyVarnick && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
@@ -790,43 +812,25 @@ struct SettingsView: View {
                         SettingRow(title: "Text generation",
                                    detail: "Writes short text for Varnick's features, such as Hey Varnick's answers.") {
                             Picker("", selection: $settings.textGenerationRunOn) {
-                                ForEach(ModelRunOn.allCases) { Text($0.title).tag($0) }
+                                ForEach(TextRunOn.allCases) { Text($0.title).tag($0) }
                             }
-                            .labelsHidden().pickerStyle(.segmented).frame(width: 240)
+                            .labelsHidden().pickerStyle(.segmented).frame(width: 330)
                         }
                         switch settings.textGenerationRunOn {
+                        case .claude:
+                            ClaudeCodeSettingRow(
+                                detail: "Runs your own Claude Code on your Claude subscription, with Claude Haiku: no tools, none of your settings, hooks, plugins, CLAUDE.md or memory, and no transcript saved. With Hey Varnick on, Anthropic gets what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too). Each answer counts toward your plan's usage limits.",
+                                state: claudeCode)
+                            gemmaRow(title: "Fallback on this Mac",
+                                     detail: "Writes the text when Claude Code can't: claude missing or logged out, offline, at your plan's limit, or too slow. Gemma 4 E2B, 4-bit, on this Mac; nothing is sent anywhere. One-time \(TextGenerator.downloadSize) download, about 2.5 GB of memory while in use, freed after 10 idle minutes. Optional.")
                         case .server:
                             ServerSettingRow(
                                 detail: "With Hey Varnick on, \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below") gets, over your tailnet, what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too).",
                                 addressPlaceholder: "http://linux-box:8080", address: $settings.textGenerationServerAddress,
                                 model: $settings.textGenerationServerModel, server: textGenerationServer)
                         case .local:
-                        SettingRow(title: "On this Mac",
-                                   detail: "Gemma 4 E2B, 4-bit. Runs on this Mac; nothing is sent anywhere. One-time \(TextGenerator.downloadSize) download. Uses about 2.5 GB of memory while in use, and frees it after 10 idle minutes.") {
-                            switch textGenerator.state {
-                            case .unavailable:
-                                Text("Needs mlx.metallib: build with make").font(.system(size: 12)).foregroundStyle(.orange)
-                            case .missing:
-                                Button("Download") { Task { await textGenerator.download() } }
-                            case .downloading(let fraction):
-                                ProgressView(value: fraction).frame(width: 120)
-                                Text("\(Int(fraction * 100))%")
-                                    .font(.system(size: 12).monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 34, alignment: .trailing)
-                            case .ready:
-                                Text("Installed").font(.system(size: 12)).foregroundStyle(.secondary)
-                            case .failed(let message):
-                                Text(message).font(.system(size: 12)).foregroundStyle(.orange)
-                                    .lineLimit(1).truncationMode(.tail)
-                                if textGenerator.failedToLoad {
-                                    Button("Retry") { Task { await textGenerator.retry() } }
-                                    Button("Download again") { Task { await textGenerator.download() } }
-                                } else {
-                                    Button("Retry") { Task { await textGenerator.download() } }
-                                }
-                            }
-                        }
+                            gemmaRow(title: "On this Mac",
+                                     detail: "Gemma 4 E2B, 4-bit. Runs on this Mac; nothing is sent anywhere. One-time \(TextGenerator.downloadSize) download. Uses about 2.5 GB of memory while in use, and frees it after 10 idle minutes.")
                         }
                         SectionLabel(text: "Keys")
                         SettingRow(title: "TypeSafe",
@@ -908,6 +912,11 @@ struct SettingsView: View {
             }
         }
         .controlSize(.small)
+        // Models and Listening show whether Claude Code is found and logged in (a local check, nothing sent), as they appear and when it is chosen.
+        .task(id: "\(sectionID) \(settings.textGenerationRunOn.rawValue)") {
+            guard settings.textGenerationRunOn == .claude, section == .models || section == .listening else { return }
+            await claudeCode.prepareForUse()
+        }
     }
 
     private var sidebar: some View {
@@ -948,11 +957,52 @@ struct SettingsView: View {
         }
     }
 
-    /// What Text generation lacks before it can run: this Mac's model installed, or a server that passed its Check.
+    /// What Text generation lacks before it can run: Claude Code found and logged in or this Mac's model installed, this Mac's model
+    /// installed, or a server that passed its Check.
     private var textGenerationNeed: String? {
         switch settings.textGenerationRunOn {
+        case .claude:
+            if claudeCode.loginPassed || textGenerator.isReady { return nil }
+            switch claudeCode.status {
+            case .notChecked, .checking: return "Setting up"
+            default: return "Needs Claude Code"
+            }
         case .local: return modelNeed(ready: textGenerator.isReady, settingUp: textGenerator.state.isDownloading)
         case .server: return serverNeed(address: settings.textGenerationServerAddress, state: textGenerationServer, fallsBack: false)
+        }
+    }
+
+    /// Claude Code failed and this Mac's model answers meanwhile: said beside Hey Varnick, as Search embeddings says it.
+    private var textGenerationFallsBack: Bool {
+        settings.textGenerationRunOn == .claude && claudeCode.isResting && textGenerator.isReady
+    }
+
+    /// This Mac's model: the download and the installed state, as the On this Mac choice and Claude Code's fallback both show them.
+    private func gemmaRow(title: String, detail: String) -> some View {
+        SettingRow(title: title, detail: detail) {
+            switch textGenerator.state {
+            case .unavailable:
+                Text("Needs mlx.metallib: build with make").font(.system(size: 12)).foregroundStyle(.orange)
+            case .missing:
+                Button("Download") { Task { await textGenerator.download() } }
+            case .downloading(let fraction):
+                ProgressView(value: fraction).frame(width: 120)
+                Text("\(Int(fraction * 100))%")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .trailing)
+            case .ready:
+                Text("Installed").font(.system(size: 12)).foregroundStyle(.secondary)
+            case .failed(let message):
+                Text(message).font(.system(size: 12)).foregroundStyle(.orange)
+                    .lineLimit(1).truncationMode(.tail)
+                if textGenerator.failedToLoad {
+                    Button("Retry") { Task { await textGenerator.retry() } }
+                    Button("Download again") { Task { await textGenerator.download() } }
+                } else {
+                    Button("Retry") { Task { await textGenerator.download() } }
+                }
+            }
         }
     }
 

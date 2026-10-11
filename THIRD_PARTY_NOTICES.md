@@ -70,17 +70,30 @@ their provenance and digests.
 
 ## What the build downloads
 
-`make build` fetches two prebuilt files, each checked against a pinned SHA-256 in the `Makefile`. They
-are not stored in this repository.
+`make build` fetches three prebuilt files, each checked against a pinned SHA-256 in the `Makefile`, and installs
+the npm packages below from a committed lockfile. None of them is stored in this repository.
 
 | Component | Where from | Licence | Read from |
 |---|---|---|---|
 | `mlx.metallib`, MLX's compiled Metal shaders, from the `mlx-metal` 0.32.2 wheel (`MLX_METAL_WHEEL`) | The wheel on PyPI | MIT, Copyright 2023 Apple Inc. | The wheel's `METADATA` (`License: MIT`) and its `licenses/LICENSE`, after checking the wheel's SHA-256 against the Makefile's |
 | zmx 0.8.1, macOS arm64 (`ZMX_URL`) | `neurosnap/zmx` release `v0.8.1` | MIT, Copyright 2025 Eric Bower | `LICENSE` at the `v0.8.1` tag; the tarball's SHA-256 matches the Makefile's |
+| Bun 1.3.14, macOS arm64 (`BUN_URL`) | `oven-sh/bun` release `bun-v1.3.14` | MIT for Bun itself, with statically linked libraries under their own licences, JavaScriptCore among them under the LGPL | `LICENSE.md` at the `bun-v1.3.14` tag, where the libraries and their terms are listed; the archive's SHA-256 matches the Makefile's and the release's `SHASUMS256.txt` |
 
-The downloadable `Varnick.app` carries both in binary form: `mlx.metallib` in `Contents/Resources` and zmx in
-`Contents/MacOS`. This file and `LICENSE` are in the app's `Contents/Resources`, so the notices travel with the
-binaries.
+The downloadable `Varnick.app` carries all three in binary form: `mlx.metallib` in `Contents/Resources`, zmx in
+`Contents/MacOS` and Bun in `Contents/Helpers`. This file and `LICENSE` are in the app's `Contents/Resources`, so the
+notices travel with the binaries.
+
+Bun builds and runs the text helper (`TextHelper/`), whose `agent.js` in `Contents/Resources` is bundled from these npm
+packages, pinned exactly in `TextHelper/package.json` and installed from `TextHelper/bun.lock`:
+
+| Package | Version | Licence | Read from |
+|---|---|---|---|
+| `@zabaca/agent` | 0.2.0 | MIT (its `package.json`; the package carries no licence file) | `package.json` of the installed package |
+| `@anthropic-ai/claude-agent-sdk` | 0.3.291 | "© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here: https://code.claude.com/docs/en/legal-and-compliance." Its `package.json` says "SEE LICENSE IN README.md". **To be read by the maintainer before the first release that ships it** (ADR 0029) | `LICENSE.md` of the installed package |
+
+The SDK's `sdk.mjs` is a bundled file that holds code from other projects with no licence banners; what they are and
+their terms were not verified. The reminders filter that ships beside `agent.js` (`Contents/Resources/mods/reminders`)
+is the `mods/reminders` folder of `@zabaca/agent`. The SDK's optional native Claude Code packages are not installed or used.
 
 The same wheel carries Apple's metal-cpp headers (Apache-2.0, `mlx/include/metal_cpp/LICENSE.txt`). They are
 headers, not part of `mlx.metallib`.
