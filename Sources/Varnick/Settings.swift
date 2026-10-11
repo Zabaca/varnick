@@ -202,7 +202,18 @@ final class Settings: ObservableObject {
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
     /// Voice Varnick speaks in (an `AVSpeechSynthesisVoice` identifier); empty is the system voice.
+    /// With an ElevenLabs voice chosen it is the fallback voice, spoken when ElevenLabs fails (ADR 0028).
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
+    /// The ElevenLabs voice's id Varnick speaks in; empty means the installed voice `voice` speaks. Kept when the key is removed.
+    @Published var elevenLabsVoice: String { didSet { defaults.set(elevenLabsVoice, forKey: "elevenLabsVoice") } }
+    /// The account's voices as last fetched, shown meanwhile and offline.
+    @Published private(set) var elevenLabsVoices: [ElevenLabs.Voice] {
+        didSet { defaults.set(try? JSONEncoder().encode(elevenLabsVoices), forKey: "elevenLabsVoices") }
+    }
+    /// Why the last line wasn't spoken by ElevenLabs, and why the voice list couldn't be fetched. In memory only: the first clears
+    /// when a line plays from ElevenLabs again, the second when a list is fetched.
+    @Published var elevenLabsNote: String?
+    @Published private(set) var elevenLabsListNote: String?
     /// Answers a mic phrase that starts "Hey Varnick" aloud, while Listening is on (ADR 0015); off until turned on.
     @Published var heyVarnick: Bool { didSet { defaults.set(heyVarnick, forKey: "heyVarnick") } }
     /// Lets a spoken request point at the screen: Varnick reads the focused window's controls and draws an arrow (ADR 0019); off
@@ -247,7 +258,15 @@ final class Settings: ObservableObject {
     /// `ModelServer` reads it when it sends a request.
     @Published private(set) var modelServerKeyInKeychain: Bool
     @Published private(set) var modelServerKeyError: String?
+    /// The ElevenLabs key (Settings › Models › Keys): the Keychain only, no `.env` or environment, and not kept in memory;
+    /// `ElevenLabs` reads it when it sends a request.
+    @Published private(set) var elevenLabsKeyInKeychain: Bool
+    @Published private(set) var elevenLabsKeyError: String?
     static let defaultEmbeddingServerModel = Embedder.modelKey
+
+    /// Whether Varnick's lines go to ElevenLabs: a voice is chosen and a key is saved. Otherwise the installed voice speaks and
+    /// nothing is sent.
+    var speaksInElevenLabs: Bool { !elevenLabsVoice.isEmpty && elevenLabsKeyInKeychain }
 
     /// The judge the next search uses; nil is no filter. VARNICK_EVAL_FILTER (typesafe, local, off) overrides
     /// both settings, so `--search-eval` can compare filters without writing them.
@@ -320,6 +339,9 @@ final class Settings: ObservableObject {
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         voice = defaults.string(forKey: "voice") ?? ""
+        elevenLabsVoice = defaults.string(forKey: "elevenLabsVoice") ?? ""
+        elevenLabsVoices = defaults.data(forKey: "elevenLabsVoices")
+            .flatMap { try? JSONDecoder().decode([ElevenLabs.Voice].self, from: $0) } ?? []
         heyVarnick = defaults.bool(forKey: "heyVarnick")
         pointAtScreen = defaults.bool(forKey: "pointAtScreen")
         semanticSearch = defaults.object(forKey: "semanticSearch") as? Bool ?? true
@@ -330,6 +352,7 @@ final class Settings: ObservableObject {
         textGenerationServerAddress = defaults.string(forKey: "textGenerationServer") ?? ""
         textGenerationServerModel = defaults.string(forKey: "textGenerationServerModel") ?? ServerGenerator.defaultModel
         modelServerKeyInKeychain = Keychain.exists(ModelServer.keyAccount)
+        elevenLabsKeyInKeychain = Keychain.exists(ElevenLabs.keyAccount)
         let storedKey = Keychain.read(Self.typesafeAccount)
         typesafeKeyInKeychain = storedKey != nil
         let key = storedKey ?? Self.typesafeKeyFromEnvironment()
@@ -387,6 +410,42 @@ final class Settings: ObservableObject {
             modelServerKeyInKeychain = true
         } catch {
             modelServerKeyError = error.localizedDescription
+        }
+    }
+
+    /// Empty removes the saved key; the chosen voice stays, and the installed voice speaks until a key is saved again.
+    func setElevenLabsKey(_ key: String) {
+        elevenLabsKeyError = nil
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            Keychain.delete(ElevenLabs.keyAccount)
+            elevenLabsKeyInKeychain = false
+            elevenLabsNote = nil
+            elevenLabsListNote = nil
+            return
+        }
+        do {
+            try Keychain.save(key, for: ElevenLabs.keyAccount)
+            elevenLabsKeyInKeychain = true
+            elevenLabsNote = nil
+            Task { await refreshElevenLabsVoices() }
+        } catch {
+            elevenLabsKeyError = error.localizedDescription
+        }
+    }
+
+    /// Fetches the account's voices (the network wait is off the main actor) and keeps them. A failure leaves the last list and says
+    /// why under the Voice picker.
+    func refreshElevenLabsVoices() async {
+        guard elevenLabsKeyInKeychain else { return }
+        do {
+            elevenLabsVoices = try await ElevenLabs.voices()
+            elevenLabsListNote = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            guard elevenLabsKeyInKeychain else { return }
+            elevenLabsListNote = (error as? ElevenLabs.Failure)?.note ?? "ElevenLabs not answering"
         }
     }
 
@@ -482,6 +541,7 @@ struct SettingsView: View {
     let openAppFolders: () -> Set<String>
     @State private var typesafeKeyDraft = ""
     @State private var modelServerKeyDraft = ""
+    @State private var elevenLabsKeyDraft = ""
     /// Last section viewed, so Settings reopens where you left it.
     @AppStorage("settingsSection") private var sectionID = SettingsSection.claude.rawValue
 
@@ -589,7 +649,7 @@ struct SettingsView: View {
                         }
                         case .listening:
                         SettingRow(title: "Hey Varnick",
-                                   detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. Varnick answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe.") {
+                                   detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. Varnick answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
                             if Listener.shared.state.isUnavailable {
                                 Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                             } else if let need = textGenerationNeed {
@@ -615,8 +675,24 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !screenGateOpen))
                         }
-                        SettingRow(title: "Voice", detail: "What Varnick speaks in.") {
-                            VoicePicker(settings: settings)
+                        SettingRow(title: "Voice",
+                                   detail: "What Varnick speaks in. An ElevenLabs voice sends every line Varnick speaks to ElevenLabs, answers included, which can repeat words of your request and name your pages, sessions and folders; the voices installed on this Mac send nothing.") {
+                            VStack(alignment: .trailing, spacing: 4) {
+                                if let note = settings.elevenLabsListNote ?? settings.elevenLabsNote {
+                                    Text(note).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
+                                }
+                                if !settings.elevenLabsKeyInKeychain {
+                                    Button("ElevenLabs voices: add a key in Settings › Models") { sectionID = SettingsSection.models.rawValue }
+                                        .buttonStyle(.link)
+                                        .font(.system(size: 12))
+                                }
+                                VoicePicker(settings: settings)
+                            }
+                        }
+                        if !settings.elevenLabsVoice.isEmpty {
+                            SettingRow(title: "Fallback voice", detail: "Speaks on this Mac when ElevenLabs fails or is slow.") {
+                                InstalledVoicePicker(settings: settings)
+                            }
                         }
                         case .peers:
                         PeersSettingsView()
@@ -777,6 +853,23 @@ struct SettingsView: View {
                                     .disabled(modelServerKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
                             }
                         }
+                        SettingRow(title: "ElevenLabs",
+                                   detail: "Speaks Hey Varnick's answers in an ElevenLabs voice, chosen in Settings › Listening. The key needs the Text to Speech and Voices Read permissions. Kept in the macOS Keychain.") {
+                            if let error = settings.elevenLabsKeyError {
+                                Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
+                            }
+                            if settings.elevenLabsKeyInKeychain {
+                                Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
+                                Button("Remove key") { settings.setElevenLabsKey("") }
+                            } else {
+                                SecureField("ElevenLabs API key", text: $elevenLabsKeyDraft)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 170)
+                                    .onSubmit { saveElevenLabsKey() }
+                                Button("Save") { saveElevenLabsKey() }
+                                    .disabled(elevenLabsKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+                        }
                         case .shortcuts:
                         ForEach(groups, id: \.self) { group in
                             SectionLabel(text: group)
@@ -911,6 +1004,12 @@ struct SettingsView: View {
         guard !modelServerKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         settings.setModelServerKey(modelServerKeyDraft)
         modelServerKeyDraft = ""
+    }
+
+    private func saveElevenLabsKey() {
+        guard !elevenLabsKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        settings.setElevenLabsKey(elevenLabsKeyDraft)
+        elevenLabsKeyDraft = ""
     }
 
     private var groups: [String] {

@@ -91,6 +91,8 @@ final class SpokenRequests {
             guard phrase.isFinal, let rest = SpokenText.request(in: phrase.text) else { return }
             // A short system sound: the request can follow.
             NSSound(named: "Tink")?.play()
+            // The answer comes at least the hold later: time enough to open the connection to ElevenLabs.
+            Speaker.shared.warmUp()
             if rest.isEmpty {
                 wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
             } else {
@@ -310,7 +312,8 @@ final class SpokenRequests {
         }
         record(saying)
         let speaking = Date()
-        let first = await Speaker.shared.speak(saying)
+        let speech = await Speaker.shared.speak(saying)
+        let first = speech.first
         if drawn, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
 
         // For the latency check: where the time went, as durations, places and kinds only.
@@ -328,6 +331,7 @@ final class SpokenRequests {
               + Self.arrowTiming(pointed: pointing != nil, reread: reread, drawing: drawing, drawn: drawn,
                                  upAfterSpeech: arrowUp.map { $0.timeIntervalSince(request.lastEnd) })
               + "speaking began \(speaking.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
+              + "voice \(speech.by), "
               + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "
               + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended, "
               + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")
