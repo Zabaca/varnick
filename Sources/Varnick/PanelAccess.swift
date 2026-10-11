@@ -61,61 +61,36 @@ enum PanelRefusal: Error {
     }
 }
 
-/// The ids a pane has been given in the replies, `s1`, `s2`…: the same pane gets the same id at every read, and a new one the next
-/// number. A card of the board and a pane share the table, since a card's id is a pane's.
-struct PanelIDs {
-    private var numbers: [UUID: Int] = [:]
-    private var targets: [Int: UUID] = [:]
+/// The ids of one kind that a pane has been given in the replies: `s1`, `s2`… for panes and cards (a card's id is a pane's, so they share
+/// one table) and `o1`… for the Outline's rows (one for each row path). The same target gets the same id at every read, and a new one the
+/// next number. A target that has since gone keeps its number.
+struct PanelIDs<Target: Hashable> {
+    let prefix: Character
+    private var numbers: [Target: Int] = [:]
+    private var targets: [Int: Target] = [:]
     private var last = 0
 
-    mutating func id(for target: UUID) -> String {
-        if let number = numbers[target] { return "s\(number)" }
+    init(prefix: Character) { self.prefix = prefix }
+
+    mutating func id(for target: Target) -> String {
+        if let number = numbers[target] { return "\(prefix)\(number)" }
         last += 1
         numbers[target] = last
         targets[last] = target
-        return "s\(last)"
+        return "\(prefix)\(last)"
     }
 
-    /// The pane an id was given for; nil for one never given.
-    func target(_ text: String) -> UUID? {
+    /// What an id was given for; nil for one never given.
+    func target(_ text: String) -> Target? {
         let word = text.trimmingCharacters(in: .whitespaces).lowercased()
-        guard word.hasPrefix("s"), let number = Int(word.dropFirst()) else { return nil }
+        guard word.hasPrefix(String(prefix)), let number = Int(word.dropFirst()) else { return nil }
         return targets[number]
     }
 
-    /// The mappings go and the numbers keep counting, so an id given before is never given to another pane.
+    /// The mappings go and the numbers keep counting, so an id given before is never given to another target.
     mutating func forget() {
         numbers = [:]
         targets = [:]
-    }
-}
-
-/// The ids the Outline's rows have been given in the replies, `o1`, `o2`…: a row's path is the same id at every read, as a pane is. A path
-/// that has left the tree keeps its number, and is "gone" when asked for.
-struct PanelOutlineIDs {
-    private var numbers: [String: Int] = [:]
-    private var paths: [Int: OutlinePath] = [:]
-    private var last = 0
-
-    mutating func id(for path: OutlinePath) -> String {
-        if let number = numbers[path.id] { return "o\(number)" }
-        last += 1
-        numbers[path.id] = last
-        paths[last] = path
-        return "o\(last)"
-    }
-
-    /// The path an id was given for; nil for one never given.
-    func path(_ text: String) -> OutlinePath? {
-        let word = text.trimmingCharacters(in: .whitespaces).lowercased()
-        guard word.hasPrefix("o"), let number = Int(word.dropFirst()) else { return nil }
-        return paths[number]
-    }
-
-    /// The mappings go and the numbers keep counting, so an id given before is never given to another row.
-    mutating func forget() {
-        numbers = [:]
-        paths = [:]
     }
 }
 
@@ -132,9 +107,9 @@ final class PanelAccess {
     func noteKey() { lastKey = .now }
 
     /// Each calling pane's ids: held in memory only, kept for the pane's life, and dropped once it has gone or the switch is off.
-    private var tables: [UUID: PanelIDs] = [:]
+    private var tables: [UUID: PanelIDs<UUID>] = [:]
     /// The same for the Outline's rows (`o` ids), per calling pane.
-    private var outlineTables: [UUID: PanelOutlineIDs] = [:]
+    private var outlineTables: [UUID: PanelIDs<OutlinePath>] = [:]
 
     /// Turning the switch off: every id stops meaning anything at once.
     func switchedOff() {
@@ -146,7 +121,7 @@ final class PanelAccess {
 
     /// `target`'s id in the calling pane's table.
     func id(for target: UUID, caller: UUID) -> String {
-        tables[caller, default: PanelIDs()].id(for: target)
+        tables[caller, default: PanelIDs(prefix: "s")].id(for: target)
     }
 
     /// The pane or card an id was given for in the calling pane's table; an id never given is refused.
@@ -157,12 +132,12 @@ final class PanelAccess {
 
     /// A row's id in the calling pane's table.
     func outlineID(for path: OutlinePath, caller: UUID) -> String {
-        outlineTables[caller, default: PanelOutlineIDs()].id(for: path)
+        outlineTables[caller, default: PanelIDs(prefix: "o")].id(for: path)
     }
 
     /// The row path an `o` id was given for in the calling pane's table; an id never given is refused.
     func outlinePath(_ text: String?, caller: UUID) throws -> OutlinePath {
-        guard let text, let found = outlineTables[caller]?.path(text) else { throw PanelRefusal.unknownID }
+        guard let text, let found = outlineTables[caller]?.target(text) else { throw PanelRefusal.unknownID }
         return found
     }
 
@@ -339,6 +314,9 @@ final class PanelAccess {
 
     private var panelWindow: LauncherPanel? { NSApp.windows.first { $0 is LauncherPanel } as? LauncherPanel }
 
+    /// Whether the panel is up and key: only then can a bullet have the caret.
+    var panelHasKeyboard: Bool { panelWindow.map { $0.isVisible && $0.isKeyWindow } ?? false }
+
     /// What the panel shows, in the order the view picks it (`LauncherView`), and what has the keyboard (the order the key monitor and
     /// the cards give it). Never the search field's text.
     private func panelText(_ model: LauncherModel, caller: UUID) -> String {
@@ -410,15 +388,9 @@ final class PanelAccess {
     /// bullets themselves are `outline_read`'s. While the file is not read yet, or can't be, it says so (it loads when the Outline shows).
     private func outlineLines(_ model: LauncherModel, caller: UUID) -> [String] {
         let outline = model.outline
-        switch outline.load {
-        case .notLoaded, .loading: return ["Showing: the outline (loading)"]
-        case .unreadable: return ["Showing: the outline (outline.json couldn't be read; the user has to deal with it there)"]
-        case .newer: return ["Showing: the outline (outline.json is from a newer Varnick)"]
-        case .ready: break
-        }
+        if let problem = outline.load.problem { return ["Showing: the outline (\(problem))"] }
         let reading = OutlineReading(tree: outline.tree) { self.outlineID(for: $0, caller: caller) }
-        let view = OutlineReading.Shown(rows: [], crumbs: outline.crumbs, filterText: outline.filterText, showsCompleted: outline.showsCompleted,
-                                        caret: outline.caretForSessions, selection: outline.selection, onScreen: true)
+        let view = outline.shownForSessions(panelHasKeyboard: panelHasKeyboard, onScreen: true)
         return ["Showing: the outline"] + reading.state(view).map { "  " + $0 }
     }
 

@@ -43,7 +43,7 @@ What Claude is doing in a **Session** right now: working, waiting for the user's
 _Avoid_: Status, state, running (a session "runs" while its zmx session is alive)
 
 **Panel**:
-Varnick's one floating window, shown and hidden with ⌃Space and pinnable, that shows one view at a time: the search, a **Tab** of **Pane**s, the **Session board** or the **Outline**, with Settings over it.
+Varnick's one floating window, shown and hidden with its show/hide shortcut and pinnable, that shows one view at a time: the search, a **Tab** of **Pane**s, the **Session board** or the **Outline**, with Settings over it.
 _Avoid_: Window (another app's, which **Screen access** reaches), popup
 
 **Session board**:

@@ -18,6 +18,16 @@ final class Outline: ObservableObject {
         /// Why, in words that never hold a bullet's text.
         case unreadable(String)
         case newer(Int)
+
+        /// Why a session can't read the outline now (nil when it can), in words that never hold a bullet's text.
+        var problem: String? {
+            switch self {
+            case .ready: nil
+            case .notLoaded, .loading: "outline.json is still loading"
+            case .unreadable(let reason): "outline.json couldn't be read (\(reason))"
+            case .newer(let version): "outline.json is from a newer Varnick (file version \(version))"
+            }
+        }
     }
 
     struct ScrollRequest: Equatable {
@@ -170,6 +180,7 @@ final class Outline: ObservableObject {
         pending = nil
         queuedEvents = []
         typingRun = nil
+        focusesOnLoad = false
     }
 
     /// Quit from the menu bar: a change not yet written is written, after any write under way.
@@ -536,10 +547,12 @@ final class Outline: ObservableObject {
 
     // MARK: Caret
 
-    /// Where the caret is, for a session's read (Panel access): the model's own record, kept up to date as the caret moves, and never asked of
-    /// a text view. `inBullet` is whether a bullet's text or note has the caret now; if not it is where it last was.
-    var caretForSessions: (caret: OutlineCaret, inBullet: Bool)? {
-        remembered.map { ($0, activeView != nil && selection == nil) }
+    /// What a session's read shows (Panel access), from the model and never a text view. The caret is the model's own record, kept up to date as
+    /// it moves; it is "in a bullet" only while the panel has the keyboard and one has it, else it is where it last was.
+    func shownForSessions(panelHasKeyboard: Bool, onScreen: Bool) -> OutlineReading.Shown {
+        OutlineReading.Shown(rows: rows, crumbs: crumbs, filterText: filterText, showsCompleted: showsCompleted,
+                             caret: remembered.map { OutlineReading.Caret(caret: $0, inBullet: panelHasKeyboard && activeView != nil && selection == nil) },
+                             selection: selection, onScreen: onScreen)
     }
 
     /// The caret goes back to where it was. A row that is hidden now (a collapsed parent) gives it to the nearest row still showing on its path,

@@ -1004,9 +1004,8 @@ final class LauncherModel: ObservableObject {
         run(shown[commandSelection])
     }
 
-    /// A command as ↩ on its row runs it, and as `show` runs one for a session (`PanelAccess`): one function, so both behave the same.
-    /// ↩ clears the `!` it was typed in; a session's `show` leaves what the user typed alone.
-    /// `focusing` false (a session's `show` while the panel lacks the keyboard) shows the outline without placing the caret.
+    /// A command as ↩ on its row runs it and as a session's `show` runs it (`PanelAccess`); `show` leaves the query alone and passes
+    /// `focusing` false when the panel lacks the keyboard, so the outline shows with no caret.
     func run(_ command: LauncherCommand, clearingQuery: Bool = true, focusing: Bool = true) {
         switch command {
         case .listen: Listener.shared.toggle()
