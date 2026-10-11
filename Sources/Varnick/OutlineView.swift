@@ -76,6 +76,10 @@ private struct OutlineFilterField: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(Theme.tileFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        // A click in the field ends a selection of bullets; the caret goes back to its bullet when the filter clears.
+        .onChange(of: focused) { _, isFocused in
+            if isFocused { DispatchQueue.main.async { outline.filterTookFocus() } }
+        }
         // The caret is in a bullet's text view, so it has to let go first, as search does (`focusSearch`).
         .onChange(of: outline.filterFocusRequest) { _, _ in
             DispatchQueue.main.async {
@@ -189,9 +193,11 @@ private struct OutlineRows: View {
                             .id(title.id)
                             .padding(.vertical, 6)
                     }
-                    ForEach(outline.rows) { row in
+                    let looks = SelectedLook.looks(of: outline.rows, selection: outline.selection)
+                    ForEach(Array(outline.rows.enumerated()), id: \.element.id) { index, row in
                         OutlineRowView(outline: outline, row: row, noteOpen: outline.notePath == row.path,
-                                       highlight: row.matched ? outline.filterWords : [], filtering: !outline.filterWords.isEmpty).id(row.id)
+                                       highlight: row.matched ? outline.filterWords : [], filtering: !outline.filterWords.isEmpty,
+                                       selected: looks[index]).id(row.id)
                     }
                     if outline.rows.isEmpty, !outline.filterWords.isEmpty {
                         Text("No bullets match").font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.vertical, 6)
@@ -236,6 +242,34 @@ private struct BulletTexts: View {
     }
 }
 
+/// How a row sits in the block of selected bullets: the selected bullets and what is nested under them read as one block.
+private struct SelectedLook {
+    /// The depth of the selected bullet the row is, or is nested under: the fill starts at its dot for the whole block.
+    let depth: Int
+    let startsBlock: Bool
+    let endsBlock: Bool
+
+    /// One entry for each row, nil for the rows that aren't selected. Rows come in the order of a walk, so what is nested under a selected
+    /// bullet follows it.
+    static func looks(of rows: [OutlineRow], selection: OutlineSelection?) -> [SelectedLook?] {
+        guard let selection else { return Array(repeating: nil, count: rows.count) }
+        let roots = Set(selection.run)
+        var under: OutlinePath?
+        var depths: [Int?] = []
+        for row in rows {
+            if roots.contains(row.path) {
+                under = row.path
+            } else if let root = under, !row.path.placements.starts(with: root.placements) {
+                under = nil
+            }
+            depths.append(under.map { row.depth - (row.path.placements.count - $0.placements.count) })
+        }
+        return depths.indices.map { i in
+            depths[i].map { SelectedLook(depth: $0, startsBlock: i == 0 || depths[i - 1] == nil, endsBlock: i == depths.count - 1 || depths[i + 1] == nil) }
+        }
+    }
+}
+
 private struct OutlineRowView: View {
     let outline: Outline
     let row: OutlineRow
@@ -245,6 +279,8 @@ private struct OutlineRowView: View {
     let highlight: [String]
     /// A filter is on: every ancestor shows open, so there is no triangle to click.
     let filtering: Bool
+    /// The row is selected, or nested under a selected bullet.
+    let selected: SelectedLook?
 
     /// What each level of nesting indents by.
     static let indent: CGFloat = 18
@@ -261,6 +297,17 @@ private struct OutlineRowView: View {
         }
         .padding(.leading, CGFloat(row.depth) * Self.indent)
         .padding(.vertical, 2)
+        // From the selected bullet's dot to the right edge, joined to the rows above and below it into one block.
+        .background(alignment: .leading) {
+            if let selected {
+                let corner: CGFloat = 6
+                UnevenRoundedRectangle(topLeadingRadius: selected.startsBlock ? corner : 0, bottomLeadingRadius: selected.endsBlock ? corner : 0,
+                                       bottomTrailingRadius: selected.endsBlock ? corner : 0, topTrailingRadius: selected.startsBlock ? corner : 0,
+                                       style: .continuous)
+                    .fill(Theme.selection)
+                    .padding(.leading, CGFloat(selected.depth) * Self.indent + Self.disclosureWidth + 4)
+            }
+        }
     }
 
     /// A triangle on a bullet with bullets nested under it; the space is kept on the others so the dots line up.
@@ -362,6 +409,7 @@ private struct BulletText: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let view = notification.object as? OutlineTextView else { return }
+            view.selectionChanged(from: (notification.userInfo?["NSOldSelectedCharacterRange"] as? NSValue)?.rangeValue)
             outline.selectionChanged(view)
         }
 
@@ -653,17 +701,45 @@ final class OutlineTextView: NSTextView {
         return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
     }
 
-    /// The caret is on the first wrapped line, so ↑ leaves the bullet.
-    var caretOnFirstLine: Bool {
-        guard let here = lineRect(atCharacter: selectedRange().location), let first = lineRect(atCharacter: 0) else { return true }
+    private func isOnFirstLine(_ index: Int) -> Bool {
+        guard let here = lineRect(atCharacter: index), let first = lineRect(atCharacter: 0) else { return true }
         return here.minY == first.minY
     }
 
-    /// The caret is on the last wrapped line, so ↓ leaves the bullet.
-    var caretOnLastLine: Bool {
-        guard let here = lineRect(atCharacter: NSMaxRange(selectedRange())), let last = lineRect(atCharacter: length - 1) else { return true }
+    private func isOnLastLine(_ index: Int) -> Bool {
+        guard let here = lineRect(atCharacter: index), let last = lineRect(atCharacter: length - 1) else { return true }
         return here.minY == last.minY
     }
+
+    /// The caret is on the first wrapped line, so ↑ leaves the bullet.
+    var caretOnFirstLine: Bool { isOnFirstLine(selectedRange().location) }
+
+    /// The caret is on the last wrapped line, so ↓ leaves the bullet.
+    var caretOnLastLine: Bool { isOnLastLine(NSMaxRange(selectedRange())) }
+
+    /// The end of the text selection that the shift keys move, as far as it can be told: the caret itself without a selection, the end a key
+    /// moved otherwise. Nil for a selection made with the mouse, or by the program.
+    private(set) var movingEnd: Int?
+
+    /// Called on every change of the selection, with where it was. Only a key can say which end moved: the end that stayed is the other one.
+    func selectionChanged(from old: NSRange?) {
+        let now = selectedRange()
+        if now.length == 0 {
+            movingEnd = now.location
+        } else if let old, NSApp.currentEvent?.type == .keyDown, now.location == old.location, now.length != old.length {
+            movingEnd = NSMaxRange(now)
+        } else if let old, NSApp.currentEvent?.type == .keyDown, NSMaxRange(now) == NSMaxRange(old), now.location != old.location {
+            movingEnd = now.location
+        } else {
+            movingEnd = nil
+        }
+    }
+
+    /// ⇧↑ selects the whole bullet when the end being moved is on its first line (the selection's start when that can't be told, as ↑ goes by it).
+    var movingEndOnFirstLine: Bool { isOnFirstLine(movingEnd ?? selectedRange().location) }
+
+    /// ⇧↓ likewise on the last line (the selection's end).
+    var movingEndOnLastLine: Bool { isOnLastLine(movingEnd ?? NSMaxRange(selectedRange())) }
 
     /// Where the caret is, across, so the next bullet's caret can be put under it.
     func caretX() -> CGFloat {

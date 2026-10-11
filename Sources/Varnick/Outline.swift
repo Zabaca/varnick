@@ -44,8 +44,13 @@ final class Outline: ObservableObject {
     /// vanish under the caret, or from under a click.
     private var filterKept: Set<OutlinePath> = []
     private let foldCache = OutlineFoldCache()
-    /// The bullet ⌥⌘C copied, to be placed again by ⌥⌘V: held here for the launch, never on the system clipboard.
-    private var mirrorToPlace: String?
+    /// The bullets ⌥⌘C copied, in order, to be placed again by ⌥⌘V: held here for the launch, never on the system clipboard.
+    private var mirrorToPlace: [String] = []
+    /// The bullets selected whole (⇧↑ and ⇧↓ at the edge of a bullet), as sibling paths. Never saved. While it is set no text view has the
+    /// keyboard, and `key` takes every key but Varnick's shortcuts.
+    @Published private(set) var selection: OutlineSelection?
+    /// The caret the selection started from, which esc puts back while that bullet is still the fixed end.
+    private var selectionOrigin: OutlineCaret?
     /// The other places of the mirrors on screen, worked out once per tree: the dot's tooltip asks on every redraw.
     private var placesCache: [OutlinePath: OutlinePlaces] = [:]
 
@@ -131,10 +136,16 @@ final class Outline: ObservableObject {
     private func refreshRows() {
         let shown = tree.visibleRows(scope)
         if shown != rows { rows = shown }
+        // A selected bullet that stops showing ends the selection, and the caret comes back where esc would have put it.
+        if let selection, !selection.run.allSatisfy({ path in shown.contains { $0.path == path } }) {
+            endSelection()
+            restoreCaret()
+        }
     }
 
     /// The outline closes: a change not yet written is written at once.
     func close() {
+        endSelection()
         saver.flush()
         pending = nil
         queuedEvents = []
@@ -175,13 +186,29 @@ final class Outline: ObservableObject {
                 say(message)
             }
             return reason
-        case .applied(let new, let caret):
+        case .applied(let new, let caret, let run):
             // A new bullet doesn't match the filter, and the caret is on its way into it.
             if let caret { keep(caret.path) }
+            let held = selection
             if new != tree {
                 record(caretBefore ?? currentCaret(), typing: typing)
+                if !filterWords.isEmpty { filterKept.formUnion(run) }
+                // The selection follows the run to its new rows before they show, or ends when the caret is to go somewhere.
+                if let held {
+                    if let caret {
+                        remembered = caret
+                        dropSelection()
+                    } else if edit.keepsSelection, let followed = held.following(run) {
+                        selection = followed
+                        selectionOrigin = selectionOrigin.map { $0.path == held.fixed ? OutlineCaret(path: followed.fixed, offset: $0.offset) : $0 }
+                    } else {
+                        endSelection()
+                    }
+                }
                 use(new)
                 saver.changed(new)
+                if held != nil, selection == nil, caret == nil { restoreCaret() }
+                if let moving = selection?.moving { scroll(to: moving) }
             }
             if let caret { moveCaret(to: caret.path, field: caret.field, .offset(caret.offset)) }
             return nil
@@ -216,18 +243,20 @@ final class Outline: ObservableObject {
         apply(.paste(view.rowPath, range: selection.location..<NSMaxRange(selection), lines: lines))
     }
 
-    /// ⌥⌘C: the bullet under the caret is remembered, to be placed again as a mirror.
-    private func copyAsMirror(_ path: OutlinePath) {
-        guard let bullet = tree.bulletID(at: path) else { return }
-        mirrorToPlace = bullet
-        say("Copied as a mirror")
+    /// ⌥⌘C: the bullet under the caret, or the bullets selected, are remembered, to be placed again as mirrors.
+    private func copyAsMirror(_ paths: [OutlinePath]) {
+        let bullets = paths.compactMap { tree.bulletID(at: $0) }
+        guard !bullets.isEmpty else { return }
+        mirrorToPlace = bullets
+        say(bullets.count == 1 ? "Copied as a mirror" : "Copied \(bullets.count) bullets as mirrors")
     }
 
-    /// ⌥⌘V: a mirror of the copied bullet, below the bullet that has the caret. A bullet that is gone, or would end up inside itself, is refused.
+    /// ⌥⌘V: mirrors of the copied bullets, below the bullet that has the caret or after the last one selected. A bullet that is gone is left out;
+    /// one that would end up inside itself refuses them all.
     private func placeMirror(after path: OutlinePath) {
-        guard let bullet = mirrorToPlace else { return NSSound.beep() }
-        // A refusal with a message has said so; one without (the bullet is gone, or this is nowhere to put it) still beeps.
-        if let refusal = apply(.placeMirror(after: path, bullet: bullet)), refusal.message == nil { NSSound.beep() }
+        guard !mirrorToPlace.isEmpty else { return NSSound.beep() }
+        // A refusal with a message has said so; one without (the bullets are gone, or this is nowhere to put them) still beeps.
+        if let refusal = apply(.placeMirror(after: path, bullets: mirrorToPlace)), refusal.message == nil { NSSound.beep() }
     }
 
     /// Where a mirror is placed besides at `path`.
@@ -252,6 +281,7 @@ final class Outline: ObservableObject {
     /// ⌘⇧C and the header's button. A view setting, so it isn't undone; it is saved with the file.
     func toggleShowsCompleted() {
         guard load == .ready else { return }
+        endSelection()
         var new = tree
         new.showsCompleted.toggle()
         new = new.ensuringBullet(now: Date())
@@ -272,6 +302,9 @@ final class Outline: ObservableObject {
     /// ⌘F: the caret goes into the filter field.
     func focusFilter() { filterFocusRequest += 1 }
 
+    /// The filter field has the keyboard: bullets selected are no longer.
+    func filterTookFocus() { endSelection() }
+
     /// The filter's text changed: the rows follow as it is typed, and no bullet is kept in view for the caret any more.
     func setFilter(_ text: String) {
         filterText = text
@@ -282,10 +315,17 @@ final class Outline: ObservableObject {
 
     /// A click on a tag: the filter gains it, or loses it if it has it. The caret stays where it was, in a bullet that stays in view.
     func toggleTag(_ tag: String) {
+        let selecting = selection != nil
+        endSelection()
         var words = filterText.split(whereSeparator: \.isWhitespace).map(String.init)
         if let at = words.firstIndex(where: { OutlineTags.same($0, tag) }) { words.remove(at: at) } else { words.append(tag) }
         setFilter(words.joined(separator: " "))
         if let view = activeView { keep(view.rowPath) }
+        // No text view has the caret while bullets are selected: it goes back where esc would put it, in view.
+        if selecting, let remembered {
+            keep(remembered.path)
+            restoreCaret()
+        }
     }
 
     /// Under a filter, the bullet the caret is in or goes to stays in view, matching or not.
@@ -302,6 +342,7 @@ final class Outline: ObservableObject {
     /// The disclosure triangle. The caret stays where it was.
     func toggleCollapse(_ path: OutlinePath) {
         guard filterWords.isEmpty, let row = rows.first(where: { $0.path == path }) else { return }
+        endSelection()
         apply(.collapse(path, !row.collapsed))
         restoreCaret()
     }
@@ -321,9 +362,11 @@ final class Outline: ObservableObject {
 
     // MARK: Undo
 
+    /// `selection` is what was selected when the step was taken (the paths in `tree`); `caret` is then where the selection started.
     private struct Step {
         let tree: OutlineTree
         let caret: OutlineCaret?
+        var selection: OutlineSelection?
     }
 
     private static let undoLimit = 200
@@ -331,6 +374,7 @@ final class Outline: ObservableObject {
     private static let typingPause: TimeInterval = 1
 
     private func currentCaret() -> OutlineCaret? {
+        if selection != nil, let selectionOrigin { return selectionOrigin }
         if let view = activeView, view.window?.firstResponder === view {
             return OutlineCaret(path: view.rowPath, offset: view.selectedRange().location, field: view.field)
         }
@@ -345,7 +389,7 @@ final class Outline: ObservableObject {
             return
         }
         typingRun = typing ? caret.map { ($0.path, $0.field, Date()) } : nil
-        undoStack.append(Step(tree: tree, caret: caret))
+        undoStack.append(Step(tree: tree, caret: caret, selection: selection))
         if undoStack.count > Self.undoLimit { undoStack.removeFirst(undoStack.count - Self.undoLimit) }
     }
 
@@ -353,19 +397,25 @@ final class Outline: ObservableObject {
     private func undoOrRedo(redo: Bool) {
         guard load == .ready else { return }
         guard let step = redo ? redoStack.popLast() : undoStack.popLast() else { return }
-        let here = Step(tree: tree, caret: currentCaret())
+        let here = Step(tree: tree, caret: currentCaret(), selection: selection)
         if redo { undoStack.append(here) } else { redoStack.append(here) }
         typingRun = nil
-        // Moving about isn't an edit: the zoom stays, unless the caret's row is outside it.
+        endSelection()
+        // Moving about isn't an edit: the zoom stays, unless the caret's row, or the selected rows, are outside it.
         var restored = step.tree.keepingView(of: tree)
         if let caret = step.caret { restored = restored.zoomShowing(caret.path) }
+        if let first = step.selection?.run.first { restored = restored.zoomShowing(first) }
         // There is always a line to type in: Show completed turned off since may have hidden what the step brings back.
         restored = restored.ensuringBullet(now: Date())
         let before = rows
         if let caret = step.caret { keep(caret.path) }
+        if !filterWords.isEmpty, let run = step.selection?.run { filterKept.formUnion(run) }
         use(restored)
         saver.changed(restored)
-        if let caret = step.caret, showing(caret.path) {
+        // A step taken with bullets selected selects them again, when they all show.
+        if let wanted = step.selection, wanted.run.allSatisfy(showing) {
+            select(wanted, from: step.caret)
+        } else if let caret = step.caret, showing(caret.path) {
             moveCaret(to: caret.path, field: usable(caret, in: restored), .offset(caret.offset))
         } else if let caret = step.caret, let moved = restored.caretAfterHiding(caret.path, from: before, scope: scope) {
             moveCaret(to: moved.path, .offset(moved.offset))
@@ -394,6 +444,8 @@ final class Outline: ObservableObject {
 
     func caretEntered(_ view: OutlineTextView) {
         if typingRun?.path != view.rowPath || typingRun?.field != view.field { typingRun = nil }
+        // A text view taking the caret (a click in text, or a caret sent to a row) ends the selection.
+        dropSelection()
         activeView = view
         let note = view.field == .note ? view.rowPath : nil
         if notePath != note { notePath = note }
@@ -412,6 +464,7 @@ final class Outline: ObservableObject {
     /// at the end of its text; a path that is gone gives it to the first bullet.
     func restoreCaret() {
         guard load == .ready else { return }
+        endSelection()
         if let remembered, showing(remembered.path) {
             moveCaret(to: remembered.path, field: usable(remembered, in: tree), .offset(remembered.offset))
         } else if let remembered, let near = nearestVisible(remembered.path) {
@@ -443,6 +496,7 @@ final class Outline: ObservableObject {
     /// ⌘] or a click on a dot: the bullet becomes the top of the view, with the caret in its first nested bullet or, with none, its title.
     func zoomIn(_ path: OutlinePath) {
         guard load == .ready, path != zoomPath, let zoomed = tree.zoomed(into: path) else { return }
+        endSelection()
         setView(zoomed)
         moveCaret(to: rows.first?.path ?? path, .offset(Int.max))
     }
@@ -452,6 +506,7 @@ final class Outline: ObservableObject {
         let before = zoomPath
         guard load == .ready, depth >= 0, depth < before.placements.count,
               let zoomed = tree.zoomed(into: OutlinePath(placements: Array(before.placements.prefix(depth)))) else { return }
+        endSelection()
         setView(zoomed)
         moveCaret(to: OutlinePath(placements: Array(before.placements.prefix(depth + 1))), .offset(Int.max))
     }
@@ -470,6 +525,7 @@ final class Outline: ObservableObject {
 
     /// A click below the last bullet.
     func focusLast() {
+        endSelection()
         if let last = rows.last?.path ?? crumbs.last?.path { moveCaret(to: last, .offset(Int.max)) }
     }
 
@@ -521,6 +577,110 @@ final class Outline: ObservableObject {
         for event in queued.reversed() { NSApp.postEvent(event, atStart: true) }
     }
 
+    // MARK: Selection
+
+    /// ⇧↑ or ⇧↓ at the edge of a bullet: it is selected whole, with the text selection dropped. `end` is the end of the text selection the keys
+    /// were moving, which is where esc puts the caret back.
+    private func startSelection(from view: OutlineTextView, at end: Int) {
+        guard let started = tree.selecting(view.rowPath, scope: scope) else { return }
+        view.setSelectedRange(NSRange(location: min(max(end, 0), (view.string as NSString).length), length: 0))
+        select(started, from: OutlineCaret(path: view.rowPath, offset: view.selectedRange().location))
+    }
+
+    /// Bullets become selected: the window's first responder goes (the text view resigns as ever, `caretLeft`), so no key types into a bullet and
+    /// no input method holds marked text.
+    private func select(_ new: OutlineSelection, from origin: OutlineCaret?) {
+        pending = nil
+        queuedEvents = []
+        typingRun = nil
+        (activeView?.window ?? NSApp.keyWindow)?.makeFirstResponder(nil)
+        selection = new
+        selectionOrigin = origin
+        if let origin { remembered = origin }
+        scroll(to: new.moving)
+    }
+
+    /// Ends the selection and leaves `remembered` where esc would put the caret. No text view has the caret meanwhile, so whoever calls this
+    /// puts it somewhere.
+    private func endSelection() {
+        guard let held = selection else { return }
+        remembered = escapeCaret(held) ?? remembered
+        dropSelection()
+    }
+
+    private func dropSelection() {
+        if selection != nil { selection = nil }
+        selectionOrigin = nil
+    }
+
+    /// The bullet the selection started in while it is still the fixed end, where it was; otherwise the end of the fixed end's text.
+    private func escapeCaret(_ held: OutlineSelection) -> OutlineCaret? {
+        if let origin = selectionOrigin, origin.path == held.fixed { return origin }
+        return OutlineCaret(path: held.fixed, offset: (tree.text(at: held.fixed) ?? "").utf16.count)
+    }
+
+    /// ⇧↑ and ⇧↓ with bullets selected. At the top level of the zoom the key does nothing.
+    private func extendSelection(_ held: OutlineSelection, by step: Int) {
+        guard let next = tree.extending(held, by: step, scope: scope) else { return }
+        selection = next
+        scroll(to: next.moving)
+    }
+
+    /// A key while bullets are selected. Varnick's shortcuts go on, as does nothing else: any key not listed beeps and changes nothing.
+    private func selectionKey(_ event: NSEvent, _ held: OutlineSelection) -> Bool {
+        // The Paste shortcut's key is the outline's here; every other shortcut acts as always.
+        if let shortcut = Settings.shared.action(for: event), shortcut != .paste { return false }
+        let flags = event.modifierFlags.intersection(KeyCombo.relevant)
+        let command: NSEvent.ModifierFlags = .command, commandShift: NSEvent.ModifierFlags = [.command, .shift]
+        let code = Int(event.keyCode)
+        let run = OutlineRun(held.run)
+        switch (code, flags) {
+        case (kVK_Escape, []):
+            restoreCaret()
+        case (kVK_UpArrow, []), (kVK_LeftArrow, []):
+            endSelection()
+            if let first = held.run.first { moveCaret(to: first, .offset(0)) }
+        case (kVK_DownArrow, []), (kVK_RightArrow, []):
+            endSelection()
+            if let last = held.run.last { moveCaret(to: last, .offset(Int.max)) }
+        case (kVK_UpArrow, .shift):
+            extendSelection(held, by: -1)
+        case (kVK_DownArrow, .shift):
+            extendSelection(held, by: 1)
+        case (kVK_Tab, []):
+            apply(.indent(run))
+        case (kVK_Tab, .shift):
+            apply(.outdent(run))
+        case (kVK_UpArrow, commandShift):
+            apply(.move(run, by: -1))
+        case (kVK_DownArrow, commandShift):
+            apply(.move(run, by: 1))
+        case (kVK_Delete, []), (kVK_ForwardDelete, []), (kVK_Delete, commandShift):
+            apply(.delete(run))
+        case (kVK_Return, command), (kVK_ANSI_KeypadEnter, command):
+            apply(.complete(run))
+        case (kVK_ANSI_C, [.command, .option]):
+            copyAsMirror(held.run)
+        case (kVK_ANSI_V, [.command, .option]):
+            if let last = held.run.last { placeMirror(after: last) }
+        case (kVK_ANSI_Z, command), (kVK_ANSI_Z, commandShift):
+            undoOrRedo(redo: flags == commandShift)
+        // These end the selection, then do what they do.
+        case (kVK_ANSI_LeftBracket, command):
+            let zoomedIn = !tree.effectiveZoom.isEmpty
+            endSelection()
+            if zoomedIn { zoomOut(to: tree.effectiveZoom.count - 1) } else { restoreCaret() }
+        case (kVK_ANSI_C, commandShift):
+            toggleShowsCompleted()
+        case (kVK_ANSI_F, command):
+            endSelection()
+            focusFilter()
+        default:
+            NSSound.beep()
+        }
+        return true
+    }
+
     // MARK: Keys
 
     /// The keys the outline takes, as `SessionBoard.key` does: the switch below lists them. The End session, Mark session done and Restart
@@ -529,6 +689,8 @@ final class Outline: ObservableObject {
         if let action = Settings.shared.action(for: event), action == .endPane || action == .doneSession || action == .restartSession {
             return true
         }
+        // Bullets selected: no text view has the keyboard, so the outline takes every key but Varnick's shortcuts.
+        if let selection, load == .ready { return selectionKey(event, selection) }
         let flags = event.modifierFlags.intersection(KeyCombo.relevant)
         // The caret is on its way to another bullet: what is typed meanwhile waits for it, ⌘V and ⌥ keys included. A shortcut other than
         // Paste (⌘⇧Y, ⌘,) still acts.
@@ -586,7 +748,7 @@ final class Outline: ObservableObject {
         let here = OutlineCaret(path: path, offset: selection.location, field: view.field)
         let atStart = selection.location == 0 && selection.length == 0
         if flags == [.command, .option], code == kVK_ANSI_C || code == kVK_ANSI_V {
-            if code == kVK_ANSI_C { copyAsMirror(path) } else { placeMirror(after: path) }
+            if code == kVK_ANSI_C { copyAsMirror([path]) } else { placeMirror(after: path) }
             return true
         }
         // In a note ↩ is a new line, which the text view does itself; the keys that mean the bullet still work.
@@ -595,7 +757,7 @@ final class Outline: ObservableObject {
             case (kVK_Return, .shift), (kVK_ANSI_KeypadEnter, .shift):
                 leaveNote(view)
             case (kVK_Return, command), (kVK_ANSI_KeypadEnter, command):
-                apply(.complete(here))
+                apply(.complete(OutlineRun(here)))
             case (kVK_UpArrow, []) where view.caretOnFirstLine:
                 leaveNote(view, place: .x(view.caretX(), bottom: true))
             case (kVK_DownArrow, []) where view.caretOnLastLine:
@@ -634,23 +796,29 @@ final class Outline: ObservableObject {
         case (kVK_Return, .shift), (kVK_ANSI_KeypadEnter, .shift):
             openNote(path)
         case (kVK_Return, command), (kVK_ANSI_KeypadEnter, command):
-            apply(.complete(here))
+            apply(.complete(OutlineRun(here)))
         case (kVK_Delete, []) where atStart:
             apply(.join(path))
         case (kVK_Delete, commandShift):
-            apply(.delete(path))
+            apply(.delete(OutlineRun(path)))
         case (kVK_Tab, []):
-            apply(.indent(here))
+            apply(.indent(OutlineRun(here)))
         case (kVK_Tab, .shift):
-            apply(.outdent(here))
+            apply(.outdent(OutlineRun(here)))
         case (kVK_UpArrow, []) where view.caretOnFirstLine:
             return cross(from: view, by: -1)
         case (kVK_DownArrow, []) where view.caretOnLastLine:
             return cross(from: view, by: 1)
+        // ⇧↑ on the first wrapped line and ⇧↓ on the last select the whole bullet, by the end of the text selection the keys move; elsewhere
+        // they select text.
+        case (kVK_UpArrow, .shift) where view.movingEndOnFirstLine:
+            startSelection(from: view, at: view.movingEnd ?? selection.location)
+        case (kVK_DownArrow, .shift) where view.movingEndOnLastLine:
+            startSelection(from: view, at: view.movingEnd ?? NSMaxRange(selection))
         case (kVK_UpArrow, commandShift):
-            apply(.move(here, by: -1))
+            apply(.move(OutlineRun(here), by: -1))
         case (kVK_DownArrow, commandShift):
-            apply(.move(here, by: 1))
+            apply(.move(OutlineRun(here), by: 1))
         case (kVK_UpArrow, command):
             // Under a filter every ancestor shows open, so a collapse would save a state nothing on screen shows.
             if filterWords.isEmpty { apply(.collapse(path, true)) }

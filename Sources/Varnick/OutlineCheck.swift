@@ -42,11 +42,38 @@ enum OutlineCheck {
         var steps: [String] = []
         for _ in 1...count {
             guard let path = copy.placementPaths(of: id, limit: 1).first,
-                  case .applied(let next, _) = copy.applying(.delete(path), now: Date()) else { break }
+                  case .applied(let next, _, _) = copy.applying(.delete(OutlineRun(path)), now: Date()) else { break }
             copy = next
             steps.append("\(copy.placementCounts()[id] ?? 0) left, bullet \(copy.bullets[id] == nil ? "gone" : "kept")")
         }
         print("mirror check: a bullet with \(count) placements, deleting them one by one: " + steps.joined(separator: "; "))
+    }
+
+    /// What a bullet's placements are, in order, for every bullet: the tree's shape without its dates or its text.
+    private static func shape(_ tree: OutlineTree) -> [String: [String]] { tree.bullets.mapValues { $0.children.map(\.id) } }
+
+    /// On a copy of the tree with the zoom cleared, finds a run of two sibling bullets with a sibling above, indents it and then outdents it.
+    /// Prints whether the counts and the tree's shape are as they were. Prints counts only.
+    private static func runCheck(_ tree: OutlineTree) {
+        var copy = tree
+        copy.zoom = []
+        copy.showsCompleted = true
+        let rows = copy.visibleRows().map(\.path)
+        let groups = Dictionary(grouping: rows, by: \.parent)
+        let found = rows.lazy.compactMap { path -> [OutlinePath]? in
+            guard let siblings = groups[path.parent], let at = siblings.firstIndex(of: path), at >= 1, at + 1 < siblings.count else { return nil }
+            return [siblings[at], siblings[at + 1]]
+        }.first
+        guard let run = found else { return print("run check: no run of two bullets with a sibling above") }
+        guard case .applied(let indented, _, let nested) = copy.applying(.indent(OutlineRun(run)), now: Date()) else {
+            return print("run check: indenting the run was refused")
+        }
+        guard case .applied(let back, _, _) = indented.applying(.outdent(OutlineRun(nested)), now: Date()) else {
+            return print("run check: outdenting the run was refused")
+        }
+        print("run check: a run of 2 sibling bullets indented, then outdented: counts "
+              + "\(Counts(back) == Counts(copy) ? "unchanged" : "CHANGED"), tree "
+              + "\(shape(back) == shape(copy) ? "back as it was" : "NOT back as it was")")
     }
 
     static func run(_ arguments: [String]) -> Int32 {
@@ -75,6 +102,7 @@ enum OutlineCheck {
             tree = loaded
         }
         mirrorCheck(tree)
+        runCheck(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {
