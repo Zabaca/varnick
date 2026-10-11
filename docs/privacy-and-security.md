@@ -179,7 +179,7 @@ A session can also change what the panel shows (`show`): the search, the board, 
 panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is
 refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel.
 
-A session can also press keys in the panel (`keys`): text and key combos for the search or the session board, sent inside Varnick
+A session can also press keys in the panel (`keys`): text and key combos for the search, the session board or your Outline, sent inside Varnick
 to the panel's own key handling, as your keys go. Nothing is sent to another app and no permission is used. It works only while
 the panel is open with the keyboard, never opens it, and stops at once when you type in it. It never presses the keys that end,
 mark done or restart a session, Varnick's shortcuts that work anywhere, quit, paste, or Return where it would start a Claude

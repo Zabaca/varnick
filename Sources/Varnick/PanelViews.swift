@@ -342,6 +342,10 @@ struct OutlinePanelView: PanelAccessView {
 
     @MainActor init(model: LauncherModel) { self.model = model }
 
+    /// The Outline takes every key it handles and the typing its text views take: `Outline.key` first, as for the user, then the text view with
+    /// the caret. The keys that end, restart or mark a session, quit and paste are refused before this is asked (`PanelKeys.neverSent`).
+    @MainActor func refusal(of key: PanelKey) -> String? { nil }
+
     /// The Outline with its file read, or why a session can't use it now (the same words for a read and an edit).
     @MainActor fileprivate func ready() async throws -> Outline {
         let outline = model.outline

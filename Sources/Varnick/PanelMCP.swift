@@ -119,14 +119,14 @@ enum PanelMCP {
     private static let keys = tool("keys", PanelToolSpec(
         summary: "Types `text`, then presses `keys` in order, into the view Varnick's panel shows, as the user's own keys go: through the panel's "
             + "key monitor and the view's key handler, inside Varnick (nothing reaches another app). It works only while the panel is up with the "
-            + "keyboard, which it never brings about, the view on screen is the search or the session board, and the user has not pressed a key "
+            + "keyboard, which it never brings about, the view on screen is the search, the session board or the Outline, and the user has not pressed a key "
             + "in the panel for 2 seconds; the first key that fails stops the call, and the reply says how far it got. Refused before anything is "
             + "sent: the keys that end, mark done or restart a session, Varnick's own shortcuts, a new terminal, Settings, quit and paste. "
             + "Refused by the view as it stands when the key comes: in the search, ↩ on a prompt (it starts a session), on !listen, on a ? result "
             + "or on a session to resume, and esc (it hides the panel); on the board, D and R, and ↩ on a card that is not a pane open here. "
             + "Never with a tab, Settings, the Restart Varnick card or the split picker showing. Text is at most \(ScreenKeys.maxCharacters) "
             + "characters with no line break or tab; keys are at most \(ScreenKeys.maxKeys), such as Return, Tab, shift+Tab, cmd+z, Down. It "
-            + "reports what it sent, never what happened: read `panel` or `board_read` afterwards.",
+            + "reports what it sent, never what happened: read `panel`, `board_read` or `outline_read` with `as_shown` afterwards.",
         properties: [
             "text": ["type": "string", "description": "What to type, at most \(ScreenKeys.maxCharacters) characters, no line breaks or tabs."],
             "keys": ["type": "array", "items": ["type": "string"],

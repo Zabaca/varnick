@@ -257,6 +257,10 @@ extension PanelAccess {
             if let why = send(key, model, caller: caller, first: sent == PanelKeyCount()) { throw stop(why) }
             if key.isText { sent.characters += 1 } else { sent.keys += 1 }
             try? await Task.sleep(for: key.isText ? ScreenKeys.characterPace : ScreenKeys.comboPace)
+            // The Outline queues keys while its caret moves to another bullet and sends them again once it has landed: the next key waits for that.
+            if model.showingOutline, !(await model.outline.keysSettled()) {
+                throw stop("the Outline's caret was still moving to another bullet")
+            }
         }
         return Answered(text: "Sent \(sent.text). This says what was sent, not what it did: read panel, or board_read or outline_read with as_shown, to see.",
                         counts: "sent \(sent.of(asked))")
