@@ -132,6 +132,8 @@ enum TextHelper {
     /// The helper's output cut into lines as it arrives.
     struct Lines {
         enum Line: Equatable {
+            /// The helper has read the request: everything before it is `bun`'s start and the load of `agent.js`.
+            case ready
             case text(String)
             case result(Reply)
         }
@@ -159,6 +161,7 @@ enum TextHelper {
                 guard !raw.isEmpty else { continue }
                 guard let wire = try? JSONDecoder().decode(Wire.self, from: raw) else { unreadable += 1; continue }
                 switch wire.type {
+                case "ready": lines.append(.ready)
                 case "text": lines.append(.text(wire.text ?? ""))
                 case "result":
                     lines.append(.result(Reply(ok: wire.ok == true, text: wire.text ?? "", kind: wire.kind, stopReason: wire.stopReason,
@@ -174,25 +177,35 @@ enum TextHelper {
     private final class Collector: @unchecked Sendable {
         private let lock = NSLock()
         private var lines = Lines()
-        private var firstAt: ContinuousClock.Instant?
+        private var readyAt: ContinuousClock.Instant?
         private var resultAt: ContinuousClock.Instant?
         private var reply: Reply?
+        private let onResult: @Sendable () -> Void
+
+        init(onResult: @escaping @Sendable () -> Void) { self.onResult = onResult }
 
         func add(_ data: Data) {
             lock.lock()
-            defer { lock.unlock() }
             let now = ContinuousClock.now
-            firstAt = firstAt ?? now
-            for case .result(let found) in lines.add(data) {
-                reply = found
-                resultAt = resultAt ?? now
+            var arrived = false
+            for line in lines.add(data) {
+                switch line {
+                case .ready: readyAt = readyAt ?? now
+                case .text: break
+                case .result(let found):
+                    reply = found
+                    resultAt = resultAt ?? now
+                    arrived = true
+                }
             }
+            lock.unlock()
+            if arrived { onResult() }
         }
 
-        var snapshot: (reply: Reply?, firstAt: ContinuousClock.Instant?, resultAt: ContinuousClock.Instant?, unreadable: Int) {
+        var snapshot: (reply: Reply?, readyAt: ContinuousClock.Instant?, resultAt: ContinuousClock.Instant?, unreadable: Int) {
             lock.lock()
             defer { lock.unlock() }
-            return (reply, firstAt, resultAt, lines.unreadable)
+            return (reply, readyAt, resultAt, lines.unreadable)
         }
     }
 
@@ -206,41 +219,56 @@ enum TextHelper {
         var end: End
         var text = ""
         var stopReason: String?
-        /// `bun`'s start to its first line, and its start to the `result`, or to its end when there was none.
+        /// `bun`'s start to the helper's `ready` (it has read the request), and its start to the `result`, or to its end when there was none.
         var startup: Duration?
         var total: Duration
         /// What the SDK reported: the first text token, the whole call, and the API's share of it.
         var firstTokenMs: Double?
         var durationMs: Double?
         var apiMs: Double?
-        var exitStatus: Int32
+        /// Nil when the result came first and the helper was left to wind down.
+        var exitStatus: Int32?
     }
 
     /// Runs `bun --no-env-file` on `agent.js` in the empty working folder, with the request on its input, which is then closed.
     /// `--no-env-file` keeps Bun from loading a `.env` into an environment that goes on to `claude`; `--no-install` keeps it from
-    /// ever fetching a package. Cancel and the deadline send SIGTERM, on which the helper ends `claude`, and SIGKILL a second later.
+    /// ever fetching a package. Cancel and the deadline send SIGTERM, on which the helper stops `claude`, and SIGKILL a second later.
+    /// Returns when the `result` arrives, not when the helper has stopped `claude`; a cancel or the deadline waits for the process.
     static func run(_ prompt: String, claude: String, environment: [String: String]) async -> Outcome {
         let clock = ContinuousClock()
         let began = clock.now
         try? FileManager.default.createDirectory(at: workingFolder, withIntermediateDirectories: true)
         let request = Request(prompt: prompt, model: model, claude: claude, filter: filter.path, cwd: workingFolder.path)
-        guard var line = try? JSONEncoder().encode(request) else { return Outcome(end: .failed("request unwritable"), total: .zero, exitStatus: -1) }
+        guard var line = try? JSONEncoder().encode(request) else { return Outcome(end: .failed("request unwritable"), total: .zero) }
         line.append(0x0A)
-        let collector = Collector()
-        let result = await Subprocess.stream(bun.path, ["--no-env-file", "--no-install", script.path], environment: environment,
-                                             input: line, directory: workingFolder, deadline: deadline) { collector.add($0) }
+        let (signal, signaller) = AsyncStream<Void>.makeStream()
+        let collector = Collector(onResult: { signaller.yield() })
+        let streaming = Task {
+            let finished = await Subprocess.stream(bun.path, ["--no-env-file", "--no-install", script.path], environment: environment,
+                                                   input: line, directory: workingFolder, deadline: deadline) { collector.add($0) }
+            signaller.finish()
+            return finished
+        }
+        await withTaskCancellationHandler {
+            for await _ in signal { break }
+        } onCancel: {
+            streaming.cancel()
+        }
+        // The "aborted" a SIGTERM makes the helper send says nothing of why it was sent: that is the process's end to tell.
+        let early = collector.snapshot.reply.map { $0.ok || $0.kind != "aborted" } ?? false
+        let result = early && !Task.isCancelled ? nil : await streaming.value
         let found = collector.snapshot
         var outcome = Outcome(end: .answered, stopReason: found.reply?.stopReason,
-                              startup: found.firstAt.map { began.duration(to: $0) },
+                              startup: found.readyAt.map { began.duration(to: $0) },
                               total: began.duration(to: found.resultAt ?? clock.now),
                               firstTokenMs: found.reply?.firstTokenMs, durationMs: found.reply?.durationMs, apiMs: found.reply?.apiMs,
-                              exitStatus: result.status)
-        if result.cancelled { outcome.end = .cancelled }
-        else if result.launchFailed { outcome.end = .failed("bun did not start") }
+                              exitStatus: result?.status)
+        if result?.cancelled == true { outcome.end = .cancelled }
+        else if result?.launchFailed == true { outcome.end = .failed("bun did not start") }
         // A result that arrived is the answer even when the deadline fell just after it. A failed one that the deadline's SIGTERM
         // made the helper send ("aborted") is the deadline's.
         else if let reply = found.reply, reply.ok { outcome.text = reply.text }
-        else if result.timedOut { outcome.end = .failed("deadline passed") }
+        else if result?.timedOut == true { outcome.end = .failed("deadline passed") }
         else if let reply = found.reply { outcome.end = .failed(reply.kind ?? "failed") }
         else if found.unreadable > 0 { outcome.end = .failed("output unreadable") }
         else { outcome.end = .failed("helper ended without a result") }

@@ -26,7 +26,7 @@ with() { ( export "$1"; shift; "$@" ); }
 
 request "$fake" "$build/mods/reminders" > "$work/ok.json"
 with FAKE_CLAUDE_LOG="$work/fake.log" helper "$work/ok.json" "$work/ok.out"
-grep -q '"type":"text","text":"OK"' "$work/ok.out" && grep -q '"type":"result","ok":true,"text":"OK"' "$work/ok.out" && ok "a request is answered in pieces and a result" || bad "a request is answered"
+grep -q '"type":"ready"' "$work/ok.out" && grep -q '"type":"text","text":"OK"' "$work/ok.out" && grep -q '"type":"result","ok":true,"text":"OK"' "$work/ok.out" && ok "a request is answered in pieces and a result" || bad "a request is answered"
 [ -z "$(grep -v '^{' "$work/ok.out")" ] && [ ! -s "$work/stderr" ] && ok "standard output holds JSON lines only, standard error nothing" || bad "standard output or error carries more than JSON lines"
 grep -q -- '--no-session-persistence' "$work/fake.log" && grep -q -- '"--tools", ""' "$work/fake.log" && grep -q -- "--plugin-dir\", \"$build/mods/reminders" "$work/fake.log" \
   && ok "claude is started with no transcript, no tools and the filter by its path" || bad "claude's arguments"

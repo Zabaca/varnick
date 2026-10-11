@@ -709,7 +709,7 @@ runTextCommand { text, generator, place in
     let generation = try await clock.measure { reply = try await generator.generate(text, maxTokens: 512) }
     var split = ""
     if let outcome = (generator as? ClaudeCodeState)?.lastOutcome {
-        split = " (bun's start to its first line \(outcome.startup.map { "\($0)" } ?? "-"), to the result \(outcome.total), "
+        split = " (start-up to the request read \(outcome.startup.map { "\($0)" } ?? "-"), start to the result \(outcome.total), "
             + "API \(outcome.apiMs.map { String(format: "%.0f ms", $0) } ?? "-"))"
     }
     return "\(reply)\nmade on \(place): \(times)generation \(generation)\(split)"

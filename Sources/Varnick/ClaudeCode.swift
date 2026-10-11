@@ -172,11 +172,11 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
         case .cancelled:
             throw CancellationError()
         case .failed(let kind):
-            NSLog("Varnick: Claude Code call failed: \(kind) after \(outcome.total.seconds.secondsText), helper exit status \(outcome.exitStatus)"
+            NSLog("Varnick: Claude Code call failed: \(kind) after \(outcome.total.seconds.secondsText), helper exit status \(outcome.exitStatus.map(String.init) ?? "-")"
                   + (outcome.stopReason.map { ", stop reason \($0)" } ?? ""))
             throw Failure(kind: kind)
         case .answered:
-            NSLog("Varnick: Claude Code answered in \(outcome.total.seconds.secondsText), helper's first line \(outcome.startup?.seconds.secondsText ?? "-"), "
+            NSLog("Varnick: Claude Code answered in \(outcome.total.seconds.secondsText), helper ready after \(outcome.startup?.seconds.secondsText ?? "-"), "
                   + "API \(outcome.apiMs.map { String(format: "%.2f s", $0 / 1000) } ?? "-"), stop reason \(outcome.stopReason ?? "-")")
             loginPassed = true
             restingSince = nil
