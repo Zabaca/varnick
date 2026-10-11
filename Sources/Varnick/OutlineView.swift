@@ -521,6 +521,21 @@ final class OutlineTextView: NSTextView {
         restyle()
     }
 
+    /// A session's edit to the text the user is typing in (Panel access), put in as a key would be: the view is asked first, only the part that
+    /// differs is replaced, the selection is set again around it, and `didChangeText` lets the outline apply it. False if the view refused.
+    /// Nothing is awaited in here, so no key lands between the steps.
+    @MainActor
+    func replaceAsKey(with new: String) -> Bool {
+        guard let change = OutlineActing.smallestChange(from: string, to: new) else { return true }
+        let selected = selectedRange()
+        guard shouldChangeText(in: change.range, replacementString: change.replacement) else { return false }
+        // The typing attributes carry the font, which an empty view's text storage has no run to take from.
+        textStorage?.replaceCharacters(in: change.range, with: NSAttributedString(string: change.replacement, attributes: typingAttributes))
+        setSelectedRange(OutlineActing.selection(selected, afterReplacing: change.range, withLength: (change.replacement as NSString).length))
+        didChangeText()
+        return true
+    }
+
     /// Struck through and dimmed for a completed bullet, dimmed for what is nested under one: attributes of the text.
     func applyStyle(completed: Bool, dimmed: Bool, highlight: [String]) {
         // Marks are found again each time while there are some: the text may have been typed into since.

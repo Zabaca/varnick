@@ -936,12 +936,12 @@ struct OutlineTree: Codable, Equatable {
         return levels(below: root, stack: [root])
     }
 
-    /// A note's line breaks as line feeds.
-    private static func cleanNote(_ note: String) -> String {
+    /// A note's line breaks as line feeds. A session's edit to the note under the caret puts this into the view, so the view holds what the tree will.
+    static func cleanNote(_ note: String) -> String {
         note.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 
-    private static func oneLine(_ text: String) -> String {
+    static func oneLine(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
     }
 

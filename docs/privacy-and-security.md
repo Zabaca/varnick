@@ -171,7 +171,7 @@ don't want your bullets sent to Anthropic, leave Panel access off.
 
 A session can also change your Outline (`outline_act`) without asking: add bullets, edit a bullet's text or note, complete,
 delete, move, indent, outdent, collapse or mirror one. Each change goes through the Outline's own edits and is one step of
-your undo (⌘Z), and the bullet you are typing in keeps your caret and your text. Varnick's log holds the action and a count
+your undo (⌘Z), and an edit to the bullet you are typing in goes in as if typed, your caret kept at its place in your text. Varnick's log holds the action and a count
 of lines, never a bullet's text. If you don't want a session to change your Outline, leave Panel access off.
 
 A session can also change what the panel shows (`show`): the search, the board, the Problems tab, the Outline, a pane's tab, or a

@@ -271,10 +271,69 @@ enum OutlineCheck {
               + "\(OutlineActing.problem(withText: String(repeating: "x", count: OutlineActing.textLimit + 1), note: false) != nil)")
     }
 
+    /// A session's edit to the bullet the user is typing in (`OutlineActing.smallestChange` and `.selection`, which `OutlineTextView.replaceAsKey` runs):
+    /// the part of a text that differs, and where the user's selection goes around it. Fixed sample strings; prints counts and the names of any case
+    /// that fails.
+    private static func typedInCheck() {
+        var failed: [String] = []
+        var cases = 0
+        func expect(_ name: String, _ ok: Bool) {
+            cases += 1
+            if !ok { failed.append(name) }
+        }
+        func change(_ old: String, _ new: String) -> OutlineActing.TextChange? { OutlineActing.smallestChange(from: old, to: new) }
+        func range(_ location: Int, _ length: Int) -> NSRange { NSRange(location: location, length: length) }
+        func changed(_ location: Int, _ length: Int, _ replacement: String) -> OutlineActing.TextChange? {
+            OutlineActing.TextChange(range: range(location, length), replacement: replacement)
+        }
+        expect("one word replaced", change("hello world", "hello there") == changed(6, 5, "there"))
+        expect("the same text", change("same", "same") == nil)
+        expect("an insert", change("ab", "aXYb") == changed(1, 0, "XY"))
+        expect("a delete", change("aXYb", "ab") == changed(1, 2, ""))
+        expect("a repeat at the end", change("aaa", "aa") == changed(2, 1, ""))
+        expect("from empty", change("", "new") == changed(0, 0, "new"))
+        expect("to empty", change("old", "") == changed(0, 3, ""))
+        expect("an emoji changed keeps its pair whole", change("a\u{1F600}b", "a\u{1F601}b") == changed(1, 2, "\u{1F601}"))
+        expect("an emoji changed at the end keeps its pair whole", change("a\u{1F600}", "a\u{1F601}") == changed(1, 2, "\u{1F601}"))
+        // Whatever the pair, the change turns the old text into the new.
+        let samples = ["", "a", "ab", "abc", "hello world", "hello there", "x\u{1F600}y", "x\u{1F601}y", "\u{1F600}\u{1F600}", "\u{1F600}", "e\u{301}", "#tag text", "text #tag"]
+        let everyPair = samples.allSatisfy { old in
+            samples.allSatisfy { new in
+                guard let found = change(old, new) else { return old == new }
+                return (old as NSString).replacingCharacters(in: found.range, with: found.replacement) == new
+            }
+        }
+        expect("every pair of samples turns the old into the new", everyPair)
+
+        // A word of 5 replaced by one of 3 (6..<11 of 14), and an insert of 2 at 4.
+        let word = range(6, 5)
+        func after(_ selected: NSRange, _ replaced: NSRange = range(6, 5), _ length: Int = 3) -> NSRange {
+            OutlineActing.selection(selected, afterReplacing: replaced, withLength: length)
+        }
+        expect("a caret before stays", after(range(2, 0)) == range(2, 0))
+        expect("a caret at the start of the range stays", after(range(6, 0)) == range(6, 0))
+        expect("a caret after shifts by the change in length", after(range(14, 0)) == range(12, 0))
+        expect("a caret at the end of the range lands at the end of the new text", after(range(11, 0)) == range(9, 0))
+        expect("a caret inside lands at the end of the new text", after(range(8, 0)) == range(9, 0))
+        expect("a selection before stays", after(range(0, 6)) == range(0, 6))
+        expect("a selection after shifts, its length kept", after(range(11, 3)) == range(9, 3))
+        expect("a selection inside becomes a caret at the end", after(range(8, 1)) == range(9, 0))
+        expect("a selection spanning the change becomes a caret at the end", after(range(3, 10)) == range(9, 0))
+        expect("a selection starting inside and ending after becomes a caret at the end", after(range(8, 6)) == range(9, 0))
+        expect("a selection ending inside and starting before becomes a caret at the end", after(range(2, 7)) == range(9, 0))
+        expect("a longer replacement moves a caret after it out", after(range(14, 0), word, 9) == range(18, 0))
+        expect("a caret at an insertion point stays before it", after(range(4, 0), range(4, 0), 2) == range(4, 0))
+        expect("a caret after an insertion shifts", after(range(5, 0), range(4, 0), 2) == range(7, 0))
+        expect("a selection from an insertion point shifts with the text", after(range(4, 3), range(4, 0), 2) == range(6, 3))
+        expect("a delete leaves a caret inside at the join", after(range(8, 0), word, 0) == range(6, 0))
+        print("typed-in check: \(cases - failed.count) of \(cases) cases as expected" + (failed.isEmpty ? "" : "; NOT as expected: " + failed.joined(separator: ", ")))
+    }
+
     /// A session's edits (Panel access) on a copy with the zoom cleared: `add` in each place, and where the user's caret goes. Prints counts and
     /// yes or no, never a bullet's text.
     private static func actCheck(_ tree: OutlineTree) {
         wholeTreeCheck()
+        typedInCheck()
         var copy = tree
         copy.zoom = []
         copy.showsCompleted = true

@@ -91,6 +91,39 @@ enum OutlineActing {
         return nil
     }
 
+    /// The part of a text view's text that a session's edit replaces: a UTF-16 range of the old text, and what goes there.
+    struct TextChange: Equatable {
+        var range: NSRange
+        var replacement: String
+    }
+
+    /// The smallest change that turns `old` into `new`: the common start and end (UTF-16) are kept, and only what lies between is replaced. Nil
+    /// when they are the same. A surrogate pair is never split, so the replaced range and the replacement are both whole characters.
+    static func smallestChange(from old: String, to new: String) -> TextChange? {
+        let a = Array(old.utf16), b = Array(new.utf16)
+        guard a != b else { return nil }
+        let most = min(a.count, b.count)
+        var head = 0
+        while head < most, a[head] == b[head] { head += 1 }
+        if head > 0, UTF16.isLeadSurrogate(a[head - 1]) { head -= 1 }
+        var tail = 0
+        while tail < most - head, a[a.count - 1 - tail] == b[b.count - 1 - tail] { tail += 1 }
+        if tail > 0, UTF16.isTrailSurrogate(a[a.count - tail]) { tail -= 1 }
+        return TextChange(range: NSRange(location: head, length: a.count - head - tail),
+                          replacement: String(decoding: b[head..<(b.count - tail)], as: UTF16.self))
+    }
+
+    /// Where the user's selection goes when `range` of the text is replaced by `length` UTF-16 units: a selection that ends at or before the range
+    /// stays (a caret at its start included, so a caret at an insertion point stays before it); one that starts at or after its end moves by the
+    /// change in length; one that overlaps it, a caret at the end of the new text.
+    static func selection(_ selected: NSRange, afterReplacing range: NSRange, withLength length: Int) -> NSRange {
+        if NSMaxRange(selected) <= range.location { return selected }
+        if selected.location >= NSMaxRange(range) {
+            return NSRange(location: selected.location + length - range.length, length: selected.length)
+        }
+        return NSRange(location: range.location + length, length: 0)
+    }
+
     /// The bullets of an `add`'s text, or why there are none.
     static func drafts(ofAdd text: String) -> (drafts: [OutlineDraft], problem: String?) {
         let lines = OutlineClipboard.lineCount(of: text)

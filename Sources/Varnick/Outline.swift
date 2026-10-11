@@ -262,12 +262,15 @@ final class Outline: ObservableObject {
         }
     }
 
-    /// A text view's text changed: the user typed. `selectionBefore` is where its selection started before the change (its delegate saw it first).
+    /// A session's edit is going into the caret's text view: `textChanged` records it as a step of its own, not as typing.
+    private var sessionTextEdit = false
+
+    /// A text view's text changed: the user typed (or a session's edit went in as a key; see `typeIntoCaretView`). `selectionBefore` is where its selection started before the change (its delegate saw it first).
     func textChanged(_ view: OutlineTextView, selectionBefore: Int?) {
         let field = view.field
         let length = (content(of: view) ?? "").utf16.count
         let before = selectionBefore.map { OutlineCaret(path: view.rowPath, offset: min($0, length), field: field) }
-        apply(field == .note ? .setNote(view.rowPath, view.string) : .setText(view.rowPath, view.string), caretBefore: before, typing: true)
+        apply(field == .note ? .setNote(view.rowPath, view.string) : .setText(view.rowPath, view.string), caretBefore: before, typing: !sessionTextEdit)
     }
 
     // MARK: A session's edits (Panel access)
@@ -305,10 +308,14 @@ final class Outline: ObservableObject {
         guard await wait(.seconds(1), until: { pending == nil }) else {
             return SessionOutcome(refusal: "The user's caret is still moving to another bullet: try again")
         }
-        // Marked text isn't in the tree yet, and a move or a delete of its row would take the view away: those edits wait for it.
-        if let row = caretView?.rowPath, OutlineActing.touches(edit, row: row, in: tree) {
-            guard await wait(.seconds(3), until: { caretView?.hasMarkedText() != true }) else {
-                return SessionOutcome(refusal: "The user is composing text in a bullet: try again")
+        // Marked text isn't in the tree yet, and a move or a delete of its row would take the view away: those edits wait for it, and so does a
+        // text edit that goes into the view that has it.
+        if let row = caretView?.rowPath {
+            let typedIn = caretView(takingText: edit) != nil
+            if typedIn || OutlineActing.touches(edit, row: row, in: tree) {
+                guard await wait(.seconds(3), until: { caretView?.hasMarkedText() != true }) else {
+                    return SessionOutcome(refusal: .other(typedIn ? "The user is composing text in that bullet: try again" : "The user is composing text in a bullet: try again"))
+                }
             }
         }
         guard allowed(), load == .ready else { return SessionOutcome(refusal: "Panel access was turned off, or the outline closed, while this waited") }
@@ -316,10 +323,8 @@ final class Outline: ObservableObject {
         if case .collapse = edit, !filterWords.isEmpty {
             return SessionOutcome(refusal: "the user's filter is on, and every bullet shows open under a filter: a collapse would show nothing")
         }
-        if let view = caretView, let target = Self.textTarget(of: edit),
-           view.field == target.field, tree.bulletID(at: target.path) != nil, tree.bulletID(at: target.path) == tree.bulletID(at: view.rowPath) {
-            return SessionOutcome(refusal: .other("Not yet: the user's caret is in that bullet's \(target.field == .note ? "note" : "text"), and a session can't change it there"))
-        }
+        // The edit goes into the view that has the caret as a key would; nothing is awaited from the wait above to the end of this.
+        if let view = caretView(takingText: edit) { return typeIntoCaretView(edit, view) }
         let user = selection == nil ? currentCaret() : nil
         let live = caretView != nil
         let before = tree
@@ -346,6 +351,31 @@ final class Outline: ObservableObject {
             }
         }
         return SessionOutcome(changed: true, run: done.run, caret: done.caret)
+    }
+
+    /// The text view with the caret, when `edit` sets the text or note it shows: its bullet's, through any placement (a mirror shares its text),
+    /// compared by bullet and not by path.
+    private func caretView(takingText edit: OutlineEdit) -> OutlineTextView? {
+        guard let view = caretView, let target = Self.textTarget(of: edit), view.field == target.field,
+              let bullet = tree.bulletID(at: target.path), bullet == tree.bulletID(at: view.rowPath) else { return nil }
+        return view
+    }
+
+    /// A session's `set_text` or `set_note` on what the user is typing in. The outline never sets the text of the view that has the caret, since
+    /// the user's next key writes that view's text back into the tree: so the new text goes into the view as a key does (`replaceAsKey`), and
+    /// `textChanged` takes it from there, as its own undo step. Its text is cleaned as the tree cleans it, so the view holds what the tree will.
+    private func typeIntoCaretView(_ edit: OutlineEdit, _ view: OutlineTextView) -> SessionOutcome {
+        let new: String
+        switch edit {
+        case .setText(_, let text): new = OutlineTree.oneLine(text)
+        case .setNote(_, let note): new = OutlineTree.cleanNote(note)
+        default: return SessionOutcome()
+        }
+        let before = tree
+        sessionTextEdit = true
+        defer { sessionTextEdit = false }
+        guard view.replaceAsKey(with: new) else { return SessionOutcome(refusal: .other("that bullet's text view doesn't take this change")) }
+        return SessionOutcome(changed: tree != before)
     }
 
     /// The row and field a text or note edit changes.

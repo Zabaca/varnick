@@ -275,11 +275,11 @@ struct OutlinePanelView: PanelAccessView {
                 "first": ["type": "boolean", "description": "add: put the bullets first under `under` instead of last."],
             ]),
         PanelActionSpec(
-            name: "set_text", summary: "Sets bullet `id`'s text to `text`, one line. Refused \"not yet\" while the user's caret is in that bullet's text.",
+            name: "set_text", summary: "Sets bullet `id`'s text to `text`, one line. If the user's caret is in that bullet's text it goes in as a typed change, the caret kept at its place, and waits (up to 3 s) while the user is composing.",
             properties: ["id": ["type": "string", "description": "The row (o1…) the action is about, from outline_read."]]),
         PanelActionSpec(
             name: "set_note",
-            summary: "Sets bullet `id`'s note to `note`; empty removes it. Refused \"not yet\" while the user's caret is in that bullet's note.",
+            summary: "Sets bullet `id`'s note to `note`; empty removes it. If the user's caret is in that note it goes in as a typed change, the caret kept at its place.",
             properties: ["note": ["type": "string", "description": "set_note: the note, with line breaks; empty removes it."]]),
         PanelActionSpec(
             name: "complete", summary: "Marks bullet `id` done (`done` true) or not done (false), acting only when that differs.",
