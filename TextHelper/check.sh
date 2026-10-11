@@ -30,6 +30,8 @@ grep -q '"type":"text","text":"OK"' "$work/ok.out" && grep -q '"type":"result","
 [ -z "$(grep -v '^{' "$work/ok.out")" ] && [ ! -s "$work/stderr" ] && ok "standard output holds JSON lines only, standard error nothing" || bad "standard output or error carries more than JSON lines"
 grep -q -- '--no-session-persistence' "$work/fake.log" && grep -q -- '"--tools", ""' "$work/fake.log" && grep -q -- "--plugin-dir\", \"$build/mods/reminders" "$work/fake.log" \
   && ok "claude is started with no transcript, no tools and the filter by its path" || bad "claude's arguments"
+grep -q -- '"--effort", "low"' "$work/fake.log" && ok "claude is asked for effort low" || bad "effort low"
+[ "$(grep -o -- '--plugin-dir' "$work/fake.log" | wc -l | tr -d ' ')" -eq 1 ] && ok "one reminders filter, ours: the package's own default is replaced, not added to" || bad "plugin directories"
 
 request "$fake" "$work/no-such-filter" > "$work/nofilter.json"
 helper "$work/nofilter.json" "$work/nofilter.out"

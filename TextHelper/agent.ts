@@ -64,7 +64,8 @@ async function answer(request: Request): Promise<void> {
     const outcome = await run(
       request.prompt,
       {
-        ...minimalOptions({ model: request.model, abortController }),
+        // Effort low is what stops Haiku 5.5 thinking: `thinking: disabled`, which minimalOptions() also sets, is accepted and ignored.
+        ...minimalOptions({ model: request.model, effort: 'low', abortController }),
         pathToClaudeCodeExecutable: request.claude,
         persistSession: false,
         includePartialMessages: true,
