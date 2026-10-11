@@ -463,11 +463,20 @@ final class OutlineTextView: NSTextView {
         let whole = NSRange(location: 0, length: (string as NSString).length)
         if completed { textStorage?.addAttribute(.strikethroughStyle, value: strike, range: whole) } else { textStorage?.removeAttribute(.strikethroughStyle, range: whole) }
         typingAttributes[.strikethroughStyle] = completed ? strike : nil
-        // The filter's words, wherever they are in the text, ignoring case and accents.
+        // Tags in the accent colour (dimmed with the rest of a completed bullet).
+        let tags = OutlineTags.ranges(in: string)
+        for tag in tags { textStorage?.addAttribute(.foregroundColor, value: NSColor(Theme.tag).withAlphaComponent(dimmed ? 0.45 : 1), range: tag) }
+        // The filter's words, wherever they are in the text, ignoring case and accents; a tag word marks that tag only.
         textStorage?.removeAttribute(.backgroundColor, range: whole)
         typingAttributes[.backgroundColor] = nil
         let text = string as NSString
         for word in highlight where !word.isEmpty {
+            if OutlineTags.isTagWord(word) {
+                for tag in tags where OutlineTree.folded(text.substring(with: tag)) == word {
+                    textStorage?.addAttribute(.backgroundColor, value: NSColor(Theme.highlight), range: tag)
+                }
+                continue
+            }
             var from = 0
             while from < text.length {
                 let found = text.range(of: word, options: OutlineTree.matchOptions, range: NSRange(location: from, length: text.length - from))
@@ -476,6 +485,31 @@ final class OutlineTextView: NSTextView {
                 from = NSMaxRange(found)
             }
         }
+    }
+
+    /// Tags are coloured as they are typed.
+    override func didChangeText() {
+        super.didChangeText()
+        restyle()
+    }
+
+    /// A click on a tag filters by it, and places no caret.
+    override func mouseDown(with event: NSEvent) {
+        if let tag = tag(at: convert(event.locationInWindow, from: nil)) {
+            outline?.toggleTag(tag)
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    private func tag(at point: NSPoint) -> String? {
+        guard let layoutManager, let textContainer, length > 0 else { return nil }
+        var fraction: CGFloat = 0
+        let index = layoutManager.characterIndex(for: point, in: textContainer, fractionOfDistanceBetweenInsertionPoints: &fraction)
+        guard let range = OutlineTags.ranges(in: string).first(where: { NSLocationInRange(index, $0) }) else { return nil }
+        // The index of the nearest character: the point has to be on the tag itself, not beside it on a short line.
+        let box = layoutManager.boundingRect(forGlyphRange: layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: textContainer)
+        return box.contains(point) ? (string as NSString).substring(with: range) : nil
     }
 
     /// A note with the caret shows in full; without it, two lines ending in "…".

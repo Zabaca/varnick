@@ -144,15 +144,70 @@ struct OutlineScope {
     var cache: OutlineFoldCache?
 }
 
-/// Each bullet's text and note folded for matching, worked out once per change instead of once per keystroke in the filter.
-final class OutlineFoldCache {
-    private var entries: [String: (text: String, note: String?, folded: String)] = [:]
+/// A `#word` or `@word` in a bullet's text or note. One rule, used by the text views (colour, click) and the filter (a tag word matches a tag
+/// exactly). Nothing about tags is stored: they are read from the text each time.
+enum OutlineTags {
+    /// The tags in `text`, as UTF-16 ranges: `#` or `@`, then letters, digits, `_` or `-`, at the start of the text or of a line, or after a
+    /// space or `(`. `me@example.com` and the `#top` of a URL are not tags.
+    static func ranges(in text: String) -> [NSRange] {
+        var found: [NSRange] = []
+        var offset = 0
+        var previous: Unicode.Scalar?
+        var start: (offset: Int, length: Int)?
+        func close() {
+            if let open = start, open.length > 1 { found.append(NSRange(location: open.offset, length: open.length)) }
+            start = nil
+        }
+        for scalar in text.unicodeScalars {
+            let width = scalar.utf16.count
+            if start != nil {
+                if isNameCharacter(scalar) { start?.length += width } else { close() }
+            }
+            if start == nil, scalar == "#" || scalar == "@", previous.map({ $0 == "(" || CharacterSet.whitespacesAndNewlines.contains($0) }) ?? true {
+                start = (offset, width)
+            }
+            previous = scalar
+            offset += width
+        }
+        close()
+        return found
+    }
 
-    func folded(_ id: String, _ bullet: OutlineBullet) -> String {
-        if let entry = entries[id], entry.text == bullet.text, entry.note == bullet.note { return entry.folded }
-        let folded = OutlineTree.folded(bullet.text + "\n" + (bullet.note ?? ""))
-        entries[id] = (bullet.text, bullet.note, folded)
-        return folded
+    /// The tags in `text`, folded for matching (`OutlineTree.folded`), with their `#` or `@`.
+    static func folded(in text: String) -> Set<String> {
+        let units = text as NSString
+        return Set(ranges(in: text).map { OutlineTree.folded(units.substring(with: $0)) })
+    }
+
+    /// A filter word that names a tag: it starts with `#` or `@` and has a name.
+    static func isTagWord(_ word: String) -> Bool { word.count > 1 && (word.hasPrefix("#") || word.hasPrefix("@")) }
+
+    private static func isNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == "_" || scalar == "-" || CharacterSet.alphanumerics.contains(scalar)
+    }
+}
+
+/// Each bullet's text and note folded for matching, and its tags, worked out once per change instead of once per keystroke in the filter.
+final class OutlineFoldCache {
+    struct Entry {
+        let text: String
+        let note: String?
+        let folded: String
+        let tags: Set<String>
+    }
+
+    private var entries: [String: Entry] = [:]
+
+    func entry(_ id: String, _ bullet: OutlineBullet) -> Entry {
+        if let entry = entries[id], entry.text == bullet.text, entry.note == bullet.note { return entry }
+        let entry = Self.make(bullet)
+        entries[id] = entry
+        return entry
+    }
+
+    static func make(_ bullet: OutlineBullet) -> Entry {
+        let both = bullet.text + "\n" + (bullet.note ?? "")
+        return Entry(text: bullet.text, note: bullet.note, folded: OutlineTree.folded(both), tags: OutlineTags.folded(in: both))
     }
 }
 
@@ -279,8 +334,9 @@ struct OutlineTree: Codable, Equatable {
 
     /// A bullet matches when every word is in its text or its note.
     private static func matches(_ bullet: OutlineBullet, id: String, _ words: [String], cache: OutlineFoldCache?) -> Bool {
-        let haystack = cache?.folded(id, bullet) ?? folded(bullet.text + "\n" + (bullet.note ?? ""))
-        return words.allSatisfy { haystack.contains($0) }
+        let entry = cache?.entry(id, bullet) ?? OutlineFoldCache.make(bullet)
+        // A word that names a tag matches that tag only: `#work` doesn't find `#workshop`.
+        return words.allSatisfy { OutlineTags.isTagWord($0) ? entry.tags.contains($0) : entry.folded.contains($0) }
     }
 
     /// Where the caret goes when the row `path` has left the view (completed with Show completed off, or Show completed turned off): the next row

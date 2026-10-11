@@ -14,6 +14,8 @@ enum Theme {
     static let tileFill = Color.primary.opacity(0.06)
     /// A word the outline's filter found.
     static let highlight = Color.yellow.opacity(0.35)
+    /// A `#tag` or `@tag` in the outline.
+    static let tag = Color.accentColor
     /// Text on a filled accent or orange badge.
     static let onAccent = Color.black.opacity(0.85)
 

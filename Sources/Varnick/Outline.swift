@@ -252,6 +252,14 @@ final class Outline: ObservableObject {
         refreshRows()
     }
 
+    /// A click on a tag: the filter gains it, or loses it if it has it. The caret stays where it was, in a bullet that stays in view.
+    func toggleTag(_ tag: String) {
+        var words = filterText.split(whereSeparator: \.isWhitespace).map(String.init)
+        if let at = words.firstIndex(where: { OutlineTree.folded($0) == OutlineTree.folded(tag) }) { words.remove(at: at) } else { words.append(tag) }
+        setFilter(words.joined(separator: " "))
+        if let view = activeView { keep(view.rowPath) }
+    }
+
     /// Under a filter, the bullet the caret is in or goes to stays in view, matching or not.
     private func keep(_ path: OutlinePath) {
         guard !filterWords.isEmpty, filterKept.insert(path).inserted else { return }

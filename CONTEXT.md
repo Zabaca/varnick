@@ -181,6 +181,10 @@ _Avoid_: Focus (a pane's), open, drill down
 Words typed at the top of the **Outline** that hide every **Bullet** that doesn't match, while keeping each match's ancestors. It looks only inside the bullet zoomed into. Not the **Relevance filter**, which is search's last pass.
 _Avoid_: Search (a `?` query searches **History**), find
 
+**Tag**:
+A `#word` or `@word` in a **Bullet**'s text or note. Clicking it filters the **Outline** to it. Not a **Project** or an **Agent**, which `#name` and `@name` name in a **Prompt**.
+_Avoid_: Label, hashtag, mention
+
 **Placement**:
 One spot where a **Bullet** shows: an entry in its parent's list. A bullet's text, note and completion are kept once, however many placements it has.
 _Avoid_: Instance, occurrence, link
