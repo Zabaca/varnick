@@ -203,7 +203,10 @@ refused. **Your bullets and notes go to Anthropic with the session**, though the
 `outline_act` edits the Outline **without asking**: it adds bullets (indented lines nest), sets a bullet's text or note,
 completes, deletes, moves, indents, outdents, collapses or mirrors one, through the Outline's own edits. Each is one step
 of your undo, so ⌘Z takes it back, and your caret stays where it was in the text unless the edit moves or removes its
-row, when it goes where the same key would put it. For now it won't change the text or note of the bullet your caret is in.
+row, when it goes where the same key would put it. A session changes a bullet's text or note only after reading that row, and only if it is
+still as it read it (it is told to read again if you typed in it since). In the bullet you are typing in, the change goes in as if typed: your
+caret keeps its place in your text, your next key adds to the new text, and ⌘Z takes back the session's change alone; while an input
+method is composing there, it waits for the composition to end.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
 board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows

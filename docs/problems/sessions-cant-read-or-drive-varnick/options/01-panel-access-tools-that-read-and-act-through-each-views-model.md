@@ -16,7 +16,7 @@ status: accepted
 | `board_read` | `tab` | The Session board's cards by column, as the board shows them, or the Problems tab's. |
 | `pane_read` | `id` | A pane's kind and title, and for a terminal the text its screen shows now. |
 | `outline_read` | `at`, `depth`, `as_shown`, `after` | The Outline's bullets as indented lines with ids, from Home or from a bullet. With `as_shown`, the rows exactly as the user sees them, with the zoom, the filter and the caret. With `after`, the read that a capped one names continues from the row after that id. |
-| `outline_act` | `action`, then its arguments | One edit, through the Outline's own edits and undo stack: `add`, `set_text`, `set_note`, `complete`, `delete`, `move`, `indent`, `outdent`, `collapse` or `mirror`. |
+| `outline_act` | `action`, then its arguments | One edit, through the Outline's own edits and undo stack: `add`, `set_text`, `set_note`, `complete`, `delete`, `move`, `indent`, `outdent`, `collapse` or `mirror`. `set_text` and `set_note` are refused "Read it first" for a row this session never read with `outline_read`, and "Changed since you read it: read again" when the field differs from what it read. |
 
 `panel` and `show` belong to the panel. The other four come from the first three views that adopt the protocol: the board, the panes and the Outline. A view added later gets its own `<view>_read`, and `<view>_act` if it has actions, without a change to the relay.
 
@@ -168,6 +168,7 @@ status: accepted
 - **The keys' own edits:**
   - `set_text`: one line;
   - `set_note`: empty removes the note;
+  - both replace the whole field, so each is refused unless this session read the row ("Read it first") and the field is as it read it ("Changed since you read it: read again"), checked right before the edit;
   - `complete`, with `done` true or false. The edit toggles, so it runs only when the state differs;
   - `delete`: this placement and everything nested under it, as ⌘⇧⌫;
   - `move`, by -1 or 1;
@@ -308,6 +309,9 @@ status: accepted
 - **Limits:** `add` takes at most 1000 lines, and its reply lists at most 100 new ids, naming the call that reads the rest.
 - **The caret's landing:** an edit that moves the user's caret is refused when the caret hasn't landed within 1 s, so a slow view never leaves an edit half placed.
 - **Open:** a session's move, indent or outdent of a row inside the user's whole-bullet selection ends that selection; the caret goes to the nearest row instead of the selection following the rows.
+
+**Decided by the user (2026-10-11, after ticket 07's review)**
+- **Stale edits are refused.** `set_text` and `set_note` replace the whole field, so keys the user typed after the session's last read would be deleted. If the field's text now differs from what this session last read for that row, the edit is refused with "Changed since you read it: read again" and nothing changes; a field never read is refused with "Read it first". The router remembers the full text and note `outline_read` returned for each row id, per calling pane, even where the read cut them (a hash will do), and checks right before the edit, after the waits. It applies to every `set_text` and `set_note`, not only the caret's bullet.
 
 **Considered, not taken**
 - **Sessions editing `outline.json` themselves.** ADR 0030 makes Varnick its one writer. A running Varnick saves over the file, and its undo stack would know nothing of the change.

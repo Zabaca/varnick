@@ -301,8 +301,9 @@ final class Outline: ObservableObject {
     }
 
     /// One edit for a session: one undo step on the keys' stack, the user's caret moved only as `OutlineActing.caretMove` says, and never the
-    /// text of the view that has it. `allowed` is asked right before the edit, after the waits.
-    func performForSession(_ edit: OutlineEdit, allowed: () -> Bool) async -> SessionOutcome {
+    /// text of the view that has it. `allowed` is asked right before the edit, after the waits, and then `fresh`, which says why a text or note edit must not
+    /// replace what is there now (the session didn't read it, or it has changed since: the tree's text is the user's, keys typed included).
+    func performForSession(_ edit: OutlineEdit, fresh: (OutlineTree) -> String?, allowed: () -> Bool) async -> SessionOutcome {
         guard load == .ready else { return SessionOutcome(refusal: .other(load.problem ?? "the outline isn't ready")) }
         // The caret on its way to a row lands first.
         guard await wait(.seconds(1), until: { pending == nil }) else {
@@ -314,11 +315,12 @@ final class Outline: ObservableObject {
             let typedIn = caretView(takingText: edit) != nil
             if typedIn || OutlineActing.touches(edit, row: row, in: tree) {
                 guard await wait(.seconds(3), until: { caretView?.hasMarkedText() != true }) else {
-                    return SessionOutcome(refusal: .other(typedIn ? "The user is composing text in that bullet: try again" : "The user is composing text in a bullet: try again"))
+                    return SessionOutcome(refusal: .other("The user is composing text in \(typedIn ? "that" : "a") bullet: try again"))
                 }
             }
         }
         guard allowed(), load == .ready else { return SessionOutcome(refusal: "Panel access was turned off, or the outline closed, while this waited") }
+        if let why = fresh(tree) { return SessionOutcome(refusal: .other(why)) }
         // Under a filter every bullet shows open, as the key's collapse knows.
         if case .collapse = edit, !filterWords.isEmpty {
             return SessionOutcome(refusal: "the user's filter is on, and every bullet shows open under a filter: a collapse would show nothing")
@@ -369,7 +371,7 @@ final class Outline: ObservableObject {
         switch edit {
         case .setText(_, let text): new = OutlineTree.oneLine(text)
         case .setNote(_, let note): new = OutlineTree.cleanNote(note)
-        default: return SessionOutcome()
+        default: return SessionOutcome(refusal: .other("that is not a text or note edit"))
         }
         let before = tree
         sessionTextEdit = true

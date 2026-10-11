@@ -114,11 +114,14 @@ final class PanelAccess {
     private var tables: [UUID: PanelIDs<UUID>] = [:]
     /// The same for the Outline's rows (`o` ids), per calling pane.
     private var outlineTables: [UUID: PanelIDs<OutlinePath>] = [:]
+    /// What each calling pane has read of the Outline's rows, so an edit to a field it hasn't read, or that changed since, is refused.
+    private var outlineKnown: [UUID: OutlineKnowledge] = [:]
 
     /// Turning the switch off: every id stops meaning anything at once.
     func switchedOff() {
         for caller in tables.keys { tables[caller]?.forget() }
         for caller in outlineTables.keys { outlineTables[caller]?.forget() }
+        outlineKnown = [:]
     }
 
     // MARK: Ids
@@ -143,6 +146,21 @@ final class PanelAccess {
     func outlinePath(_ text: String?, caller: UUID) throws -> OutlinePath {
         guard let text, let found = outlineTables[caller]?.target(text) else { throw PanelRefusal.unknownID }
         return found
+    }
+
+    /// A read listed this row for the calling pane.
+    func sawOutline(_ path: OutlinePath, text: String, note: String?, caller: UUID) {
+        outlineKnown[caller, default: OutlineKnowledge()].read(path, text: text, note: note)
+    }
+
+    /// Why the calling pane may not set `field` of `path` now (it never read it, or it differs from what it read), or nil.
+    func outlineStaleness(of field: OutlineField, at path: OutlinePath, in tree: OutlineTree, caller: UUID) -> String? {
+        (outlineKnown[caller] ?? OutlineKnowledge()).freshness(of: field, at: path, in: tree).refusal
+    }
+
+    /// The calling pane set `field` of `path`: it knows what is there.
+    func setOutline(_ field: OutlineField, at path: OutlinePath, in tree: OutlineTree, caller: UUID) {
+        outlineKnown[caller, default: OutlineKnowledge()].set(field, at: path, in: tree)
     }
 
     // MARK: The call
@@ -234,10 +252,11 @@ final class PanelAccess {
 
     /// Tables of panes that have gone are dropped.
     private func prune(in model: LauncherModel) {
-        guard !tables.isEmpty || !outlineTables.isEmpty else { return }
+        guard !tables.isEmpty || !outlineTables.isEmpty || !outlineKnown.isEmpty else { return }
         let open = Set(model.tabs.flatMap { $0.sessions.map(\.id) })
         tables = tables.filter { open.contains($0.key) }
         outlineTables = outlineTables.filter { open.contains($0.key) }
+        outlineKnown = outlineKnown.filter { open.contains($0.key) }
     }
 
     // MARK: show
