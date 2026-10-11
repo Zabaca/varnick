@@ -50,9 +50,18 @@ indirect enum ScreenRefusal: Error {
     case keyboardUnknown
     /// Refused once the call was under way: what was done by then, and the counts for the log.
     case stopped(ScreenRefusal, String, String)
+    /// A picture was asked for and Varnick does not have Screen Recording.
+    case noScreenRecording
+    /// A picture was asked for and could not be made: the reason, and its kind for the log.
+    case noPicture(String, String)
+
+    /// Said of a missing Screen Recording grant, by the text step's note and by a picture's refusal.
+    static let screenRecordingWords = "Varnick doesn't have Screen Recording (the user can grant it in Settings › Claude, under Screen access)"
 
     @MainActor var message: String {
         switch self {
+        case .noScreenRecording: "No picture was taken: \(Self.screenRecordingWords)."
+        case .noPicture(let why, _): "No picture was taken: \(why)."
         case .unreadable: "Varnick couldn't read the request"
         case .versionDiffers: "Restart this session\(Self.restartKeys.map { " (\($0))" } ?? "") to update Varnick's tools"
         case .off: "Screen access is off in Varnick's Settings › Claude"
@@ -114,6 +123,8 @@ indirect enum ScreenRefusal: Error {
         case .keyboardElsewhere: "keyboard elsewhere"
         case .keyboardUnknown: "keyboard unknown"
         case .stopped(let why, _, _): why.logKind
+        case .noScreenRecording: "no Screen Recording"
+        case .noPicture(_, let kind): kind
         }
     }
 
@@ -131,6 +142,8 @@ indirect enum ScreenRefusal: Error {
 struct Done {
     var text: String
     var counts = ""
+    /// A `look`'s picture.
+    var image: ScreenReply.Image?
 }
 
 /// Answers the screen tools for the panes' sessions. Reads, presses and posted events run off the main actor, as `ScreenReader.read`
@@ -182,7 +195,7 @@ final class ScreenAccess {
             guard let request = PeerJSON.decode(ScreenRequest.self, from: line) else { throw ScreenRefusal.unreadable }
             tool = ScreenTool(rawValue: request.tool)
             let done = try await run(request, tool: tool, arrived: arrived)
-            reply = ScreenReply(text: done.text, isError: false)
+            reply = ScreenReply(text: done.text, isError: false, image: done.image)
             counts = done.counts
         } catch let refusal as ScreenRefusal {
             kind = refusal.logKind
@@ -192,7 +205,8 @@ final class ScreenAccess {
             kind = "failed"
             reply = ScreenReply(text: "The call failed inside Varnick", isError: true)
         }
-        // Only the tool, the outcome's kind, durations and counts: never a label, note, title, app name, session name or the request's own words.
+        // Only the tool, the outcome's kind, durations and counts (a picture's kind, pixel size and byte count among them): never a label,
+        // note, title, app name, session name, the request's own words or anything a picture showed.
         NSLog("Varnick: screen %@ %@%@ [%.2f s]", tool?.rawValue ?? "-", kind, counts.isEmpty ? "" : " (\(counts))",
               arrived.duration(to: .now).seconds)
         return PeerJSON.line(reply)
@@ -256,9 +270,24 @@ final class ScreenAccess {
         return try target(id, pane: pane)
     }
 
+    private static let unreadableRect = "The rectangle needs numbers x, y, width and height"
+
     // MARK: look
 
     private func look(_ args: ScreenArguments, pane: UUID) async throws -> Done {
+        // Early, so a refusal costs no read.
+        let wantsPicture = args.picture == true
+        var crop: CGRect?
+        if wantsPicture {
+            guard ScreenText.hasAccess else { throw ScreenRefusal.noScreenRecording }
+            guard args.rectUnreadable != true else { throw ScreenRefusal.bad(Self.unreadableRect) }
+            if let rect = args.rect?.frame {
+                guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
+                    throw ScreenRefusal.bad("The rectangle needs a positive width and height")
+                }
+                crop = rect
+            }
+        }
         let app: NSRunningApplication
         if let named = args.app?.trimmingCharacters(in: .whitespaces), !named.isEmpty {
             guard let found = ScreenReader.application(named: named) else { throw ScreenRefusal.noApp(named) }
@@ -275,7 +304,7 @@ final class ScreenAccess {
         // The picture's text, when the window lists nothing, Chrome hides its page, or the session asked for it.
         var text: ScreenText.WindowText?
         var notes: [String] = []
-        if reading.elements.isEmpty || reading.chromeBlind || args.asksForPicture {
+        if reading.elements.isEmpty || reading.chromeBlind || args.asksForText {
             if reading.chromeBlind, reading.emptyWebArea == nil {
                 // Without the page's frame its lines can't be told from the tab titles and the toolbar's.
                 notes.append("Text was not read from a picture: the page's frame is unknown.")
@@ -284,7 +313,7 @@ final class ScreenAccess {
                                                            within: reading.chromeBlind ? reading.emptyWebArea : nil, pointer: pointer)
                 if let skipped = found.look.skipped {
                     notes.append(skipped == "no Screen Recording"
-                                 ? "Text was not read from a picture: Varnick doesn't have Screen Recording (the user can grant it in Settings › Claude, under Screen access)."
+                                 ? "Text was not read from a picture: \(ScreenRefusal.screenRecordingWords)."
                                  : "Text was not read from a picture: \(skipped).")
                 } else {
                     text = found
@@ -318,8 +347,48 @@ final class ScreenAccess {
         if reading.elements.isEmpty, text?.lines.isEmpty ?? true {
             notes.append("Nothing is listed in this window.")
         }
+        var counts = "elements \(reading.elements.count), text lines \(text?.lines.count ?? 0)"
+        var image: ScreenReply.Image?
+        if wantsPicture {
+            // After the list, so the picture is made to fit what else the reply holds.
+            let listing = (lines + notes).joined(separator: "\n")
+            let made = try await picture(of: reading, pid: app.processIdentifier, crop: crop, textBytes: listing.utf8.count)
+            image = ScreenReply.Image(data: made.data.base64EncodedString(), mimeType: made.mimeType)
+            notes.append("Picture: \(made.kind.uppercased()), \(made.width)x\(made.height) pixels, of the area \(Self.describe(made.area)) in screen points "
+                         + "(\(String(format: "%.2f", made.pixelsPerPoint)) pixels per point).")
+            if made.hidden > 0 { notes.append("\(made.hidden) password field\(made.hidden == 1 ? "" : "s") in it painted black.") }
+            if reading.walkCutShort || reading.chromeBlind {
+                // Not "none": the window's controls were only partly reached, so a password field may be in the picture.
+                notes.append("Varnick reached only part of this window's controls, so a password field may be in the picture.")
+            } else if made.hidden == 0 {
+                notes.append("No password fields seen in it.")
+            }
+            counts += ", picture \(made.kind) \(made.width)x\(made.height) \(made.data.count) bytes, hidden \(made.hidden)"
+        }
         targets[pane] = table
-        return Done(text: (lines + notes).joined(separator: "\n"), counts: "elements \(reading.elements.count), text lines \(text?.lines.count ?? 0)")
+        return Done(text: (lines + notes).joined(separator: "\n"), counts: counts, image: image)
+    }
+
+    /// The window `look` read, as a picture (`ScreenPicture`), off the main actor. Password fields the walk found are painted black.
+    private func picture(of reading: ScreenReader.Reading, pid: pid_t, crop: CGRect?, textBytes: Int) async throws -> ScreenPicture.Made {
+        guard let frame = reading.windowFrame else { throw ScreenRefusal.noPicture("the window's frame couldn't be read", "no window frame") }
+        let capture: ScreenText.Capture
+        do {
+            capture = try await ScreenText.capture(pid: pid, near: frame)
+        } catch {
+            try Task.checkCancellation()
+            throw ScreenRefusal.noPicture("the window couldn't be captured (\(error.logKind))", error.logKind)
+        }
+        try Task.checkCancellation()
+        let secure = reading.secureFrames
+        let limit = ScreenPicture.maxBytes(textBytes: textBytes)
+        do {
+            return try await Task.detached(priority: .userInitiated) {
+                try ScreenPicture.make(capture, secure: secure, windowWas: frame, crop: crop, maxBytes: limit)
+            }.value
+        } catch let failure as ScreenPicture.Failure {
+            throw ScreenRefusal.noPicture(failure.message, "picture \(failure)")
+        }
     }
 
     /// Which control has focus: its id, else its kind. Never a label or a value.
@@ -344,6 +413,8 @@ final class ScreenAccess {
             frame = now
             fallback = target.note
             aimed = id.lowercased()
+        } else if args.rectUnreadable == true {
+            throw ScreenRefusal.bad(Self.unreadableRect)
         } else if let rect = args.rect?.frame {
             guard rect.width > 0, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else {
                 throw ScreenRefusal.bad("The rectangle needs a positive width and height")

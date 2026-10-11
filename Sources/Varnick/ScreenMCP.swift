@@ -27,8 +27,12 @@ struct ScreenArguments: Codable {
     var app: String?
     /// `look`'s flag or `type`'s characters, whichever the call sent: the tool says which it takes.
     var text: Text?
+    /// `look`'s flag for a picture of the window, with `rect` to crop it.
+    var picture: Bool?
     var id: String?
     var rect: Rect?
+    /// Set by the relay when `rect` was sent and could not be read, so the app refuses the call instead of acting as if there were none.
+    var rectUnreadable: Bool?
     var note: String?
     var at: Point?
     var keys: [String]?
@@ -45,6 +49,18 @@ struct ScreenArguments: Codable {
         var height: Double
 
         var frame: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+
+        /// Numbers or numbers as text, as a model sends them.
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            guard let x = ScreenArguments.number(values, .x), let y = ScreenArguments.number(values, .y),
+                  let width = ScreenArguments.number(values, .width), let height = ScreenArguments.number(values, .height) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not a rectangle"))
+            }
+            (self.x, self.y, self.width, self.height) = (x, y, width, height)
+        }
+
+        private enum CodingKeys: String, CodingKey { case x, y, width, height }
     }
 
     struct Point: Codable {
@@ -122,7 +138,16 @@ struct ScreenArguments: Codable {
         app = try? values.decodeIfPresent(String.self, forKey: .app)
         id = try? values.decodeIfPresent(String.self, forKey: .id)
         note = try? values.decodeIfPresent(String.self, forKey: .note)
-        rect = try? values.decodeIfPresent(Rect.self, forKey: .rect)
+        if values.contains(.rect), (try? values.decodeNil(forKey: .rect)) != true {
+            // The rectangle as an object, or as JSON text.
+            if let found = try? values.decode(Rect.self, forKey: .rect) {
+                rect = found
+            } else if let text = try? values.decode(String.self, forKey: .rect), let found = try? JSONDecoder().decode(Rect.self, from: Data(text.utf8)) {
+                rect = found
+            } else {
+                rectUnreadable = true
+            }
+        }
         at = try? values.decodeIfPresent(Point.self, forKey: .at)
         text = try? values.decodeIfPresent(Text.self, forKey: .text)
         if let list = try? values.decodeIfPresent([String].self, forKey: .keys) {
@@ -130,24 +155,27 @@ struct ScreenArguments: Codable {
         } else if let one = try? values.decodeIfPresent(String.self, forKey: .keys) {
             keys = one.split(whereSeparator: \.isWhitespace).map(String.init)
         }
-        if let flag = try? values.decodeIfPresent(Bool.self, forKey: .replace) {
-            replace = flag
-        } else if let word = try? values.decodeIfPresent(String.self, forKey: .replace) {
-            replace = word.lowercased() == "true"
-        }
+        replace = Self.flag(values, .replace)
+        picture = Self.flag(values, .picture)
         from = try? values.decodeIfPresent(Spot.self, forKey: .from)
         to = try? values.decodeIfPresent(Spot.self, forKey: .to)
         position = try? values.decodeIfPresent(Point.self, forKey: .position)
         size = try? values.decodeIfPresent(Size.self, forKey: .size)
     }
 
-    /// `look`'s flag: `true`, or `"true"` as a model sends it.
-    var asksForPicture: Bool {
+    /// `look`'s `text` flag (read the window's text from a picture): `true`, or `"true"` as a model sends it.
+    var asksForText: Bool {
         switch text {
         case .flag(let flag)?: flag
         case .words(let word)?: word.lowercased() == "true"
         case nil: false
         }
+    }
+
+    /// A boolean or `"true"`, nil when absent or neither.
+    private static func flag<Key>(_ values: KeyedDecodingContainer<Key>, _ key: Key) -> Bool? {
+        if let flag = try? values.decodeIfPresent(Bool.self, forKey: key) { return flag }
+        return (try? values.decodeIfPresent(String.self, forKey: key)).map { $0.lowercased() == "true" }
     }
 
     /// A number or a number as text, for the points a model sends.
@@ -156,13 +184,21 @@ struct ScreenArguments: Codable {
         return (try? values.decodeIfPresent(String.self, forKey: key)).flatMap { Double($0) }
     }
 
-    private enum CodingKeys: String, CodingKey { case app, text, id, rect, note, at, keys, replace, from, to, position, size }
+    private enum CodingKeys: String, CodingKey { case app, text, picture, id, rect, rectUnreadable, note, at, keys, replace, from, to, position, size }
 }
 
-/// The reply line: the call's text, and whether it was a refusal or a failure.
+/// The reply line: the call's text, whether it was a refusal or a failure, and for a `look` that asked for one, a picture. An older
+/// Varnick sends no picture and an older server ignores one, so the request's version is unchanged.
 struct ScreenReply: Codable {
     var text: String
     var isError: Bool
+    var image: Image?
+
+    /// A picture as MCP carries it: base64 data and its mime type.
+    struct Image: Codable {
+        var data: String
+        var mimeType: String
+    }
 }
 
 /// The server: newline-delimited JSON-RPC on standard input and output, the stdio transport of MCP. No library: the protocol
@@ -217,10 +253,18 @@ enum ScreenMCP {
              + "read from a picture of the window (t1, t2…). A last line says which control has focus, by its id or its kind: \"Focus: e7\", "
              + "\"Focus: a text field that isn't listed\", \"Focus: a password field\" or \"Focus: none\". Ids are what point, click, type, "
              + "drag and window take, and are replaced by the next look. Frames are in screen points, the origin at the top left of the "
-             + "main display. Nothing a person typed into a field is listed.",
+             + "main display. Nothing a person typed into a field is listed. With `picture` it also returns an image of the window "
+             + "(at most about \(ScreenPicture.longSide) pixels on the long side), and the text says which part of the screen it shows. The "
+             + "image shows everything on the window, typed text included, and goes to Anthropic with this session: ask for it only when the "
+             + "listing is not enough. Password fields Varnick can see are painted black; one it cannot see (a Chrome page's, a remote "
+             + "desktop's) is not.",
              properties: [
                 "app": ["type": "string", "description": "The app to look at, by name. Omit for the app the user is working in."],
                 "text": ["type": "boolean", "description": "Also read the window's text from a picture of it, even when its controls are listed."],
+                "picture": ["type": "boolean", "description": "Also return an image of the window. Needs Screen Recording."],
+                "rect": ["type": "object", "description": "With `picture`: only this area of the window, in screen points, the origin at the top left of the main display.",
+                         "properties": ["x": ["type": "number"], "y": ["type": "number"], "width": ["type": "number"], "height": ["type": "number"]],
+                         "required": ["x", "y", "width", "height"]],
              ]),
         tool(.point, "Draws the user's attention to a control or a rectangle with an arrow and a sign that shows this session's name and "
              + "the note. It stays \(Int(ArrowOverlay.lingers)) seconds, or until the next point or click. It changes nothing on the screen.",
@@ -317,7 +361,9 @@ enum ScreenMCP {
             let arguments = (params["arguments"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                 .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
             let reply = ask(requestLine(pane: pane, tool: name, arguments: arguments))
-            return success(id: id, ["content": [["type": "text", "text": reply.text]], "isError": reply.isError])
+            var content: [[String: Any]] = [["type": "text", "text": reply.text]]
+            if let image = reply.image { content.append(["type": "image", "data": image.data, "mimeType": image.mimeType]) }
+            return success(id: id, ["content": content, "isError": reply.isError])
         default:
             return failure(id: id, code: -32601, "Method not found")
         }
