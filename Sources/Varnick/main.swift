@@ -122,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        SavedAudio.closeOnTerminate()
         Settings.storeSkipPermissionsIfAbsent()
         Settings.storeTextGenerationIfAbsent()
         PaneFolder.migrateOldScratchFolder()

@@ -642,9 +642,35 @@ enum SavedAudio {
             .appendingPathComponent("\(time.string(from: start))-\(source.rawValue).m4a")
     }
 
-    /// Closes every file still open, waiting for what is queued: the app is quitting, and an m4a never closed is unreadable.
-    static func closeAll() {
-        if #available(macOS 26, *) { SavedAudioFile.closeAll() }
+    /// Closes every file still open, waiting for what is queued: Varnick is ending, and an m4a never closed is unreadable. Gives up
+    /// after `timeout` in all, so a stuck queue can't hold up an exit (`scripts/restart.sh` waits 10 s for it).
+    static func closeAll(timeout: TimeInterval = 2) {
+        if #available(macOS 26, *) { SavedAudioFile.closeAll(timeout: timeout) }
+    }
+
+    /// Written by the SIGTERM handler, which may call only async-signal-safe functions: `write` to this pipe is one.
+    private nonisolated(unsafe) static var termPipe: Int32 = -1
+
+    /// Makes a SIGTERM (`make run`, `scripts/restart.sh`, `make stop`) close the open files and then `_exit(0)`, and does nothing else:
+    /// no `applicationWillTerminate`, no `stopAppServers`, so app servers and zmx sessions survive as before (`restartImpact`). A
+    /// handler, not SIG_IGN with a signal source: an ignored signal stays ignored in every child Varnick execs, a handled one is
+    /// reset by exec. Call once, at launch.
+    static func closeOnTerminate() {
+        var fds: [Int32] = [0, 0]
+        guard pipe(&fds) == 0 else { return NSLog("Varnick: no pipe for SIGTERM; a restart may leave saved audio unreadable") }
+        for fd in fds { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+        _ = fcntl(fds[1], F_SETFL, O_NONBLOCK)
+        termPipe = fds[1]
+        let source = DispatchSource.makeReadSource(fileDescriptor: fds[0], queue: DispatchQueue(label: "com.zabaca.varnick.sigterm"))
+        source.setEventHandler {
+            closeAll()
+            _exit(0)
+        }
+        source.resume()
+        signal(SIGTERM) { _ in
+            var byte: UInt8 = 1
+            _ = write(SavedAudio.termPipe, &byte, 1)
+        }
     }
 }
 
@@ -691,9 +717,11 @@ private final class SavedAudioFile: @unchecked Sendable {
         }
     }
 
-    static func closeAll() {
+    static func closeAll(timeout: TimeInterval) {
         let all = live.withLock { Array($0.values) }
-        for file in all { file.queue.sync { file.shutdown() } }
+        let group = DispatchGroup()
+        for file in all { file.queue.async(group: group) { file.shutdown() } }
+        if group.wait(timeout: .now() + timeout) == .timedOut { NSLog("Varnick: saved audio didn't finish closing in \(timeout) s") }
     }
 
     private func shutdown() {
