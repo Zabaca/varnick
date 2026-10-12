@@ -4,7 +4,7 @@ description: The session board's Completed column is each Mac's own. A session t
 impact: The boards disagree about what is finished, so the user can't trust any one of them. Every Done has to be repeated on every Mac. Ended cards, which have no cap, pile up in Stopped on the Macs where the session wasn't marked.
 severity: mid
 evidence: The user's report of 2026-10-10, "the session board on other paired machines doesn't seem to share the completed state". Code read at 0b289b0 (main), protocol 19. Option 04 of session-turns-not-visible, shipped, decided "Done marks stay per Mac".
-status: open
+status: closed
 ---
 
 ## What the user wants

@@ -2,7 +2,7 @@
 problem: done-marks-stay-on-one-mac
 title: The session's host keeps its done mark, and every Mac reads it from there
 summary: A session's done mark belongs to its host, the machine its zmx session runs on. Done on another Mac's session sends a new `done` request to that host, which marks the session without ending anything: in Completed if it has ended there, on the pane's own record if it is still open. The host's `sessions` listing and its Recent entries carry the mark (a protocol bump), and every paired Mac puts a session its host marks in Completed, with "Still open on…" while it runs. Opening a still-open session from Completed clears the mark on its host. A headless host keeps the mark on its own session records. A Done the host can't take stays on that Mac only, as today, and its card says so.
-status: accepted
+status: shipped
 ---
 
 ## Solution
