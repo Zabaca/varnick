@@ -647,31 +647,6 @@ enum SavedAudio {
     static func closeAll(timeout: TimeInterval = 2) {
         if #available(macOS 26, *) { SavedAudioFile.closeAll(timeout: timeout) }
     }
-
-    /// Written by the SIGTERM handler, which may call only async-signal-safe functions: `write` to this pipe is one.
-    private nonisolated(unsafe) static var termPipe: Int32 = -1
-
-    /// Makes a SIGTERM (`make run`, `scripts/restart.sh`, `make stop`) close the open files and then `_exit(0)`, and does nothing else:
-    /// no `applicationWillTerminate`, no `stopAppServers`, so app servers and zmx sessions survive as before (`restartImpact`). A
-    /// handler, not SIG_IGN with a signal source: an ignored signal stays ignored in every child Varnick execs, a handled one is
-    /// reset by exec. Call once, at launch.
-    static func closeOnTerminate() {
-        var fds: [Int32] = [0, 0]
-        guard pipe(&fds) == 0 else { return NSLog("Varnick: no pipe for SIGTERM; a restart may leave saved audio unreadable") }
-        for fd in fds { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
-        _ = fcntl(fds[1], F_SETFL, O_NONBLOCK)
-        termPipe = fds[1]
-        let source = DispatchSource.makeReadSource(fileDescriptor: fds[0], queue: DispatchQueue(label: "com.zabaca.varnick.sigterm"))
-        source.setEventHandler {
-            closeAll()
-            _exit(0)
-        }
-        source.resume()
-        signal(SIGTERM) { _ in
-            var byte: UInt8 = 1
-            _ = write(SavedAudio.termPipe, &byte, 1)
-        }
-    }
 }
 
 /// One source's audio as m4a files, written on its own queue so the audio callback only queues (`where-it-breaks.md`).
@@ -683,7 +658,7 @@ private final class SavedAudioFile: @unchecked Sendable {
     private let source: TranscriptSource
     private let format: AVAudioFormat
     private let runStart: Date
-    private let queue = DispatchQueue(label: "com.zabaca.varnick.saved-audio", qos: .utility)
+    private let queue = DispatchQueue(label: "com.zabaca.varnick.saved-audio", qos: .userInitiated)
     // Everything below is touched on `queue` only.
     private var file: AVAudioFile?
     private var url: URL?

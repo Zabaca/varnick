@@ -122,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        SavedAudio.closeOnTerminate()
+        Self.onTerminate()
         Settings.storeSkipPermissionsIfAbsent()
         Settings.storeTextGenerationIfAbsent()
         PaneFolder.migrateOldScratchFolder()
@@ -324,6 +324,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             listenHotKey = HotKey(id: Self.listenHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { Listener.shared.toggle() }
         }
         showListening(Listener.shared.state)
+    }
+
+    /// Written by the SIGTERM handler, which may call only async-signal-safe functions: `write` to this pipe is one.
+    private nonisolated(unsafe) static var terminatePipe: Int32 = -1
+
+    /// What a SIGTERM does (`make run`, `scripts/restart.sh` and `make stop` end Varnick with one): saved audio is closed, then
+    /// `_exit(0)`, and nothing else. No `applicationWillTerminate`, no `stopAppServers`, so app servers and zmx sessions survive a
+    /// restart as `restartImpact` says; anything added here changes that. A handler, not SIG_IGN with a signal source: an ignored
+    /// signal stays ignored in every child Varnick execs, a handled one is reset by exec. Set up once, at launch.
+    nonisolated private static func onTerminate() {
+        var fds: [Int32] = [0, 0]
+        guard pipe(&fds) == 0 else { return NSLog("Varnick: no pipe for SIGTERM; a restart may leave saved audio unreadable") }
+        for fd in fds { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+        _ = fcntl(fds[1], F_SETFL, O_NONBLOCK)
+        terminatePipe = fds[1]
+        let source = DispatchSource.makeReadSource(fileDescriptor: fds[0], queue: DispatchQueue(label: "com.zabaca.varnick.sigterm"))
+        source.setEventHandler {
+            SavedAudio.closeAll()
+            _exit(0)
+        }
+        source.resume()
+        signal(SIGTERM) { _ in
+            var byte: UInt8 = 1
+            _ = write(AppDelegate.terminatePipe, &byte, 1)
+        }
     }
 
     func applicationWillTerminate(_ note: Notification) {

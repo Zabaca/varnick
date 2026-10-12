@@ -459,7 +459,7 @@ final class BuildUpgrade {
             return failure
         }
         // Not `exit`: no atexit handlers, which is what the SIGTERM of the checkout's restart skips too. Saved audio is the one
-        // thing closed first, as that SIGTERM's handler does.
+        // thing closed first, as that SIGTERM's handler (`AppDelegate.onTerminate`) does.
         SavedAudio.closeAll()
         _exit(0)
     }
