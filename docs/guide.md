@@ -188,12 +188,13 @@ Settings › Claude › **Panel access** (off by default, and independent of Scr
 you start or restart in Varnick's panes tools for Varnick itself, from the same `varnick` MCP server. `panel` says
 whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
-the Outline, with its zoom, filter and caret; Settings) and what has the keyboard. `board_read` gives the session board's cards, one per tab with its sessions listed under it, by column (Running, Stopped,
-Completed) as the board shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane
-gets an id such as `s1` (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and title and, for a
-terminal (a Claude session or a shell, this session's own included), the text its screen shows now, never its
-scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or a custom
-app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** `outline_read` gives
+the Outline, with its zoom, filter and caret; Settings) and what has the keyboard. `board_read` gives the session
+board's cards, one per tab with its sessions listed under it, by column (Running, Stopped, Completed) as the board
+shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane gets an id such as `s1`
+(a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
+title and, for a terminal (a Claude session or a shell, this session's own included), the text its screen shows now,
+never its scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or
+a custom app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** `outline_read` gives
 your Outline's bullets: by default the tree from Home, or
 from a bullet, three levels down (`depth` 0 for all), with each bullet's id (`o1`, the same every time), text, whether it
 is done, collapsed or a mirror, its tags and its note, and which ones your view hides; with `as_shown`, the rows exactly
