@@ -216,7 +216,7 @@ struct OutlineReading {
         }
         let counts = tree.placementCounts()
         let filtering = !view.filterText.split(whereSeparator: \.isWhitespace).isEmpty
-        lines.append("Rows (\(view.rows.count)):" + (view.rows.isEmpty ? " none" : after.map { ", continuing after \(id($0))" } ?? ""))
+        lines.append("Rows (\(view.rows.count))" + (view.rows.isEmpty ? ": none" : (after.map { ", continuing after \(id($0))" } ?? "") + ":"))
         let (listed, rest) = listing(total: view.rows.count, from: first, into: &lines) { at in
             rows(for: view.rows[at], places: counts[view.rows[at].bullet] ?? 1, filtering: filtering)
         }

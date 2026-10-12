@@ -215,6 +215,18 @@ struct OutlineKnowledge {
         rows[path] = Seen(text: Self.digest(text), note: Self.digest(note ?? ""))
     }
 
+    /// A row the session's own edit made and named with its text (the new rows of an `add`): it knows the text and note as the tree holds them.
+    mutating func read(_ path: OutlinePath, in tree: OutlineTree) {
+        guard tree.bulletID(at: path) != nil else { return }
+        read(path, text: tree.text(at: path) ?? "", note: tree.note(at: path))
+    }
+
+    /// The bullet the session knew at `old` is now also at `new` (moved, indented, outdented or mirrored): what it read of it, or set, still holds
+    /// there, as hashes, so a field it never read stays unread and one the user changed since stays changed.
+    mutating func carry(from old: OutlinePath, to new: OutlinePath) {
+        if let seen = rows[old] { rows[new] = seen }
+    }
+
     /// The session set this field, so it knows what it holds now. The other field of the row is no better known than it was.
     mutating func set(_ field: OutlineField, at path: OutlinePath, in tree: OutlineTree) {
         var seen = rows[path] ?? Seen()
