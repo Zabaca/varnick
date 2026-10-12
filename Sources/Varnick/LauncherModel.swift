@@ -1490,7 +1490,7 @@ final class LauncherModel: ObservableObject {
             let new = TabRecord(id: id, sessions: sessions, name: infos.compactMap(\.tabName).first, lastUsed: Date())
             if let at = remembered.firstIndex(where: { $0.id == id }) {
                 let old = remembered[at]
-                changed = changed || old.layout != new.layout || old.name != new.name
+                changed = changed || Self.listedDiffers(old, new)
                     || new.lastUsed.timeIntervalSince(rememberedSaved[id] ?? .distantPast) > Self.rememberedResaveAfter
                 remembered[at] = new
             } else {
@@ -1499,6 +1499,15 @@ final class LauncherModel: ObservableObject {
             }
         }
         if changed { saveSessions() }
+    }
+
+    /// Whether two listings of a tab differ in anything but the time they were made: a listing makes its records anew each time, so
+    /// comparing the records whole would save at every ask.
+    private static func listedDiffers(_ old: TabRecord, _ new: TabRecord) -> Bool {
+        func key(_ tab: TabRecord) -> [[String]] {
+            tab.records.map { [$0.id.uuidString, $0.host ?? "", $0.title, $0.directory, $0.agent ?? "", $0.conversation ?? ""] }
+        }
+        return old.name != new.name || key(old) != key(new) || old.records.map(\.workLinks) != new.records.map(\.workLinks)
     }
 
     /// Makes an ended card of a remembered tab of `host` once its latest listing succeeded without it and its
