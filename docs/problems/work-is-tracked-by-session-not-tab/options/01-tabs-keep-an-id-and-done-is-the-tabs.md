@@ -2,7 +2,7 @@
 problem: work-is-tracked-by-session-not-tab
 title: Tabs keep an id, and Done, Completed and the board are the tab's
 summary: Every tab keeps an id, saved with it, and belongs to one machine, its host. Done is the tab's. It closes every pane of the tab, and the tab goes to Completed, which lists tabs and reopens them whole. Done on a session goes away. The board shows one card per tab, listing its sessions, in the column of its most urgent session. ADR 0028's rule that the host keeps the mark carries on, keyed by tab. `done` names a tab, and the host's listings give each session's tab and the tab's mark (protocol 21). A tab here that shows another machine's sessions takes that machine's tab id. Splitting one of its panes is refused until option 03. Existing marks, ended cards and remembered sessions become one-pane tabs. It ships alone. Recent and search stay per session until option 02.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -28,7 +28,7 @@ status: proposed
 - **Splitting a pane that runs on another machine is refused.** Today it makes a local session in that machine's folder path, in the same tab. Option 03 starts it on the host instead.
 - **A protocol bump to 21.** Every Mac and the headless host run one commit, as for any bump, and a machine on another version is refused before any request.
 - **Going back to an older build** keeps the open tabs. It shows Completed and the ended cards empty, since they are saved under new keys.
-- **Migrating a mark on one pane of a split tab** is lossy: the tab is marked only if all its Claude panes were (open question 3).
+- **Migrating a mark on one pane of a split tab** is lossy: the tab is marked only if all its Claude panes were.
 
 ## User Stories
 
@@ -60,7 +60,7 @@ status: proposed
   - its reply to `start` (a prompt sent there);
   - its reply to `resume` (Recent or search).
 - **Opening a session whose tab is already shown here adds it to that tab,** beside its last pane, instead of making a new tab. Until option 03 that layout is this Mac's own.
-- **Splitting a pane that runs on another machine is refused** in the pane, with the reason: splits on another machine come with whole remote tabs (open question 1). The split picker isn't shown for it.
+- **Splitting a pane that runs on another machine is refused** in the pane, with the reason: splits on another machine come with whole remote tabs. The split picker isn't shown for it.
 - **A saved tab with panes on more than one machine** (made by such a split before this option) is split at load into one tab per machine, in place. Its layout is pruned per machine, and the first keeps the id.
 - **A tab with no Claude pane** stays in the search's Tabs list and gets no board card, since the board shows turns. Picked to match today's board.
 
@@ -149,7 +149,7 @@ status: proposed
 - **Ended cards become one-pane ended tabs,** and remembered sessions become remembered tabs, each with the same id.
   - A paired Mac's tab of several panes is known by its first pane's id.
   - A remembered session that wasn't its tab's first pane matches nothing, so an end it had while this Mac was off is missed once.
-- **An open Claude pane marked on its record** marks its tab only when all the tab's Claude panes are marked, at the newest date. Otherwise the marks are dropped (open question 3).
+- **An open Claude pane marked on its record** marks its tab only when all the tab's Claude panes are marked, at the newest date. Otherwise the marks are dropped.
 - **The saved file gains new keys** for Completed and the ended and remembered tabs, beside the old keys. The old ones are read once and then saved absent. A changed type under an old key would make the whole file unreadable, and every open tab would go with it.
 
 ## Testing Decisions
@@ -214,7 +214,7 @@ status: proposed
   - a tab with no Claude pane isn't on the board;
   - R restarts only a tab with one Claude pane;
   - resuming a Completed tab's conversation elsewhere leaves the tab in Completed.
-- **Open questions,** each with a recommendation:
-  1. **Splitting a pane that runs on another machine, until option 03:** refuse it, or start a Claude pane on that host, in the same tab there? **Recommended: refuse it.** A Claude pane alone could start through `start`. But the host would then have to add it to its own tab, and a terminal or web pane couldn't follow until option 03. A rule that holds for some kinds and not others would change again in option 03.
-  2. **Should a session waiting on the user outrank a working one** for the tab's column (the user's leaning)? **Recommended: yes.** It puts a tab that needs the user in Stopped, marked, even while another session in it works.
-  3. **A mark on one pane of a split tab, at migration:** the tab takes it only if all its Claude panes are marked, or if any is? **Recommended: only if all are.** Those marks came from another Mac marking one session, and a tab with live unmarked work isn't done. There are at most a few such panes.
+- **Decided by the user (2026-10-12),** when accepting this option:
+  1. **Splitting a pane that runs on another machine is refused** until option 03, which starts it on the host.
+  2. **A session waiting on the user outranks a working one** for the tab's column.
+  3. **A mark on one pane of a split tab, at migration:** the tab takes it only if all its Claude panes are marked (the recommendation, taken with the acceptance).
