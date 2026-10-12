@@ -212,8 +212,12 @@ Varnick transcribing the microphone and the Mac's own audio on this Mac, until i
 _Avoid_: Recording, dictation
 
 **Transcript**:
-What Varnick heard while listening: one file per day, a line per finished phrase with its time and source (`mic` or `system`), and a line for each answer Varnick spoke (`varnick`). What the mic hears while Varnick speaks isn't in it. Not a Claude Code conversation's transcript.
+What Varnick heard while listening: one file per day, a line per finished phrase with its time and source (`mic` or `system`), and a line for each answer Varnick spoke (`varnick`). What the mic hears while Varnick speaks isn't in it. Not a Claude Code conversation's transcript, and not **Saved audio**.
 _Avoid_: Log, recording
+
+**Saved audio**:
+The sound itself, kept only with Settings › Listening › Save audio on: each run of **Listening** writes two m4a files, the mic's and the Mac's audio, to `recordings/<yyyy-MM-dd>/<HH-mm-ss>-mic.m4a` and `…-system.m4a` in Application Support, named by when the run started (a change of device starts a new run). It holds everything heard, including the mic while Varnick speaks, which the **Transcript** leaves out. Local only; Varnick never deletes it. Made to test speaker separation and voice recognition on real calls.
+_Avoid_: Recording, call recording
 
 **Wake phrase**:
 "Hey Varnick" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**.

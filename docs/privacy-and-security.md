@@ -14,6 +14,12 @@ vulnerability, see [the end of this page](#reporting-a-vulnerability).
   characters), which only the search by meaning reads.
 - **What you say and hear, while Listening is on.** It records the microphone and the Mac's system audio and
   writes what it transcribes, on this Mac, to the day's transcript file.
+- **Saved audio, only with Settings › Listening › Save audio on (off by default).** While Listening is on it also
+  keeps the sound itself, other people on calls included and the mic while Varnick speaks: two m4a files per run
+  (mic and system audio, mono AAC at 32 kbps and the speech model's sample rate), in `~/Library/Application Support/Varnick/recordings/<day>/`. They are
+  never sent anywhere, and Varnick never deletes them: you do. They are not encrypted beyond what your Mac's disk
+  encryption does. Turning the setting off stops the next run saving; files already saved stay. Varnick's log says
+  only that saving stopped, with an error code, never what was heard.
 - **Pictures of the screen.** When it reads a window from a picture, the picture is never written to disk,
   logged or sent.
 
