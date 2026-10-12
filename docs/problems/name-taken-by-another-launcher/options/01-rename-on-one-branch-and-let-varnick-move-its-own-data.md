@@ -2,7 +2,7 @@
 problem: name-taken-by-another-launcher
 title: Rename everything on one branch, let Varnick move its own data at first launch, and cut each machine over by hand once
 summary: Accepted on 2026-10-09, with the recommendations under Further Notes taken, the Fold as logo and menu-bar icon, and the chosen page for varnick.com. A measurement comes first. It checks how the transcriber hears "Hey Varnick" and whether Jev's measured questions hold with the new name. Then one integration branch renames every name, identifier, file, folder and evergreen doc, and bumps the peer protocol. It also carries a one-time migration, copied from the app's existing settings migration. At its first launch, before anything reads saved state, Varnick ends every zmx session named the old way, then copies the settings domain, moves the support folder, copies the web data and renames the database. Short-lived guards keep a machine still on Launchy from crossing by itself: Varnick's command-line modes refuse to run there, the build refuses while Launchy's binary is in the checkout, stop and restart also stop Launchy, restart refuses with no Varnick to start, install removes the old LaunchAgent, and the Linux installer refuses a host still holding the old root. After the merge come the two GitHub renames. Each machine is then cut over by hand from a terminal outside the app, the Ryzen first, and the user grants permissions and enters keys again. The repository goes public after that, and a last ticket removes the migration and guards. The checkout's folder is renamed after every machine runs Varnick, and varnick.com serves the new page once a downloadable build exists.
-status: accepted
+status: shipped
 ---
 
 ## Solution

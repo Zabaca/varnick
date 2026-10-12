@@ -4,7 +4,7 @@ description: The user wants a WorkFlowy-style outline in the panel, one shortcut
 impact: Lists and plans that belong beside the sessions live in another app, or nowhere. Either way they are a context switch away from the panel the user works in all day.
 severity: low
 evidence: The user's request of 2026-10-07, with the decisions below, relayed by the coordinator. Code read at 4c7f344 (main), before the rename, and re-checked against 79ac676 (main) on 2026-10-10.
-status: open
+status: closed
 ---
 
 ## What the user wants

@@ -4,7 +4,7 @@ description: Search's last pass, the relevance filter, runs on TypeSafe's hosted
 impact: For a filter that helps on descriptive searches the user still has to choose TypeSafe, which sends each search they pause on, with the titles, sites and descriptions of up to 20 of their pages, to a third party, needs a key and a network, and settles about 1.1 to 1.2 s after typing stops. The private choice keeps history on this Mac but mostly leaves the fused order as it was. The checkpoint ages as history grows, and a Mac without its folder, or anyone else, has no On this Mac filter at all.
 severity: mid
 evidence: A distillation prototype run on 2026-10-03/04 on the user's Mac. Its numbers and recipe are recorded below because its files are untracked and personal (see "Where the personal files are"). Jev's figures for Launchy's own request come from the jev-bench run of 2026-10-03 behind commit 46bbae7. Five investigations and two reviews on 2026-10-04 measured what running its checkpoint in Launchy's Swift stack takes; their results are in the options. On 2026-10-05 `Launchy --search-eval` measured both filters against no filter on Launchy's own fused results.
-status: open
+status: closed
 ---
 
 ## Today

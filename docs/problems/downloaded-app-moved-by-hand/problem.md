@@ -4,7 +4,7 @@ description: A published build is `Varnick.zip` (ADR 0025). A person unzips it a
 impact: A first launch that ends in a refusal, right after macOS's own "downloaded from the Internet" confirmation. Some people give up there. The rest spend three more steps in Finder before Varnick does anything.
 severity: mid
 evidence: Code as of 887d4a9, read on 2026-10-10. The latest release's assets, read with `gh` the same day. dmgbuild 1.6.7's source, read from its published wheel. The translocation calls in the Command Line Tools SDK's Security stubs. The tools present on the Mac that makes the app. Nothing was built, run or mounted.
-status: open
+status: closed
 ---
 
 ## What the user wants
