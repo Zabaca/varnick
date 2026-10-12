@@ -2092,8 +2092,8 @@ final class LauncherModel: ObservableObject {
 
     /// What restarting Varnick does to the open panes (the `restart` request's dry run), by what the next launch does (ADR 0004). A started Claude
     /// or terminal pane in zmx survives only with Keep sessions running on now: the launch sweep kills the session of a restored pane
-    /// otherwise (`ownsZmxSession`). An app's server survives whatever the setting says, since the restart is a SIGTERM that Varnick
-    /// has no handler for, so `stopAppServers` never runs. A pane for a session on a peer and one not yet started whose session may run
+    /// otherwise (`ownsZmxSession`). An app's server survives whatever the setting says, since the restart is a SIGTERM whose only
+    /// handler (`AppDelegate.onTerminate`) closes saved audio and exits, so `stopAppServers` never runs. A pane for a session on a peer and one not yet started whose session may run
     /// reconnect; the rest of the started panes end, by their label.
     func restartImpact() -> (ends: [String], reconnect: Int) {
         var ends: [String] = [], reconnect = 0

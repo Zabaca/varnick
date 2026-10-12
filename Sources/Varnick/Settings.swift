@@ -223,6 +223,9 @@ final class Settings: ObservableObject {
     private var elevenLabsNoteIsFromList = false
     /// Answers a mic phrase that starts "Hey Varnick" aloud, while Listening is on (ADR 0015); off until turned on.
     @Published var heyVarnick: Bool { didSet { defaults.set(heyVarnick, forKey: "heyVarnick") } }
+    /// Keeps what the mic and the Mac's audio hear, while Listening is on, as audio files on this Mac (`SavedAudio`); off until
+    /// turned on.
+    @Published var saveAudio: Bool { didSet { defaults.set(saveAudio, forKey: "saveAudio") } }
     /// Lets a spoken request point at the screen: Varnick reads the focused window's controls and draws an arrow (ADR 0019); off
     /// until turned on. `screenPointingOn` says whether its other conditions hold too.
     @Published var pointAtScreen: Bool { didSet { defaults.set(pointAtScreen, forKey: "pointAtScreen") } }
@@ -370,6 +373,7 @@ final class Settings: ObservableObject {
         elevenLabsVoices = defaults.data(forKey: "elevenLabsVoices")
             .flatMap { try? JSONDecoder().decode([ElevenLabs.Voice].self, from: $0) } ?? []
         heyVarnick = defaults.bool(forKey: "heyVarnick")
+        saveAudio = defaults.bool(forKey: "saveAudio")
         pointAtScreen = defaults.bool(forKey: "pointAtScreen")
         semanticSearch = defaults.object(forKey: "semanticSearch") as? Bool ?? true
         searchEmbeddingsRunOn = defaults.string(forKey: "searchEmbeddingsRunOn").flatMap(ModelRunOn.init) ?? .local
@@ -700,6 +704,10 @@ struct SettingsView: View {
                             }
                             Toggle("", isOn: $settings.heyVarnick).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                 .disabled(!settings.heyVarnick && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
+                        }
+                        SettingRow(title: "Save audio",
+                                   detail: "While Listening is on, saves what the microphone and the Mac's audio hear, other people on calls included, as audio files on this Mac only, so you can test voice recognition on real calls. Each time Listening starts (and after a change of microphone or output) it writes two files, one for the mic and one for the Mac's audio, into \(SavedAudio.displayPath)/<day>/, starting new ones every 15 minutes. Nothing is sent anywhere, and nothing is deleted automatically: remove the files yourself. Turning it on or off takes effect the next time Listening starts or restarts.") {
+                            Toggle("", isOn: $settings.saveAudio).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Point at the screen",
                                    detail: "Ask \"Hey Varnick, where's the Allow button\" and Varnick draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Varnick can't place. With Varnick's panel open, it is read too, so its session, project, Mac and page names go. A rebuild may need both permissions again. Every session and shell in Varnick's panes gets them too, kept running in zmx or not: see SECURITY.md.") {

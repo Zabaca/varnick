@@ -112,6 +112,13 @@ Listening transcribes your microphone and what the Mac plays, on this Mac, into 
 (`Varnick/transcripts/` under Application Support). It is off at each launch and needs macOS 26. macOS asks for
 the microphone and system audio permissions the first time.
 
+Settings › Listening › **Save audio** (off by default) also keeps the sound. Each run of Listening, which starts
+again when the microphone or output device changes, writes two m4a files, the mic's and the Mac's audio:
+`Varnick/recordings/<yyyy-MM-dd>/<HH-mm-ss>-mic.m4a` and `…-system.m4a` under Application Support, named by when
+the run started. A run longer than 15 minutes goes on in new files named by their own start time, so a crash
+loses at most the last 15 minutes. A source that delivered no audio leaves no file. The setting is read each time
+Listening starts or restarts. The files stay on this Mac and Varnick never deletes them.
+
 Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,
 save an ElevenLabs API key under Settings › Models › Keys (it needs the Text to Speech and Voices Read
 permissions) and pick one of your account's voices in the same Voice list. That sends everything Varnick speaks to
