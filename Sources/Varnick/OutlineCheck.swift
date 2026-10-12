@@ -388,12 +388,56 @@ enum OutlineCheck {
         print("read-before-edit check: forgotten, a row is unread again: \(ok(fresh(.text, a, tree) == .unread))")
     }
 
+    /// A row a session's own edit made, or moved, is as read: `add` and then `set_text` works, a user's edit between them is "Changed since you read
+    /// it", and an indent carries what the session knew (a never-read field stays unread). Prints yes or no, never a bullet's text.
+    private static func ownRowsCheck() {
+        let at = Date(timeIntervalSince1970: 0)
+        let home = OutlinePath(placements: [])
+        func ok(_ value: Bool) -> String { value ? "yes" : "NO" }
+        var seed = 0
+        func newID() -> String { seed += 1; return "n\(seed)" }
+        let start = OutlineTree(root: "r", bullets: ["r": OutlineBullet(text: "", created: at, changed: at, children: [])])
+        let drafts = OutlineActing.drafts(ofAdd: "one\ntwo").drafts
+        guard case .applied(let added, _, let run) = start.applying(.insert(drafts, at: .lastUnder(home)), now: at, newID: newID), run.count == 2 else {
+            return print("own-rows check: an add of two lines was refused")
+        }
+        var known = OutlineKnowledge()
+        let rows = OutlineActing.newRows(of: run, in: added).rows.map(\.path)
+        for path in rows { known.read(path, in: added) }
+        let (one, two) = (run[0], run[1])
+        print("own-rows check: after an add both new rows can be set (text and note): "
+              + ok(rows.count == 2 && [one, two].allSatisfy { known.freshness(of: .text, at: $0, in: added) == .current && known.freshness(of: .note, at: $0, in: added) == .current }))
+        var typed = added
+        if let id = typed.bulletID(at: one) { typed.bullets[id]?.text = "one, typed by the user" }
+        print("own-rows check: a user's edit after the add makes that text changed, and the other row stays current: "
+              + ok(known.freshness(of: .text, at: one, in: typed) == .changed && known.freshness(of: .text, at: two, in: typed) == .current))
+        // Indent the second row under the first: the session knew it at `two`, it is at `moved` now.
+        guard case .applied(let indented, _, let moved) = added.applying(.indent(OutlineRun(two)), now: at, newID: newID), let now = moved.first else {
+            return print("own-rows check: an indent was refused")
+        }
+        known.carry(from: two, to: now)
+        var edited = indented
+        if let id = edited.bulletID(at: now) { edited.bullets[id]?.text = "edited" }
+        print("own-rows check: after an indent the new id's text is current: \(ok(known.freshness(of: .text, at: now, in: indented) == .current)), "
+              + "and a user's edit after it is changed: \(ok(known.freshness(of: .text, at: now, in: edited) == .changed))")
+        var stranger = OutlineKnowledge()
+        stranger.carry(from: two, to: now)
+        print("own-rows check: a row the session never read stays unread when it moves: \(ok(stranger.freshness(of: .text, at: now, in: indented) == .unread))")
+        // The as_shown header: the count, then "continuing after", then the colon.
+        let reading = OutlineReading(tree: added) { $0.id }
+        let view = OutlineReading.Shown(rows: added.visibleRows(), crumbs: [], filterText: "", showsCompleted: false, caret: nil, selection: nil, onScreen: true)
+        let header = { (after: OutlinePath?) in (try? reading.shown(view, after: after))?.text.split(separator: "\n").first { $0.hasPrefix("Rows (") }.map(String.init) ?? "" }
+        print("own-rows check: the as_shown rows header reads \"Rows (2):\" and \"Rows (2), continuing after <id>:\": "
+              + ok(header(nil) == "Rows (2):" && header(one) == "Rows (2), continuing after \(one.id):"))
+    }
+
     /// A session's edits (Panel access) on a copy with the zoom cleared: `add` in each place, and where the user's caret goes. Prints counts and
     /// yes or no, never a bullet's text.
     private static func actCheck(_ tree: OutlineTree) {
         wholeTreeCheck()
         typedInCheck()
         readBeforeEditCheck()
+        ownRowsCheck()
         var copy = tree
         copy.zoom = []
         copy.showsCompleted = true

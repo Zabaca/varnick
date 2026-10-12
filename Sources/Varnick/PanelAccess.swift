@@ -182,6 +182,16 @@ final class PanelAccess {
         outlineKnown[caller, default: OutlineKnowledge()].read(path, text: text, note: note)
     }
 
+    /// The calling pane's own edit made these rows and named them with their text: it knows them as a read would.
+    func learnedOutline(_ paths: [OutlinePath], in tree: OutlineTree, caller: UUID) {
+        for path in paths { outlineKnown[caller, default: OutlineKnowledge()].read(path, in: tree) }
+    }
+
+    /// The calling pane's own edit moved or mirrored the row it knew at `old` to `new`: it knows it as it did.
+    func carriedOutline(from old: OutlinePath, to new: OutlinePath, caller: UUID) {
+        outlineKnown[caller, default: OutlineKnowledge()].carry(from: old, to: new)
+    }
+
     /// Why the calling pane may not set `field` of `path` now (it never read it, or it differs from what it read), or nil.
     func outlineStaleness(of field: OutlineField, at path: OutlinePath, in tree: OutlineTree, caller: UUID) -> String? {
         (outlineKnown[caller] ?? OutlineKnowledge()).freshness(of: field, at: path, in: tree).refusal

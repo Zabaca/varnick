@@ -317,11 +317,11 @@ struct OutlinePanelView: PanelAccessView {
                 "first": ["type": "boolean", "description": "add: put the bullets first under `under` instead of last."],
             ]),
         PanelActionSpec(
-            name: "set_text", summary: "Sets bullet `id`'s text to `text`, one line. Refused \"Read it first\" unless you read this row with outline_read, and \"Changed since you read it: read again\" if its text has changed since (the user's typing included): it replaces the whole text. If the user's caret is in that text it goes in as a typed change, the caret kept at its place, and waits (up to 3 s) while the user is composing.",
+            name: "set_text", summary: "Sets bullet `id`'s text to `text`, one line. Refused \"Read it first\" unless you read this row with outline_read (a row your own add listed counts, and so does one you indented, outdented, moved or mirrored that you had read), and \"Changed since you read it: read again\" if its text has changed since (the user's typing included): it replaces the whole text. If the user's caret is in that text it goes in as a typed change, the caret kept at its place, and waits (up to 3 s) while the user is composing.",
             properties: ["id": ["type": "string", "description": "The row (o1…) the action is about, from outline_read."]]),
         PanelActionSpec(
             name: "set_note",
-            summary: "Sets bullet `id`'s note to `note`; empty removes it. Refused \"Read it first\" unless you read this row with outline_read, and \"Changed since you read it: read again\" if its note has changed since. If the user's caret is in that note it goes in as a typed change, the caret kept at its place, and waits (up to 3 s) while the user is composing.",
+            summary: "Sets bullet `id`'s note to `note`; empty removes it. Refused \"Read it first\" unless you read this row with outline_read (as for set_text, a row your own add listed counts), and \"Changed since you read it: read again\" if its note has changed since. If the user's caret is in that note it goes in as a typed change, the caret kept at its place, and waits (up to 3 s) while the user is composing.",
             properties: ["note": ["type": "string", "description": "set_note: the note, with line breaks; empty removes it."]]),
         PanelActionSpec(
             name: "complete", summary: "Marks bullet `id` done (`done` true) or not done (false), acting only when that differs.",
@@ -439,6 +439,8 @@ struct OutlinePanelView: PanelAccessView {
         /// For a text or note: the field, which the session must have read and find unchanged right before the edit.
         var field: (path: OutlinePath, field: OutlineField)?
         let said: (Outline.SessionOutcome) -> String
+        /// For the rows the reply names: what the session now knows of them, so it can set them without reading them again.
+        var learned: (Outline.SessionOutcome) -> Void = { _ in }
         switch action {
         case "add":
             guard let lines = args["text"] else { throw PanelRefusal.bad("text is required: one or more lines, indented to nest") }
@@ -459,6 +461,10 @@ struct OutlinePanelView: PanelAccessView {
                 place = first ? .firstUnder(under) : .lastUnder(under)
             }
             edit = .insert(made.drafts, at: place)
+            learned = { done in
+                let rows = OutlineActing.newRows(of: done.run, in: outline.tree).rows
+                ids.learnedOutline(rows.map(\.path), in: outline.tree, caller: caller)
+            }
             said = { done in
                 let (rows, more) = OutlineActing.newRows(of: done.run, in: outline.tree)
                 var lines = ["Added \(rows.count + more) bullet\(rows.count + more == 1 ? "" : "s") under \(named(under)):"]
@@ -495,6 +501,7 @@ struct OutlinePanelView: PanelAccessView {
             }
             let verb = ["move": step < 0 ? "Moved up" : "Moved down", "indent": "Indented", "outdent": "Outdented"][action] ?? ""
             edit = action == "move" ? .move(OutlineRun(path), by: step) : action == "indent" ? .indent(OutlineRun(path)) : .outdent(OutlineRun(path))
+            learned = { done in if let now = done.run.first { ids.carriedOutline(from: path, to: now, caller: caller) } }
             said = { done in
                 guard let now = done.run.first else { return "\(verb) \(id(path))." }
                 return "\(verb) \(id(path)); it is \(id(now)) now, under \(named(now.parent)). Read again for the ids of what is nested under it."
@@ -509,6 +516,7 @@ struct OutlinePanelView: PanelAccessView {
             let path = try row("id"), after = try row("after")
             guard let bullet = outline.tree.bulletID(at: path) else { throw PanelRefusal.gone }
             edit = .placeMirror(after: after, bullets: [bullet])
+            learned = { done in if let new = done.caret?.path { ids.carriedOutline(from: path, to: new, caller: caller) } }
             said = { done in
                 guard let new = done.caret?.path else { return "Placed a mirror of \(id(path))." }
                 return "Placed a mirror of \(id(path)) after \(id(after)); the new row is \(id(new)), under \(named(new.parent))." + hiding([new])
@@ -526,6 +534,7 @@ struct OutlinePanelView: PanelAccessView {
         }
         if let field { ids.setOutline(field.field, at: field.path, in: outline.tree, caller: caller) }
         guard done.changed else { return "Already so: nothing changed." }
+        learned(done)
         return said(done)
     }
 }
