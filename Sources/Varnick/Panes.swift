@@ -158,7 +158,7 @@ struct SplitPicker: View {
 }
 
 /// A tab's panes, saved so splits come back after a relaunch.
-indirect enum PaneLayout: Codable {
+indirect enum PaneLayout: Codable, Equatable {
     case leaf(SessionRecord)
     case split(axis: SplitAxis, fraction: Double, first: PaneLayout, second: PaneLayout)
 
@@ -167,6 +167,29 @@ indirect enum PaneLayout: Codable {
         case .leaf(let r): [r]
         case .split(_, _, let a, let b): a.records + b.records
         }
+    }
+
+    /// The records side by side, equal in width: how a tab of another machine's sessions is laid out here.
+    static func sideBySide(_ records: [SessionRecord]) -> PaneLayout {
+        guard let first = records.first else { preconditionFailure("A layout holds a record") }
+        guard records.count > 1 else { return .leaf(first) }
+        return .split(axis: .sideBySide, fraction: 1 / Double(records.count), first: .leaf(first), second: sideBySide(Array(records.dropFirst())))
+    }
+
+    /// Every record changed by `change`.
+    func mapping(_ change: (inout SessionRecord) -> Void) -> PaneLayout {
+        switch self {
+        case .leaf(var r):
+            change(&r)
+            return .leaf(r)
+        case .split(let axis, let fraction, let a, let b):
+            return .split(axis: axis, fraction: fraction, first: a.mapping(change), second: b.mapping(change))
+        }
+    }
+
+    /// The record with `record`'s id replaced by it, as a pane leaves the layout of a tab being closed.
+    func replacing(_ record: SessionRecord) -> PaneLayout {
+        mapping { if $0.id == record.id { $0 = record } }
     }
 
     /// Drops leaves `keep` rejects; a split left with one side collapses into it.
@@ -291,8 +314,11 @@ final class PaneNode: ObservableObject, Identifiable {
 
 /// One header tab: a split tree of sessions and the pane with keyboard focus.
 @MainActor
-final class ClaudeTab: ObservableObject, Identifiable {
-    let id = UUID()
+final class ClaudeTab: ObservableObject {
+    /// What the views key the tab by, new at each launch and never changing, unlike `id`.
+    let viewID = UUID()
+    /// The tab's id (ADR 0032), saved with it. A tab that shows another machine's sessions takes that machine's id for it.
+    private(set) var id: UUID
     let root: PaneNode
     @Published private(set) var focused: ClaudeSession
     /// Set with ⌘⇧R; nil follows the focused pane's title.
@@ -300,18 +326,54 @@ final class ClaudeTab: ObservableObject, Identifiable {
     /// File tree on the right (⌘⇧F).
     @Published var showsFiles = false
     let files = FileTree()
+    /// When another Mac marked the tab done while it is open here; nil is not marked. A tab of another machine's has its host's.
+    var completedAt: Date?
     /// Layout changed (divider moved); the model saves.
     var onChange: () -> Void = {}
+    /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is.
+    var onClosing: () -> Void = {}
 
-    init(root: PaneNode, focused: ClaudeSession? = nil, name: String? = nil) {
+    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil) {
+        self.id = id
         self.root = root
         self.name = name
+        self.completedAt = completedAt
         self.focused = focused ?? root.leaves[0]
     }
 
     var sessions: [ClaudeSession] { root.leaves }
 
-    /// What the session board's card for `pane` is called, and what the sign of its screen tools shows (`ScreenAccess`).
+    /// The Claude panes, in layout order.
+    var claudeSessions: [ClaudeSession] { sessions.filter(\.isClaude) }
+
+    /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one).
+    var host: String? { claudeSessions.first?.record.host }
+
+    /// A tab made for a session the user asked a paired Mac to resume takes the id of the tab the host puts it in, once: a later pane
+    /// joining it names another host tab, which it ignores.
+    var awaitsHostTab = false
+
+    func adopt(_ hostTab: UUID) {
+        guard awaitsHostTab else { return }
+        awaitsHostTab = false
+        id = hostTab
+    }
+
+    /// The id the host's listing gives the tab (`LauncherModel.followHostTabs`).
+    func take(_ hostTab: UUID) {
+        awaitsHostTab = false
+        id = hostTab
+    }
+
+    /// The tab as it is saved.
+    var saved: SessionStore.SavedTab {
+        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt)
+    }
+
+    /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).
+    var asksBeforeDone: Bool { claudeSessions.contains(where: \.asksBeforeDone) }
+
+    /// What a pane is called in this tab (the tab's name when it has one pane), which the sign of its screen tools shows (`ScreenAccess`).
     func boardTitle(of pane: ClaudeSession) -> String { sessions.count == 1 ? name ?? pane.label : pane.label }
 
     func contains(_ session: ClaudeSession) -> Bool { root.leaf(for: session) != nil }
@@ -329,6 +391,7 @@ final class ClaudeTab: ObservableObject, Identifiable {
 
     /// The tab's ×: ends every pane, as ⌘W would one by one; the last one to go closes the tab.
     func close() {
+        onClosing()
         for session in sessions { session.end() }
     }
 
@@ -476,7 +539,7 @@ struct TerminalLeaf: View {
                     .frame(width: 230)
                     .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
-            } else if let failure = session.restartFailure {
+            } else if let failure = session.restartFailure ?? session.splitRefusal {
                 Text(failure)
                     .font(.system(size: 11.5))
                     .fixedSize(horizontal: false, vertical: true)
@@ -665,7 +728,7 @@ struct CloseButton: View {
     }
 }
 
-/// Done on a Claude pane: the mouse's Mark session done key.
+/// Done on a Claude pane: the mouse's Mark tab done key.
 struct DoneButton: View {
     /// Room a bar that runs under the corner leaves for Done and ×.
     static let reserved: CGFloat = 96
@@ -685,7 +748,7 @@ struct DoneButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .help(Settings.shared.combo(.doneSession).map { "Mark session done (\($0.label))" } ?? "Mark session done")
+        .help(Settings.shared.combo(.doneSession).map { "Mark tab done (\($0.label))" } ?? "Mark tab done")
         .onHover { hovering = $0 }
     }
 }

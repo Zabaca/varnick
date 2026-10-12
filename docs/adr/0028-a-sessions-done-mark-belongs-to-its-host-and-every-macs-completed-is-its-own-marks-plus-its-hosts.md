@@ -1,5 +1,7 @@
 # A session's done mark belongs to its host, and every Mac's Completed is its own marks plus its hosts'
 
+Superseded by [ADR 0032](0032-a-tabs-done-mark-belongs-to-its-host-and-completed-lists-tabs.md): the mark is the tab's, not the session's. The rules below carry over by tab; the protocol is 21.
+
 Done marks were each Mac's own (option 04 of `session-turns-not-visible`): a session marked done on one Mac stayed in Running or Stopped on every other paired Mac, or turned up there as an ended card, until the user marked it again on each. Now a session has one host, the machine its zmx session runs on, and the host is the one place its mark is kept. Every Mac's Completed is its own marks plus the marks its hosts report. The problem and its option are in `docs/problems/done-marks-stay-on-one-mac/`.
 
 The rule is across machines and the protocol encodes it (version 20), so it is hard to undo:

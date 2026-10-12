@@ -2,7 +2,7 @@
 problem: work-is-tracked-by-session-not-tab
 title: Tabs keep an id, and Done, Completed and the board are the tab's
 summary: Every tab keeps an id, saved with it, and belongs to one machine, its host. Done is the tab's. It closes every pane of the tab, and the tab goes to Completed, which lists tabs and reopens them whole. Done on a session goes away. The board shows one card per tab, listing its sessions, in the column of its most urgent session. ADR 0028's rule that the host keeps the mark carries on, keyed by tab. `done` names a tab, and the host's listings give each session's tab and the tab's mark (protocol 21). A tab here that shows another machine's sessions takes that machine's tab id. Splitting one of its panes is refused until option 03. Existing marks, ended cards and remembered sessions become one-pane tabs. It ships alone. Recent and search stay per session until option 02.
-status: accepted
+status: shipped
 ---
 
 ## Solution

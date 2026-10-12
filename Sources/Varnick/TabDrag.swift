@@ -67,7 +67,7 @@ private struct ReorderableTab: ViewModifier {
             .opacity(drag.dragged === tab ? 0.4 : 1)
             .background(GeometryReader { geo in
                 Color.clear.preference(key: TabFrames.self,
-                                       value: [tab.id: geo.frame(in: .named(TabDrag.space))])
+                                       value: [tab.viewID: geo.frame(in: .named(TabDrag.space))])
             })
             .simultaneousGesture(
                 DragGesture(minimumDistance: 6, coordinateSpace: .named(TabDrag.space))
@@ -77,7 +77,7 @@ private struct ReorderableTab: ViewModifier {
                         let at = min(max(raw, range.lowerBound), range.upperBound)
                         drag.dragged = tab
                         drag.gap = model.tabs.filter {
-                            guard let f = drag.frames[$0.id] else { return false }
+                            guard let f = drag.frames[$0.viewID] else { return false }
                             return (axis == .horizontal ? f.midX : f.midY) < at
                         }.count
                     }
@@ -104,9 +104,9 @@ private struct TabDropMarker: ViewModifier {
         // The header strip has 4pt between tabs; the list rows touch.
         let inset: CGFloat = axis == .horizontal ? 2 : 0
         let edge: CGFloat
-        if gap < tabs.count, let f = drag.frames[tabs[gap].id] {
+        if gap < tabs.count, let f = drag.frames[tabs[gap].viewID] {
             edge = (axis == .horizontal ? f.minX : f.minY) - inset
-        } else if let f = tabs.last.flatMap({ drag.frames[$0.id] }) {
+        } else if let f = tabs.last.flatMap({ drag.frames[$0.viewID] }) {
             edge = (axis == .horizontal ? f.maxX : f.maxY) + inset
         } else {
             return nil

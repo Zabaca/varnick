@@ -942,7 +942,7 @@ final class Outline: ObservableObject {
 
     // MARK: Keys
 
-    /// The keys the outline takes, as `SessionBoard.key` does: the switch below lists them. The End session, Mark session done and Restart
+    /// The keys the outline takes, as `SessionBoard.key` does: the switch below lists them. The End session, Mark tab done and Restart
     /// session keys are taken and do nothing. The rest goes on; while an input method is composing, so does all but those three.
     func key(_ event: NSEvent) -> Bool {
         if replaying > 0 { replaying -= 1 }

@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 20
+    public static let version = 21
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -63,7 +63,8 @@ public enum PeerOp: String, Codable, Sendable {
     case pages
     /// The receiving Mac's Recent, for the other Mac's own. The relay answers it from the saved tabs alone.
     case recent
-    /// Marks a session done on its host, or with `mark` false takes the mark off, without ending anything. Who may ask and who answers: ADR 0028.
+    /// Marks a tab done on its host (`PeerRequest.tab`), or with `mark` false takes the mark off, without ending anything. Who may ask and
+    /// who answers: ADR 0032, which carries on ADR 0028's rules by tab.
     case done
     /// Start `claude --resume` on a conversation that ended there, because the user picked it in
     /// Recent or search. Its running Varnick does it. Never sent by anything that runs by itself:
@@ -394,16 +395,21 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
     /// The pane's work links, as in `PeerSessionStatus`.
     public var work: PeerWork?
 
-    /// How many seconds ago the host marked the session done, by the host's clock like `turnAge`. Nil: not marked. A device isn't sent it.
+    /// How many seconds ago the host marked the session's tab done, by the host's clock like `turnAge`. Nil: not marked. A device isn't sent it.
     public var doneAge: Int?
 
+    /// The tab the host keeps the session in (ADR 0032): its id, and its name (⌘⇧R) when it has one. A headless host's records are
+    /// one-pane tabs under the record's id. Nil from a build before protocol 21.
+    public var tab: String?
+    public var tabName: String?
+
     private enum CodingKeys: String, CodingKey {
-        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge, work, doneAge
+        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge, work, doneAge, tab, tabName
     }
 
     public init(session: String, title: String, folder: String, agent: String? = nil, conversation: String? = nil, control: String? = nil,
                 controlName: String? = nil, clients: Int? = nil, turn: Turn? = nil, turnAge: Int? = nil, work: PeerWork? = nil,
-                doneAge: Int? = nil) {
+                doneAge: Int? = nil, tab: String? = nil, tabName: String? = nil) {
         self.session = session
         self.title = title
         self.folder = folder
@@ -416,6 +422,8 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
         self.turnAge = turnAge
         self.work = work
         self.doneAge = doneAge
+        self.tab = tab
+        self.tabName = tabName
     }
 }
 
@@ -536,11 +544,14 @@ public struct PeerRecentSession: Codable, Equatable, Sendable {
     /// listed that session open can tell it ended here. For a conversation a /clear left behind it is a name no
     /// session ever had. Nil from a build that doesn't send it; the Phone page's rows don't read it.
     public var session: String?
-    /// When the host marked the session done, in unix seconds. Nil: not marked. A device isn't sent it.
+    /// When the host marked the session's tab done, in unix seconds. Nil: not marked. A device isn't sent it.
     public var done: Int64?
+    /// The tab the session was in when it ended (ADR 0032). Nil from a build before protocol 21, and for a record saved before Recent
+    /// named tabs: the session then counts as a tab of its own, under its pane id.
+    public var tab: String?
 
     public init(conversation: String, title: String, folder: String, agent: String? = nil, last: Int64, session: String? = nil,
-                done: Int64? = nil) {
+                done: Int64? = nil, tab: String? = nil) {
         self.conversation = conversation
         self.title = title
         self.folder = folder
@@ -548,6 +559,7 @@ public struct PeerRecentSession: Codable, Equatable, Sendable {
         self.last = last
         self.session = session
         self.done = done
+        self.tab = tab
     }
 }
 
@@ -563,8 +575,10 @@ public struct PeerRequest: Codable, Sendable {
     /// receiving Mac answers only a Mac it lists.
     public var by: String?
     public var start: PeerStart?
-    /// A zmx session name, `varnick-<uuid>`: attach, end, screen, watch and done.
+    /// A zmx session name, `varnick-<uuid>`: attach, end, screen and watch.
     public var session: String?
+    /// Done: the host's tab to mark, by its id (ADR 0032).
+    public var tab: String?
     /// Done: false takes the mark off. Nil or true marks.
     public var mark: Bool?
     /// Attach: relabel control to `by` and detach every client first.
@@ -609,6 +623,8 @@ public struct PeerReply: Codable, Sendable {
     public var paired: Bool?
     /// Start and agents: the folder the session runs in, or the agents were read from.
     public var folder: String?
+    /// Start and resume: the tab the host put the session in, which the asker's tab takes the id of (ADR 0032).
+    public var tab: String?
     /// Status, by zmx session name.
     public var sessions: [String: PeerSessionStatus]?
     public var projects: [PeerProject]?

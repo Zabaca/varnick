@@ -137,8 +137,20 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private var clientEnded = false
     /// Closing the card on the host asked to end the session and is waiting for the answer.
     @Published private(set) var confirmingEnd = false
-    /// Done was pressed in the pane while Claude is mid-turn: the pane asks whether to end the session.
+    /// Done was pressed in the pane while Claude is mid-turn in it, or in another pane of its tab: the pane asks whether to end the tab.
     @Published var asking: SessionQuestionKind?
+    /// Whether any Claude session in the pane's tab is mid-turn (`ClaudeTab.asksBeforeDone`), which is what Done in this pane asks about.
+    var tabAsksBeforeDone: () -> Bool = { false }
+    /// Why a split of this pane was refused, shown over the pane for a few seconds.
+    @Published private(set) var splitRefusal: String?
+
+    func showRefusal(_ message: String) {
+        splitRefusal = message
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            if self?.splitRefusal == message { self?.splitRefusal = nil }
+        }
+    }
     /// Done on it asks first (`Turn.asksBeforeDone`), and Restart by the same rule; a pane showing a card (`awayNote`) asks for itself.
     var asksBeforeDone: Bool { started && Turn.asksBeforeDone(turn?.turn, showingCard: awayNote != nil) }
     /// Done pressed in the pane (`LauncherModel.requestDone`); also "End it" on its question.
@@ -147,6 +159,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var onRestart: () -> Void = {}
     /// Called when the pane needs the user's answer, so the model can bring it on screen.
     var onNeedsConfirmation: () -> Void = {}
+    /// The host answered a `resume` the user asked for, naming the tab it put the session in: the pane's tab here takes that id.
+    var onHostTab: (UUID) -> Void = { _ in }
     /// Called when a close the user asked for won't happen: the question was answered No, the pane was
     /// taken over or went live again, or the card it was waiting to ask on never showed.
     var onKept: () -> Void = {}
@@ -313,7 +327,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             Task { @MainActor in
                 self?.checkConversation()
                 self?.checkTurn()
-                if self?.asking != nil, self?.asksBeforeDone == false { self?.asking = nil }
+                // The question on Done is the tab's, so it stays while any session of the tab works; Restart's is this pane's.
+                if let asking = self?.asking, (asking == .done ? self?.tabAsksBeforeDone() : self?.asksBeforeDone) == false { self?.asking = nil }
                 self?.checkRename()
                 self?.checkExit()
                 self?.checkSessionStillRuns()
@@ -591,8 +606,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             case .failure(let refusal):
                 self.explicitResumeFailed = explicit
                 self.markAway(.resumeFailed(refusal.message))
-            case .success where explicit:
-                // The host answers a `resume` request only once the session exists.
+            case .success(let reply) where explicit:
+                // The host answers a `resume` request only once the session exists, and says which tab it put it in (ADR 0032).
+                if let tab = reply.tab.flatMap(UUID.init(uuidString:)) { self.onHostTab(tab) }
                 self.resumeClient { self.attachToHost(on: host, take: true) }
             case .success(let reply):
                 switch reply.resume ?? .started {
@@ -1155,13 +1171,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         return changed
     }
 
-    /// The done mark a paired Mac made on a session that runs here (`LauncherModel.hostDone`), kept on the record so it is saved with the tabs
-    /// and survives a restart. Never set on a pane on a peer: that host holds the mark.
-    func setDoneMark(_ date: Date?) {
-        guard isClaude, !isOnPeer else { return }
-        record.completedAt = date
-    }
-
     /// The host didn't answer: its last word on the turn is no longer known to hold.
     func clearHostTurn() {
         turn = nil
@@ -1708,7 +1717,7 @@ struct ClaudePane: View {
             Theme.hairline.frame(height: 1)
             HStack(spacing: 0) {
                 PaneView(node: tab.root, tab: tab)
-                    .id(tab.id)   // swap the whole tree when switching tabs
+                    .id(tab.viewID)   // swap the whole tree when switching tabs
                     .padding(.leading, 2)
                     .background(Color(nsColor: NSColor(white: 0.1, alpha: 1)))
                     .overlay {
@@ -1718,7 +1727,7 @@ struct ClaudePane: View {
                     Theme.hairline.frame(width: 1)
                     FileTreeView(tree: tab.files, root: tab.focused.record.directory,
                                  selected: tab.focused.record.file) { model.openFile($0) }
-                        .id(tab.id)   // per tab, so switching tabs shows and stops each tab's own tree
+                        .id(tab.viewID)   // per tab, so switching tabs shows and stops each tab's own tree
                 }
             }
         }
@@ -1726,7 +1735,7 @@ struct ClaudePane: View {
 
     private var tabs: some View {
         HStack(spacing: 4) {
-            ForEach(model.tabs) { t in
+            ForEach(model.tabs, id: \.viewID) { t in
                 HeaderTab(tab: t, active: t === tab, renaming: model.renamingTab === t,
                           onTap: { model.tabDrag.tap { model.activate(t) } },
                           onRename: { model.finishRename(t, name: $0) })
