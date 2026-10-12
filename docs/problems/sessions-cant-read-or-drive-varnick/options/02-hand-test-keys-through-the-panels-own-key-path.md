@@ -21,7 +21,7 @@ The events are made in Varnick and handed to `NSApp.sendEvent`, addressed to the
 - **The events are synthetic, though in-process.** They skip the hardware and the window server. They still pass through AppKit's own dispatch, the monitor and the view's handler. How an input method treats them is unverified.
 - **It takes the panel while it runs.** The user sees each key act, and the gate refuses while the user is typing. It doesn't refuse while the user only watches, or reads the session's own pane, which the view replaces as soon as `show` runs.
 - **Only when the user has the panel up.** It never brings the panel up, since that would take the keyboard from the app the user is in. In practice the user is talking to the session in the panel, so it is up.
-- **A stray key acts like the user's.** In the Outline it can delete bullets, which ⌘Z undoes. Keys that act on sessions, or start Listening, are refused before anything is sent.
+- **A stray key acts like the user's.** In the Outline it can delete bullets, which ⌘Z undoes. Keys that act on sessions, or start Listening, are refused: the always-refused ones before the first key, a view's own as each key comes, so the keys before it in the call are sent.
 
 ## User Stories
 
@@ -55,6 +55,7 @@ The first failure stops the call, and the reply says how far it got ("Stopped af
 - **The Outline** takes every key it handles, and those it passes to its text views.
 - **Never:** a tab (a terminal, page or file pane), Settings, the Restart Varnick card, the split picker, the tab rename field.
 - **Always refused, whatever the view:** the End session, Mark session done and Restart session keys as bound; Varnick's anywhere-shortcuts; the Quit key.
+- Building added more refusals (paste, esc in the search, ↩ on a `?` result or a Recent row, a ⌃ letter, Settings, a new terminal tab) and allowed resuming a stopped pane here; the full list is in where-it-breaks, Panel access.
 
 **The reply** says what was sent ("Sent 12 characters and 3 keys"), never that it worked. The session reads `panel` or the view's `_read` (with `as_shown` for the Outline) to see. How the view looks is a screen picture's job.
 
@@ -86,7 +87,7 @@ The first failure stops the call, and the reply says how far it got ("Stopped af
 - **Refusals:**
   - typing in the panel while a long call runs stops it;
   - `keys` with a tab showing, with Settings showing or with the panel hidden is refused;
-  - D on the board, the End session key and ↩ on a prompt are refused before anything is sent.
+  - the End session key is refused before anything is sent; D on the board and ↩ on a prompt are refused when they come, after the keys before them.
 - **Unverified, first:**
   - that local monitors see an event posted to the app's own queue;
   - how an input method treats one;

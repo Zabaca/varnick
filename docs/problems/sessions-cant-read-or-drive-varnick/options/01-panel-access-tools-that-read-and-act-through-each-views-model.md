@@ -1,7 +1,7 @@
 ---
 problem: sessions-cant-read-or-drive-varnick
 title: Panel access, Varnick's own tools on the `varnick` server, that read and act through each view's model
-summary: Accepted on 2026-10-11 (the user's decision, relayed by the coordinator). A new switch beside Screen access, Panel access, is in Settings › Claude and off by default. Claude sessions started while it is on get tools for Varnick itself, on the same `varnick` MCP server. `panel` says what the panel shows and where the focus and the caret are. `show` opens a view or runs a `!` Command, never `!listen`, without bringing the panel up. Each view that adopts a small protocol gets a `<view>_read` tool, and a `<view>_act` tool if it has actions, both listed from one registry. The Session board reads its cards, and `pane_read` gives any pane's terminal screen as text. The Outline reads its tree, or the rows as the user sees them. It edits bullets through its own edits and undo stack, including the bullet the user is typing in: that change goes into the text view as a key would, around the user's caret. Nothing goes through Accessibility, no event is posted, and no grant is needed. The Outline's parts wait for the Outline to merge.
+summary: Accepted on 2026-10-11 (the user's decision, relayed by the coordinator). A new switch beside Screen access, Panel access, is in Settings › Claude and off by default. Claude sessions started while it is on get tools for Varnick itself, on the same `varnick` MCP server. `panel` says what the panel shows and where the focus and the caret are. `show` opens a view or runs a `!` Command, never `!listen`, without bringing the panel up. Each view that adopts a small protocol gets a `<view>_read` tool, and a `<view>_act` tool if it has actions, both listed from one registry. The Session board reads its cards, and `pane_read` gives any pane's terminal screen as text. The Outline reads its tree, or the rows as the user sees them. It edits bullets through its own edits and undo stack, including the bullet the user is typing in: that change goes into the text view as a key would, around the user's caret. Nothing goes through Accessibility, no event is posted, and no grant is needed.
 status: shipped
 ---
 
@@ -154,7 +154,7 @@ status: shipped
   - The zoom's crumbs, the filter's words and Show completed come first.
   - Each row is described as above.
   - The caret: its row, text or note, and its offset in the text view's own count (UTF-16).
-- **A cap of 400 rows,** then "N more: read at o12".
+- **A cap of 400 rows,** then "N more: call outline_read with after: o12".
 - **The file.** The first call in a launch reads the file, as showing the Outline would, off the main actor, without showing it or moving focus. If the file is unreadable or newer, every Outline call is refused with the Outline's own words, and the file is never written (ADR 0030).
 
 **The Outline: acting** (needs the Outline merged)
@@ -163,13 +163,13 @@ status: shipped
   - `text`: one line, or several. Two leading spaces or a tab nest a line under the one above, and a leading "- " is dropped.
   - `under`: an id, or Home when it is left out.
   - Where: `after` an id, or `first`; last by default.
-  - It is one new tree edit, `insert`. A bullet it adds is new, so it can't end up inside itself. Building ticket 06 changed `OutlineTree`'s rules in three more ways: a whole-tree scope for sessions' indent, move and outdent (no zoom, no collapse, only Show completed), outdent stopping at Home rather than the zoom's top, and a refusal to delete, indent or outdent the bullet zoomed into or one it sits inside.
+  - It is one new tree edit, `insert`. A bullet it adds is new, so it can't end up inside itself. Building ticket 06 changed `OutlineTree`'s rules in more ways: a whole-tree scope for sessions' indent, move and outdent (no zoom, no collapse, only Show completed), outdent stopping at Home rather than the zoom's top, a refusal to delete, indent or outdent the bullet zoomed into or one it sits inside, `lastUnder` with Home as a parent for `insert`, a `setDone` edit, and `gone` as its own refusal.
   - The reply gives the new rows' ids.
 - **The keys' own edits:**
   - `set_text`: one line;
   - `set_note`: empty removes the note;
   - both replace the whole field, so each is refused unless this session read the row ("Read it first") and the field is as it read it ("Changed since you read it: read again"), checked right before the edit;
-  - `complete`, with `done` true or false. The edit toggles, so it runs only when the state differs;
+  - `complete`, with `done` true or false: a `setDone` edit, which checks the state when it applies, so a second one changes nothing;
   - `delete`: this placement and everything nested under it, as ⌘⇧⌫;
   - `move`, by -1 or 1;
   - `indent` and `outdent`;

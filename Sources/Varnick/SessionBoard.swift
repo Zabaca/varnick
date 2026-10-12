@@ -474,9 +474,8 @@ final class SessionBoard: ObservableObject {
         if let selection { open(selection) }
     }
 
-    /// Why a session may not press ↩ now (`keys`, Panel access), nil when it only shows a pane open here or does nothing. `open` resumes an
-    /// ended or Completed session and opens a paired Mac's on its card, so those are a session started; on the Problems tab ↩ opens the
-    /// selected chip's session the same way, and otherwise only unfolds the card.
+    /// Why a session may not press ↩ now (`keys`, Panel access): refused on an ended, Completed or paired Mac's card, whose `open` starts a
+    /// session; allowed to show a pane here, a stopped one included (it starts in its own tab, as with `show pane:`; where-it-breaks).
     func returnRefusal() -> String? {
         let id = tab == .problems ? problems.chipSelection : selection
         guard let id, let card = cards.first(where: { $0.id == id }) else { return nil }
