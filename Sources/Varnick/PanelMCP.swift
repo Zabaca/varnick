@@ -137,6 +137,7 @@ enum PanelMCP {
         summary: "Says what Varnick's panel shows now, and where the keyboard focus is. Whether the panel is visible, key and pinned; what it "
             + "shows: the search (its mode, and whether its field is empty, never its text), a tab with its panes (each with an id such as s1, "
             + "its kind and title, which has focus and which is this session), the session board with its tab and selected card, the Outline with its zoom, filter and caret, Settings, "
-            + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives, and show, board_read and pane_read use the same ids.",
+            + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives, and show, board_read and pane_read use the same ids. "
+            + "When this session's own pane is not among the panes listed (the Outline, the board, the search or another tab shows), a line like \"This session: s1 (in the tab ...)\" gives its id, so it can show pane: back; no other pane is named then.",
         properties: [:]))
 }

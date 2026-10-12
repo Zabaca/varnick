@@ -429,6 +429,10 @@ enum OutlineCheck {
         let header = { (after: OutlinePath?) in (try? reading.shown(view, after: after))?.text.split(separator: "\n").first { $0.hasPrefix("Rows (") }.map(String.init) ?? "" }
         print("own-rows check: the as_shown rows header reads \"Rows (2):\" and \"Rows (2), continuing after <id>:\": "
               + ok(header(nil) == "Rows (2):" && header(one) == "Rows (2), continuing after \(one.id):"))
+        print("own-rows check: after the last row the as_shown header ends \"continuing after <id>: none\": "
+              + ok(header(two) == "Rows (2), continuing after \(two.id): none"))
+        let tail = (try? reading.read(from: nil, depth: 0, after: two))?.text ?? ""
+        print("own-rows check: the tree read after the last row says nothing is after it: " + ok(tail.hasSuffix("Nothing after it.")))
     }
 
     /// A session's edits (Panel access) on a copy with the zoom cleared: `add` in each place, and where the user's caret goes. Prints counts and
