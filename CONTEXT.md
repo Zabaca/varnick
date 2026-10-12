@@ -47,7 +47,7 @@ Varnick's one floating window, shown and hidden with its show/hide shortcut and 
 _Avoid_: Window (another app's, which **Screen access** reaches), popup
 
 **Session board**:
-The panel's view of the Claude panes on this Mac and the sessions open on paired Macs, each as a **board card** in one of three columns by **Turn**: Running (working or background), Stopped (everything else, marked when Claude waits on the user mid-turn, and below the live cards the **ended cards** of sessions whose pane closed without Done, or that a paired Mac's Recent says closed there after this Mac listed them open, kept until the user marks them done or opens them) and Completed (reached only by Done, and shared between the paired Macs through each session's host: ADR 0028). It replaces the panel's content as Settings does. Beside Sessions it has a Problems tab, while Settings › Experimental › Problems board is on: a card per problem of the projects that keep `docs/problems`, in Backlog, Decided, Building, Shipped or Closed by what the problem and option files say, the branches tied to options and the **Work links** of live sessions, not by **Turn**, with a chip for each session that worked on it.
+The panel's view of the **Tab**s with a Claude pane on this Mac and the tabs open on paired Macs, each as one **board card**, listing the tab's sessions, in one of three columns by the **Turn** of its most urgent session (waiting on the user mid-turn, then working, then background, then waiting for the next prompt): Running (working or background), Stopped (everything else, marked when Claude waits on the user mid-turn, and below the live cards the **ended cards** of tabs that closed without Done, or that a paired Mac's Recent says closed there after this Mac listed them open, kept until the user marks them done or opens them) and Completed (reached only by Done, which is a tab's and closes all its panes, and shared between the paired Macs through each tab's host: [ADR 0032](docs/adr/0032-a-tabs-done-mark-belongs-to-its-host-and-completed-lists-tabs.md)). ↩ on a Completed or ended card reopens the tab whole. It replaces the panel's content as Settings does. Beside Sessions it has a Problems tab, while Settings › Experimental › Problems board is on: a card per problem of the projects that keep `docs/problems`, in Backlog, Decided, Building, Shipped or Closed by what the problem and option files say, the branches tied to options and the **Work links** of live sessions, not by **Turn**, with a chip for each session that worked on it.
 _Avoid_: Kanban (the command's name), dashboard; "card" alone, which is a pane's **Card**
 
 **Pane**:
@@ -67,7 +67,7 @@ The custom apps that ship with Varnick, reviewed in its repository, which the us
 _Avoid_: Marketplace, store, built-in app
 
 **Tab**:
-A group of panes, split side by side or stacked, shown together in the panel.
+A group of panes, split side by side or stacked, shown together in the panel. It keeps an id across launches, which is how the **Session board**, Completed and other machines name it, and belongs to one machine, its **Host**: a tab here that shows a paired Mac's sessions is that Mac's tab, under its id, and can't be split here. The user's unit of work: Done is a tab's, and it closes every pane in it.
 _Avoid_: Workspace, window
 
 **Default folder**:
@@ -103,7 +103,7 @@ The web page a **Host** serves on port 8444 of its tailnet name, for a **Device*
 _Avoid_: Web UI, dashboard, remote
 
 **Host**:
-The machine where a session's Claude process runs, kept alive by its zmx: a Mac, or a **Headless host**. A session's host never changes.
+The machine where a session's Claude process runs, kept alive by its zmx: a Mac, or a **Headless host**. A session's host never changes, and a **Tab**'s is the machine its panes run on. The host keeps the tab's done mark.
 _Avoid_: Server, remote
 
 **Headless host**:
