@@ -333,6 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.outline.saveForQuit()
         model.quitting = true
         model.stopAppServers()
+        // Saved audio's open files, or the run in progress is unreadable.
+        SavedAudio.closeAll()
     }
 
     @objc func showFromMenu() { show() }

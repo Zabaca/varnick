@@ -71,7 +71,7 @@ final class Listener: ObservableObject {
         generation += 1
         let generation = generation
         state = .starting("Starting…")
-        // Read now, so a change in Settings takes effect at the next start.
+        // Read here, so a change in Settings takes effect the next time Listening starts or restarts (a device change restarts it).
         let saveAudio = Settings.shared.saveAudio
         starting = Task { [weak self] in
             let capture = Capture(saveAudio: saveAudio)
@@ -243,10 +243,10 @@ private final class Capture {
 
     /// Set before `start()`.
     var onEvent: (CaptureEvent) -> Void = { _ in }
-    /// Save each source's audio to `Recordings`: read when the capture is made, never mid-run.
+    /// Whether to keep each source's audio (`SavedAudio`); fixed for the capture.
     private let saveAudio: Bool
     /// One per source, made in `analyze`; finished in `stop` on every path.
-    private var recorders: [AudioRecorder] = []
+    private var savedFiles: [SavedAudioFile] = []
     /// Names the run's files, so a run's two share a time.
     private var runStart = Date()
     private let engine = AVAudioEngine()
@@ -330,8 +330,8 @@ private final class Capture {
         feeds = []
         analyzers = []
         // After the mic tap and the IOProc are gone, so nothing more is queued. Both stops keep what was written.
-        for recorder in recorders { await recorder.finish() }
-        recorders = []
+        for saved in savedFiles { await saved.finish() }
+        savedFiles = []
     }
 
     private static func transcriber(_ locale: Locale) -> SpeechTranscriber {
@@ -448,8 +448,8 @@ private final class Capture {
         try await analyzer.start(inputSequence: inputs)
         analyzers.append(analyzer)
         feeds.append(feed)
-        let recorder = saveAudio ? AudioRecorder(source, format: format, runStart: runStart) : nil
-        if let recorder { recorders.append(recorder) }
+        let saved = saveAudio ? SavedAudioFile(source, format: format, runStart: runStart) : nil
+        if let saved { savedFiles.append(saved) }
 
         let clock = AudioClock()
         Task.detached { [self] in
@@ -499,7 +499,7 @@ private final class Capture {
             clock.fed(seconds: Double(out.frameLength) / format.sampleRate)
             feed.yield(AnalyzerInput(buffer: out))
             // `out` is this call's own buffer, never touched again here, so it is handed over, not copied.
-            recorder?.write(out)
+            saved?.write(out)
         }
     }
 
@@ -584,7 +584,7 @@ enum Transcript {
         .appendingPathComponent("Varnick/transcripts", isDirectory: true)
     /// Both sources write through it, so lines never interleave.
     private static let queue = DispatchQueue(label: "com.zabaca.varnick.transcript")
-    private static let day = formatter("yyyy-MM-dd")
+    fileprivate static let day = formatter("yyyy-MM-dd")
     private static let time = formatter("HH:mm:ss")
 
     static func file(on date: Date = Date()) -> URL {
@@ -618,7 +618,7 @@ enum Transcript {
         return open(file.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
     }
 
-    private static func formatter(_ format: String) -> DateFormatter {
+    fileprivate static func formatter(_ format: String) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = format
@@ -626,51 +626,53 @@ enum Transcript {
     }
 }
 
-/// Where saved audio goes: `recordings/<yyyy-MM-dd>/<HH-mm-ss>-<mic|system>.m4a` in Application Support, one pair of files per
-/// run of `Capture`, named by when the run started. Written only with Settings › Listening › Save audio on; never deleted by Varnick.
-enum Recordings {
+/// Saved audio's folder and names (layout: the guide's Listening section); written only with Settings › Listening › Save audio on.
+enum SavedAudio {
     static let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Varnick/recordings", isDirectory: true)
     /// For Settings' text.
-    static let displayPath = "~/Library/Application Support/Varnick/recordings"
-    /// AAC mono; modest, since the audio is already the speech model's 16 kHz.
-    static let bitRate = 32_000
+    static var displayPath: String { (directory.path as NSString).abbreviatingWithTildeInPath }
+    /// A file longer than this is closed and a new one started, so a crash loses at most one.
+    fileprivate static let segmentLength: TimeInterval = 15 * 60
+    fileprivate static let bitRate = 32_000
+    private static let time = Transcript.formatter("HH-mm-ss")
 
-    static func file(_ source: TranscriptSource, runStart: Date) -> URL {
-        let day = DateFormatter()
-        day.locale = Locale(identifier: "en_US_POSIX")
-        day.dateFormat = "yyyy-MM-dd"
-        let time = DateFormatter()
-        time.locale = day.locale
-        time.dateFormat = "HH-mm-ss"
-        return directory.appendingPathComponent(day.string(from: runStart), isDirectory: true)
-            .appendingPathComponent("\(time.string(from: runStart))-\(source.rawValue).m4a")
+    fileprivate static func file(_ source: TranscriptSource, at start: Date) -> URL {
+        directory.appendingPathComponent(Transcript.day.string(from: start), isDirectory: true)
+            .appendingPathComponent("\(time.string(from: start))-\(source.rawValue).m4a")
+    }
+
+    /// Closes every file still open, waiting for what is queued: the app is quitting, and an m4a never closed is unreadable.
+    static func closeAll() {
+        if #available(macOS 26, *) { SavedAudioFile.closeAll() }
     }
 }
 
-/// One source's audio on disk, as an m4a. Everything runs on its own serial queue: `write` is called from the audio callback
-/// (a Core Audio IOProc, for system audio) and only queues. The file is made at the first buffer, so a run that heard nothing
-/// leaves none, and closed in `finish` (an m4a never closed is unreadable). A failure is logged once and stops this recorder
-/// alone: Listening and the transcript go on.
+/// One source's audio as m4a files, written on its own queue so the audio callback only queues (`where-it-breaks.md`).
 @available(macOS 26, *)
-private final class AudioRecorder: @unchecked Sendable {
+private final class SavedAudioFile: @unchecked Sendable {
+    /// Every file not yet finished, for `closeAll`.
+    private static let live = Mutex<[ObjectIdentifier: SavedAudioFile]>([:])
+
     private let source: TranscriptSource
     private let format: AVAudioFormat
-    /// The name for the run; `url` is it, or it with a number when that file exists.
-    private let base: URL
-    private var url: URL
-    private let queue = DispatchQueue(label: "com.zabaca.varnick.recording", qos: .utility)
+    private let runStart: Date
+    private let queue = DispatchQueue(label: "com.zabaca.varnick.saved-audio", qos: .utility)
     // Everything below is touched on `queue` only.
     private var file: AVAudioFile?
+    private var url: URL?
     private var frames: AVAudioFramePosition = 0
+    /// Which `segmentLength` stretch of the run the open file belongs to.
+    private var segment = 0
     private var failed = false
+    private var closed = false
 
     /// `format` is what `write` is given: the speech format.
     init(_ source: TranscriptSource, format: AVAudioFormat, runStart: Date) {
         self.source = source
         self.format = format
-        base = Recordings.file(source, runStart: runStart)
-        url = base
+        self.runStart = runStart
+        Self.live.withLock { $0[ObjectIdentifier(self)] = self }
     }
 
     /// Queues the buffer, which must not be changed afterwards. Safe on any thread, including a real-time one.
@@ -679,20 +681,37 @@ private final class AudioRecorder: @unchecked Sendable {
         queue.async { self.append(buffer) }
     }
 
-    /// Writes what is queued, then closes the file; a file with no frames is removed. Call after the callbacks have stopped.
+    /// Writes what is queued, then closes for good. Call after the callbacks have stopped.
     func finish() async {
         await withCheckedContinuation { continuation in
             queue.async {
-                self.close()
+                self.shutdown()
                 continuation.resume()
             }
         }
     }
 
+    static func closeAll() {
+        let all = live.withLock { Array($0.values) }
+        for file in all { file.queue.sync { file.shutdown() } }
+    }
+
+    private func shutdown() {
+        // A late callback after this can't start another file.
+        closed = true
+        close()
+        Self.live.withLock { _ = $0.removeValue(forKey: ObjectIdentifier(self)) }
+    }
+
     private func append(_ buffer: AVAudioPCMBuffer) {
-        guard !failed else { return }
+        guard !closed, !failed else { return }
         do {
-            if file == nil { file = try create() }
+            let current = max(0, Int(Date().timeIntervalSince(runStart) / SavedAudio.segmentLength))
+            if current != segment {
+                close()
+                segment = current
+            }
+            if file == nil { file = try create(at: runStart.addingTimeInterval(Double(segment) * SavedAudio.segmentLength)) }
             guard let file else { return }
             // AVAudioFile raises, not throws, on a buffer in another layout.
             let layout = file.processingFormat
@@ -707,33 +726,37 @@ private final class AudioRecorder: @unchecked Sendable {
             NSLog("Varnick: saving %@ audio stopped (%@ %ld); Listening goes on", source.rawValue, code.domain, code.code)
             failed = true
             close()
-            // A failed create can leave an empty file behind.
-            if frames == 0 { try? FileManager.default.removeItem(at: url) }
         }
     }
 
-    private func create() throws -> AVAudioFile {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    /// A segment is named by its own start time, so the two sources' segments line up.
+    private func create(at start: Date) throws -> AVAudioFile {
+        let named = SavedAudio.file(source, at: start)
+        let folder = named.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Listening stopped and started again within a second would otherwise overwrite the earlier run.
+        var target = named
         var n = 1
-        while FileManager.default.fileExists(atPath: url.path) {
+        while FileManager.default.fileExists(atPath: target.path) {
             n += 1
-            url = url.deletingLastPathComponent()
-                .appendingPathComponent(base.deletingPathExtension().lastPathComponent + "-\(n).m4a")
+            target = folder.appendingPathComponent("\(named.deletingPathExtension().lastPathComponent)-\(n).m4a")
         }
+        url = target
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: format.sampleRate,
             AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: Recordings.bitRate,
+            AVEncoderBitRateKey: SavedAudio.bitRate,
         ]
-        return try AVAudioFile(forWriting: url, settings: settings, commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+        return try AVAudioFile(forWriting: target, settings: settings, commonFormat: format.commonFormat, interleaved: format.isInterleaved)
     }
 
+    /// Closes the open file and removes it if no frame went in, the one place a file is dropped.
     private func close() {
-        guard let file else { return }
-        file.close()
-        self.file = nil
-        if frames == 0 { try? FileManager.default.removeItem(at: url) }
+        file?.close()
+        file = nil
+        if let url, frames == 0 { try? FileManager.default.removeItem(at: url) }
+        url = nil
+        frames = 0
     }
 }

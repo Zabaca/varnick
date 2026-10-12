@@ -216,7 +216,7 @@ What Varnick heard while listening: one file per day, a line per finished phrase
 _Avoid_: Log, recording
 
 **Saved audio**:
-The sound itself, kept only with Settings › Listening › Save audio on: each run of **Listening** writes two m4a files, the mic's and the Mac's audio, to `recordings/<yyyy-MM-dd>/<HH-mm-ss>-mic.m4a` and `…-system.m4a` in Application Support, named by when the run started (a change of device starts a new run). It holds everything heard, including the mic while Varnick speaks, which the **Transcript** leaves out. Local only; Varnick never deletes it. Made to test speaker separation and voice recognition on real calls.
+The sound itself, kept only with Settings › Listening › Save audio on: m4a files of the mic and of the Mac's audio, made while **Listening** runs. It holds everything heard, including the mic while Varnick speaks, which the **Transcript** leaves out. Local only; Varnick never deletes it. Kept to test speaker separation and voice recognition on real calls.
 _Avoid_: Recording, call recording
 
 **Wake phrase**:
