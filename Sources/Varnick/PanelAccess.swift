@@ -343,7 +343,7 @@ final class PanelAccess {
             let target = try self.target(value, caller: caller)
             opensTab = true
             // A card's id is its tab's (ADR 0032): the tab comes up with its most urgent session focused. A session's is its pane's.
-            if model.tabs.contains(where: { $0.tabID == target }) {
+            if model.tabs.contains(where: { $0.id == target }) {
                 act = { model.showTab(target, focusing: model.board.cards.first { $0.id == target }?.lead.id) }
             } else if model.tabs.contains(where: { $0.sessions.contains { $0.id == target } }) {
                 act = { model.showPane(target) }

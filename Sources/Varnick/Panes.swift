@@ -314,12 +314,11 @@ final class PaneNode: ObservableObject, Identifiable {
 
 /// One header tab: a split tree of sessions and the pane with keyboard focus.
 @MainActor
-final class ClaudeTab: ObservableObject, Identifiable {
-    /// What the views know the tab by, new at each launch. Never compared with `tabID`.
-    let id = UUID()
-    /// The tab as the board, Completed and other machines name it (ADR 0032): saved with the tab, so it lasts across launches. A tab
-    /// here that shows another machine's sessions takes that machine's tab id (`adopt`).
-    private(set) var tabID: UUID
+final class ClaudeTab: ObservableObject {
+    /// What the views key the tab by, new at each launch and never changing, unlike `id`.
+    let viewID = UUID()
+    /// The tab's id (ADR 0032), saved with it. A tab that shows another machine's sessions takes that machine's id for it.
+    private(set) var id: UUID
     let root: PaneNode
     @Published private(set) var focused: ClaudeSession
     /// Set with ⌘⇧R; nil follows the focused pane's title.
@@ -327,16 +326,15 @@ final class ClaudeTab: ObservableObject, Identifiable {
     /// File tree on the right (⌘⇧F).
     @Published var showsFiles = false
     let files = FileTree()
-    /// When another Mac marked the tab done while it is open here; nil is not marked. Never set on a tab of another machine, whose
-    /// host holds its mark (`LauncherModel.doneMark(of:)`).
+    /// When another Mac marked the tab done while it is open here; nil is not marked. A tab of another machine's has its host's.
     var completedAt: Date?
     /// Layout changed (divider moved); the model saves.
     var onChange: () -> Void = {}
-    /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is, for Completed or an ended card.
+    /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is.
     var onClosing: () -> Void = {}
 
-    init(root: PaneNode, tabID: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil) {
-        self.tabID = tabID
+    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil) {
+        self.id = id
         self.root = root
         self.name = name
         self.completedAt = completedAt
@@ -351,19 +349,25 @@ final class ClaudeTab: ObservableObject, Identifiable {
     /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one).
     var host: String? { claudeSessions.first?.record.host }
 
-    /// A tab made for a session the user asked a paired Mac to resume: the host puts it in a tab of its own and says which, and this one
-    /// takes that id once (a later pane joining it names another tab, which it ignores), or the host's marks couldn't name it.
+    /// A tab made for a session the user asked a paired Mac to resume takes the id of the tab the host puts it in, once: a later pane
+    /// joining it names another host tab, which it ignores.
     var awaitsHostTab = false
 
-    func adopt(tabID: UUID) {
+    func adopt(_ hostTab: UUID) {
         guard awaitsHostTab else { return }
         awaitsHostTab = false
-        self.tabID = tabID
+        id = hostTab
+    }
+
+    /// The id the host's listing gives the tab (`LauncherModel.followHostTabs`).
+    func take(_ hostTab: UUID) {
+        awaitsHostTab = false
+        id = hostTab
     }
 
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
-        SessionStore.SavedTab(id: tabID, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt)
+        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt)
     }
 
     /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).

@@ -182,7 +182,7 @@ struct LauncherView: View {
                 .padding(.trailing, Theme.gutter)
                 .frame(height: LauncherModel.sessionHeaderHeight)
                 VStack(spacing: 0) {
-                    ForEach(Array(model.tabs.enumerated()), id: \.element.id) { i, t in
+                    ForEach(Array(model.tabs.enumerated()), id: \.element.viewID) { i, t in
                         TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record))
                             .onTapGesture { model.tabDrag.tap { model.activate(t) } }
                             .reorderable(t, in: model, axis: .vertical)

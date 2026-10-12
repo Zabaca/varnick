@@ -314,7 +314,7 @@ final class SessionBoard: ObservableObject {
         model?.refreshPeerRecentForBoard()
         refresh()
         if selection == nil {
-            selection = model?.activeTab.flatMap { active in cards.first { $0.id == active.tabID }?.id }
+            selection = model?.activeTab.flatMap { active in cards.first { $0.id == active.id }?.id }
                 ?? Self.moved(nil, in: cards, .down)
         }
     }
@@ -384,10 +384,8 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Cards
 
-    /// One card per tab with a Claude pane here, listing its sessions with the turns their files hold now (a pane on a peer, the host's),
-    /// then each paired Mac's open tabs that no tab here shows, then the ended tabs (Stopped, below the live cards), then the Completed
-    /// tabs. A tab whose Mac is no longer paired is hidden, and an ended card whose id already has a card is skipped. The Problems tab gets
-    /// the cards' sessions' work links after each change.
+    /// One card per tab with a Claude pane here, then each paired Mac's tabs that no tab here shows, then the ended tabs, then the
+    /// Completed ones. A tab of a Mac no longer paired is hidden. The Problems tab gets the cards' sessions' work links after each change.
     func refresh() {
         guard let model else { return }
         var next: [Card] = []
@@ -443,7 +441,7 @@ final class SessionBoard: ObservableObject {
         guard !claude.isEmpty else { return nil }
         let marked = model.doneMark(of: tab)
         let titled = tab.focused.isClaude ? tab.focused : claude[0]
-        return Card(id: tab.tabID,
+        return Card(id: tab.id,
                     title: tab.name ?? titled.label,
                     pills: model.pills(for: titled.record),
                     hostName: titled.hostName,
@@ -590,9 +588,8 @@ final class SessionBoard: ObservableObject {
         if let selection { done(selection) }
     }
 
-    /// Done on a card (D, the End session key, End it) closes every pane of its tab (`markDone`); a card with a working session
-    /// asks first. A paired Mac's tab with no tab here is only marked (`markPeerDone`), and an ended card is moved to Completed
-    /// (`markEndedDone`), each without a question.
+    /// Done on a card closes every pane of its tab (`markDone`), asking first while a session works. A paired Mac's tab with no tab here is
+    /// only marked (`markPeerDone`), an ended card moves to Completed (`markEndedDone`), each without a question.
     func done(_ id: UUID) {
         guard let card = cards.first(where: { $0.id == id }), card.column != .completed else { return }
         selection = id
@@ -616,9 +613,8 @@ final class SessionBoard: ObservableObject {
         if let selection { restart(selection) }
     }
 
-    /// Restart on a card (R, the Restart session key) starts its pane's claude again on the same conversation
-    /// (`LauncherModel.restart`); a working card asks first. A card that has no such pane here (ended, Completed, a paired
-    /// Mac's tab, a pane showing a card) does nothing, and so does a tab with several Claude panes: each restarts from itself.
+    /// Restart on a card starts its one Claude pane's claude again on the same conversation (`LauncherModel.restart`), asking first
+    /// while it works. Nothing for an ended, Completed or paired Mac's card, a pane showing a card, or a tab with several Claude panes.
     func restart(_ id: UUID) {
         guard let card = cards.first(where: { $0.id == id }), card.column != .completed, !card.isEnded, !card.hasNoPane,
               model?.canRestart(id) == true else { return }

@@ -204,9 +204,8 @@ enum PeerOpenSessions {
 
 /// Which of a Mac's ended sessions a peer's Recent lists.
 enum PeerRecentSessions {
-    /// This Mac's own Claude sessions with a transcript to resume (a session it holds for another
-    /// Mac is that Mac's to offer), newest first as saved. Each names the tab it ended in and carries that tab's mark, read from Completed by
-    /// tab id: Recent's own copies carry none (ADR 0032). A record saved before Recent named tabs is a tab of its own, under its pane id.
+    /// This Mac's own Claude sessions with a transcript to resume (one it holds for another Mac is that Mac's to offer), newest first. Each
+    /// names the tab it ended in (else its own id) and carries that tab's mark, read from Completed: Recent's copies carry none.
     static func list(in state: SessionStore.State) -> [PeerRecentSession] {
         let marks = Dictionary(state.completedList.compactMap { tab in tab.completedAt.map { (tab.id, $0) } }) { first, _ in first }
         return state.recent.filter { $0.isClaude && $0.host == nil && $0.transcriptExists }.map { record in

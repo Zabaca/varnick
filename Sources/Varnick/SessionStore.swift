@@ -240,9 +240,8 @@ enum SessionNames {
 /// app with a signal and nothing runs at quit.
 struct SessionStore {
     struct SavedTab: Codable, Equatable {
-        /// The tab's id, kept across launches (ADR 0032). Optional so older files load: a tab saved without one takes its first pane's
-        /// id (`resolvedID`). The app and the relay both apply that rule through `State.openTabs`, so a relay reading a file the app
-        /// hasn't saved since gives the same ids.
+        /// The tab's id, kept across launches (ADR 0032). Optional so older files load: without one a tab takes its first pane's id
+        /// (`resolvedID`), which `State.openTabs` applies for the app and the relay alike.
         var id: UUID?
         var layout: PaneLayout
         var focused: UUID?
@@ -285,9 +284,8 @@ struct SessionStore {
             return !claude.isEmpty && dates.count == claude.count ? dates.max() : nil
         }
 
-        /// A saved tab with panes on more than one machine (made by a split of a pane on another machine, before such splits were
-        /// refused) is one tab per machine, in place: the layout pruned per machine, the first piece keeping the tab's id, name and
-        /// file tree, and each other piece taking its first pane's id.
+        /// A tab with panes on more than one machine (a split made before such splits were refused) is one tab per machine: the first
+        /// piece keeps the id, name and file tree, each other takes its first pane's id.
         fileprivate func splitByMachine() -> [SavedTab] {
             var machines: [String?] = []
             for record in layout.records where !machines.contains(record.host) { machines.append(record.host) }
@@ -309,9 +307,8 @@ struct SessionStore {
         /// Before splits: one session per tab.
         var open: [SessionRecord]?
         var recent: [SessionRecord] = []
-        /// Before marks were the tab's (ADR 0032): sessions marked done, sessions that ended without Done, and paired Macs' sessions
-        /// listed. Read once, as one-pane tabs (`completedList`, `endedList`, `rememberedList`), and saved absent. Their type stays:
-        /// a changed one would make the whole file unreadable.
+        /// The keys before marks were the tab's (ADR 0032), read once as one-pane tabs (`completedList` and the others) and saved
+        /// absent. Their type stays: a changed one would make the whole file unreadable.
         var completed: [SessionRecord]?
         var ended: [SessionRecord]?
         var remembered: [SessionRecord]?

@@ -1717,7 +1717,7 @@ struct ClaudePane: View {
             Theme.hairline.frame(height: 1)
             HStack(spacing: 0) {
                 PaneView(node: tab.root, tab: tab)
-                    .id(tab.id)   // swap the whole tree when switching tabs
+                    .id(tab.viewID)   // swap the whole tree when switching tabs
                     .padding(.leading, 2)
                     .background(Color(nsColor: NSColor(white: 0.1, alpha: 1)))
                     .overlay {
@@ -1727,7 +1727,7 @@ struct ClaudePane: View {
                     Theme.hairline.frame(width: 1)
                     FileTreeView(tree: tab.files, root: tab.focused.record.directory,
                                  selected: tab.focused.record.file) { model.openFile($0) }
-                        .id(tab.id)   // per tab, so switching tabs shows and stops each tab's own tree
+                        .id(tab.viewID)   // per tab, so switching tabs shows and stops each tab's own tree
                 }
             }
         }
@@ -1735,7 +1735,7 @@ struct ClaudePane: View {
 
     private var tabs: some View {
         HStack(spacing: 4) {
-            ForEach(model.tabs) { t in
+            ForEach(model.tabs, id: \.viewID) { t in
                 HeaderTab(tab: t, active: t === tab, renaming: model.renamingTab === t,
                           onTap: { model.tabDrag.tap { model.activate(t) } },
                           onRename: { model.finishRename(t, name: $0) })

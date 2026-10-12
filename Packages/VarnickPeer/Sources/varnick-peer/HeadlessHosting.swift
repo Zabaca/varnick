@@ -154,9 +154,8 @@ extension HeadlessPeerHost {
 
     // MARK: done
 
-    /// `done`: sets the done date of the tab, or with `mark` false clears it, and ends nothing. Each record is a tab of one pane under
-    /// the record's id (ADR 0032), so the record's date is the tab's mark and nothing changes on disk. A Mac host's equivalent is
-    /// `LauncherModel.hostDone`. A mark already there keeps its date.
+    /// `done`: sets the tab's done date, or with `mark` false clears it, and ends nothing. A record is a one-pane tab under its id
+    /// (ADR 0032), so its date is the mark. A Mac host's equivalent is `LauncherModel.hostDone`.
     private func done(_ request: PeerRequest) -> PeerReply {
         guard let tab = request.tab, let id = UUID(uuidString: tab) else { return .failure("Not a Varnick tab id") }
         state.reconcile()
