@@ -399,6 +399,7 @@ final class PanelAccess {
                                  model.pinned ? "pinned" : "not pinned"].joined(separator: ", ")]
         // The base view, then what lies over it.
         var focus: String
+        var listsCaller = false
         if model.showingSettings {
             lines.append("Showing: Settings")
             focus = "Settings"
@@ -410,10 +411,15 @@ final class PanelAccess {
             focus = "the outline"
         } else if let tab = model.activeTab {
             lines += tabLines(tab, caller: caller)
+            listsCaller = tab.sessions.contains { $0.id == caller }
             focus = tab.focused.id == caller ? "the pane of this session" : "the pane \(id(for: tab.focused.id, caller: caller))"
         } else {
             lines.append("Showing: the search (\(Self.modeText(model.mode)); the field is \(model.query.isEmpty ? "empty" : "not empty"))")
             focus = "the search field"
+        }
+        // The caller's own pane id whatever shows, so it can `show` its pane back without a `board_read`; no other pane is named here.
+        if !listsCaller, case .found(_, let tab, _) = CallingPane.find(caller.uuidString, in: model) {
+            lines.append("This session: \(id(for: caller, caller: caller)) (in the tab \"\(tab.name ?? tab.focused.label)\")")
         }
         if model.pendingSplit != nil {
             lines.append("Over it: the split picker")
