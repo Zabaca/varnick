@@ -100,7 +100,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .newTerminalTab: "New terminal tab"
         case .renameTab: "Rename tab"
         case .endPane: "End session (focused pane)"
-        case .doneSession: "Mark session done (focused Claude pane)"
+        case .doneSession: "Mark tab done (from a Claude pane)"
         case .restartSession: "Restart session (focused Claude pane)"
         case .paste: "Paste text or image"
         case .previousTab: "Previous tab"

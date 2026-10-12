@@ -39,13 +39,21 @@ final class LauncherModel: ObservableObject {
     var activeSession: ClaudeSession? { activeTab?.focused }
     /// Ended sessions, newest first; Return on one resumes it.
     @Published var recent: [SessionRecord] = [] { didSet { rebuildRecent() } }
-    /// Sessions marked done on the board, newest first. One open in a pane here is dropped (`rebuildRecent`).
-    @Published private(set) var completed: [SessionRecord] = []
-    /// Claude panes that closed without Done, newest first with no cap, kept by pane id until marked done,
+    /// Tabs marked done on the board, newest first, at most `SessionStore.completedLimit`. One open here is dropped (`rebuildRecent`).
+    @Published private(set) var completed: [TabRecord] = []
+    /// Tabs that closed without Done holding a Claude pane, newest first with no cap, kept by tab id until marked done,
     /// opened or open again (`rebuildRecent`).
-    @Published private(set) var ended: [SessionRecord] = []
-    /// Panes Done closes; each goes into Completed in `sessionExited`, unless its close doesn't happen (`onKept`).
-    private var doneRequested: Set<UUID> = []
+    @Published private(set) var ended: [TabRecord] = []
+    /// A tab whose panes are being closed, by its × or by Done, as it was when the closing began. The last pane's exit
+    /// (`sessionExited`) makes it a Completed tab (`done`) or an ended one; a close that doesn't happen clears it (`onKept`).
+    private struct ClosingTab {
+        var saved: SessionStore.SavedTab
+        var done: Bool
+        /// A pane that closed while it closed would leave an ended card (`sessionExited`), and one that waits for its Mac's Recent.
+        var leavesEnded = false
+        var waitsForRecent = false
+    }
+    private var closing: [UUID: ClosingTab] = [:]
     /// `recent` with the paired Macs' ended sessions (`rebuildRecent`), which the session list shows.
     @Published private(set) var allRecent: [SessionRecord] = []
     /// Highlighted row in the session list (empty query): open tabs, then recent.
@@ -221,9 +229,9 @@ final class LauncherModel: ObservableObject {
     private var peerRecentAskedAt = Date.distantPast
     /// When the ask behind each paired Mac's last Recent answer was sent, an unchanged reply included.
     private var peerRecentSentAt: [String: Date] = [:]
-    /// The paired Macs' open sessions this Mac listed for the board, with `lastUsed` the time of the last
-    /// listing: what `endRememberedSessions` finds an end from.
-    private var remembered: [SessionRecord] = []
+    /// The paired Macs' open tabs this Mac listed for the board, with `lastUsed` the time of the last
+    /// listing: what `endRememberedTabs` finds an end from.
+    private var remembered: [TabRecord] = []
     /// `remembered`'s `lastUsed` as last saved, so a listing saves again only when that is `rememberedResaveAfter` old.
     private var rememberedSaved: [UUID: Date] = [:]
     private static let rememberedResaveAfter: TimeInterval = 3600
@@ -231,10 +239,10 @@ final class LauncherModel: ObservableObject {
     private static let recentWatchWindow: TimeInterval = 60
     private static let rememberedLife: TimeInterval = 30 * 24 * 3600
     private static let closedHereLife: TimeInterval = 600
-    /// When this Mac last marked, or took the mark off, a paired Mac's session by its pane id (Done, ↩ on a Completed card, the host's
-    /// reply). A listing or Recent asked before that is ignored for that pane id (`askPredatesAct`), or its stale word would undo it.
+    /// When this Mac last marked, or took the mark off, a paired Mac's tab by its id (Done, ↩ on a Completed card, the host's
+    /// reply). A listing or Recent asked before that is ignored for that tab id (`askPredatesAct`), or its stale word would undo it.
     private var actedHereAt: [UUID: Date] = [:]
-    /// The Dones whose `done` to the host is still out: their cards don't say "Done on this Mac only" yet.
+    /// The Dones whose `done` to the host is still out (by tab id): their cards don't say "Done on this Mac only" yet.
     private var pendingDone: Set<UUID> = []
     /// Runs while this Mac has a pane on a peer (`updatePeerFollowing`); nil otherwise.
     private var peerFollowTask: Task<Void, Never>?
@@ -578,23 +586,23 @@ final class LauncherModel: ObservableObject {
             .map(\.element)
             .filter { !open.contains($0.conversationID) && seen.insert($0.conversationID).inserted }
         if merged != allRecent { allRecent = merged }
-        // By conversation, and by pane id too: a session open here after a /clear on its host has moved on.
-        let here = openHere
-        let panes = Set(tabs.flatMap(\.sessions).map(\.id))
-        if completed.contains(where: { here.contains($0.conversationID) || panes.contains($0.id) }) {
-            completed = completed.filter { !here.contains($0.conversationID) && !panes.contains($0.id) }
+        // Completed keeps a tab until it is open here again, by its id: a conversation of it resumed from Recent or search opens a tab of its
+        // own and leaves the Completed one where it is.
+        let tabIDs = Set(tabs.map(\.tabID))
+        if completed.contains(where: { tabIDs.contains($0.id) }) { completed.removeAll { tabIDs.contains($0.id) } }
+        // Recent's rule, not Completed's: a tab open here or listed open by its host, or whose Claude conversations are all open in a
+        // pane here or on a paired Mac, so a session resumed at its own Mac doesn't show live and ended both.
+        let listed = listedTabIDs()
+        let openAgain = { (record: TabRecord) in
+            tabIDs.contains(record.id) || listed.contains(record.id) || record.claudeRecords.allSatisfy { open.contains($0.conversationID) }
         }
-        // Recent's rule, not Completed's: open in a pane or on a paired Mac, by pane id and by conversation, so a
-        // session resumed at its own Mac doesn't show live and ended both.
-        let listed = listedPaneIDs()
-        let openAgain = { (record: SessionRecord) in open.contains(record.conversationID) || panes.contains(record.id) || listed.contains(record.id) }
         if ended.contains(where: openAgain) { ended.removeAll(where: openAgain) }
-        // A remembered session is forgotten once a pane here takes its id (that pane's close is this Mac's) or it is
-        // marked done, when its Mac is no longer paired, and 30 days after it was last listed.
+        // A remembered tab is forgotten once a tab here takes its id (that tab's close is this Mac's) or it is marked done, when its
+        // Mac is no longer paired, and 30 days after it was last listed.
         let marked = Set(completed.map(\.id))
         let stale = Date().addingTimeInterval(-Self.rememberedLife)
-        let forgotten = { (record: SessionRecord) in
-            panes.contains(record.id) || marked.contains(record.id) || !pairedIDs.contains(record.host ?? "") || record.lastUsed < stale
+        let forgotten = { (record: TabRecord) in
+            tabIDs.contains(record.id) || marked.contains(record.id) || !pairedIDs.contains(record.host ?? "") || record.lastUsed < stale
         }
         if remembered.contains(where: forgotten) { remembered.removeAll(where: forgotten) }
     }
@@ -604,8 +612,11 @@ final class LauncherModel: ObservableObject {
         let peer: Peer
         let info: PeerOpenSession
         var id: String { peer.id + "|" + info.session }
-        /// The id the session's pane has here once opened, which a board card carries.
+        /// The id the session's pane has here once opened.
         var paneID: UUID? { Zmx.paneID(info.session) }
+        /// The tab its host keeps it in, which a tab here that shows it takes the id of and a board card carries (ADR 0032). A host that
+        /// names none keeps the session in a tab of its own, under the pane's id.
+        var tabID: UUID? { info.tab.flatMap(UUID.init(uuidString:)) ?? paneID }
 
         /// The record of the pane it opens into, or of its mark in Completed: its Mac, folder, agent,
         /// conversation and title, with the pane's id so the two match.
@@ -615,7 +626,7 @@ final class LauncherModel: ObservableObject {
             record.agent = info.agent
             record.conversation = info.conversation
             record.host = peer.id
-            // The links it was listed with, so the ended card it becomes keeps them (`endRememberedSessions`).
+            // The links it was listed with, so the ended card it becomes keeps them (`endRememberedTabs`).
             record.workLinks = info.work?.paneWork.history
             return record
         }
@@ -639,18 +650,37 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// The open session of a paired Mac whose pane has this id, found by pane id and never by conversation, which
-    /// /clear moves on.
-    func peerOpenRow(_ paneID: UUID, on host: String? = nil) -> PeerOpenRow? {
-        peerOpenRows.first { $0.paneID == paneID && (host == nil || Zmx.sameID($0.peer.id, host)) }
+    /// A paired Mac's open tab that no tab here shows: its listed sessions, in the order the host gave them.
+    struct PeerOpenTab: Identifiable {
+        let peer: Peer
+        let id: UUID
+        let rows: [PeerOpenRow]
+        /// The host's name for the tab; nil when it has none.
+        var name: String? { rows.lazy.compactMap(\.info.tabName).first }
     }
 
-    /// What the board shows of the paired Macs: `peerOpenRows` less the sessions marked done, here (by pane id, as a resume here drops
-    /// a session out of Completed) or by their host, which Completed shows with "Still open on…". A session its host marks is never
-    /// a Running or Stopped card, even once Completed's cap has dropped it.
-    var boardPeerRows: [PeerOpenRow] {
-        let done = Set(completed.map(\.id))
-        return peerOpenRows.filter { row in row.paneID.map { !done.contains($0) && row.info.doneAge == nil } ?? false }
+    /// What the board shows of the paired Macs: the tabs `peerOpenRows` lists that no tab here has the id of, less those marked done,
+    /// here (by tab id) or by their host, which Completed shows with "Still open on…". A tab its host marks is never a Running or
+    /// Stopped card, even once Completed's cap has dropped it.
+    var boardPeerTabs: [PeerOpenTab] {
+        let done = Set(completed.map(\.id)), mine = Set(tabs.map(\.tabID))
+        var order: [UUID] = [], grouped: [UUID: [PeerOpenRow]] = [:]
+        for row in peerOpenRows {
+            guard let id = row.tabID, !done.contains(id), !mine.contains(id) else { continue }
+            if grouped[id] == nil { order.append(id) }
+            grouped[id, default: []].append(row)
+        }
+        return order.compactMap { id in
+            guard let rows = grouped[id], rows.allSatisfy({ $0.info.doneAge == nil }) else { return nil }
+            return PeerOpenTab(peer: rows[0].peer, id: id, rows: rows)
+        }
+    }
+
+    /// The tab a paired Mac's listing puts a session in, as a record: its listed sessions side by side.
+    private func record(of tab: PeerOpenTab, completedAt: Date? = nil, hostHoldsDone: Bool? = nil, lastUsed: Date = Date()) -> TabRecord? {
+        let sessions = tab.rows.compactMap(\.record)
+        guard !sessions.isEmpty else { return nil }
+        return TabRecord(id: tab.id, sessions: sessions, name: tab.name, completedAt: completedAt, hostHoldsDone: hostHoldsDone, lastUsed: lastUsed)
     }
 
     /// The session list's rows, in order: this Mac's tabs, then the peers' open sessions, then
@@ -1139,7 +1169,9 @@ final class LauncherModel: ObservableObject {
                 record.skipPermissions = start.skipPermissions
                 // Opens at once unless the prompt moved on while the host was starting it.
                 let waiting = self.query == typed && !self.showingBoard && !self.showingOutline
-                self.addTab(PaneNode(session: self.makeSession(record, resuming: false, query: typed)), show: waiting)
+                // The tab here is the host's tab for it, under the host's id (ADR 0032).
+                self.addTab(PaneNode(session: self.makeSession(record, resuming: false, query: typed)),
+                            tabID: reply.tab.flatMap(UUID.init(uuidString:)), show: waiting)
             }
         }
     }
@@ -1160,7 +1192,15 @@ final class LauncherModel: ObservableObject {
         peerOpenSessions[row.peer.id]?.removeAll { $0.session == row.info.session }
         let session = makeSession(record, resuming: false, query: "")
         session.opensOnCard = true
-        addTab(PaneNode(session: session))
+        // A session whose tab is already shown here opens in that tab, beside its last pane (until option 03 the layout is this Mac's own).
+        if let tab = tabs.first(where: { $0.tabID == row.tabID && $0.host == row.peer.id }), let last = tab.sessions.last {
+            tab.add(session, beside: last, .sideBySide)
+            activate(tab)
+            tab.focus(session)
+            saveSessions()
+            return
+        }
+        addTab(PaneNode(session: session), tabID: row.tabID)
     }
 
     /// The panel came up: each reachable paired Mac is asked what is open on it, off the main actor.
@@ -1238,12 +1278,20 @@ final class LauncherModel: ObservableObject {
             saveSessions()
             if showingBoard { board.refresh() }
         }
-        endRememberedSessions(on: id)
+        endRememberedTabs(on: id)
     }
 
-    // MARK: Done marks from the hosts (ADR 0028)
+    // MARK: Done marks from the hosts (ADR 0032)
 
-    /// Whether a listing or Recent asked at `sentAt` was asked before this Mac's own Done or open of `id`, and so can't know of it.
+    /// The tab a paired Mac's listing puts a session in; a host that names none keeps it in a tab of its own, under the pane's id.
+    static func tabID(of info: PeerOpenSession) -> UUID? { info.tab.flatMap(UUID.init(uuidString:)) ?? Zmx.paneID(info.session) }
+
+    /// The tab a paired Mac's Recent entry ended in, the same way.
+    static func tabID(of entry: PeerRecentSession) -> UUID? {
+        entry.tab.flatMap(UUID.init(uuidString:)) ?? entry.session.flatMap(Zmx.paneID) ?? UUID(uuidString: entry.conversation)
+    }
+
+    /// Whether a listing or Recent asked at `sentAt` was asked before this Mac's own Done or open of tab `id`, and so can't know of it.
     private func askPredatesAct(_ id: UUID, _ sentAt: Date) -> Bool {
         actedHereAt[id].map { sentAt <= $0 } ?? false
     }
@@ -1257,7 +1305,7 @@ final class LauncherModel: ObservableObject {
     /// `record` into Completed, newest mark first, keeping the newest `completedLimit`; one older than the 20th isn't added.
     /// Returns whether Completed changed.
     @discardableResult
-    private func insertCompleted(_ record: SessionRecord) -> Bool {
+    private func insertCompleted(_ record: TabRecord) -> Bool {
         guard record.resumable else { return false }
         var list = completed.filter { $0.id != record.id }
         list.append(record)
@@ -1271,23 +1319,29 @@ final class LauncherModel: ObservableObject {
         return true
     }
 
-    /// What one paired Mac's marks may change here: its record, the panes here, and the conversations open in them.
+    /// `record` first in `list`: one entry per tab id, so a tab is never in a list twice.
+    private static func put(_ record: TabRecord, first list: inout [TabRecord]) {
+        guard record.resumable else { return }
+        list.removeAll { $0.id == record.id }
+        list.insert(record, at: 0)
+    }
+
+    /// What one paired Mac's marks may change here: its tabs, the tabs open here, and its peer.
     private struct HostMarks {
         let host: String
         let peer: Peer
-        let panes: Set<UUID>
-        let here: Set<String>
+        let tabs: Set<UUID>
     }
 
     private func hostMarks(from host: String) -> HostMarks? {
         guard let peer = PeerManager.shared.peers.first(where: { $0.id == host }), PeerManager.shared.status[host] != .removedThisMac else { return nil }
-        return HostMarks(host: host, peer: peer, panes: Set(tabs.flatMap(\.sessions).map(\.id)), here: openHere)
+        return HostMarks(host: host, peer: peer, tabs: Set(tabs.map(\.tabID)))
     }
 
-    /// One session its host marks, with no pane here: flagged if Completed has it, else added there, dated by the host. An ended or
-    /// remembered card of it goes only once Completed took the mark, so a mark past the cap leaves the card. Returns whether anything changed.
-    private func takeInHostMark(_ id: UUID, conversation: String, at date: Date, _ marks: HostMarks, build: (SessionRecord?) -> SessionRecord?) -> Bool {
-        guard !marks.panes.contains(id), !marks.here.contains(conversation) else { return false }
+    /// One tab its host marks, with no tab here: flagged if Completed has it, else added there, dated by the host. An ended or remembered card of it goes only once
+    /// Completed took the mark, so a mark past the cap leaves the card. Returns whether anything changed.
+    private func takeInHostMark(_ id: UUID, at date: Date, _ marks: HostMarks, build: (TabRecord?) -> TabRecord?) -> Bool {
+        guard !marks.tabs.contains(id) else { return false }
         let card = ended.first { $0.id == id } ?? remembered.first { $0.id == id && $0.host == marks.host }
         var changed = false
         if let at = completed.firstIndex(where: { $0.id == id }) {
@@ -1310,80 +1364,100 @@ final class LauncherModel: ObservableObject {
         return changed
     }
 
-    /// What a paired Mac's `sessions` answer says of its marks (ADR 0028). Returns whether anything changed, so an answer that changes nothing saves nothing.
+    /// What a paired Mac's `sessions` answer says of its marks (ADR 0032). Returns whether anything changed, so an answer that changes nothing saves nothing.
     private func takeInListingMarks(_ found: [PeerOpenSession], on host: String, sentAt: Date) -> Bool {
         guard let marks = hostMarks(from: host) else { return false }
         var changed = false
         for info in found where info.doneAge == nil {
-            guard let id = Zmx.paneID(info.session), !askPredatesAct(id, sentAt) else { continue }
-            let conversation = Self.conversation(of: info)
+            guard let id = Self.tabID(of: info), !askPredatesAct(id, sentAt) else { continue }
             let before = completed.count
-            completed.removeAll { $0.host == host && $0.hostHoldsDone == true && ($0.id == id || $0.conversationID == conversation) }
+            completed.removeAll { $0.host == host && $0.hostHoldsDone == true && $0.id == id }
             changed = changed || completed.count != before
         }
-        for info in found {
-            guard let age = info.doneAge, let id = Zmx.paneID(info.session), !askPredatesAct(id, sentAt) else { continue }
+        let marked = Dictionary(grouping: found.filter { $0.doneAge != nil }, by: { Self.tabID(of: $0) })
+        for (tab, infos) in marked {
+            guard let id = tab, !askPredatesAct(id, sentAt), let age = infos.compactMap(\.doneAge).min() else { continue }
             let date = Date().addingTimeInterval(-TimeInterval(age))
-            changed = takeInHostMark(id, conversation: Self.conversation(of: info) ?? "", at: date, marks, build: { _ in
-                PeerOpenRow(peer: marks.peer, info: info).record
+            changed = takeInHostMark(id, at: date, marks, build: { _ in
+                let sessions = infos.compactMap { PeerOpenRow(peer: marks.peer, info: $0).record }
+                return sessions.isEmpty ? nil : TabRecord(id: id, sessions: sessions, name: infos.compactMap(\.tabName).first, lastUsed: Date())
             }) || changed
         }
         return changed
+    }
+
+    /// A Recent entry of a paired Mac as the session record it stands for.
+    private func session(from entry: PeerRecentSession, on host: String) -> SessionRecord? {
+        guard let id = entry.session.flatMap(Zmx.paneID) ?? UUID(uuidString: entry.conversation) else { return nil }
+        let last = Date(timeIntervalSince1970: TimeInterval(entry.last))
+        var record = SessionRecord(id: id, prompt: "", title: entry.title, directory: entry.folder, startedAt: last, lastUsed: last)
+        record.agent = entry.agent
+        record.host = host
+        record.conversation = record.conversation(reportedAs: entry.conversation)
+        return record
+    }
+
+    /// `tab` with each of its sessions that `sessions` has updated from it: what the host says of them now.
+    private static func updating(_ tab: TabRecord, from sessions: [SessionRecord]) -> TabRecord {
+        var record = tab
+        record.layout = tab.layout.mapping { held in
+            guard let new = sessions.first(where: { $0.id == held.id }) else { return }
+            if !new.title.isEmpty { held.title = new.title }
+            held.directory = new.directory
+            held.agent = new.agent
+            held.conversation = new.conversation
+            held.host = new.host
+        }
+        return record
     }
 
     /// What a paired Mac's Recent says of its marks. An entry without one changes nothing, so a mark the host's cap or age dropped stays here.
     private func takeInRecentMarks(_ found: [PeerRecentSession], from host: String, sentAt: Date) -> Bool {
         guard let marks = hostMarks(from: host) else { return false }
         var changed = false
-        for entry in found {
-            guard let done = entry.done, let id = entry.session.flatMap(Zmx.paneID) ?? UUID(uuidString: entry.conversation),
-                  !askPredatesAct(id, sentAt) else { continue }
-            let last = Date(timeIntervalSince1970: TimeInterval(entry.last))
-            changed = takeInHostMark(id, conversation: entry.conversation, at: Date(timeIntervalSince1970: TimeInterval(done)), marks, build: { card in
-                var record = card ?? SessionRecord(id: id, prompt: "", title: entry.title, directory: entry.folder, startedAt: last, lastUsed: last)
-                if card != nil {
-                    if !entry.title.isEmpty { record.title = entry.title }
-                    record.directory = entry.folder
-                }
-                record.agent = entry.agent
-                record.host = host
-                record.conversation = record.conversation(reportedAs: entry.conversation)
-                return record
+        let marked = Dictionary(grouping: found.filter { $0.done != nil }, by: { Self.tabID(of: $0) })
+        for (tab, entries) in marked {
+            guard let id = tab, !askPredatesAct(id, sentAt), let done = entries.compactMap(\.done).max() else { continue }
+            let sessions = entries.compactMap { session(from: $0, on: host) }
+            let last = sessions.map(\.lastUsed).max() ?? Date()
+            changed = takeInHostMark(id, at: Date(timeIntervalSince1970: TimeInterval(done)), marks, build: { card in
+                if let card { return Self.updating(card, from: sessions) }
+                return sessions.isEmpty ? nil : TabRecord(id: id, sessions: sessions, lastUsed: last)
             }) || changed
         }
         return changed
     }
 
-    /// When a paired Mac's last listing says it marked this session done; nil when it doesn't, or the listing predates this Mac's own act on it.
+    /// When a paired Mac's last listing says it marked this tab done; nil when it doesn't, or the listing predates this Mac's own act on it.
     func hostDoneMark(of id: UUID, on host: String) -> Date? {
-        guard let age = peerOpenSessions[host]?.first(where: { Zmx.paneID($0.session) == id })?.doneAge,
+        guard let age = peerOpenSessions[host]?.first(where: { Self.tabID(of: $0) == id })?.doneAge,
               !askPredatesAct(id, peerOpenSessionsSentAt[host] ?? .distantPast) else { return nil }
         return Turn.began(ageSeconds: age, before: peerOpenSessionsAnsweredAt[host] ?? Date())
     }
 
-    /// When a Claude pane here is marked done: on its own record by another Mac, or by its host when it runs on a paired Mac.
-    /// Such a pane is a Completed card ("Still open here"), and closing it goes to Completed.
-    func doneMark(of pane: ClaudeSession) -> Date? {
-        guard pane.isClaude else { return nil }
-        if let host = pane.record.host { return hostDoneMark(of: pane.id, on: host) }
-        return pane.record.completedAt
+    /// When a tab here is marked done: by another Mac on a tab that runs here (its saved tab keeps the date), or by its host when it
+    /// shows a paired Mac's. Such a tab is a Completed card ("Still open here"), and closing it goes to Completed.
+    func doneMark(of tab: ClaudeTab) -> Date? {
+        guard !tab.claudeSessions.isEmpty else { return nil }
+        if let host = tab.host { return hostDoneMark(of: tab.tabID, on: host) }
+        return tab.completedAt
     }
 
-    /// The note a Completed card carries: where the session still runs, and that the Done is this Mac's only.
-    func completedNote(for record: SessionRecord) -> String? {
+    /// The note a Completed card carries: where the tab still runs, and that the Done is this Mac's only.
+    func completedNote(for record: TabRecord) -> String? {
         var parts: [String] = []
         if let mac = stillOpenOn(record) { parts.append("Still open on " + mac) }
         if record.host != nil, record.hostHoldsDone != true, !pendingDone.contains(record.id) { parts.append("Done on this Mac only") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Tells a session's host this Mac marked it done, or with `mark` false opened it again. A mark the host takes is flagged here;
+    /// Tells a tab's host this Mac marked it done, or with `mark` false opened it again. A mark the host takes is flagged here;
     /// a failure leaves it this Mac's only, and nothing sends it again.
     private func sendDone(_ id: UUID, on host: String, mark: Bool = true) {
         if mark { pendingDone.insert(id) }
         noteActed(on: id)
         Task { [weak self] in
-            let taken = await PeerManager.shared.done(session: id, on: host, mark: mark)
+            let taken = await PeerManager.shared.done(tab: id, on: host, mark: mark)
             guard let self else { return }
             self.pendingDone.remove(id)
             // Asked before the host answered, a listing can't know of the mark or the clear.
@@ -1396,21 +1470,28 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// Remembers what a Mac's answer lists that the board would show: no pane here, not marked done, not closed
+    /// Remembers what a Mac's answer lists that the board would show: a tab no tab here has the id of, not marked done, not closed
     /// here since the ask. Saves only when something but the date changed, or the saved date is `rememberedResaveAfter` old.
     private func remember(_ found: [PeerOpenSession], on host: String) {
         guard let peer = PeerManager.shared.peers.first(where: { $0.id == host }) else { return }
-        let panes = Set(tabs.flatMap(\.sessions).map(\.id))
+        let mine = Set(tabs.map(\.tabID))
         let marked = Set(completed.map(\.id))
         var changed = false
+        var order: [UUID] = [], grouped: [UUID: [PeerOpenSession]] = [:]
         for info in found {
-            guard info.doneAge == nil, let new = PeerOpenRow(peer: peer, info: info).record, !panes.contains(new.id), !marked.contains(new.id),
-                  !listingPredatesClose(of: new.id, on: host) else { continue }
-            if let at = remembered.firstIndex(where: { $0.id == new.id }) {
+            guard let id = Self.tabID(of: info) else { continue }
+            if grouped[id] == nil { order.append(id) }
+            grouped[id, default: []].append(info)
+        }
+        for id in order {
+            guard let infos = grouped[id], infos.allSatisfy({ $0.doneAge == nil }), !mine.contains(id), !marked.contains(id) else { continue }
+            let sessions = infos.compactMap { info in PeerOpenRow(peer: peer, info: info).record }.filter { !listingPredatesClose(of: $0.id, on: host) }
+            guard !sessions.isEmpty else { continue }
+            let new = TabRecord(id: id, sessions: sessions, name: infos.compactMap(\.tabName).first, lastUsed: Date())
+            if let at = remembered.firstIndex(where: { $0.id == id }) {
                 let old = remembered[at]
-                changed = changed || old.host != new.host || old.title != new.title || old.directory != new.directory
-                    || old.agent != new.agent || old.conversation != new.conversation || old.workLinks != new.workLinks
-                    || new.lastUsed.timeIntervalSince(rememberedSaved[new.id] ?? .distantPast) > Self.rememberedResaveAfter
+                changed = changed || old.layout != new.layout || old.name != new.name
+                    || new.lastUsed.timeIntervalSince(rememberedSaved[id] ?? .distantPast) > Self.rememberedResaveAfter
                 remembered[at] = new
             } else {
                 remembered.append(new)
@@ -1420,30 +1501,28 @@ final class LauncherModel: ObservableObject {
         if changed { saveSessions() }
     }
 
-    /// Makes an ended card of a remembered session of `host` once its latest listing succeeded without it and its
-    /// Recent, asked after the session was last listed, has an entry with its pane id. A silent Mac ends nothing.
-    private func endRememberedSessions(on host: String) {
+    /// Makes an ended card of a remembered tab of `host` once its latest listing succeeded without it and its
+    /// Recent, asked after the tab was last listed, has an entry naming it. A silent Mac ends nothing.
+    private func endRememberedTabs(on host: String) {
         guard peerOpenSessions[host] != nil, peerOpenSessionsAnsweredAt[host] != nil,
               let asked = peerRecentSentAt[host], let entries = peerRecent[host] else { return }
-        let listedPanes = listedPaneIDs(on: host)
-        let panes = Set(tabs.flatMap(\.sessions).map(\.id))
+        let listed = listedTabIDs(on: host)
+        let mine = Set(tabs.map(\.tabID))
         var changed = false
-        for old in remembered where old.host == host && asked > old.lastUsed && !listedPanes.contains(old.id) && !panes.contains(old.id) {
-            guard let entry = entries.first(where: { $0.session == Zmx.sessionName(old.id) }) else { continue }
+        for old in remembered where old.host == host && asked > old.lastUsed && !listed.contains(old.id) && !mine.contains(old.id) {
+            let named = entries.filter { Self.tabID(of: $0) == old.id }
+            guard !named.isEmpty else { continue }
             // Marked done there and in Completed here (`takeInRecentMarks`): never an ended card.
-            if entry.done != nil, completed.contains(where: { $0.id == old.id }) {
+            if named.contains(where: { $0.done != nil }), completed.contains(where: { $0.id == old.id }) {
                 remembered.removeAll { $0.id == old.id }
                 changed = true
                 continue
             }
-            let end = min(Date(timeIntervalSince1970: TimeInterval(entry.last)), Date())
-            var record = SessionRecord(id: old.id, prompt: "", title: entry.title.isEmpty ? old.title : entry.title,
-                                       directory: entry.folder, startedAt: end, lastUsed: end)
-            record.agent = entry.agent
-            record.host = host
-            record.conversation = record.conversation(reportedAs: entry.conversation)
-            record.workLinks = old.workLinks
-            Self.put(record, first: &ended, limit: .max, byConversation: false)
+            let end = min(Date(timeIntervalSince1970: TimeInterval(named.map(\.last).max() ?? 0)), Date())
+            var record = Self.updating(old, from: named.compactMap { session(from: $0, on: host) })
+            record.lastUsed = end
+            record.completedAt = nil
+            Self.put(record, first: &ended)
             ended.sort { $0.lastUsed > $1.lastUsed }
             remembered.removeAll { $0.id == old.id }
             changed = true
@@ -1453,10 +1532,10 @@ final class LauncherModel: ObservableObject {
         if showingBoard { board.refresh() }
     }
 
-    /// Whether `host` stopped listing a session within the last minute that its Recent hasn't accounted for yet.
+    /// Whether `host` stopped listing a tab within the last minute that its Recent hasn't accounted for yet.
     private func hasUnresolvedSessions(on host: String) -> Bool {
-        let listedPanes = listedPaneIDs(on: host)
-        return remembered.contains { $0.host == host && !listedPanes.contains($0.id) && Date().timeIntervalSince($0.lastUsed) < Self.recentWatchWindow }
+        let listed = listedTabIDs(on: host)
+        return remembered.contains { $0.host == host && !listed.contains($0.id) && Date().timeIntervalSince($0.lastUsed) < Self.recentWatchWindow }
     }
 
     /// What the cached listings have open (of `host` alone, when given), less sessions closed here after the ask
@@ -1467,8 +1546,9 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    private func listedPaneIDs(on host: String? = nil) -> Set<UUID> {
-        Set(listedSessions(on: host).compactMap { Zmx.paneID($0.session) })
+    /// The tabs the cached listings have open.
+    private func listedTabIDs(on host: String? = nil) -> Set<UUID> {
+        Set(listedSessions(on: host).compactMap(Self.tabID(of:)))
     }
 
     private func listingPredatesClose(of id: UUID, on host: String) -> Bool {
@@ -1545,7 +1625,7 @@ final class LauncherModel: ObservableObject {
         if let found {
             if takeInListingMarks(found, on: id, sentAt: sentAt) { saveSessions() }
             remember(found, on: id)
-            endRememberedSessions(on: id)
+            endRememberedTabs(on: id)
             // The close reaches that Mac's Recent a moment after its session goes, so a Mac that just stopped listing
             // one is asked again alone, with each answer while the minute lasts (every 5 s while the board shows).
             if hasUnresolvedSessions(on: id), peerRecentTasks[id] == nil { refreshPeerRecent(only: [id]) }
@@ -1561,10 +1641,9 @@ final class LauncherModel: ObservableObject {
         if let host = record.host { return resumeOnPeer(conversation: record.conversationID, on: host, folder: record.directory,
                                                        title: record.title, agent: record.agent) }
         recent.removeAll { $0.id == record.id }
-        // A pane started from a record starts unmarked; only a restored tab keeps its mark (ADR 0028).
+        // The tab Recent's copy ended in belongs to that copy, not to the pane: it opens a tab of its own.
         var record = record
-        record.completedAt = nil
-        record.hostHoldsDone = nil
+        record.tab = nil
         addTab(PaneNode(session: makeSession(record, resuming: true, query: "")), name: store.tabName(ofSession: record.conversationID))
     }
 
@@ -1573,8 +1652,10 @@ final class LauncherModel: ObservableObject {
     /// (`openPeerSession`); else the Mac's Varnick is asked to start `claude --resume` on it, in a
     /// pane here that shows what it answers (the card of any session being started there), and the
     /// user is in control. Always the user's own action: `ClaudeSession.resumesOnPeer` is what tells
-    /// the pane to ask for it, and nothing that runs by itself sets it.
-    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?) {
+    /// the pane to ask for it, and nothing that runs by itself sets it. With `into`, the pane joins that tab beside its last pane
+    /// instead of opening a tab of its own (a closed tab of that Mac coming back); the tab takes the id of the first tab the host
+    /// puts a session of it in (`ClaudeTab.adopt`).
+    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?, into existing: ClaudeTab? = nil) {
         for tab in tabs {
             if let pane = tab.sessions.first(where: { $0.isClaude && $0.record.conversationID == conversation }) {
                 activate(tab)
@@ -1595,7 +1676,12 @@ final class LauncherModel: ObservableObject {
         recent.removeAll { $0.conversationID == conversation }
         let session = makeSession(record, resuming: true, query: "")
         session.resumesOnPeer = true
-        addTab(PaneNode(session: session))
+        if let existing, let last = existing.sessions.last {
+            existing.add(session, beside: last, .sideBySide)
+            saveSessions()
+        } else {
+            addTab(PaneNode(session: session), awaitsHostTab: true)
+        }
     }
 
     /// The conversation a session open on a peer is on: its own id until /clear or /resume moves it.
@@ -1666,6 +1752,14 @@ final class LauncherModel: ObservableObject {
         if activeTab === tab { tab.focus(tab.focused) }
     }
 
+    /// A pane that runs on another machine isn't split here: its tab is that machine's, and a new pane would be a session on this Mac in
+    /// a folder that may not exist here. The pane says why; splits on another machine come with whole remote tabs (option 03).
+    private func refusesSplit(of pane: ClaudeSession) -> Bool {
+        guard pane.isOnPeer else { return false }
+        pane.showRefusal("This session runs on \(pane.hostName ?? "another Mac"), so it can't be split here: splits on another machine come with whole remote tabs.")
+        return true
+    }
+
     /// ⌘⇧E / ⌘⇧O: splits the focused pane; the new pane is a fresh session of the same
     /// kind (Claude or shell) in the same folder. With ⌃ (`otherKind`), the other kind.
     func split(_ axis: SplitAxis) {
@@ -1676,7 +1770,7 @@ final class LauncherModel: ObservableObject {
     /// The new pane is fresh, in the focused pane's folder; a web pane starts with its
     /// address bar focused.
     func split(_ axis: SplitAxis, kind: PaneKind) {
-        guard let tab = activeTab else { return }
+        guard let tab = activeTab, !refusesSplit(of: tab.focused) else { return }
         var record = Self.newRecord(prompt: "", directory: tab.focused.record.directory)
         switch kind {
         case .claude: break
@@ -1709,6 +1803,8 @@ final class LauncherModel: ObservableObject {
     func openFile(_ path: String) {
         guard let tab = activeTab else { return }
         if let open = tab.sessions.first(where: { $0.record.file == path }) { return tab.focus(open) }
+        // A file pane is a split too, and the tree lists this Mac's folders, not the other machine's.
+        guard !refusesSplit(of: tab.focused) else { return }
         var record = Self.newRecord(prompt: "", directory: tab.files.root)
         record.file = path
         let session = makeSession(record, resuming: false, query: "")
@@ -1726,7 +1822,7 @@ final class LauncherModel: ObservableObject {
 
     /// Reads the custom apps from disk each time, for the focused pane's project.
     func askSplit(_ axis: SplitAxis) {
-        guard showsTerminal, let focused = activeSession else { return }
+        guard showsTerminal, let focused = activeSession, !refusesSplit(of: focused) else { return }
         pickerItems = PickerItem.items(apps: CustomApp.available(from: focused.record.directory))
         pickerSelection = pickerItems.firstIndex { $0.kind == .terminal } ?? 0
         pendingSplit = axis
@@ -1781,16 +1877,27 @@ final class LauncherModel: ObservableObject {
         SessionRecord(id: UUID(), prompt: prompt, title: "", directory: directory, startedAt: Date(), lastUsed: Date())
     }
 
-    private func addTab(_ root: PaneNode, focused: ClaudeSession? = nil, name: String? = nil, show: Bool = true) {
-        let tab = makeTab(root, focused: focused, name: name)
+    /// A new tab. `tabID` is the id another machine keeps it under, for a tab that shows that machine's sessions; `awaitsHostTab` is for one
+    /// that will be told it later (`ClaudeTab.adopt`).
+    @discardableResult
+    private func addTab(_ root: PaneNode, focused: ClaudeSession? = nil, name: String? = nil, tabID: UUID? = nil, awaitsHostTab: Bool = false,
+                        show: Bool = true) -> ClaudeTab {
+        let tab = makeTab(root, tabID: tabID, focused: focused, name: name)
+        tab.awaitsHostTab = awaitsHostTab
         tabs.append(tab)
         if show { activate(tab) }
         saveSessions()
+        return tab
     }
 
-    private func makeTab(_ root: PaneNode, focused: ClaudeSession? = nil, name: String? = nil) -> ClaudeTab {
-        let tab = ClaudeTab(root: root, focused: focused, name: name)
+    private func makeTab(_ root: PaneNode, tabID: UUID? = nil, focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil) -> ClaudeTab {
+        let tab = ClaudeTab(root: root, tabID: tabID ?? UUID(), focused: focused, name: name, completedAt: completedAt)
         tab.onChange = { [weak self] in self?.saveSessions() }
+        // Keeps the tab as it is, for Completed or an ended card; Done has done so already.
+        tab.onClosing = { [weak self, weak tab] in
+            guard let self, let tab, self.closing[tab.tabID] == nil else { return }
+            self.closing[tab.tabID] = ClosingTab(saved: tab.saved, done: false)
+        }
         return tab
     }
 
@@ -1805,13 +1912,30 @@ final class LauncherModel: ObservableObject {
         session.onReleased = { [weak self] record in
             guard let self else { return }
             recent.removeAll { $0.id == record.id || $0.conversationID == record.conversationID }
-            ended.removeAll { $0.id == record.id }
+            // Its ended tab, or the session out of an ended tab that held others too.
+            ended = ended.compactMap { held in
+                guard held.records.contains(where: { $0.id == record.id }) else { return held }
+                guard let layout = held.layout.pruned({ $0.id != record.id }) else { return nil }
+                var rest = held
+                rest.layout = layout
+                return rest.claudeRecords.isEmpty ? nil : rest
+            }
             saveSessions()
         }
         session.onConversationChange = { [weak self] left, now in self?.conversationChanged(left: left, now: now) }
+        // A close that doesn't happen (the question answered No, the pane taken over): the tab isn't closing any more, Done or ×.
         session.onKept = { [weak self] in
-            guard let self, let kept = ref else { return }
-            self.doneRequested.remove(kept.id)
+            guard let self, let kept = ref, let tab = self.tabs.first(where: { $0.contains(kept) }) else { return }
+            self.closing[tab.tabID] = nil
+        }
+        session.tabAsksBeforeDone = { [weak self] in
+            guard let self, let pane = ref else { return false }
+            return self.tabs.first(where: { $0.contains(pane) })?.asksBeforeDone ?? false
+        }
+        session.onHostTab = { [weak self] id in
+            guard let self, let pane = ref, let tab = self.tabs.first(where: { $0.contains(pane) }) else { return }
+            tab.adopt(tabID: id)
+            self.saveSessions()
         }
         session.onDone = { [weak self] in
             guard let self, let pane = ref else { return }
@@ -1851,14 +1975,16 @@ final class LauncherModel: ObservableObject {
         tabs = state.openTabs.compactMap { saved in
             guard let layout = saved.layout.pruned(\.restorable) else { return nil }
             let root = node(layout)
-            let tab = makeTab(root, focused: root.leaves.first { $0.id == saved.focused }, name: saved.name)
+            let tab = makeTab(root, tabID: saved.resolvedID, focused: root.leaves.first { $0.id == saved.focused }, name: saved.name,
+                              completedAt: saved.done)
             tab.showsFiles = saved.showsFiles ?? false
             return tab
         }
-        // Before Recent, whose change drops what is open in a pane from Completed.
-        completed = (state.completed ?? []).filter(\.resumable)
-        ended = (state.ended ?? []).filter(\.resumable)
-        remembered = state.remembered ?? []
+        // Before Recent, whose change drops what is open here from Completed. A file saved before marks were the tab's has them as
+        // one-pane tabs under the record's id (`State.completedList`).
+        completed = state.completedList.filter(\.resumable)
+        ended = state.endedList.filter(\.resumable)
+        remembered = state.rememberedList
         rememberedSaved = Dictionary(remembered.map { ($0.id, $0.lastUsed) }, uniquingKeysWith: { first, _ in first })
         // A session that ran on a paired Mac has its transcript there, not here.
         recent = state.recent.filter(\.resumable)
@@ -1968,13 +2094,13 @@ final class LauncherModel: ObservableObject {
     func saveSessions() {
         guard !quitting else { return }
         rebuildRecent()   // first: it drops open conversations from Completed, which is saved below
+        // The old keys (`completed`, `ended`, `remembered`) are read once at launch and saved absent.
         sessionStore.save(.init(
-            tabs: tabs.map { .init(layout: $0.root.layout, focused: $0.focused.id, name: $0.name,
-                                   showsFiles: $0.showsFiles ? true : nil) },
+            tabs: tabs.map(\.saved),
             recent: recent,
-            completed: completed.isEmpty ? nil : completed,
-            ended: ended.isEmpty ? nil : ended,
-            remembered: remembered.isEmpty ? nil : remembered))
+            completedTabs: completed.isEmpty ? nil : completed,
+            endedTabs: ended.isEmpty ? nil : ended,
+            rememberedTabs: remembered.isEmpty ? nil : remembered))
         rememberedSaved = Dictionary(remembered.map { ($0.id, $0.lastUsed) }, uniquingKeysWith: { first, _ in first })
         updatePeerFollowing()
     }
@@ -1982,10 +2108,14 @@ final class LauncherModel: ObservableObject {
     private func sessionExited(_ session: ClaudeSession, code: Int32?, query prompt: String) {
         guard !quitting, let index = tabs.firstIndex(where: { $0.contains(session) }) else { return }
         let tab = tabs[index]
+        // Marked while open: by another Mac on a tab that runs here (its saved tab keeps the date), or by the host of one that runs on a
+        // paired Mac, whose Completed copy is flagged. Read before the pane's close takes it out of the cached listing.
+        let markedAt = doneMark(of: tab)
+        let held = closing[tab.tabID]
         // Keep it resumable unless it never got a message (shells can't be resumed).
         var record = session.snapshot
         // The name ⌘⇧R gave a one-pane tab is the card's, as on the running card (`SessionBoard.card(for:in:_:)`).
-        if record.isClaude, tab.sessions.count == 1, let name = tab.name { record.title = name }
+        if record.isClaude, (held?.saved.layout.records.count ?? tab.sessions.count) == 1, let name = tab.name { record.title = name }
         // Its links stay with the saved record, so its card keeps its chips (ADR 0020); the log is read here, once, as the pane closes.
         // A pane on a peer keeps what that host last said; the search database gets this Mac's own at once, and a peer's at the sync.
         if record.isClaude {
@@ -1995,32 +2125,43 @@ final class LauncherModel: ObservableObject {
                 if !session.isOnPeer { HistorySync.recordWork(of: record, links: links, databasePath: store.path) }
             }
         }
-        let pressedDone = doneRequested.remove(session.id) != nil
-        // Marked while open: by another Mac on a session that runs here (its record keeps the date), or by the host of one that runs on a
-        // paired Mac, whose Completed copy is flagged. Either way it closes into Completed, never Stopped.
-        let markedAt = record.isClaude ? doneMark(of: session) : nil
-        if let markedAt {
-            record.completedAt = markedAt
-            if record.host != nil { record.hostHoldsDone = true }
-        }
-        let markedDone = pressedDone || markedAt != nil
         // A tab that ends isn't being renamed any more, on screen or not (the board can end a tab under it).
         if renamingTab === tab, tab.sessions.count == 1 { renamingTab = nil }
         // The frozen view of a session another Mac controls ends nothing: that Mac's Recent has it when it ends.
-        if record.isClaude, !session.isViewOfSessionControlledElsewhere { addRecent(record) }
+        if record.isClaude, !session.isViewOfSessionControlledElsewhere { addRecent(record, in: tab.tabID) }
+        // A pane on a paired Mac that closes here: that Mac's cached listing of it is stale from now on.
+        if record.isClaude, let host = record.host { noteClosed(record, on: host) }
         // Closing that card ends nothing either, but the card's own check finding the session gone may be an end.
-        let leavesEnded = record.isClaude && !markedDone && !(session.isViewOfSessionControlledElsewhere && session.endedByUser)
+        let leavesEnded = record.isClaude && !(session.isViewOfSessionControlledElsewhere && session.endedByUser)
         // Only a card a reboot can fool: a restarted Mac restores its sessions, and its Recent says whether this one closed.
         let waitsForRecent = !session.endedByUser && (session.isViewOfSessionControlledElsewhere || session.opensOnCard)
-        defer { saveSessions() }
-        // Other panes remain: focus moves to a neighbour, if the tab is on screen to take it.
-        if tab.remove(session, focusing: showsTerminal && activeTab === tab) {
-            if markedDone { addDone(record) } else if leavesEnded { addClosed(record, waitsForRecent: waitsForRecent) }
-            return
+        // The tab as it was when its closing began, with this pane as it leaves.
+        var going = held
+        if var kept = held {
+            kept.saved.layout = kept.saved.layout.replacing(record)
+            kept.leavesEnded = kept.leavesEnded || leavesEnded
+            kept.waitsForRecent = kept.waitsForRecent || waitsForRecent
+            closing[tab.tabID] = kept
+            going = kept
         }
+        defer { saveSessions() }
+        // Other panes remain: focus moves to a neighbour, if the tab is on screen to take it. A pane closed alone marks nothing and
+        // leaves no ended card: the tab stays.
+        if tab.remove(session, focusing: showsTerminal && activeTab === tab) { return }
 
+        // The last pane is out: the tab goes to Completed, or is an ended card when it held a Claude pane.
+        closing[tab.tabID] = nil
         tabs.remove(at: index)
-        if markedDone { addDone(record) } else if leavesEnded { addClosed(record, waitsForRecent: waitsForRecent) }
+        let closed = going ?? ClosingTab(saved: .init(id: tab.tabID, layout: .leaf(record), focused: record.id, name: tab.name,
+                                                      showsFiles: tab.showsFiles ? true : nil),
+                                         done: false, leavesEnded: leavesEnded, waitsForRecent: waitsForRecent)
+        if closed.done || markedAt != nil {
+            var done = TabRecord(saved: closed.saved, completedAt: markedAt ?? Date())
+            if markedAt != nil, tab.host != nil { done.hostHoldsDone = true }
+            addDone(done)
+        } else if closed.leavesEnded, closed.saved.layout.records.contains(where: \.isClaude) {
+            addClosed(TabRecord(saved: closed.saved), waitsForRecent: closed.waitsForRecent)
+        }
         sessionSelection = min(sessionSelection, max(0, tabs.count - 1))
         guard activeTab === tab else { return }   // a background tab ended
 
@@ -2047,17 +2188,16 @@ final class LauncherModel: ObservableObject {
     /// moved to leaves Recent (it's open again).
     private func conversationChanged(left: SessionRecord, now: String) {
         recent.removeAll { $0.conversationID == now }
-        addRecent(left)
+        addRecent(left, in: tabs.first { $0.sessions.contains { $0.id == left.id } }?.tabID)
         saveSessions()
     }
 
     /// Newest first, one entry per conversation; only conversations with a transcript. A session that
-    /// ran on a paired Mac has it there: it goes in, and resuming it asks that Mac.
-    private func addRecent(_ record: SessionRecord) {
-        // Recent's copies carry no mark: a resume starts unmarked, and the relay reads a mark from Completed (ADR 0028).
+    /// ran on a paired Mac has it there: it goes in, and resuming it asks that Mac. The copy names the tab it ended in, which a Mac's
+    /// Recent tells its peers (protocol 21); Recent's copies carry no mark, the relay reads a tab's from Completed (ADR 0032).
+    private func addRecent(_ record: SessionRecord, in tab: UUID?) {
         var record = record
-        record.completedAt = nil
-        record.hostHoldsDone = nil
+        record.tab = tab
         Self.put(record, first: &recent, limit: SessionStore.recentLimit, byConversation: true)
     }
 
@@ -2070,11 +2210,10 @@ final class LauncherModel: ObservableObject {
         list = Array(list.prefix(limit))
     }
 
-    /// A pane closed without Done. A card on a peer whose check found the session gone may only have lost its Mac to a
+    /// A tab closed without Done. A tab on a peer whose card its own check found gone may only have lost a Mac to a
     /// restart, which restores the session: it waits in `remembered` for that Mac's Recent.
-    private func addClosed(_ record: SessionRecord, waitsForRecent: Bool) {
+    private func addClosed(_ record: TabRecord, waitsForRecent: Bool) {
         if let host = record.host, waitsForRecent {
-            noteClosed(record, on: host)
             remembered.removeAll { $0.id == record.id }
             remembered.append(record)
             refreshPeerRecent(only: [host])
@@ -2091,59 +2230,65 @@ final class LauncherModel: ObservableObject {
         peerOpenSessions[host]?.removeAll { Zmx.paneID($0.session) == record.id }
     }
 
-    /// An ended card, added once the pane is out of its tab and only from the exit handler, never with Done.
-    private func addEnded(_ record: SessionRecord) {
-        if let host = record.host { noteClosed(record, on: host) }
-        Self.put(record, first: &ended, limit: .max, byConversation: false)
+    /// An ended card, added once the last pane is out of its tab and only from the exit handler, never with Done.
+    private func addEnded(_ record: TabRecord) {
+        Self.put(record, first: &ended)
         if showingBoard { board.refresh() }
     }
 
-    /// Called once the pane is out of its tab, so the rebuild doesn't take it for an open conversation.
-    private func addCompleted(_ record: SessionRecord) {
+    /// Called once the last pane is out of the tab, so the rebuild doesn't take it for an open one.
+    private func addCompleted(_ record: TabRecord) {
         ended.removeAll { $0.id == record.id }
         var done = record
-        // A pane marked while it was open keeps its mark's date.
+        // A tab marked while it was open keeps its mark's date.
         done.completedAt = record.completedAt ?? Date()
         if done.host != nil { noteActed(on: done.id) }
         insertCompleted(done)
         if showingBoard { board.refresh() }
     }
 
-    /// A Done on another Mac's session, once this Mac's Completed has it: its host is told, unless it marked it itself.
-    private func addDone(_ record: SessionRecord) {
+    /// A Done on another Mac's tab, once this Mac's Completed has it: its host is told, unless it marked it itself.
+    private func addDone(_ record: TabRecord) {
         addCompleted(record)
         if let host = record.host, record.hostHoldsDone != true { sendDone(record.id, on: host) }
     }
 
-    /// Done on a board card: ends the pane as ⌘W does, and the session goes into Completed once the
-    /// pane has closed. A close that needs the host card's question brings that tab on screen to ask.
+    /// Done on a tab (a board card, a pane's Done button or key): closes every pane as its × does, and the tab goes into Completed once
+    /// its last pane has closed. A close that needs the host card's question brings that tab on screen to ask.
     func markDone(_ id: UUID) {
-        guard let pane = tabs.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude }) else { return }
-        doneRequested.insert(id)
-        pane.end()
+        guard let tab = tabs.first(where: { $0.tabID == id && !$0.claudeSessions.isEmpty }) else { return }
+        closing[id] = ClosingTab(saved: tab.saved, done: true)
+        tab.close()
     }
 
-    /// Done in a Claude pane (its Done button, the Mark session done key): as on the board, a working session
-    /// asks first, in the pane, and a second Done ends it.
+    /// Done in a Claude pane (its Done button, the Mark tab done key): marks its tab, as on the board. A tab with a session
+    /// mid-turn asks first, in the pane, and a second Done closes the tab.
     func requestDone(_ session: ClaudeSession) {
-        guard session.isClaude else { return }
-        if session.asksBeforeDone, session.asking != .done {
+        guard session.isClaude, let tab = tabs.first(where: { $0.contains(session) }) else { return }
+        if tab.asksBeforeDone, session.asking != .done {
             session.asking = .done
             return
         }
         session.asking = nil
-        markDone(session.id)
+        markDone(tab.tabID)
     }
 
-    /// Restart on a board card or a pane: ends the pane's claude and starts it again in the same pane (`ClaudeSession.restart`).
-    /// Nothing for a pane that can't (`ClaudeSession.canRestart`).
+    /// The Claude pane Restart on a card acts on: the tab's only one. A tab with several restarts each from its own pane.
+    private func restartablePane(inTab id: UUID) -> ClaudeSession? {
+        guard let claude = tabs.first(where: { $0.tabID == id })?.claudeSessions, claude.count == 1 else { return nil }
+        return claude[0]
+    }
+
+    /// Restart on a board card: ends the tab's one Claude pane's claude and starts it again in the same pane (`ClaudeSession.restart`).
+    /// Nothing for a tab that has none or several, or a pane that can't (`ClaudeSession.canRestart`).
     func restart(_ id: UUID) {
-        tabs.flatMap(\.sessions).first { $0.id == id && $0.isClaude }?.restart()
+        restartablePane(inTab: id)?.restart()
     }
 
-    /// Whether the Claude pane with this id can restart: not a card, not on a paired Mac, not a restored pane not shown yet.
+    /// Whether Restart on this card does anything: its tab has one Claude pane, and that is not a card, not on a paired Mac and
+    /// not a restored pane not shown yet.
     func canRestart(_ id: UUID) -> Bool {
-        tabs.flatMap(\.sessions).first { $0.id == id && $0.isClaude }?.canRestart == true
+        restartablePane(inTab: id)?.canRestart == true
     }
 
     /// Restart in a Claude pane (its Restart button, the Restart session key): as Done does, a working session asks first, in the
@@ -2165,7 +2310,7 @@ final class LauncherModel: ObservableObject {
         return true
     }
 
-    /// The Mark session done key. Returns whether the key was used: false when the focused pane isn't Claude, so the key goes on to it.
+    /// The Mark tab done key. Returns whether the key was used: false when the focused pane isn't Claude, so the key goes on to it.
     func requestDoneActive() -> Bool {
         guard showsTerminal, let session = activeSession, session.isClaude else { return false }
         requestDone(session)
@@ -2186,10 +2331,10 @@ final class LauncherModel: ObservableObject {
         return true
     }
 
-    /// Done on a paired Mac's open session that has no pane here: only marked, in Completed with "Still open
+    /// Done on a paired Mac's open tab that has no tab here: only marked, in Completed with "Still open
     /// on…". This Mac can't end it: the host takes `end` only from the Mac in control.
     func markPeerDone(_ id: UUID) {
-        guard let record = peerOpenRow(id)?.record else { return }
+        guard let tab = boardPeerTabs.first(where: { $0.id == id }), let record = record(of: tab) else { return }
         addDone(record)
         saveSessions()
     }
@@ -2201,46 +2346,81 @@ final class LauncherModel: ObservableObject {
         saveSessions()
     }
 
-    /// ↩ on an ended card: resumed as Recent resumes it, here under the same pane id or on its Mac, and the
-    /// card goes at once.
+    /// ↩ on an ended card: the tab comes back whole (`reopen`), and the card goes at once.
     func openEnded(_ id: UUID) {
         guard let record = ended.first(where: { $0.id == id }) else { return }
         ended.removeAll { $0.id == id }
-        resume(record)
+        reopen(record)
         saveSessions()
     }
 
-    /// ↩ on a Completed card: resumed as Recent resumes it, here or on its Mac, and out of Completed.
-    /// A paired Mac's session still open there opens on its card instead.
+    /// ↩ on a Completed card: the tab comes back whole, here or on its Mac (`reopen`), and out of Completed. A tab still open here
+    /// with the mark on it ("Still open here") is shown and the mark taken off, here or on its host.
     func openCompleted(_ id: UUID) {
-        // A pane here the mark is on ("Still open here"): shown, and the mark taken off, here or on its host.
-        if let pane = tabs.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude }) {
-            if let host = pane.record.host { sendDone(id, on: host, mark: false) } else { pane.setDoneMark(nil) }
+        if let tab = tabs.first(where: { $0.tabID == id && !$0.claudeSessions.isEmpty }) {
+            if let host = tab.host { sendDone(id, on: host, mark: false) } else { tab.completedAt = nil }
             saveSessions()
             if showingBoard { board.refresh() }
-            showPane(id)
+            showTab(id)
             return
         }
         guard var record = completed.first(where: { $0.id == id }) else { return }
         completed.removeAll { $0.id == id }
         record.completedAt = nil
         if let host = record.host {
+            // The mark comes off at the host when it holds one or the tab is open there, or the next Recent it sends would put the tab
+            // back in Completed here.
             noteActed(on: id)
-            // The host's mark goes when the session is open again there; one still open only needs its mark taken off.
-            if peerOpenRow(record.id, on: host) != nil { sendDone(id, on: host, mark: false) }
+            if record.hostHoldsDone == true || listedTabIDs(on: host).contains(id) { sendDone(id, on: host, mark: false) }
         }
         record.hostHoldsDone = nil
-        if let host = record.host, let row = peerOpenRow(record.id, on: host) {
-            openPeerSession(row)
-        } else {
-            resume(record)
-        }
+        reopen(record)
         saveSessions()
     }
 
-    /// The Mac a Completed session still runs on, when it was released to it or is open there.
-    func stillOpenOn(_ record: SessionRecord) -> String? {
-        guard let host = record.host, peerOpenRow(record.id, on: host) != nil else { return nil }
+    /// A closed tab comes back whole, as the launch restores the tabs left open: its Claude panes resume when first shown, its
+    /// terminals start fresh in their folder, its pages load their address, its apps run, its files open, the Transcript follows today's
+    /// file. A pane that couldn't be restored at launch is left out (`restorable`), and so is a Claude pane whose conversation is open
+    /// in another pane here; with none left, the tab that holds one of its conversations is shown instead. It keeps its id. A tab of
+    /// another Mac comes back there (`reopenOnPeer`).
+    private func reopen(_ record: TabRecord) {
+        claudeError = nil
+        if let host = record.host { return reopenOnPeer(record, on: host) }
+        let held = openHere
+        guard let layout = record.layout.pruned({ $0.restorable && !($0.isClaude && held.contains($0.conversationID)) }) else {
+            if let holder = tabs.first(where: { tab in
+                tab.claudeSessions.contains { pane in record.claudeRecords.contains { $0.conversationID == pane.record.conversationID } }
+            }) { activate(holder) }
+            return
+        }
+        let root = node(layout)
+        let tab = makeTab(root, tabID: record.id, focused: root.leaves.first { $0.id == record.focused }, name: record.name)
+        tab.showsFiles = record.showsFiles ?? false
+        tabs.append(tab)
+        activate(tab)
+        saveSessions()
+    }
+
+    /// A tab of a paired Mac: if it is still open there, its listed sessions open in one tab here, on their cards (`openPeerSession`);
+    /// if it closed there, each Claude session it held is resumed there, as Recent resumes one, into one tab here. Until the host
+    /// reopens whole tabs (option 02) the sessions come back in this Mac's own layout.
+    private func reopenOnPeer(_ record: TabRecord, on host: String) {
+        let listed = Set(listedSessions(on: host).filter { Self.tabID(of: $0) == record.id }.map(\.session))
+        if !listed.isEmpty {
+            for row in peerOpenRows where Zmx.sameID(row.peer.id, host) && listed.contains(row.info.session) { openPeerSession(row) }
+            return
+        }
+        var tab: ClaudeTab?
+        for held in record.claudeRecords {
+            let before = tabs.count
+            resumeOnPeer(conversation: held.conversationID, on: host, folder: held.directory, title: held.title, agent: held.agent, into: tab)
+            if tab == nil, tabs.count > before { tab = tabs.last }
+        }
+    }
+
+    /// The Mac a Completed tab still runs on, when it is open there.
+    func stillOpenOn(_ record: TabRecord) -> String? {
+        guard let host = record.host, listedTabIDs(on: host).contains(record.id) else { return nil }
         return PeerManager.shared.name(of: host)
     }
 
@@ -2393,12 +2573,26 @@ final class LauncherModel: ObservableObject {
         outline.close()
     }
 
-    /// ↩ on a board card: the pane's tab, with focus on that pane.
+    /// A pane's tab, with focus on that pane.
     func showPane(_ id: UUID) {
         guard let tab = tabs.first(where: { $0.sessions.contains { $0.id == id } }),
               let pane = tab.sessions.first(where: { $0.id == id }) else { return }
         activate(tab)
         tab.focus(pane)
+    }
+
+    /// ↩ on a board card: the tab, with focus on `pane` when it has one of that id (the card's most urgent session).
+    func showTab(_ id: UUID, focusing pane: UUID? = nil) {
+        guard let tab = tabs.first(where: { $0.tabID == id }) else { return }
+        activate(tab)
+        if let pane, let session = tab.sessions.first(where: { $0.id == pane }) { tab.focus(session) }
+    }
+
+    /// ↩ on a card of a paired Mac's tab that no tab here shows: its listed sessions open in one tab here, on their cards, never taking
+    /// control (`openPeerSession`), with `pane` focused when it is one of them.
+    func openPeerTab(_ id: UUID, focusing pane: UUID? = nil) {
+        for row in boardPeerTabs.first(where: { $0.id == id })?.rows ?? [] { openPeerSession(row) }
+        showTab(id, focusing: pane)
     }
 
     /// New text size for every terminal (⌘= / ⌘- / ⌘0 and Settings).
@@ -2435,10 +2629,11 @@ final class LauncherModel: ObservableObject {
         record.origin = peer
         let session = makeSession(record, resuming: false, query: "")
         session.startedFor = peer
-        tabs.append(makeTab(PaneNode(session: session)))
+        let tab = makeTab(PaneNode(session: session))
+        tabs.append(tab)
         saveSessions()
         session.start()
-        return await replyOnceRunning(session, in: folder)
+        return await replyOnceRunning(session, in: folder, tab: tab)
     }
 
     /// A peer's `start` with `resume`: its session isn't running here. The only session this Mac starts
@@ -2451,14 +2646,17 @@ final class LauncherModel: ObservableObject {
     /// permissions, labelled for the peer in control and with the origin its record saved (none for a
     /// session this Mac started itself, so closing it on that peer still releases it).
     private func hostResume(id: UUID, by peer: String, existing: ClaudeSession?) async -> PeerReply {
+        var tab: String?
         func reply(_ resume: PeerResume, status: PeerSessionStatus? = nil, folder: String? = nil) -> PeerReply {
             var reply = PeerReply.success()
             reply.resume = resume
             reply.status = status
             reply.folder = folder
+            reply.tab = tab
             return reply
         }
         guard let existing, existing.isClaude, !existing.isOnPeer else { return reply(.ended) }
+        tab = tabs.first { $0.contains(existing) }.map { $0.tabID.uuidString.lowercased() }
         // It may be running again already (shown here, or a retry that crossed this one): the peer
         // looks at who controls it.
         let status = await Task.detached { Zmx.status(of: id) }.value
@@ -2504,10 +2702,11 @@ final class LauncherModel: ObservableObject {
         recent.removeAll { $0.conversationID == conversation }
         let session = makeSession(record, resuming: true, query: "")
         session.startedFor = peer
-        tabs.append(makeTab(PaneNode(session: session), name: store.tabName(ofSession: conversation)))
+        let tab = makeTab(PaneNode(session: session), name: store.tabName(ofSession: conversation))
+        tabs.append(tab)
         saveSessions()
         session.start()
-        return await replyOnceRunning(session, in: folder)
+        return await replyOnceRunning(session, in: folder, tab: tab)
     }
 
     private static func isFolder(_ path: String) -> Bool {
@@ -2516,14 +2715,15 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Waits for a pane's zmx session to exist, then tells the peer which folder it runs in. A pane
-    /// that closes meanwhile means claude exited as it started.
-    private func replyOnceRunning(_ session: ClaudeSession, in folder: String) async -> PeerReply {
+    /// that closes meanwhile means claude exited as it started. A new tab's id goes in the reply, so the asker's tab takes it (ADR 0032).
+    private func replyOnceRunning(_ session: ClaudeSession, in folder: String, tab: ClaudeTab? = nil) async -> PeerReply {
         let here = PeerIdentity.name ?? "this Mac"
         let id = session.id
         for _ in 0..<80 {
             if await Task.detached(operation: { Zmx.hasSession(id) }).value {
                 var reply = PeerReply.success()
                 reply.folder = folder
+                reply.tab = tab.map { $0.tabID.uuidString.lowercased() }
                 return reply
             }
             try? await Task.sleep(for: .milliseconds(100))
@@ -2566,24 +2766,36 @@ final class LauncherModel: ObservableObject {
         return .success()
     }
 
-    /// A peer's `done` (ADR 0028): marks a session of this Mac, or with `mark` false takes the mark off, and ends nothing.
-    /// A pane here is marked on its record; an ended session moves from its ended card or Recent entry into Completed, or leaves it.
+    /// A peer's `done` (ADR 0032): marks a tab of this Mac, or with `mark` false takes the mark off, and ends nothing.
+    /// An open tab is marked on its saved tab; an ended tab moves from its ended card or Recent's entries into Completed, or leaves it.
     func hostDone(_ request: PeerRequest) async -> PeerReply {
-        guard let name = request.session, let id = Zmx.paneID(name) else { return .failure("Not a Varnick session name") }
+        guard let id = request.tab.flatMap(UUID.init(uuidString:)) else { return .failure("Not a Varnick tab id") }
         let mark = request.mark ?? true
         let inCompleted = completed.contains { $0.id == id && $0.host == nil }
-        if let pane = tabs.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) {
-            if !mark { pane.setDoneMark(nil) } else if pane.record.completedAt == nil { pane.setDoneMark(Date()) }
-        } else if let record = ended.first(where: { $0.id == id && $0.host == nil }) ?? recent.first(where: { $0.id == id && $0.host == nil }) {
+        if let tab = tabs.first(where: { $0.tabID == id && $0.host == nil && !$0.claudeSessions.isEmpty }) {
+            if !mark { tab.completedAt = nil } else if tab.completedAt == nil { tab.completedAt = Date() }
+        } else if let record = ended.first(where: { $0.id == id && $0.host == nil }) ?? recentTab(id) {
             if mark && !inCompleted { addCompleted(record) }
         } else if !inCompleted {
-            return .failure("That session isn't on \(PeerIdentity.name ?? "this Mac")")
+            return .failure("That tab isn't on \(PeerIdentity.name ?? "this Mac")")
         }
-        // Taken off a session that has ended since: it leaves Completed, and stays in Recent.
+        // Taken off a tab that has ended since: it leaves Completed, and its sessions stay in Recent.
         if !mark { completed.removeAll { $0.id == id && $0.host == nil } }
         saveSessions()
         if showingBoard { board.refresh() }
         return .success()
+    }
+
+    /// The sessions Recent holds that ended in the tab `id`, as a tab: a pane closed in a tab that stays open, or in one whose ended
+    /// card is gone. A record saved before Recent named tabs counts as a tab of its own, under its pane id.
+    private func recentTab(_ id: UUID) -> TabRecord? {
+        let sessions = recent.filter { $0.host == nil && ($0.tab ?? $0.id) == id }.map { held -> SessionRecord in
+            var held = held
+            held.tab = nil
+            return held
+        }
+        guard let last = sessions.map(\.lastUsed).max() else { return nil }
+        return TabRecord(id: id, sessions: sessions, lastUsed: last)
     }
 
     /// A peer's `projects`: scanned fresh, off the main actor, since a repo cloned since the prompt

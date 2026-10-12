@@ -341,14 +341,18 @@ final class PanelAccess {
             }
         case "pane":
             let target = try self.target(value, caller: caller)
-            guard model.tabs.contains(where: { $0.sessions.contains { $0.id == target } }) else {
+            opensTab = true
+            // A card's id is its tab's (ADR 0032): the tab comes up with its most urgent session focused. A session's is its pane's.
+            if model.tabs.contains(where: { $0.tabID == target }) {
+                act = { model.showTab(target, focusing: model.board.cards.first { $0.id == target }?.lead.id) }
+            } else if model.tabs.contains(where: { $0.sessions.contains { $0.id == target } }) {
+                act = { model.showPane(target) }
+            } else {
                 if model.board.cards.contains(where: { $0.id == target }) {
-                    throw PanelRefusal.bad("That is a card with no pane open in a tab, so there is no tab to show")
+                    throw PanelRefusal.bad("That is a card with no tab open here, so there is no tab to show")
                 }
                 throw PanelRefusal.gone
             }
-            opensTab = true
-            act = { model.showPane(target) }
         default:
             let name = String(value.lowercased().drop(while: { $0 == "!" }))
             guard let command = LauncherCommand.allCases.first(where: { $0.names.contains(name) }) else {

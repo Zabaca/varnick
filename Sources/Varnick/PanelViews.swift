@@ -86,10 +86,11 @@ extension PanelAccess {
 struct BoardPanelView: PanelAccessView {
     static let name = "board"
     static let readSpec = PanelToolSpec(
-        summary: "Reads the session board: the Claude sessions as cards in Running, Stopped and Completed, each with its id (s1…), title, "
-            + "project, the Mac it runs on when that is another, its turn and how long (\"Working 12m\"), background work, a mark when it "
-            + "waits on the user, its note (\"Controlled on…\"), the problem or option it is linked to, and \"this session\" on the caller's "
-            + "own. With `tab: problems`, the Problems tab's cards instead, by stage. It reads the board as the model holds it, whether the "
+        summary: "Reads the session board: the tabs as cards in Running, Stopped and Completed, each with its id (s1…), title, "
+            + "project, the Mac it runs on when that is another, the turn and how long (\"Working 12m\") of its most urgent session, a mark "
+            + "when that waits on the user, its note (\"Controlled on…\"), and the problem or option it is linked to. Under each card its "
+            + "Claude sessions, each with its own id (the one `pane_read` takes), title, turn, background work, mark and note, and \"this "
+            + "session\" on the caller's own. With `tab: problems`, the Problems tab's cards instead, by stage. It reads the board as the model holds it, whether the "
             + "board is showing or not, and asks no paired Mac: those cards are as last fetched. The titles and notes go to Anthropic with "
             + "this session.",
         properties: ["tab": ["type": "string", "enum": ["sessions", "problems"],
@@ -113,8 +114,8 @@ struct BoardPanelView: PanelAccessView {
         guard key.modifiers.isEmpty else { return nil }
         if key.isReturn { return model.board.returnRefusal() }
         switch Int(key.keyCode) {
-        case kVK_ANSI_D: return "D marks the selected session done, which ends it"
-        case kVK_ANSI_R: return "R restarts the selected session"
+        case kVK_ANSI_D: return "D marks the selected tab done, which closes its panes"
+        case kVK_ANSI_R: return "R restarts the selected tab's session"
         default: return nil
         }
     }
@@ -127,13 +128,17 @@ struct BoardPanelView: PanelAccessView {
         for column in SessionBoard.Column.allCases {
             let cards = model.board.cards(in: column)
             lines.append("\(column.title) (\(cards.count))" + (cards.isEmpty ? ": none" : ":"))
-            for card in cards { lines.append("  " + line(card, caller: caller, now: now)) }
+            for card in cards {
+                lines.append("  " + line(card, caller: caller, now: now))
+                // A card is a tab's: its sessions are listed under it, each with the id `pane_read` takes.
+                for session in card.lines { lines.append("    " + sessionLine(session, of: card, caller: caller, now: now)) }
+            }
         }
         return lines.joined(separator: "\n")
     }
 
     @MainActor private func line(_ card: SessionBoard.Card, caller: UUID, now: Date) -> String {
-        var parts = ["\(PanelAccess.shared.id(for: card.id, caller: caller)) \"\(PanelAccess.oneLine(card.title))\""]
+        var parts = ["\(PanelAccess.shared.id(for: card.id, caller: caller)) \"\(PanelAccess.oneLine(card.title))\" (tab, \(card.lines.count) session\(card.lines.count == 1 ? "" : "s"))"]
         parts.append(PanelAccess.oneLine(card.pills.project ?? card.folder, limit: 60))
         if card.foreign, let host = card.hostName { parts.append("on " + PanelAccess.oneLine(host, limit: 40)) }
         parts.append(card.turnText(at: now))
@@ -142,7 +147,17 @@ struct BoardPanelView: PanelAccessView {
         if let mark = card.mark { parts.append(mark) }
         if let note = card.note { parts.append("note: " + PanelAccess.oneLine(note)) }
         if let work = card.workText { parts.append("work: " + work) }
-        if card.id == caller { parts.append("this session") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// One session of a card: its pane's id, title and turn, and what the caller needs to know of it.
+    @MainActor private func sessionLine(_ session: SessionBoard.Card.Line, of card: SessionBoard.Card, caller: UUID, now: Date) -> String {
+        var parts = ["\(PanelAccess.shared.id(for: session.id, caller: caller)) \"\(PanelAccess.oneLine(session.title))\""]
+        if card.closed == nil { parts.append(session.turnText(at: now)) }
+        if card.closed == nil, !session.background.isEmpty, session.turn != .background { parts.append(session.background.text) }
+        if card.closed == nil, let mark = session.mark { parts.append(mark) }
+        if let note = session.note { parts.append("note: " + PanelAccess.oneLine(note)) }
+        if session.id == caller { parts.append("this session") }
         return parts.joined(separator: " · ")
     }
 
@@ -181,7 +196,7 @@ struct PanePanelView: PanelAccessView {
             + "its screen shows now, trailing blanks and empty lines cut, never its scrollback. A pane that shows a card because another "
             + "Mac or a device controls its session gives the screen the card holds, with the time of the last one when it is no longer "
             + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only. "
-            + "The id is a pane's or a board card's from panel or board_read. The screen holds whatever is on it, a session's latest "
+            + "The id is a pane's from panel or board_read (a card's own id is its tab's, which has no screen). The screen holds whatever is on it, a session's latest "
             + "exchange or a shell's output, secrets included, and goes to Anthropic with this session.",
         properties: ["id": ["type": "string", "description": "A pane's id from panel or board_read (s1…)."]],
         required: ["id"])
@@ -214,10 +229,10 @@ struct PanePanelView: PanelAccessView {
     /// An id that is no pane in a tab: a card of the board with no pane here, which has no screen on this Mac.
     @MainActor private func card(_ target: UUID, id: String) throws -> String {
         guard let card = model.board.cards.first(where: { $0.id == target }) else { throw PanelRefusal.gone }
-        let header = "\(id) Claude \"\(PanelAccess.oneLine(card.title))\""
+        let header = "\(id) tab \"\(PanelAccess.oneLine(card.title))\""
         return header + (card.hasNoPane
-            ? "\nA session of a paired Mac with no pane here: its screen is not on this Mac. Opening its card shows it."
-            : "\nNo pane of it is open: it has no screen.")
+            ? "\nA tab of a paired Mac with no tab here: its screens are not on this Mac. Opening its card shows them."
+            : "\nA tab has no screen of its own: read one of its sessions by the id board_read lists under the card.")
     }
 
     /// What a pane showing a card holds: its live screen, or its last one with the time it stopped, else that it has none.

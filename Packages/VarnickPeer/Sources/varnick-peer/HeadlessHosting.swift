@@ -69,6 +69,7 @@ extension HeadlessPeerHost {
             follow(&statuses)
             reply.resume = .running
             reply.status = statuses[Zmx.sessionName(uuid)]
+            reply.tab = id
         case .closing:
             reply.resume = .closing
         case .ended:
@@ -112,10 +113,6 @@ extension HeadlessPeerHost {
         do {
             switch try state.add(record, refusing: { records in
                 HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: StateFolder.conversations(of: records))
-            }, alongside: { records in
-                // Open again, so its ended records lose their mark, as a Mac's Completed drops an open conversation (ADR 0028).
-                let conversations = StateFolder.conversations(of: records)
-                for index in records.indices where conversations[records[index].id] == conversation { records[index].done = nil }
             }) {
             case .exists: return taken
             case .refused: return .failure("That session is open on \(name): take it over from the list")
@@ -157,17 +154,18 @@ extension HeadlessPeerHost {
 
     // MARK: done
 
-    /// `done`: sets the record's done date, or with `mark` false clears it, and ends nothing. A Mac host's equivalent is
+    /// `done`: sets the done date of the tab, or with `mark` false clears it, and ends nothing. Each record is a tab of one pane under
+    /// the record's id (ADR 0032), so the record's date is the tab's mark and nothing changes on disk. A Mac host's equivalent is
     /// `LauncherModel.hostDone`. A mark already there keeps its date.
     private func done(_ request: PeerRequest) -> PeerReply {
-        guard let session = request.session, let id = Zmx.paneID(session) else { return .failure("Not a Varnick session name") }
+        guard let tab = request.tab, let id = UUID(uuidString: tab) else { return .failure("Not a Varnick tab id") }
         state.reconcile()
         let mark = request.mark ?? true
         do {
             let found = try state.update(id.uuidString.lowercased()) { record in
                 if !mark { record.done = nil } else if record.done == nil { record.done = Date() }
             }
-            return found ? .success() : .failure("That session isn't on \(name)")
+            return found ? .success() : .failure("That tab isn't on \(name)")
         } catch {
             return stateFailure(error)
         }
@@ -229,7 +227,7 @@ extension HeadlessPeerHost {
             return PeerOpenSession(session: session, title: title, folder: folder, agent: record.agent,
                                    conversation: conversation == record.id ? nil : conversation, control: status.control, clients: status.clients,
                                    turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: uuid),
-                                   doneAge: record.done.map { Int(max(0, now.timeIntervalSince($0))) })
+                                   doneAge: record.done.map { Int(max(0, now.timeIntervalSince($0))) }, tab: record.id)
         }
         return reply
     }
@@ -256,7 +254,7 @@ extension HeadlessPeerHost {
             return PeerRecentSession(conversation: conversation, title: title, folder: folder, agent: record.agent,
                                      last: Int64((record.ended ?? Date()).timeIntervalSince1970),
                                      session: UUID(uuidString: record.id).map(Zmx.sessionName),
-                                     done: record.done.map { Int64($0.timeIntervalSince1970) })
+                                     done: record.done.map { Int64($0.timeIntervalSince1970) }, tab: record.id)
         }
         return reply
     }

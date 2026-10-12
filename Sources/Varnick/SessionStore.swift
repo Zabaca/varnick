@@ -57,11 +57,16 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// a peer asked for follows the peer's. Nil follows the setting.
     var skipPermissions: Bool?
 
-    /// When it was marked done: on a Completed copy, by Done or its host; on a Claude pane here, by another Mac (ADR 0028). Optional so older files load.
+    /// Only read by the migration of a file saved before marks were the tab's (ADR 0032): the mark of a Completed copy, or of a Claude
+    /// pane here that another Mac marked. `SessionStore.State` turns it into a tab's mark and never writes it again. Optional so older files load.
     var completedAt: Date?
 
-    /// On a Completed copy of another Mac's session: its host holds the mark too. Without it the mark is this Mac's only. Optional so older files load.
+    /// Only read by the same migration: a Completed copy of another Mac's session whose host holds the mark too. Optional so older files load.
     var hostHoldsDone: Bool?
+
+    /// The tab it was in when its pane closed or moved to another conversation, kept on Recent's copies so a Mac's Recent can name the tab
+    /// the session ended in (protocol 21). Nil on a record saved before that: the session then counts as a tab of its own, with its own id.
+    var tab: UUID?
 
     /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
     /// their chips. On a record with a `host` they are that host's last report, with `group/name` as the repository (`PeerWork`). Optional so
@@ -142,6 +147,73 @@ struct TitleRecord: Codable, Equatable {
     var title: String?
 }
 
+/// A tab that is not open: marked done (Completed), closed without Done (an ended card), or another machine's tab this Mac listed
+/// (remembered). It holds the tab as it was, so ↩ reopens it whole (ADR 0032). Its id is the tab's, which another machine's tab keeps.
+struct TabRecord: Codable, Identifiable, Equatable {
+    let id: UUID
+    var layout: PaneLayout
+    var focused: UUID?
+    var name: String?
+    var showsFiles: Bool?
+    /// When it was marked done, by Done or its host; nil on an ended or remembered tab.
+    var completedAt: Date?
+    /// On a Completed tab of another machine: its host holds the mark too. Without it the mark is this Mac's only.
+    var hostHoldsDone: Bool?
+    /// When it closed (an ended tab), or was last listed by its host (a remembered one).
+    var lastUsed: Date
+
+    init(id: UUID, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, completedAt: Date? = nil,
+         hostHoldsDone: Bool? = nil, lastUsed: Date) {
+        self.id = id
+        self.layout = layout
+        self.focused = focused
+        self.name = name
+        self.showsFiles = showsFiles
+        self.completedAt = completedAt
+        self.hostHoldsDone = hostHoldsDone
+        self.lastUsed = lastUsed
+    }
+
+    /// A tab saved as it was open, closed now.
+    init(saved: SessionStore.SavedTab, completedAt: Date? = nil, lastUsed: Date = Date()) {
+        self.init(id: saved.resolvedID, layout: saved.layout, focused: saved.focused, name: saved.name, showsFiles: saved.showsFiles,
+                  completedAt: completedAt, lastUsed: lastUsed)
+    }
+
+    /// Another machine's tab: the sessions it lists side by side, in this Mac's own layout.
+    init(id: UUID, sessions: [SessionRecord], name: String? = nil, completedAt: Date? = nil, hostHoldsDone: Bool? = nil, lastUsed: Date) {
+        self.init(id: id, layout: PaneLayout.sideBySide(sessions), focused: sessions.first?.id, name: name, completedAt: completedAt,
+                  hostHoldsDone: hostHoldsDone, lastUsed: lastUsed)
+    }
+
+    /// A record of the old keys, now the one pane of a tab with the record's id; its mark moves to the tab.
+    init(migrating record: SessionRecord, completedAt: Date? = nil) {
+        var session = record
+        session.completedAt = nil
+        session.hostHoldsDone = nil
+        self.init(id: record.id, layout: .leaf(session), focused: record.id, completedAt: completedAt, hostHoldsDone: record.hostHoldsDone,
+                  lastUsed: record.lastUsed)
+    }
+
+    var records: [SessionRecord] { layout.records }
+    var claudeRecords: [SessionRecord] { records.filter(\.isClaude) }
+
+    /// The machine its Claude panes run on; nil is this Mac. A tab is one machine's (`SavedTab.splitByMachine`).
+    var host: String? { claudeRecords.first?.host }
+
+    /// Worth listing: a Claude session of it can be resumed.
+    var resumable: Bool { claudeRecords.contains(where: \.resumable) }
+
+    /// The record of the pane it focused if that is a Claude pane, else its first Claude pane: what the card is named after.
+    var leading: SessionRecord? { claudeRecords.first { $0.id == focused } ?? claudeRecords.first }
+
+    /// What its card is called: its name, else its leading session's title.
+    var title: String { name ?? leading?.listTitle ?? "Untitled session" }
+
+    /// The tab as a saved tab, its panes' marks gone.
+    var saved: SessionStore.SavedTab { SessionStore.SavedTab(id: id, layout: layout, focused: focused, name: name, showsFiles: showsFiles) }
+}
+
 /// The names the user gave sessions with ⌘⇧R, for search (`HistorySync.syncNames`): a tab's name names the conversation of its
 /// one pane, as on the board.
 enum SessionNames {
@@ -167,13 +239,69 @@ enum SessionNames {
 /// sessions stay listed as recent. Saved on every change, since `make run` stops the
 /// app with a signal and nothing runs at quit.
 struct SessionStore {
-    struct SavedTab: Codable {
+    struct SavedTab: Codable, Equatable {
+        /// The tab's id, kept across launches (ADR 0032). Optional so older files load: a tab saved without one takes its first pane's
+        /// id (`resolvedID`). The app and the relay both apply that rule through `State.openTabs`, so a relay reading a file the app
+        /// hasn't saved since gives the same ids.
+        var id: UUID?
         var layout: PaneLayout
         var focused: UUID?
         /// Name set with ⌘⇧R; nil follows the focused pane's title.
         var name: String?
         /// File tree shown (⌘⇧F).
         var showsFiles: Bool?
+        /// When another machine marked the tab done while it is open here. Optional so older files load.
+        var done: Date?
+
+        init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil) {
+            self.id = id
+            self.layout = layout
+            self.focused = focused
+            self.name = name
+            self.showsFiles = showsFiles
+            self.done = done
+        }
+
+        /// A layout always holds a record.
+        var resolvedID: UUID { id ?? layout.records[0].id }
+
+        /// The tab as `State.openTabs` hands it out: its id set, and a mark migrated from its panes' records.
+        fileprivate func migrated() -> SavedTab {
+            var tab = self
+            tab.id = resolvedID
+            if tab.done == nil { tab.done = Self.markFromPanes(layout) }
+            tab.layout = layout.mapping { record in
+                record.completedAt = nil
+                record.hostHoldsDone = nil
+            }
+            return tab
+        }
+
+        /// A mark on the panes of a tab saved before marks were the tab's: the tab is marked only if every one of its Claude panes that
+        /// runs here is, at the newest date; otherwise the marks are dropped.
+        private static func markFromPanes(_ layout: PaneLayout) -> Date? {
+            let claude = layout.records.filter { $0.isClaude && $0.host == nil }
+            let dates = claude.compactMap(\.completedAt)
+            return !claude.isEmpty && dates.count == claude.count ? dates.max() : nil
+        }
+
+        /// A saved tab with panes on more than one machine (made by a split of a pane on another machine, before such splits were
+        /// refused) is one tab per machine, in place: the layout pruned per machine, the first piece keeping the tab's id, name and
+        /// file tree, and each other piece taking its first pane's id.
+        fileprivate func splitByMachine() -> [SavedTab] {
+            var machines: [String?] = []
+            for record in layout.records where !machines.contains(record.host) { machines.append(record.host) }
+            guard machines.count > 1 else { return [self] }
+            var pieces: [SavedTab] = []
+            for machine in machines {
+                guard let pruned = layout.pruned({ $0.host == machine }) else { continue }
+                let first = pieces.isEmpty
+                pieces.append(SavedTab(id: first ? resolvedID : pruned.records[0].id, layout: pruned,
+                                       focused: pruned.records.contains { $0.id == focused } ? focused : nil,
+                                       name: first ? name : nil, showsFiles: first ? showsFiles : nil, done: first ? done : nil))
+            }
+            return pieces
+        }
     }
 
     struct State: Codable {
@@ -181,17 +309,38 @@ struct SessionStore {
         /// Before splits: one session per tab.
         var open: [SessionRecord]?
         var recent: [SessionRecord] = []
-        /// Sessions marked done on the board, newest first. Optional so older files load.
+        /// Before marks were the tab's (ADR 0032): sessions marked done, sessions that ended without Done, and paired Macs' sessions
+        /// listed. Read once, as one-pane tabs (`completedList`, `endedList`, `rememberedList`), and saved absent. Their type stays:
+        /// a changed one would make the whole file unreadable.
         var completed: [SessionRecord]?
-        /// Sessions that ended without Done, kept in Stopped until marked done or opened (newest first, no cap).
-        /// Optional so older files load; nil when empty.
         var ended: [SessionRecord]?
-        /// Paired Macs' open sessions this Mac listed, with `lastUsed` the time of the last listing, so an end
-        /// found while this Varnick was off is still found. Optional so older files load; nil when empty.
         var remembered: [SessionRecord]?
+        /// Tabs marked done on the board, newest first. Optional so older files load.
+        var completedTabs: [TabRecord]?
+        /// Tabs that closed without Done holding a Claude pane, kept in Stopped until marked done or opened (newest first, no cap).
+        /// Optional so older files load; nil when empty.
+        var endedTabs: [TabRecord]?
+        /// Paired Macs' tabs this Mac listed, with `lastUsed` the time of the last listing, so an end found while this Varnick was off
+        /// is still found. Optional so older files load; nil when empty.
+        var rememberedTabs: [TabRecord]?
 
+        /// The open tabs, each with its id, with a mark migrated from its panes, and split by machine (see `SavedTab`).
         var openTabs: [SavedTab] {
-            tabs ?? (open ?? []).map { SavedTab(layout: .leaf($0), focused: $0.id) }
+            let saved = tabs ?? (open ?? []).map { SavedTab(layout: .leaf($0), focused: $0.id) }
+            return saved.flatMap { $0.splitByMachine() }.map { $0.migrated() }
+        }
+
+        /// Completed, the ended cards and the remembered tabs, the old keys' records among them as one-pane tabs under the record's id.
+        var completedList: [TabRecord] {
+            Self.merge(completedTabs, (completed ?? []).map { TabRecord(migrating: $0, completedAt: $0.completedAt ?? $0.lastUsed) })
+        }
+        var endedList: [TabRecord] { Self.merge(endedTabs, (ended ?? []).map { TabRecord(migrating: $0) }) }
+        var rememberedList: [TabRecord] { Self.merge(rememberedTabs, (remembered ?? []).map { TabRecord(migrating: $0) }) }
+
+        /// The new key's tabs, then the old key's, less any with an id already there.
+        private static func merge(_ new: [TabRecord]?, _ old: [TabRecord]) -> [TabRecord] {
+            var seen: Set<UUID> = []
+            return ((new ?? []) + old).filter { seen.insert($0.id).inserted }
         }
     }
 

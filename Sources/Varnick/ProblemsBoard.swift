@@ -118,7 +118,7 @@ final class ProblemsBoard: ObservableObject {
 
     /// The Problems tab's keys: arrows move between cards (and, in a card showing its chips, between them), ↩ opens a card or a
     /// selected chip's session, esc collapses the card whose chip is selected and otherwise closes the board. D, E, R and the End
-    /// session, Mark session done and Restart session keys are taken and do nothing; anything else goes on.
+    /// session, Mark tab done and Restart session keys are taken and do nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
         switch Int(event.keyCode) {

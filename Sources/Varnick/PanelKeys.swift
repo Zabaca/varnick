@@ -177,7 +177,7 @@ enum PanelKeys {
     // MARK: What is never pressed
 
     /// Why a session may not press the key in any view, nil when the view decides: what no state could make safe. Checked for every key of a
-    /// call before anything is sent. The monitor runs before the shortcuts, so each of these would act: the End session, Mark session done
+    /// call before anything is sent. The monitor runs before the shortcuts, so each of these would act: the End session, Mark tab done
     /// and Restart session keys as bound; Varnick's own anywhere-shortcuts (`ScreenKeys.refusal`), which include Listening's; the keys that
     /// start a terminal or open Settings, whose switches govern sessions; ⌘Q; and paste, which would put the user's clipboard where the
     /// session can read it (the Outline, then `outline_read`). ⌥⌘V is the Outline's Place mirror and is allowed. The shortcuts are matched as the
@@ -185,7 +185,7 @@ enum PanelKeys {
     @MainActor static func neverSent(_ key: PanelKey) -> String? {
         if let why = ScreenKeys.refusal(of: key.combo) { return why }
         let refused: [ShortcutAction: String] = [
-            .endPane: "ends a session", .doneSession: "marks a session done", .restartSession: "restarts a session",
+            .endPane: "ends a session", .doneSession: "marks a tab done", .restartSession: "restarts a session",
             .newTerminalTab: "starts a terminal", .settings: "opens Settings, whose switches govern sessions",
             .paste: "pastes the user's clipboard, which a session could then read",
         ]
