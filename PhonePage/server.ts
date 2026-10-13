@@ -243,8 +243,9 @@ async function main(): Promise<void> {
     const certFiles = certificateFiles(folder);
     // The Macs this host lists, by tailnet name: asked of the relay as the host itself. One ask is shared by every request that comes while it runs,
     // and its answer is kept for a minute, a failure for ten seconds, like the other hosts' links.
-    let peersCache: { at: number; ttl: number; names: Set<string> } | null = null;
-    let peersFetch: Promise<Set<string>> | null = null;
+    // A fetch that fails keeps the last good set, and with none yet the answer is null: a paired Mac is asked to come back, not cut off.
+    let peersCache: { at: number; ttl: number; names: Set<string> | null } | null = null;
+    let peersFetch: Promise<Set<string> | null> | null = null;
     const world: ProxyWorld = {
       tabs: () => relay.ask("tabs", ownID, {}, undefined, "proxy"),
       // The saved tabs' date and size: a look that finds them as they were doesn't run the relay. A host that gives no file is asked only every few minutes.
@@ -282,7 +283,7 @@ async function main(): Promise<void> {
             const [listed, statusNow] = await Promise.all([relay.ask("hosts", ownID, {}, undefined, "proxy-hosts"), capture([config.tailscale, "status", "--json"], 10_000)]);
             const nodes = statusNow ? parseNodeNames(statusNow) : new Set<string>();
             const ok = listed.ok && nodes.size > 0;
-            const names = ok ? new Set(hostNodes(listed.reply, self!.dnsName, nodes).map((node) => node.dns)) : new Set<string>();
+            const names = ok ? new Set(hostNodes(listed.reply, self!.dnsName, nodes).map((node) => node.dns)) : (peersCache?.names ?? null);
             peersCache = { at: Date.now(), ttl: ok ? linksLifetime : linksFailureLifetime, names };
             return names;
           } finally {

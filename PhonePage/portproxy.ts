@@ -32,8 +32,8 @@ export interface ProxyWorld {
   whois(address: string): Promise<WhoisNode | null>;
   /** The devices the host lists, read when asked. */
   devices(): Device[];
-  /** The tailnet names of the Macs the host lists as peers. */
-  peers(): Promise<ReadonlySet<string>>;
+  /** The tailnet names of the Macs the host lists as peers, or null when they can't be told (never read yet): a caller is then neither admitted nor refused. */
+  peers(): Promise<ReadonlySet<string> | null>;
   log(line: string): void;
 }
 
@@ -91,8 +91,15 @@ interface Listener {
   servers: Bun.Server<ProxiedSocket>[];
   sockets: Slots;
   requests: Slots;
-  /** The sockets open now, so a caller no longer admitted is cut off. */
+  /** The sockets open now, those of servers a certificate swap has since replaced too, so they end with the port or with their caller's admission. */
   open: Set<ProxiedWebSocket>;
+  /** The responses being streamed now (an event stream, a long poll), cut off the same way. */
+  streams: Set<Stream>;
+}
+
+interface Stream {
+  address: string;
+  abort: () => void;
 }
 
 interface ProxiedSocket {
@@ -304,8 +311,9 @@ export class PortProxy {
         listener.servers = [];
       }
       if (listener.servers.length === 0) {
-        // Nothing is serving it: not held, and the next look opens it.
+        // Nothing is serving it: not held, and the next look opens it. What was open on the old servers goes with it.
         this.listeners.delete(listener.port);
+        this.retire(listener);
         this.world.log(`proxy close :${listener.port} (certificate swap failed)`);
       }
     }
@@ -325,7 +333,7 @@ export class PortProxy {
   private open(port: number, addresses: string[]): string | null {
     if (addresses.length === 0) return notes.noAddress;
     const listener: Listener = {
-      port, addresses: [], servers: [], sockets: new Slots(websocketsInAll, websocketsPerCaller), requests: new Slots(requestsInAll, requestsPerCaller), open: new Set(),
+      port, addresses: [], servers: [], sockets: new Slots(websocketsInAll, websocketsPerCaller), requests: new Slots(requestsInAll, requestsPerCaller), open: new Set(), streams: new Set(),
     };
     let code = "";
     for (const address of addresses) {
@@ -372,22 +380,31 @@ export class PortProxy {
     if (!listener) return;
     this.listeners.delete(port);
     for (const server of listener.servers) void server.stop(!gently);
+    // A gentle stop leaves the connections open, and one made before a certificate swap belongs to a server this list no longer holds.
+    this.retire(listener);
     this.world.log(`proxy close :${port} (${why.length > 60 ? "see status" : why})`);
   }
 
-  /** Sockets of a caller the host no longer admits (a device removed, a Mac unpaired) are closed. A caller whose whois failed this time stays. */
+  /** Ends every socket and stream open on a port that is closing or dropped. */
+  private retire(listener: Listener): void {
+    for (const ws of [...listener.open]) ws.close(1001, "port closed");
+    for (const stream of [...listener.streams]) stream.abort();
+  }
+
+  /** Sockets and streams of a caller the host no longer admits (a device removed, a Mac unpaired) are ended. A caller who can't be told this time stays. */
   private async cutOffRemoved(): Promise<void> {
     const verdicts = new Map<string, Admission>();
-    for (const listener of this.listeners.values()) {
-      for (const ws of [...listener.open]) {
-        const address = ws.data.address;
-        let verdict = verdicts.get(address);
-        if (!verdict) {
-          verdict = await this.admit(address);
-          verdicts.set(address, verdict);
-        }
-        if (!verdict.admitted && verdict.reason !== "unknown") ws.close(1008, "not admitted");
+    const removed = async (address: string) => {
+      let verdict = verdicts.get(address);
+      if (!verdict) {
+        verdict = await this.admit(address);
+        verdicts.set(address, verdict);
       }
+      return !verdict.admitted && verdict.reason !== "unknown";
+    };
+    for (const listener of this.listeners.values()) {
+      for (const ws of [...listener.open]) if (await removed(ws.data.address)) ws.close(1008, "not admitted");
+      for (const stream of [...listener.streams]) if (await removed(stream.address)) stream.abort();
     }
   }
 
@@ -405,7 +422,8 @@ export class PortProxy {
     const address = server.requestIP(request)?.address;
     if (!address) return this.refusal(port, 403, "Not admitted");
     const admission = await this.admit(address);
-    if (!admission.admitted) return this.refusal(port, 403, "Not admitted");
+    // A caller who can't be told (the Macs the host lists couldn't be read, the whois slots were all busy) is asked to come back, not refused.
+    if (!admission.admitted) return admission.reason === "unknown" ? this.refusal(port, 503, "Try again") : this.refusal(port, 403, "Not admitted");
     const origin = proxiedOrigin(this.options.dnsName, port);
     if (!checkProxyFetch(request.method, request.headers, origin)) return this.refusal(port, 403, "cross-site");
 
@@ -415,7 +433,7 @@ export class PortProxy {
 
     if (!listener.requests.acquire(admission.key)) return this.refusal(port, 429, "Too many requests");
     try {
-      return await this.forward(listener, request, target, origin);
+      return await this.forward(listener, request, target, origin, address);
     } finally {
       listener.requests.release(admission.key);
     }
@@ -427,24 +445,37 @@ export class PortProxy {
     const devices = this.world.devices();
     const first = decideProxyCaller(node, this.options.userID, devices, new Set());
     if (first.admitted || first.reason !== "not-listed") return first;
-    return decideProxyCaller(node, this.options.userID, devices, await this.world.peers());
+    const peers = await this.world.peers();
+    return peers === null ? { admitted: false, reason: "unknown" } : decideProxyCaller(node, this.options.userID, devices, peers);
   }
 
-  private async forward(listener: Listener, request: Request, target: string, origin: string): Promise<Response> {
+  private async forward(listener: Listener, request: Request, target: string, origin: string, address: string): Promise<Response> {
     const { port } = listener;
     const headers = upstreamHeaders(request.headers, port, origin);
     const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
-    // A body can be sent once: a request that has one tries the first address only.
-    for (const host of hasBody ? this.upstreams.slice(0, 1) : this.upstreams) {
-      try {
-        const upstream = await fetch(`http://${host}:${port}${target}`, {
-          method: request.method, headers, body: hasBody ? request.body : undefined, redirect: "manual", decompress: false, signal: request.signal,
-        } as RequestInit);
-        const body = request.method === "HEAD" || upstream.status === 204 || upstream.status === 304 ? null : upstream.body;
-        return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers: downstreamHeaders(upstream.headers, port, origin) });
-      } catch {
-        if (request.signal.aborted) return new Response(null, { status: 499 });
+    // The response counts as open until its body ends, so a caller removed meanwhile is cut off mid-stream.
+    const cut = new AbortController();
+    const stream: Stream = { address, abort: () => cut.abort() };
+    listener.streams.add(stream);
+    const done = () => { listener.streams.delete(stream); };
+    const signal = AbortSignal.any([request.signal, cut.signal]);
+    let handedOver = false;
+    try {
+      // A body can be sent once: a request that has one tries the first address only.
+      for (const host of hasBody ? this.upstreams.slice(0, 1) : this.upstreams) {
+        try {
+          const upstream = await fetch(`http://${host}:${port}${target}`, {
+            method: request.method, headers, body: hasBody ? request.body : undefined, redirect: "manual", decompress: false, signal,
+          } as RequestInit);
+          const body = request.method === "HEAD" || upstream.status === 204 || upstream.status === 304 ? null : upstream.body;
+          handedOver = body !== null;
+          return new Response(body && ending(body, done), { status: upstream.status, statusText: upstream.statusText, headers: downstreamHeaders(upstream.headers, port, origin) });
+        } catch {
+          if (request.signal.aborted) return new Response(null, { status: 499 });
+        }
       }
+    } finally {
+      if (!handedOver) done();
     }
     // Nothing answered: if the server has gone, the port goes with it at once, so a restart doesn't find it held.
     if (!(await this.answersOnLocalhost(port))) this.close(port, notes.down, true);
@@ -499,6 +530,31 @@ export class PortProxy {
       this.world.log("proxy status: couldn't be written");
     }
   }
+}
+
+/** The same body, with `done` called once it has ended, failed or been given up on. */
+function ending(body: ReadableStream<Uint8Array>, done: () => void): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          done();
+          controller.close();
+        } else {
+          controller.enqueue(next.value);
+        }
+      } catch (error) {
+        done();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      done();
+      return reader.cancel(reason);
+    },
+  });
 }
 
 /** Opens a socket to the server, or null when it doesn't open in time. */

@@ -44,6 +44,7 @@ async function rig(change: {
         return server.upgrade(request, wanted ? { headers: { "sec-websocket-protocol": wanted } } : undefined) ? undefined : new Response("no", { status: 400 });
       }
       if (url.pathname === "/redirect") return new Response(null, { status: 302, headers: { location: `http://localhost:${backend.port}/landing?x=1` } });
+      if (url.pathname === "/forever") return new Response(new ReadableStream({ start(c) { const tick = setInterval(() => { try { c.enqueue(new TextEncoder().encode("tick\n")); } catch { clearInterval(tick); } }, 30); } }), { headers: { "content-type": "text/event-stream" } });
       if (url.pathname === "/stream") return new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("a")); setTimeout(() => { c.enqueue(new TextEncoder().encode("b")); c.close(); }, 50); } }));
       return Response.json({ host: request.headers.get("host"), origin: request.headers.get("origin"), method: request.method, path: url.pathname + url.search, body: await request.text() });
     },
@@ -159,10 +160,17 @@ describe.skipIf(!ipv6)("who and what is refused", () => {
     expect((await ask(r, "/")).status).toBe(403);
   });
 
-  test("a failed whois gets nothing", async () => {
+  test("a failed whois is asked to come back, not refused", async () => {
     const r = await rig({ whois: null });
     await r.proxy.look();
-    expect((await ask(r, "/")).status).toBe(403);
+    expect((await ask(r, "/")).status).toBe(503);
+  });
+
+  test("with the paired Macs never read, a Mac that isn't a device is asked to come back, and one whose socket is open stays", async () => {
+    const r = await rig({ whois: { ...PHONE, stableID: "nMAC", dnsName: "other-mac.example.ts.net" } });
+    r.world.peers = async () => null;
+    await r.proxy.look();
+    expect((await ask(r, "/")).status).toBe(503);
   });
 
   test("a Mac the host lists as a peer is let in", async () => {
@@ -219,6 +227,23 @@ describe.skipIf(!ipv6)("what stays open", () => {
     await r.proxy.look();
     expect(await ended).toBe(1008);
     expect(r.proxy.heldPorts()).toEqual([r.port]);
+  });
+
+  test("a response being streamed to a caller no longer admitted is cut off", async () => {
+    const r = await rig();
+    await r.proxy.look();
+    const ended = new Promise<string>((resolve) => {
+      const sent = httpRequest({ host: "::1", port: r.port, path: "/forever", headers: { host: r.host, ...SAME_ORIGIN } }, (response) => {
+        response.once("data", () => { r.world.devices = () => []; void r.proxy.look(); });
+        response.on("error", () => resolve("error"));
+        response.on("aborted", () => resolve("aborted"));
+        response.on("close", () => resolve("close"));
+      });
+      sent.on("error", () => resolve("error"));
+      sent.end();
+      setTimeout(() => resolve("still open"), 3000);
+    });
+    expect(await ended).not.toBe("still open");
   });
 
   test("a caller whose whois fails for a moment is not cut off", async () => {
@@ -428,6 +453,22 @@ describe.skipIf(!ipv6 || !openssl)("the certificate", () => {
     expect(Math.abs(Date.now() / 1000 - r.status().at)).toBeLessThan(5);
     release();
     await looking;
+  });
+
+  test("a socket opened before a certificate swap ends with its port", async () => {
+    const first = selfSigned(), second = selfSigned();
+    let next = first;
+    const r = await rig({ tls: true, certificate: async () => ({ ok: true, cert: next.cert, key: next.key }) });
+    await r.proxy.look();
+    const socket = new WebSocket(`wss://[::1]:${r.port}/ws`, { tls: { rejectUnauthorized: false }, headers: { host: r.host, origin: `https://${NAME}:${r.port}`, ...SAME_ORIGIN } } as unknown as string[]);
+    await new Promise<void>((resolve, reject) => { socket.onmessage = () => resolve(); socket.onerror = () => reject(new Error("socket error")); setTimeout(() => reject(new Error("no message")), 3000); });
+    next = second;
+    await r.proxy.renewCertificate();
+    const ended = new Promise<number>((resolve) => { socket.onclose = (event) => resolve(event.code); setTimeout(() => resolve(-1), 3000); });
+    r.tabs.value = { tabs: [] };
+    await r.proxy.look();
+    expect(r.proxy.heldPorts()).toEqual([]);
+    expect(await ended).not.toBe(-1);
   });
 
   test("with no certificate nothing opens, and the status says why", async () => {

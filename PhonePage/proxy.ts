@@ -2,6 +2,7 @@
 // port isn't, who may connect, which requests a browser may make, and what is rewritten on the way through. portproxy.ts does the
 // listening and the spawning; everything it decides by is here, so `bun test` can check it.
 
+import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { decideCaller, mayBeListed, parseTailnetJSON, type Device, type WhoisNode } from "./checks";
 import { isObject, objects, type Json } from "./json";
@@ -26,8 +27,8 @@ export const notes = {
   noAddress: "Tailscale gave no address for this machine.",
 } as const;
 
-/** The one fix for a refused certificate, which takes root once. Settings shows it from the status file; no other file spells it. */
-export const operatorCommand = "sudo tailscale set --operator=$USER";
+/** The one fix for a refused certificate, which takes root once. It is written in `operator-command.txt`, which the installer reads too; Settings shows it from the status file. */
+export const operatorCommand = readFileSync(new URL("./operator-command.txt", import.meta.url), "utf8").trim();
 
 /** Why the proxy couldn't open a port, by the error's code. */
 export const openFailure = (code: string): string => `The proxy couldn't open this port (${code || "error"}).`;
