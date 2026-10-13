@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, isLocalAddress, isOpenable, offersTake, paneLabel, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersTake, paneLabel, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
 } from "./page/tabrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
 
@@ -88,6 +88,22 @@ describe("what a pane that is not a terminal says", () => {
     expect(paneNote(other(a, "web", { url: "http://127.0.0.1:5173/" }), "Mac mini").text).toBe("This page runs on Mac mini.");
     expect(paneNote(other(a, "web", { url: "http://[::1]:5173/" }), "Mac mini").text).toBe("This page runs on Mac mini.");
     expect(paneNote(other(a, "app", { app: "scratch", url: "http://127.0.0.1:5200/" }), "linux box").text).toBe("scratch runs on linux box.");
+  });
+
+  test("a page or an app the host proxies is framed, and says nothing", () => {
+    const proxied = "https://mac-mini.example.ts.net:5173/deep";
+    expect(framedAddress(other(a, "app", { app: "scratch", proxy: proxied }))).toBe(proxied);
+    expect(framedAddress(other(a, "web", { url: "http://localhost:5173/", proxy: proxied }))).toBe(proxied);
+    expect(framedAddress(other(a, "web", { url: "http://localhost:5173/", proxy: null }))).toBeNull();
+    expect(framedAddress(other(a, "file", { proxy: proxied }))).toBeNull();
+  });
+
+  test("one the host can't proxy says why, in the host's words", () => {
+    const note = "Its server isn't answering on that machine yet.";
+    expect(paneNote(other(a, "app", { app: "scratch", url: "http://127.0.0.1:5200/", proxyNote: note }), "linux box"))
+      .toEqual({ text: "scratch runs on linux box.", detail: `Its server is at http://127.0.0.1:5200/ there, which only linux box can reach. It can't be shown here: ${note}` });
+    expect(paneNote(other(a, "web", { url: "http://localhost:3000/", proxyNote: note }), "Mac mini").detail).toContain(`It can't be shown here: ${note}`);
+    expect(paneNote(other(a, "web", { url: "http://localhost:3000/" }), "Mac mini").detail).toEndWith("It can't be shown here.");
   });
 
   test("a page at an outside address is just that address", () => {

@@ -1,12 +1,13 @@
 // One tab on the phone (ADR 0034): its panes in a switcher, shown one at a time. A Claude or terminal pane that runs is today's session view
 // (session.js: the live screen, then the terminal after Take over), and only the shown pane's terminal is open. Any other pane is a note: a
-// file's text from the host, or where a page, an app or the Transcript runs. Take over takes the whole tab; End ends it or hands it back. The
+// file's text from the host, or where a page, an app or the Transcript runs; a page or an app the host proxies (ADR 0035) is framed instead,
+// with a link to open it alone. Take over takes the whole tab; End ends it or hands it back. The
 // host's listing is asked again every few seconds while the page is visible, so a pane added or closed elsewhere shows. Everything the host
 // sent goes in with textContent, never as markup.
 
 import { element, notListed, postJSON } from "/dom.js";
 import { confirmEnd, openSession, releaseSession } from "/session.js";
-import { choosePane, isOpenable, kindWord, offersTake, paneLabel, paneNote, samePanes, tabHash, tabTitle } from "/tabrules.js";
+import { choosePane, framedAddress, isOpenable, kindWord, offersTake, paneLabel, paneNote, samePanes, tabHash, tabTitle } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
 const visible = () => document.visibilityState === "visible";
@@ -61,6 +62,7 @@ function showPane(t, pane) {
   markShown(t);
   if (pane && isOpenable(pane)) {
     $("note").hidden = true;
+    hideFrame();
     t.session = true;
     // The page's own start of this session takes it once; any other open asks the host's status first.
     const take = t.take === pane.session;
@@ -70,10 +72,35 @@ function showPane(t, pane) {
   }
   t.session = false;
   releaseSession();
-  showNote(t, pane);
+  if (pane && framedAddress(pane)) showFrame(t, pane);
+  else showNote(t, pane);
+}
+
+/** Stops the framed app: the frame is emptied, so nothing of it runs while another pane shows. */
+function hideFrame() {
+  $("frame").hidden = true;
+  const view = $("frame-view");
+  if (!view.hasAttribute("src")) return;
+  // A frame left to itself keeps running; a fresh one without an address is what stops it.
+  const empty = view.cloneNode(false);
+  empty.removeAttribute("src");
+  view.replaceWith(empty);
+}
+
+/** Frames the host's proxied address of a page or an app. Navigating in it is the viewer's own browsing, and the host's pane keeps its address. */
+function showFrame(t, pane) {
+  for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
+  $("end").hidden = false;
+  header(t, kindWord(pane.kind));
+  const address = framedAddress(pane);
+  $("frame").hidden = false;
+  $("frame-address").textContent = address;
+  $("frame-open").href = address;
+  $("frame-view").src = address;
 }
 
 function showNote(t, pane) {
+  hideFrame();
   for (const id of ["card", "live", "terminal-view"]) $(id).hidden = true;
   $("note").hidden = false;
   $("end").hidden = false;
@@ -134,15 +161,18 @@ async function load(t) {
   const changed = first || !samePanes(before, t.data.panes);
   if (changed) renderSwitcher(t);
   // The pane stays unless it is gone, or it began or stopped running.
-  if (first || !now || now.id !== t.pane || (shown && isOpenable(shown) !== isOpenable(now))) {
+  // A page or an app is shown again when the host begins or stops proxying it; a new address of the same pane is the viewer's own browsing.
+  const framingChanged = shown && Boolean(framedAddress(shown)) !== Boolean(framedAddress(now ?? shown));
+  if (first || !now || now.id !== t.pane || (shown && isOpenable(shown) !== isOpenable(now)) || framingChanged) {
     showPane(t, now);
-  } else if (!t.session) {
+  } else if (!t.session && !framedAddress(now)) {
     header(t, kindWord(now.kind));
     paintControl(t);
   }
 }
 
 function failed(t, error) {
+  hideFrame();
   for (const id of ["live", "terminal-view"]) $(id).hidden = true;
   $("note").hidden = false;
   $("note-control").hidden = true;
@@ -184,6 +214,7 @@ export function closeTab() {
   $("panes").hidden = true;
   $("panes").replaceChildren();
   $("note").hidden = true;
+  hideFrame();
 }
 
 async function endTab(t) {

@@ -29,6 +29,10 @@ export interface HomePane {
   app: string | null;
   port: number | null;
   file: string | null;
+  /** Web at a local address, and app: the address the tab view frames it at, through the host's port proxy (an https address), when it has one. */
+  proxy: string | null;
+  /** Why it has none, in the host's words. */
+  proxyNote: string | null;
 }
 
 /** An open tab of the host with its panes in the host's layout order. `name` is the tab's own (⌘⇧R), when it has one. */
@@ -76,6 +80,12 @@ export const same = (a: unknown, b: string): boolean => typeof a === "string" &&
 const text = (value: unknown): string => (typeof value === "string" ? value : "");
 export const optional = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
 
+/** An address the page may frame: https, and nothing else. The host's relay sent it, and the page's content rules name the host's own name too. */
+function framedAddress(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try { return new URL(value).protocol === "https:" ? value : null; } catch { return null; }
+}
+
 /** The Mac app's wording (`Peer.controlledText`): with no client attached the controller only last had control. */
 export function controlledText(controller: string, attached: boolean): string {
   return (attached ? "Controlled on " : "Last controlled on ") + controller;
@@ -112,6 +122,8 @@ export function shapePane(pane: Record<string, unknown>, device: Device): HomePa
     app: optional(pane.app),
     port: typeof pane.port === "number" && Number.isInteger(pane.port) ? pane.port : null,
     file: optional(pane.file),
+    proxy: framedAddress(pane.proxy),
+    proxyNote: optional(pane.proxyNote),
   };
 }
 

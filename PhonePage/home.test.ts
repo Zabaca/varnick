@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Device } from "./checks";
-import { controlledText, escapeHTML, shapeHome, unlistedLines, unlistedPage } from "./home";
+import { controlledText, escapeHTML, shapeHome, shapePane, unlistedLines, unlistedPage } from "./home";
 import { buildRequest, parseReply, relayArguments, relayEnvironment, Slots } from "./relay";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
@@ -18,6 +18,20 @@ const pane = (id: string, fields: Record<string, unknown> = {}) => ({ id, kind: 
 const paneA = "aaaaaaaa-0000-4000-8000-0000000000a1";
 const paneB = "bbbbbbbb-0000-4000-8000-0000000000b1";
 const paneC = "cccccccc-0000-4000-8000-0000000000c1";
+
+describe("the proxied address of a pane", () => {
+  const device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "n", name: "Phone" };
+  const shape = (fields: Record<string, unknown>) => shapePane({ id: "aaaaaaaa-0000-4000-8000-0000000000a1", kind: "app", ...fields }, device)!;
+
+  test("an https address the host sent is kept, and the reason it has none", () => {
+    expect(shape({ proxy: "https://mac-mini.example.ts.net:5173/x" })).toMatchObject({ proxy: "https://mac-mini.example.ts.net:5173/x", proxyNote: null });
+    expect(shape({ proxyNote: "Its server isn't answering on that machine yet." })).toMatchObject({ proxy: null, proxyNote: "Its server isn't answering on that machine yet." });
+  });
+
+  test("an address that isn't https is not one the page frames", () => {
+    for (const bad of ["http://mac-mini.example.ts.net:5173/", "javascript:alert(1)", "data:text/html,x", "nonsense", 5, null]) expect(shape({ proxy: bad }).proxy).toBeNull();
+  });
+});
 
 describe("a pane", () => {
   const rows = (panes: Record<string, unknown>[], control: Record<string, unknown> = {}) => {

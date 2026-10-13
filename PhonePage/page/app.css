@@ -92,6 +92,10 @@ button.pane-tab.idle { opacity: .6; }
 .note button { margin-bottom: 12px; }
 .note-text { margin: 0 0 4px; font-weight: 600; overflow-wrap: anywhere; }
 .note-detail { margin: 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.frame { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0 8px 8px; }
+.frame-bar { display: flex; align-items: center; gap: 8px; padding: 0 0 8px; flex: none; }
+.frame-address { flex: 1; min-width: 0; margin: 0; font: 12px ui-monospace, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frame iframe { flex: 1; min-height: 0; width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .note-file { margin: 8px 0 0; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .card { margin: 16px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }

@@ -64,7 +64,10 @@ export function samePanes(a, b) {
   return a.length === b.length && a.every((pane, index) => pane.id === b[index].id && paneLabel(pane) === paneLabel(b[index]) && isOpenable(pane) === isOpenable(b[index]));
 }
 
-/** An address only the host itself can reach: the page runs there, and option 04 of the problem brings it here. */
+/** The address the tab view frames a web or app pane at, through the host's port proxy, or null when the pane has none. */
+export const framedAddress = (pane) => ((pane.kind === "web" || pane.kind === "app") && pane.proxy ? pane.proxy : null);
+
+/** An address only the host itself can reach. */
 export function isLocalAddress(url) {
   if (!url) return true;
   try {
@@ -77,7 +80,7 @@ export function isLocalAddress(url) {
 
 /**
  * What a pane that isn't a terminal says: its note, and the address or path it is at. A file's text is the page's to fetch, so it has none
- * here. A page at an outside address is opened in the browser, not framed.
+ * here. A page at an outside address is opened in the browser, not framed; one the host proxies is framed (`framedAddress`) and says nothing.
  */
 export function paneNote(pane, host) {
   switch (pane.kind) {
@@ -89,15 +92,18 @@ export function paneNote(pane, host) {
     case "transcript":
       return { text: `The Transcript stays on ${host}.`, detail: "It is what the host heard while listening, and it never leaves that Mac." };
     case "app":
-      return { text: `${pane.app ?? "This app"} runs on ${host}.`, detail: `Its server is at ${pane.url ?? "an address"} there, which only ${host} can reach. It can't be shown here yet.` };
+      return { text: `${pane.app ?? "This app"} runs on ${host}.`, detail: unreachable(pane, `Its server is at ${pane.url ?? "an address"} there, which only ${host} can reach.`) };
     case "web":
       return isLocalAddress(pane.url)
-        ? { text: `This page runs on ${host}.`, detail: `It is at ${pane.url || "an address"} there, which only ${host} can reach. It can't be shown here yet.` }
+        ? { text: `This page runs on ${host}.`, detail: unreachable(pane, `It is at ${pane.url || "an address"} there, which only ${host} can reach.`) }
         : { text: `A page at ${addressHost(pane.url)}.`, detail: pane.url };
     default:
       return { text: "This version of the page can't show this pane.", detail: "" };
   }
 }
+
+/** Why a page or an app on the host can't be shown here: the host's own reason, else what the pane is at. */
+const unreachable = (pane, where) => `${where} ${pane.proxyNote ? `It can't be shown here: ${pane.proxyNote}` : "It can't be shown here."}`;
 
 /** Whether Take over is offered for the tab: something in it runs, and this phone isn't in control of it. */
 export const offersTake = (tab) => tab.panes.some(isOpenable) && !tab.mine;
