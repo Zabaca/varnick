@@ -3133,10 +3133,8 @@ final class LauncherModel: ObservableObject {
         return .failure("The session didn't start on \(here)")
     }
 
-    /// A peer's `end`: the Mac in control closed a pane (or a tab: `hostEndTab`, or a page or file: `hostEndPane`). The label has to name the
-    /// asker. A request naming the pane's tab is ⌘W in a tab it controls: the pane ends as it would here, unless the pane is the tab's last,
-    /// which this Mac decides, and then it is the tab's `end`. A session with no tab (the phone's) ends if its origin names the asker and is
-    /// otherwise released: control comes back here and the pane here, if it shows the card, goes live.
+    /// A peer's `end` of a pane (a tab: `hostEndTab`; a page or file: `hostEndPane`). Naming its tab it is ⌘W in a tab it controls: the pane
+    /// ends, or the tab does if this Mac finds it is the last. With no tab (the phone's) it ends if its origin names the asker, else is released.
     func hostEnd(_ request: PeerRequest, by peer: String) async -> PeerReply {
         if request.tab != nil, request.pane != nil { return await hostEndPane(request, by: peer) }
         if request.tab != nil, request.session == nil { return await hostEndTab(request, by: peer) }

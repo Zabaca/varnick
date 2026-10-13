@@ -175,9 +175,8 @@ extension HeadlessPeerHost {
 
     // MARK: end
 
-    /// The machine in control closed a pane (named by its session, or by `pane`); the label has to name it. Naming the pane's tab it is ⌘W in a
-    /// tab it controls: the pane ends, unless it is the tab's last, which this host decides, and then it is the tab's `end`. A session with no
-    /// tab (the phone's) ends if its origin names the asker and is otherwise released.
+    /// The machine in control closed a pane (by session, or `pane`). Naming its tab it is ⌘W in a tab it controls: the pane ends, or the tab
+    /// does if this host finds it is the last. With no tab (the phone's) it ends if its origin names the asker, else is released.
     private func end(_ request: PeerRequest, by: String) -> PeerReply {
         if let tab = request.tab, request.pane == nil, request.session == nil { return endTab(tab, by: by) }
         let session = request.session ?? request.pane.flatMap(UUID.init(uuidString:)).map(Zmx.sessionName)
