@@ -52,6 +52,10 @@ li { background: var(--panel); border: 1px solid var(--line); border-radius: 10p
 .control { margin-top: 6px; font-size: 13px; color: var(--muted); }
 .control.mine { color: var(--accent); }
 
+/* A tab of several sessions: its name over a list of its sessions, which are boxed as rows are. */
+li.tab-group { padding: 8px; }
+.tab-name { margin: 0 4px 8px; font-size: 13px; font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }
+
 .hint { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
 .empty, .error { margin: 0; padding: 12px 0; font-size: 14px; color: var(--muted); }
 .error { color: var(--warn); }
@@ -72,6 +76,27 @@ body.in-session { max-width: none; padding: 0; height: var(--page-height, 100dvh
 .bar p { margin: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #back { font-size: 18px; min-width: 44px; }
 #end { color: var(--warn); }
+
+/* The tab's panes, a button each, side by side and scrolling when they don't fit. */
+.panes { display: flex; gap: 6px; padding: 0 8px 8px; overflow-x: auto; flex: none; scrollbar-width: none; }
+button.pane-tab { display: flex; flex-direction: column; align-items: flex-start; gap: 0; min-height: 44px; max-width: 12rem; padding: 4px 12px; text-align: left; }
+button.pane-tab[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+button.pane-tab.idle { opacity: .6; }
+.pane-kind { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.pane-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+
+/* A pane that is not a terminal: where it runs, or a file's text, scrolling. */
+.note { margin: 0 8px 8px; padding: 12px; flex: 1; min-height: 0; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.note-control { margin: 0 0 8px; font-size: 14px; color: var(--muted); }
+.note-control.mine { color: var(--accent); }
+.note button { margin-bottom: 12px; }
+.note-text { margin: 0 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+.note-detail { margin: 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.frame { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0 8px 8px; }
+.frame-bar { display: flex; align-items: center; gap: 8px; padding: 0 0 8px; flex: none; }
+.frame-address { flex: 1; min-width: 0; margin: 0; font: 12px ui-monospace, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frame iframe { flex: 1; min-height: 0; width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.note-file { margin: 8px 0 0; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .card { margin: 16px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 .card-note { margin: 0 0 8px; font-weight: 600; color: var(--warn); }

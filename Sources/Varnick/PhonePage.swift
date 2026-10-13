@@ -8,7 +8,7 @@ enum PhonePage {
     static let publishedPort = 8444
     /// The port of 127.0.0.1 the server listens on where Tailscale can't serve a socket.
     static let loopbackPort = 18444
-    /// The server's zmx session. It is never a pane's name, so neither the launch sweep nor `sessions` sees it.
+    /// The server's zmx session. It is never a pane's name, so neither the launch sweep nor `tabs` sees it.
     static let sessionName = "varnick-phone-page"
     /// The labels the session is made with: the server's files, where they are, and how it listens. A session with other values
     /// than the ones wanted now is ended and started again.
@@ -155,9 +155,10 @@ enum PhonePage {
     /// The server's environment, and nothing else of Varnick's. `VARNICK_ZMX_DIR` goes along only when Varnick has it
     /// (a check's throwaway folder), so the relay the server runs looks in the same zmx folder.
     static func environment(mode: Mode, socketPath: String, relay: String, devices: String, tailscale: String?,
-                            home: String, zmxDirectory: String?) -> [String] {
+                            home: String, zmxDirectory: String?, proxyFolder: String, proxyStatus: String, proxyTabs: String) -> [String] {
         var environment = [mode == .socket ? "VARNICK_PAGE_SOCKET=\(socketPath)" : "VARNICK_PAGE_LOOPBACK=\(loopbackPort)",
-                           "VARNICK_PAGE_PORT=\(publishedPort)", "VARNICK_RELAY=\(relay)", "VARNICK_DEVICES=\(devices)"]
+                           "VARNICK_PAGE_PORT=\(publishedPort)", "VARNICK_RELAY=\(relay)", "VARNICK_DEVICES=\(devices)",
+                           "VARNICK_PROXY_FOLDER=\(proxyFolder)", "VARNICK_PROXY_STATUS=\(proxyStatus)", "VARNICK_PROXY_TABS=\(proxyTabs)"]
         if let tailscale { environment.append("VARNICK_TAILSCALE=\(tailscale)") }
         environment += ["HOME=\(home)", "PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"]
         if let zmxDirectory { environment.append("VARNICK_ZMX_DIR=\(zmxDirectory)") }

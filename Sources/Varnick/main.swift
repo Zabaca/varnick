@@ -185,6 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // The Restart Varnick card takes every key.
             if self.model.answerRestartKey(event) { return nil }
             if self.model.pendingSplit != nil {
+                // The address of a page for another machine's tab is typed into the picker's field: its keys go there.
+                if self.model.pickerAsksAddress { return event }
                 self.model.pickerKey(event)
                 return nil
             }
@@ -294,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .focusUp where inSession: model.moveFocus(.up)
         case .focusRight where inSession: model.moveFocus(.right)
         case .webAddress: return model.webAction { $0.editingAddress = true }
-        case .webReload: return model.webAction { $0.reload() }
+        case .webReload: return model.webAction(includingRemoteFiles: true) { $0.reload() }
         case .fontBigger: Settings.shared.adjustFont(0.5)
         case .fontSmaller: Settings.shared.adjustFont(-0.5)
         case .fontReset: Settings.shared.fontSize = Settings.defaultFontSize

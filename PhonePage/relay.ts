@@ -120,6 +120,8 @@ export class Admissions {
 const timeoutMs = 15_000;
 /** A Mac host takes up to 25 s to answer `start` and `resume` (it waits for the session to exist): they get longer than a lookup. */
 export const launchTimeoutMs = 40_000;
+/** A Mac host waits up to 60 s for the panes of a `reopen` (`MacPeerHost.forward`): the relay is given a little more. */
+export const reopenTimeoutMs = 70_000;
 /**
  * The most the request's one base64 argument may be. Linux allows 131,072 bytes (with the final NUL) for one argument, and
  * a request over it can't be spawned at all. `launch.ts` holds a prompt to what fits, with room for the rest of the request.

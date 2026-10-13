@@ -123,7 +123,7 @@ enum PanelMCP {
             + "in the panel for \(Int(PanelAccess.typingQuiet.components.seconds)) seconds; each key is checked as it comes, so the call can stop partway (the reply says how far it got). Refused before anything is "
             + "sent: the keys that end, mark done or restart a session, Varnick's own shortcuts, a new terminal, Settings, quit, paste, and ⌃ with a letter (a control character). "
             + "Refused by the view as it stands when the key comes: in the search, ↩ on a prompt (it starts a session), on !listen, on a ? result "
-            + "or on a session to resume, and esc (it hides the panel); on the board, D and R, and ↩ on a card that is not a pane open here. "
+            + "or on a closed tab or a paired Mac's tab to open, and esc (it hides the panel); on the board, D and R, and ↩ on a card that is not a pane open here. "
             + "Never with a tab, Settings, the Restart Varnick card or the split picker showing. Text is at most \(ScreenKeys.maxCharacters) "
             + "characters with no line break or tab; keys are at most \(ScreenKeys.maxKeys), such as Return, Tab, shift+Tab, cmd+z, Down. It "
             + "reports what it sent, never what happened: read `panel`, `board_read` or `outline_read` with `as_shown` afterwards.",

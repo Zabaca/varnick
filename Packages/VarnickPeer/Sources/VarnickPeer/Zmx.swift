@@ -60,7 +60,7 @@ public enum Zmx {
 
     /// The command that runs `executable` in a session that isn't a pane's, such as the phone page's server (the app's
     /// `PhonePageServer`): named by its caller, labelled as it is created. Nil without zmx, or for a name a pane could
-    /// have, which the launch sweep and the relay's `sessions` would take for theirs.
+    /// have, which the launch sweep and the relay's `tabs` would take for theirs.
     public static func attachCommand(named name: String, labels: String, running executable: String,
                                      _ arguments: [String]) -> (executable: String, arguments: [String])? {
         guard let binary, !isPaneSession(name) else { return nil }

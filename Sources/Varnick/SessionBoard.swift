@@ -397,7 +397,7 @@ final class SessionBoard: ObservableObject {
             record.host.map { id in PeerManager.shared.peers.contains { $0.id == id } } ?? true
         }
         for record in model.ended where paired(record) && !next.contains(where: { $0.id == record.id }) {
-            if let card = card(for: record, closed: .ended(at: record.lastUsed), note: nil, model) { next.append(card) }
+            if let card = card(for: record, closed: .ended(at: record.lastUsed), note: model.reopening[record.id]?.text, model) { next.append(card) }
         }
         for record in model.completed where paired(record) {
             if let card = card(for: record, closed: .done(at: record.completedAt ?? record.lastUsed), note: model.completedNote(for: record), model) {

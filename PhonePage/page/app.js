@@ -1,9 +1,12 @@
-// The Phone page's home: the host's open Claude sessions and its Recent, from /api/home. A session row opens its
-// session (session.js) at `#s=<name>`, so Back returns here. Everything the host sent goes in with textContent, never as markup.
+// The Phone page's home: the host's open tabs, each a row, and its Recent, which lists closed tabs, from /api/home. A tab row opens the tab
+// (tab.js) at `#t=<tab>`, so Back returns here; a session started or found without its tab opens at `#s=<name>` (session.js). Everything the
+// host sent goes in with textContent, never as markup.
 
 import { element, notListed, postJSON, shortFolder } from "/dom.js";
 import { closeNew, openNew } from "/new.js";
 import { closeSession, openSession } from "/session.js";
+import { closeTab, openTab } from "/tab.js";
+import { paneSummary, parseTabHash, tabHash, tabTitle } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
 const refreshButton = $("refresh");
@@ -39,6 +42,27 @@ function row(title, folder, agent, session) {
   return { item, body };
 }
 
+/** An open tab's row: a link that opens it, with what it holds and who is in control. */
+function tabRow(tab) {
+  const first = tab.panes.find((pane) => pane.kind === "claude") ?? tab.panes[0];
+  const item = element("li");
+  const link = element("a", "row-link");
+  link.href = tabHash(tab.tab, null);
+  link.append(element("div", "title", tabTitle(tab)));
+  const meta = element("div", "meta");
+  if (first.folder) {
+    const path = element("span", "folder", shortFolder(first.folder));
+    path.title = first.folder;
+    meta.append(path);
+  }
+  if (first.agent) meta.append(element("span", "agent", first.agent));
+  meta.append(element("span", "", paneSummary(tab)));
+  link.append(meta);
+  if (tab.text) link.append(element("div", tab.mine ? "control mine" : "control", tab.text));
+  item.append(link);
+  return item;
+}
+
 function fill(container, part, emptyText, build) {
   container.replaceChildren();
   if (part.error !== undefined) {
@@ -58,17 +82,17 @@ function show(home) {
   document.title = `${home.host.name} · Phone page`;
   hostName = home.host.name;
   titles.clear();
-  fill($("sessions"), home.sessions, "No Claude sessions are open.", (session) => {
-    titles.set(session.session, session.title);
-    const { item, body } = row(session.title, session.folder, session.agent, session.session);
-    body.append(element("div", session.mine ? "control mine" : "control", session.text));
-    return item;
+  fill($("sessions"), home.tabs, "No tabs are open.", (tab) => {
+    for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
+    return tabRow(tab);
   });
   showHosts(home.hosts);
   fill($("recent"), home.recent, "Nothing in Recent yet.", (recent) => {
-    const { item, body } = row(recent.title, recent.folder, recent.agent);
+    const first = recent.sessions[0];
+    const { item, body } = row(recent.title, first.folder, first.agent);
+    if (recent.sessions.length > 1) body.append(element("div", "control", `${recent.sessions.length} sessions`));
     if (recent.last) body.append(element("div", "control", ago(recent.last)));
-    item.dataset.conversation = recent.conversation;
+    item.dataset.tab = recent.tab;
     const button = element("button", "resume", "Resume");
     button.type = "button";
     button.addEventListener("click", () => resume(recent));
@@ -95,15 +119,15 @@ function showHosts(hosts) {
 }
 
 /**
- * Resume: the host starts that conversation again under a new session id (`POST /api/resume`: the server finds the folder
- * and agent in the host's own Recent) and the terminal opens with take. A conversation the host has open in a running
- * session comes back as that session's row, with Take over on it. What is under way, or was refused, is kept by
- * conversation and painted onto whatever rows show it: a home that reloads while the host answers builds new rows.
+ * Resume: the host reopens the closed tab whole, in its layout (`POST /api/resume`): its Claude panes resumed and its terminals started
+ * fresh, all labelled for this phone, and the tab opens. A tab that is open on the host already comes back as a link to open it, where
+ * Take over is. What is under way, or was refused, is kept by tab and painted onto whatever rows show it: a home that reloads while the
+ * host answers builds new rows.
  */
 const resuming = new Map();
 
 function paintResume(item) {
-  const state = resuming.get(item.dataset.conversation);
+  const state = resuming.get(item.dataset.tab);
   const button = item.querySelector("button.resume");
   const message = item.querySelector(".resume-message");
   button.disabled = state?.busy === true;
@@ -112,52 +136,48 @@ function paintResume(item) {
   message.hidden = !state?.error;
   if (!state?.error) return;
   message.append(element("p", "error", state.error));
-  const open = state.open;
-  if (!open) return;
-  message.append(element("p", "open-line", open.text));
-  const take = element("button", "take-here", "Take over");
-  take.type = "button";
-  take.addEventListener("click", () => enterSession(open.session, open.title, false));
-  const link = element("a", "open-link", "Open");
-  link.href = `#s=${open.session}`;
-  titles.set(open.session, open.title);
-  message.append(take, link);
+  if (!state.openTab) return;
+  const link = element("a", "open-link", "Open the tab");
+  link.href = tabHash(state.openTab, null);
+  message.append(link);
 }
 
-function paintResumes(conversation) {
-  for (const item of document.querySelectorAll("li[data-conversation]")) {
-    if (item.dataset.conversation === conversation) paintResume(item);
+function paintResumes(tab) {
+  for (const item of document.querySelectorAll("li[data-tab]")) {
+    if (item.dataset.tab === tab) paintResume(item);
   }
 }
 
 async function resume(recent) {
-  const conversation = recent.conversation;
-  if (resuming.get(conversation)?.busy) return;
-  resuming.set(conversation, { busy: true, error: null, open: null });
-  paintResumes(conversation);
-  const result = await postJSON("/api/resume", { conversation }, "The host didn't answer. If it started, the session is in Open sessions.");
+  const tab = recent.tab;
+  if (resuming.get(tab)?.busy) return;
+  resuming.set(tab, { busy: true, error: null, openTab: null });
+  paintResumes(tab);
+  const result = await postJSON("/api/resume", { tab }, "The host didn't answer. If it started, the tab is in Open tabs.");
   if (result.ok) {
-    resuming.delete(conversation);
-    paintResumes(conversation);
-    // Whatever the page shows now: the session is the host's, and it was asked for.
-    return enterSession(result.session, recent.title, false);
+    resuming.delete(tab);
+    paintResumes(tab);
+    // Whatever the page shows now: the tab is the host's, labelled for this phone, and it was asked for.
+    location.hash = tabHash(result.tab ?? tab, null).slice(1);
+    return;
   }
-  resuming.set(conversation, { busy: false, error: result.error, open: result.open ?? null });
-  paintResumes(conversation);
+  resuming.set(tab, { busy: false, error: result.error, openTab: result.openTab ?? null });
+  paintResumes(tab);
 }
 
 /**
- * Opens a session this page has just started or resumed: the terminal attaches with take, the one place besides Take over
- * that sets it. `replace` swaps New session's history entry, so Back goes to the home and not to an empty form.
+ * Opens a session this page has just started: the terminal attaches with take, the one place besides Take over that sets it. It opens in
+ * its tab when the host named one, else alone. `replace` swaps New session's history entry, so Back goes to the home and not to an empty form.
  */
-function enterSession(session, title, replace) {
+function enterSession(session, title, replace, tab = null) {
   titles.set(session, title);
   takeOnce = session;
+  const hash = tab ? tabHash(tab, session.slice("varnick-".length)) : `#s=${session}`;
   if (replace) {
-    history.replaceState(null, "", `#s=${session}`);
+    history.replaceState(null, "", hash);
     route();
   } else {
-    location.hash = `s=${session}`;
+    location.hash = hash.slice(1);
   }
 }
 
@@ -206,14 +226,25 @@ function goHome(text) {
   route();
 }
 
-/** The address says which view: `#s=<session>` is a session, `#new` is New session, anything else the home. */
+/** The address says which view: `#t=<tab>` is a tab, `#s=<session>` a session, `#new` is New session, anything else the home. */
 function route() {
+  const tabMatch = parseTabHash(location.hash);
   const match = sessionHash.exec(location.hash);
-  // Take is for the one session the page has just started or resumed, once: a reload or a revisit never repeats it.
+  // Take is for the one session the page has just started, once: a reload or a revisit never repeats it.
   const take = match !== null && takeOnce === match[1];
+  const takeSession = takeOnce;
   takeOnce = null;
-  if (match) {
+  if (tabMatch) {
     closeNew();
+    closeSession();
+    $("home").hidden = true;
+    document.body.classList.remove("in-new");
+    document.body.classList.add("in-session");
+    document.title = hostName ? `${hostName} · Phone page` : "Phone page";
+    openTab({ tab: tabMatch.tab, pane: tabMatch.pane, host: hostName, done: goHome, take: takeSession });
+  } else if (match) {
+    closeNew();
+    closeTab();
     $("home").hidden = true;
     document.body.classList.remove("in-new");
     document.body.classList.add("in-session");
@@ -222,13 +253,15 @@ function route() {
     openSession({ name: match[1], title: titles.get(match[1]) ?? "", host: hostName, done: goHome, take });
   } else if (location.hash === "#new") {
     closeSession();
+    closeTab();
     $("home").hidden = true;
     document.body.classList.remove("in-session");
     document.body.classList.add("in-new");
     document.title = hostName ? `New session · ${hostName}` : "New session · Phone page";
-    openNew({ host: hostName, started: ({ session, title }) => enterSession(session, title, true), done: goHome });
+    openNew({ host: hostName, started: ({ session, title, tab }) => enterSession(session, title, true, tab), done: goHome });
   } else {
     closeSession();
+    closeTab();
     closeNew();
     document.body.classList.remove("in-session", "in-new");
     $("home").hidden = false;

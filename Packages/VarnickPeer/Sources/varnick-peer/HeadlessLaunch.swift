@@ -21,11 +21,8 @@ extension HeadlessPeerHost {
     /// How long a start waits for the labels (`replyOnceRunning` waits 80 times 100 ms).
     private static let startWait = 8.0
 
-    /// Creates the zmx session for a record that is saved and marked starting, and hands it over. Every way of
-    /// starting claude here goes through it: a new session, a session started again after a reboot, and a
-    /// conversation resumed from Recent. Its order and what it locks are in `docs/agents/where-it-breaks.md` ›
-    /// Peers; the comments below name its steps. `conversation` makes it `claude --resume`. `failed` undoes what
-    /// the caller did to the record. The reply is `ok` with the folder.
+    /// Creates the zmx session for a saved record marked starting, and hands it over: claude (resumed with `conversation`), or a terminal
+    /// record's login shell. Order and locks: where-it-breaks › Peers. `failed` undoes the caller's record; the reply is `ok` with the folder.
     func launch(_ record: HeadlessSession, control: String, origin: String?, resuming conversation: String?,
                 failed: () -> Void) -> PeerReply {
         guard let uuid = UUID(uuidString: record.id), let account = HeadlessAccount.current else {
@@ -35,24 +32,31 @@ extension HeadlessPeerHost {
         let session = Zmx.sessionName(uuid)
         let folder = record.folder ?? config.defaultFolder
 
-        // Pane folder: the hooks write here, with no report left from an earlier run; claude must not start without it.
-        do {
-            try FileManager.default.createDirectory(at: PaneFolder.url(for: uuid), withIntermediateDirectories: true)
-            try? FileManager.default.removeItem(at: PaneFolder.sessionFile(for: uuid))
-            PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: record.prompt ?? ""), for: uuid)
-            PaneFolder.clearSubagentWork(for: uuid)
-        } catch {
-            failed()
-            return stateFailure(error)
+        // Pane folder: the hooks write here, with no report left from an earlier run; claude must not start without it. A terminal has no hooks.
+        if !record.isTerminal {
+            do {
+                try FileManager.default.createDirectory(at: PaneFolder.url(for: uuid), withIntermediateDirectories: true)
+                try? FileManager.default.removeItem(at: PaneFolder.sessionFile(for: uuid))
+                PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: record.prompt ?? ""), for: uuid)
+                PaneFolder.clearSubagentWork(for: uuid)
+            } catch {
+                failed()
+                return stateFailure(error)
+            }
         }
 
         // Pty client: the Mac's command and a fresh environment, on a pty of the relay's own, with the labels written in the same attach.
         // claude exits on an unknown --agent, so only one that exists is passed.
-        let agent = record.agent.flatMap { wanted in Agent.available(in: folder).contains { $0.name == wanted } ? wanted : nil }
-        let claude = ClaudeCommand.arguments(skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent,
-                                             resuming: conversation, sessionID: record.id, prompt: record.prompt ?? "",
-                                             problems: problemsBoard)
-        guard let command = Zmx.attachCommand(uuid, running: account.shell, ClaudeCommand.shellArguments(claude), control: control, origin: origin) else {
+        let shellArguments: [String]
+        if record.isTerminal {
+            shellArguments = ["-l"]
+        } else {
+            let agent = record.agent.flatMap { wanted in Agent.available(in: folder).contains { $0.name == wanted } ? wanted : nil }
+            shellArguments = ClaudeCommand.shellArguments(ClaudeCommand.arguments(
+                skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent, resuming: conversation, sessionID: record.id,
+                prompt: record.prompt ?? "", problems: problemsBoard))
+        }
+        guard let command = Zmx.attachCommand(uuid, running: account.shell, shellArguments, control: control, origin: origin) else {
             failed()
             return .failure("zmx isn't installed next to Varnick on \(name)")
         }
@@ -76,7 +80,7 @@ extension HeadlessPeerHost {
                 // A session the client made before it exited is nobody's to keep.
                 if Zmx.labels(of: session) != nil { Zmx.killNow(uuid) }
                 failed()
-                return .failure("Claude exited as it started on \(name)")
+                return .failure("\(record.isTerminal ? "The shell" : "Claude") exited as it started on \(name)")
             } else if Date() >= deadline {
                 Zmx.killNow(uuid)
                 client.finish(waiting: 2000)
@@ -97,8 +101,8 @@ extension HeadlessPeerHost {
         }
         var reply = PeerReply.success()
         reply.folder = folder
-        // Each record is a tab of one pane, under the record's id (ADR 0032).
-        reply.tab = record.id
+        // A record is a tab under its id, unless a `resume` put it in another (ADR 0032).
+        reply.tab = record.tabID
         return reply
     }
 

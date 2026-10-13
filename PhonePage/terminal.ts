@@ -5,7 +5,7 @@
 import type { Device } from "./checks";
 import type { RelayResult } from "./home";
 import { controlledText, optional, same } from "./home";
-import type { Json } from "./json";
+import { uuidPattern, type Json } from "./json";
 import { parseReply } from "./relay";
 
 /** The one kind of name the page may open: a pane's zmx session, `varnick-<uuid>` with a lowercase uuid (`Zmx.paneID`). */
@@ -206,7 +206,23 @@ export function refusal(held: string): string | null {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// End
+// End and take over
+
+/** A body that names a tab by its id, lowercased, and nothing else. */
+export function parseTabBody(body: unknown): { ok: true; tab: string } | { ok: false; error: string } {
+  const tab = typeof body === "object" && body !== null ? (body as Record<string, unknown>).tab : undefined;
+  return typeof tab === "string" && uuidPattern.test(tab) ? { ok: true, tab: tab.toLowerCase() } : { ok: false, error: "Not a Varnick tab id" };
+}
+
+/** `POST /api/end`: a tab (the page's End) or a session by its name; only the one it names reaches the relay. */
+export function parseEndBody(body: unknown): { ok: true; fields: Record<string, string> } | { ok: false; error: string } {
+  const object = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  if (object.tab !== undefined) {
+    const tab = parseTabBody(body);
+    return tab.ok ? { ok: true, fields: { tab: tab.tab } } : tab;
+  }
+  return isSessionName(object.session) ? { ok: true, fields: { session: object.session } } : { ok: false, error: "Not a Varnick session name or tab id" };
+}
 
 /** What End says the host did: "Ended", or "Handed back to Mac mini, still running" when the reply has `released`. */
 export function endText(reply: Record<string, unknown>, hostName: string): string {

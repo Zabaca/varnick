@@ -99,7 +99,7 @@ A headless Linux host runs Varnick's relay alone, installed from a checkout: see
 
 ## The Phone page
 
-A web page each host can serve to your own devices, such as a phone: the host's sessions, Recent, a new
+A web page each host can serve to your own devices, such as a phone: the host's sessions under their tabs, Recent (its closed tabs), a new
 session and a terminal, typed into with the phone's own keyboard plus one row of the keys it lacks (Esc, Tab,
 Shift+Tab, the arrows and a sticky Ctrl). It is off by default (Settings › Serve the phone page; on Linux,
 `--page`). It needs Bun and Tailscale. It is published with `tailscale serve` on HTTPS port 8444, to your tailnet

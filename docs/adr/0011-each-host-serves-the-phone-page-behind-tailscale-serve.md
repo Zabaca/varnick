@@ -10,7 +10,7 @@ Every host serves a web page, the Phone page, to the user's own devices, such as
 
 ## Consequences
 
-- A second way in beside SSH, for the user's own devices. This amends ADR 0007's "No listening port" for that one door.
+- A second way in beside SSH, for the user's own devices. This amends ADR 0007's "No listening port" for that one door. [ADR 0035](0035-remote-web-and-app-panes-go-through-a-port-proxy-in-each-hosts-phone-page-server.md) adds more doors from the same server: one TLS listener on the tailnet addresses per port that an open tab's web or app pane uses.
 - Nothing listens on TCP, except where a host's Tailscale can't serve a socket: the Studio's 1.92.2 and the Air's app (the spike and ticket 04, in the option's Results), and a Mac whose tailscaled refuses a socket to a user who isn't root (the note at the end). There the server listens on loopback, any local process could claim to be the phone, and the page says so.
 - Who is calling comes from serve's `X-Forwarded-For` and whois, trusted only because the socket is the user's. Serve's identity headers name the user, the same for every device. Serve replaces forged `X-Forwarded-*` and `Tailscale-User-*` headers, but `Origin` passes through: every change is a POST, and every websocket is checked against it.
 - The socket sits in a 0700 folder, since Bun binds it before it can be chmodded.

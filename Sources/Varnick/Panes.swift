@@ -12,6 +12,8 @@ enum PaneDirection { case left, down, up, right }
 enum PaneKind: Equatable {
     case claude, terminal, web
     case app(CustomApp)
+    /// A custom app of the host of another machine's tab, listed by `apps`: it runs there (ADR 0035).
+    case hostApp(PeerApp)
 
     static let builtIns: [PaneKind] = [.claude, .terminal, .web]
 
@@ -21,6 +23,7 @@ enum PaneKind: Equatable {
         case .terminal: "Terminal"
         case .web: "Browser"
         case .app(let app): app.name
+        case .hostApp(let app): app.name
         }
     }
     /// Picker shortcut of a built-in; an app's is assigned when the picker opens (`PickerItem`).
@@ -29,7 +32,7 @@ enum PaneKind: Equatable {
         case .claude: "c"
         case .terminal: "t"
         case .web: "b"
-        case .app: nil
+        case .app, .hostApp: nil
         }
     }
     var source: String {
@@ -37,12 +40,16 @@ enum PaneKind: Equatable {
         case .claude: "claude"
         case .terminal: "terminal"
         case .web: "web"
-        case .app: "app"
+        case .app, .hostApp: "app"
         }
     }
     /// SF Symbol in place of the source's own.
     var symbol: String? {
-        if case .app(let app) = self { app.symbol } else { nil }
+        switch self {
+        case .app(let app): app.symbol
+        case .hostApp(let app): CustomApp.symbol(for: app.icon)
+        default: nil
+        }
     }
 }
 
@@ -75,6 +82,16 @@ struct PickerItem: Equatable {
     }
 }
 
+extension PickerItem {
+    /// The built-ins, then the apps another machine's tab can run, each with the key that machine gave it unless a built-in has it.
+    static func items(hostApps: [PeerApp]) -> [PickerItem] {
+        let taken = Set(PaneKind.builtIns.compactMap(\.key))
+        return items(apps: []) + hostApps.map { app in
+            PickerItem(kind: .hostApp(app), key: app.key.flatMap { $0.count == 1 && !taken.contains($0.lowercased()) ? $0.lowercased() : nil })
+        }
+    }
+}
+
 /// Card over the panes asking what a ⌘⌃⇧E / ⌘⌃⇧O split should hold. Keys go through the
 /// app's key monitor (LauncherModel.pickerKey), so the terminal never sees them.
 struct SplitPicker: View {
@@ -89,10 +106,14 @@ struct SplitPicker: View {
                 Text(axis == .sideBySide ? "Split side by side with…" : "Split top and bottom with…")
                     .font(.system(size: 13, weight: .semibold))
             }
-            grid
+            if model.pickerAsksAddress {
+                addressField
+            } else {
+                grid
+            }
             HStack(spacing: 12) {
-                KeyHint(label: "Pick", keys: ["↩"])
-                KeyHint(label: "Cancel", keys: ["esc"])
+                KeyHint(label: model.pickerAsksAddress ? "Open" : "Pick", keys: ["↩"])
+                KeyHint(label: model.pickerAsksAddress ? "Back" : "Cancel", keys: ["esc"])
             }
             .font(.system(size: 11))
         }
@@ -100,6 +121,19 @@ struct SplitPicker: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
+    }
+
+    @FocusState private var addressFocused: Bool
+
+    /// The address of a page in a tab of another machine, typed here: it opens there, where it is loaded from.
+    private var addressField: some View {
+        TextField("localhost:3000 or a URL, opened on the host", text: $model.pickerAddress)
+            .textFieldStyle(.roundedBorder)
+            .focused($addressFocused)
+            .onAppear { DispatchQueue.main.async { addressFocused = true } }
+            .onSubmit { model.finishSplit(.web, address: model.pickerAddress) }
+            .onKeyPress(.escape) { model.cancelAddress(); return .handled }
+            .frame(width: 360)
     }
 
     private static let tileWidth: CGFloat = 92, tileHeight: CGFloat = 96, tileSpacing: CGFloat = 8
@@ -270,8 +304,16 @@ final class PaneNode: ObservableObject, Identifiable {
         for (i, split) in chain.enumerated() { split.fraction = 1 / CGFloat(chain.count + 1 - i) }
     }
 
-    /// Becomes a copy of `other` (used when a sibling closes and this split collapses).
-    private func take(_ other: PaneNode) {
+    /// The tree of a host's layout (`PeerLayout`) with each pane's session; nil when a pane has none or the layout is malformed.
+    static func build(_ layout: PeerLayout, sessions: [String: ClaudeSession]) -> PaneNode? {
+        if let pane = layout.pane { return sessions[pane].map { PaneNode(session: $0) } }
+        guard let axis = layout.axis.flatMap(SplitAxis.init(rawValue:)), let fraction = layout.fraction, let parts = layout.parts, parts.count == 2,
+              let first = build(parts[0], sessions: sessions), let second = build(parts[1], sessions: sessions) else { return nil }
+        return PaneNode(axis: axis, fraction: CGFloat(fraction), first: first, second: second)
+    }
+
+    /// Becomes a copy of `other`, when a sibling closes and this split collapses, and when the host's layout replaces the tab's.
+    func become(_ other: PaneNode) {
         session = other.session
         axis = other.axis
         fraction = other.fraction
@@ -284,7 +326,7 @@ final class PaneNode: ObservableObject, Identifiable {
     func removeLeaf() -> Bool {
         guard let parent else { return false }
         guard let sibling = parent.children.first(where: { $0 !== self }) else { return false }
-        parent.take(sibling)
+        parent.become(sibling)
         return true
     }
 
@@ -328,16 +370,22 @@ final class ClaudeTab: ObservableObject {
     let files = FileTree()
     /// When another Mac marked the tab done while it is open here; nil is not marked. A tab of another machine's has its host's.
     var completedAt: Date?
+    /// The conversations it has held, newest first (`TabHistory`); the model keeps it (`LauncherModel.noteHistories`) and it is saved with the tab.
+    var history: [HeldConversation] = []
     /// Layout changed (divider moved); the model saves.
     var onChange: () -> Void = {}
     /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is.
     var onClosing: () -> Void = {}
+    /// The tab is closing as a whole: the model tells the host of another machine's tab once, in place of each pane doing so (ADR 0034).
+    var onEnding: () -> Void = {}
 
-    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil) {
+    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
+         history: [HeldConversation] = []) {
         self.id = id
         self.root = root
         self.name = name
         self.completedAt = completedAt
+        self.history = history
         self.focused = focused ?? root.leaves[0]
     }
 
@@ -346,8 +394,20 @@ final class ClaudeTab: ObservableObject {
     /// The Claude panes, in layout order.
     var claudeSessions: [ClaudeSession] { sessions.filter(\.isClaude) }
 
-    /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one).
-    var host: String? { claudeSessions.first?.record.host }
+    /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
+    func holds(_ conversation: String) -> Bool {
+        TabHistory.holds(conversation, history: history, panes: claudeSessions.map(\.record))
+    }
+
+    /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one). A tab with one is that machine's tab, which
+    /// this Mac shows in the host's layout (ADR 0034).
+    var host: String? { sessions.lazy.compactMap(\.record.host).first }
+
+    /// Whether this Mac is in control of the tab on its host: every running Claude and terminal pane names it, as the host's listing last said
+    /// or a take over or a start just made it. Saved, and corrected by the next listing.
+    var inControl = false
+    /// Why this Mac can't change the tab's layout (split, close a pane, move a divider, rename it), or nil when it can. Set by the model.
+    var layoutLock: () -> String? = { nil }
 
     /// A tab made for a session the user asked a paired Mac to resume takes the id of the tab the host puts it in, once: a later pane
     /// joining it names another host tab, which it ignores.
@@ -367,7 +427,8 @@ final class ClaudeTab: ObservableObject {
 
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
-        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt)
+        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt,
+                              history: history.isEmpty ? nil : history, inControl: inControl && host != nil ? true : nil)
     }
 
     /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).
@@ -392,6 +453,7 @@ final class ClaudeTab: ObservableObject {
     /// The tab's ×: ends every pane, as ⌘W would one by one; the last one to go closes the tab.
     func close() {
         onClosing()
+        onEnding()
         for session in sessions { session.end() }
     }
 
@@ -420,6 +482,14 @@ final class ClaudeTab: ObservableObject {
             if focusing { focus(next) } else { focused = next }
         }
         return true
+    }
+
+    /// Lays the tab out as its host does (`layout`), with `sessions` by pane id; a pane of the tab that the layout has no place for (one
+    /// that is closing) goes beside the last. Focus stays where it was if that pane is still in the tab.
+    func rearrange(to layout: PeerLayout, using sessions: [String: ClaudeSession]) {
+        guard let node = PaneNode.build(layout.addingMissing(sessions.keys.sorted()), sessions: sessions) else { return }
+        root.become(node)
+        if !contains(focused), let first = root.leaves.first { focused = first }
     }
 
     /// Nearest pane past the focused pane's edge in `direction`, among those overlapping it
@@ -475,12 +545,15 @@ struct PaneView: View {
                     PaneView(node: node.children[0], tab: tab)
                         .frame(width: sideBySide ? first : nil, height: sideBySide ? nil : first)
                     SplitDivider(sideBySide: sideBySide, space: node.id) { position in
+                        // Only the machine in control of a tab moves its dividers (ADR 0034).
+                        guard tab.layoutLock() == nil else { return }
                         let minSize = sideBySide ? Self.minPane.width : Self.minPane.height
                         let lo = min(0.5, minSize / max(total, 1))
                         node.fraction = min(1 - lo, max(lo, (position - Self.divider / 2) / max(total, 1)))
                     } onEnd: {
-                        tab.onChange()
+                        if let reason = tab.layoutLock() { tab.focused.showRefusal(reason) } else { tab.onChange() }
                     } onReset: {
+                        if let reason = tab.layoutLock() { return tab.focused.showRefusal(reason) }
                         node.fraction = 0.5
                         tab.onChange()
                     }
@@ -500,7 +573,9 @@ struct TerminalLeaf: View {
     var body: some View {
         let split = tab.root.session == nil
         Group {
-            if session.isWeb {
+            if session.staysOnHost {
+                RemotePaneCard(session: session) { tab.focus(session) }
+            } else if session.isWeb {
                 VStack(spacing: 0) {
                     AddressBar(session: session)
                     if session.appExited {
@@ -533,7 +608,12 @@ struct TerminalLeaf: View {
         // Terminals have no bar to put it in: their × shows over the corner while hovered, and a Claude pane's
         // Restart and Done beside it. The question Done or Restart asks of a working session stays until it is answered.
         .overlay(alignment: .topTrailing) {
-            if let kind = session.asking {
+            if session.askingEnd {
+                EndTerminalQuestion(host: session.hostName ?? "the host", confirm: session.endTerminal, keep: session.keepTerminal)
+                    .frame(width: 230)
+                    .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(6)
+            } else if let kind = session.asking {
                 WorkingSessionQuestion(kind: kind, turn: session.turn?.turn, background: session.turn?.background ?? BackgroundWork(),
                                        confirm: kind == .done ? session.onDone : session.onRestart, keep: { session.asking = nil })
                     .frame(width: 230)
@@ -547,7 +627,7 @@ struct TerminalLeaf: View {
                     .frame(width: 230, alignment: .leading)
                     .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
-            } else if hovering && !session.isWeb && !session.isFile {
+            } else if hovering && !session.isWeb && !session.isFile && !session.staysOnHost {
                 HStack(spacing: 2) {
                     if session.canRestart { RestartButton(action: session.onRestart) }
                     if session.isClaude { DoneButton(action: session.onDone) }
@@ -575,6 +655,31 @@ struct TerminalLeaf: View {
                 .padding(.trailing, 3)
                 .padding(.vertical, 5)
         }
+    }
+}
+
+/// The question ⌘W asks of a terminal of another machine's tab, in the pane: closing it ends the terminal there.
+struct EndTerminalQuestion: View {
+    let host: String
+    let confirm: () -> Void
+    let keep: () -> Void
+
+    var body: some View {
+        let accent = Theme.sourceColor("terminal")
+        VStack(alignment: .leading, spacing: 6) {
+            (Text("This ends the terminal on \(host). ") + Text("End it?").bold().foregroundColor(accent))
+                .font(.system(size: 11.5))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 5) {
+                Spacer(minLength: 0)
+                Button(action: confirm) { Text("End it").font(.system(size: 11.5, weight: .semibold)) }
+                Button(action: keep) { Text("Keep").font(.system(size: 11.5)) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 7)
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(accent.opacity(0.5), lineWidth: 1))
     }
 }
 
@@ -627,6 +732,8 @@ struct HostCard: View {
             return ("Couldn't resume on \(mac)", reason + "\nThe session isn't running on \(mac) right now.", "Retry")
         case .resuming:
             return ("Resuming on \(mac)…", "\(mac)'s Varnick is starting the session again with --resume.", nil)
+        case .unavailable:
+            return ("\(session.label) isn't running on \(mac)", session.unavailableNote ?? "Nothing is running for this pane there.", "Start")
         case .controlled:
             return nil
         }

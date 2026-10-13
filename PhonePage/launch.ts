@@ -3,10 +3,10 @@
 // relay as a seam (`Asker`), so `bun test` runs them against a fake.
 
 import type { Device } from "./checks";
-import { optional, same, shapeSession, type HomeSession, type RelayResult } from "./home";
-import { isObject, objects, type Json } from "./json";
+import { optional, same, type RelayResult } from "./home";
+import { isObject, objects, uuidPattern, type Json } from "./json";
 import { projectName } from "./page/newrules.js";
-import { launchTimeoutMs } from "./relay";
+import { launchTimeoutMs, reopenTimeoutMs } from "./relay";
 
 /** What the flows need of `Relay`: one relay request as a device. */
 export interface Asker {
@@ -29,8 +29,6 @@ const nameLimit = 128;
 const controls = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 /** Every control character, for a folder or a name that is one line. */
 const anyControl = /[\x00-\x1f\x7f]/;
-
-export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type Parsed<Value> = { ok: true; value: Value } | { ok: false; error: string };
 const refuse = (error: string): { ok: false; error: string } => ({ ok: false, error });
@@ -69,10 +67,10 @@ export function parseStartBody(body: unknown): Parsed<StartAsk> {
   return { ok: true, value: { folder: body.folder, agent, prompt } };
 }
 
-/** `POST /api/resume`'s body: the conversation, and nothing else. The folder and agent are the host's own, from its Recent. */
+/** `POST /api/resume`'s body: the closed tab, and nothing else. Its sessions, their folders and agents are the host's own, from its Recent. */
 export function parseResumeBody(body: unknown): Parsed<string> {
-  if (!isObject(body) || typeof body.conversation !== "string" || !uuidPattern.test(body.conversation)) return refuse("That isn't a conversation id");
-  return { ok: true, value: body.conversation.toLowerCase() };
+  if (!isObject(body) || typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
+  return { ok: true, value: body.tab.toLowerCase() };
 }
 
 /** `GET /api/agents`'s folder, when one is asked for: a host path. None asks for the host's default folder. */
@@ -125,11 +123,15 @@ export function shapeAgents(result: RelayResult): { folder: string | null; rows:
 // ---------------------------------------------------------------------------------------------------------------
 // The flows
 
+/**
+ * What a start or a reopen made: the tab the host put it in, and for a start the session. A refusal because the tab is open on the host
+ * already names that tab, for the page to open and take over.
+ */
 export type Launched =
-  | { status: 200; body: { ok: true; session: string } }
-  | { status: number; body: { ok: false; error: string; open?: HomeSession } };
+  | { status: 200; body: { ok: true; session: string | null; tab: string | null } }
+  | { status: number; body: { ok: false; error: string; openTab?: string } };
 
-const failed = (status: number, error: string, open?: HomeSession): Launched => ({ status, body: open ? { ok: false, error, open } : { ok: false, error } });
+const failed = (status: number, error: string, openTab?: string): Launched => ({ status, body: openTab ? { ok: false, error, openTab } : { ok: false, error } });
 export const sessionNameFor = (id: string): string => `varnick-${id}`;
 
 const notAProject = (host: string): string => `That folder isn't one of ${host}'s projects`;
@@ -175,41 +177,31 @@ export async function startSession(asker: Asker, device: Device, host: string, a
   const start: Json = { id, folder: ask.folder, prompt: ask.prompt };
   if (ask.agent !== null) start.agent = ask.agent;
   const started = await asker.ask("start", device.id, { start }, launchTimeoutMs);
-  if (started.ok || await isRunning(asker, device, session)) return { status: 200, body: { ok: true, session } };
+  if (started.ok) return { status: 200, body: { ok: true, session, tab: optional(started.reply.tab)?.toLowerCase() ?? null } };
+  // A start whose answer was lost: the session may be there, and its tab is not known, so the page opens the session alone.
+  if (await isRunning(asker, device, session)) return { status: 200, body: { ok: true, session, tab: null } };
   return failed(502, started.error);
 }
 
-/** The session in a `sessions` reply that has the conversation open: by its `conversation`, else by its own id (`conversation(of:)` on a Mac). */
-export function findOpenSession(sessions: RelayResult, conversation: string, device: Device): HomeSession | null {
-  if (!sessions.ok) return null;
-  const open = objects(sessions.reply.open).find((row) => same(row.conversation, conversation) || same(row.session, sessionNameFor(conversation)));
-  return open ? shapeSession(open, device) : null;
+/** The tab in a `tabs` reply with this id, as the host lists it. */
+function findTab(tabs: RelayResult, tab: string): Json | null {
+  return tabs.ok ? objects(tabs.reply.tabs).find((candidate) => same(candidate.tab, tab)) ?? null : null;
 }
 
-/** The wording of the host's own refusal, for a conversation already known to be open there. */
-export const openElsewhere = (host: string): string => `That session is open on ${host}: take it over from the list`;
+/** The wording of a reopen of a tab that is open on the host. */
+export const openElsewhere = (host: string): string => `That tab is open on ${host}: take it over from the list`;
 
 /**
- * Resume. The folder and agent are the host's Recent row's. A conversation a running session has open is answered with that
- * session's row, and `resume` isn't sent for it. When the host refuses all the same (the session opened after the first look),
- * the sessions are read again and the row is returned the same way.
+ * Reopen a closed tab of the host's Recent (protocol 24): the host reopens it whole, in its layout, its Claude panes resumed and its terminals
+ * started fresh, every one labelled for this device. A tab that is open on the host already is answered with its id to open and take over, and
+ * nothing is reopened; the same when the host refuses a reopen in a race. The page opens the tab.
  */
-export async function resumeConversation(asker: Asker, device: Device, host: string, asked: string, newID: () => string): Promise<Launched> {
-  const conversation = asked.toLowerCase();
-  const [recent, sessions] = await Promise.all([asker.ask("recent", device.id), asker.ask("sessions", device.id)]);
-  const open = findOpenSession(sessions, conversation, device);
-  if (open) return failed(409, openElsewhere(host), open);
-  if (!recent.ok) return failed(502, recent.error);
-  const row = objects(recent.reply.recent).find((candidate) => same(candidate.conversation, conversation));
-  if (!row) return failed(404, `That conversation isn't in ${host}'s Recent any more`);
-  if (!isFolder(row.folder)) return failed(502, `${host} didn't say where that conversation ran`);
-  const agent = optional(row.agent);
-  const id = newID();
-  const session = sessionNameFor(id);
-  const start: Json = { id, folder: row.folder, prompt: "" };
-  if (agent !== null && isAgentName(agent)) start.agent = agent;
-  const resumed = await asker.ask("resume", device.id, { conversation, start }, launchTimeoutMs);
-  if (resumed.ok || await isRunning(asker, device, session)) return { status: 200, body: { ok: true, session } };
-  const raced = findOpenSession(await asker.ask("sessions", device.id), conversation, device);
-  return raced ? failed(409, resumed.error, raced) : failed(502, resumed.error);
+export async function reopenTab(asker: Asker, device: Device, host: string, asked: string): Promise<Launched> {
+  const tab = asked.toLowerCase();
+  if (findTab(await asker.ask("tabs", device.id), tab)) return failed(409, openElsewhere(host), tab);
+  const reopened = await asker.ask("reopen", device.id, { tab }, reopenTimeoutMs);
+  if (reopened.ok) return { status: 200, body: { ok: true, session: null, tab: optional(reopened.reply.tab)?.toLowerCase() ?? tab } };
+  // The answer may only have been lost or late, or the tab opened meanwhile: if the host has it, it is the page's to open.
+  if (findTab(await asker.ask("tabs", device.id), tab)) return failed(409, reopened.error, tab);
+  return failed(502, reopened.error);
 }

@@ -22,6 +22,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     @Published var editingAddress = false
     private var webObservers: [NSKeyValueObservation] = []
     private var retry: DispatchWorkItem?
+    /// The page last asked for failed to load and hasn't loaded since: a proxied address that returns tries again at once.
+    private var loadFailed = false
     /// Terminal title Claude Code sets (it names the conversation once it has a topic).
     @Published private(set) var title = ""
     @Published private(set) var started = false
@@ -64,19 +66,22 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         case resumeFailed(String)
         /// The session was gone, and its host's Varnick is starting it again with `--resume`.
         case resuming
+        /// The host's tab lists the pane with no session running, such as a terminal while Keep sessions running is off there. Start asks the
+        /// host to start it, which is the user's to ask: opening a tab never starts anything.
+        case unavailable
 
         /// A card that comes from the link to the host, so the pane looks again by itself.
         var isLink: Bool {
             switch self {
             case .lost, .offline: true
-            case .controlled, .resumeFailed, .resuming: false
+            case .controlled, .resumeFailed, .resuming, .unavailable: false
             }
         }
 
         /// A card that waits for the user, or for a start already under way: the pane doesn't ask again.
         var skipsAutomaticCheck: Bool {
             switch self {
-            case .resumeFailed, .resuming: true
+            case .resumeFailed, .resuming, .unavailable: true
             case .controlled, .lost, .offline: false
             }
         }
@@ -172,6 +177,24 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// control and whether or not a client is attached there, and never takes control by itself. For
     /// the pane's whole life: a session found gone closes the pane, and nothing starts it again.
     var opensOnCard = false
+    /// The host's tab lists this pane with no session running: it opens on a card that says so (`Away.unavailable`), with the host's reason.
+    var opensUnavailable = false
+    var unavailableNote: String?
+
+    /// The host's listing now says the pane runs: a card that said it didn't asks the host again.
+    func hostSaysRunning() {
+        opensUnavailable = false
+        guard case .unavailable = away, let host = record.host, !reconnecting, !finished else { return }
+        reconnecting = true
+        Task { [weak self] in
+            guard let self else { return }
+            let answer = await self.sessionStatusAskingTwice()
+            self.reconnecting = false
+            guard !self.finished, self.clientEnded, !self.endedByUser, case .unavailable = self.away else { return }
+            self.settle(on: host, with: answer) { .offline($0) }
+        }
+    }
+
     /// The user picked this ended session of a peer in Recent or search: the pane asks the host to
     /// start it with `resume`. Set only for that click (by the model, and by Retry on a card that
     /// failed to do it), and cleared as soon as the host has answered, so nothing that runs by itself
@@ -231,6 +254,50 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var isLiveTranscript: Bool { record.isLiveTranscript }
     /// The session runs on a peer, and this pane is an ssh client of its host's zmx.
     var isOnPeer: Bool { record.host != nil }
+    /// A pane of another machine's tab that this Mac doesn't show (`SessionRecord.staysOnHost`). A page that has loaded stays, whatever the host's
+    /// listing says next.
+    var staysOnHost: Bool { record.staysOnHost && webView == nil }
+    /// What its card says: a title, the detail, and the address on the host when it has one.
+    var remoteNote: (title: String, detail: String, address: String?)? {
+        guard staysOnHost else { return nil }
+        let host = hostName ?? "the host"
+        if isLiveTranscript {
+            return ("The Transcript stays on \(host)", "It is what \(host) heard while listening, and it never leaves that Mac.", nil)
+        }
+        let reason = record.proxyNote.map { " It can't be shown here: \($0)" } ?? " It can't be shown here."
+        if isApp {
+            return ("\(record.app ?? label) runs on \(host)", "Its server is on \(host), where only \(host) can reach it." + reason, record.url)
+        }
+        return ("This page runs on \(host)", "It is at an address only \(host) can reach." + reason, record.url)
+    }
+
+    /// The host's listing of a web or app pane (protocol 25): the address its port proxy serves it at, or why there is none. A card that gets an
+    /// address becomes the page; a page already loading stays the viewer's own browsing. True when the record changed.
+    @discardableResult
+    func applyHostProxy(_ address: String?, note: String?) -> Bool {
+        guard record.host != nil, record.isWeb, record.proxy != address || record.proxyNote != note else { return false }
+        objectWillChange.send()
+        record.proxy = address
+        record.proxyNote = note
+        if let address, webView == nil {
+            record.url = address
+            makeWebView()
+            if started { load(address) }
+        } else if let address, loadFailed {
+            // The address is back after a page failed to load: try it now, not at the next retry (at the new address if the port moved).
+            retry?.cancel()
+            loadFailed = false
+            let wanted = record.url.flatMap(URL.init(string:))
+            if let wanted, wanted.port == URL(string: address)?.port { webView?.load(URLRequest(url: wanted)) } else { load(address) }
+        }
+        return true
+    }
+    /// The card shows another machine in control of the pane's session.
+    var isHeldElsewhere: Bool {
+        if case .controlled = away { true } else { false }
+    }
+    /// A Claude or terminal pane: its process runs in a zmx session another machine can attach to, so it has a card (ADR 0034).
+    var runsInZmx: Bool { record.runsInZmx }
     /// The host of a session on a peer, for the header and rows. Nil on a session's own host.
     var hostName: String? { record.host.map { PeerManager.shared.name(of: $0) } }
     /// The pane is the view of a session that goes on running with another Mac in control, so closing it
@@ -246,6 +313,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         case .offline: "Not reachable"
         case .resumeFailed: "Couldn't resume"
         case .resuming: "Resuming"
+        case .unavailable: "Not running"
         case nil: nil
         }
     }
@@ -271,8 +339,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.nativeBackgroundColor = NSColor(white: 0.1, alpha: 1)
         view.nativeForegroundColor = NSColor(white: 0.9, alpha: 1)
         view.caretColor = .systemBlue
-        if record.isWeb { makeWebView() }
-        if let file = record.file { fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize) }
+        if record.isWeb, !record.staysOnHost { makeWebView() }
+        if let file = record.file {
+            fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize, remote: record.host.map { RemoteFile(host: $0, pane: record.id) })
+        }
         // A title Varnick generated, saved with the pane: Claude's own replaces it, so neither shows nor is saved again.
         if let generated = record.titleRecord?.title {
             if record.title == generated { self.record.title = record.transcriptTitle ?? "" }
@@ -285,8 +355,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         guard !started, !finished else { return }
         started = true
         startedAt = Date()
+        // A card says where the pane runs and starts nothing.
+        if staysOnHost { return }
         if isWeb {
-            if isApp, customApp != nil {
+            if isApp, customApp != nil, record.host == nil {
                 // A restored pane reconnects to its server if the session is still there.
                 startApp(reconnecting: resuming && Zmx.hasSession(record.id))
                 watchExit()
@@ -336,9 +408,14 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         }
     }
 
-    /// The user's login shell, like a new terminal window. A restored shell reconnects to its
-    /// zmx session; without one it starts fresh in its last known folder.
+    /// The user's login shell, like a new terminal window. A restored shell reconnects to its zmx session unless another machine controls
+    /// it (`startLocal`); without one it starts fresh in its last folder. On a peer it is an ssh client of the host's zmx.
     private func startShell() {
+        if let host = record.host { return startOnHost(on: host) }
+        startLocal { self.launchShell() }
+    }
+
+    private func launchShell() {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true) + [paneIDVariable]
         startInTerminal(shell, ["-l"], environment: env)
@@ -373,7 +450,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Runs the app's server in the pane's zmx session, whatever Keep sessions running says: a
     /// server has no screen to reattach. Without zmx it runs directly and ends with Varnick.
     private func startApp(reconnecting: Bool) {
-        guard let app = customApp else { return }
+        guard record.host == nil, let app = customApp else { return }
         let fm = FileManager.default
         try? fm.createDirectory(at: app.dataDirectory, withIntermediateDirectories: true)
         try? fm.createDirectory(at: CustomApp.logsDirectory, withIntermediateDirectories: true)
@@ -446,11 +523,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     private func startClaude() {
         if let host = record.host { return startOnHost(on: host) }
-        // A session another Mac is in control of is never attached from here: a second client would
-        // type into it too. The card shows instead. A new pane has no session yet to ask about
-        // (the one a peer's `start` made creates it, labelled for that peer). zmx is asked off the
-        // main actor, so the process starts a moment after.
-        guard resuming, Zmx.isEnabled else { return launchClaude() }
+        startLocal { self.launchClaude() }
+    }
+
+    /// Starts a Claude or terminal pane of this Mac with `launch`, unless its zmx session runs: one another Mac controls is never attached
+    /// from here (a second client would type into it), and the card shows. zmx is asked off the main actor.
+    private func startLocal(launch: @escaping () -> Void) {
+        guard resuming, Zmx.isEnabled else { return launch() }
         let id = record.id
         Task { [weak self] in
             let status = await Task.detached { Zmx.status(of: id) }.value
@@ -466,7 +545,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             }
             // A session that runs is attached to, never started: it could end before the attach.
             if status.running { return self.attachToLocalSession() }
-            self.launchClaude()
+            launch()
         }
     }
 
@@ -537,6 +616,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// from the host's open sessions shows the card, and asks the same way. Asks off the main
     /// actor, after the view update that started it.
     private func startOnHost(on host: String) {
+        if opensUnavailable { return markAway(.unavailable) }
         if resumesOnPeer { return resumeOnHost(on: host) }
         guard resuming || opensOnCard else { return attachToHost(on: host, take: true) }
         Task { [weak self] in
@@ -628,6 +708,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// now, without waiting for the pane's own check, and does what `settle` does with the answer.
     func reconnect() {
         guard clientEnded, !finished, !reconnecting, let host = record.host else { return }
+        // Start on a pane that isn't running: the host starts it again if it can, and says why when it can't.
+        if case .unavailable = away {
+            opensUnavailable = false
+            return resumeOnHost(on: host)
+        }
         // Retry on a resume the user asked for: this click asks for it again.
         if case .resumeFailed = away, explicitResumeFailed {
             explicitResumeFailed = false
@@ -964,17 +1049,38 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if framesPaused != paused { framesPaused = paused }
     }
 
-    /// Take over on a card whose Mac is in control: this pane's client attaches again, as the one
-    /// in control, and the Mac that had it sees its own exit and freezes. From a peer that is one
-    /// attach with take, which relabels, detaches every client and attaches in order. On the host
-    /// the same steps run here: relabel first, then detach, then the pane's own client starts.
+    /// Take over on the card: control is the tab's, so the model takes every card of the tab (`LauncherModel.takeOver(tabOf:)`).
+    var onTakeOver: (() -> Void)?
+
+    /// The card shows another machine in control and nothing is changing that, so Take over does something.
+    var canTakeOver: Bool {
+        guard clientEnded, !finished, !takingOver, case .controlled = away else { return false }
+        return true
+    }
+
     func takeOver() {
+        guard canTakeOver else { return }
+        if let onTakeOver { onTakeOver() } else { performTakeOver() }
+    }
+
+    /// The tab's take over is under way, shown as "Taking over…"; `takeOverFailed` or `performTakeOver` ends it.
+    func beginTakeOver() { takingOver = true }
+
+    func takeOverFailed(_ message: String) {
+        takingOver = false
+        screen.failure = message
+    }
+
+    /// Take over on a card: this pane's client attaches as the one in control and the Mac that had it freezes. From a peer that is an attach
+    /// with take (with `taken`, the tab's `take` has relabelled it already); on the host, relabel, detach, then attach.
+    func performTakeOver(taken: Bool = false) {
+        takingOver = false
         guard clientEnded, !finished, !takingOver, case .controlled = away else { return }
         confirmingEnd = false
         onKept()
         screen.failure = nil
         if let host = record.host {
-            resumeClient { self.attachToHost(on: host, take: true) }
+            resumeClient { self.attachToHost(on: host, take: !taken) }
             return
         }
         guard let me = PeerIdentity.id else {
@@ -1187,9 +1293,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         guard !finished, !clientEnded, !restarting else { return }
         // A server that exits leaves its pane open, to read what it printed; ⌘W closes it.
         if isApp, !endedByUser { return appEnded() }
-        // A Claude client exiting isn't always the pane ending: another Mac may have taken the
+        // A Claude or terminal client exiting isn't always the pane ending: another machine may have taken the
         // session, or the link to its host may have dropped.
-        if isClaude, inZmx || isOnPeer, !endedByUser { return clientExited(code) }
+        if runsInZmx, inZmx || isOnPeer, !endedByUser { return clientExited(code) }
         conclude(code, killSession: true)
     }
 
@@ -1396,7 +1502,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         return URL(string: (local ? "http://" : "https://") + text)
     }
 
+    /// The same, only when it is an http or https address: the one test of which addresses a page of another machine's tab may open.
+    static func httpURL(from text: String) -> URL? {
+        guard let url = url(from: text.trimmingCharacters(in: .whitespaces)), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+
     func reload() {
+        // A file of another machine is read again.
+        if let viewer = fileViewer, viewer.remote != nil { return viewer.load() }
         guard let web = webView else { return }
         if appExited { return restartApp() }
         if let url = record.url.flatMap(URL.init(string:)), web.url == nil || web.url?.scheme == "about" {
@@ -1412,20 +1526,46 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         Task { @MainActor in self.showLoadError(error) }
     }
 
+    /// A page that loads through the port proxy of this pane's host: the host's own name, whatever its listing says now.
+    private func isHostProxy(_ url: URL) -> Bool {
+        guard let host = record.host, let peer = PeerManager.shared.peers.first(where: { $0.id == host }) else { return false }
+        TailnetNodes.shared.refreshIfStale()
+        return PeerProxyAddress.accepts(url.absoluteString, forPeer: peer.address, in: TailnetNodes.shared.nodes)
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor in
+            // The error page this class loads is about:blank; a real page that finished means the failure is over.
+            if let url = webView.url, url.scheme != "about" { self.loadFailed = false }
+        }
+    }
+
     private func showLoadError(_ error: Error) {
         guard let web = webView, let target = record.url.flatMap(URL.init(string:)) else { return }
         if (error as NSError).code == NSURLErrorCancelled { return }
-        let local = ["localhost", "127.0.0.1", "0.0.0.0"].contains(target.host() ?? "")
-        let message = local ? "Waiting for \(target.absoluteString) to start…" : error.localizedDescription
+        loadFailed = true
+        // A load refused for a page of another machine's tab means its server, or the host's Phone page server, stopped; the host's own reason wins.
+        var retryAfter: TimeInterval?
+        let message: String
+        if isHostProxy(target) {
+            let host = hostName ?? "the host"
+            message = record.proxyNote.map { "\(host): \($0)" } ?? "\(host)'s Phone page server isn't running, or this page's server has stopped."
+            retryAfter = 3
+        } else if PeerProxyAddress.isProxiable(target.absoluteString) {
+            message = "Waiting for \(target.absoluteString) to start…"
+            retryAfter = 1.5
+        } else {
+            message = error.localizedDescription
+        }
         let html = """
             <body style="background:#1a1a1a;color:#999;font:13px -apple-system;display:grid;place-items:center;height:90vh">
             <div>\(message.replacingOccurrences(of: "<", with: "&lt;"))</div></body>
             """
         web.loadHTMLString(html, baseURL: nil)
-        guard local else { return }
+        guard let retryAfter else { return }
         let work = DispatchWorkItem { [weak self] in self?.webView?.load(URLRequest(url: target)) }
         retry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + retryAfter, execute: work)
     }
 
     func setFontSize(_ size: Double) {
@@ -1438,6 +1578,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// honour (they ignore the SIGTERM SwiftTerm's terminate() sends, which left the pane
     /// open with its input already closed). SIGKILL if it's still there a second later.
     func end() {
+        if !endsWithTab, let reason = closeGate() { return showRefusal(reason) }
+        if isShell, isOnPeer, away == nil, !finished, !endsWithTab, !endConfirmed {
+            askingEnd = true
+            return onNeedsConfirmation()
+        }
         // The card on a session's host is the one pane that session has: closing it would leave
         // the session running with nothing owning it. So it asks first, on the card.
         if clientEnded, !isOnPeer, case .controlled = away, !finished {
@@ -1447,7 +1592,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         }
         // A restored pane with no client yet (never shown, or still asking zmx) may hold a session
         // a peer controls, which is the card in waiting: it doesn't know until zmx says.
-        if isClaude, !isOnPeer, resuming, Zmx.isEnabled, !clientEnded, view.process.shellPid <= 0, !finished {
+        if runsInZmx, !isOnPeer, resuming, Zmx.isEnabled, !clientEnded, view.process.shellPid <= 0, !finished {
             return endAfterAskingZmx()
         }
         endNow()
@@ -1502,18 +1647,49 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         }
     }
 
-    /// Closing a pane in control of a session on a peer tells its host, which decides: a session it
-    /// started for this Mac ends, as closing a local pane ends its zmx session; one it started
-    /// itself is released back to it and keeps running (`LauncherModel.hostEnd`). Either way this pane
-    /// is over and nothing here starts it again. A pane showing a card isn't in control, so it sends
-    /// nothing. One with no client running doesn't know whether it is (never shown, or still asking the
-    /// host, or its client just exited), so the host is asked first.
+    /// The host closed this pane (its tab's listing no longer has it): the view closes without telling the host anything.
+    func hostRemoved() {
+        endsWithTab = true
+        endSession()
+    }
+
+    /// A terminal of another machine's tab moved to `folder` there. Returns whether the record changed.
+    func updateHostFolder(_ folder: String) -> Bool {
+        guard isOnPeer, !folder.isEmpty, record.directory != folder else { return false }
+        record.directory = folder
+        return true
+    }
+
+    /// The pane closes with its whole tab, whose host the model tells once (`ClaudeTab.onEnding`), so it sends no `end` of its own.
+    var endsWithTab = false
+    /// Why closing this pane alone is refused (set by the model): another machine's tab changes only for the machine in control of it.
+    var closeGate: () -> String? = { nil }
+    /// Set by the model for a pane of another machine's tab: a change to the tab is on its way to the host, and the returned closure says it
+    /// arrived. And the tab's id, which the host needs to tell ⌘W from the phone's end of one session.
+    var layoutChange: () -> () -> Void = { {} }
+    var hostTab: () -> UUID? = { nil }
+    /// ⌘W on a terminal of another machine's tab asks first: it ends that terminal there. A Claude pane's conversation stays in the tab's history.
+    @Published private(set) var askingEnd = false
+    private var endConfirmed = false
+
+    func endTerminal() {
+        askingEnd = false
+        endConfirmed = true
+        end()
+    }
+
+    func keepTerminal() { askingEnd = false }
+
+    /// Closing a pane in control of a session on a peer tells its host, naming the tab: the host ends the pane as closing it there would, or
+    /// the tab if it is the last (`hostEnd`). A card sends nothing; a pane with no client running asks the host first.
     private func endSessionOnHost() {
-        guard let host = record.host, isClaude, !finished, away == nil else { return }
-        let id = record.id, unknown = clientEnded || view.process.shellPid <= 0
+        guard let host = record.host, runsInZmx, !finished, away == nil, !endsWithTab else { return }
+        let id = record.id, unknown = clientEnded || view.process.shellPid <= 0, tab = hostTab()
         let left = record, onReleased = onReleased
+        let arrived = layoutChange()
         Task {
-            if await PeerManager.shared.end(session: id, on: host, onlyIfControlled: unknown) { onReleased(left) }
+            if await PeerManager.shared.end(session: id, on: host, onlyIfControlled: unknown, tab: tab) { onReleased(left) }
+            arrived()
         }
     }
 

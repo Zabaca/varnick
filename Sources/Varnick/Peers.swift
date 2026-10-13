@@ -109,6 +109,8 @@ enum Tailscale {
         var userID: Int64?
         /// Shared in from another user's tailnet.
         var sharee: Bool
+        /// Its tailnet addresses.
+        var addresses: [String] = []
 
         /// The first label of its MagicDNS name: `phone-1`.
         var label: String { dnsName.split(separator: ".").first.map(String.init) ?? dnsName }
@@ -152,10 +154,34 @@ enum Tailscale {
         let peers = (json["Peer"] as? [String: [String: Any]] ?? [:]).values.map {
             Node(id: $0["ID"] as? String ?? "", dnsName: name($0), hostName: $0["HostName"] as? String ?? "", os: $0["OS"] as? String ?? "",
                  online: $0["Online"] as? Bool ?? false, tags: $0["Tags"] as? [String] ?? [], userID: $0["UserID"] as? Int64,
-                 sharee: $0["ShareeNode"] as? Bool ?? false)
+                 sharee: $0["ShareeNode"] as? Bool ?? false, addresses: $0["TailscaleIPs"] as? [String] ?? [])
         }
         let own = json["Self"] as? [String: Any]
         return .ok(Status(selfDNSName: name(own), selfUserID: own?["UserID"] as? Int64, nodes: peers))
+    }
+}
+
+/// The tailnet's nodes as `tailscale status` last listed them, kept for the checks that need the full name of a peer's node (the address of a
+/// page another machine proxies, ADR 0035). Read again when older than a minute; the last list stays while one is being read.
+@MainActor
+final class TailnetNodes {
+    static let shared = TailnetNodes()
+
+    private(set) var nodes: [PeerProxyAddress.Node] = []
+    private var readAt = Date.distantPast
+    private var reading = false
+
+    func refreshIfStale() {
+        guard !reading, Date().timeIntervalSince(readAt) > 60 else { return }
+        reading = true
+        Task {
+            let outcome = await Tailscale.status()
+            reading = false
+            readAt = Date()
+            if case .ok(let status) = outcome {
+                nodes = status.nodes.map { PeerProxyAddress.Node(dnsName: $0.dnsName, addresses: $0.addresses) }
+            }
+        }
     }
 }
 
@@ -736,8 +762,8 @@ final class PeerManager: ObservableObject {
         return reply.sessions ?? [:]
     }
 
-    /// What a peer's Recent holds, nil when it couldn't be asked.
-    func recentSessions(on id: String) async -> [PeerRecentSession]? {
+    /// The closed tabs a peer's Recent holds, nil when it couldn't be asked.
+    func recentTabs(on id: String) async -> [PeerRecentTab]? {
         var request = PeerRequest(.recent)
         request.by = PeerIdentity.id
         guard case .success(let reply) = await send(request, to: id) else { return nil }
@@ -790,11 +816,11 @@ final class PeerManager: ObservableObject {
         return last.isEmpty ? .ended : .failed(String(last.prefix(120)))
     }
 
-    /// The Claude sessions open on a peer, nil when it couldn't be asked. `timeout` is `send`'s unless given.
-    func openSessions(on id: String, timeout: TimeInterval? = nil) async -> [PeerOpenSession]? {
-        let result = if let timeout { await send(PeerRequest(.sessions), to: id, timeout: timeout) } else { await send(PeerRequest(.sessions), to: id) }
+    /// The tabs open on a peer, whole (ADR 0034), nil when it couldn't be asked. `timeout` is `send`'s unless given.
+    func tabs(on id: String, timeout: TimeInterval? = nil) async -> [PeerTab]? {
+        let result = if let timeout { await send(PeerRequest(.tabs), to: id, timeout: timeout) } else { await send(PeerRequest(.tabs), to: id) }
         guard case .success(let reply) = result else { return nil }
-        return reply.open ?? []
+        return reply.tabs ?? []
     }
 
     /// The Mac in control closed its pane. The host decides: it kills the session and closes its own pane
@@ -804,14 +830,13 @@ final class PeerManager: ObservableObject {
     /// failure is only logged: the pane closes anyway, and nothing here asks for the session again.
     /// Returns whether the host released it, so the caller can take it out of Recent.
     @discardableResult
-    func end(session id: UUID, on host: String, onlyIfControlled: Bool) async -> Bool {
+    func end(session id: UUID, on host: String, onlyIfControlled: Bool, tab: UUID? = nil) async -> Bool {
         let name = Zmx.sessionName(id)
         if onlyIfControlled {
             let (status, _) = await sessionStatus(name, on: host)
             guard let status, status.running, Zmx.sameID(status.control, PeerIdentity.id) else { return false }
         }
-        var request = PeerRequest(.end)
-        request.by = PeerIdentity.id
+        var request = tabRequest(.end, tab: tab)
         request.session = name
         switch await send(request, to: host) {
         case .failure(let refusal):
@@ -819,6 +844,69 @@ final class PeerManager: ObservableObject {
             return false
         case .success(let reply):
             return reply.released == true
+        }
+    }
+
+    /// A request about a tab or one of its panes (ADR 0034), as this Mac.
+    private func tabRequest(_ op: PeerOp, tab: UUID? = nil, pane: UUID? = nil) -> PeerRequest {
+        var request = PeerRequest(op)
+        request.by = PeerIdentity.id
+        request.tab = tab?.uuidString.lowercased()
+        request.pane = pane?.uuidString.lowercased()
+        return request
+    }
+
+    /// A divider moved or the name changed, in control of a tab on its host (`arrange`). Nil once the host took it, else why not.
+    func arrange(tab id: UUID, layout: PeerLayout, name: String?, on host: String) async -> String? {
+        var request = tabRequest(.arrange, tab: id)
+        request.layout = layout
+        request.tabName = name ?? ""
+        switch await send(request, to: host) {
+        case .failure(let refusal): return refusal.message
+        case .success: return nil
+        }
+    }
+
+    /// A file pane's text, read by its host (`file`): the host finds the pane in its tabs and refuses a path outside the tab's folders, a
+    /// file that is too large and one that isn't text. The failure is the line to show in the pane.
+    func fileText(pane id: UUID, on host: String) async -> Result<String, Refusal> {
+        switch await send(tabRequest(.file, pane: id), to: host, timeout: 20) {
+        case .failure(let refusal): return .failure(refusal)
+        case .success(let reply): return reply.text.map { .success($0) } ?? .failure(Refusal(message: "\(self.name(of: host)) sent no text"))
+        }
+    }
+
+    /// Reopens a tab that closed on the host, whole, for this Mac (`reopen`, ADR 0034). The host starts its panes, which takes a few seconds each.
+    func reopen(tab id: UUID, on host: String) async -> Result<PeerReply, Refusal> {
+        await send(tabRequest(.reopen, tab: id), to: host, timeout: 80)
+    }
+
+    /// The Mac in control closed a pane of the host's tab that has no session of its own (a page, a file). A failure is only logged.
+    func end(pane: UUID, in tab: UUID, on host: String) async {
+        if case .failure(let refusal) = await send(tabRequest(.end, tab: tab, pane: pane), to: host) {
+            NSLog("Varnick: couldn't close pane \(pane.uuidString.lowercased()) of a tab on \(self.name(of: host)): \(refusal.message)")
+        }
+    }
+
+    /// The Mac in control closed a whole tab of the host's (`end` naming the tab, ADR 0034). The host decides as for one pane: it ends the
+    /// tab if it was made for this Mac, else releases every pane. A failure is only logged. Returns whether the host released it.
+    @discardableResult
+    func end(tab id: UUID, on host: String) async -> Bool {
+        switch await send(tabRequest(.end, tab: id), to: host) {
+        case .failure(let refusal):
+            NSLog("Varnick: couldn't end tab \(id.uuidString.lowercased()) on \(self.name(of: host)): \(refusal.message)")
+            return false
+        case .success(let reply):
+            return reply.released == true
+        }
+    }
+
+    /// Takes a tab on its host for this Mac (`take`): every Claude and terminal pane of it is relabelled, then every client detached. Nil once
+    /// taken, else why not. The caller attaches each pane, which finds the label naming this Mac.
+    func take(tab id: UUID, on host: String) async -> String? {
+        switch await send(tabRequest(.take, tab: id), to: host, timeout: 20) {
+        case .failure(let refusal): return refusal.message
+        case .success: return nil
         }
     }
 
@@ -903,17 +991,19 @@ final class PeerManager: ObservableObject {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))
             }
             return PeerJSON.line(await model.hostDone(request))
-        case .start, .resume, .end:
+        case .start, .resume, .end, .arrange, .reopen:
             guard let model else { return starting }
-            // Both change what runs here, so only for a Mac in the list, or a device (read from the file the
-            // relay reads, so a hand edit counts at once). The id goes into a zmx label, so it has to be a UUID.
+            // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit
+            // counts at once), except `arrange`, which a Mac alone may send. The id goes into a zmx label, so it has to be a UUID.
             guard let by = request.by, UUID(uuidString: by) != nil,
-                  peers.contains(where: { $0.id == by }) || MacPeerHost().listsDevice(by) else {
+                  peers.contains(where: { $0.id == by }) || (request.op != .arrange && MacPeerHost().listsDevice(by)) else {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
             }
             switch request.op {
             case .start: return PeerJSON.line(await model.hostStart(request, by: by))
             case .resume: return PeerJSON.line(await model.hostResumeConversation(request, by: by))
+            case .arrange: return PeerJSON.line(await model.hostArrange(request, by: by))
+            case .reopen: return PeerJSON.line(await model.hostReopen(request, by: by))
             default: return PeerJSON.line(await model.hostEnd(request, by: by))
             }
         case .projects:
@@ -922,7 +1012,10 @@ final class PeerManager: ObservableObject {
         case .agents:
             guard let model else { return starting }
             return PeerJSON.line(await model.hostAgents(folder: request.folder))
-        case .attach, .status, .screen, .watch, .sessions, .rows, .pages, .recent, .hosts, .upgrade, .restart:
+        case .apps:
+            guard let model else { return starting }
+            return PeerJSON.line(await model.hostApps(folder: request.folder))
+        case .attach, .status, .screen, .watch, .tabs, .take, .file, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))
         }

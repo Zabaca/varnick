@@ -198,10 +198,17 @@ struct FileRow: View {
 
 // MARK: - Viewer
 
+/// A file pane of another machine's tab: its text is read from that machine (`file`), when the pane shows and when it is reloaded.
+struct RemoteFile {
+    let host: String
+    let pane: UUID
+}
+
 /// A file pane's view: text (Markdown rendered, or as source) that reloads as the file
 /// changes, keeping the scroll position; anything else (images, PDFs) in Quick Look.
 final class FileViewer: NSView, WKNavigationDelegate {
     let url: URL
+    let remote: RemoteFile?
     private var scroll: NSScrollView?
     private var text: NSTextView?
     private var preview: QLPreviewView?
@@ -234,8 +241,9 @@ final class FileViewer: NSView, WKNavigationDelegate {
     /// Rendered Markdown is prose: a little larger than the terminal's monospace reads better.
     private static let proseBump = 1.5
 
-    init(path: String, fontSize: Double) {
+    init(path: String, fontSize: Double, remote: RemoteFile? = nil) {
         url = URL(fileURLWithPath: path)
+        self.remote = remote
         self.fontSize = fontSize
         super.init(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
     }
@@ -249,6 +257,17 @@ final class FileViewer: NSView, WKNavigationDelegate {
     func load() {
         loads += 1
         let load = loads, url = self.url
+        if let remote {
+            Task { [weak self] in
+                let result = await PeerManager.shared.fileText(pane: remote.pane, on: remote.host)
+                guard let self, load == self.loads else { return }
+                switch result {
+                case .success(let text): self.showText(text)
+                case .failure(let refusal): self.showText(refusal.message)
+                }
+            }
+            return
+        }
         Task { [weak self] in
             let content = await Task.detached(priority: .userInitiated) { Self.read(url) }.value
             guard let self, load == self.loads else { return }
@@ -393,7 +412,8 @@ final class FileViewer: NSView, WKNavigationDelegate {
             NSWorkspace.shared.open(target)
             return
         }
-        guard target.isFileURL else { return }
+        // A path in a file of another machine is that machine's: it would name, reveal or open something else here.
+        guard target.isFileURL, remote == nil else { return }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return }
         if isDirectory.boolValue {
@@ -407,6 +427,7 @@ final class FileViewer: NSView, WKNavigationDelegate {
     /// ends the watch on the old one; reload and watch whatever is at the path now.
     private func watch() {
         stop()
+        guard remote == nil else { return }
         let fd = open(url.path, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
@@ -441,14 +462,17 @@ struct FileBar: View {
                 }
                 .help(session.showsSource ? "Show rendered" : "Show source")
             }
-            Button { NSWorkspace.shared.open(URL(fileURLWithPath: path)) } label: {
-                Image(systemName: "arrow.up.forward.app")
+            // A file of another machine's tab isn't on this Mac to open.
+            if session.fileViewer?.remote == nil {
+                Button { NSWorkspace.shared.open(URL(fileURLWithPath: path)) } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                }
+                .help("Open in default app")
+                Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
+                    Image(systemName: "folder")
+                }
+                .help("Reveal in Finder")
             }
-            .help("Open in default app")
-            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
-                Image(systemName: "folder")
-            }
-            .help("Reveal in Finder")
             CloseButton(help: CloseButton.paneHelp) { session.end() }
         }
         .buttonStyle(.plain)

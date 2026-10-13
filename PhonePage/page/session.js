@@ -24,7 +24,8 @@ function setSub(s, state) {
 }
 
 function setTitle(s, title) {
-  if (title) s.title = title;
+  // A pane of a tab keeps the tab's title in the header: the tab view names the pane in its switcher.
+  if (title && !s.tab) s.title = title;
   $("session-title").textContent = s.title;
 }
 
@@ -372,12 +373,13 @@ function setCtrl(s, on) {
 /**
  * Opens a session. `title` and `host` are what the home list knew; the host's answer replaces them. `done(text)` says the
  * user left or ended it: text is what End said, or null. `take` is true only for a session this page has just started or
- * resumed (app.js): it then attaches with take at once, as Take over does, without asking the status first.
+ * resumed (app.js): it then attaches with take at once, as Take over does, without asking the status first. `tab` is `{id}` for
+ * a pane of a tab (tab.js): the header keeps the tab's title, Take over takes the whole tab, and End ends it.
  */
-export function openSession({ name, title, host, done, take = false }) {
-  closeSession();
+export function openSession({ name, title, host, done, take = false, tab = null }) {
+  releaseSession();
   const s = {
-    name, title: title || "Claude session", host: host || "", done,
+    name, title: title || "Claude session", host: host || "", done, tab,
     lv: newLive(),
     view: "", ws: null, term: null, fit: null, observer: null, timer: null, tries: 0, generation: 0, ctrlOn: false, closed: false,
     // mine: this page held the session (output arrived); note: "Taken over on X"; error: the relay's refusal; openedAt: when the socket opened.
@@ -392,8 +394,17 @@ export function openSession({ name, title, host, done, take = false }) {
   connect(s, take);
 }
 
-/** Leaves the session: closes only this phone's websocket, so the session keeps running with its label. */
+/** Leaves the session and its view: closes only this phone's websocket, so the session keeps running with its label. */
 export function closeSession() {
+  releaseSession();
+  $("session").hidden = true;
+}
+
+/**
+ * Lets go of the open session, if there is one, and leaves the view up for the tab to put another pane in. Its websockets close and the
+ * terminal goes, so the phone's terminals stay within the server's cap (only the shown pane's is open).
+ */
+export function releaseSession() {
   const s = current;
   if (!s) return;
   current = null;
@@ -408,18 +419,22 @@ export function closeSession() {
   s.observer?.disconnect();
   s.term?.dispose();
   $("term").replaceChildren();
-  $("session").hidden = true;
 }
 
-async function endSession(s) {
-  $("confirm-text").textContent = `End “${s.title}”? A session this phone started ends. Any other is handed back to ${s.host || "its host"} and keeps running.`;
+/** Asks whether to end `title`, a tab or a session; true on End. What ending does is the host's: a tab this phone started ends, any other is handed back. */
+export async function confirmEnd(title, host, whole) {
+  $("confirm-text").textContent = `End “${title}”? ${whole ? "A tab" : "A session"} this phone started ends. Any other is handed back to ${host || "its host"} and keeps running.`;
   const dialog = $("confirm");
   dialog.returnValue = "cancel";
   dialog.showModal();
   await new Promise((resolve) => dialog.addEventListener("close", resolve, { once: true }));
-  if (dialog.returnValue !== "end" || s.closed) return;
+  return dialog.returnValue === "end";
+}
+
+async function endSession(s) {
+  if (!(await confirmEnd(s.title, s.host, s.tab !== null)) || s.closed) return;
   $("end").disabled = true;
-  const result = await postJSON("/api/end", { session: s.name }, "the host didn't answer");
+  const result = await postJSON("/api/end", s.tab ? { tab: s.tab.id } : { session: s.name }, "the host didn't answer");
   $("end").disabled = false;
   if (s.closed) return;
   if (result.ok) {
@@ -435,11 +450,24 @@ async function endSession(s) {
 
 $("back").addEventListener("click", () => current?.done(null));
 $("leave").addEventListener("click", () => current?.done(null));
-$("take").addEventListener("click", () => {
+$("take").addEventListener("click", async () => {
   const s = current;
   if (!s) return;
   s.note = "";
   s.error = "";
+  if (s.tab) {
+    // A tab's control is the tab's: the host relabels every Claude and terminal pane of it for this phone and detaches their clients, and this
+    // pane then attaches without take, since the label names the phone.
+    $("take").disabled = true;
+    const result = await postJSON("/api/take", { tab: s.tab.id }, "the host didn't answer");
+    $("take").disabled = false;
+    if (s.closed) return;
+    if (!result.ok) {
+      s.error = result.error;
+      return showNotice(s);
+    }
+    return connect(s, false);
+  }
   // `take` is true right after this press, or for a session just started or resumed (`openSession`): nowhere else.
   connect(s, true);
 });

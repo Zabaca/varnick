@@ -15,6 +15,11 @@ interface CommonConfig {
   /** Passed on to the relay when set, for checks. */
   zmxDir?: string;
   userHome?: string;
+  /**
+   * The port proxy (proxy.ts): an owner-only folder for its certificate, and the file it writes its status to. Both set, or no proxy.
+   * `tabs` is the saved-tabs file whose date says whether to ask the relay again; without it the relay is asked only now and then.
+   */
+  proxy?: { folder: string; status: string; tabs?: string };
 }
 
 /** Socket mode (an owner-only Unix socket) or loopback (a port on 127.0.0.1): exactly one. */
@@ -35,7 +40,16 @@ export function readConfig(env: Record<string, string | undefined>): { config: C
   const devices = env.VARNICK_DEVICES;
   if (!devices || !devices.startsWith("/")) return { error: "VARNICK_DEVICES must be the absolute path of devices.json" };
   const tailscale = env.VARNICK_TAILSCALE || "tailscale";
-  const shared = { port, relay, devices, tailscale, zmxDir: env.VARNICK_ZMX_DIR || undefined, userHome: env.CFFIXED_USER_HOME || undefined };
+  const folder = env.VARNICK_PROXY_FOLDER || undefined, status = env.VARNICK_PROXY_STATUS || undefined;
+  if ((folder === undefined) !== (status === undefined)) return { error: "Set VARNICK_PROXY_FOLDER and VARNICK_PROXY_STATUS together, or neither" };
+  const tabs = env.VARNICK_PROXY_TABS || undefined;
+  if ((folder && !folder.startsWith("/")) || (status && !status.startsWith("/")) || (tabs && !tabs.startsWith("/"))) {
+    return { error: "VARNICK_PROXY_FOLDER, VARNICK_PROXY_STATUS and VARNICK_PROXY_TABS must be absolute paths" };
+  }
+  const shared = {
+    port, relay, devices, tailscale, zmxDir: env.VARNICK_ZMX_DIR || undefined, userHome: env.CFFIXED_USER_HOME || undefined,
+    proxy: folder && status ? { folder, status, tabs } : undefined,
+  };
   if (socketPath) {
     if (!socketPath.startsWith("/")) return { error: "VARNICK_PAGE_SOCKET must be an absolute path" };
     return { config: { mode: "socket", socketPath, ...shared } };
@@ -84,6 +98,8 @@ export interface WhoisNode {
   stableID: string;
   /** The node's MagicDNS label ("phone-1"). Null when it has none that is safe to show. */
   label: string | null;
+  /** The node's full MagicDNS name, lowercase with no final dot. Null when it has none. */
+  dnsName: string | null;
   tagged: boolean;
   sharee: boolean;
   /** The owning user's id, as text. */
@@ -95,11 +111,13 @@ export function parseWhois(text: string): WhoisNode | null {
   try { json = parseTailnetJSON(text); } catch { return null; }
   const node = isObject(json) ? json.Node : null;
   if (!isObject(node) || typeof node.StableID !== "string" || node.StableID === "") return null;
-  const name = typeof node.Name === "string" ? node.Name.split(".")[0] : "";
+  const full = typeof node.Name === "string" ? node.Name.replace(/\.$/, "").toLowerCase() : "";
+  const name = full.split(".")[0];
   const tags = node.Tags;
   return {
     stableID: node.StableID,
     label: /^[A-Za-z0-9-]{1,63}$/.test(name) ? name : null,
+    dnsName: full !== "" ? full : null,
     // Anything but an empty list of tags counts as tagged: a shape this code doesn't know is not the user's own node.
     tagged: !(tags === null || tags === undefined || (Array.isArray(tags) && tags.length === 0)),
     sharee: sharedIn(node),

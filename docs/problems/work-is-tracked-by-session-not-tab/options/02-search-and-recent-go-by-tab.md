@@ -1,8 +1,8 @@
 ---
 problem: work-is-tracked-by-session-not-tab
 title: Search groups sessions under their tab, and Recent lists closed tabs
-summary: On top of option 01. A tab keeps the history of the conversations it has held, the ones left behind by /clear and /resume included. Recent lists closed tabs, and ↩ reopens one whole, on this Mac or on its host. Search still matches sessions, since that is where the text is, but shows them grouped under their tab, and opening any of them opens that tab. The session list's tab rows say how many sessions a tab has and how many wait ("3 sessions · 1 waiting"), and other machines' open sessions are listed by tab. The search database keeps which tab each conversation belongs to, and other machines send it with their rows. A new `reopen` request asks a Mac host to reopen one of its closed tabs (protocol 22). A session with no tab, such as one from before the change, gets a one-pane tab when it is opened.
-status: accepted
+summary: On top of option 01. A tab keeps the history of the conversations it has held, the ones left behind by /clear and /resume included. Recent lists closed tabs, and ↩ reopens one whole, on this Mac or on its host. Search still matches sessions, since that is where the text is, but shows them grouped under their tab, and opening any of them opens that tab. The session list's tab rows say how many sessions a tab has and how many wait ("3 sessions · 1 waiting"), and other machines' open sessions are listed by tab. The search database keeps which tab each conversation belongs to, and other machines send it with their rows. Reopening a closed tab on another machine is one `resume` per Claude session, each carrying the tab, which the host gathers into one tab (protocol 23). A session with no tab, such as one from before the change, gets a one-pane tab when it is opened.
+status: shipped
 ---
 
 ## Solution
@@ -30,14 +30,15 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
 - **↩ on an old conversation opens its tab, not that conversation** (decision 3). A conversation that no pane of the tab is on now, say one a `/clear` left, is reached with `/resume` inside the tab.
 - **Recent drops the conversations a `/clear` left in a tab that is still open.** They stay in the tab's history and in search, under the open tab.
 - **Recent holds 20 tabs rather than 20 sessions.** It reaches more conversations, but a single old session falls off with its tab.
-- **A protocol bump to 22:**
+- **A protocol bump to 23:**
   - `recent` lists tabs;
-  - `rows` carries each session's tab;
-  - `reopen` is new.
+  - `rows` carries the tab of each session.
+
+  There is no `reopen` request: the `resume` that option 01 made carry the tab does it.
 
   The headless host's `rows` isn't built yet (`sessions-hosted-only-on-macs`, ticket 4). Until it is, the Ryzen's sessions are matched only through Recent, and have a tab only once listed there.
 - **The search database gains a table** in its archive half, as the session names and the work history did.
-- **A reopened tab on another machine opens here with only its Claude panes** until option 03. The host has it whole.
+- **A reopened tab on another machine opens with only its Claude panes** until option 03, here and on the host. The host keeps the closed tab whole (a tab it reopened for a peer remembers the record it came from and closes back into Recent with its terminals and splits), so option 03 can restore it.
 
 ## User Stories
 
@@ -66,13 +67,13 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
 - **The newest 20 closed tabs, Done or not,** as Done sessions are in Recent today. Each is a saved tab with its history and when it closed.
 - **A tab reopened leaves Recent.** One of its conversations resumed elsewhere moves that conversation out of its history.
 - **↩ on a closed tab of this Mac reopens it whole,** by option 01's rules for a Completed tab.
-- **↩ on another machine's closed tab sends `reopen` to that host:**
-  - **a Mac host** reopens the tab in the background, starts its Claude panes labelled for the asker, as `resume` starts one, and replies with the tab;
-  - **the headless host** has one-pane tabs, so it is `resume` as today.
+- **↩ on another machine's closed tab sends a `resume` for each of its Claude sessions, naming the tab and its name:**
+  - **a Mac host** starts each pane in a background tab of that id, labelled for the asker, as `resume` starts one, and replies with the tab. The first makes the tab and the others join it;
+  - **the headless host** records the tab on each session it starts.
 
   The tab opens here as the host's tab, its sessions in control here, as a resume is today.
 - **The host refuses a tab whose conversation is open there.** The asker opens the open tab instead, as a refused resume does today.
-- **Saved under a new key.** Today's Recent sessions become one-pane closed tabs with the record's id, as option 01 does for Completed. The old key is read once, then saved absent.
+- **Saved under a new key,** and also under the old one. Today's Recent sessions are read once as closed tabs: the sessions that ended in one tab are one closed tab, its newest session the pane and the others its history, since they never ran together. One whose tab is open is not closed: its sessions go into that tab's history. The old key is saved from then on as a session per pane and per past conversation, each naming its tab, so a build before this one still lists them and the next migrates them again.
 
 **Search**
 - **The search database keeps each conversation's tab:** the tab's id, name and machine.
@@ -88,7 +89,7 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
 - **Opening a match opens the tab,** from the tab's row or any of its sessions:
   - **open here:** shown, with the pane on that conversation focused if there is one;
   - **closed here:** reopened;
-  - **another machine's:** opened as that machine's tab, or reopened there with `reopen`;
+  - **another machine's:** opened as that machine's tab, or reopened there with a `resume` per session;
   - **in Completed:** reopened, and its mark taken off, as ↩ on its card does.
 - **A match with no tab** is resumed in a new one-pane tab, as today, and the conversation joins that tab's history.
 - **Every row added to the session list, the prompt's list and the results** goes into the panel's height in each branch, with the selection's order and the row ids that follow the highlight.
@@ -103,13 +104,13 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
 
 **The Phone page**
 - **Home lists the host's sessions under their tabs,** and Recent lists closed tabs.
-- **Reopening a closed tab** asks `reopen` on a Mac host and `resume` on the headless host, with the same checks as a resume: the host's own Recent offers it, and a refused one returns the open tab to take over.
+- **Reopening a closed tab** asks `resume` for each of its sessions, together, on a Mac host and on the headless host alike, with the same checks as a resume: the host's own Recent offers it, and a refused one returns the open tab to take over.
 - **The page still opens one session at a time.** A tab's panes, one at a time, come with option 03.
 
-**The protocol** goes to 22, with the Phone page's constant:
+**The protocol** goes to 23, with the Phone page's constant:
 - `recent` lists closed tabs, each with its id, name, when it closed, its Claude sessions (conversation, title, folder, agent) and its mark (option 01);
 - `rows` gives each row its tab's id and name;
-- `reopen` names a tab.
+- there is no `reopen`: `resume` names the tab.
 
 ## Testing Decisions
 
@@ -142,7 +143,7 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
   - Panel size: the new rows;
   - Sessions and tabs: a tab's history and a conversation's one tab;
   - Search store: the new table, with "made if it isn't there" and its readers on an older database;
-  - Peers: `recent` as tabs, `rows` with tabs, `reopen`.
+  - Peers: `recent` as tabs, `rows` with tabs, a tab's `resume`s.
 - **Verified in the code at 0d1d161:**
   - Recent lists sessions, including those a `/clear` or `/resume` left behind;
   - opening a search match activates the pane on that conversation, or resumes it in a new tab;

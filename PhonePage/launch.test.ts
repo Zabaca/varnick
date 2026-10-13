@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Device } from "./checks";
 import type { RelayResult } from "./home";
 import {
-  agentsOf, findOpenSession, parseAgentsFolder, parseResumeBody, parseStartBody, promptLimitBytes, referenceDateOffset, resumeConversation, shapeAgents, shapeProjects, startSession,
+  agentsOf, openElsewhere, parseAgentsFolder, parseResumeBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab, shapeAgents, shapeProjects, startSession,
   type Asker,
 } from "./launch";
 import { argumentLimit, buildRequest, Relay, relayArguments } from "./relay";
@@ -14,6 +14,8 @@ import { PROTOCOL as V } from "./fixtures/protocol";
 const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXAMPLE4CNTRL", name: "Phone" };
 const folder = "/home/alex/Projects/play/cc";
 const conversation = "7c0e1f3a-5b2d-4c9e-8a11-3d4f5a6b7c8d";
+const tab = "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77";
+const other = "00000000-0000-4000-8000-00000000000a";
 const fixedID = "11111111-2222-4333-8444-555555555555";
 const ok = (reply: Record<string, unknown>): RelayResult => ({ ok: true, reply: { v: V, ok: true, ...reply } });
 
@@ -109,14 +111,15 @@ describe("what a start may ask", () => {
 });
 
 describe("what a resume may ask", () => {
-  test("a conversation id, lowercased, and nothing else", () => {
-    expect(parseResumeBody({ conversation: conversation.toUpperCase(), folder: "/etc", agent: "x", by: "me" })).toEqual({ ok: true, value: conversation });
+  test("a tab id, lowercased, and nothing else", () => {
+    expect(parseResumeBody({ tab: tab.toUpperCase(), conversation, folder: "/etc", agent: "x", by: "me" })).toEqual({ ok: true, value: tab });
   });
 
-  test("anything that isn't a uuid is refused", () => {
-    for (const bad of [undefined, null, 5, "", "not-a-uuid", `${conversation}x`, `--${conversation}`, `${conversation}\n`, [conversation]]) {
-      expect(parseResumeBody({ conversation: bad })).toMatchObject({ ok: false });
+  test("anything that isn't a uuid is refused, and so is a conversation in place of a tab", () => {
+    for (const bad of [undefined, null, 5, "", "not-a-uuid", `${tab}x`, `--${tab}`, `${tab}\n`, [tab]]) {
+      expect(parseResumeBody({ tab: bad })).toMatchObject({ ok: false });
     }
+    expect(parseResumeBody({ conversation })).toMatchObject({ ok: false });
     expect(parseResumeBody(null)).toMatchObject({ ok: false });
   });
 
@@ -175,7 +178,7 @@ describe("starting", () => {
   test("sends start as the device, with the server's id, and no skipPermissions", async () => {
     const { asker, calls } = fakeRelay({ projects, agents, start: ok({ folder }) });
     const launched = await startSession(asker, device, "linux box", { folder, agent: "reviewer", prompt: "Reply with the word ok." }, () => fixedID);
-    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}` } });
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab: null } });
     const start = calls.find((call) => call.op === "start")!;
     expect(start.by).toBe(device.id);
     expect(start.fields).toEqual({ start: { id: fixedID, folder, prompt: "Reply with the word ok.", agent: "reviewer" } });
@@ -242,62 +245,50 @@ describe("starting", () => {
   });
 });
 
-describe("resuming", () => {
-  const recent = ok({ recent: [{ conversation, title: "Fix the build", folder, agent: "reviewer", last: 1_790_000_000 }, { conversation: "00000000-0000-4000-8000-00000000000a", title: "Other", folder: "/x/y", last: 1 }] });
-  const empty = ok({ open: [] });
+describe("reopening a closed tab", () => {
+  const listed = (...tabs: string[]) => ok({ tabs: tabs.map((id) => ({ tab: id, panes: [] })) });
 
-  test("sends resume as the device for a conversation Recent offers, with Recent's folder and agent", async () => {
-    const { asker, calls } = fakeRelay({ recent, sessions: empty, resume: ok({ folder }) });
-    const launched = await resumeConversation(asker, device, "linux box", conversation.toUpperCase(), () => fixedID);
-    // The conversation is compared case-insensitively, and sent lowercase.
-    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}` } });
-    const resume = calls.find((call) => call.op === "resume")!;
-    expect(resume.by).toBe(device.id);
-    expect(resume.fields).toEqual({ conversation, start: { id: fixedID, folder, prompt: "", agent: "reviewer" } });
-    expect(resume.limitMs).toBeGreaterThan(25_000);
+  test("sends reopen as the device for the tab, lowercased, and the page opens the tab the host answers with", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), reopen: ok({ tab }) });
+    const launched = await reopenTab(asker, device, "linux box", tab.toUpperCase());
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: null, tab } });
+    const reopen = calls.find((call) => call.op === "reopen")!;
+    expect(reopen.by).toBe(device.id);
+    expect(reopen.fields).toEqual({ tab });
+    // The host starts the panes together, up to 60 s on a Mac: the relay is given longer than that.
+    expect(reopen.limitMs).toBeGreaterThan(60_000);
   });
 
-  test("a conversation Recent doesn't offer is never resumed", async () => {
-    const { asker, calls } = fakeRelay({ recent, sessions: empty, resume: ok({}) });
-    const launched = await resumeConversation(asker, device, "linux box", "99999999-9999-4999-8999-999999999999", () => fixedID);
-    expect(launched.status).toBe(404);
-    expect(calls.some((call) => call.op === "resume")).toBe(false);
+  test("a host that doesn't name the tab leaves the tab that was asked for", async () => {
+    const { asker } = fakeRelay({ tabs: listed(), reopen: ok({}) });
+    expect(await reopenTab(asker, device, "linux box", tab)).toEqual({ status: 200, body: { ok: true, session: null, tab } });
   });
 
-  test("a conversation a running session has open is answered with that session's row, and resume isn't sent", async () => {
-    const sessions = ok({ open: [{ session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Open one", folder, conversation, controlName: "Mac mini", clients: 1 }] });
-    const { asker, calls } = fakeRelay({ recent, sessions, resume: ok({}) });
-    const launched = await resumeConversation(asker, device, "linux box", conversation, () => fixedID);
+  test("a tab that is open on the host is answered with its id to take over, and nothing is reopened", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(other, tab.toUpperCase()), reopen: ok({}) });
+    const launched = await reopenTab(asker, device, "linux box", tab);
+    expect(launched).toEqual({ status: 409, body: { ok: false, error: openElsewhere("linux box"), openTab: tab } });
+    expect(calls.some((call) => call.op === "reopen")).toBe(false);
+  });
+
+  test("the host's refusal reaches the page in its words", async () => {
+    const { asker } = fakeRelay({ tabs: listed(), reopen: { ok: false, error: "That tab isn't in Mac mini's Recent any more" } });
+    expect(await reopenTab(asker, device, "Mac mini", tab)).toEqual({ status: 502, body: { ok: false, error: "That tab isn't in Mac mini's Recent any more" } });
+  });
+
+  test("a refusal because the tab opened meanwhile returns that tab to take over", async () => {
+    const { asker } = fakeRelay({
+      tabs: [listed(), listed(tab)],
+      reopen: { ok: false, error: "That tab is open on linux box: take it over from the list" },
+    });
+    const launched = await reopenTab(asker, device, "linux box", tab);
     expect(launched.status).toBe(409);
-    expect(launched.body).toMatchObject({ ok: false, error: "That session is open on linux box: take it over from the list", open: { session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", text: "Controlled on Mac mini", mine: false } });
-    expect(calls.some((call) => call.op === "resume")).toBe(false);
+    expect(launched.body).toMatchObject({ ok: false, openTab: tab });
   });
 
-  test("an open session is found by its own id when it hasn't moved to another conversation", () => {
-    const sessions = ok({ open: [{ session: `varnick-${conversation}`, title: "Same id", folder, clients: 0, controlName: "Phone" }, { session: "varnick-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", title: "Elsewhere", folder, conversation: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }] });
-    expect(findOpenSession(sessions, conversation, device)?.title).toBe("Same id");
-    expect(findOpenSession(sessions, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", device)?.title).toBe("Elsewhere");
-    expect(findOpenSession(sessions, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", device)).toBeNull();
-    expect(findOpenSession({ ok: false, error: "x" }, conversation, device)).toBeNull();
-  });
-
-  test("the host's own refusal reaches the page in the host's words", async () => {
-    const { asker } = fakeRelay({ recent, sessions: empty, resume: { ok: false, error: "That session is open on Mac mini: take it over from the list" } });
-    const launched = await resumeConversation(asker, device, "Mac mini", conversation, () => fixedID);
-    expect(launched).toEqual({ status: 502, body: { ok: false, error: "That session is open on Mac mini: take it over from the list" } });
-  });
-
-  test("a host whose Recent can't be read resumes nothing", async () => {
-    const { asker, calls } = fakeRelay({ recent: { ok: false, error: "The saved tabs on Mac mini couldn't be read" }, sessions: empty });
-    const launched = await resumeConversation(asker, device, "Mac mini", conversation, () => fixedID);
-    expect(launched.status).toBe(502);
-    expect(calls.some((call) => call.op === "resume")).toBe(false);
-  });
-
-  test("a Recent row with no usable folder resumes nothing", async () => {
-    const { asker, calls } = fakeRelay({ recent: ok({ recent: [{ conversation, title: "x", folder: "relative" }] }), sessions: empty, resume: ok({}) });
-    expect((await resumeConversation(asker, device, "linux box", conversation, () => fixedID)).status).toBe(502);
-    expect(calls.some((call) => call.op === "resume")).toBe(false);
+  test("a reopen whose answer was lost, for a tab the host has since, is the page's to open", async () => {
+    const { asker } = fakeRelay({ tabs: [listed(), listed(tab)], reopen: { ok: false, error: "The relay didn't answer in time" } });
+    expect(await reopenTab(asker, device, "linux box", tab)).toMatchObject({ status: 409, body: { openTab: tab } });
   });
 });
 
@@ -364,17 +355,15 @@ describe("New session's preselection", () => {
   });
 });
 
-describe("a start or resume that failed or came late", () => {
+describe("a start that failed or came late", () => {
   const projects = ok({ projects: [{ path: folder }] });
-  const recent = ok({ recent: [{ conversation, title: "x", folder, last: 1 }] });
-  const empty = ok({ open: [] });
   const running = (name: string) => ok({ sessions: { [name]: { running: true, clients: 0 } } });
   const sessionOf = `varnick-${fixedID}`;
 
   test("a start whose answer was lost but whose session runs is a success, so a second tap makes no duplicate", async () => {
     const { asker, calls } = fakeRelay({ projects, start: { ok: false, error: "The relay didn't answer in time" }, status: running(sessionOf) });
     const launched = await startSession(asker, device, "linux box", { folder, agent: null, prompt: "" }, () => fixedID);
-    expect(launched).toEqual({ status: 200, body: { ok: true, session: sessionOf } });
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: sessionOf, tab: null } });
     // The host is asked about the very session the start named, as the device.
     const status = calls.find((call) => call.op === "status")!;
     expect(status.fields).toEqual({ sessions: [sessionOf] });
@@ -391,34 +380,11 @@ describe("a start or resume that failed or came late", () => {
     expect((await startSession(asker, device, "linux box", { folder, agent: null, prompt: "" }, () => fixedID)).status).toBe(502);
   });
 
-  test("a success asks nothing more", async () => {
-    const { asker, calls } = fakeRelay({ projects, start: ok({ folder }) });
-    await startSession(asker, device, "linux box", { folder, agent: null, prompt: "" }, () => fixedID);
+  test("a success asks nothing more, and carries the tab the host put the session in", async () => {
+    const { asker, calls } = fakeRelay({ projects, start: ok({ folder, tab: tab.toUpperCase() }) });
+    const launched = await startSession(asker, device, "linux box", { folder, agent: null, prompt: "" }, () => fixedID);
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: sessionOf, tab } });
     expect(calls.some((call) => call.op === "status")).toBe(false);
-  });
-
-  test("a resume whose answer was lost but whose session runs is a success", async () => {
-    const { asker } = fakeRelay({ recent, sessions: empty, resume: { ok: false, error: "The relay didn't answer in time" }, status: running(sessionOf) });
-    expect(await resumeConversation(asker, device, "linux box", conversation, () => fixedID)).toEqual({ status: 200, body: { ok: true, session: sessionOf } });
-  });
-
-  test("a resume the host refuses in a race returns the session that opened meanwhile, to take over", async () => {
-    const opened = ok({ open: [{ session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Opened meanwhile", folder, conversation, controlName: "Mac mini", clients: 1 }] });
-    // The first look finds nothing; by the second the conversation is open.
-    const { asker, calls } = fakeRelay({
-      recent, sessions: [empty, opened],
-      resume: { ok: false, error: "That session is open on linux box: take it over from the list" },
-      status: ok({ sessions: { [sessionOf]: { running: false } } }),
-    });
-    const launched = await resumeConversation(asker, device, "linux box", conversation, () => fixedID);
-    expect(launched.status).toBe(409);
-    expect(launched.body).toMatchObject({ ok: false, error: "That session is open on linux box: take it over from the list", open: { session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", text: "Controlled on Mac mini" } });
-    expect(calls.filter((call) => call.op === "sessions")).toHaveLength(2);
-  });
-
-  test("a resume refused for another reason, with nothing open, stays a failure", async () => {
-    const { asker } = fakeRelay({ recent, sessions: empty, resume: { ok: false, error: "/x isn't a folder on linux box" }, status: ok({ sessions: {} }) });
-    expect(await resumeConversation(asker, device, "linux box", conversation, () => fixedID)).toEqual({ status: 502, body: { ok: false, error: "/x isn't a folder on linux box" } });
   });
 });
 

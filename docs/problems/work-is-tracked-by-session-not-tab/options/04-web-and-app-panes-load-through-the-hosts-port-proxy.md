@@ -1,8 +1,8 @@
 ---
 problem: work-is-tracked-by-session-not-tab
 title: Web and app panes of another host's tab load through that host's port proxy
-summary: On top of option 03, as decision 4 has it. Each host runs a reverse proxy in its Phone page server, the one Varnick process that runs between requests on a Mac and on the headless host alike. The proxy listens on the host's tailnet address, on the ports its open tabs' web and app panes use, with a `tailscale cert` certificate for the machine's name, and forwards port N to localhost:N. It forwards websockets and rewrites the Host header so dev servers' host checks pass. Another Mac's web pane loads `https://<host's tailnet name>:N/` in place of `http://localhost:N/`. The phone shows it in the tab's pane view. Only listed devices and paired machines may connect, and a request started by another site is refused. The host's listing gives each such pane's address (protocol 24). A spike first checks `tailscale cert` and the tailnet bind on each kind of host, and Scratch through the proxy.
-status: accepted
+summary: On top of option 03, as decision 4 has it. Each host runs a reverse proxy in its Phone page server, the one Varnick process that runs between requests on a Mac and on the headless host alike. The proxy listens on the host's tailnet address, on the ports its open tabs' web and app panes use, with a `tailscale cert` certificate for the machine's name, and forwards port N to localhost:N. It forwards websockets and rewrites the Host header so dev servers' host checks pass. Another Mac's web pane loads `https://<host's tailnet name>:N/` in place of `http://localhost:N/`. The phone shows it in the tab's pane view. Only listed devices and paired machines may connect, and a request started by another site is refused. The host's listing gives each such pane's address (protocol 25). A spike first checks `tailscale cert` and the tailnet bind on each kind of host, and Scratch through the proxy.
+status: shipped
 ---
 
 ## Solution
@@ -47,7 +47,7 @@ A host that doesn't serve the Phone page doesn't proxy.
 - **On Linux, a server that binds every address and restarts within a few seconds can fail to start:** the proxy still holds the tailnet address at its port until it sees the server has stopped. Started again after that, it starts.
 - **It needs the Phone page server on the host.** A host with the page off keeps option 03's card for these panes.
 - **`tailscale cert` needs the user to be Tailscale's operator,** or tailscaled run with `TS_PERMIT_CERT_UID` for the user, on Linux and on a Mac with Homebrew's tailscaled alike (the spike). Setting either takes root, once per host. The Tailscale app's CLI on a Mac is untested.
-- **A protocol bump to 24,** for the proxied address in the listing.
+- **A protocol bump to 25,** for the proxied address in the listing.
 
 ## User Stories
 
@@ -133,7 +133,7 @@ Start from option 03's branch, or from main once option 03 is merged. Only the h
 - **The phone's tab view** shows the page in a frame, with "Open alone" beside it. The page's content rules allow frames from the host's own name on the proxied ports. An app that forbids framing shows nothing there, and Open alone covers it.
 - **Splits from afar** (option 03's decision 1) can then offer web and app panes too. The host runs the app, and the viewer loads it through the proxy.
 
-**The protocol** goes to 24, for the proxied address and the reason a pane can't be proxied in `tabs`, with the Phone page's constant.
+**The protocol** goes to 25, for the proxied address and the reason a pane can't be proxied in `tabs`, with the Phone page's constant.
 
 ## Testing Decisions
 
@@ -208,3 +208,13 @@ Start from option 03's branch, or from main once option 03 is merged. Only the h
   4. **Requests between two ports of a host.** On localhost a page on one port can fetch from another, since Vite's default CORS allows any localhost origin. Through the proxy that fails twice: the browser calls the request `same-site`, which the fetch-metadata rule refuses, and the Origin is the proxied address, for which the other port's Vite sends no `Access-Control-Allow-Origin`.
      - **Recommended: say it breaks,** in the custom-apps skill and in where-it-breaks. A page that needs a second server reaches it through its own dev server's proxy (Vite's `server.proxy`), which keeps it same-origin, so it works from afar unchanged.
      - **Rejected: the proxy rewrites between the host's ports.** An Origin that is another of this host's proxied addresses would go in as that port's localhost origin, an `Access-Control-Allow-Origin` naming a localhost port would come back as its proxied address, and the fetch-metadata rule would let `same-site` through when its Origin is one of them. It fixes only pages that build the other port's address from their own host name: one that writes `localhost:5198` breaks from afar anyway. Images and stylesheets from the other port carry no Origin, so they stay refused. And it widens the rule the spike just tightened, so every open app could call every other with the phone's or another Mac's identity.
+- **Departures found while building (2026-10-12), for the user to confirm:**
+  - **The page server asks `tabs` and `hosts` as the host's own id,** which the relay now answers for those two requests and no others, treating it as a device. The proxy has no device or paired Mac of its own to ask as; an anonymous request was the other way and was not taken.
+  - **The status file is keyed by pane,** so the relay never works out which port a pane names: the page server does, once. The saved tabs' date (`VARNICK_PROXY_TABS`) says whether the relay need be asked at all, which keeps an idle host near free.
+  - **A headless host cannot split a page or an app from afar,** and the request is refused with that reason: its tabs hold Claude sessions and terminals, and it has no browser or custom apps. It lists no web or app pane, so its proxy is idle. Splits of a Mac host's tab can add a page (its address typed in the split picker) or one of that Mac's custom apps (listed by a new `apps` request).
+  - **The operator is checked at the first look, not when a port is first wanted,** so Settings shows the command before any pane; the installer warns about a headless host as it does for linger.
+  - **The certificate is asked for at the first look and then hourly while no port is wanted** (each minute while one is, a day after a success), where the spec asks for it daily with a minimum validity.
+  - **A caller who is removed (a device unlisted, a Mac unpaired) loses its open websockets and streamed responses** at the next look, not only its next request.
+  - **Every port closes after a minute of the relay failing,** so a pane closed meanwhile can't keep its port open for good.
+  - **A socket may have 8 MB waiting to go to the server,** and is closed past that.
+  - **A viewer finds the proxied address's name from `tailscale status`,** by the peer's saved address, rather than trusting the listing or building it from the `ssh` address.

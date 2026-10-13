@@ -25,6 +25,7 @@ struct PhonePageSettingsSection: View {
                 if case .exited(let tail) = phone.server { logLines(tail) }
                 if case .failed(let message) = phone.server, message.contains("\n") { logLines(String(message.split(separator: "\n", maxSplits: 1).last ?? "")) }
                 if let look = phone.look { serveRows(look) }
+                if let look = phone.look, look.running { proxyRows(look) }
             } else if let note = unpublishNote {
                 SettingRow(title: "Tailscale serve", detail: note) {}
             }
@@ -84,6 +85,20 @@ struct PhonePageSettingsSection: View {
             }
             if let result = phone.usingSocketResult { SettingNote(text: socketFailure(result)) }
         }
+    }
+
+    /// The port proxy: whether it serves the web and app panes of this Mac's tabs to the user's other machines (ADR 0035), and what it needs.
+    @ViewBuilder private func proxyRows(_ look: PhonePageServer.Look) -> some View {
+        SettingRow(title: "Port proxy", detail: proxyText(look.proxy)) {}
+        // The usual cause of no certificate has one fix, run once.
+        if let command = look.proxy?.command { commandLine(command, copy: true) }
+    }
+
+    private func proxyText(_ status: PeerProxyStatus?) -> String {
+        guard let status else { return "Not running: Start again, or wait a few seconds after a start." }
+        if let note = status.note { return note }
+        if status.ports.isEmpty { return "Idle: no web or app pane of a tab here is open to other machines." }
+        return "Serving " + status.ports.map(String.init).joined(separator: ", ") + " to your other machines, tailnet only."
     }
 
     /// Why the last Use a socket went back to loopback.

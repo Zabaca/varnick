@@ -52,7 +52,7 @@ describe("the caller decision", () => {
   test("a real whois answer (redacted), as the user's own untagged node", () => {
     const text = readFileSync(new URL("./fixtures/whois-own-node.json", import.meta.url), "utf8");
     const node = parseWhois(text)!;
-    expect(node).toEqual({ stableID: "nEXAMPLE1CNTRL", label: "mac-mini", tagged: false, sharee: false, userID: FIXTURE_USER });
+    expect(node).toEqual({ stableID: "nEXAMPLE1CNTRL", label: "mac-mini", dnsName: "mac-mini.example.ts.net", tagged: false, sharee: false, userID: FIXTURE_USER });
     expect(decideCaller(node, FIXTURE_USER, [{ id: devices[0].id, node: node.stableID, name: "Mac mini" }]).kind).toBe("device");
     expect(decideCaller(node, OTHER, [{ id: devices[0].id, node: node.stableID, name: "Mac mini" }]).kind).toBe("unlisted");
     // The same answer with the fields that mark it as not the user's own.
@@ -263,6 +263,17 @@ describe("the configuration", () => {
     expect("error" in read({ VARNICK_PAGE_PORT: "99999" })).toBe(true);
     expect("error" in read({ VARNICK_PAGE_PORT: "8444x" })).toBe(true);
     expect("error" in readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "nope" })).toBe(true);
+  });
+
+  test("the port proxy has a folder and a status file together, or is off", () => {
+    const read = (extra: Record<string, string>) => readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "18449", ...extra });
+    expect((read({}) as any).config.proxy).toBeUndefined();
+    expect((read({ VARNICK_PROXY_FOLDER: "/p", VARNICK_PROXY_STATUS: "/s.json" }) as any).config.proxy).toEqual({ folder: "/p", status: "/s.json", tabs: undefined });
+    expect((read({ VARNICK_PROXY_FOLDER: "/p", VARNICK_PROXY_STATUS: "/s.json", VARNICK_PROXY_TABS: "/t.json" }) as any).config.proxy.tabs).toBe("/t.json");
+    expect("error" in read({ VARNICK_PROXY_FOLDER: "/p", VARNICK_PROXY_STATUS: "/s.json", VARNICK_PROXY_TABS: "t.json" })).toBe(true);
+    expect("error" in read({ VARNICK_PROXY_FOLDER: "/p" })).toBe(true);
+    expect("error" in read({ VARNICK_PROXY_STATUS: "/s.json" })).toBe(true);
+    expect("error" in read({ VARNICK_PROXY_FOLDER: "p", VARNICK_PROXY_STATUS: "/s.json" })).toBe(true);
   });
 
   test("the relay and the device file are absolute paths", () => {

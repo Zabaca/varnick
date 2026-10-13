@@ -5,7 +5,7 @@
 // Who is calling is never taken from the client. The server alone sets `by`: whois on the address serve puts in
 // X-Forwarded-For, then the node, then devices.json. Logs hold the method, the path, the status, the device's name and the time.
 
-import { chmodSync, lstatSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { isIP } from "node:net";
@@ -15,14 +15,17 @@ import {
 } from "./checks";
 import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
-import { loopbackNote, shapeHome, unlistedPage } from "./home";
-import { hostLinks, parseNodeNames, type HostLink } from "./hosts";
-import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, resumeConversation, shapeProjects, startSession } from "./launch";
+import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
+import { hostLinks, hostNodes, parseNodeNames, type HostLink } from "./hosts";
+import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, reopenTab, shapeProjects, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
-import { decideOpen, endText, isSessionName } from "./terminal";
+import { uuidPattern } from "./json";
+import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
+import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
+import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 25;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */
@@ -35,19 +38,26 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function capture(argv: string[], timeout: number): Promise<string | null> {
+/** Runs a command with a plain environment and a deadline: whether it succeeded, and both its streams (`tailscale cert` says why it refuses on stderr). */
+async function run(argv: string[], timeout: number): Promise<{ ok: boolean; out: string; err: string }> {
   try {
-    const process = Bun.spawn(argv, { env: { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+    const process = Bun.spawn(argv, { env: { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => process.kill(), timeout);
     try {
-      const output = await new Response(process.stdout).text();
-      return (await process.exited) === 0 ? output : null;
+      const [out, err] = await Promise.all([new Response(process.stdout).text(), new Response(process.stderr).text()]);
+      return { ok: (await process.exited) === 0, out, err };
     } finally {
       clearTimeout(timer);
     }
   } catch {
-    return null;
+    return { ok: false, out: "", err: "" };
   }
+}
+
+/** A command's output, or null when it failed. */
+async function capture(argv: string[], timeout: number): Promise<string | null> {
+  const done = await run(argv, timeout);
+  return done.ok ? done.out : null;
 }
 
 /** The socket's folder must be the user's own and closed to everyone else: Bun binds the socket before it can be chmodded. */
@@ -127,6 +137,8 @@ async function main(): Promise<void> {
   const identity = hello.reply.hello as { name?: unknown; headless?: unknown } | undefined;
   if (!identity || typeof identity.name !== "string" || identity.name === "") fail("the relay's hello didn't say the host's name");
   const host = { name: identity.name, headless: identity.headless === true };
+  // The host's own id is how this server asks `tabs` and `hosts` for the proxy: it is no device's, and a peer's request for them is refused unlisted.
+  const ownID = typeof (identity as { id?: unknown }).id === "string" ? String((identity as { id: string }).id) : null;
 
   const wantHost = expectedHost(self.dnsName, config.port);
   const wantOrigin = expectedOrigin(self.dnsName, config.port);
@@ -193,7 +205,8 @@ async function main(): Promise<void> {
     ...security,
     // xterm.js's renderer writes <style> elements, which `style-src 'self'` would refuse: styles may be inline, scripts may not.
     // The terminal's websocket is named outright: not every browser takes 'self' to cover wss.
-    "content-security-policy": `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://${wantHost}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    // Frames only from this host's own name, on the proxied ports (proxy.ts): the tab view shows an app of the tab in one.
+    "content-security-policy": `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://${wantHost}; frame-src https://${self.dnsName}:*; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
   };
 
   function respond(body: BodyInit | null, status: number, type: string, extra: Record<string, string> = {}): Response {
@@ -207,6 +220,8 @@ async function main(): Promise<void> {
     "/": { file: "page/index.html", type: "text/html; charset=utf-8" },
     "/app.js": { file: "page/app.js", type: js },
     "/session.js": { file: "page/session.js", type: js },
+    "/tab.js": { file: "page/tab.js", type: js },
+    "/tabrules.js": { file: "page/tabrules.js", type: js },
     "/rules.js": { file: "page/rules.js", type: js },
     "/dom.js": { file: "page/dom.js", type: js },
     "/live.js": { file: "page/live.js", type: js },
@@ -220,6 +235,67 @@ async function main(): Promise<void> {
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
+
+  // The port proxy (portproxy.ts), only where the environment gives it a folder and a status file, and the relay gave this host's id.
+  let proxy: PortProxy | null = null;
+  if (config.proxy && ownID) {
+    const { folder, status, tabs: tabsFile } = config.proxy;
+    const certFiles = certificateFiles(folder);
+    // The Macs this host lists, by tailnet name: asked of the relay as the host itself. One ask is shared by every request that comes while it runs,
+    // and its answer is kept for a minute, a failure for ten seconds, like the other hosts' links.
+    // A fetch that fails keeps the last good set, and with none yet the answer is null: a paired Mac is asked to come back, not cut off.
+    let peersCache: { at: number; ttl: number; names: Set<string> | null } | null = null;
+    let peersFetch: Promise<Set<string> | null> | null = null;
+    const world: ProxyWorld = {
+      tabs: () => relay.ask("tabs", ownID, {}, undefined, "proxy"),
+      // The saved tabs' date and size: a look that finds them as they were doesn't run the relay. A host that gives no file is asked only every few minutes.
+      tabsStamp: () => {
+        if (!tabsFile) return "none";
+        try { const info = statSync(tabsFile); return `${info.mtimeMs}:${info.size}`; } catch { return "missing"; }
+      },
+      servePorts: async () => {
+        const text = await capture([config.tailscale, "serve", "status", "--json"], 8000);
+        return text ? parseServePorts(text) : new Set<number>();
+      },
+      addresses: async () => {
+        const text = await capture([config.tailscale, "status", "--json"], 10_000);
+        return text ? parseSelfAddresses(text) : [];
+      },
+      certificate: async (): Promise<CertificateResult> => {
+        // Under the status file's minute, with the status written before and after: a first issuance takes seconds, not minutes.
+        const asked = await run([config.tailscale, "cert", "--cert-file", certFiles.cert, "--key-file", certFiles.key, "--min-validity", "720h", self.dnsName], 50_000);
+        if (!asked.ok) return { ok: false, ...certificateFailure(asked.err) };
+        try {
+          return { ok: true, cert: readFileSync(certFiles.cert, "utf8"), key: readFileSync(certFiles.key, "utf8") };
+        } catch {
+          const failure = certificateFailure("");
+          return { ok: false, note: failure.note };
+        }
+      },
+      whois,
+      devices: () => {
+        try { return readDevices(readFileSync(config.devices, "utf8")); } catch { return []; }
+      },
+      peers: () => {
+        if (peersCache && Date.now() - peersCache.at < peersCache.ttl) return Promise.resolve(peersCache.names);
+        peersFetch ??= (async () => {
+          try {
+            const [listed, statusNow] = await Promise.all([relay.ask("hosts", ownID, {}, undefined, "proxy-hosts"), capture([config.tailscale, "status", "--json"], 10_000)]);
+            const nodes = statusNow ? parseNodeNames(statusNow) : new Set<string>();
+            const ok = listed.ok && nodes.size > 0;
+            const names = ok ? new Set(hostNodes(listed.reply, self!.dnsName, nodes).map((node) => node.dns)) : (peersCache?.names ?? null);
+            peersCache = { at: Date.now(), ttl: ok ? linksLifetime : linksFailureLifetime, names };
+            return names;
+          } finally {
+            peersFetch = null;
+          }
+        })();
+        return peersFetch;
+      },
+      log,
+    };
+    proxy = new PortProxy(world, { dnsName: self.dnsName, userID: self.userID, reserved: [config.port, ...(config.mode === "loopback" ? [config.loopbackPort] : [])], statusPath: status });
+  }
   const terminals = new Terminals(config, relay, PROTOCOL_VERSION, homedir(), log);
   const watches = new Watches(config, PROTOCOL_VERSION, homedir(), log);
   const json = (value: unknown, status = 200) => respond(JSON.stringify(value), status, "application/json; charset=utf-8");
@@ -261,16 +337,24 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume") return plain(404, "Not found");
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
       if (path === "/api/end") {
-        const session = typeof body === "object" && body !== null ? (body as Record<string, unknown>).session : undefined;
-        if (!isSessionName(session)) return plain(400, "Not a Varnick session name");
-        // The host decides: a session this device started ends, any other is released to its host.
-        const ended = await relay.ask("end", device.id, { session });
+        const target = parseEndBody(body);
+        if (!target.ok) return plain(400, target.error);
+        // The host decides: a tab (or session) this device started ends, any other is released to its host.
+        const ended = await relay.ask("end", device.id, target.fields);
         if (!ended.ok) return json({ ok: false, error: ended.error }, 502);
         return json({ ok: true, released: ended.reply.released === true, text: endText(ended.reply, host.name) });
+      }
+      if (path === "/api/take") {
+        // Take over takes the whole tab (ADR 0034): the relay relabels every Claude and terminal pane of it for this device, then detaches
+        // their clients. The page then attaches the pane it shows, without take.
+        const target = parseTabBody(body);
+        if (!target.ok) return plain(400, target.error);
+        const taken = await relay.ask("take", device.id, { tab: target.tab });
+        return taken.ok ? json({ ok: true }) : json({ ok: false, error: taken.error }, 502);
       }
       // A start waits for the host (`launchTimeoutMs`), then asks it again before it fails: past the 30 s Bun waits on an idle connection.
       server.timeout(request, 120);
@@ -281,9 +365,9 @@ async function main(): Promise<void> {
         const launched = await startSession(relay, device, host.name, ask.value, () => crypto.randomUUID());
         return json(launched.body, launched.status);
       }
-      const conversation = parseResumeBody(body);
-      if (!conversation.ok) return json({ ok: false, error: conversation.error }, 400);
-      const launched = await resumeConversation(relay, device, host.name, conversation.value, () => crypto.randomUUID());
+      const tab = parseResumeBody(body);
+      if (!tab.ok) return json({ ok: false, error: tab.error }, 400);
+      const launched = await reopenTab(relay, device, host.name, tab.value);
       return json(launched.body, launched.status);
     }
 
@@ -299,6 +383,24 @@ async function main(): Promise<void> {
       // Every open and every reconnect asks first: the label says whether to attach, show who has it, or say it ended.
       return json({ ...decideOpen(await relay.ask("status", device.id, { sessions: [session] }), session, device), host: host.name });
     }
+    if (path === "/api/tab" && request.method === "GET") {
+      proxy?.touch();
+      const tab = new URL(request.url).searchParams.get("tab");
+      if (tab === null || !uuidPattern.test(tab)) return plain(400, "Not a Varnick tab id");
+      const listed = await relay.ask("tabs", device.id);
+      if (!listed.ok) return json({ ok: false, error: listed.error }, 502);
+      const found = (Array.isArray(listed.reply.tabs) ? listed.reply.tabs : []).find((candidate: any) => String(candidate?.tab).toLowerCase() === tab.toLowerCase());
+      const shaped = found && typeof found === "object" ? shapeTab(found as Record<string, unknown>, device) : null;
+      return shaped ? json({ ok: true, host: host.name, tab: shaped }) : json({ ok: false, error: `That tab isn't open on ${host.name} any more` }, 404);
+    }
+    if (path === "/api/file" && request.method === "GET") {
+      const query = new URL(request.url).searchParams;
+      const tab = query.get("tab"), pane = query.get("pane");
+      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
+      // The host reads the file the pane has, inside the tab's folders, and caps its size: the path is never the page's.
+      const read = await relay.ask("file", device.id, { tab: tab.toLowerCase(), pane: pane.toLowerCase() });
+      return read.ok && typeof read.reply.text === "string" ? json({ ok: true, text: read.reply.text }) : json({ ok: false, error: read.ok ? "The host sent no text" : read.error }, 502);
+    }
     if (path === "/api/projects" && request.method === "GET") {
       const projects = shapeProjects(await relay.ask("projects", device.id));
       return "error" in projects ? json({ ok: false, error: projects.error }, 502) : json({ ok: true, host: host.name, projects: projects.rows });
@@ -310,10 +412,11 @@ async function main(): Promise<void> {
       return json(agents.body, agents.status);
     }
     if (path === "/api/home" && request.method === "GET") {
-      // The sessions and Recent run at once, each its own relay as the device the server found; the other hosts' links come
+      proxy?.touch();
+      // The tabs and Recent run at once, each its own relay as the device the server found; the other hosts' links come
       // from the cache or the one shared fetch (`otherHosts`), which has a slot key of its own.
-      const [sessions, recent, hosts] = await Promise.all([relay.ask("sessions", device.id), relay.ask("recent", device.id), otherHosts(device)]);
-      return respond(JSON.stringify(shapeHome({ host, loopback, device, sessions, recent, hosts })), 200, "application/json; charset=utf-8");
+      const [tabs, recent, hosts] = await Promise.all([relay.ask("tabs", device.id), relay.ask("recent", device.id), otherHosts(device)]);
+      return respond(JSON.stringify(shapeHome({ host, loopback, device, tabs, recent, hosts })), 200, "application/json; charset=utf-8");
     }
     return plain(404, "Not found");
   }
@@ -347,11 +450,13 @@ async function main(): Promise<void> {
   const stop = () => {
     server.stop(true);
     if (config.mode === "socket") rmSync(config.socketPath, { force: true });
-    process.exit(0);
+    // Its status file goes first, so the relay stops listing proxied addresses at once.
+    void (proxy ? proxy.stop() : Promise.resolve()).finally(() => process.exit(0));
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
 
+  proxy?.start();
   console.log(`${new Date().toISOString()} listening ${config.mode === "socket" ? config.socketPath : `127.0.0.1:${config.loopbackPort}`} as ${self.dnsName}:${config.port} for ${host.name}${host.headless ? " (headless)" : ""}, protocol ${PROTOCOL_VERSION}`);
 }
 

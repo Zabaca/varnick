@@ -1,8 +1,8 @@
 ---
 problem: work-is-tracked-by-session-not-tab
 title: A tab lives on one host and opens whole on other devices, its terminals and files included
-summary: On top of options 01 and 02. The machine that runs a tab keeps its layout, its panes and its mark, and lists its open tabs whole to other machines and devices with a new `tabs` request (protocol 23). Another Mac opens a host's tab in the host's layout. Claude and terminal panes show on cards until Take over, which now takes the whole tab. File panes are read over SSH, the Transcript stays on its own Mac, and web and app panes on a local address wait for option 04. Only the machine in control of a tab changes its layout. A split starts the new pane on the tab's host. The host's terminals survive another machine attaching to them, and the headless host keeps tabs of several panes, terminals included. The phone shows a tab's panes one at a time.
-status: accepted
+summary: On top of options 01 and 02. The machine that runs a tab keeps its layout, its panes and its mark, and lists its open tabs whole to other machines and devices with a new `tabs` request (protocol 24). Another Mac opens a host's tab in the host's layout. Claude and terminal panes show on cards until Take over, which now takes the whole tab. File panes are read over SSH, the Transcript stays on its own Mac, and web and app panes on a local address wait for option 04. Only the machine in control of a tab changes its layout. A split starts the new pane on the tab's host. The host's terminals survive another machine attaching to them, and the headless host keeps tabs of several panes, terminals included. The phone shows a tab's panes one at a time.
+status: shipped
 ---
 
 ## Solution
@@ -43,7 +43,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 - **Terminals on a Mac host are reachable only with Keep sessions running on there,** since a terminal runs in zmx only then (verified). Without it, the host lists them and says why they can't be opened.
 - **Web pages on a local address, and app panes, aren't reachable until option 04.** This option ships without the proxy.
 - **The Transcript never leaves its Mac** (Listening's privacy rule).
-- **Protocol 23.**
+- **Protocol 24.**
 
 ## User Stories
 
@@ -87,7 +87,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 - **A tab's control is the label on its Claude and terminal panes' zmx sessions,** kept the same on each. A tab with none of those has no control, and only its host changes it.
 - **Take over** (the card's button, ⇧↩) is one new request, `take`, naming the tab. The host relabels every one of its panes for the taker, then detaches their clients. The label always comes before the detach, as today. The taker then attaches each pane with `attach`, which finds the label naming it. The check after each attach runs per pane, as today, so two takers racing end with one keyboard per pane.
 - **Closing the tab in control is one `end` for the tab.** The host ends the tab if its origin names the closer. Otherwise it releases every pane: the labels are cleared, the clients detached, the host's cards go live. That is today's rule, with the tab's origin in place of the session's. On the headless host, release keeps the label, as today.
-- **A tab's origin is set when it is made for a machine:** a `start` that makes a new tab, or a `reopen`. A pane added to the tab later keeps the tab's origin.
+- **A tab's origin is set when it is made for a machine:** a `start` that makes a new tab, or a `resume` that reopens one. A pane added to the tab later keeps the tab's origin.
 
 **Layout changes**
 - **Only the machine or device in control of a tab changes its layout** (picked, to match **In control**: only it types). A viewer's split, close, divider and rename keys are refused with "Take over to change this tab". A tab with no control is changed only on its host.
@@ -114,7 +114,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 - **Take over takes the tab,** and a refused or raced take is told as today.
 - **A new session from the phone** is still a one-pane tab.
 
-**The protocol** goes to 23, with the Phone page's constant:
+**The protocol** goes to 24, with the Phone page's constant:
 - `tabs` is new;
 - `sessions` is gone;
 - `start` gains the tab, the pane split, the side and the kind;
@@ -165,5 +165,12 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
   - that taking over several zmx sessions at once is as safe as one, since each step is today's, per pane;
   - that 5 s is soon enough for a layout change made elsewhere.
 - **Picked:** only the machine in control changes the layout; a split from afar offers Claude and terminal only.
+- **Closing a pane (ruled 2026-10-12, still pending the user):** ⌘W on a pane in a tab this Mac controls closes it in the host's tab exactly as ⌘W would on the host. A Claude pane closes without asking, and its conversation goes to the tab's history. A terminal asks first, with a sentence saying it ends that terminal on the host, and then ends. A pane that is released never stays behind in the host's tab. The host decides whether the pane is the tab's last, not the asker, whose copy can be 5 s old, and then it is handled as the tab's `end`. Closing the whole tab keeps the earlier rule: it ends if every running pane's origin names the closer and is handed back otherwise. An `end` naming a session and no tab (the phone's single-session view) keeps the old release rule: it ends if the session's origin names the asker and is released otherwise. Only the ⌘W path in a controlled tab ends. It is one place to change (`LauncherModel.hostEnd` and the headless `end`).
+- **Departures accepted at review (2026-10-12):**
+  - `reopen` is a request of its own, in the protocol list. It reopens a closed tab whole in the host's layout, in place of a `resume` per session.
+  - A headless host's mark stays on its session records; the new tab record holds the layout, the name and the origin.
+  - `start` names the pane to split and an axis (`sideBySide` or `stacked`), and the new pane goes second. There is no side.
+  - A web pane at an outside address is an "Open in the browser" link on the phone, not a frame. The Mac loads it in the pane.
+  - A machine is in control only when every running Claude and terminal pane names it, and a pane's Start is refused while another machine holds the tab.
 - **Decided by the user (2026-10-12),** when accepting this option, each the recommendation:
   1. **Splitting a pane of another machine's tab** starts the new pane on that host.

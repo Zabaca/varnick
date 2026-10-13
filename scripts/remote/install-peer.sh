@@ -247,6 +247,8 @@ WorkingDirectory=%h/.varnick/PhonePage
 ExecStart=%h/.bun/bin/bun server.ts
 Environment=VARNICK_PAGE_SOCKET=%h/.varnick/phone/page.sock
 Environment=VARNICK_PAGE_PORT=$PAGE_PORT
+Environment=VARNICK_PROXY_FOLDER=%h/.varnick/phone
+Environment=VARNICK_PROXY_STATUS=%h/.varnick/state/proxy-status.json
 Environment=VARNICK_RELAY=%h/.varnick/varnick-peer
 Environment=VARNICK_DEVICES=%h/.varnick/state/devices.json
 Environment=VARNICK_TAILSCALE=/usr/bin/tailscale
@@ -307,10 +309,24 @@ UNIT
   echo "MAINPID=$(systemctl --user show -p MainPID --value "$PAGE_UNIT" 2>/dev/null)"
   echo "KILLMODE=$(systemctl --user show -p KillMode --value "$PAGE_UNIT" 2>/dev/null)"
   echo "LINGER=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null | sed 's/^$/no/')"
+  echo "OPERATOR=$(operator_state)"
   echo "SOCKET=$(stat -c %a "$sock" 2>/dev/null || echo missing)"
   echo "PHONEDIR=$(stat -c %a "$phone" 2>/dev/null || echo missing)"
   command -v tailscale >/dev/null 2>&1 && page_serve_markers "$sock"
   return 0
+}
+
+# Whether the user is Tailscale's operator, which `tailscale cert` (the port proxy's certificate, ADR 0035) needs: yes, no, or unknown when it
+# can't be read. tailscaled run with TS_PERMIT_CERT_UID is another way and is not visible from here, so no is a warning, not a failure.
+operator_state() {
+  command -v tailscale >/dev/null 2>&1 || { echo unknown; return; }
+  timeout 8 tailscale debug prefs 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print("yes" if (json.load(sys.stdin) or {}).get("OperatorUser") == sys.argv[1] else "no")
+except Exception:
+    print("unknown")
+' "$(id -un)" 2>/dev/null || echo unknown
 }
 
 # Where the tailnet's 8444 points and this host's name, read only.

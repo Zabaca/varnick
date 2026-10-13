@@ -8,6 +8,8 @@ enum Theme {
     static let gutter: CGFloat = 16
     static let listWidth: CGFloat = 300
     static let rowHeight: CGFloat = 48
+    /// How far a session is indented under the row of its tab in the prompt's list and in a search's results.
+    static let underTabIndent: CGFloat = 14
 
     static let hairline = Color.primary.opacity(0.08)
     static let selection = Color.primary.opacity(0.09)
@@ -149,7 +151,7 @@ struct LauncherView: View {
                 )
                 .frame(width: Theme.listWidth)
                 Theme.hairline.frame(width: 1)
-                if let r = model.selected { PreviewPane(result: r) }
+                if let r = model.previewed { PreviewPane(result: r) }
             }
             .frame(height: LauncherModel.resultsHeight)
             Theme.hairline.frame(height: 1)
@@ -183,31 +185,33 @@ struct LauncherView: View {
                 .frame(height: LauncherModel.sessionHeaderHeight)
                 VStack(spacing: 0) {
                     ForEach(Array(model.tabs.enumerated()), id: \.element.viewID) { i, t in
-                        TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record))
+                        TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record),
+                               sessions: model.tabSummaries[t.viewID] ?? [])
                             .onTapGesture { model.tabDrag.tap { model.activate(t) } }
                             .reorderable(t, in: model, axis: .vertical)
                     }
                 }
                 .tabDropMarker(model.tabDrag, in: model.tabs, axis: .vertical)
             }
-            // Each paired Mac's open sessions, under its name; ↩ takes one over.
-            let peerRows = model.peerOpenRows
-            ForEach(Array(peerRows.enumerated()), id: \.element.id) { i, row in
-                if i == 0 || peerRows[i - 1].peer.id != row.peer.id {
-                    SectionLabel(text: row.peer.name)
+            // Each paired Mac's open tabs, under its name; ↩ opens one whole, in its host's layout, on cards.
+            let peerTabs = model.peerListTabs
+            ForEach(Array(peerTabs.enumerated()), id: \.element.viewID) { i, tab in
+                if i == 0 || peerTabs[i - 1].peer.id != tab.peer.id {
+                    SectionLabel(text: tab.peer.name)
                         .frame(height: LauncherModel.sessionHeaderHeight)
                 }
-                PeerOpenSessionRow(row: row, selected: model.peerRowsStart + i == model.sessionSelection,
-                                   pills: model.pills(folder: row.info.folder, agent: row.info.agent, host: row.peer.id))
-                    .onTapGesture { model.openPeerSession(row) }
+                PeerOpenTabRow(tab: tab, selected: model.peerRowsStart + i == model.sessionSelection,
+                               pills: model.pills(folder: tab.folder, agent: tab.agent, host: tab.peer.id))
+                    .onTapGesture { model.openPeerTab(tab) }
             }
             if !model.shownRecent.isEmpty {
                 SectionLabel(text: "Recent")
                     .frame(height: LauncherModel.sessionHeaderHeight)
                 ForEach(Array(model.shownRecent.enumerated()), id: \.element.id) { i, r in
-                    RecentSessionRow(record: r, selected: model.recentRowsStart + i == model.sessionSelection,
-                                     pills: model.pills(for: r))
-                        .onTapGesture { model.resume(r) }
+                    RecentTabRow(tab: r, selected: model.recentRowsStart + i == model.sessionSelection,
+                                 pills: r.leading.map { model.pills(for: $0) } ?? SessionPills(), done: model.isDone(r),
+                                 note: model.reopening[r.id]?.text)
+                        .onTapGesture { model.openRecent(r) }
                 }
             }
         }
@@ -257,9 +261,16 @@ struct LauncherView: View {
             SectionLabel(text: "Sessions")
                 .frame(height: LauncherModel.sessionHeaderHeight)
             ForEach(Array(model.results.enumerated()), id: \.element.id) { i, r in
-                PromptSessionRow(result: r, selected: i == model.promptSelection, pills: model.promptPills[r.id] ?? SessionPills(),
-                                 isOpen: model.openConversations.contains(r.sessionID))
-                    .onTapGesture { model.promptSelection = i; model.submitPrompt() }
+                Group {
+                    if r.isTab {
+                        TabResultRow(result: r, isSelected: i == model.promptSelection)
+                    } else {
+                        PromptSessionRow(result: r, selected: i == model.promptSelection, pills: model.promptPills[r.id] ?? SessionPills(),
+                                         isOpen: model.openConversations.contains(r.sessionID), underTab: r.tab != nil)
+                    }
+                }
+                .padding(.horizontal, r.isTab ? 6 : 0)
+                .onTapGesture { model.promptSelection = i; model.submitPrompt() }
             }
         }
         .padding(.bottom, 8)
@@ -371,8 +382,9 @@ struct LauncherView: View {
             }
             .foregroundStyle(.tertiary)
             Spacer()
-            let onSession = model.selected?.isSession == true
-            KeyHint(label: onSession ? "Resume" : "Open", keys: ["↩"])
+            let selected = model.selected
+            let onSession = selected?.isSession == true || selected?.isTab == true
+            KeyHint(label: selected?.isTab == true || selected?.tab != nil ? "Open tab" : onSession ? "Resume" : "Open", keys: ["↩"])
             if !onSession { KeyHint(label: "Copy Link", keys: ["⌘", "↩"]) }
             KeyHint(label: "Close", keys: ["esc"])
         }
@@ -385,7 +397,8 @@ struct LauncherView: View {
 
     /// Sessions are counted before pages; the relevance check is about pages only.
     private var footerSummary: String {
-        let sessions = model.sessionCount, pages = model.results.count - sessions
+        // The first `sessionCount` rows are the session matches and the rows of their tabs; only the matches are counted.
+        let sessions = model.results.prefix(model.sessionCount).filter(\.isSession).count, pages = model.results.count - model.sessionCount
         let sessionText = sessions == 1 ? "1 session" : "\(sessions) sessions"
         let pageText = sessions > 0 ? "\(pages) pages" : "\(pages) results"
         guard pages > 0 || sessions == 0 else { return sessionText }   // nothing to check the relevance of
@@ -461,10 +474,16 @@ struct ResultList: View {
                         if sessionCount > 0, i == 0 { SectionLabel(text: "Sessions") }
                         if sessionCount > 0, i == sessionCount { SectionLabel(text: "Pages") }
                         if let n = relevantCount, n > 0, i == sessionCount + n { SectionLabel(text: "Less relevant") }
-                        ResultRow(result: r, isSelected: i == selection, demoted: isDemoted(i), scoredBy: rerankedBy,
-                                  isOpen: r.isSession && openConversations.contains(r.sessionID))
-                            .onTapGesture(count: 2) { onOpen(i) }
-                            .simultaneousGesture(TapGesture().onEnded { onSelect(i) })
+                        Group {
+                            if r.isTab {
+                                TabResultRow(result: r, isSelected: i == selection)
+                            } else {
+                                ResultRow(result: r, isSelected: i == selection, demoted: isDemoted(i), scoredBy: rerankedBy,
+                                          isOpen: r.isSession && openConversations.contains(r.sessionID), underTab: r.isSession && r.tab != nil)
+                            }
+                        }
+                        .onTapGesture(count: 2) { onOpen(i) }
+                        .simultaneousGesture(TapGesture().onEnded { onSelect(i) })
                     }
                 }
                 .padding(8)
@@ -511,9 +530,12 @@ struct ResultRow: View {
     var scoredBy: RelevanceBackend?
     /// A session that a tab has open.
     var isOpen = false
+    /// A session listed under the row of its tab.
+    var underTab = false
 
     var body: some View {
         HStack(spacing: 10) {
+            if underTab { Color.clear.frame(width: Theme.underTabIndent, height: 1) }
             SourceTile(source: result.source)
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.title)
@@ -579,6 +601,30 @@ struct ResultRow: View {
         }
         flush()
         return out
+    }
+}
+
+/// The row of a tab above its matching sessions in a search's results: its name, and whether it is open, closed or done, and where.
+/// ↩ on it opens the tab.
+struct TabResultRow: View {
+    let result: SearchResult
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "square.stack")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.sourceColor("claude"))
+                .frame(width: 18)
+            Text(result.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+            Text(result.snippet).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 0)
+            if isSelected { KeyHint(label: "Open tab", keys: ["↩"]).font(.system(size: 11)) }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: LauncherModel.tabRowHeight)
+        .background(isSelected ? Theme.selection : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
     }
 }
 
@@ -812,9 +858,12 @@ struct TabRow: View {
     @ObservedObject var tab: ClaudeTab
     let selected: Bool
     let pills: SessionPills
+    /// What it says of its Claude sessions when it has several (`TabSummary`).
+    let sessions: [String]
 
     var body: some View {
-        SessionRow(session: tab.focused, name: tab.name, panes: tab.sessions.count, selected: selected, pills: pills)
+        SessionRow(session: tab.focused, name: tab.name, panes: tab.sessions.count, sessions: sessions,
+                   otherPanes: tab.sessions.count - tab.claudeSessions.count, selected: selected, pills: pills)
     }
 }
 
@@ -822,6 +871,9 @@ struct SessionRow: View {
     @ObservedObject var session: ClaudeSession
     var name: String? = nil
     let panes: Int
+    /// A tab of several Claude sessions: how many, and how many wait or work. Then only the panes that aren't sessions are counted.
+    var sessions: [String] = []
+    var otherPanes = 0
     let selected: Bool
     let pills: SessionPills
 
@@ -846,7 +898,11 @@ struct SessionRow: View {
     private var rest: [String] {
         var parts: [String] = []
         if let note = session.awayNote { parts.append(note) }
-        if panes > 1 { parts.append("\(panes) panes") }
+        if !sessions.isEmpty {
+            parts += sessions + (otherPanes > 0 ? ["\(otherPanes) other pane\(otherPanes == 1 ? "" : "s")"] : [])
+        } else if panes > 1 {
+            parts.append("\(panes) panes")
+        }
         parts.append(session.started ? "Started \(session.startedAt.formatted(.relative(presentation: .named)))" : "Resumes when opened")
         return parts
     }
@@ -1011,19 +1067,21 @@ struct SessionDetailLine: View {
     }
 }
 
-/// A session open on a paired Mac, in the session list: ↩ opens it on the card, where Take over is.
-struct PeerOpenSessionRow: View {
-    let row: LauncherModel.PeerOpenRow
+/// A tab open on a paired Mac, in the session list: ↩ opens it whole, its Claude and terminal panes on their cards, where Take over is. It says its name or its first
+/// session's title, and for a tab of several sessions how many there are and how many wait or work; for one, who is in control.
+struct PeerOpenTabRow: View {
+    let tab: LauncherModel.PeerOpenTab
     let selected: Bool
     let pills: SessionPills
 
     var body: some View {
         HStack(spacing: 12) {
-            SourceTile(source: "claude")
+            SourceTile(source: tab.rows.isEmpty ? (tab.listing.panes.first?.kind?.rawValue ?? "terminal") : "claude")
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.info.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                SessionDetailLine(pills: pills, folder: (row.info.folder as NSString).lastPathComponent,
-                                  host: row.peer.name, rest: [row.controlNote])
+                Text(tab.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                let summary = TabSummary.parts(sessions: tab.rows.count, waiting: tab.waiting, working: tab.working)
+                SessionDetailLine(pills: pills, folder: (tab.folder as NSString).lastPathComponent, host: tab.peer.name,
+                                  rest: summary.isEmpty ? [tab.note] : summary)
             }
             Spacer()
             if selected { KeyHint(label: "Open", keys: ["↩"]).font(.system(size: 11)) }
@@ -1043,9 +1101,12 @@ struct PromptSessionRow: View {
     let selected: Bool
     let pills: SessionPills
     let isOpen: Bool
+    /// Listed under the row of its tab, whose tab ↩ opens.
+    var underTab = false
 
     var body: some View {
         HStack(spacing: 12) {
+            if underTab { Color.clear.frame(width: Theme.underTabIndent, height: 1) }
             SourceTile(source: result.source)
             VStack(alignment: .leading, spacing: 1) {
                 Text(result.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
@@ -1056,7 +1117,7 @@ struct PromptSessionRow: View {
             }
             Spacer(minLength: 8)
             if isOpen { WordBadge(text: "open") }
-            if selected { KeyHint(label: isOpen ? "Open" : "Resume", keys: ["↩"]).font(.system(size: 11)) }
+            if selected { KeyHint(label: underTab ? "Open tab" : isOpen ? "Open" : "Resume", keys: ["↩"]).font(.system(size: 11)) }
         }
         .padding(.horizontal, 10)
         .frame(height: LauncherModel.sessionRowHeight)
@@ -1066,29 +1127,41 @@ struct PromptSessionRow: View {
     }
 }
 
-struct RecentSessionRow: View {
-    let record: SessionRecord
+/// A closed tab in Recent: ↩ opens it whole. It says its name or its focused session's title, how many sessions it held, its folder, the Mac
+/// when that is another, and when it closed.
+struct RecentTabRow: View {
+    let tab: TabRecord
     let selected: Bool
     let pills: SessionPills
+    /// Marked done, here or by its host.
+    let done: Bool
+    /// A reopen under way, or why it failed.
+    var note: String?
 
     var body: some View {
         HStack(spacing: 12) {
             SourceTile(source: "claude").opacity(0.6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(record.listTitle)
+                Text(tab.title)
                     .font(.system(size: 13, weight: .medium)).lineLimit(1)
-                SessionDetailLine(pills: pills, folder: record.folderName,
-                                  host: record.host.map { PeerManager.shared.name(of: $0) },
-                                  rest: ["Ended " + record.lastUsed.formatted(.relative(presentation: .named))])
+                SessionDetailLine(pills: pills, folder: tab.leading?.folderName ?? "",
+                                  host: tab.host.map { PeerManager.shared.name(of: $0) }, rest: rest)
             }
             Spacer()
-            if selected { KeyHint(label: "Resume", keys: ["↩"]).font(.system(size: 11)) }
+            if selected { KeyHint(label: "Open", keys: ["↩"]).font(.system(size: 11)) }
         }
         .padding(.horizontal, 10)
         .frame(height: LauncherModel.sessionRowHeight)
         .background(selected ? Theme.selection : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
+    }
+
+    /// How many sessions it held when that is more than one, then when it closed, or "Done" when it was marked.
+    private var rest: [String] {
+        let sessions = tab.claudeRecords.count
+        let when = tab.lastUsed.formatted(.relative(presentation: .named))
+        return (note.map { [$0] } ?? []) + (sessions > 1 ? ["\(sessions) sessions"] : []) + [(done ? "Done " : "Closed ") + when]
     }
 }
 
