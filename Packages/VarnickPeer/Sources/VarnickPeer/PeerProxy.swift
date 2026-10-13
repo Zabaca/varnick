@@ -67,7 +67,7 @@ public extension PeerPane {
     /// An address on the machine that runs the pane: localhost, 127.0.0.1 and ::1, or none yet.
     static func isLocalAddress(_ address: String) -> Bool {
         guard !address.isEmpty else { return true }
-        let host = (URL(string: address)?.host(percentEncoded: false) ?? "").lowercased()
+        let host = (URL(string: address)?.host ?? "").lowercased()
         return host.isEmpty || ["localhost", "127.0.0.1", "::1"].contains(host)
     }
 

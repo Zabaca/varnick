@@ -23,6 +23,8 @@ final class PhonePageServer: ObservableObject {
         var logTail: String
         var bun: Bool
         var files: Bool
+        /// What the server's port proxy last wrote, nil when it isn't running (`PeerProxyStatus.read`).
+        var proxy: PeerProxyStatus?
     }
 
     enum Server: Equatable {
@@ -297,6 +299,6 @@ final class PhonePageServer: ObservableObject {
         return Look(dnsName: dnsName, mode: mode, reason: reason, version: chosen.version, hasCLI: cli != nil, serve: serve,
                     serveCommand: PhonePage.serveCommand(cli: cli, target: target), funnelOffCommand: PhonePage.funnelOffCommand(cli: cli),
                     running: running, logTail: tail, bun: PhonePage.bunExecutable() != nil,
-                    files: PhonePage.serverFolder(installedIn: LaunchSnapshot.serverInstall) != nil)
+                    files: PhonePage.serverFolder(installedIn: LaunchSnapshot.serverInstall) != nil, proxy: PeerProxyStatus.read())
     }
 }

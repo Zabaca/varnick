@@ -251,8 +251,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var isLiveTranscript: Bool { record.isLiveTranscript }
     /// The session runs on a peer, and this pane is an ssh client of its host's zmx.
     var isOnPeer: Bool { record.host != nil }
-    /// A pane of another machine's tab that this Mac doesn't show (`SessionRecord.staysOnHost`).
-    var staysOnHost: Bool { record.staysOnHost }
+    /// A pane of another machine's tab that this Mac doesn't show (`SessionRecord.staysOnHost`). A page that has loaded stays, whatever the host's
+    /// listing says next.
+    var staysOnHost: Bool { record.staysOnHost && webView == nil }
     /// What its card says: a title, the detail, and the address on the host when it has one.
     var remoteNote: (title: String, detail: String, address: String?)? {
         guard staysOnHost else { return nil }
@@ -260,10 +261,27 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if isLiveTranscript {
             return ("The Transcript stays on \(host)", "It is what \(host) heard while listening, and it never leaves that Mac.", nil)
         }
+        let reason = record.proxyNote.map { " It can't be shown here: \($0)" } ?? " It can't be shown here."
         if isApp {
-            return ("\(record.app ?? label) runs on \(host)", "Its server is on \(host), where only \(host) can reach it. It can't be shown here yet.", record.url)
+            return ("\(record.app ?? label) runs on \(host)", "Its server is on \(host), where only \(host) can reach it." + reason, record.url)
         }
-        return ("This page runs on \(host)", "It is at an address only \(host) can reach, so it can't be shown here yet.", record.url)
+        return ("This page runs on \(host)", "It is at an address only \(host) can reach." + reason, record.url)
+    }
+
+    /// The host's listing of a web or app pane (protocol 25): the address its port proxy serves it at, or why there is none. A card that gets an
+    /// address becomes the page; a page already loading stays the viewer's own browsing. True when the record changed.
+    @discardableResult
+    func applyHostProxy(_ address: String?, note: String?) -> Bool {
+        guard record.host != nil, record.isWeb, record.proxied != address || record.proxyNote != note else { return false }
+        objectWillChange.send()
+        record.proxied = address
+        record.proxyNote = note
+        if let address, webView == nil {
+            record.url = address
+            makeWebView()
+            if started { load(address) }
+        }
+        return true
     }
     /// A Claude or terminal pane: its process runs in a zmx session another machine can attach to, so it has a card (ADR 0034).
     var runsInZmx: Bool { isClaude || isShell }
@@ -1497,16 +1515,20 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         guard let web = webView, let target = record.url.flatMap(URL.init(string:)) else { return }
         if (error as NSError).code == NSURLErrorCancelled { return }
         let local = ["localhost", "127.0.0.1", "0.0.0.0"].contains(target.host() ?? "")
-        let message = local ? "Waiting for \(target.absoluteString) to start…" : error.localizedDescription
+        // A page of another machine's tab loaded through its port proxy: a load refused means its server, or the host's Phone page server, stopped.
+        let viaProxy = record.host != nil && record.proxied.flatMap(URL.init(string:))?.host() == target.host()
+        let hostName = self.hostName ?? "the host"
+        let message = viaProxy ? record.proxyNote.map { "\(hostName): \($0)" } ?? "\(hostName)'s Phone page server isn't running, or this page's server has stopped."
+            : local ? "Waiting for \(target.absoluteString) to start…" : error.localizedDescription
         let html = """
             <body style="background:#1a1a1a;color:#999;font:13px -apple-system;display:grid;place-items:center;height:90vh">
             <div>\(message.replacingOccurrences(of: "<", with: "&lt;"))</div></body>
             """
         web.loadHTMLString(html, baseURL: nil)
-        guard local else { return }
+        guard local || viaProxy else { return }
         let work = DispatchWorkItem { [weak self] in self?.webView?.load(URLRequest(url: target)) }
         retry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (viaProxy ? 3 : 1.5), execute: work)
     }
 
     func setFontSize(_ size: Double) {

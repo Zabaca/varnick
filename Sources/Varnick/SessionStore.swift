@@ -68,6 +68,11 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// (`State.flatRecent`), which an older build still lists, and read by `State.recentList`. Optional so older files load.
     var tab: UUID?
 
+    /// A web or app pane of another machine's tab (`host`): the address the host's port proxy serves it at, from the host's listing, and why
+    /// it has none while that is so (ADR 0035). Optional so older saved records still load.
+    var proxied: String?
+    var proxyNote: String?
+
     /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
     /// their chips. On a record with a `host` they are that host's last report, with `group/name` as the repository (`PeerWork`). Optional so
     /// older saved records still load; nil when it linked nothing.
@@ -103,13 +108,14 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var isApp: Bool { app != nil }
     var isLiveTranscript: Bool { liveTranscript == true }
 
-    /// A pane of another machine's tab that is not shown here: the Transcript, which stays on its Mac, an app, and a page at a local address,
-    /// which only that machine can reach (option 04 of `work-is-tracked-by-session-not-tab` brings them here). Its pane is a card that says so.
+    /// A pane of another machine's tab that is not shown here: the Transcript, which stays on its Mac, and an app or a page at a local address
+    /// that its host doesn't proxy (yet): its pane is a card that says so. Once the host lists a proxied address they load from it (ADR 0035).
     var staysOnHost: Bool {
         guard host != nil else { return false }
-        if isLiveTranscript || isApp { return true }
-        guard isWeb else { return false }
-        return Self.isLocalAddress(url ?? "")
+        if isLiveTranscript { return true }
+        if proxied != nil { return false }
+        if isApp { return true }
+        return isWeb && (proxyNote != nil || Self.isLocalAddress(url ?? ""))
     }
 
     /// An address only the machine it names can reach: localhost, 127.0.0.1 and ::1, or none yet.

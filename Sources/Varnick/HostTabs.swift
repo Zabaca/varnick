@@ -10,7 +10,8 @@ extension LauncherModel {
     // MARK: Opening
 
     /// A pane of a host's listed tab as a session here: a card for Claude and terminal, text read from the host for a file, a page at an
-    /// outside address loaded here, and a card saying where the rest run (`SessionRecord.staysOnHost`).
+    /// outside address loaded here, a page or an app on the host's localhost loaded through its port proxy once the host lists the address
+    /// (ADR 0035), and a card saying where the rest run (`SessionRecord.staysOnHost`).
     func hostPane(_ pane: PeerPane, on peer: String) -> ClaudeSession? {
         guard let id = UUID(uuidString: pane.id), let kind = pane.kind else { return nil }
         var record = SessionRecord(id: id, prompt: "", title: pane.title, directory: pane.folder, startedAt: Date(), lastUsed: Date())
@@ -22,14 +23,16 @@ extension LauncherModel {
             // The links it was listed with, so the ended card it becomes keeps them.
             record.workLinks = pane.work?.paneWork.history
         case .terminal: record.shell = true
-        case .web: record.url = pane.url ?? ""
+        case .web: record.url = pane.proxy ?? pane.url ?? ""
         case .app:
             record.app = pane.app
-            record.url = pane.url ?? ""
+            record.url = pane.proxy ?? pane.url ?? ""
             record.appPort = pane.port
         case .file: record.file = pane.file
         case .transcript: record.liveTranscript = true
         }
+        record.proxied = pane.proxy
+        record.proxyNote = pane.proxyNote
         let session = makeSession(record, resuming: false, query: "")
         session.opensOnCard = kind.runsInZmx
         session.opensUnavailable = kind.runsInZmx && pane.running != true
@@ -127,6 +130,7 @@ extension LauncherModel {
             guard let session = sessions[pane.id] else { continue }
             if pane.kind == .terminal, session.updateHostFolder(pane.folder) { changed = true }
             if pane.kind?.runsInZmx == true, pane.running == true { session.hostSaysRunning() }
+            if pane.kind == .web || pane.kind == .app, session.applyHostProxy(pane.proxy, note: pane.proxyNote) { changed = true }
         }
         guard !stale else { return saveIfChanged(changed) }
         tab.inControl = Zmx.sameID(listing.control, PeerIdentity.id)

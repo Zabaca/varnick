@@ -65,7 +65,8 @@ enum PhonePageRunner {
             return .failed("zmx isn't next to Varnick: build with make")
         }
         let environment = PhonePage.environment(mode: mode, socketPath: socket, relay: relay, devices: DeviceList.file.path, tailscale: tailscale,
-                                                home: NSHomeDirectory(), zmxDirectory: Zmx.overriddenDirectory) + Zmx.paneEnvironment
+                                                home: NSHomeDirectory(), zmxDirectory: Zmx.overriddenDirectory, proxyFolder: phone.path,
+                                                proxyStatus: PeerProxyStatus.file.path) + Zmx.paneEnvironment
         // The labels are how a later launch tells these files and this mode from others.
         let started = ZmxDetached.start(command, named: name, environment: environment, directory: folder.path) {
             PhonePage.isCurrent(labels: $0, digest: digest, mode: mode, place: PhonePage.place(of: folder))
