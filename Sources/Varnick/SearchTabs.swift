@@ -9,6 +9,17 @@ struct TabRef: Hashable {
     var id: UUID
     var host: String?
     var name: String?
+
+    /// What names the tab, whatever its name is now: the Mac that keeps it and its id.
+    var key: String { (host ?? "") + "|" + id.uuidString }
+}
+
+extension ClaudeTab {
+    func matches(_ ref: TabRef) -> Bool { id == ref.id && host == ref.host }
+}
+
+extension TabRecord {
+    func matches(_ ref: TabRef) -> Bool { id == ref.id && host == ref.host }
 }
 
 extension SearchResult {
@@ -18,7 +29,7 @@ extension SearchResult {
     /// and no database row has its id: it is negative, and the same for the same tab.
     init(tab: TabRef, title: String, standing: String) {
         var hash: UInt64 = 0xcbf29ce484222325
-        let key = (tab.host ?? "") + "|" + tab.id.uuidString
+        let key = tab.key
         for byte in key.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
         self.init(id: Int64(bitPattern: hash | (1 << 63)), key: "tab:" + key, source: Self.tabSource, title: title, snippet: standing, description: "",
                   url: "", tags: "", createdAt: "")
@@ -57,10 +68,10 @@ extension LauncherModel {
     /// Where a tab stands now. A tab open here, or listed open by its host, is open whatever its mark says; a closed one is done when it is
     /// in Completed or its host's Recent marks it. One this Mac has no record of, kept only by the search database, is closed.
     func standing(of tab: TabRef) -> TabStanding {
-        if tabs.contains(where: { $0.id == tab.id && $0.host == tab.host }) { return .open }
+        if tabs.contains(where: { $0.matches(tab) }) { return .open }
         if let host = tab.host, listedTabIDs(on: host).contains(tab.id) { return .open }
-        if completed.contains(where: { $0.id == tab.id && $0.host == tab.host }) { return .done }
-        if let closed = allRecent.first(where: { $0.id == tab.id && $0.host == tab.host }), isDone(closed) { return .done }
+        if completed.contains(where: { $0.matches(tab) }) { return .done }
+        if let closed = allRecent.first(where: { $0.matches(tab) }), isDone(closed) { return .done }
         return .closed
     }
 
@@ -72,10 +83,9 @@ extension LauncherModel {
 
     /// What a tab's row calls it: its name, else what the tab here shows (the focused pane), else its closed record's title, else `fallback`.
     private func title(of ref: TabRef, fallback: String) -> String {
-        if let tab = tabs.first(where: { $0.id == ref.id && $0.host == ref.host }) { return tab.name ?? tab.focused.label }
+        if let tab = tabs.first(where: { $0.matches(ref) }) { return tab.name ?? tab.focused.label }
         if let name = ref.name { return name }
-        let closed = allRecent.first(where: { $0.id == ref.id && $0.host == ref.host })
-            ?? (completed + ended).first(where: { $0.id == ref.id && $0.host == ref.host })
+        let closed = allRecent.first(where: { $0.matches(ref) }) ?? (completed + ended).first(where: { $0.matches(ref) })
         return closed?.title ?? fallback
     }
 
@@ -87,7 +97,7 @@ extension LauncherModel {
         for var session in sessions {
             let ref = tabHolding(session.sessionID, on: session.host) ?? kept[session.id]
             session.tab = ref
-            let key = ref.map { ($0.host ?? "") + "|" + $0.id.uuidString } ?? "session|\(session.id)"
+            let key = ref?.key ?? "session|\(session.id)"
             if groups[key] == nil {
                 order.append(key)
                 groups[key] = (ref, [])

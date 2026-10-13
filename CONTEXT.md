@@ -11,7 +11,7 @@ Called Launchy until 2026-10. Older records keep that name; [ADR 0024](docs/adr/
 **History**:
 Pages visited in Chrome, kept in a local archive after Chrome drops them, and searched from the panel.
 A **Peer**'s History is searched with this Mac's, marked with its Mac when only that Mac visited the page.
-_Avoid_: Favorite, browsing data
+_Avoid_: Favorite, browsing data, history of a tab (that is its **Tab history**)
 
 **Bookmark**:
 A page saved in Chrome's bookmarks, searched alongside **History** whether or not it was visited. Varnick follows Chrome, so a bookmark deleted there leaves search.
@@ -31,7 +31,7 @@ A page's own summary from its `<head>`, fetched once without cookies, so pages b
 ### Workspace
 
 **Session**:
-One Claude Code conversation: what `/clear` starts fresh and what `/resume` brings back. A pane can move from one session to another without closing, and the **Tab** keeps the ones it has held. Search finds sessions, since that is where the text is, and shows each under the tab that holds it. The process zmx keeps for a pane is a "zmx session", never just a session.
+One Claude Code conversation: what `/clear` starts fresh and what `/resume` brings back. A pane can move from one session to another without closing, and the **Tab** keeps the ones it has held as its **Tab history**. Search finds sessions, since that is where the text is, and shows each under the tab that holds it. The process zmx keeps for a pane is a "zmx session", never just a session.
 _Avoid_: Conversation, chat
 
 **Exchange**:
@@ -67,16 +67,20 @@ The custom apps that ship with Varnick, reviewed in its repository, which the us
 _Avoid_: Marketplace, store, built-in app
 
 **Tab**:
-A group of panes, split side by side or stacked, shown together in the panel. It keeps an id across launches, which is how the **Session board**, Completed and other machines name it, and belongs to one machine, its **Host**: a tab here that shows a paired Mac's sessions is that Mac's tab, under its id, and can't be split here. The user's unit of work: Done is a tab's, and it closes every pane in it. It keeps a history of the **Session**s it has held, the ones `/clear` and `/resume` left behind and those of panes closed while it stayed open included, and a session is in the history of the latest tab that held it.
+A group of panes, split side by side or stacked, shown together in the panel. It keeps an id across launches, which is how the **Session board**, Completed and other machines name it, and belongs to one machine, its **Host**: a tab here that shows a paired Mac's sessions is that Mac's tab, under its id, and can't be split here. The user's unit of work: Done is a tab's, and it closes every pane in it. It keeps a **Tab history**.
 _Avoid_: Workspace, window
+
+**Tab history**:
+The **Session**s a **Tab** has held, newest first (the newest 50), saved with it: the ones `/clear` and `/resume` left behind and those of panes closed while it stayed open included. A session is in the Tab history of the latest tab that held it, and search shows it under that tab.
+_Avoid_: History (the Chrome archive, see **History**), Recent
 
 **Default folder**:
 The folder a new session starts in when no project is picked.
 _Avoid_: Working folder, Claude folder, home folder
 
 **Recent**:
-The tabs that closed, Done or not, newest first (the newest 20); ↩ on one reopens it whole. A **Peer**'s closed tabs are listed with this Mac's, marked with their Mac, and reopened on that Mac. A conversation `/clear` or `/resume` left behind is in its tab's history, not in Recent.
-_Avoid_: History (a **Tab**'s history is its conversations), closed sessions
+The tabs that closed, Done or not, newest first (the newest 20); ↩ on one reopens it whole. A **Peer**'s closed tabs are listed with this Mac's, marked with their Mac, and reopened on that Mac. A **Session** `/clear` or `/resume` left behind is in its **Tab history**, not in Recent.
+_Avoid_: History (the Chrome archive, see **History**), closed sessions
 
 **Scratch area**:
 A folder in the project, belonging to one Claude pane, where Claude builds a page that Scratch, a **Custom app** split from that pane, shows live. It stays with the pane when the pane moves to another session.

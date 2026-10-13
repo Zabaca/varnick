@@ -303,11 +303,39 @@ describe("resuming", () => {
     expect(launched).toEqual({ status: 502, body: { ok: false, error: "That session is open on Mac mini: take it over from the list" } });
   });
 
-  test("a later session the host refuses leaves the tab reopened with the first, and asks for no more", async () => {
+  test("a later session the host refuses leaves the tab reopened with the first", async () => {
+    const ids = [fixedID, second];
     const { asker, calls } = fakeRelay({ recent, sessions: empty, resume: [ok({}), { ok: false, error: "no transcript" }], status: ok({ sessions: {} }) });
-    const launched = await resumeTab(asker, device, "linux box", tab, () => fixedID);
+    const launched = await resumeTab(asker, device, "linux box", tab, () => ids.shift()!);
     expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}` } });
     expect(calls.filter((call) => call.op === "resume")).toHaveLength(2);
+  });
+
+  test("the first session refused opens the next that started, and every one refused is the first's failure", async () => {
+    const ids = [fixedID, second];
+    const refused = { ok: false as const, error: "no transcript" };
+    const { asker } = fakeRelay({ recent, sessions: empty, resume: [refused, ok({})], status: ok({ sessions: {} }) });
+    expect(await resumeTab(asker, device, "linux box", tab, () => ids.shift()!)).toEqual({ status: 200, body: { ok: true, session: `varnick-${second}` } });
+    const none = fakeRelay({ recent, sessions: empty, resume: refused, status: ok({ sessions: {} }) });
+    expect(await resumeTab(none.asker, device, "linux box", tab, () => fixedID)).toEqual({ status: 502, body: { ok: false, error: "no transcript" } });
+  });
+
+  test("the sessions are resumed together: every resume is asked before the first answer", async () => {
+    let waiting = 0, peak = 0;
+    const asker: Asker = {
+      async ask(op, _by, _fields) {
+        if (op === "recent") return recent;
+        if (op === "sessions") return empty;
+        waiting += 1;
+        peak = Math.max(peak, waiting);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        waiting -= 1;
+        return ok({});
+      },
+    };
+    const ids = [fixedID, second];
+    await resumeTab(asker, device, "linux box", tab, () => ids.shift()!);
+    expect(peak).toBe(2);
   });
 
   test("a host whose Recent can't be read resumes nothing", async () => {

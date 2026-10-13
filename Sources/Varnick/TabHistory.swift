@@ -28,6 +28,19 @@ enum TabHistory {
         return next
     }
 
+    /// `history` with the conversations of `more` that it doesn't hold added after its own, in their order, up to the cap.
+    static func appending(_ history: [HeldConversation], _ more: [HeldConversation]) -> [HeldConversation] {
+        var next = history
+        for past in more where !next.contains(where: { $0.conversation == past.conversation }) { next.append(past) }
+        return Array(next.prefix(limit))
+    }
+
+    /// Whether a tab holds the conversation (any case): in its history, or a Claude pane here is on it.
+    static func holds(_ conversation: String, history: [HeldConversation]?, panes: [SessionRecord]) -> Bool {
+        let id = conversation.lowercased()
+        return history?.contains { $0.conversation == id } == true || panes.contains { $0.conversationID.lowercased() == id }
+    }
+
     /// `history` without `conversation`; nil when it was not there.
     static func releasing(_ history: [HeldConversation], _ conversation: String) -> [HeldConversation]? {
         let id = conversation.lowercased()
