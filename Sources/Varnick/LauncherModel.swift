@@ -3008,8 +3008,8 @@ final class LauncherModel: ObservableObject {
         let existing = tabs.flatMap(\.sessions).first { $0.id == id }
         if start.resume == true { return await hostResume(id: id, by: peer, existing: existing) }
         guard existing == nil else { return .failure("That session already exists on \(here)") }
-        guard start.kind == nil || start.kind == .claude || start.isTerminal || start.isPage else { return .failure("\(here) doesn't start that kind of pane") }
-        guard !start.isPage || request.tab != nil else { return .failure("A page or an app is added to a tab: the request named none") }
+        guard start.kind == nil || start.kind == .claude || start.isTerminal || start.isWebOrApp else { return .failure("\(here) doesn't start that kind of pane") }
+        guard !start.isWebOrApp || request.tab != nil else { return .failure("A page or an app is added to a tab: the request named none") }
         // A split of a tab of this Mac, in the place the asker named, which only the machine in control of the tab may ask (ADR 0034). The new
         // pane starts in the split pane's folder and takes the tab's origin: closing the tab on the machine it was made for ends it.
         var split: (tab: ClaudeTab, beside: ClaudeSession, axis: SplitAxis)?
@@ -3026,7 +3026,7 @@ final class LauncherModel: ObservableObject {
         }
         let target = folder ?? Self.claudeDirectory
         guard Self.isFolder(target) else { return .failure("\(target) isn't a folder on \(here)") }
-        if start.isPage, let split { return hostSplitPage(start, id: id, folder: target, in: split, origin: origin, here: here) }
+        if start.isWebOrApp, let split { return hostSplitPage(start, id: id, folder: target, in: split, origin: origin, here: here) }
         var record = SessionRecord(id: id, prompt: start.isTerminal ? "" : start.prompt, title: "", directory: target, startedAt: Date(), lastUsed: Date())
         if start.isTerminal {
             record.shell = true
@@ -3058,10 +3058,7 @@ final class LauncherModel: ObservableObject {
         record.origin = origin
         var app: CustomApp?
         if start.kind == .web {
-            let text = (start.url ?? "").trimmingCharacters(in: .whitespaces)
-            guard let url = ClaudeSession.url(from: text), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-                return .failure("\(here) opens only http and https addresses")
-            }
+            guard let url = ClaudeSession.httpURL(from: start.url ?? "") else { return .failure("\(here) opens only http and https addresses") }
             record.url = url.absoluteString
         } else {
             guard let name = start.app, let found = CustomApp.find(name, from: folder) else { return .failure("\(here) has no app called \(start.app ?? "that")") }

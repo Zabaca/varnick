@@ -107,18 +107,39 @@ public enum PeerProxyAddress {
         return scheme == "http" || scheme == "https"
     }
 
-    /// Whether an address a listing sent is the host's own proxy: https, a name under `.ts.net` that is the peer's (its address as saved, or that
-    /// name with the tailnet's suffix), and a port from 1024. A host's listing is not trusted to send the viewer anywhere else.
-    public static func accepts(_ address: String, forPeer peerAddress: String) -> Bool {
-        guard let url = URL(string: address), url.scheme == "https", url.user == nil, url.password == nil, let port = url.port, port >= 1024,
-              let host = url.host?.lowercased(), host.hasSuffix(".ts.net"), let want = peerName(peerAddress) else { return false }
-        return host == want || (!want.contains(".") && host.hasPrefix(want + "."))
+    /// A node of the tailnet as `tailscale status` lists it: its full MagicDNS name (lowercase, no final dot) and its addresses.
+    public struct Node: Equatable, Sendable {
+        public var dnsName: String
+        public var addresses: [String]
+
+        public init(dnsName: String, addresses: [String] = []) {
+            self.dnsName = dnsName.lowercased()
+            self.addresses = addresses
+        }
+
+        var label: String { dnsName.split(separator: ".").first.map(String.init) ?? dnsName }
     }
 
-    /// The name in what is typed after `ssh` ("alex@linux-box" is "linux-box"); nil for anything that isn't a plain name.
-    static func peerName(_ address: String) -> String? {
-        let name = (address.split(separator: "@", omittingEmptySubsequences: false).last.map(String.init) ?? "").lowercased()
-        guard !name.isEmpty, name.range(of: #"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"#, options: .regularExpression) != nil else { return nil }
-        return name
+    /// Whether an address a listing sent is the host's own proxy: https, from port 1024, at the full MagicDNS name of the node that peer is. A host's
+    /// listing is not trusted to send the viewer anywhere else, and the name is never built from what is typed after `ssh`.
+    public static func accepts(_ address: String, forPeer peerAddress: String, in nodes: [Node]) -> Bool {
+        guard let url = URL(string: address), url.scheme == "https", url.user == nil, url.password == nil, let port = url.port, port >= 1024,
+              let host = url.host?.lowercased(), let node = node(ofPeer: peerAddress, in: nodes) else { return false }
+        return host == node.dnsName
+    }
+
+    /// The one node a peer's address (as typed after `ssh`: `user@` and `:port` left off) names: by its full name, one of its addresses, or its
+    /// first label. Nil when none does, or several do, as an alias from an ssh config would not.
+    public static func node(ofPeer peerAddress: String, in nodes: [Node]) -> Node? {
+        var host = (peerAddress.split(separator: "@", omittingEmptySubsequences: false).last.map(String.init) ?? "").lowercased()
+        if host.hasPrefix("["), let end = host.firstIndex(of: "]") {
+            host = String(host[host.index(after: host.startIndex)..<end])
+        } else if host.filter({ $0 == ":" }).count == 1, let colon = host.firstIndex(of: ":") {
+            host = String(host[..<colon])
+        }
+        if host.hasSuffix(".") { host.removeLast() }
+        guard !host.isEmpty else { return nil }
+        let found = nodes.filter { $0.dnsName == host || $0.addresses.contains(host) || (!host.contains(".") && $0.label == host) }
+        return found.count == 1 ? found[0] : nil
     }
 }

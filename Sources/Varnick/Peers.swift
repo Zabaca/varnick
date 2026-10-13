@@ -109,6 +109,8 @@ enum Tailscale {
         var userID: Int64?
         /// Shared in from another user's tailnet.
         var sharee: Bool
+        /// Its tailnet addresses.
+        var addresses: [String] = []
 
         /// The first label of its MagicDNS name: `phone-1`.
         var label: String { dnsName.split(separator: ".").first.map(String.init) ?? dnsName }
@@ -152,10 +154,34 @@ enum Tailscale {
         let peers = (json["Peer"] as? [String: [String: Any]] ?? [:]).values.map {
             Node(id: $0["ID"] as? String ?? "", dnsName: name($0), hostName: $0["HostName"] as? String ?? "", os: $0["OS"] as? String ?? "",
                  online: $0["Online"] as? Bool ?? false, tags: $0["Tags"] as? [String] ?? [], userID: $0["UserID"] as? Int64,
-                 sharee: $0["ShareeNode"] as? Bool ?? false)
+                 sharee: $0["ShareeNode"] as? Bool ?? false, addresses: $0["TailscaleIPs"] as? [String] ?? [])
         }
         let own = json["Self"] as? [String: Any]
         return .ok(Status(selfDNSName: name(own), selfUserID: own?["UserID"] as? Int64, nodes: peers))
+    }
+}
+
+/// The tailnet's nodes as `tailscale status` last listed them, kept for the checks that need the full name of a peer's node (the address of a
+/// page another machine proxies, ADR 0035). Read again when older than a minute; the last list stays while one is being read.
+@MainActor
+final class TailnetNodes {
+    static let shared = TailnetNodes()
+
+    private(set) var nodes: [PeerProxyAddress.Node] = []
+    private var readAt = Date.distantPast
+    private var reading = false
+
+    func refreshIfStale() {
+        guard !reading, Date().timeIntervalSince(readAt) > 60 else { return }
+        reading = true
+        Task {
+            let outcome = await Tailscale.status()
+            reading = false
+            readAt = Date()
+            if case .ok(let status) = outcome {
+                nodes = status.nodes.map { PeerProxyAddress.Node(dnsName: $0.dnsName, addresses: $0.addresses) }
+            }
+        }
     }
 }
 

@@ -47,8 +47,11 @@ extension LauncherModel {
     private func trustedProxy(of pane: PeerPane, on host: String) -> (address: String?, note: String?) {
         guard let address = pane.proxy else { return (nil, pane.proxyNote) }
         let peerAddress = PeerManager.shared.peers.first { $0.id == host }?.address ?? ""
-        if PeerProxyAddress.accepts(address, forPeer: peerAddress) { return (address, nil) }
-        return (nil, "The address \(PeerManager.shared.name(of: host)) listed isn't one of its own.")
+        TailnetNodes.shared.refreshIfStale()
+        if PeerProxyAddress.accepts(address, forPeer: peerAddress, in: TailnetNodes.shared.nodes) { return (address, nil) }
+        // Until the tailnet has been read once the address can't be told from another's.
+        return (nil, TailnetNodes.shared.nodes.isEmpty ? "Checking the address \(PeerManager.shared.name(of: host)) listed…"
+                : "The address \(PeerManager.shared.name(of: host)) listed isn't one of its own.")
     }
 
     /// A listing's layout with the panes this build can show: one it can't is left out, and one the layout has no place for goes beside the last.
@@ -229,9 +232,8 @@ extension LauncherModel {
         }
     }
 
-    /// A split of another machine's tab, in control of it: the host starts the new pane in the split pane's folder and place, and this Mac adds it
-    /// there. A Claude session or terminal attaches; a page (at `address`) or one of the host's custom apps runs there, and loads here through
-    /// the host's port proxy once the host lists it (ADR 0035). Files are the host's own.
+    /// A split of another machine's tab, in control of it: the host starts the new pane beside the split one. Claude and terminals attach; a page
+    /// (at `address`) or an app of the host's runs there and loads here through its port proxy (ADR 0035).
     func splitOnHost(_ tab: ClaudeTab, _ axis: SplitAxis, kind: PaneKind, address: String? = nil) {
         let target = tab.focused
         guard let host = tab.host else { return }
@@ -244,8 +246,7 @@ extension LauncherModel {
         switch kind {
         case .claude, .terminal: break
         case .web:
-            guard let address, let url = ClaudeSession.url(from: address.trimmingCharacters(in: .whitespaces)), let scheme = url.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https" else {
+            guard let address, let url = ClaudeSession.httpURL(from: address) else {
                 return target.showRefusal("Pick Browser in the split picker and give an http or https address: it opens on \(hostName).")
             }
             pageURL = url.absoluteString

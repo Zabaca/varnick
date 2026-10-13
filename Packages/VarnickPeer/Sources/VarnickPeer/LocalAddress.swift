@@ -1,10 +1,8 @@
 import Foundation
 
 public extension PeerPane {
-    /// Whether an address can't be loaded from another machine: none yet, one that doesn't parse, a scheme other than http and https (`about:`
-    /// and `file:` would load the viewer's own), or a host that is the machine itself: localhost and `*.localhost`, 127.0.0.0/8 however it is
-    /// written (`127.1`, `2130706433`, `0x7f.1`), ::1, the unspecified addresses and IPv4-mapped IPv6. The only Swift copy; the page's and the
-    /// proxy's is `isLocalAddress` in `PhonePage/page/tabrules.js`, and `tab.test.ts` holds the cases both answer alike.
+    /// Whether an address can't be loaded from another machine: none, unparsable, not http or https, or the machine itself in any spelling
+    /// (`127.1`, `0x7f.1`, `::ffff:127.0.0.1`). The only Swift copy; `isLocalAddress` in `PhonePage/page/tabrules.js` answers alike (`tab.test.ts`).
     static func isLocalAddress(_ address: String) -> Bool {
         guard !address.isEmpty, let url = URL(string: address), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return true }
         var host = (url.host ?? "").lowercased()

@@ -78,7 +78,7 @@ public enum PeerRelay {
         var device: String?
         if op != .hello {
             let peer = host.lists(head.by)
-            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || PeerProtocol.answersAnyVersion(op)
+            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || op == .apps || PeerProtocol.answersAnyVersion(op)
             if !peer, !macsOnly, host.listsDevice(head.by) {
                 device = head.by
             } else if !peer, op == .tabs || op == .hosts, Zmx.sameID(head.by, host.ownID) {

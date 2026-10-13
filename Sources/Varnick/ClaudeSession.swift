@@ -1502,6 +1502,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         return URL(string: (local ? "http://" : "https://") + text)
     }
 
+    /// The same, only when it is an http or https address: the one test of which addresses a page of another machine's tab may open.
+    static func httpURL(from text: String) -> URL? {
+        guard let url = url(from: text.trimmingCharacters(in: .whitespaces)), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+
     func reload() {
         // A file of another machine is read again.
         if let viewer = fileViewer, viewer.remote != nil { return viewer.load() }
@@ -1523,7 +1529,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// A page that loads through the port proxy of this pane's host: the host's own name, whatever its listing says now.
     private func isHostProxy(_ url: URL) -> Bool {
         guard let host = record.host, let peer = PeerManager.shared.peers.first(where: { $0.id == host }) else { return false }
-        return PeerProxyAddress.accepts(url.absoluteString, forPeer: peer.address)
+        TailnetNodes.shared.refreshIfStale()
+        return PeerProxyAddress.accepts(url.absoluteString, forPeer: peer.address, in: TailnetNodes.shared.nodes)
     }
 
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1544,7 +1551,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             let host = hostName ?? "the host"
             message = record.proxyNote.map { "\(host): \($0)" } ?? "\(host)'s Phone page server isn't running, or this page's server has stopped."
             retryAfter = 3
-        } else if ["localhost", "127.0.0.1", "0.0.0.0"].contains(target.host() ?? "") {
+        } else if PeerProxyAddress.isProxiable(target.absoluteString) {
             message = "Waiting for \(target.absoluteString) to start…"
             retryAfter = 1.5
         } else {

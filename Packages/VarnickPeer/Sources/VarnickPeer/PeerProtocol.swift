@@ -286,8 +286,8 @@ public struct PeerStart: Codable, Equatable, Sendable {
     }
 
     public var isTerminal: Bool { kind == .terminal }
-    /// A page or an app: panes with no zmx session of the tab's own, that only a Mac host can start.
-    public var isPage: Bool { kind == .web || kind == .app }
+    /// A web page or a custom app: panes with no zmx session of the tab's own, that only a Mac host can start.
+    public var isWebOrApp: Bool { kind == .web || kind == .app }
 }
 
 /// What a host did with a `start` that has `resume`. Absent means a new session was started.
