@@ -93,7 +93,7 @@ status: shipped
   A pane that couldn't be restored at launch is left out, and so is a Claude pane whose conversation is open in another pane here. If none is left, the tab that holds that conversation is shown instead. The reopened tab keeps its id, and leaves Completed or the ended cards.
 - **↩ on another machine's tab** depends on whether it is still open there:
   - still open: its listed sessions open in one tab here, on their cards, and `done` clears the mark there;
-  - closed there: each Claude session it held is resumed there, as Recent resumes one, into one tab here. Option 02 makes this the host reopening the whole tab.
+  - closed there: each Claude session it held is resumed there, and each `resume` names the tab (its id and name, protocol 22), so the host puts them in one tab of that id, as the tab here is. The host keeps no layout of it (a headless host none at all) until option 03.
 - **Resuming one of a Completed tab's conversations from Recent or search opens a new tab,** with its own id, and leaves the Completed tab where it is.
 
 **The board**
@@ -218,3 +218,4 @@ status: shipped
   1. **Splitting a pane that runs on another machine is refused** until option 03, which starts it on the host.
   2. **A session waiting on the user outranks a working one** for the tab's column.
   3. **A mark on one pane of a split tab, at migration:** the tab takes it only if all its Claude panes are marked (the recommendation, taken with the acceptance).
+- **Found by hand after it shipped:** `resume` named no tab, so a reopened two-session tab became one host tab per session and a later Done marked only one. `resume` now carries `tab` and `tabName` (protocol 22).
