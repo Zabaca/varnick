@@ -228,15 +228,18 @@ public struct PeerTab: Codable, Equatable, Sendable {
     public var layout: PeerLayout
     /// In layout order.
     public var panes: [PeerPane]
+    /// The file tree shows as a column beside the panes (protocol 26). Nil: it doesn't, or the host has none.
+    public var showsFiles: Bool?
 
     public init(tab: String, name: String? = nil, doneAge: Int? = nil, control: String? = nil, controlName: String? = nil, clients: Int? = nil,
-                layout: PeerLayout, panes: [PeerPane]) {
+                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil) {
         self.tab = tab
         self.name = name
         self.doneAge = doneAge
         self.control = control
         self.controlName = controlName
         self.clients = clients
+        self.showsFiles = showsFiles
         self.layout = layout
         self.panes = panes
     }
@@ -306,10 +309,15 @@ public enum PeerFile {
         guard let size = (attributes[.size] as? NSNumber)?.intValue, size <= limit else {
             return .failure(PeerFileRefusal(message: "That file is too large to show here (over 1 MB)"))
         }
-        guard let handle = FileHandle(forReadingAtPath: resolved), let data = try? handle.read(upToCount: limit + 1) else {
+        guard let handle = FileHandle(forReadingAtPath: resolved) else { return .failure(PeerFileRefusal(message: "That file couldn't be read")) }
+        defer { try? handle.close() }
+        let data: Data
+        do {
+            // Nil at end of file, so an empty file is empty text, not a failed read.
+            data = try handle.read(upToCount: limit + 1) ?? Data()
+        } catch {
             return .failure(PeerFileRefusal(message: "That file couldn't be read"))
         }
-        try? handle.close()
         guard data.count <= limit, !data.contains(0), let text = String(data: data, encoding: .utf8) else {
             return .failure(PeerFileRefusal(message: data.count > limit ? "That file is too large to show here (over 1 MB)" : "That file isn't text"))
         }
@@ -319,4 +327,49 @@ public enum PeerFile {
 
 public struct PeerFileRefusal: Error, Equatable, Sendable {
     public var message: String
+}
+
+/// One entry of a folder, as the file tree of a Mac that views a tab lists it (`files`).
+public struct PeerFileEntry: Codable, Equatable, Sendable {
+    public var name: String
+    public var isDirectory: Bool
+
+    public init(name: String, isDirectory: Bool) {
+        self.name = name
+        self.isDirectory = isDirectory
+    }
+}
+
+/// Listing a folder of a tab for another machine (`files`): one level, only inside the tab's folders (links resolved, as `PeerFile` does), and
+/// no more than `limit` entries.
+public enum PeerFolder {
+    public static let limit = 2000
+
+    /// Never listed, at any depth: large, generated and noisy while building. The file tree's own rule, on this machine and the viewer's.
+    public static let hidden: Set<String> = [
+        ".git", ".DS_Store", "node_modules", ".build", "dist", "target", ".next", ".venv", "__pycache__", "DerivedData",
+    ]
+
+    /// The folder's entries, folders first and each group by name, or the one-line reason the other machine is told it can't be shown.
+    /// A link to a folder is listed as a file, which the tree never opens.
+    public static func list(path: String, folders: [String]) -> Result<(entries: [PeerFileEntry], more: Bool), PeerFileRefusal> {
+        guard PeerFile.isInside(path, folders: folders) else { return .failure(PeerFileRefusal(message: "That folder is outside the tab's folders")) }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory) else {
+            return .failure(PeerFileRefusal(message: "That folder isn't there any more"))
+        }
+        guard isDirectory.boolValue else { return .failure(PeerFileRefusal(message: "That isn't a folder")) }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: resolved) else {
+            return .failure(PeerFileRefusal(message: "That folder couldn't be read"))
+        }
+        let listed = names.filter { !hidden.contains($0) }.map { name -> PeerFileEntry in
+            let type = (try? FileManager.default.attributesOfItem(atPath: resolved + "/" + name))?[.type] as? FileAttributeType
+            return PeerFileEntry(name: name, isDirectory: type == .typeDirectory)
+        }
+        .sorted {
+            $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.compare($1.name, options: [.caseInsensitive, .numeric]) == .orderedAscending
+        }
+        return .success((Array(listed.prefix(limit)), listed.count > limit))
+    }
 }

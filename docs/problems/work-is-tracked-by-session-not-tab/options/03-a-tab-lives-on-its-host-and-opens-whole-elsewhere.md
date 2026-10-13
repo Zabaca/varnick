@@ -143,7 +143,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 
 - Web and app panes on a local address from another machine (option 04).
 - A tab spanning machines, and moving a pane between tabs or machines.
-- Splits of web, file and app kinds made from another machine.
+- Splits of web and app kinds made from another machine (option 04). A file is not a split: see Added Later.
 - Sharing a browser's logged-in state between machines (decision 4 keeps pixel streaming for that, later).
 
 ## Further Notes
@@ -174,3 +174,12 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
   - A machine is in control only when every running Claude and terminal pane names it, and a pane's Start is refused while another machine holds the tab.
 - **Decided by the user (2026-10-12),** when accepting this option, each the recommendation:
   1. **Splitting a pane of another machine's tab** starts the new pane on that host.
+
+## Added Later
+
+On 2026-10-13 the user asked, after hand-testing, for what Out of Scope had left out: opening a file from another machine's tab.
+- The file tree is the host's. The listing says whether the tab shows it (`PeerTab.showsFiles`), and the viewer lists the host's folders through a new `files` request, one level at a time, inside the tab's folders.
+- ⌘⇧F on the viewer is a layout change: the machine in control asks the host through `arrange` and the tree shows once the host has taken it.
+- A file picked in the tree is a `start` of kind file, which only the machine in control may send and the host checks like a split. A viewer that is not in control is told to take over.
+- Protocol 26. A headless host has no tree and says so.
+- An untouched Claude pane (no prompt, no conversation) now comes back fresh when a tab is restored or reopened, like a terminal, on every host. One that had a prompt and lost its transcript is still dropped.

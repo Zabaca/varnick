@@ -56,6 +56,29 @@ public enum TranscriptReader {
         "\(NSHomeDirectory())/.claude/projects/\(Project.claudeFolder(directory))/\(conversation).jsonl"
     }
 
+    /// Whether the conversation has a transcript with something in it: an empty file, which Claude Code can leave, holds none (`--resume`
+    /// finds nothing, `--session-id` refuses the id).
+    public static func hasConversation(directory: String, conversation: String) -> Bool {
+        hasContent(atPath: path(directory: directory, conversation: conversation))
+    }
+
+    /// Whether the file is there and not empty.
+    public static func hasContent(atPath file: String) -> Bool {
+        size(ofFile: file).map { $0 > 0 } ?? false
+    }
+
+    private static func size(ofFile file: String) -> Int? {
+        ((try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber)?.intValue
+    }
+
+    /// Removes the conversation's transcript if it is empty, so a session can start again under its id. Only a uuid names one.
+    public static func removeEmpty(directory: String, conversation: String) {
+        guard UUID(uuidString: conversation) != nil else { return }
+        let file = path(directory: directory, conversation: conversation)
+        guard size(ofFile: file) == 0 else { return }
+        try? FileManager.default.removeItem(atPath: file)
+    }
+
     /// The name Claude Code last gave the conversation (its `ai-title` entries), for a
     /// conversation that is no longer on screen to take its terminal title from.
     public static func title(directory: String, conversation: String) -> String? {

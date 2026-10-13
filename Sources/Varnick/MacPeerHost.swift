@@ -122,6 +122,24 @@ struct MacPeerHost: PeerHost {
         }
     }
 
+    /// One level of a folder of one of this Mac's tabs, for the file tree of the Mac that views it: the folder must be inside the tab's folders.
+    func files(tab: String?, folder: String?) -> PeerReply {
+        guard let state = SessionStore().load() else { return .failure("The saved tabs on \(name) couldn't be read") }
+        guard let tab, let wanted = UUID(uuidString: tab), let folder,
+              let saved = PeerOpenTabs.hosted(in: state).first(where: { $0.resolvedID == wanted }) else {
+            return .failure("That isn't a tab open on \(name)")
+        }
+        switch PeerFolder.list(path: folder, folders: saved.layout.records.map(\.directory)) {
+        case .success(let listing):
+            var reply = PeerReply.success()
+            reply.entries = listing.entries
+            reply.more = listing.more ? true : nil
+            return reply
+        case .failure(let refusal):
+            return .failure(refusal.message)
+        }
+    }
+
     func recent() -> PeerReply {
         guard let state = SessionStore().load() else { return .failure("The saved tabs on \(name) couldn't be read") }
         var reply = PeerReply.success()
@@ -231,7 +249,7 @@ enum PeerOpenTabs {
                                      var listed = pane(for: record, status: statuses[Zmx.sessionName(record.id)])
                                      if keepOff, listed.running == false { listed.note = why }
                                      return listed
-                                 })
+                                 }, showsFiles: tab.showsFiles == true ? true : nil)
             listed.settleControl()
             return listed
         }

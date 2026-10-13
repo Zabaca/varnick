@@ -568,12 +568,16 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // A switch the last run reported but never got to read (killed within a poll) is
         // still the pane's conversation; take it before clearing the file.
         checkConversation()
-        // A restart resumes what claude has written, found where the hook last reported it (a /resume can move the pane to a
-        // conversation stored elsewhere), else where claude keeps it. A conversation with no transcript yet (no message sent) can't
+        // A restart or a restored pane resumes what claude has written, found where the hook last reported it (a /resume can move the pane
+        // to a conversation stored elsewhere), else where claude keeps it. A conversation with no transcript yet (no message sent) can't
         // be resumed, so it starts again under its own id, with the prompt only if the pane never moved off its first conversation
         // (after /clear or /resume the prompt isn't this conversation's). Read before the session file goes.
-        let resumable = restarting ? hasTranscript : resuming
-        let prompt = restarting && record.conversation != nil ? "" : record.prompt
+        let again = restarting || resuming
+        let resumable = again && hasTranscript
+        // A restored pane never sends its first prompt again; a restart does, if the pane never left its first conversation.
+        let prompt = restarting ? (record.conversation != nil ? "" : record.prompt) : (resuming ? "" : record.prompt)
+        // An empty transcript is no conversation, and claude refuses its id for a new session.
+        if again, !resumable { TranscriptReader.removeEmpty(directory: record.directory, conversation: record.conversationID) }
         // The first turn, so a session started again isn't read as its last run's turn (ADR 0010).
         let conversation = resumable ? record.conversationID : nil
         try? FileManager.default.removeItem(at: conversationFile)
@@ -589,7 +593,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // pane gains or loses them at its next start or restart.
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
-                                                 sessionID: restarting ? record.conversationID : record.id.uuidString.lowercased(),
+                                                 sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
                                                  prompt: prompt, problems: Settings.shared.problemsBoard,
                                                  mcpConfig: ScreenMCP.configuration(pane: record.id, screen: Settings.shared.screenAccess,
                                                                                     panel: Settings.shared.panelAccess))
@@ -1376,8 +1380,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let hooked = currentTranscriptPath().flatMap {
             URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent == record.conversationID ? $0 : nil
         }
-        return FileManager.default.fileExists(
-            atPath: hooked ?? TranscriptReader.path(directory: record.directory, conversation: record.conversationID))
+        return hooked.map(TranscriptReader.hasContent(atPath:)) ?? record.transcriptExists
     }
 
     /// Hangs up the client as `endNow` does (SIGKILL if it is still there a second later), waits for it to be gone, then starts claude.
@@ -1901,8 +1904,8 @@ struct ClaudePane: View {
                     }
                 if tab.showsFiles {
                     Theme.hairline.frame(width: 1)
-                    FileTreeView(tree: tab.files, root: tab.focused.record.directory,
-                                 selected: tab.focused.record.file) { model.openFile($0) }
+                    FileTreeView(tree: tab.files, root: tab.focused.record.directory, selected: tab.focused.record.file,
+                                 remote: tab.host.map { RemoteTree(host: $0, tab: tab.id) }) { model.openFile($0) }
                         .id(tab.viewID)   // per tab, so switching tabs shows and stops each tab's own tree
                 }
             }

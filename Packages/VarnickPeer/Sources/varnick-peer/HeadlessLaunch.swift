@@ -21,9 +21,10 @@ extension HeadlessPeerHost {
     /// How long a start waits for the labels (`replyOnceRunning` waits 80 times 100 ms).
     private static let startWait = 8.0
 
-    /// Creates the zmx session for a saved record marked starting, and hands it over: claude (resumed with `conversation`), or a terminal
-    /// record's login shell. Order and locks: where-it-breaks › Peers. `failed` undoes the caller's record; the reply is `ok` with the folder.
-    func launch(_ record: HeadlessSession, control: String, origin: String?, resuming conversation: String?,
+    /// Creates the zmx session for a saved record marked starting, and hands it over: claude (resumed with `conversation`, or fresh under
+    /// `freshUnder` with no prompt), or a terminal record's login shell. Order and locks: where-it-breaks › Peers. `failed` undoes the
+    /// caller's record; the reply is `ok` with the folder.
+    func launch(_ record: HeadlessSession, control: String, origin: String?, resuming conversation: String?, freshUnder: String? = nil,
                 failed: () -> Void) -> PeerReply {
         guard let uuid = UUID(uuidString: record.id), let account = HeadlessAccount.current else {
             failed()
@@ -31,13 +32,18 @@ extension HeadlessPeerHost {
         }
         let session = Zmx.sessionName(uuid)
         let folder = record.folder ?? config.defaultFolder
+        // A fresh pane starts under the conversation it follows, with no prompt: a reopened tab's untouched one never sends its first again.
+        let startID = freshUnder ?? record.id
+        let prompt = freshUnder == nil ? record.prompt ?? "" : ""
+        // It may find an empty transcript under that id, which claude refuses as in use.
+        if conversation == nil, !record.isTerminal { TranscriptReader.removeEmpty(directory: folder, conversation: startID) }
 
         // Pane folder: the hooks write here, with no report left from an earlier run; claude must not start without it. A terminal has no hooks.
         if !record.isTerminal {
             do {
                 try FileManager.default.createDirectory(at: PaneFolder.url(for: uuid), withIntermediateDirectories: true)
                 try? FileManager.default.removeItem(at: PaneFolder.sessionFile(for: uuid))
-                PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: record.prompt ?? ""), for: uuid)
+                PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: uuid)
                 PaneFolder.clearSubagentWork(for: uuid)
             } catch {
                 failed()
@@ -53,8 +59,8 @@ extension HeadlessPeerHost {
         } else {
             let agent = record.agent.flatMap { wanted in Agent.available(in: folder).contains { $0.name == wanted } ? wanted : nil }
             shellArguments = ClaudeCommand.shellArguments(ClaudeCommand.arguments(
-                skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent, resuming: conversation, sessionID: record.id,
-                prompt: record.prompt ?? "", problems: problemsBoard))
+                skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent, resuming: conversation, sessionID: startID,
+                prompt: prompt, problems: problemsBoard))
         }
         guard let command = Zmx.attachCommand(uuid, running: account.shell, shellArguments, control: control, origin: origin) else {
             failed()

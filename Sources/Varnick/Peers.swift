@@ -856,11 +856,13 @@ final class PeerManager: ObservableObject {
         return request
     }
 
-    /// A divider moved or the name changed, in control of a tab on its host (`arrange`). Nil once the host took it, else why not.
-    func arrange(tab id: UUID, layout: PeerLayout, name: String?, on host: String) async -> String? {
+    /// A divider moved, the name changed or the file tree was shown or hidden, in control of a tab on its host (`arrange`). Nil once the host
+    /// took it, else why not.
+    func arrange(tab id: UUID, layout: PeerLayout, name: String?, showsFiles: Bool, on host: String) async -> String? {
         var request = tabRequest(.arrange, tab: id)
         request.layout = layout
         request.tabName = name ?? ""
+        request.showsFiles = showsFiles
         switch await send(request, to: host) {
         case .failure(let refusal): return refusal.message
         case .success: return nil
@@ -873,6 +875,19 @@ final class PeerManager: ObservableObject {
         switch await send(tabRequest(.file, pane: id), to: host, timeout: 20) {
         case .failure(let refusal): return .failure(refusal)
         case .success(let reply): return reply.text.map { .success($0) } ?? .failure(Refusal(message: "\(self.name(of: host)) sent no text"))
+        }
+    }
+
+    /// One level of a folder of a tab, listed by its host (`files`), for the file tree of the tab opened here: the host refuses a folder outside the
+    /// tab's folders. The failure is the line to show in the column.
+    func folderEntries(tab id: UUID, folder: String, on host: String) async -> Result<(entries: [PeerFileEntry], more: Bool), Refusal> {
+        var request = tabRequest(.files, tab: id)
+        request.folder = folder
+        switch await send(request, to: host, timeout: 20) {
+        case .failure(let refusal): return .failure(refusal)
+        case .success(let reply):
+            guard let entries = reply.entries else { return .failure(Refusal(message: "\(self.name(of: host)) sent no entries")) }
+            return .success((entries, reply.more == true))
         }
     }
 
@@ -1015,7 +1030,7 @@ final class PeerManager: ObservableObject {
         case .apps:
             guard let model else { return starting }
             return PeerJSON.line(await model.hostApps(folder: request.folder))
-        case .attach, .status, .screen, .watch, .tabs, .take, .file, .rows, .pages, .recent, .hosts, .upgrade, .restart:
+        case .attach, .status, .screen, .watch, .tabs, .take, .file, .files, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))
         }

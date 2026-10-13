@@ -1893,15 +1893,11 @@ final class LauncherModel: ObservableObject {
         if activeTab === tab { tab.focus(tab.focused) }
     }
 
-    /// Whether a file pane or the file tree is refused because the tab is another machine's: they list this Mac's folders. The pane says so.
-    /// A split is the host's (`splitOnHost`).
+    /// Whether a file pane or the file tree is refused: a tab with a pane another machine holds changes only after Take over. The pane says so.
+    /// Another machine's tab never comes here: its tree and its file panes are the host's (`toggleFiles`, `openFileOnHost`).
     private func refusesLocalChange(to tab: ClaudeTab) -> Bool {
-        if let reason = layoutLockReason(of: tab) {
-            tab.focused.showRefusal(reason)
-            return true
-        }
-        guard let host = tab.host else { return false }
-        tab.focused.showRefusal("This tab is \(PeerManager.shared.name(of: host))'s: its files open there, and a pane splits there.")
+        guard let reason = layoutLockReason(of: tab) else { return false }
+        tab.focused.showRefusal(reason)
         return true
     }
 
@@ -1941,8 +1937,18 @@ final class LauncherModel: ObservableObject {
     // MARK: Files (⌘⇧F)
 
     func toggleFiles() {
-        guard let tab = activeTab, !refusesLocalChange(to: tab) else { return }
-        tab.showsFiles.toggle()
+        guard let tab = activeTab else { return }
+        if tab.host != nil {
+            // Showing the tree is a layout change: the machine in control asks, and it shows once the host has taken it (`arrange`).
+            if let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
+            return arrangeOnHost(tab, showing: tab.focused, files: !tab.showsFiles)
+        }
+        guard !refusesLocalChange(to: tab) else { return }
+        setFiles(!tab.showsFiles, in: tab)
+    }
+
+    func setFiles(_ shown: Bool, in tab: ClaudeTab) {
+        tab.showsFiles = shown
         tab.focus(tab.focused)
         saveSessions()
     }
@@ -1952,9 +1958,14 @@ final class LauncherModel: ObservableObject {
     func openFile(_ path: String) {
         guard let tab = activeTab else { return }
         if let open = tab.sessions.first(where: { $0.record.file == path }) { return tab.focus(open) }
-        // A file pane is a split too, and the tree lists this Mac's folders, not the other machine's.
+        if tab.host != nil { return openFileOnHost(path, in: tab) }
         guard !refusesLocalChange(to: tab) else { return }
-        var record = Self.newRecord(prompt: "", directory: tab.files.root)
+        addFilePane(path, directory: tab.files.root, to: tab)
+    }
+
+    /// The pane for `path` in `tab`: below the newest file pane so files stack in one column, else beside the focused pane.
+    private func addFilePane(_ path: String, directory: String, to tab: ClaudeTab, id: UUID = UUID()) {
+        var record = SessionRecord(id: id, prompt: "", title: "", directory: directory, startedAt: Date(), lastUsed: Date())
         record.file = path
         let session = makeSession(record, resuming: false, query: "")
         if let column = tab.sessions.last(where: \.isFile) {
@@ -1965,6 +1976,13 @@ final class LauncherModel: ObservableObject {
             tab.split(.sideBySide, adding: session)
         }
         saveSessions()
+    }
+
+    /// A file picked in the tree of another machine's tab: the machine in control asks the host to open it there, as its own tree does.
+    private func openFileOnHost(_ path: String, in tab: ClaudeTab) {
+        if let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
+        askHost(toStart: PeerStart(id: UUID().uuidString.lowercased(), folder: tab.files.root, prompt: "", kind: .file, file: path),
+                in: tab, beside: tab.focused)
     }
 
     // MARK: Split picker (⌘⌃⇧E / ⌘⌃⇧O)
@@ -3008,7 +3026,10 @@ final class LauncherModel: ObservableObject {
         let existing = tabs.flatMap(\.sessions).first { $0.id == id }
         if start.resume == true { return await hostResume(id: id, by: peer, existing: existing) }
         guard existing == nil else { return .failure("That session already exists on \(here)") }
-        guard start.kind == nil || start.kind == .claude || start.isTerminal || start.isWebOrApp else { return .failure("\(here) doesn't start that kind of pane") }
+        guard start.kind == nil || start.kind == .claude || start.isTerminal || start.isWebOrApp || start.isFile else {
+            return .failure("\(here) doesn't start that kind of pane")
+        }
+        if start.isFile { return await hostOpenFile(request, start: start, id: id, here: here, by: peer) }
         guard !start.isWebOrApp || request.tab != nil else { return .failure("A page or an app is added to a tab: the request named none") }
         // A split of a tab of this Mac, in the place the asker named, which only the machine in control of the tab may ask (ADR 0034). The new
         // pane starts in the split pane's folder and takes the tab's origin: closing the tab on the machine it was made for ends it.
@@ -3048,6 +3069,27 @@ final class LauncherModel: ObservableObject {
         saveSessions()
         session.start()
         return await replyOnceRunning(session, in: target, tab: tab)
+    }
+
+    /// A peer's `start` of a file, picked in the tree it shows of this Mac's folders: it opens as a pick in this Mac's own tree does. The file
+    /// and the tree's folder must be inside the tab's folders (as `file` reads them) and the file a regular file.
+    private func hostOpenFile(_ request: PeerRequest, start: PeerStart, id: UUID, here: String, by peer: String) async -> PeerReply {
+        guard let wanted = request.tab.flatMap(UUID.init(uuidString:)), let path = start.file, let folder = start.folder else {
+            return .failure("A file is added to a tab: the request named no tab, folder or file")
+        }
+        guard let tab = tabs.first(where: { $0.id == wanted && $0.host == nil }) else { return .failure("That tab isn't open on \(here)") }
+        if let denied = await refusalUnlessControlled(tab, by: peer) { return denied }
+        let folders = tab.sessions.map(\.record.directory)
+        guard PeerFile.isInside(path, folders: folders), PeerFile.isInside(folder, folders: folders) else {
+            return .failure("That file is outside the tab's folders")
+        }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard (try? FileManager.default.attributesOfItem(atPath: resolved))?[.type] as? FileAttributeType == .typeRegular else {
+            return .failure("That isn't a file on \(here)")
+        }
+        if tab.sessions.contains(where: { $0.record.file == path }) { return .success() }
+        addFilePane(path, directory: folder, to: tab, id: id)
+        return .success()
     }
 
     /// A split of this Mac's tab into a page (an http or https address) or a custom app it runs, for the machine in control: no zmx session of the
@@ -3133,8 +3175,9 @@ final class LauncherModel: ObservableObject {
         let status = await Task.detached { Zmx.status(of: id) }.value
         if status.running { return reply(.running, status: status) }
         guard !existing.started else { return reply(.closing) }
-        // A terminal has no conversation to resume: it starts fresh in its folder.
-        guard existing.isShell || existing.record.transcriptExists else { return reply(.ended) }
+        // A terminal has no conversation to resume: it starts fresh in its folder, as a Claude pane nothing was sent in does. One that lost its
+        // transcript is over.
+        guard existing.isShell || existing.record.transcriptExists || existing.record.isUntouched else { return reply(.ended) }
         existing.startedFor = peer
         existing.start()
         let started = await replyOnceRunning(existing, in: existing.record.directory)
@@ -3250,6 +3293,7 @@ final class LauncherModel: ObservableObject {
         tab.rearrange(to: layout, using: sessions)
         let name = request.tabName?.trimmingCharacters(in: .whitespaces)
         tab.name = name?.isEmpty == false ? name : nil
+        if let shows = request.showsFiles, tab.showsFiles != shows { tab.showsFiles = shows }
         saveSessions()
         return .success()
     }

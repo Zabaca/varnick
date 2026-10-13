@@ -36,7 +36,7 @@ extension HeadlessPeerHost {
         guard let ask = request.start, let uuid = UUID(uuidString: ask.id) else { return .failure("The request had no session id") }
         state.reconcile()
         if ask.resume == true { return startAgain(uuid, by: by) }
-        guard !ask.isWebOrApp else { return .failure("\(name) has no browser or custom apps: its tabs hold Claude sessions and terminals") }
+        guard !ask.isWebOrApp, !ask.isFile else { return .failure("\(name) has no browser, custom apps or files: its tabs hold Claude sessions and terminals") }
         guard ask.kind == nil || ask.kind == .claude || ask.isTerminal else { return .failure("\(name) doesn't start that kind of pane") }
         let id = uuid.uuidString.lowercased()
         let taken = PeerReply.failure("That session already exists on \(name)")
@@ -126,10 +126,12 @@ extension HeadlessPeerHost {
             reply.resume = .closing
         case .ended:
             reply.resume = .ended
-        case .start(let conversation):
+        case .start(let conversation), .startFresh(let conversation):
             guard let before = claim.before else { return .failure("That session has no record on \(name)") }
+            var fresh: String?
+            if case .startFresh = claim.decision { fresh = conversation }
             // Labelled for the Mac that asked, with the record's own origin.
-            reply = launch(before, control: by, origin: before.origin, resuming: conversation) {
+            reply = launch(before, control: by, origin: before.origin, resuming: fresh == nil ? conversation : nil, freshUnder: fresh) {
                 // Only what the claim changed goes back, so a mark made or cleared during the start stays.
                 _ = try? state.update(id) {
                     guard $0.ended == nil, $0.starting == true else { return }
@@ -155,7 +157,7 @@ extension HeadlessPeerHost {
         let taken = PeerReply.failure("That session already exists on \(name)")
         let folder = HeadlessConfig.expand(given)
         guard Self.isFolder(folder) else { return .failure("\(folder) isn't a folder on \(name)") }
-        guard FileManager.default.fileExists(atPath: TranscriptReader.path(directory: folder, conversation: conversation)) else {
+        guard TranscriptReader.hasConversation(directory: folder, conversation: conversation) else {
             return .failure("\(name) has no transcript of that conversation")
         }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
@@ -259,7 +261,7 @@ extension HeadlessPeerHost {
             let replies = LockedBox([PeerReply?](repeating: nil, count: panes.count))
             DispatchQueue.concurrentPerform(iterations: panes.count) { index in
                 let pane = panes[index]
-                let reply = launch(pane.record, control: by, origin: by, resuming: pane.conversation) {
+                let reply = launch(pane.record, control: by, origin: by, resuming: pane.conversation, freshUnder: pane.freshUnder) {
                     // Only what the claim changed goes back, so the record is ended as it was.
                     _ = try? state.update(pane.record.id) { if $0.ended == nil, $0.starting == true { $0 = pane.before } }
                 }
@@ -281,6 +283,7 @@ extension HeadlessPeerHost {
         guard let tab = request.tab?.lowercased(), UUID(uuidString: tab) != nil, let layout = request.layout else {
             return .failure("The request needs a tab and a layout")
         }
+        guard request.showsFiles != true else { return .failure("\(self.name) has no file tree") }
         state.reconcile()
         if let denied = controlled(tab: tab, by: by) { return denied }
         let name = request.tabName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -398,6 +401,11 @@ extension HeadlessPeerHost {
         .failure("\(name) has no file panes")
     }
 
+    /// Nor a file tree: its tabs list none (`PeerTab.files` is nil).
+    func files(tab: String?, folder: String?) -> PeerReply {
+        .failure("\(name) has no file tree")
+    }
+
     /// `recent`: the tabs whose every record has ended, newest first (protocol 23), each conversation once and only with a transcript and
     /// no running session holding it. A session that ended by itself is here once the next request reconciles it.
     func recent() -> PeerReply {
@@ -414,7 +422,7 @@ extension HeadlessPeerHost {
             .sorted(by: { ($0.ended ?? .distantPast) > ($1.ended ?? .distantPast) }) {
             let conversation = conversations[record.id] ?? record.id
             let folder = record.folder ?? config.defaultFolder
-            guard !seen.contains(conversation), FileManager.default.fileExists(atPath: TranscriptReader.path(directory: folder, conversation: conversation)),
+            guard !seen.contains(conversation), TranscriptReader.hasConversation(directory: folder, conversation: conversation),
                   !HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: conversations) else { continue }
             seen.insert(conversation)
             let title = TranscriptReader.title(directory: folder, conversation: conversation) ?? Self.firstLine(of: record.prompt) ?? ""
