@@ -98,7 +98,10 @@ private struct ReorderableTab: ViewModifier {
                         drag.gap = drag.gap(at: point, in: among, axis: axis)
                     }
                     .onEnded { _ in
-                        if let gap = drag.gap { model.moveTab(tab, toGap: place(gap)) }
+                        // A drop that changes nothing among the tabs shown changes nothing: `place` could land it elsewhere in a filtered strip.
+                        if let gap = drag.gap, let from = among.firstIndex(where: { $0 === tab }), gap != from, gap != from + 1 {
+                            model.moveTab(tab, toGap: place(gap))
+                        }
                         drag.ended()
                     },
                 including: enabled ? .all : .subviews)

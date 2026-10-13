@@ -41,6 +41,8 @@ final class LauncherModel: ObservableObject {
     let tabDrag = TabDrag()
     /// The header's tab strip: which tabs it shows, and the list of those it doesn't.
     let strip = TabStrip()
+    /// The projects column, and the project the strip is filtered to (⌘⇧P, ⌘⌥[ and ⌘⌥]).
+    let tabProjects = TabProjects()
     /// Tab on screen; nil shows search (tabs are listed there when the query is empty).
     @Published var activeTab: ClaudeTab? { didSet { strip.refresh() } }
     /// Focused pane of the tab on screen.
@@ -99,7 +101,12 @@ final class LauncherModel: ObservableObject {
     /// time a prompt is begun or that folder changes.
     @Published var agents: [Agent] = [] { didSet { promptWordsResolved() } }
     /// Git repos for `#name`, rescanned in the background each time a prompt is begun.
-    @Published var projects: [Project] = [] { didSet { if mode == .prompt { loadAgents(); promptWordsResolved() } } }
+    @Published var projects: [Project] = [] {
+        didSet {
+            if mode == .prompt { loadAgents(); promptWordsResolved() }
+            strip.refresh()   // a tab's project may change
+        }
+    }
     /// Highlighted suggestion while a `^host`, `#project` or `@agent` word is being typed.
     @Published var suggestionSelection = 0
     /// Set while a session is being started on a peer (its name): the host answers once the
@@ -111,6 +118,7 @@ final class LauncherModel: ObservableObject {
         // A project that just resolved changes the folder whose agents the prompt wants. Only the named
         // peer's list matters: a row's ask of another peer leaves the prompt alone.
         didSet {
+            if peerProjects != oldValue { strip.refresh() }   // a tab on that Mac may change its project
             guard mode == .prompt, let id = claudePeer?.id, peerProjects[id] != oldValue[id] else { return }
             loadPeerLists()
             promptWordsResolved()
@@ -327,6 +335,7 @@ final class LauncherModel: ObservableObject {
         board.model = self
         outline.model = self
         strip.model = self
+        tabProjects.model = self
         restoreSessions()
         // Scanned before the first prompt so `#name` resolves straight away, and again when
         // the folders change (the publisher sends the new value before it's stored).
@@ -2426,6 +2435,7 @@ final class LauncherModel: ObservableObject {
 
         // The last pane is out: the tab goes to Completed, or is an ended card when it held a Claude pane.
         closing[tab.id] = nil
+        let inStrip = strip.tabs
         tabs.remove(at: index)
         let closed = going ?? ClosingTab(saved: .init(id: tab.id, layout: .leaf(record), focused: record.id, name: tab.name,
                                                       showsFiles: tab.showsFiles ? true : nil),
@@ -2462,8 +2472,10 @@ final class LauncherModel: ObservableObject {
             query = prompt
             focusSearchField()
         } else if !tabs.isEmpty {
-            // Like closing a tab: show the neighbour.
-            activate(tabs[min(index, tabs.count - 1)], keepingBoard: true)
+            // Like closing a tab: show the neighbour in the strip, or in all the tabs when the chosen project ended with this one.
+            let rest = inStrip.filter { $0 !== tab }
+            let at = inStrip.firstIndex { $0 === tab } ?? 0
+            activate(rest.isEmpty ? tabs[min(index, tabs.count - 1)] : rest[min(at, rest.count - 1)], keepingBoard: true)
         } else {
             showSearch()
         }
@@ -2853,14 +2865,25 @@ final class LauncherModel: ObservableObject {
         refreshPeerRecent(minInterval: 5)
     }
 
-    /// ⌘⇧[ / ⌘⇧]: previous / next tab, wrapping. From search it opens the last (or first) tab.
+    /// ⌘⇧[ / ⌘⇧]: previous / next tab of the strip (the chosen project's), wrapping. From search it opens the last (or first) tab.
     func cycleSession(_ delta: Int) {
+        let tabs = strip.tabs
         guard !tabs.isEmpty else { return }
         guard let active = activeTab, let i = tabs.firstIndex(where: { $0 === active }) else {
             activate(delta < 0 ? tabs[tabs.count - 1] : tabs[0])
             return
         }
         activate(tabs[(i + delta + tabs.count) % tabs.count])
+    }
+
+    /// ⌘⇧P: the projects column shows or hides. In a panel too narrow for it (with the file tree, if shown) the list of projects opens instead.
+    func toggleProjects() {
+        guard let tab = activeTab else { return }
+        guard tabProjects.fits(showsFiles: tab.showsFiles) else { return tabProjects.toggleList() }
+        tabProjects.closeList()
+        tabProjects.columnOn.toggle()
+        if tabProjects.columnOn { startSummaryTicker() }
+        tab.focus(tab.focused)
     }
 
     /// Where Claude starts: the folder from Settings, else VARNICK_CLAUDE_DIR, else the launcher's working directory from a checkout (the repo,
@@ -2894,7 +2917,7 @@ final class LauncherModel: ObservableObject {
     private func focusShown() {
         if let tab = activeTab {
             tab.focus(tab.focused)
-            if strip.layout.hidden > 0 { startSummaryTicker() }
+            if strip.needsMarks { startSummaryTicker() }
         } else {
             focusSearchField()
         }
@@ -3040,8 +3063,8 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// Reads the summaries now, and once a second while the search shows or a tab does with some tabs hidden (their turns turn the +N chip
-    /// orange). It ends when the panel hides or the board, the outline or Settings covers them; `panelDidShow` and the like start it again.
+    /// Reads the summaries now, and once a second while the search shows or a tab does with some tabs hidden or the projects column on (their
+    /// turns turn the +N chip orange and mark the projects: `TabStrip.needsMarks`). It ends when the panel hides or the board, the outline or Settings covers them; `panelDidShow` and the like start it again.
     func startSummaryTicker(reading: Bool = true) {
         if reading { refreshTabSummaries() }
         guard summaryTicker == nil else { return }
@@ -3052,7 +3075,7 @@ final class LauncherModel: ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 let covered = self.showingBoard || self.showingOutline || self.showingSettings
                 let searching = self.activeTab == nil && !covered
-                guard SessionBoard.panelIsVisible, !covered, searching || self.strip.layout.hidden > 0 else {
+                guard SessionBoard.panelIsVisible, !covered, searching || self.strip.needsMarks else {
                     self.summaryTicker = nil
                     return
                 }

@@ -55,6 +55,7 @@ enum PanelViews {
         if model.pendingSplit != nil { return NoKeys("The split picker is showing: ask the user to answer it first") }
         if model.renamingTab != nil { return NoKeys("A tab is being renamed: ask the user to finish first") }
         if model.strip.listOpen { return NoKeys("The list of hidden tabs is showing: ask the user to answer it first") }
+        if model.tabProjects.listOpen { return NoKeys("The list of projects is showing: ask the user to answer it first") }
         if model.showingSettings { return NoKeys("Settings is showing: its switches govern sessions, so a session may not press keys there") }
         if model.showingBoard { return BoardPanelView(model: model) }
         if model.showingOutline { return OutlinePanelView(model: model) }

@@ -170,6 +170,9 @@ enum TabMetrics {
 final class TabStrip: ObservableObject {
     weak var model: LauncherModel?
     @Published private(set) var layout = TabFit.Result.empty
+    /// The tabs the strip lays out, in its order: those of the chosen project (`TabProjects`), or all. The run, the drops and the list all
+    /// count within this array. Set by `refresh`.
+    @Published private(set) var tabs: [ClaudeTab] = []
     @Published private(set) var listOpen = false
     /// The highlighted row of the list, an index of `hiddenTabs`.
     @Published var listSelection = 0
@@ -194,9 +197,6 @@ final class TabStrip: ObservableObject {
         modeWatch = Settings.shared.$tabOverflow.dropFirst().removeDuplicates().sink { [weak self] mode in self?.refresh(mode: mode) }
     }
 
-    /// The tabs the strip lays out, in its order: all of them, for now. The run, the drops and the list all count within this array.
-    var tabs: [ClaudeTab] { model?.tabs ?? [] }
-
     /// The header grows by a row for each row the strip wraps onto.
     var headerHeight: CGFloat {
         LauncherModel.claudeHeaderHeight + CGFloat(max(layout.rows.count, 1) - 1) * (TabFit.rowHeight + TabFit.gap)
@@ -216,7 +216,9 @@ final class TabStrip: ObservableObject {
     /// Works the run out again, when tabs open, close or move, a title, the tab on screen, the width or the mode changes.
     func refresh(mode: TabOverflow? = nil) {
         guard let model else { return }
-        let tabs = self.tabs
+        model.tabProjects.rebuild()
+        let tabs = model.tabs.filter { model.tabProjects.includes($0) }
+        if !tabs.elementsEqual(self.tabs, by: ===) { self.tabs = tabs }
         let items = tabs.map { tab -> TabFit.Item in
             if model.renamingTab === tab { return TabFit.Item(natural: TabMetrics.renameWidth, rigid: true) }
             return TabFit.Item(natural: TabMetrics.natural(title: tab.name ?? tab.focused.label, panes: tab.sessions.count,
@@ -231,12 +233,16 @@ final class TabStrip: ObservableObject {
         firstShown = tabs.indices.contains(firstIndex) ? tabs[firstIndex].viewID : nil
         if next != layout { layout = next }
         if next.hidden == 0 {
-            closeList()
-        } else {
-            if listSelection >= next.hidden { listSelection = next.hidden - 1 }
-            model.startSummaryTicker(reading: false)
+            closeHiddenList()
+        } else if listSelection >= next.hidden {
+            listSelection = next.hidden - 1
         }
+        // The turns are read for the +N chip's mark and for the projects' marks, while a tab shows.
+        if needsMarks, model.showsTerminal, SessionBoard.panelIsVisible { model.startSummaryTicker(reading: false) }
     }
+
+    /// Whether the turns of the tabs not in view are read: some tabs are hidden, or the projects column or its list needs the marks.
+    var needsMarks: Bool { layout.hidden > 0 || model?.tabProjects.needsMarks == true }
 
     /// A tab is about to move in the strip's order (a drop): the run stays where it is by place.
     func keepRunByIndex() { keepsRunByIndex = true }
@@ -272,13 +278,20 @@ final class TabStrip: ObservableObject {
     func toggleList() {
         if listOpen { return closeList(refocus: true) }
         guard layout.hidden > 0 else { return }
+        model?.tabProjects.closeList()
         listSelection = 0
         listOpen = true
         model?.refreshTabSummaries()
     }
 
-    /// Closes the list. The keyboard was never taken from the pane, but a click that closed it may have moved it, so it goes back.
+    /// Closes the lists under the strip, the hidden tabs' and the projects'.
     func closeList(refocus: Bool = false) {
+        model?.tabProjects.closeList(refocus: refocus)
+        closeHiddenList(refocus: refocus)
+    }
+
+    /// Closes the hidden tabs' list. The keyboard was never taken from the pane, but a click that closed it may have moved it, so it goes back.
+    private func closeHiddenList(refocus: Bool = false) {
         guard listOpen else { return }
         listOpen = false
         if refocus, let tab = model?.activeTab, model?.showsTerminal == true { tab.focus(tab.focused) }
@@ -286,6 +299,7 @@ final class TabStrip: ObservableObject {
 
     /// A click while the list is open: outside it, and not on the chip (which toggles), closes it. The click goes on to what it landed on.
     func mouseDown(_ event: NSEvent) {
+        model?.tabProjects.mouseDown(event)
         guard listOpen, let view = event.window?.contentView else { return }
         let point = CGPoint(x: event.locationInWindow.x, y: view.bounds.height - event.locationInWindow.y)
         if !listFrame.contains(point), !chipFrame.contains(point) { closeList() }
@@ -299,6 +313,7 @@ final class TabStrip: ObservableObject {
 
     /// The list's keys while it is open, taken before the shortcuts and the panes: ↑ ↓ ↩ esc. Others go on.
     func key(_ event: NSEvent) -> Bool {
+        if let projects = model?.tabProjects, projects.listOpen { return projects.key(event) }
         guard listOpen, model?.renamingTab == nil, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
         let count = hiddenTabs.count
         switch Int(event.keyCode) {

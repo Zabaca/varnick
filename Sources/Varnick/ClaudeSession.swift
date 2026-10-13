@@ -1871,6 +1871,7 @@ struct ClaudePane: View {
     @ObservedObject var model: LauncherModel
     @ObservedObject var tab: ClaudeTab
     @ObservedObject private var strip: TabStrip
+    @ObservedObject private var projects: TabProjects
     @State private var chipX: CGFloat = 0
     @State private var paneWidth: CGFloat = 0
 
@@ -1881,11 +1882,18 @@ struct ClaudePane: View {
         self.model = model
         self.tab = tab
         strip = model.strip
+        projects = model.tabProjects
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
+                // With the column out of sight, the chosen project's name opens the list of projects.
+                if projects.showsChip(for: tab) {
+                    ProjectChip(projects: projects)
+                        .padding(.top, (LauncherModel.claudeHeaderHeight - TabFit.rowHeight) / 2 + 1)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }
                 // The strip fills what the pills and the pin leave, and reports only its width; the header's empty part drags the window.
                 TabStripView(model: model, strip: strip, tab: tab, chipX: $chipX)
                 // The focused pane's pills, as in its row in the session list (`LauncherModel.pills`). With no
@@ -1902,6 +1910,10 @@ struct ClaudePane: View {
             .background(WindowDragArea())
             Theme.hairline.frame(height: 1)
             HStack(spacing: 0) {
+                if projects.showsColumn(for: tab) {
+                    ProjectsColumn(model: model, projects: projects)
+                    Theme.hairline.frame(width: 1)
+                }
                 PaneView(node: tab.root, tab: tab)
                     .id(tab.viewID)   // swap the whole tree when switching tabs
                     .padding(.leading, 2)
@@ -1918,12 +1930,19 @@ struct ClaudePane: View {
             }
         }
         .coordinateSpace(name: Self.space)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { paneWidth = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+            paneWidth = $0
+            projects.paneWidth = $0
+        }
         .overlay(alignment: .topLeading) {
             // A click outside it closes it (`TabStrip.mouseDown`, from the mouse monitor), so the click reaches what it landed on.
             if strip.listOpen {
                 HiddenTabsList(model: model, strip: strip)
                     .offset(x: max(min(chipX, paneWidth - HiddenTabsList.width - 8), 8), y: strip.headerHeight - 4)
+            }
+            if projects.listOpen {
+                ProjectsList(model: model, projects: projects)
+                    .offset(x: 8, y: strip.headerHeight - 4)
             }
         }
     }

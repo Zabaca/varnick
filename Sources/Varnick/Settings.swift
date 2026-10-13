@@ -80,6 +80,7 @@ struct KeyCombo: Codable, Equatable {
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     case toggleLauncher, pinLauncher, toggleListening, settings, outline
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
+    case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
     case webAddress, webReload
     case fontBigger, fontSmaller, fontReset
@@ -107,6 +108,9 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .nextTab: "Next tab"
         case .toggleFiles: "Show / hide file tree"
         case .sessionBoard: "Show / hide session board"
+        case .toggleProjects: "Show / hide projects"
+        case .previousProject: "Previous project"
+        case .nextProject: "Next project"
         case .splitSideBySide: "Split side by side"
         case .splitStacked: "Split top and bottom"
         case .splitSideBySideOther: "Split side by side, choose Claude / terminal / browser"
@@ -126,7 +130,8 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     var group: String {
         switch self {
         case .toggleLauncher, .pinLauncher, .toggleListening, .settings, .outline: "Varnick"
-        case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard: "Tabs"
+        case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard,
+             .toggleProjects, .previousProject, .nextProject: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight: "Splits"
         case .webAddress, .webReload: "Web"
         case .fontBigger, .fontSmaller, .fontReset: "Terminal"
@@ -151,6 +156,9 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .nextTab: KeyCombo(keyCode: kVK_ANSI_RightBracket, [.command, .shift])
         case .toggleFiles: KeyCombo(keyCode: kVK_ANSI_F, [.command, .shift])
         case .sessionBoard: KeyCombo(keyCode: kVK_ANSI_B, [.command, .shift])
+        case .toggleProjects: KeyCombo(keyCode: kVK_ANSI_P, [.command, .shift])
+        case .previousProject: KeyCombo(keyCode: kVK_ANSI_LeftBracket, [.command, .option])
+        case .nextProject: KeyCombo(keyCode: kVK_ANSI_RightBracket, [.command, .option])
         case .splitSideBySide: KeyCombo(keyCode: kVK_ANSI_E, [.command, .shift])
         case .splitStacked: KeyCombo(keyCode: kVK_ANSI_O, [.command, .shift])
         case .splitSideBySideOther: KeyCombo(keyCode: kVK_ANSI_E, [.command, .control, .shift])
