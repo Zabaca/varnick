@@ -2880,7 +2880,7 @@ final class LauncherModel: ObservableObject {
     /// The search field takes focus, or the caret goes back into its bullet while the outline shows over the search.
     func focusSearchField() {
         if showingOutline { outline.restoreCaret() } else { focusToken += 1 }
-        if activeTab == nil, !showingBoard, !showingOutline, !showingSettings { startSummaryTicker() }
+        if activeTab == nil, !showingBoard, !showingOutline, !showingResources, !showingSettings { startSummaryTicker() }
     }
 
     /// The tab on screen takes focus, or the search field when none shows.
@@ -3039,7 +3039,8 @@ final class LauncherModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
-                guard SessionBoard.panelIsVisible, self.activeTab == nil, !self.showingBoard, !self.showingOutline, !self.showingSettings else {
+                guard SessionBoard.panelIsVisible, self.activeTab == nil, !self.showingBoard, !self.showingOutline, !self.showingResources,
+                      !self.showingSettings else {
                     self.summaryTicker = nil
                     return
                 }

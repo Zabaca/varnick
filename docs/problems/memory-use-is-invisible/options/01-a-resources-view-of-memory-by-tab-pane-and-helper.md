@@ -77,7 +77,7 @@ The Mark tab done and Restart session keys are taken and do nothing, so no key r
 
 **Which processes are Varnick's**
 - **One walk of the user's processes.** For each process: its parent, its path and its footprint, through libproc. No `ps`, `footprint` or zmx call.
-- **Arguments are read (sysctl) of a few processes only:** zmx, Varnick's binary, the MCP tool's link, and any process whose path can't be read. They are only used to match processes, never shown or logged, because a Claude pane's carry its prompt.
+- **Arguments are read (sysctl) of a few processes only:** zmx, ssh (a background connection's title names its socket in Varnick's folder, which tells Varnick's links from the user's own), Varnick's binary, the MCP tool's link, and any process whose path can't be read. They are only used to match processes, never shown or logged, because a Claude pane's carry its prompt.
 - **Varnick's processes are:**
   - Varnick and its descendants;
   - each zmx process whose arguments name one of Varnick's sessions (a pane's, or another of Varnick's own), and its descendants;

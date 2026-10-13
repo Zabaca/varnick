@@ -47,12 +47,14 @@ enum ProcessTable {
                 ?? withUnsafePointer(to: info.pbi_comm) { string($0) }
             let path = path(of: pid)
             let arguments = wantsArguments(name, path) ? arguments(of: pid) : nil
-            let webKit = path?.contains("/com.apple.WebKit.") == true
             entries.append(ProcessEntry(pid: pid, ppid: Int32(info.pbi_ppid), name: name, path: path, arguments: arguments,
-                                        footprint: footprint(of: pid), responsible: webKit ? WebKitProcess.responsible(for: pid) : nil))
+                                        footprint: footprint(of: pid), responsible: isWebKit(path: path) ? WebKitProcess.responsible(for: pid) : nil))
         }
         return entries
     }
+
+    /// WebKit's helper processes (page, GPU, network) by the file they run from.
+    static func isWebKit(path: String?) -> Bool { path?.contains("/com.apple.WebKit.") == true }
 
     /// `phys_footprint` of a process of this account; 0 when it can't be read.
     static func footprint(of pid: Int32) -> UInt64 {

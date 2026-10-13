@@ -55,9 +55,9 @@ private struct ResourcesBody: View {
                             }
                         }
                     }
-                    if !report.remote.isEmpty {
+                    if !report.elsewhere.isEmpty {
                         section("Tabs on other machines") {
-                            ForEach(report.remote) { tab in
+                            ForEach(report.elsewhere) { tab in
                                 FigureRow(title: tab.name, detail: "Runs on \(tab.host)", figure: tab.count > 0 ? tab.share : nil)
                             }
                         }
@@ -69,7 +69,7 @@ private struct ResourcesBody: View {
                             .opacity(0.6)
                             .padding(.horizontal, 10)
                     }
-                    if !resources.canTellResponsibility {
+                    if !WebKitProcess.canTellResponsibility {
                         Text("macOS's responsible-process call is missing here, so WebKit's shared processes and any page no pane names are not counted.")
                             .font(.system(size: 11.5))
                             .foregroundStyle(.orange)
@@ -102,7 +102,7 @@ private struct ResourcesBody: View {
         section("The app", figure: app.footprint) {
             FigureRow(title: "On-device models", detail: app.modelNames.isEmpty ? "none loaded" : app.modelNames.joined(separator: ", "),
                       figure: app.models)
-            if let graphics = app.graphics { FigureRow(title: "Graphics", detail: "drawing and web view layers", figure: graphics) }
+            if let graphics = app.graphics { FigureRow(title: "Graphics", detail: "the app's own drawing", figure: graphics) }
             FigureRow(title: "Everything else", detail: "", figure: app.rest)
         }
     }

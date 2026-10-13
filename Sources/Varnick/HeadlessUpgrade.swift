@@ -8,6 +8,8 @@ import VarnickPeer
 
 /// The installer's session and log for one host, so two hosts can be upgraded together.
 enum InstallerRunner {
+    static let sessionPrefix = "varnick-install-"
+
     /// Readable, and a hash of the address so two addresses never share a session or a log.
     static func slug(_ host: String) -> String {
         let readable = String(host.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" }.prefix(20))
@@ -16,7 +18,7 @@ enum InstallerRunner {
 
     /// A far half's markers are early in a long log and a Swift build prints a good deal after them, hence the long tail.
     static func run(for host: String) -> ZmxRun {
-        ZmxRun(session: "varnick-install-\(slug(host))", log: UpgradeFolder.url.appendingPathComponent("install-\(slug(host)).log"),
+        ZmxRun(session: sessionPrefix + slug(host), log: UpgradeFolder.url.appendingPathComponent("install-\(slug(host)).log"),
                noun: "installer", tailBytes: 1024 * 1024)
     }
 
