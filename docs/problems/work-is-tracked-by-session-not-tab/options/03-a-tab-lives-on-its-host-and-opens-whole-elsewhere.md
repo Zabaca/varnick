@@ -165,5 +165,12 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
   - that taking over several zmx sessions at once is as safe as one, since each step is today's, per pane;
   - that 5 s is soon enough for a layout change made elsewhere.
 - **Picked:** only the machine in control changes the layout; a split from afar offers Claude and terminal only.
+- **Ruled by the coordinator (2026-10-12), pending the user:** when a pane is closed with ⌘W in a tab this Mac controls, it closes in the host's tab exactly as ⌘W would on the host. A Claude pane's conversation goes to the tab's history and a terminal ends; released panes don't stay behind. Closing the whole tab keeps the rule above (a tab the closer started ends, one the host started is handed back), and the last pane of a tab closes the tab. It is one place to change (`LauncherModel.hostEnd`, and the headless `end`).
+- **Departures accepted at review (2026-10-12):**
+  - `reopen` is a request of its own, in the protocol list. It reopens a closed tab whole in the host's layout, in place of a `resume` per session.
+  - A headless host's mark stays on its session records; the new tab record holds the layout, the name and the origin.
+  - `start` names the pane to split and an axis (`sideBySide` or `stacked`), and the new pane goes second. There is no side.
+  - A web pane at an outside address is an "Open in the browser" link on the phone, not a frame. The Mac loads it in the pane.
+  - A machine is in control only when every running Claude and terminal pane names it, and a pane's Start is refused while another machine holds the tab.
 - **Decided by the user (2026-10-12),** when accepting this option, each the recommendation:
   1. **Splitting a pane of another machine's tab** starts the new pane on that host.
