@@ -461,14 +461,17 @@ struct FileBar: View {
                 }
                 .help(session.showsSource ? "Show rendered" : "Show source")
             }
-            Button { NSWorkspace.shared.open(URL(fileURLWithPath: path)) } label: {
-                Image(systemName: "arrow.up.forward.app")
+            // A file of another machine's tab isn't on this Mac to open.
+            if session.fileViewer?.remote == nil {
+                Button { NSWorkspace.shared.open(URL(fileURLWithPath: path)) } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                }
+                .help("Open in default app")
+                Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
+                    Image(systemName: "folder")
+                }
+                .help("Reveal in Finder")
             }
-            .help("Open in default app")
-            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
-                Image(systemName: "folder")
-            }
-            .help("Reveal in Finder")
             CloseButton(help: CloseButton.paneHelp) { session.end() }
         }
         .buttonStyle(.plain)

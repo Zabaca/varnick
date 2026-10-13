@@ -1,6 +1,6 @@
 import Foundation
 
-// A pane's work links as a host sends them in `status` and `sessions` (ADR 0020, protocol 18), read as `PeerTurn` reads the turn.
+// A pane's work links as a host sends them in `status` and `tabs` (ADR 0020, protocol 18), read as `PeerTurn` reads the turn.
 // A link names its repository as `group/name` (`PeerWork.project(of:)`), never a path.
 
 /// One problem or option a pane's session or subagents worked on.

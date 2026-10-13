@@ -105,7 +105,7 @@ public enum PeerRelay {
         case .recent:
             return finish(device == nil ? host.recent() : hidingMarks(host.recent()))
         case .hosts:
-            // Names and addresses only (`PeerHostEntry` has no id), so a device may ask it as it may ask for `sessions`.
+            // Names and addresses only (`PeerHostEntry` has no id), so a device may ask it as it may ask for `tabs`.
             var reply = PeerReply.success()
             reply.hosts = host.hosts()
             return finish(reply)

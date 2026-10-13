@@ -8,7 +8,7 @@ enum PhonePage {
     static let publishedPort = 8444
     /// The port of 127.0.0.1 the server listens on where Tailscale can't serve a socket.
     static let loopbackPort = 18444
-    /// The server's zmx session. It is never a pane's name, so neither the launch sweep nor `sessions` sees it.
+    /// The server's zmx session. It is never a pane's name, so neither the launch sweep nor `tabs` sees it.
     static let sessionName = "varnick-phone-page"
     /// The labels the session is made with: the server's files, where they are, and how it listens. A session with other values
     /// than the ones wanted now is ended and started again.

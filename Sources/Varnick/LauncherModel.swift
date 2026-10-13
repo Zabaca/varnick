@@ -1392,7 +1392,7 @@ final class LauncherModel: ObservableObject {
         return changed
     }
 
-    /// What a paired Mac's `sessions` answer says of its marks (ADR 0032). Returns whether anything changed, so an answer that changes nothing saves nothing.
+    /// What a paired Mac's `tabs` answer says of its marks (ADR 0032). Returns whether anything changed, so an answer that changes nothing saves nothing.
     private func takeInListingMarks(_ found: [PeerOpenSession], on host: String, sentAt: Date) -> Bool {
         guard let marks = hostMarks(from: host) else { return false }
         var changed = false
