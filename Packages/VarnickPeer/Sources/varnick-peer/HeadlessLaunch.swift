@@ -21,12 +21,8 @@ extension HeadlessPeerHost {
     /// How long a start waits for the labels (`replyOnceRunning` waits 80 times 100 ms).
     private static let startWait = 8.0
 
-    /// Creates the zmx session for a record that is saved and marked starting, and hands it over. Every way of
-    /// starting claude here goes through it: a new session, a session started again after a reboot, and a
-    /// conversation resumed from Recent. A terminal record starts the account's login shell instead, with no pane
-    /// folder or hooks. Its order and what it locks are in `docs/agents/where-it-breaks.md` ›
-    /// Peers; the comments below name its steps. `conversation` makes it `claude --resume`. `failed` undoes what
-    /// the caller did to the record. The reply is `ok` with the folder.
+    /// Creates the zmx session for a saved record marked starting, and hands it over: claude (resumed with `conversation`), or a terminal
+    /// record's login shell. Order and locks: where-it-breaks › Peers. `failed` undoes the caller's record; the reply is `ok` with the folder.
     func launch(_ record: HeadlessSession, control: String, origin: String?, resuming conversation: String?,
                 failed: () -> Void) -> PeerReply {
         guard let uuid = UUID(uuidString: record.id), let account = HeadlessAccount.current else {

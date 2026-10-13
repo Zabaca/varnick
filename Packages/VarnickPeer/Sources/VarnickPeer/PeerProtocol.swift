@@ -78,9 +78,8 @@ public enum PeerOp: String, Codable, Sendable {
     /// Reopen a tab that closed on the host (`tab`) whole, in its layout: its Claude panes resume, its terminals start fresh, all labelled
     /// for the asker. Its running Varnick does it.
     case reopen
-    /// Start `claude --resume` on a conversation that ended there, because the user picked it in Recent or search. Its running Varnick
-    /// does it, in a tab of its own. Never sent by anything that runs by itself: `start` with `resume` is the automatic one, which refuses
-    /// an ended session. A whole closed tab comes back by `reopen`.
+    /// Start `claude --resume` on a conversation that ended there, picked in Recent or search, in a tab of its own. Never sent by anything
+    /// that runs by itself (`start` with `resume` is that); a closed tab comes back by `reopen`.
     case resume
     /// The peers the receiving host lists, by name and address and nothing else, for the Phone page's links to the other hosts'
     /// pages (ADR 0011). The list is Varnick's list on a Mac and `state/peers.json` on a headless host. A device may ask it, and
@@ -264,11 +263,11 @@ public struct PeerStart: Codable, Equatable, Sendable {
     /// restarted. Only into the pane the host restored for it, which resumes the conversation it
     /// follows itself (`PeerResume`). `id` is still the zmx session's name.
     public var resume: Bool?
-    /// What the pane is: `claude` (nil too) or `terminal`, the account's login shell in the folder. A terminal has no prompt, agent or turn.
-    public var kind: String?
+    /// What the pane is: Claude (nil too) or a terminal, the account's login shell in the folder, with no prompt, agent or turn.
+    public var kind: PeerPaneKind?
 
     public init(id: String, folder: String? = nil, prompt: String, agent: String? = nil, skipPermissions: Bool? = nil, resume: Bool? = nil,
-                kind: String? = nil) {
+                kind: PeerPaneKind? = nil) {
         self.id = id
         self.folder = folder
         self.prompt = prompt
@@ -278,8 +277,7 @@ public struct PeerStart: Codable, Equatable, Sendable {
         self.kind = kind
     }
 
-    public static let terminalKind = "terminal"
-    public var isTerminal: Bool { kind == Self.terminalKind }
+    public var isTerminal: Bool { kind == .terminal }
 }
 
 /// What a host did with a `start` that has `resume`. Absent means a new session was started.

@@ -6,7 +6,7 @@ import type { Device } from "./checks";
 import { optional, same, type RelayResult } from "./home";
 import { isObject, objects, uuidPattern, type Json } from "./json";
 import { projectName } from "./page/newrules.js";
-import { launchTimeoutMs } from "./relay";
+import { launchTimeoutMs, reopenTimeoutMs } from "./relay";
 
 /** What the flows need of `Relay`: one relay request as a device. */
 export interface Asker {
@@ -199,7 +199,7 @@ export const openElsewhere = (host: string): string => `That tab is open on ${ho
 export async function reopenTab(asker: Asker, device: Device, host: string, asked: string): Promise<Launched> {
   const tab = asked.toLowerCase();
   if (findTab(await asker.ask("tabs", device.id), tab)) return failed(409, openElsewhere(host), tab);
-  const reopened = await asker.ask("reopen", device.id, { tab }, launchTimeoutMs);
+  const reopened = await asker.ask("reopen", device.id, { tab }, reopenTimeoutMs);
   if (reopened.ok) return { status: 200, body: { ok: true, session: null, tab: optional(reopened.reply.tab)?.toLowerCase() ?? tab } };
   // The answer may only have been lost or late, or the tab opened meanwhile: if the host has it, it is the page's to open.
   if (findTab(await asker.ask("tabs", device.id), tab)) return failed(409, reopened.error, tab);

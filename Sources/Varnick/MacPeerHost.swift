@@ -91,7 +91,7 @@ struct MacPeerHost: PeerHost {
     func tabs() -> PeerReply {
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         guard let state = SessionStore().load() else { return .failure("The saved tabs on \(name) couldn't be read") }
-        let names = Set(PeerOpenTabs.hosted(in: state).flatMap { $0.layout.records }.filter { $0.isClaude || $0.isShell }.map { Zmx.sessionName($0.id) })
+        let names = Set(PeerOpenTabs.hosted(in: state).flatMap { $0.layout.records }.filter(\.runsInZmx).map { Zmx.sessionName($0.id) })
         var reply = PeerReply.success()
         reply.tabs = PeerOpenTabs.list(in: state, statuses: Zmx.statuses(of: names.sorted()))
         return reply
@@ -219,10 +219,17 @@ enum PeerOpenTabs {
     /// Each tab with its layout and every pane. A Claude or terminal pane says whether its zmx session runs (a terminal runs in zmx only
     /// while Keep sessions running is on) and who controls it; the tab's control is the panes' (`PeerTab.settleControl`).
     static func list(in state: SessionStore.State, statuses: [String: PeerSessionStatus], now: Date = Date()) -> [PeerTab] {
-        hosted(in: state).map { tab in
+        // A pane runs in zmx, where another machine can attach to it, only while Keep sessions running is on.
+        let keepOff = !PeerIdentity.defaults.bool(forKey: Settings.keepSessionsRunningKey)
+        let why = "Panes are reachable from another machine only while Keep sessions running is on in \(PeerIdentity.name ?? "its") Settings."
+        return hosted(in: state).map { tab in
             var listed = PeerTab(tab: tab.resolvedID.uuidString.lowercased(), name: tab.name,
                                  doneAge: tab.done.map { Int(max(0, now.timeIntervalSince($0))) }, layout: tab.layout.peerLayout,
-                                 panes: tab.layout.records.map { pane(for: $0, status: statuses[Zmx.sessionName($0.id)]) })
+                                 panes: tab.layout.records.map { record in
+                                     var listed = pane(for: record, status: statuses[Zmx.sessionName(record.id)])
+                                     if keepOff, listed.running == false { listed.note = why }
+                                     return listed
+                                 })
             listed.settleControl()
             return listed
         }

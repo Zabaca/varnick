@@ -198,14 +198,14 @@ struct FileRow: View {
 
 // MARK: - Viewer
 
-/// A file pane's view: text (Markdown rendered, or as source) that reloads as the file
-/// changes, keeping the scroll position; anything else (images, PDFs) in Quick Look.
 /// A file pane of another machine's tab: its text is read from that machine (`file`), when the pane shows and when it is reloaded.
 struct RemoteFile {
     let host: String
     let pane: UUID
 }
 
+/// A file pane's view: text (Markdown rendered, or as source) that reloads as the file
+/// changes, keeping the scroll position; anything else (images, PDFs) in Quick Look.
 final class FileViewer: NSView, WKNavigationDelegate {
     let url: URL
     let remote: RemoteFile?
@@ -412,7 +412,8 @@ final class FileViewer: NSView, WKNavigationDelegate {
             NSWorkspace.shared.open(target)
             return
         }
-        guard target.isFileURL else { return }
+        // A path in a file of another machine is that machine's: it would name, reveal or open something else here.
+        guard target.isFileURL, remote == nil else { return }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else { return }
         if isDirectory.boolValue {

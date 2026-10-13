@@ -6,7 +6,7 @@
 
 import { element, notListed, postJSON } from "/dom.js";
 import { confirmEnd, openSession, releaseSession } from "/session.js";
-import { choosePane, isOpenable, kindWord, offersTake, paneLabel, paneNote, samePanes, tabHash, tabTitle } from "/tabrules.js";
+import { choosePane, isLocalAddress, isOpenable, kindWord, offersTake, paneLabel, paneNote, samePanes, tabHash, tabTitle } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
 const visible = () => document.visibilityState === "visible";
@@ -76,13 +76,18 @@ function showPane(t, pane) {
 function showNote(t, pane) {
   for (const id of ["card", "live", "terminal-view"]) $(id).hidden = true;
   $("note").hidden = false;
-  $("end").hidden = false;
+  // End is the phone's to offer only while it holds the tab; otherwise Take over comes first.
+  $("end").hidden = !t.data.mine;
   header(t, pane ? kindWord(pane.kind) : "");
   const note = pane ? paneNote(pane, t.host) : { text: "This tab has no pane.", detail: "" };
   $("note-text").textContent = note.text;
   $("note-detail").textContent = note.detail;
   $("note-text").hidden = note.text === "";
   $("note-detail").hidden = note.detail === "" || pane?.kind === "file";
+  // A page at an outside address opens in the browser, not here.
+  const link = $("note-link");
+  link.hidden = !(pane?.kind === "web" && !isLocalAddress(pane.url) && /^https?:\/\//.test(pane.url));
+  if (!link.hidden) link.href = pane.url;
   paintControl(t);
   const file = $("note-file");
   file.hidden = true;
@@ -139,16 +144,18 @@ async function load(t) {
   } else if (!t.session) {
     header(t, kindWord(now.kind));
     paintControl(t);
+    $("end").hidden = !t.data.mine;
   }
 }
 
 function failed(t, error) {
-  for (const id of ["live", "terminal-view"]) $(id).hidden = true;
+  for (const id of ["card", "live", "terminal-view"]) $(id).hidden = true;
   $("note").hidden = false;
   $("note-control").hidden = true;
   $("note-take").hidden = true;
   $("note-file").hidden = true;
   $("note-detail").hidden = true;
+  $("note-link").hidden = true;
   $("note-text").hidden = false;
   $("note-text").textContent = error;
   $("end").hidden = true;
@@ -165,7 +172,8 @@ export function openTab({ tab, pane, host, done, take = null }) {
   current = t;
   $("session").hidden = false;
   $("panes").hidden = true;
-  $("note").hidden = true;
+  // Nothing of the session or tab shown before: its card, live screen and terminal are gone from view until a pane is chosen.
+  for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
   $("end").hidden = true;
   header(t, "Opening…");
   load(t);

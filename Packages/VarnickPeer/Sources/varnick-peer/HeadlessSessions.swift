@@ -27,18 +27,18 @@ struct HeadlessSession: Codable, Equatable {
     /// When a Mac marked the session's tab done (`done`), running or ended: the one place a headless host keeps the mark. Each record is
     /// a tab under its id unless it has `tab` (ADR 0032), and `done` sets the date on every record of the tab. Nil: not marked.
     var done: Date?
-    /// The tab (ADR 0032) a `resume` that named one put the session in, and its name. Nil: the record is a tab of its own, under its id.
-    /// A headless host holds no layout, so a tab's records are its panes only in what the host lists; each carries the tab's mark in `done`.
+    /// The tab the session is in, and its name before the tab had a record (`HeadlessTab`). Nil: the record is a tab of its own, under its id.
+    /// Each record of a tab carries the tab's mark in `done`.
     var tab: String?
     var tabName: String?
-    /// `terminal` for a terminal pane (the account's login shell in the folder, with no hooks or turn); nil is a Claude session. Optional
-    /// so a file saved before terminals loads.
-    var kind: String?
+    /// A terminal pane (the account's login shell in the folder, with no hooks or turn); nil is a Claude session. Optional so a file saved
+    /// before terminals loads.
+    var kind: PeerPaneKind?
 
     /// The tab the session is in, as a Mac names it.
     var tabID: String { tab ?? id }
 
-    var isTerminal: Bool { kind == PeerStart.terminalKind }
+    var isTerminal: Bool { kind == .terminal }
 
     /// The conversation claude is on: the hook's last report, else the one saved, else the session's own id.
     func conversationID(reported: String?) -> String { reported ?? conversation ?? id }
@@ -148,30 +148,30 @@ extension StateFolder {
             guard !sessions.contains(where: { $0.id == session.id }) else { return .exists }
             guard !refusing(sessions) else { return .refused }
             var tabs = try readTabs()
-            let changed = HeadlessTabs.place(session, placement, among: sessions, tabs: &tabs)
+            HeadlessTabs.place(session, placement, among: sessions, tabs: &tabs)
             sessions.append(session)
             try writeSessions(sessions)
-            if changed { try writeTabs(tabs) }
+            try writeTabs(tabs)
             return .added
         }
     }
 
-    /// Changes the tab record with this id (made from its records if it has none), and writes it only if the change altered it. False when
-    /// the tab has no open record. `change` gets the layout as it is now, listed panes only.
-    @discardableResult
-    func updateTabRecord(_ id: String, _ change: (inout HeadlessTab) -> Void) throws -> Bool {
+    enum Arranged { case done, noTab, refused }
+
+    /// Takes the layout and name a machine in control gave a tab, in one step: it must hold the same panes the tab has now, each once. Pane ids
+    /// are written lowercase.
+    func arrangeTab(_ id: String, layout: PeerLayout, name: String?) throws -> Arranged {
         try locked(exclusive: true) {
             let sessions = try readSessions()
             var tabs = try readTabs()
-            guard var record = HeadlessTabs.record(of: id, sessions: sessions, tabs: tabs) else { return false }
-            let before = tabs.first { $0.id == id }
-            change(&record)
-            if record != before {
-                tabs.removeAll { $0.id == id }
-                tabs.append(record)
-                try writeTabs(tabs)
-            }
-            return true
+            guard var record = HeadlessTabs.record(of: id, sessions: sessions, tabs: tabs) else { return .noTab }
+            let proposed = layout.lowercased()
+            guard record.layout.accepts(proposed) else { return .refused }
+            (record.layout, record.name) = (proposed, name)
+            tabs.removeAll { $0.id == id }
+            tabs.append(record)
+            try writeTabs(tabs)
+            return .done
         }
     }
 
@@ -205,10 +205,40 @@ extension StateFolder {
         }
     }
 
-    /// Marks the record ended (`HeadlessSession.ending`). False when there is no such record.
+    /// Marks the records ended (`HeadlessSession.ending`), in one write. A tab that keeps an open record has the ended panes taken out of
+    /// its layout; one with none keeps its layout whole for a `reopen`. False when none of them has a record.
     @discardableResult
-    func markEnded(_ id: String, now: Date = Date()) throws -> Bool {
-        try update(id) { $0 = $0.ending(at: now, reported: Self.reported(for: $0.id)) }
+    func markEnded(ids: [String], now: Date = Date()) throws -> Bool {
+        try locked(exclusive: true) {
+            var sessions = try readSessions()
+            var affected = Set<String>()
+            for index in sessions.indices where ids.contains(sessions[index].id) {
+                affected.insert(sessions[index].tabID)
+                sessions[index] = sessions[index].ending(at: now, reported: Self.reported(for: sessions[index].id))
+            }
+            guard !affected.isEmpty else { return false }
+            var tabs = try readTabs()
+            let settled = settle(&tabs, in: sessions, affected)
+            try writeSessions(sessions)
+            if settled { try writeTabs(tabs) }
+            return true
+        }
+    }
+
+    @discardableResult
+    func markEnded(_ id: String, now: Date = Date()) throws -> Bool { try markEnded(ids: [id], now: now) }
+
+    /// Writes the layout of each tab that still has an open record as `HeadlessTabs.record` has it, so a pane that ended is out of it. Returns
+    /// whether `tabs` changed. A tab with no open record is left as it is.
+    private func settle(_ tabs: inout [HeadlessTab], in sessions: [HeadlessSession], _ affected: Set<String>) -> Bool {
+        var changed = false
+        for id in affected {
+            guard let record = HeadlessTabs.record(of: id, sessions: sessions, tabs: tabs), tabs.first(where: { $0.id == id }) != record else { continue }
+            tabs.removeAll { $0.id == id }
+            tabs.append(record)
+            changed = true
+        }
+        return changed
     }
 
     private static func reported(for id: String) -> String? {
@@ -241,10 +271,17 @@ extension StateFolder {
         guard !changes.isEmpty else { return }
         _ = try? locked(exclusive: true) {
             var sessions = try readSessions()
+            var affected = Set<String>()
             for change in changes {
-                if let index = sessions.firstIndex(where: { $0.id == change.old.id }), sessions[index] == change.old { sessions[index] = change.new }
+                if let index = sessions.firstIndex(where: { $0.id == change.old.id }), sessions[index] == change.old {
+                    sessions[index] = change.new
+                    if change.new.ended != nil { affected.insert(change.new.tabID) }
+                }
             }
+            var tabs = try readTabs()
+            let settled = settle(&tabs, in: sessions, affected)
             try writeSessions(sessions)
+            if settled { try writeTabs(tabs) }
         }
     }
 

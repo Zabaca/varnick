@@ -64,12 +64,12 @@ export function samePanes(a, b) {
   return a.length === b.length && a.every((pane, index) => pane.id === b[index].id && paneLabel(pane) === paneLabel(b[index]) && isOpenable(pane) === isOpenable(b[index]));
 }
 
-/** An address only the host itself can reach: the page runs there, and option 04 of the problem brings it here. */
+/** An address only the host itself can reach (localhost and `*.localhost`, 127.0.0.0/8, ::1, the unspecified addresses): the page runs there, and option 04 brings it here. */
 export function isLocalAddress(url) {
   if (!url) return true;
   try {
     const host = new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "::" || host === "0.0.0.0" || /^127(\.\d{1,3}){3}$/.test(host);
   } catch {
     return true;
   }
@@ -83,7 +83,7 @@ export function paneNote(pane, host) {
   switch (pane.kind) {
     case "claude":
     case "terminal":
-      return { text: `${kindWord(pane.kind)} isn't running on ${host}.`, detail: "" };
+      return { text: `${kindWord(pane.kind)} isn't running on ${host}.`, detail: pane.note ?? "" };
     case "file":
       return { text: "", detail: pane.file ?? "" };
     case "transcript":

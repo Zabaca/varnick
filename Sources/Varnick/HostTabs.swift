@@ -33,16 +33,14 @@ extension LauncherModel {
         let session = makeSession(record, resuming: false, query: "")
         session.opensOnCard = kind.runsInZmx
         session.opensUnavailable = kind.runsInZmx && pane.running != true
+        session.unavailableNote = pane.note
         return session
     }
 
     /// A listing's layout with the panes this build can show: one it can't is left out, and one the layout has no place for goes beside the last.
     private func hostLayout(_ listing: PeerTab, known: Set<String>) -> PeerLayout? {
-        guard var layout = listing.layout.pruned(keeping: known) ?? PeerLayout.evenRow(known.sorted()) else { return nil }
-        for id in listing.panes.map(\.id) where known.contains(id) && !layout.panes.contains(id) {
-            layout = layout.splitting(layout.panes.last ?? id, adding: id, axis: PeerLayout.sideBySide) ?? layout
-        }
-        return layout
+        let layout = listing.layout.pruned(keeping: known) ?? PeerLayout.evenRow(known.sorted())
+        return layout?.addingMissing(listing.panes.map(\.id).filter(known.contains))
     }
 
     /// The tab a paired Mac lists, open here in the host's layout and not shown. One already open here under its id is brought up to date instead.
@@ -107,12 +105,20 @@ extension LauncherModel {
         }
     }
 
-    /// Whether a listing asked at `sentAt` was asked before this Mac's own last change to the tab, so it can't know of it.
+    /// Whether a listing asked at `sentAt` can't know of this Mac's own latest change to the tab: one is still waiting on the host, or the
+    /// listing was asked before the last finished.
     private func layoutAskPredatesChange(_ id: UUID, _ sentAt: Date) -> Bool {
-        layoutActedAt[id].map { sentAt <= $0 } ?? false
+        (layoutPending[id] ?? 0) > 0 || layoutActedAt[id].map { sentAt <= $0 } ?? false
     }
 
-    func noteLayoutChange(of id: UUID) {
+    /// A change to the tab is on its way to the host; no listing is believed until `endLayoutChange`.
+    func beginLayoutChange(of id: UUID) {
+        layoutPending[id, default: 0] += 1
+    }
+
+    func endLayoutChange(of id: UUID) {
+        let left = (layoutPending[id] ?? 1) - 1
+        layoutPending[id] = left > 0 ? left : nil
         layoutActedAt[id] = Date()
     }
 
@@ -180,22 +186,28 @@ extension LauncherModel {
 
     // MARK: Changing the layout from here
 
-    /// Why this Mac can't change the tab's layout (split, close a pane, move a divider, rename), or nil when it can: only the machine in control
-    /// of a tab does, and a tab with nothing to take is changed only on its host.
+    /// Why this Mac can't change the tab's layout (split, move a divider, rename), or nil when it can: only the machine in control of a tab
+    /// does. On the host that is locked while a card shows another machine in control; elsewhere, a tab with nothing to take is the host's.
     func layoutLockReason(of tab: ClaudeTab) -> String? {
-        guard let host = tab.host, !tab.inControl else { return nil }
-        if tab.sessions.contains(where: \.runsInZmx) { return "Take over to change this tab." }
-        return "Only \(PeerManager.shared.name(of: host)) changes this tab."
+        guard let host = tab.host else { return tab.sessions.contains(where: \.isHeldElsewhere) ? "Take over to change this tab." : nil }
+        if tab.inControl { return nil }
+        return tab.sessions.contains(where: \.runsInZmx) ? "Take over to change this tab." : "Only \(PeerManager.shared.name(of: host)) changes this tab."
+    }
+
+    /// Why a pane can't be closed alone: closing is the layout lock on another machine's tab. On the host a card asks first, which ends it.
+    func closeLockReason(of tab: ClaudeTab) -> String? {
+        tab.host == nil ? nil : layoutLockReason(of: tab)
     }
 
     /// A divider moved or the tab renamed here, in control of it: the host takes the layout and the name, which it checks hold the same panes.
     func arrangeOnHost(_ tab: ClaudeTab) {
         guard let host = tab.host, tab.inControl else { return }
-        noteLayoutChange(of: tab.id)
         let id = tab.id, layout = tab.root.layout.peerLayout, name = tab.name
+        beginLayoutChange(of: id)
         Task { [weak self] in
             let refusal = await PeerManager.shared.arrange(tab: id, layout: layout, name: name, on: host)
-            self?.noteLayoutChange(of: id)
+            self?.endLayoutChange(of: id)
+            guard !Task.isCancelled else { return }
             if let refusal { NSLog("Varnick: \(PeerManager.shared.name(of: host)) wouldn't arrange tab \(id.uuidString.lowercased()): \(refusal)") }
         }
     }
@@ -210,25 +222,26 @@ extension LauncherModel {
             return target.showRefusal("Browsers, apps and files split from \(PeerManager.shared.name(of: host)) itself.")
         }
         let id = UUID()
-        var start = PeerStart(id: id.uuidString.lowercased(), prompt: "", skipPermissions: kind == .claude ? Settings.shared.skipPermissions : nil,
-                              kind: kind == .terminal ? PeerStart.terminalKind : nil)
-        start.folder = nil
+        let start = PeerStart(id: id.uuidString.lowercased(), prompt: "", skipPermissions: kind == .claude ? Settings.shared.skipPermissions : nil,
+                              kind: kind == .terminal ? .terminal : nil)
         var request = PeerRequest(.start)
         request.by = PeerIdentity.id
         request.start = start
         request.tab = tab.id.uuidString.lowercased()
         request.pane = target.id.uuidString.lowercased()
         request.axis = axis.rawValue
-        noteLayoutChange(of: tab.id)
+        beginLayoutChange(of: tab.id)
         Task { [weak self] in
             let result = await PeerManager.shared.send(request, to: host, timeout: 40)
             guard let self else { return }
-            self.noteLayoutChange(of: tab.id)
+            defer { self.endLayoutChange(of: tab.id) }
+            guard !Task.isCancelled else { return }
             switch result {
             case .failure(let refusal):
                 target.showRefusal(refusal.message)
             case .success(let reply):
-                guard self.tabs.contains(where: { $0 === tab }), tab.contains(target) else { return }
+                // The pane may be in the tab already (a listing believed meanwhile); a tab or a pane closed meanwhile has nowhere to put it.
+                guard self.tabs.contains(where: { $0 === tab }), tab.contains(target), !tab.sessions.contains(where: { $0.id == id }) else { return }
                 var record = SessionRecord(id: id, prompt: "", title: "", directory: reply.folder ?? target.record.directory,
                                            startedAt: Date(), lastUsed: Date())
                 record.host = host

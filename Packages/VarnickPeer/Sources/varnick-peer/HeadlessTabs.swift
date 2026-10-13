@@ -11,9 +11,7 @@ enum HeadlessTabs {
         guard !open.isEmpty, var layout = PeerLayout.evenRow(open.map(\.id)) else { return nil }
         let stored = tabs.first { $0.id == id }
         if let kept = stored?.layout.pruned(keeping: Set(open.map(\.id))) { layout = kept }
-        for missing in open.map(\.id) where !layout.panes.contains(missing) {
-            layout = layout.splitting(layout.panes.last ?? missing, adding: missing, axis: PeerLayout.sideBySide) ?? layout
-        }
+        layout = layout.addingMissing(open.map(\.id))
         let name = stored != nil ? stored?.name : open.compactMap(\.tabName).first
         return HeadlessTab(id: id, layout: layout, name: name, origin: stored?.origin ?? open.first?.origin)
     }
@@ -26,10 +24,9 @@ enum HeadlessTabs {
         return stored.layout.pruned(keeping: Set(ids))
     }
 
-    /// Puts the record that is about to be saved in its tab. Returns whether `tabs` changed.
-    @discardableResult
+    /// Puts the record that is about to be saved in its tab.
     static func place(_ session: HeadlessSession, _ placement: StateFolder.Placement, among sessions: [HeadlessSession],
-                      tabs: inout [HeadlessTab]) -> Bool {
+                      tabs: inout [HeadlessTab]) {
         let id = session.tabID
         switch placement {
         case .newTab:
@@ -42,6 +39,5 @@ enum HeadlessTabs {
             tabs.removeAll { $0.id == id }
             tabs.append(base)
         }
-        return true
     }
 }

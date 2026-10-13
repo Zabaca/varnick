@@ -255,8 +255,8 @@ describe("reopening a closed tab", () => {
     const reopen = calls.find((call) => call.op === "reopen")!;
     expect(reopen.by).toBe(device.id);
     expect(reopen.fields).toEqual({ tab });
-    // The host starts each pane in turn: it gets longer than a lookup.
-    expect(reopen.limitMs).toBeGreaterThan(25_000);
+    // The host starts the panes together, up to 60 s on a Mac: the relay is given longer than that.
+    expect(reopen.limitMs).toBeGreaterThan(60_000);
   });
 
   test("a host that doesn't name the tab leaves the tab that was asked for", async () => {

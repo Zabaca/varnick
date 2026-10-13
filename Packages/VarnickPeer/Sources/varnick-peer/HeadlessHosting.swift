@@ -27,15 +27,14 @@ extension HeadlessPeerHost {
 
     // MARK: start
 
-    /// `start`: a new session or terminal, or with `resume` the answer for a pane that found its session gone. With `tab` it is a split of
-    /// that tab's `pane` along `axis`, which only the machine in control of the tab may ask: the new pane takes the tab's origin. The
-    /// session itself is made by `launch`.
+    /// `start`: a new session or terminal, or with `resume` the answer for a pane that found its session gone. With `tab` it splits that
+    /// tab's `pane` along `axis` for the machine in control, and takes the tab's origin; `launch` makes the session.
     private func start(_ request: PeerRequest, by: String) -> PeerReply {
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         guard let ask = request.start, let uuid = UUID(uuidString: ask.id) else { return .failure("The request had no session id") }
         state.reconcile()
         if ask.resume == true { return startAgain(uuid, by: by) }
-        guard ask.kind == nil || ask.kind == "claude" || ask.isTerminal else { return .failure("\(name) doesn't start that kind of pane") }
+        guard ask.kind == nil || ask.kind == .claude || ask.isTerminal else { return .failure("\(name) doesn't start that kind of pane") }
         let id = uuid.uuidString.lowercased()
         let taken = PeerReply.failure("That session already exists on \(name)")
         // A zmx session of that name that no record has would be attached to, not started.
@@ -70,7 +69,7 @@ extension HeadlessPeerHost {
                                      skipPermissions: ask.isTerminal ? nil : ask.skipPermissions, origin: origin,
                                      bootID: HeadlessSession.currentBootID, started: Date(), starting: true)
         if tab != id { record.tab = tab }
-        if ask.isTerminal { record.kind = PeerStart.terminalKind }
+        if ask.isTerminal { record.kind = .terminal }
         do {
             guard try state.add(record, placed: placement) == .added else { return taken }
         } catch {
@@ -79,25 +78,34 @@ extension HeadlessPeerHost {
         return launch(record, control: by, origin: origin, resuming: nil) { ended(id) }
     }
 
-    /// Whether the asker may change a tab: it is in control of one of its running panes. Nil when it may, else the refusal. A tab with
-    /// nothing running has no one in control, and nothing on a headless host changes it but a machine that has taken it.
-    private func controlled(tab: String, by: String) -> PeerReply? {
-        guard let found = try? state.snapshot() else { return .failure("The state folder couldn't be read") }
+    /// The control labels of a tab's running panes, nil with a reply to give when the tab isn't open or nothing in it runs.
+    private func runningControls(of tab: String) -> (labels: [String?], refusal: PeerReply?) {
+        guard let found = try? state.snapshot() else { return ([], .failure("The state folder couldn't be read")) }
         let open = found.sessions.filter { $0.tabID == tab.lowercased() && $0.ended == nil }
-        guard !open.isEmpty else { return .failure("That tab isn't open on \(name)") }
-        let names = open.compactMap { UUID(uuidString: $0.id).map(Zmx.sessionName) }
-        let running = Zmx.statuses(of: names).values.filter(\.running)
-        guard !running.isEmpty else { return .failure("Nothing in that tab is running on \(name)") }
-        guard running.contains(where: { Zmx.sameID($0.control, by) }) else {
-            return .failure("That tab isn't controlled by the Mac that asked: take it over")
-        }
-        return nil
+        guard !open.isEmpty else { return ([], .failure("That tab isn't open on \(name)")) }
+        let running = Zmx.statuses(of: open.compactMap { UUID(uuidString: $0.id).map(Zmx.sessionName) }).values.filter(\.running)
+        return (running.map(\.control), running.isEmpty ? .failure("Nothing in that tab is running on \(name)") : nil)
+    }
+
+    /// Whether the asker may change a tab: every running pane of it names the asker, the tab being its whole. Nil when it may, else the refusal.
+    private func controlled(tab: String, by: String) -> PeerReply? {
+        let found = runningControls(of: tab)
+        if let refusal = found.refusal { return refusal }
+        return found.labels.allSatisfy({ Zmx.sameID($0, by) }) ? nil : .failure("That tab isn't controlled by the machine that asked: take it over")
+    }
+
+    /// Nil unless a running pane of the tab is held by someone other than the asker: Start on a lost pane would otherwise relabel it for
+    /// the asker, and a tab's panes are held by one machine.
+    private func notHeldElsewhere(tab: String, by: String) -> PeerReply? {
+        let found = runningControls(of: tab)
+        return found.labels.allSatisfy({ Zmx.sameID($0, by) }) ? nil : .failure("That tab is controlled by another machine: take it over first")
     }
 
     /// A `start` with `resume`, answered by `claimResume` (the rules are in `docs/agents/where-it-breaks.md` ›
     /// Peers).
     private func startAgain(_ uuid: UUID, by: String) -> PeerReply {
         let id = uuid.uuidString.lowercased()
+        if let record = (try? state.sessions())?.first(where: { $0.id == id }), let refusal = notHeldElsewhere(tab: record.tabID, by: by) { return refusal }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
         let claim: (decision: HeadlessLifecycle.Resume, before: HeadlessSession?)
         do { claim = try state.claimResume(id, running: running) } catch { return stateFailure(error) }
@@ -165,12 +173,12 @@ extension HeadlessPeerHost {
 
     // MARK: end
 
-    /// The Mac in control closed its pane. Only that Mac may end a session, so the label has to name it. One
-    /// it asked for ends. Any other is released: every client is detached and the control label stays, since
-    /// a Mac reads a missing one as the host being in control, and nothing here types.
+    /// The machine in control closed a pane (named by its session, or by `pane`): it ends, as closing it on the host would, whoever started it.
+    /// Only the machine in control may, so the label has to name it. Closing a whole tab is `endTab`'s rule.
     private func end(_ request: PeerRequest, by: String) -> PeerReply {
-        if let tab = request.tab { return endTab(tab, by: by) }
-        guard let session = request.session, let id = Zmx.paneID(session) else { return .failure("Not a Varnick session name") }
+        if let tab = request.tab, request.pane == nil { return endTab(tab, by: by) }
+        let session = request.session ?? request.pane.flatMap(UUID.init(uuidString:)).map(Zmx.sessionName)
+        guard let session, let id = Zmx.paneID(session) else { return .failure("Not a Varnick session name") }
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         state.reconcile()
         guard let labels = Zmx.labels(of: session) else {
@@ -178,18 +186,12 @@ extension HeadlessPeerHost {
             return .success()
         }
         guard Zmx.sameID(Zmx.control(in: labels), by) else {
-            return .failure("That session isn't controlled by the Mac that asked to end it")
+            return .failure("That session isn't controlled by the machine that asked to end it")
         }
-        var reply = PeerReply.success()
-        if Zmx.sameID(Zmx.origin(in: labels), by) {
-            Zmx.killNow(id)
-            // zmx has killed it: a record that can't be written is no reason to fail the end.
-            ended(id.uuidString.lowercased())
-        } else {
-            Zmx.detachClients(of: session)
-            reply.released = true
-        }
-        return reply
+        Zmx.killNow(id)
+        // zmx has killed it: a record that can't be written is no reason to fail the end.
+        ended(id.uuidString.lowercased())
+        return .success()
     }
 
     /// `end` naming a tab: it ends (every pane killed, its layout kept) if each running pane's origin names the asker, else every pane is
@@ -205,18 +207,19 @@ extension HeadlessPeerHost {
         let panes = records.compactMap { record in UUID(uuidString: record.id).map { (record: record, uuid: $0, name: Zmx.sessionName($0)) } }
         let labels = panes.compactMap { pane in Zmx.labels(of: pane.name).map { (pane: pane, labels: $0) } }
         if labels.isEmpty {
-            for pane in panes { ended(pane.record.id) }
+            ended(panes.map(\.record.id))
             return .success()
         }
-        guard labels.contains(where: { Zmx.sameID(Zmx.control(in: $0.labels), by) }) else {
-            return .failure("That tab isn't controlled by the Mac that asked to end it")
+        guard labels.allSatisfy({ Zmx.sameID(Zmx.control(in: $0.labels), by) }) else {
+            return .failure("That tab isn't controlled by the machine that asked to end it")
         }
         var reply = PeerReply.success()
         if labels.allSatisfy({ Zmx.sameID(Zmx.origin(in: $0.labels), by) }) {
             for found in labels { Zmx.killNow(found.pane.uuid) }
-            for pane in panes { ended(pane.record.id) }
+            // All at once, so the tab's layout stays whole for a `reopen`.
+            ended(panes.map(\.record.id))
         } else {
-            for found in labels where Zmx.sameID(Zmx.control(in: found.labels), by) { Zmx.detachClients(of: found.pane.name) }
+            for found in labels { Zmx.detachClients(of: found.pane.name) }
             reply.released = true
         }
         return reply
@@ -263,13 +266,11 @@ extension HeadlessPeerHost {
         if let denied = controlled(tab: tab, by: by) { return denied }
         let name = request.tabName?.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            guard let found = try? state.snapshot(), let current = HeadlessTabs.record(of: tab, sessions: found.sessions, tabs: found.tabs),
-                  current.layout.accepts(layout) else { return .failure("That layout doesn't hold the tab's panes") }
-            _ = try state.updateTabRecord(tab) {
-                $0.layout = layout
-                $0.name = name?.isEmpty == false ? name : nil
+            switch try state.arrangeTab(tab, layout: layout, name: name?.isEmpty == false ? name : nil) {
+            case .done: return .success()
+            case .noTab: return .failure("That tab isn't open on \(self.name)")
+            case .refused: return .failure("That layout doesn't hold the tab's panes")
             }
-            return .success()
         } catch {
             return stateFailure(error)
         }
@@ -429,12 +430,9 @@ extension HeadlessPeerHost {
 
     /// Marks a record ended after a failed start or an end of a session that is gone. A state that can't be
     /// written is no reason to change the reply.
-    private func ended(_ id: String) {
-        let tab = (try? state.sessions())?.first { $0.id == id }?.tabID
-        _ = try? state.markEnded(id)
-        // The pane leaves the tab's layout while others stay open; with none left the layout is kept for a `reopen`.
-        if let tab { _ = try? state.updateTabRecord(tab) { _ in } }
-    }
+    private func ended(_ id: String) { ended([id]) }
+
+    private func ended(_ ids: [String]) { _ = try? state.markEnded(ids: ids) }
 
     /// The one reply for a zmx that couldn't be listed.
     private var zmxUnaskable: PeerReply { .failure("zmx couldn't be asked on \(name)") }

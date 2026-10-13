@@ -70,6 +70,25 @@ public struct PeerLayout: Codable, Equatable, Sendable {
         proposed.isWellFormed && proposed.panes.count <= Self.paneLimit && holdsSamePanes(as: proposed)
     }
 
+    /// The layout with every pane id lowercased, as the host writes them.
+    public func lowercased() -> PeerLayout {
+        PeerLayout(pane: pane?.lowercased(), axis: axis, fraction: fraction, parts: parts?.map { $0.lowercased() })
+    }
+
+    /// The layout without `target`: its sibling takes its place. Nil when nothing is left.
+    public func removing(_ target: String) -> PeerLayout? {
+        pruned(keeping: Set(panes.filter { $0.lowercased() != target.lowercased() }))
+    }
+
+    /// The layout with each of `ids` it has no place for put beside the last pane, side by side: a pane a layout was not told of.
+    public func addingMissing(_ ids: [String]) -> PeerLayout {
+        var layout = self
+        for id in ids where !layout.panes.contains(id) {
+            layout = layout.splitting(layout.panes.last ?? id, adding: id, axis: Self.sideBySide) ?? layout
+        }
+        return layout
+    }
+
     /// The layout with `new` split off `target` along `axis`, `new` second and the two sharing the space equally. Nil when `target` isn't in it.
     public func splitting(_ target: String, adding new: String, axis: String) -> PeerLayout? {
         if let pane {
@@ -80,18 +99,6 @@ public struct PeerLayout: Codable, Equatable, Sendable {
         if let first = parts[0].splitting(target, adding: new, axis: axis) { return .split(axis: axis0, fraction: fraction, first, parts[1]) }
         if let second = parts[1].splitting(target, adding: new, axis: axis) { return .split(axis: axis0, fraction: fraction, parts[0], second) }
         return nil
-    }
-
-    /// The layout without `pane`: its sibling takes its place. Nil when nothing is left.
-    public func removing(_ target: String) -> PeerLayout? {
-        if let pane { return pane.lowercased() == target.lowercased() ? nil : self }
-        guard let parts, parts.count == 2, let axis, let fraction else { return self }
-        switch (parts[0].removing(target), parts[1].removing(target)) {
-        case let (first?, second?): return .split(axis: axis, fraction: fraction, first, second)
-        case let (first?, nil): return first
-        case let (nil, second?): return second
-        case (nil, nil): return nil
-        }
     }
 
     /// The layout with only the panes in `keep`; a split left with one part collapses into it. Nil when none is left.
@@ -116,7 +123,7 @@ public struct PeerLayout: Codable, Equatable, Sendable {
 }
 
 /// What kind of pane a listing says it is.
-public enum PeerPaneKind: String, Sendable {
+public enum PeerPaneKind: String, Codable, Sendable {
     case claude, terminal, web, app, file, transcript
 
     /// Run in a zmx session of their own, so another machine can attach to them.
@@ -155,6 +162,8 @@ public struct PeerPane: Codable, Equatable, Sendable {
         set { turnWord = newValue?.rawValue }
     }
     public var work: PeerWork?
+    /// Claude and terminal: why the pane doesn't run, when the host knows (a terminal on a Mac with Keep sessions running off).
+    public var note: String?
     /// Web: the address it shows. App: the app's address on the host. File: its path. App: the app's name and its port.
     public var url: String?
     public var app: String?
@@ -163,12 +172,12 @@ public struct PeerPane: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, kindWord = "kind", title, folder, running, clients, control, controlName, agent, conversation, turnWord = "turn", turnAge, work,
-             url, app, port, file
+             note, url, app, port, file
     }
 
     public init(id: String, kind: PeerPaneKind, title: String, folder: String, running: Bool? = nil, clients: Int? = nil, control: String? = nil,
                 controlName: String? = nil, agent: String? = nil, conversation: String? = nil, turn: Turn? = nil, turnAge: Int? = nil,
-                work: PeerWork? = nil, url: String? = nil, app: String? = nil, port: Int? = nil, file: String? = nil) {
+                work: PeerWork? = nil, note: String? = nil, url: String? = nil, app: String? = nil, port: Int? = nil, file: String? = nil) {
         self.id = id
         self.kindWord = kind.rawValue
         self.title = title
@@ -182,6 +191,7 @@ public struct PeerPane: Codable, Equatable, Sendable {
         self.turnWord = turn?.rawValue
         self.turnAge = turnAge
         self.work = work
+        self.note = note
         self.url = url
         self.app = app
         self.port = port
@@ -228,11 +238,11 @@ public struct PeerTab: Codable, Equatable, Sendable {
     /// The panes with a zmx session of their own that runs.
     public var runningPanes: [PeerPane] { panes.filter { $0.kind?.runsInZmx == true && $0.running == true } }
 
-    /// The tab's control and client count from its running panes: the first one's label, which is the same on each unless a take is half
-    /// done. Called by whoever builds the listing, once the panes' statuses are filled in.
+    /// The tab's control and client count from its running panes: their label when every one has the same, else nobody (a take half done,
+    /// or a pane the host holds). Called by whoever builds the listing, once the panes' statuses are filled in.
     public mutating func settleControl() {
         let running = runningPanes
-        control = running.first?.control
+        control = Set(running.map { $0.control?.lowercased() }).count <= 1 ? running.first?.control : nil
         controlName = running.first?.controlName
         clients = running.isEmpty ? nil : running.compactMap(\.clients).reduce(0, +)
     }
@@ -281,12 +291,21 @@ public enum PeerFile {
     /// The file's text, or the one-line reason the other machine is told it can't be shown.
     public static func read(path: String, folders: [String]) -> Result<String, PeerFileRefusal> {
         guard isInside(path, folders: folders) else { return .failure(PeerFileRefusal(message: "That file is outside the tab's folders")) }
-        guard let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.intValue else {
+        // The file the path leads to, not the link's own size; only a regular file (a FIFO would hang the read), and never more than the cap.
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: resolved) else {
             return .failure(PeerFileRefusal(message: "That file isn't there any more"))
         }
-        guard size <= limit else { return .failure(PeerFileRefusal(message: "That file is too large to show here (over 1 MB)")) }
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), !data.contains(0), let text = String(data: data, encoding: .utf8) else {
-            return .failure(PeerFileRefusal(message: "That file isn't text"))
+        guard attributes[.type] as? FileAttributeType == .typeRegular else { return .failure(PeerFileRefusal(message: "That isn't a file")) }
+        guard let size = (attributes[.size] as? NSNumber)?.intValue, size <= limit else {
+            return .failure(PeerFileRefusal(message: "That file is too large to show here (over 1 MB)"))
+        }
+        guard let handle = FileHandle(forReadingAtPath: resolved), let data = try? handle.read(upToCount: limit + 1) else {
+            return .failure(PeerFileRefusal(message: "That file couldn't be read"))
+        }
+        try? handle.close()
+        guard data.count <= limit, !data.contains(0), let text = String(data: data, encoding: .utf8) else {
+            return .failure(PeerFileRefusal(message: data.count > limit ? "That file is too large to show here (over 1 MB)" : "That file isn't text"))
         }
         return .success(text)
     }

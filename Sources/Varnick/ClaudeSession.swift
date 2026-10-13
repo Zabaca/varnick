@@ -175,8 +175,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// control and whether or not a client is attached there, and never takes control by itself. For
     /// the pane's whole life: a session found gone closes the pane, and nothing starts it again.
     var opensOnCard = false
-    /// The host's tab lists this pane with no session running: it opens on a card that says so (`Away.unavailable`).
+    /// The host's tab lists this pane with no session running: it opens on a card that says so (`Away.unavailable`), with the host's reason.
     var opensUnavailable = false
+    var unavailableNote: String?
 
     /// The host's listing now says the pane runs: a card that said it didn't asks the host again.
     func hostSaysRunning() {
@@ -187,7 +188,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             guard let self else { return }
             let answer = await self.sessionStatusAskingTwice()
             self.reconnecting = false
-            guard !self.finished, self.clientEnded, !self.endedByUser, case .unavailable = self.away else { return }
+            guard !Task.isCancelled, !self.finished, self.clientEnded, !self.endedByUser, case .unavailable = self.away else { return }
             self.settle(on: host, with: answer) { .offline($0) }
         }
     }
@@ -265,8 +266,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         }
         return ("This page runs on \(host)", "It is at an address only \(host) can reach, so it can't be shown here yet.", record.url)
     }
+    /// The card shows another machine in control of the pane's session.
+    var isHeldElsewhere: Bool {
+        if case .controlled = away { true } else { false }
+    }
     /// A Claude or terminal pane: its process runs in a zmx session another machine can attach to, so it has a card (ADR 0034).
-    var runsInZmx: Bool { isClaude || isShell }
+    var runsInZmx: Bool { record.runsInZmx }
     /// The host of a session on a peer, for the header and rows. Nil on a session's own host.
     var hostName: String? { record.host.map { PeerManager.shared.name(of: $0) } }
     /// The pane is the view of a session that goes on running with another Mac in control, so closing it
@@ -1018,8 +1023,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if framesPaused != paused { framesPaused = paused }
     }
 
-    /// Called by Take over on the card: control is the tab's, so the model takes every pane of the tab that shows a card
-    /// (`LauncherModel.takeOver(tabOf:)`), this one included. A pane the model doesn't know takes itself.
+    /// Take over on the card: control is the tab's, so the model takes every card of the tab (`LauncherModel.takeOver(tabOf:)`).
     var onTakeOver: (() -> Void)?
 
     /// The card shows another machine in control and nothing is changing that, so Take over does something.
@@ -1033,7 +1037,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if let onTakeOver { onTakeOver() } else { performTakeOver() }
     }
 
-    /// The tab's take over is under way (the request to its host), shown on the card as "Taking over…"; `takeOverFailed` or `performTakeOver` ends it.
+    /// The tab's take over is under way, shown as "Taking over…"; `takeOverFailed` or `performTakeOver` ends it.
     func beginTakeOver() { takingOver = true }
 
     func takeOverFailed(_ message: String) {
@@ -1041,11 +1045,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         screen.failure = message
     }
 
-    /// Take over on a card whose Mac is in control: this pane's client attaches again, as the one
-    /// in control, and the Mac that had it sees its own exit and freezes. From a peer that is one
-    /// attach with take, which relabels, detaches every client and attaches in order; with `taken` the tab's take
-    /// over has relabelled and detached already (`take`), and the attach finds the label naming this Mac. On the host
-    /// the same steps run here: relabel first, then detach, then the pane's own client starts.
+    /// Take over on a card: this pane's client attaches as the one in control and the Mac that had it freezes. From a peer that is an attach
+    /// with take (with `taken`, the tab's `take` has relabelled it already); on the host, relabel, detach, then attach.
     func performTakeOver(taken: Bool = false) {
         takingOver = false
         guard clientEnded, !finished, !takingOver, case .controlled = away else { return }
@@ -1518,9 +1519,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Closes the pane the way a terminal window does: SIGHUP, which interactive shells
     /// honour (they ignore the SIGTERM SwiftTerm's terminate() sends, which left the pane
     /// open with its input already closed). SIGKILL if it's still there a second later.
-    /// Why closing this pane alone is refused (set by the model): a viewer of another machine's tab changes it only in control of it.
-    var closeGate: () -> String? = { nil }
-
     func end() {
         if !endsWithTab, let reason = closeGate() { return showRefusal(reason) }
         // The card on a session's host is the one pane that session has: closing it would leave
@@ -1602,19 +1600,30 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     /// The pane closes with its whole tab, whose host the model tells once (`ClaudeTab.onEnding`), so it sends no `end` of its own.
     var endsWithTab = false
+    /// Why closing this pane alone is refused (set by the model): another machine's tab changes only for the machine in control of it.
+    var closeGate: () -> String? = { nil }
+    /// Set by the model for a pane of another machine's tab: a change to the tab is on its way to the host, and the returned closure says it
+    /// arrived. And the tab's id when this is its only pane, whose closing is the tab's.
+    var layoutChange: () -> () -> Void = { {} }
+    var lastPaneOfHostTab: () -> UUID? = { nil }
 
-    /// Closing a pane in control of a session on a peer tells its host, which decides: a session it
-    /// started for this Mac ends, as closing a local pane ends its zmx session; one it started
-    /// itself is released back to it and keeps running (`LauncherModel.hostEnd`). Either way this pane
-    /// is over and nothing here starts it again. A pane showing a card isn't in control, so it sends
-    /// nothing. One with no client running doesn't know whether it is (never shown, or still asking the
-    /// host, or its client just exited), so the host is asked first.
+    /// Closing a pane in control of a session on a peer tells its host, which ends it as closing it there would. The last pane of a tab closes
+    /// the tab, which the host decides (`LauncherModel.hostEndTab`). A card isn't in control, so it sends nothing; a pane with no client
+    /// running doesn't know whether it is, so the host is asked first.
     private func endSessionOnHost() {
         guard let host = record.host, runsInZmx, !finished, away == nil, !endsWithTab else { return }
         let id = record.id, unknown = clientEnded || view.process.shellPid <= 0
         let left = record, onReleased = onReleased
+        if let tab = lastPaneOfHostTab() {
+            Task {
+                if await PeerManager.shared.end(tab: tab, on: host) { onReleased(left) }
+            }
+            return
+        }
+        let arrived = layoutChange()
         Task {
-            if await PeerManager.shared.end(session: id, on: host, onlyIfControlled: unknown) { onReleased(left) }
+            _ = await PeerManager.shared.end(session: id, on: host, onlyIfControlled: unknown)
+            arrived()
         }
     }
 
