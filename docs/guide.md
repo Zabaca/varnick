@@ -55,6 +55,7 @@ To build it yourself instead, see [`building.md`](building.md).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
 - **Tabs that don't fit** is Shrink (below).
+- **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
   Phone page and the Problems board (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
@@ -95,6 +96,27 @@ The strip always shows the tab you are in, and ⌘⇧[ and ⌘⇧] bring the tab
 hidden tabs as the search lists them, with a line between those before the shown ones and those after; click or ↩ shows one, ↑ and ↓
 move, esc closes. The chip turns orange while a hidden tab has a session waiting on you (a permission, a question, a plan to approve
 or an MCP request), and that tab's row carries the same orange mark, as a row in the search does. Dragging reorders the tabs shown.
+
+## The projects column
+
+**⌘⇧P** shows a column left of the panes, as ⌘⇧F shows the file tree on the right. It lists **All**, then each project that has
+open tabs, by name, then **Other** for tabs in no project (the home folder, say). Each row shows how many tabs it has, and an orange
+mark with how many of them have a session waiting on you.
+
+- **A tab's project** is its first Claude pane's: the project whose folder is exactly that pane's folder. It doesn't change as you
+  move between panes. A pane in a subfolder or a worktree has no project, so its tab is under Other. Another Mac's tabs join the
+  same rows by the project's name; hover a row to see how many tabs are on each Mac.
+- **Choosing a row** shows only that project's tabs in the strip and brings up the one you last had open there, or its first.
+  ⌘⇧[ and ⌘⇧] step through them. **All** brings every tab back and leaves the one on screen as it is.
+- **⌘⌥[ and ⌘⌥]** choose the previous or next row, All included, with the column hidden too. Showing a tab of another project, from the
+  search, the board or a new session, moves the choice to that project; closing the last tab of the chosen project moves it to All.
+- **With the column hidden,** a chip at the strip's left names the chosen project, and clicking it lists the rows.
+- **A narrow panel** shows the column only while the panes keep 220 points beside it and the file tree. Otherwise ⌘⇧P lists the
+  rows under the strip, as the chip does.
+- **What it doesn't filter:** the search, the session board, Recent and the Phone page always cover every tab.
+
+Whether the column shows is kept across restarts; the chosen project isn't, and the strip starts on All. The three keys can be
+rebound in Settings › Shortcuts.
 
 ## Peers
 

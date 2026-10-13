@@ -148,7 +148,7 @@ What is typed into the panel, unless it starts with `?` (a search) or `!` (a **C
 _Avoid_: Ask, command
 
 **Project**:
-A git repo under the project folders that a session can start in instead of the default folder.
+A git repo under the project folders that a session can start in instead of the default folder. A pane's project is the one whose folder is exactly the pane's; a **Tab**'s project is its first Claude pane's (else its first pane's), and stays put as focus moves. A tab in no project is under Other. The projects column lists the projects that have open tabs, and choosing one filters the tab strip to its tabs; search, the **Session board** and the **Phone page** still cover every tab.
 _Avoid_: Repo, workspace
 
 **Agent**:
