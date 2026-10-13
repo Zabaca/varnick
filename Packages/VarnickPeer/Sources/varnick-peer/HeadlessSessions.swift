@@ -27,6 +27,13 @@ struct HeadlessSession: Codable, Equatable {
     /// When a Mac marked the session's tab done (`done`), running or ended: the one place a headless host keeps the mark. Each record is
     /// a tab of one pane under the record's id (ADR 0032), so the record's date is the tab's mark. Nil: not marked.
     var done: Date?
+    /// The tab (ADR 0032) a `resume` that named one put the session in, and its name. Nil: the record is a tab of its own, under its id.
+    /// A headless host holds no layout, so a tab's records are its panes only in what the host lists; each carries the tab's mark in `done`.
+    var tab: String?
+    var tabName: String?
+
+    /// The tab the session is in, as a Mac names it.
+    var tabID: String { tab ?? id }
 
     /// The conversation claude is on: the hook's last report, else the one saved, else the session's own id.
     func conversationID(reported: String?) -> String { reported ?? conversation ?? id }
@@ -104,6 +111,23 @@ extension StateFolder {
             change(&sessions[index])
             if sessions[index] != before { try writeSessions(sessions) }
             return true
+        }
+    }
+
+    /// Changes every record in the tab with this id (`HeadlessSession.tabID`), and writes only if one changed. False when there is none.
+    @discardableResult
+    func updateTab(_ tab: String, _ change: (inout HeadlessSession) -> Void) throws -> Bool {
+        try locked(exclusive: true) {
+            var sessions = try readSessions()
+            var found = false, changed = false
+            for index in sessions.indices where sessions[index].tabID == tab {
+                found = true
+                let before = sessions[index]
+                change(&sessions[index])
+                if sessions[index] != before { changed = true }
+            }
+            if changed { try writeSessions(sessions) }
+            return found
         }
     }
 

@@ -69,7 +69,7 @@ extension HeadlessPeerHost {
             follow(&statuses)
             reply.resume = .running
             reply.status = statuses[Zmx.sessionName(uuid)]
-            reply.tab = id
+            reply.tab = claim.before?.tabID ?? id
         case .closing:
             reply.resume = .closing
         case .ended:
@@ -108,8 +108,15 @@ extension HeadlessPeerHost {
         }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
         guard !running.contains(id) else { return taken }
-        let record = HeadlessSession(id: id, folder: folder, prompt: "", agent: ask.agent, skipPermissions: ask.skipPermissions, origin: by,
+        var record = HeadlessSession(id: id, folder: folder, prompt: "", agent: ask.agent, skipPermissions: ask.skipPermissions, origin: by,
                                      conversation: conversation, bootID: HeadlessSession.currentBootID, started: Date(), starting: true)
+        // The tab the asker reopened (protocol 22): this record joins it, and takes its mark if the tab has one. A host holds no layout, so
+        // that is all a tab is here.
+        if let tab = request.tab.flatMap(UUID.init(uuidString:))?.uuidString.lowercased(), tab != id {
+            record.tab = tab
+            record.tabName = request.tabName
+            record.done = (try? state.sessions())?.first { $0.tabID == tab && $0.done != nil }?.done
+        }
         do {
             switch try state.add(record, refusing: { records in
                 HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: StateFolder.conversations(of: records))
@@ -154,14 +161,14 @@ extension HeadlessPeerHost {
 
     // MARK: done
 
-    /// `done`: sets the tab's done date, or with `mark` false clears it, and ends nothing. A record is a one-pane tab under its id
-    /// (ADR 0032), so its date is the mark. A Mac host's equivalent is `LauncherModel.hostDone`.
+    /// `done`: sets the done date of every record in the tab, or with `mark` false clears it, and ends nothing. A record is a tab under
+    /// its id unless a `resume` put it in another (ADR 0032). A Mac host's equivalent is `LauncherModel.hostDone`.
     private func done(_ request: PeerRequest) -> PeerReply {
         guard let tab = request.tab, let id = UUID(uuidString: tab) else { return .failure("Not a Varnick tab id") }
         state.reconcile()
         let mark = request.mark ?? true
         do {
-            let found = try state.update(id.uuidString.lowercased()) { record in
+            let found = try state.updateTab(id.uuidString.lowercased()) { record in
                 if !mark { record.done = nil } else if record.done == nil { record.done = Date() }
             }
             return found ? .success() : .failure("That tab isn't on \(name)")
@@ -226,7 +233,8 @@ extension HeadlessPeerHost {
             return PeerOpenSession(session: session, title: title, folder: folder, agent: record.agent,
                                    conversation: conversation == record.id ? nil : conversation, control: status.control, clients: status.clients,
                                    turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: uuid),
-                                   doneAge: record.done.map { Int(max(0, now.timeIntervalSince($0))) }, tab: record.id)
+                                   doneAge: record.done.map { Int(max(0, now.timeIntervalSince($0))) }, tab: record.tabID,
+                                   tabName: record.tabName)
         }
         return reply
     }
@@ -253,7 +261,7 @@ extension HeadlessPeerHost {
             return PeerRecentSession(conversation: conversation, title: title, folder: folder, agent: record.agent,
                                      last: Int64((record.ended ?? Date()).timeIntervalSince1970),
                                      session: UUID(uuidString: record.id).map(Zmx.sessionName),
-                                     done: record.done.map { Int64($0.timeIntervalSince1970) }, tab: record.id)
+                                     done: record.done.map { Int64($0.timeIntervalSince1970) }, tab: record.tabID)
         }
         return reply
     }
