@@ -51,11 +51,16 @@ final class TabProjects: ObservableObject {
         columnOn = UserDefaults.standard.bool(forKey: Self.columnKey)
     }
 
+    /// The pane a tab's row is read from and the folder it had when first seen: a shell's `cd`, here or on its host, must not move its tab.
+    private var anchors: [UUID: (pane: UUID, folder: String)] = [:]
+
     /// A tab's row: that of its first Claude pane, else its first pane, by the pills' rule (its folder is one of its machine's projects). Focus
-    /// doesn't move it. No project is Other.
+    /// and a shell's `cd` don't move it. No project is Other.
     private func row(of tab: ClaudeTab) -> TabProject {
         guard let model, let pane = tab.sessions.first(where: \.isClaude) ?? tab.sessions.first else { return .other }
-        return model.pills(for: pane.record).project.map(TabProject.project) ?? .other
+        if anchors[tab.viewID]?.pane != pane.id { anchors[tab.viewID] = (pane.id, pane.record.directory) }
+        let folder = anchors[tab.viewID]?.folder ?? pane.record.directory
+        return model.pills(folder: folder, agent: nil, host: pane.record.host).project.map(TabProject.project) ?? .other
     }
 
     /// Works the rows out again, and keeps the tab on screen in the chosen one: the choice follows it, and falls back to All when its last
@@ -64,6 +69,7 @@ final class TabProjects: ObservableObject {
         guard let model else { return }
         let next = Dictionary(model.tabs.map { ($0.viewID, row(of: $0)) }, uniquingKeysWith: { first, _ in first })
         if next != rowOf { rowOf = next }
+        if anchors.count > next.count { anchors = anchors.filter { next[$0.key] != nil } }
         var chosen = choice
         if let active = model.activeTab, let row = next[active.viewID] {
             lastShown[row] = active.viewID
