@@ -15,11 +15,12 @@ import {
 } from "./checks";
 import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
-import { loopbackNote, shapeHome, unlistedPage } from "./home";
+import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
 import { hostLinks, parseNodeNames, type HostLink } from "./hosts";
-import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, resumeTab, shapeProjects, startSession } from "./launch";
+import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, reopenTab, shapeProjects, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
-import { decideOpen, endText, isSessionName } from "./terminal";
+import { uuidPattern } from "./json";
+import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 24;
@@ -207,6 +208,8 @@ async function main(): Promise<void> {
     "/": { file: "page/index.html", type: "text/html; charset=utf-8" },
     "/app.js": { file: "page/app.js", type: js },
     "/session.js": { file: "page/session.js", type: js },
+    "/tab.js": { file: "page/tab.js", type: js },
+    "/tabrules.js": { file: "page/tabrules.js", type: js },
     "/rules.js": { file: "page/rules.js", type: js },
     "/dom.js": { file: "page/dom.js", type: js },
     "/live.js": { file: "page/live.js", type: js },
@@ -261,16 +264,24 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume") return plain(404, "Not found");
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
       if (path === "/api/end") {
-        const session = typeof body === "object" && body !== null ? (body as Record<string, unknown>).session : undefined;
-        if (!isSessionName(session)) return plain(400, "Not a Varnick session name");
-        // The host decides: a session this device started ends, any other is released to its host.
-        const ended = await relay.ask("end", device.id, { session });
+        const target = parseEndBody(body);
+        if (!target.ok) return plain(400, target.error);
+        // The host decides: a tab (or session) this device started ends, any other is released to its host.
+        const ended = await relay.ask("end", device.id, target.fields);
         if (!ended.ok) return json({ ok: false, error: ended.error }, 502);
         return json({ ok: true, released: ended.reply.released === true, text: endText(ended.reply, host.name) });
+      }
+      if (path === "/api/take") {
+        // Take over takes the whole tab (ADR 0034): the relay relabels every Claude and terminal pane of it for this device, then detaches
+        // their clients. The page then attaches the pane it shows, without take.
+        const target = parseTabBody(body);
+        if (!target.ok) return plain(400, target.error);
+        const taken = await relay.ask("take", device.id, { tab: target.tab });
+        return taken.ok ? json({ ok: true }) : json({ ok: false, error: taken.error }, 502);
       }
       // A start waits for the host (`launchTimeoutMs`), then asks it again before it fails: past the 30 s Bun waits on an idle connection.
       server.timeout(request, 120);
@@ -283,7 +294,7 @@ async function main(): Promise<void> {
       }
       const tab = parseResumeBody(body);
       if (!tab.ok) return json({ ok: false, error: tab.error }, 400);
-      const launched = await resumeTab(relay, device, host.name, tab.value, () => crypto.randomUUID());
+      const launched = await reopenTab(relay, device, host.name, tab.value);
       return json(launched.body, launched.status);
     }
 
@@ -299,6 +310,23 @@ async function main(): Promise<void> {
       // Every open and every reconnect asks first: the label says whether to attach, show who has it, or say it ended.
       return json({ ...decideOpen(await relay.ask("status", device.id, { sessions: [session] }), session, device), host: host.name });
     }
+    if (path === "/api/tab" && request.method === "GET") {
+      const tab = new URL(request.url).searchParams.get("tab");
+      if (tab === null || !uuidPattern.test(tab)) return plain(400, "Not a Varnick tab id");
+      const listed = await relay.ask("tabs", device.id);
+      if (!listed.ok) return json({ ok: false, error: listed.error }, 502);
+      const found = (Array.isArray(listed.reply.tabs) ? listed.reply.tabs : []).find((candidate: any) => String(candidate?.tab).toLowerCase() === tab.toLowerCase());
+      const shaped = found && typeof found === "object" ? shapeTab(found as Record<string, unknown>, device) : null;
+      return shaped ? json({ ok: true, host: host.name, tab: shaped }) : json({ ok: false, error: `That tab isn't open on ${host.name} any more` }, 404);
+    }
+    if (path === "/api/file" && request.method === "GET") {
+      const query = new URL(request.url).searchParams;
+      const tab = query.get("tab"), pane = query.get("pane");
+      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
+      // The host reads the file the pane has, inside the tab's folders, and caps its size: the path is never the page's.
+      const read = await relay.ask("file", device.id, { tab: tab.toLowerCase(), pane: pane.toLowerCase() });
+      return read.ok && typeof read.reply.text === "string" ? json({ ok: true, text: read.reply.text }) : json({ ok: false, error: read.ok ? "The host sent no text" : read.error }, 502);
+    }
     if (path === "/api/projects" && request.method === "GET") {
       const projects = shapeProjects(await relay.ask("projects", device.id));
       return "error" in projects ? json({ ok: false, error: projects.error }, 502) : json({ ok: true, host: host.name, projects: projects.rows });
@@ -310,10 +338,10 @@ async function main(): Promise<void> {
       return json(agents.body, agents.status);
     }
     if (path === "/api/home" && request.method === "GET") {
-      // The sessions and Recent run at once, each its own relay as the device the server found; the other hosts' links come
+      // The tabs and Recent run at once, each its own relay as the device the server found; the other hosts' links come
       // from the cache or the one shared fetch (`otherHosts`), which has a slot key of its own.
-      const [sessions, recent, hosts] = await Promise.all([relay.ask("sessions", device.id), relay.ask("recent", device.id), otherHosts(device)]);
-      return respond(JSON.stringify(shapeHome({ host, loopback, device, sessions, recent, hosts })), 200, "application/json; charset=utf-8");
+      const [tabs, recent, hosts] = await Promise.all([relay.ask("tabs", device.id), relay.ask("recent", device.id), otherHosts(device)]);
+      return respond(JSON.stringify(shapeHome({ host, loopback, device, tabs, recent, hosts })), 200, "application/json; charset=utf-8");
     }
     return plain(404, "Not found");
   }

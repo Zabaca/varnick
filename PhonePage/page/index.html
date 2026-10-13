@@ -23,7 +23,7 @@
   <a id="new-session" class="button primary" href="#new">New session</a>
   <main>
     <section aria-labelledby="open-heading">
-      <h2 id="open-heading">Open sessions</h2>
+      <h2 id="open-heading">Open tabs</h2>
       <div id="sessions" aria-live="polite"></div>
     </section>
     <section aria-labelledby="recent-heading">
@@ -73,6 +73,8 @@
     <button id="end" type="button">End</button>
   </header>
 
+  <nav id="panes" class="panes" aria-label="Panes of the tab" hidden></nav>
+
   <section id="card" class="card" hidden>
     <p id="card-note" class="card-note" hidden></p>
     <p id="card-text" class="card-text" role="status"></p>
@@ -86,6 +88,14 @@
 
   <section id="live" aria-label="Live screen" hidden>
     <div id="live-size"><div id="live-term" aria-hidden="true"></div></div>
+  </section>
+
+  <section id="note" class="note" hidden>
+    <p id="note-control" class="note-control" hidden></p>
+    <button id="note-take" type="button" class="primary" hidden>Take over</button>
+    <p id="note-text" class="note-text"></p>
+    <p id="note-detail" class="note-detail" hidden></p>
+    <pre id="note-file" class="note-file" hidden></pre>
   </section>
 
   <section id="terminal-view" hidden>

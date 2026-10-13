@@ -157,14 +157,14 @@ async function start(s) {
   const agent = s.agent;
   const prompt = $("prompt").value;
   // The host may have started it all the same: Back shows the open sessions.
-  const result = await postJSON("/api/start", { folder, agent, prompt }, "The host didn't answer. If it started, the session is in Open sessions.");
+  const result = await postJSON("/api/start", { folder, agent, prompt }, "The host didn't answer. If it started, the session is in Open tabs.");
   if (s.closed) return;
   s.busy = false;
   updateStart(s);
   if (!result.ok) return setStatus(result.error, true);
   setStatus(null);
   write(keys.last, rememberStart(s.last, folder, agent));
-  s.started({ session: result.session, title: startTitle(prompt, folder) });
+  s.started({ session: result.session, title: startTitle(prompt, folder), tab: result.tab ?? null });
 }
 
 // ---------------------------------------------------------------------------------------------------------------

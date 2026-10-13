@@ -79,7 +79,7 @@ describe("what the browser is told", () => {
     const shaped = links(["linux box", "alex@linux-box"]);
     const home = shapeHome({
       host: { name: "Mac mini", headless: false }, loopback: false, device,
-      sessions: { ok: true, reply: { open: [] } }, recent: { ok: true, reply: { recent: [] } }, hosts: shaped,
+      tabs: { ok: true, reply: { tabs: [] } }, recent: { ok: true, reply: { recent: [] } }, hosts: shaped,
     });
     const json = JSON.stringify(home);
     expect(home.hosts).toEqual(shaped);

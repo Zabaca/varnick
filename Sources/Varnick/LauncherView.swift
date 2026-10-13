@@ -193,7 +193,7 @@ struct LauncherView: View {
                 }
                 .tabDropMarker(model.tabDrag, in: model.tabs, axis: .vertical)
             }
-            // Each paired Mac's open tabs, under its name; ↩ opens one, its sessions on their cards.
+            // Each paired Mac's open tabs, under its name; ↩ opens one whole, in its host's layout, on cards.
             let peerTabs = model.peerListTabs
             ForEach(Array(peerTabs.enumerated()), id: \.element.viewID) { i, tab in
                 if i == 0 || peerTabs[i - 1].peer.id != tab.peer.id {
@@ -1067,7 +1067,7 @@ struct SessionDetailLine: View {
     }
 }
 
-/// A tab open on a paired Mac, in the session list: ↩ opens its sessions on their cards, where Take over is. It says its name or its first
+/// A tab open on a paired Mac, in the session list: ↩ opens it whole, its Claude and terminal panes on their cards, where Take over is. It says its name or its first
 /// session's title, and for a tab of several sessions how many there are and how many wait or work; for one, who is in control.
 struct PeerOpenTabRow: View {
     let tab: LauncherModel.PeerOpenTab
