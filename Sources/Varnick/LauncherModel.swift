@@ -1884,6 +1884,10 @@ final class LauncherModel: ObservableObject {
     /// Whether a file pane or the file tree is refused because the tab is another machine's: they list this Mac's folders. The pane says so.
     /// A split is the host's (`splitOnHost`).
     private func refusesLocalChange(to tab: ClaudeTab) -> Bool {
+        if let reason = layoutLockReason(of: tab) {
+            tab.focused.showRefusal(reason)
+            return true
+        }
         guard let host = tab.host else { return false }
         tab.focused.showRefusal("This tab is \(PeerManager.shared.name(of: host))'s: its files open there, and a pane splits there.")
         return true
@@ -1900,8 +1904,9 @@ final class LauncherModel: ObservableObject {
     /// address bar focused.
     func split(_ axis: SplitAxis, kind: PaneKind) {
         guard let tab = activeTab else { return }
-        // The tab of another machine splits on that machine, when this Mac is in control of it.
+        // The tab of another machine splits on that machine, when this Mac is in control of it; this Mac's own, unless another machine is.
         if tab.host != nil { return splitOnHost(tab, axis, kind: kind) }
+        if let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
         var record = Self.newRecord(prompt: "", directory: tab.focused.record.directory)
         switch kind {
         case .claude: break
@@ -1955,9 +1960,9 @@ final class LauncherModel: ObservableObject {
     func askSplit(_ axis: SplitAxis) {
         guard showsTerminal, let tab = activeTab else { return }
         let focused = tab.focused
+        if let reason = layoutLockReason(of: tab) { return focused.showRefusal(reason) }
         if tab.host != nil {
             // Another machine's tab splits into a Claude session or a terminal there, for the machine in control of it.
-            if let reason = layoutLockReason(of: tab) { return focused.showRefusal(reason) }
             pickerItems = PickerItem.items(apps: []).filter { $0.kind == .claude || $0.kind == .terminal }
         } else {
             pickerItems = PickerItem.items(apps: CustomApp.available(from: focused.record.directory))
@@ -2079,8 +2084,8 @@ final class LauncherModel: ObservableObject {
             self.beginLayoutChange(of: tab.id)
             return { [weak self] in self?.endLayoutChange(of: tab.id) }
         }
-        session.lastPaneOfHostTab = { [weak self] in
-            guard let self, let pane = ref, let tab = self.tabs.first(where: { $0.contains(pane) }), tab.host != nil, tab.sessions.count == 1 else { return nil }
+        session.hostTab = { [weak self] in
+            guard let self, let pane = ref, let tab = self.tabs.first(where: { $0.contains(pane) }), tab.host != nil else { return nil }
             return tab.id
         }
         // Closed on this Mac, but the host released the session and it runs on: not an ended session, and no ended card.
@@ -2563,6 +2568,14 @@ final class LauncherModel: ObservableObject {
     /// A key pressed while the focused pane asks whether to end or restart its working session: esc keeps it, ↩ does it, and
     /// either is used up so it never reaches the terminal. Returns whether the key was used.
     func answerPaneQuestion(_ event: NSEvent) -> Bool {
+        if showsTerminal, let session = activeSession, session.askingEnd, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty {
+            switch Int(event.keyCode) {
+            case kVK_Escape: session.keepTerminal()
+            case kVK_Return, kVK_ANSI_KeypadEnter: session.endTerminal()
+            default: return false
+            }
+            return true
+        }
         guard showsTerminal, let session = activeSession, let asking = session.asking,
               event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
         switch Int(event.keyCode) {
@@ -2605,7 +2618,6 @@ final class LauncherModel: ObservableObject {
             // This Mac is in control of the tab from here on, whatever a listing asked before the take over says.
             if failure == nil, self.tabs.contains(where: { $0 === tab }) { tab.inControl = true }
             self.endLayoutChange(of: id)
-            guard !Task.isCancelled else { return }
             for card in cards {
                 if let failure { card.takeOverFailed(failure) } else { card.performTakeOver(taken: true) }
             }
@@ -2704,13 +2716,12 @@ final class LauncherModel: ObservableObject {
                     if self.showingBoard { self.board.refresh() }
                 }
                 try? await Task.sleep(for: .seconds(10))
-                guard !Task.isCancelled else { return }
-                self.reopening[id] = nil
+                // Only this failure: a retry begun meanwhile is under way and keeps its own state.
+                if case .failed = self.reopening[id] { self.reopening[id] = nil }
             case .success(let reply):
                 let opened = reply.tab.flatMap(UUID.init(uuidString:)) ?? id
                 let sentAt = Date()
                 let found = await PeerManager.shared.tabs(on: host)
-                guard !Task.isCancelled else { return }
                 if let found { self.updatePeerTabs(found, for: host, sentAt: sentAt) }
                 self.reopening[id] = nil
                 if let listing = self.peerTabs[host]?.first(where: { UUID(uuidString: $0.tab) == opened }), self.openHostTab(listing, on: peer) != nil {
@@ -3008,16 +3019,19 @@ final class LauncherModel: ObservableObject {
     private func refusalUnlessControlled(_ tab: ClaudeTab, by peer: String) async -> PeerReply? {
         let labels = await runningLabels(of: tab)
         guard !labels.isEmpty else { return .failure("Nothing in that tab is running to take: only \(PeerIdentity.name ?? "this Mac") changes it") }
-        guard labels.allSatisfy({ Zmx.sameID(Zmx.control(in: $0), peer) }) else {
-            return .failure("That tab isn't controlled by the machine that asked: take it over")
-        }
+        guard Self.allName(peer, in: labels) else { return .failure("That tab isn't controlled by the machine that asked: take it over") }
         return nil
+    }
+
+    /// Whether every one of the labels names `peer` as the machine in control: a tab is one machine's whole.
+    private static func allName(_ peer: String, in labels: [String]) -> Bool {
+        labels.allSatisfy { Zmx.sameID(Zmx.control(in: $0), peer) }
     }
 
     /// Nil unless a running pane of the tab is held by someone other than the asker: Start on a lost pane would relabel it for the asker.
     private func refusalIfHeldElsewhere(_ tab: ClaudeTab, by peer: String) async -> PeerReply? {
         let labels = await runningLabels(of: tab)
-        return labels.allSatisfy({ Zmx.sameID(Zmx.control(in: $0), peer) }) ? nil : .failure("That tab is controlled by another machine: take it over first")
+        return Self.allName(peer, in: labels) ? nil : .failure("That tab is controlled by another machine: take it over first")
     }
 
     /// A peer's `start` with `resume`: its session isn't running here. The only session this Mac starts
@@ -3119,17 +3133,13 @@ final class LauncherModel: ObservableObject {
         return .failure("The session didn't start on \(here)")
     }
 
-    /// A peer's `end`: the Mac in control closed its pane. Only that Mac may end a session, so the
-    /// label has to name it, read from zmx (off the main actor). What closing means is this Mac's to
-    /// decide, since it knows where the session came from: one it started for that Mac ends and its
-    /// pane closes here, which puts it in Recent as when it ends any other way. One it started itself
-    /// (its `varnick-origin` doesn't name the asker, as for one started at this Mac's own prompt) is
-    /// released instead: control comes back here, the peer's client is detached, and the pane here, if
-    /// it shows the card, goes live. A session with no pane here, which nothing would own once
-    /// released, ends. A session already gone is nothing to end, but a pane still showing it closes.
+    /// A peer's `end`: the Mac in control closed a pane (or a tab: `hostEndTab`, or a page or file: `hostEndPane`). The label has to name the
+    /// asker. A request naming the pane's tab is ⌘W in a tab it controls: the pane ends as it would here, unless the pane is the tab's last,
+    /// which this Mac decides, and then it is the tab's `end`. A session with no tab (the phone's) ends if its origin names the asker and is
+    /// otherwise released: control comes back here and the pane here, if it shows the card, goes live.
     func hostEnd(_ request: PeerRequest, by peer: String) async -> PeerReply {
         if request.tab != nil, request.pane != nil { return await hostEndPane(request, by: peer) }
-        if request.tab != nil { return await hostEndTab(request, by: peer) }
+        if request.tab != nil, request.session == nil { return await hostEndTab(request, by: peer) }
         guard let name = request.session, let id = Zmx.paneID(name) else { return .failure("Not a Varnick session name") }
         let labels = await Task.detached { Zmx.labels(of: name) }.value
         let pane = tabs.flatMap(\.sessions).first { $0.id == id && $0.runsInZmx && !$0.isOnPeer }
@@ -3140,7 +3150,19 @@ final class LauncherModel: ObservableObject {
         guard Zmx.sameID(Zmx.control(in: labels), peer) else {
             return .failure("That session isn't controlled by the machine that asked to end it")
         }
-        // As closing the pane here would: it ends, whoever started it. Closing a whole tab is `hostEndTab`'s rule.
+        if request.tab != nil {
+            if let pane, let tab = tabs.first(where: { $0.contains(pane) }), tab.sessions.count == 1 { return await hostEndTab(request, by: peer) }
+            if let pane, let tab = tabs.first(where: { $0.contains(pane) }), let denied = await refusalUnlessControlled(tab, by: peer) { return denied }
+            if let pane { pane.endSession() } else { Zmx.kill(id) }
+            return .success()
+        }
+        if let pane, !Zmx.sameID(Zmx.origin(in: labels), peer) {
+            guard await Task.detached(operation: { Zmx.release(name) }).value else { return .failure("zmx wouldn't release the session") }
+            pane.goLiveAfterRelease()
+            var reply = PeerReply.success()
+            reply.released = true
+            return reply
+        }
         if let pane { pane.endSession() } else { Zmx.kill(id) }
         return .success()
     }
@@ -3224,7 +3246,7 @@ final class LauncherModel: ObservableObject {
         let names = panes.map { Zmx.sessionName($0.id) }
         let labels = await Task.detached { names.map { Zmx.labels(of: $0) } }.value
         let labelled = zip(panes, labels).compactMap { pane, labels in labels.map { (pane, $0) } }
-        guard !labelled.isEmpty, labelled.allSatisfy({ Zmx.sameID(Zmx.control(in: $0.1), peer) }) else {
+        guard !labelled.isEmpty, Self.allName(peer, in: labelled.map(\.1)) else {
             return .failure("That tab isn't controlled by the machine that asked to end it")
         }
         if labelled.allSatisfy({ Zmx.sameID(Zmx.origin(in: $0.1), peer) }) {

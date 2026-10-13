@@ -188,7 +188,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             guard let self else { return }
             let answer = await self.sessionStatusAskingTwice()
             self.reconnecting = false
-            guard !Task.isCancelled, !self.finished, self.clientEnded, !self.endedByUser, case .unavailable = self.away else { return }
+            guard !self.finished, self.clientEnded, !self.endedByUser, case .unavailable = self.away else { return }
             self.settle(on: host, with: answer) { .offline($0) }
         }
     }
@@ -1521,6 +1521,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// open with its input already closed). SIGKILL if it's still there a second later.
     func end() {
         if !endsWithTab, let reason = closeGate() { return showRefusal(reason) }
+        if isShell, isOnPeer, away == nil, !finished, !endsWithTab, !endConfirmed {
+            askingEnd = true
+            return onNeedsConfirmation()
+        }
         // The card on a session's host is the one pane that session has: closing it would leave
         // the session running with nothing owning it. So it asks first, on the card.
         if clientEnded, !isOnPeer, case .controlled = away, !finished {
@@ -1603,25 +1607,30 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Why closing this pane alone is refused (set by the model): another machine's tab changes only for the machine in control of it.
     var closeGate: () -> String? = { nil }
     /// Set by the model for a pane of another machine's tab: a change to the tab is on its way to the host, and the returned closure says it
-    /// arrived. And the tab's id when this is its only pane, whose closing is the tab's.
+    /// arrived. And the tab's id, which the host needs to tell ⌘W from the phone's end of one session.
     var layoutChange: () -> () -> Void = { {} }
-    var lastPaneOfHostTab: () -> UUID? = { nil }
+    var hostTab: () -> UUID? = { nil }
+    /// ⌘W on a terminal of another machine's tab asks first: it ends that terminal there. A Claude pane's conversation stays in the tab's history.
+    @Published private(set) var askingEnd = false
+    private var endConfirmed = false
 
-    /// Closing a pane in control of a session on a peer tells its host, which ends it as closing it there would; the last pane closes its tab
-    /// (`hostEndTab`). A card sends nothing; a pane with no client running asks the host first.
+    func endTerminal() {
+        askingEnd = false
+        endConfirmed = true
+        end()
+    }
+
+    func keepTerminal() { askingEnd = false }
+
+    /// Closing a pane in control of a session on a peer tells its host, naming the tab: the host ends the pane as closing it there would, or
+    /// the tab if it is the last (`hostEnd`). A card sends nothing; a pane with no client running asks the host first.
     private func endSessionOnHost() {
         guard let host = record.host, runsInZmx, !finished, away == nil, !endsWithTab else { return }
-        let id = record.id, unknown = clientEnded || view.process.shellPid <= 0
+        let id = record.id, unknown = clientEnded || view.process.shellPid <= 0, tab = hostTab()
         let left = record, onReleased = onReleased
-        if let tab = lastPaneOfHostTab() {
-            Task {
-                if await PeerManager.shared.end(tab: tab, on: host) { onReleased(left) }
-            }
-            return
-        }
         let arrived = layoutChange()
         Task {
-            _ = await PeerManager.shared.end(session: id, on: host, onlyIfControlled: unknown)
+            if await PeerManager.shared.end(session: id, on: host, onlyIfControlled: unknown, tab: tab) { onReleased(left) }
             arrived()
         }
     }

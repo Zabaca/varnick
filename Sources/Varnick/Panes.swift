@@ -574,7 +574,12 @@ struct TerminalLeaf: View {
         // Terminals have no bar to put it in: their × shows over the corner while hovered, and a Claude pane's
         // Restart and Done beside it. The question Done or Restart asks of a working session stays until it is answered.
         .overlay(alignment: .topTrailing) {
-            if let kind = session.asking {
+            if session.askingEnd {
+                EndTerminalQuestion(host: session.hostName ?? "the host", confirm: session.endTerminal, keep: session.keepTerminal)
+                    .frame(width: 230)
+                    .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(6)
+            } else if let kind = session.asking {
                 WorkingSessionQuestion(kind: kind, turn: session.turn?.turn, background: session.turn?.background ?? BackgroundWork(),
                                        confirm: kind == .done ? session.onDone : session.onRestart, keep: { session.asking = nil })
                     .frame(width: 230)
@@ -616,6 +621,31 @@ struct TerminalLeaf: View {
                 .padding(.trailing, 3)
                 .padding(.vertical, 5)
         }
+    }
+}
+
+/// The question ⌘W asks of a terminal of another machine's tab, in the pane: closing it ends the terminal there.
+struct EndTerminalQuestion: View {
+    let host: String
+    let confirm: () -> Void
+    let keep: () -> Void
+
+    var body: some View {
+        let accent = Theme.sourceColor("terminal")
+        VStack(alignment: .leading, spacing: 6) {
+            (Text("This ends the terminal on \(host). ") + Text("End it?").bold().foregroundColor(accent))
+                .font(.system(size: 11.5))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 5) {
+                Spacer(minLength: 0)
+                Button(action: confirm) { Text("End it").font(.system(size: 11.5, weight: .semibold)) }
+                Button(action: keep) { Text("Keep").font(.system(size: 11.5)) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 7)
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(accent.opacity(0.5), lineWidth: 1))
     }
 }
 

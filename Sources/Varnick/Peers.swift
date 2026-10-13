@@ -804,14 +804,13 @@ final class PeerManager: ObservableObject {
     /// failure is only logged: the pane closes anyway, and nothing here asks for the session again.
     /// Returns whether the host released it, so the caller can take it out of Recent.
     @discardableResult
-    func end(session id: UUID, on host: String, onlyIfControlled: Bool) async -> Bool {
+    func end(session id: UUID, on host: String, onlyIfControlled: Bool, tab: UUID? = nil) async -> Bool {
         let name = Zmx.sessionName(id)
         if onlyIfControlled {
             let (status, _) = await sessionStatus(name, on: host)
             guard let status, status.running, Zmx.sameID(status.control, PeerIdentity.id) else { return false }
         }
-        var request = PeerRequest(.end)
-        request.by = PeerIdentity.id
+        var request = tabRequest(.end, tab: tab)
         request.session = name
         switch await send(request, to: host) {
         case .failure(let refusal):

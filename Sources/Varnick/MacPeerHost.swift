@@ -221,7 +221,7 @@ enum PeerOpenTabs {
     static func list(in state: SessionStore.State, statuses: [String: PeerSessionStatus], now: Date = Date()) -> [PeerTab] {
         // A pane runs in zmx, where another machine can attach to it, only while Keep sessions running is on.
         let keepOff = !PeerIdentity.defaults.bool(forKey: Settings.keepSessionsRunningKey)
-        let why = "Panes are reachable from another machine only while Keep sessions running is on in \(PeerIdentity.name ?? "its") Settings."
+        let why = "Panes are reachable from another machine only while Keep sessions running is on in \(PeerIdentity.name ?? "that Mac")'s Settings."
         return hosted(in: state).map { tab in
             var listed = PeerTab(tab: tab.resolvedID.uuidString.lowercased(), name: tab.name,
                                  doneAge: tab.done.map { Int(max(0, now.timeIntervalSince($0))) }, layout: tab.layout.peerLayout,
