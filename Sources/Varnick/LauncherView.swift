@@ -889,15 +889,7 @@ struct SessionRow: View {
                 SessionDetailLine(pills: pills, folder: session.record.folderName, host: session.hostName, rest: rest)
             }
             Spacer()
-            if let mark {
-                Text(mark)
-                    .font(.system(size: 10, weight: .bold))
-                    .padding(.horizontal, 7).padding(.vertical, 1)
-                    .background(Color.orange, in: Capsule())
-                    .foregroundStyle(Theme.onAccent)
-                    .lineLimit(1)
-                    .fixedSize()
-            }
+            if let mark { OrangeMark(text: mark) }
             if selected { KeyHint(label: "Open", keys: ["↩"]).font(.system(size: 11)) }
         }
         .padding(.horizontal, 10)

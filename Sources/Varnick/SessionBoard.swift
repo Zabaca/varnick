@@ -31,6 +31,21 @@ extension Turn {
     }
 }
 
+/// What a session waits on the user for (`Turn.mark`), as a card of the board and a row of the tab lists say it.
+struct OrangeMark: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .bold))
+            .padding(.horizontal, 7).padding(.vertical, 1)
+            .background(Color.orange, in: Capsule())
+            .foregroundStyle(Theme.onAccent)
+            .lineLimit(1)
+            .fixedSize()
+    }
+}
+
 extension BackgroundWork {
     /// "1 background shell", "2 background agents", Claude Code's words; several read "1 background agent, 2 teammates, 2 shells".
     /// A paired Mac's reply has no counts: "Background work".
@@ -285,10 +300,7 @@ final class SessionBoard: ObservableObject {
     /// The board is on screen (between `appear` and `close`).
     private var appeared = false
 
-    /// The zmx sessions listed when the board opened; nil until zmx answers, or if it couldn't be asked.
-    private var zmxSessions: Set<String>?
     private var ticker: Task<Void, Never>?
-    private var zmxCheck: Task<Void, Never>?
 
     func cards(in column: Column) -> [Card] { cards.filter { $0.column == column } }
 
@@ -300,7 +312,7 @@ final class SessionBoard: ObservableObject {
     func appear() {
         appeared = true
         startTicker()
-        checkZmx()
+        model?.checkZmx()
         switch tab {
         case .sessions: startSessions()
         case .problems:
@@ -339,8 +351,6 @@ final class SessionBoard: ObservableObject {
     private func stopTicker() {
         ticker?.cancel()
         ticker = nil
-        zmxCheck?.cancel()
-        zmxCheck = nil
     }
 
     static var panelIsVisible: Bool { NSApp.windows.first(where: { $0 is LauncherPanel })?.isVisible == true }
@@ -367,19 +377,6 @@ final class SessionBoard: ObservableObject {
         confirming = nil
         stopTicker()
         selection = nil
-        zmxSessions = nil
-    }
-
-    /// Which restored panes still have a zmx session, asked off the main actor; with Keep sessions running off, none.
-    private func checkZmx() {
-        guard Zmx.isEnabled, model?.tabs.contains(where: { $0.sessions.contains { $0.isClaude && !$0.started } }) == true else { return }
-        zmxCheck?.cancel()
-        zmxCheck = Task { [weak self] in
-            let listed = await Task.detached(priority: .userInitiated) { Zmx.listedSessions() }.value
-            guard !Task.isCancelled, let self else { return }
-            self.zmxSessions = listed
-            self.refresh()
-        }
     }
 
     // MARK: Cards
@@ -455,7 +452,7 @@ final class SessionBoard: ObservableObject {
         pane.checkTurn()
         pane.checkWork()
         let standing: Card.Standing
-        if !pane.started, !pane.isOnPeer, !hasZmxSession(pane) {
+        if !pane.started, !pane.isOnPeer, model?.hasZmxSession(pane) == false {
             standing = .resumes   // whatever its file says: a session killed mid-turn leaves working behind
         } else if let turn = pane.turn {
             standing = .turn(turn.turn, since: turn.since)
@@ -500,13 +497,6 @@ final class SessionBoard: ObservableObject {
                     },
                     closed: closed,
                     note: note)
-    }
-
-    /// Whether a pane not started yet has a zmx session. Before zmx has answered, or when it couldn't be
-    /// asked, it is taken to have one: only an answer may say a session is gone.
-    private func hasZmxSession(_ pane: ClaudeSession) -> Bool {
-        guard Zmx.isEnabled else { return false }
-        return zmxSessions?.contains(Zmx.sessionName(pane.id)) ?? true
     }
 
     // MARK: Keys
@@ -856,14 +846,7 @@ private struct BoardCardView: View {
                     .lineLimit(1)
                     .layoutPriority(1)
                 if let mark = card.mark {
-                    Text(mark)
-                        .font(.system(size: 10, weight: .bold))
-                        .padding(.horizontal, 7).padding(.vertical, 1)
-                        .background(Color.orange, in: Capsule())
-                        .foregroundStyle(Theme.onAccent)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .layoutPriority(2)
+                    OrangeMark(text: mark).layoutPriority(2)
                 }
             }
             .font(.system(size: 11.5))

@@ -1920,13 +1920,10 @@ struct ClaudePane: View {
         .coordinateSpace(name: Self.space)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { paneWidth = $0 }
         .overlay(alignment: .topLeading) {
+            // A click outside it closes it (`TabStrip.mouseDown`, from the mouse monitor), so the click reaches what it landed on.
             if strip.listOpen {
-                ZStack(alignment: .topLeading) {
-                    // A click anywhere else closes the list.
-                    Color.black.opacity(0.001).onTapGesture { strip.closeList(refocus: true) }
-                    HiddenTabsList(model: model, strip: strip)
-                        .offset(x: max(min(chipX, paneWidth - HiddenTabsList.width - 8), 8), y: strip.headerHeight - 4)
-                }
+                HiddenTabsList(model: model, strip: strip)
+                    .offset(x: max(min(chipX, paneWidth - HiddenTabsList.width - 8), 8), y: strip.headerHeight - 4)
             }
         }
     }
@@ -2040,8 +2037,8 @@ struct SessionTab: View {
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 9)
             .frame(height: 24)
             .contentShape(Rectangle())

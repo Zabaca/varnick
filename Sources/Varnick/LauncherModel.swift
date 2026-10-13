@@ -1873,6 +1873,7 @@ final class LauncherModel: ObservableObject {
     func beginRename() {
         // Only the machine in control of a tab renames it: refused here before anything is typed.
         if let tab = activeTab, let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
+        strip.closeList()
         renamingTab = activeTab
     }
 
@@ -1999,6 +2000,7 @@ final class LauncherModel: ObservableObject {
     /// Reads the custom apps from disk each time, for the focused pane's project.
     func askSplit(_ axis: SplitAxis) {
         guard showsTerminal, let tab = activeTab else { return }
+        strip.closeList()
         let focused = tab.focused
         if let reason = layoutLockReason(of: tab) { return focused.showRefusal(reason) }
         if let host = tab.host {
@@ -2814,6 +2816,7 @@ final class LauncherModel: ObservableObject {
         guard let from = tabs.firstIndex(where: { $0 === tab }), gap != from, gap != from + 1,
               (0...tabs.count).contains(gap) else { return }
         let selected = tabs.indices.contains(sessionSelection) ? tabs[sessionSelection] : nil
+        strip.keepRunByIndex()
         tabs.move(fromOffsets: [from], toOffset: gap)
         if let selected, let i = tabs.firstIndex(where: { $0 === selected }) { sessionSelection = i }
         saveSessions()
@@ -2872,6 +2875,7 @@ final class LauncherModel: ObservableObject {
     /// ⌘,: settings in place of the current view; again (or esc) goes back.
     func toggleSettings() {
         pendingSplit = nil
+        strip.closeList()
         Settings.shared.recording = nil
         showingSettings.toggle()
         guard !showingSettings, !showingBoard else { return }
@@ -2910,6 +2914,7 @@ final class LauncherModel: ObservableObject {
     /// `tab` is the one to show (`!problems`); nil leaves the board on the tab it showed last.
     func showBoard(_ tab: SessionBoard.Tab? = nil) {
         pendingSplit = nil
+        strip.closeList()
         hideOutline()
         if let tab { board.show(tab) }
         guard !showingBoard else { return }
@@ -2947,6 +2952,7 @@ final class LauncherModel: ObservableObject {
     /// a bullet, which is what a session's `show` does unless the panel already has the keyboard.
     func showOutline(focusing: Bool = true) {
         pendingSplit = nil
+        strip.closeList()
         hideBoard()
         guard !showingOutline else { return }
         showingOutline = true
@@ -2999,24 +3005,30 @@ final class LauncherModel: ObservableObject {
             for pane in claude where !pane.readsOwnTurn { pane.checkTurn() }
             if let mark = claude.lazy.filter(turnIsLive).compactMap({ $0.turn?.turn.mark }).first { marks[tab.viewID] = mark }
             guard claude.count > 1 else { continue }
-            summaries[tab.viewID] = TabSummary.parts(sessions: claude.count, waiting: claude.filter { $0.turn?.turn.mark != nil }.count,
+            summaries[tab.viewID] = TabSummary.parts(sessions: claude.count, waiting: claude.filter { turnIsLive($0) && $0.turn?.turn.mark != nil }.count,
                                                      working: claude.filter { $0.turn?.turn.isRunning == true }.count)
         }
         if summaries != tabSummaries { tabSummaries = summaries }
         if marks != tabMarks { tabMarks = marks }
     }
 
-    /// Zmx's sessions as last asked, off the main actor, for the marks of panes restored and not opened since: a session a reboot ended leaves a
-    /// turn file that still says it waits (the board discards it the same way). Unknown until answered, which counts as there (`SessionBoard`).
+    /// The zmx sessions as last asked (the board asks when it opens, the ticker when it starts); nil until zmx answers or if it couldn't be asked.
     private var zmxSessions: Set<String>?
     private var zmxCheck: Task<Void, Never>?
 
-    private func turnIsLive(_ pane: ClaudeSession) -> Bool {
-        if pane.started || pane.isOnPeer { return true }
-        return Zmx.isEnabled && (zmxSessions?.contains(Zmx.sessionName(pane.id)) ?? true)
+    /// Whether a pane not started yet has a zmx session. Before zmx has answered, or when it couldn't be asked, it is taken to have one: only an
+    /// answer may say a session is gone, and with Keep sessions running off none is there.
+    func hasZmxSession(_ pane: ClaudeSession) -> Bool {
+        guard Zmx.isEnabled else { return false }
+        return zmxSessions?.contains(Zmx.sessionName(pane.id)) ?? true
     }
 
-    private func checkZmx() {
+    /// Whether a pane's turn file can be believed: a session a reboot ended leaves one that still says it waits, and a restored pane not opened
+    /// since shows only what zmx still lists.
+    private func turnIsLive(_ pane: ClaudeSession) -> Bool { pane.started || pane.isOnPeer || hasZmxSession(pane) }
+
+    /// Which restored panes still have a zmx session, asked off the main actor.
+    func checkZmx() {
         guard Zmx.isEnabled, tabs.contains(where: { $0.sessions.contains { $0.isClaude && !$0.started } }) else { return }
         zmxCheck?.cancel()
         zmxCheck = Task { [weak self] in
@@ -3024,18 +3036,16 @@ final class LauncherModel: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             self.zmxSessions = listed
             self.refreshTabSummaries()
+            if self.showingBoard { self.board.refresh() }
         }
     }
 
-    /// Reads the summaries now and once a second while the search is on screen in a visible panel, or a tab is and the strip hides some tabs
-    /// (their turns are what turns the chip orange). It ends when the panel hides or the board, the outline or Settings covers what it
-    /// serves, and starts again where that comes back (`panelDidShow`, `showSearch`, `focusSearchField`, `focusShown`, the strip).
+    /// Reads the summaries now, and once a second while the search shows or a tab does with some tabs hidden (their turns turn the +N chip
+    /// orange). It ends when the panel hides or the board, the outline or Settings covers them; `panelDidShow` and the like start it again.
     func startSummaryTicker(reading: Bool = true) {
-        if reading {
-            refreshTabSummaries()
-            checkZmx()
-        }
+        if reading { refreshTabSummaries() }
         guard summaryTicker == nil else { return }
+        checkZmx()
         summaryTicker = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))

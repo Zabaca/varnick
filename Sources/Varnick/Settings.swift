@@ -679,7 +679,7 @@ struct SettingsView: View {
                             }
                         }
                         SettingRow(title: "Tabs that don't fit",
-                                   detail: "When more tabs are open than fit across the top. Shrink narrows them together, down to 140 points; Fixed width makes every tab 180 points; Wrap lets them flow onto up to three rows. The rest go behind a +N button that lists them.") {
+                                   detail: "When more tabs are open than fit across the top. Shrink narrows them together, down to 140 points; Fixed width makes every tab 180 points; Wrap lets them flow onto up to three rows. The rest go behind a +N chip that lists them.") {
                             Picker("", selection: $settings.tabOverflow) {
                                 ForEach(TabOverflow.allCases) { Text($0.title).tag($0) }
                             }

@@ -19,9 +19,8 @@ final class TabDrag: ObservableObject {
         axis == .horizontal ? 0...max(viewportWidth, 0) : 0...CGFloat.infinity
     }
 
-    /// The gap a drop at `point` falls into, among `tabs` (all of them, or the ones the header shows). Only the tabs that have a frame count,
-    /// and the gap is counted from the first of them, so tabs hidden before the run keep their places. A header that wraps puts a drop in the
-    /// row it is over, then before the first tab of that row whose middle is past it.
+    /// The gap a drop at `point` falls into among `tabs`, counted from the first one that has a frame (those hidden before the run have none).
+    /// A header that wraps puts a drop in the row it is over, then before the first tab of that row whose middle is past it.
     func gap(at point: CGPoint, in tabs: [ClaudeTab], axis: Axis) -> Int? {
         let framed = tabs.enumerated().compactMap { i, tab in frames[tab.viewID].map { (index: i, frame: $0) } }
         guard let base = framed.first?.index else { return nil }
@@ -59,8 +58,10 @@ private struct TabFrames: PreferenceKey {
 extension View {
     /// Makes a tab draggable along `axis`; its container needs `tabDropMarker`. A plain click
     /// still reaches the tab, since the drag only starts after a few points of movement.
-    func reorderable(_ tab: ClaudeTab, in model: LauncherModel, axis: Axis, enabled: Bool = true) -> some View {
-        modifier(ReorderableTab(tab: tab, model: model, drag: model.tabDrag, axis: axis, enabled: enabled))
+    /// The gap is counted among `tabs` (the model's, unless the strip lays out a part), and `place` turns it into one among all the tabs.
+    func reorderable(_ tab: ClaudeTab, among tabs: [ClaudeTab]? = nil, in model: LauncherModel, axis: Axis, place: @escaping (Int) -> Int = { $0 },
+                     enabled: Bool = true) -> some View {
+        modifier(ReorderableTab(tab: tab, among: tabs ?? model.tabs, model: model, drag: model.tabDrag, axis: axis, place: place, enabled: enabled))
     }
 
     /// Container of draggable tabs: shows where the dragged tab will land.
@@ -72,9 +73,11 @@ extension View {
 
 private struct ReorderableTab: ViewModifier {
     let tab: ClaudeTab
+    let among: [ClaudeTab]
     let model: LauncherModel
     @ObservedObject var drag: TabDrag
     let axis: Axis
+    let place: (Int) -> Int
     let enabled: Bool
 
     func body(content: Content) -> some View {
@@ -92,10 +95,10 @@ private struct ReorderableTab: ViewModifier {
                         let at = min(max(raw, range.lowerBound), range.upperBound)
                         drag.dragged = tab
                         let point = axis == .horizontal ? CGPoint(x: at, y: value.location.y) : CGPoint(x: 0, y: at)
-                        drag.gap = drag.gap(at: point, in: model.tabs, axis: axis)
+                        drag.gap = drag.gap(at: point, in: among, axis: axis)
                     }
                     .onEnded { _ in
-                        if let gap = drag.gap { model.moveTab(tab, toGap: gap) }
+                        if let gap = drag.gap { model.moveTab(tab, toGap: place(gap)) }
                         drag.ended()
                     },
                 including: enabled ? .all : .subviews)
@@ -112,8 +115,9 @@ private struct TabDropMarker: ViewModifier {
     let base: Int
     let axis: Axis
 
-    /// Where the bar goes: `x` along the axis, and `y` the middle of the tab's row (a header that wraps has several). Nil when dropping there changes nothing.
-    private var position: CGPoint? {
+    /// Where the bar goes: along the axis, and across it the middle of the tab's row (a header that wraps has several). Nil when dropping there
+    /// changes nothing.
+    private var position: (along: CGFloat, across: CGFloat)? {
         guard let dropped = drag.gap, let tab = drag.dragged, let from = tabs.firstIndex(where: { $0 === tab }) else { return nil }
         let gap = dropped - base
         guard gap != from, gap != from + 1, (0...tabs.count).contains(gap) else { return nil }
@@ -131,7 +135,7 @@ private struct TabDropMarker: ViewModifier {
         }
         // The 2pt bar stays inside the visible part.
         let range = drag.visible(axis)
-        return CGPoint(x: min(max(edge - 1, range.lowerBound), range.upperBound - 2), y: middle)
+        return (min(max(edge - 1, range.lowerBound), range.upperBound - 2), middle)
     }
 
     func body(content: Content) -> some View {
@@ -143,11 +147,11 @@ private struct TabDropMarker: ViewModifier {
                     Group {
                         if axis == .horizontal {
                             Capsule().fill(Color.accentColor).frame(width: 2, height: 18)
-                                .offset(x: position.x, y: position.y - 9)
+                                .offset(x: position.along, y: position.across - 9)
                         } else {
                             Capsule().fill(Color.accentColor).frame(height: 2)
                                 .padding(.horizontal, Theme.gutter)
-                                .offset(y: position.x)
+                                .offset(y: position.along)
                         }
                     }
                     .allowsHitTesting(false)

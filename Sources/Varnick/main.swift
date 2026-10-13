@@ -161,6 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         // A click in a split pane (terminal, page or file) focuses that pane.
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            // The hidden tabs' list closes on a click outside it; the click goes on.
+            if let self, event.window === self.panel { self.model.strip.mouseDown(event) }
             guard let self, event.window === self.panel,
                   var view = self.panel.contentView?.hitTest(event.locationInWindow) else { return event }
             // A file pane's rendered Markdown is a WKWebView inside its FileViewer.

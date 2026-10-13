@@ -460,6 +460,7 @@ final class ClaudeTab: ObservableObject {
     /// Splits `target`'s pane without moving focus (a file pane stacking under the file column).
     func add(_ new: ClaudeSession, beside target: ClaudeSession, _ axis: SplitAxis) {
         root.leaf(for: target)?.split(axis, adding: new)
+        objectWillChange.send()   // the strip measures the pane count
     }
 
     /// Closes a pane. Returns false when it was the last one (the tab is now empty). With `focusing` off the
@@ -478,6 +479,7 @@ final class ClaudeTab: ObservableObject {
         let candidates = sibling.leaves
         let next = neighbor(of: session, toward, among: candidates) ?? candidates.first
         guard leaf.removeLeaf() else { return false }
+        objectWillChange.send()   // the strip measures the pane count
         if focused === session, let next = next ?? sessions.first {
             if focusing { focus(next) } else { focused = next }
         }

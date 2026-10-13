@@ -105,7 +105,8 @@ enum TabFit {
         func everything(_ cap: CGFloat) -> Result? {
             let w = widths(items, mode, cap: cap, room: room)
             let laid = flow(w, from: 0, room: room, maxRows: maxRows, trailer: plusWidth)
-            return laid.end == n ? Result(run: 0..<n, widths: w, rows: laid.rows, count: n) : nil
+            guard laid.end == n else { return nil }
+            return Result(run: 0..<n, widths: runWidths(w, run: 0..<n, rows: laid.rows, room: room, trailer: plusWidth), rows: laid.rows, count: n)
         }
         if mode == .shrink {
             let widest = max(items.filter { !$0.rigid }.map(\.natural).max() ?? minWidth, minWidth)
@@ -131,7 +132,17 @@ enum TabFit {
         if end(s) == n { while s > 0, end(s - 1) == n { s -= 1 } }
         let laid = flow(w, from: s, room: room, maxRows: maxRows, trailer: chipTrailer)
         let run = s..<laid.end
-        return Result(run: run, widths: Array(w[run]), rows: laid.rows, count: n)
+        return Result(run: run, widths: runWidths(w, run: run, rows: laid.rows, room: room, trailer: chipTrailer), rows: laid.rows, count: n)
+    }
+
+    /// The run's widths. A tab alone in the last row is held to what the buttons leave of the row, so they are never pushed out of it.
+    private static func runWidths(_ w: [CGFloat], run: Range<Int>, rows: [Range<Int>], room: CGFloat, trailer: CGFloat) -> [CGFloat] {
+        var widths = Array(w[run])
+        if let last = rows.last, last.count == 1 {
+            let i = last.lowerBound - run.lowerBound
+            widths[i] = min(widths[i], max(room - gap - trailer, 60))
+        }
+        return widths
     }
 }
 
@@ -167,6 +178,11 @@ final class TabStrip: ObservableObject {
     private var width: CGFloat = .infinity
     private var firstShown: UUID?
     private var firstIndex = 0
+    /// The next `refresh` keeps the run by place, not by its first tab: set while a drop reorders the tabs, so a tab dropped into the run stays in it.
+    private var keepsRunByIndex = false
+    /// Where the chip and the open list are, in the window's space (the top left origin SwiftUI's `.global` has), for a click to tell outside.
+    var chipFrame = CGRect.null
+    var listFrame = CGRect.null
     private var watches: [AnyCancellable] = []
     private var modeWatch: AnyCancellable?
 
@@ -177,6 +193,9 @@ final class TabStrip: ObservableObject {
         // The publisher sends before the setting is stored, so the new value comes with it.
         modeWatch = Settings.shared.$tabOverflow.dropFirst().removeDuplicates().sink { [weak self] mode in self?.refresh(mode: mode) }
     }
+
+    /// The tabs the strip lays out, in its order: all of them, for now. The run, the drops and the list all count within this array.
+    var tabs: [ClaudeTab] { model?.tabs ?? [] }
 
     /// The header grows by a row for each row the strip wraps onto.
     var headerHeight: CGFloat {
@@ -197,13 +216,15 @@ final class TabStrip: ObservableObject {
     /// Works the run out again, when tabs open, close or move, a title, the tab on screen, the width or the mode changes.
     func refresh(mode: TabOverflow? = nil) {
         guard let model else { return }
-        let tabs = model.tabs
+        let tabs = self.tabs
         let items = tabs.map { tab -> TabFit.Item in
             if model.renamingTab === tab { return TabFit.Item(natural: TabMetrics.renameWidth, rigid: true) }
             return TabFit.Item(natural: TabMetrics.natural(title: tab.name ?? tab.focused.label, panes: tab.sessions.count,
                                                            active: tab === model.activeTab))
         }
-        let start = firstShown.flatMap { id in tabs.firstIndex { $0.viewID == id } } ?? min(firstIndex, max(tabs.count - 1, 0))
+        let byId = keepsRunByIndex ? nil : firstShown.flatMap { id in tabs.firstIndex { $0.viewID == id } }
+        keepsRunByIndex = false
+        let start = byId ?? min(firstIndex, max(tabs.count - 1, 0))
         let active = model.activeTab.flatMap { shown in tabs.firstIndex { $0 === shown } }
         let next = TabFit.fit(items, mode: mode ?? Settings.shared.tabOverflow, room: width, start: start, active: active)
         firstIndex = next.run.lowerBound
@@ -217,6 +238,17 @@ final class TabStrip: ObservableObject {
         }
     }
 
+    /// A tab is about to move in the strip's order (a drop): the run stays where it is by place.
+    func keepRunByIndex() { keepsRunByIndex = true }
+
+    /// The place in all the tabs (`LauncherModel.tabs`) of a gap among the strip's: a drop there puts the tab there in the full order.
+    func fullGap(_ gap: Int) -> Int {
+        let all = model?.tabs ?? [], mine = tabs
+        if gap < mine.count, let i = all.firstIndex(where: { $0 === mine[gap] }) { return i }
+        if let last = mine.last, let i = all.firstIndex(where: { $0 === last }) { return i + 1 }
+        return all.count
+    }
+
     /// A tab the chip hides, and whether it comes before the run.
     struct Hidden {
         let tab: ClaudeTab
@@ -225,7 +257,8 @@ final class TabStrip: ObservableObject {
 
     /// The hidden tabs in the strip's order: those before the run, then those after it.
     var hiddenTabs: [Hidden] {
-        guard let tabs = model?.tabs, layout.run.upperBound <= tabs.count else { return [] }
+        let tabs = self.tabs
+        guard layout.run.upperBound <= tabs.count else { return [] }
         return tabs[..<layout.run.lowerBound].map { Hidden(tab: $0, before: true) }
             + tabs[layout.run.upperBound...].map { Hidden(tab: $0, before: false) }
     }
@@ -251,6 +284,13 @@ final class TabStrip: ObservableObject {
         if refocus, let tab = model?.activeTab, model?.showsTerminal == true { tab.focus(tab.focused) }
     }
 
+    /// A click while the list is open: outside it, and not on the chip (which toggles), closes it. The click goes on to what it landed on.
+    func mouseDown(_ event: NSEvent) {
+        guard listOpen, let view = event.window?.contentView else { return }
+        let point = CGPoint(x: event.locationInWindow.x, y: view.bounds.height - event.locationInWindow.y)
+        if !listFrame.contains(point), !chipFrame.contains(point) { closeList() }
+    }
+
     func choose(_ index: Int) {
         let hidden = hiddenTabs
         guard hidden.indices.contains(index) else { return }
@@ -259,7 +299,7 @@ final class TabStrip: ObservableObject {
 
     /// The list's keys while it is open, taken before the shortcuts and the panes: ↑ ↓ ↩ esc. Others go on.
     func key(_ event: NSEvent) -> Bool {
-        guard listOpen, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
+        guard listOpen, model?.renamingTab == nil, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
         let count = hiddenTabs.count
         switch Int(event.keyCode) {
         case kVK_Escape: closeList(refocus: true)
@@ -284,7 +324,7 @@ struct TabStripView: View {
 
     var body: some View {
         let layout = strip.layout
-        let tabs = model.tabs
+        let tabs = strip.tabs
         let run = layout.run
         let shown = run.upperBound <= tabs.count ? Array(tabs[run]) : []
         let rows = max(layout.rows.count, 1)
@@ -299,14 +339,16 @@ struct TabStripView: View {
                 VStack(alignment: .leading, spacing: TabFit.gap) {
                     ForEach(Array(layout.rows.enumerated()), id: \.offset) { r, row in
                         HStack(spacing: TabFit.gap) {
-                            ForEach(row, id: \.self) { i in
-                                if tabs.indices.contains(i), run.contains(i), layout.widths.indices.contains(i - run.lowerBound) {
-                                    let t = tabs[i]
-                                    HeaderTab(tab: t, active: t === tab, renaming: model.renamingTab === t, width: layout.widths[i - run.lowerBound],
-                                              onTap: { model.tabDrag.tap { model.activate(t) } },
-                                              onRename: { model.finishRename(t, name: $0) })
-                                        .reorderable(t, in: model, axis: .horizontal, enabled: model.renamingTab !== t)
-                                }
+                            // Keyed by the tab, so a reorder keeps a rename field's text and each tab's hover.
+                            ForEach(row.filter { tabs.indices.contains($0) && run.contains($0) && layout.widths.indices.contains($0 - run.lowerBound) }
+                                .map { (place: $0, tab: tabs[$0]) }, id: \.tab.viewID) { entry in
+                                let t = entry.tab
+                                HeaderTab(tab: t, active: t === tab, renaming: model.renamingTab === t,
+                                          width: layout.widths[entry.place - run.lowerBound],
+                                          onTap: { model.tabDrag.tap { model.activate(t) } },
+                                          onRename: { model.finishRename(t, name: $0) })
+                                    .reorderable(t, among: tabs, in: model, axis: .horizontal, place: strip.fullGap,
+                                                 enabled: model.renamingTab !== t)
                             }
                             if r == layout.rows.count - 1 { buttons }
                         }
@@ -320,6 +362,7 @@ struct TabStripView: View {
         if strip.layout.hidden > 0 {
             HiddenChip(strip: strip, model: model)
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(ClaudePane.space)).minX } action: { chipX = $0 }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { strip.chipFrame = $0 }
         }
         Button { model.showSearch() } label: {
             Image(systemName: "plus")
@@ -390,6 +433,7 @@ struct HiddenTabsList: View {
             .onChange(of: strip.listSelection) { _, now in proxy.scrollTo(now) }
         }
         .frame(width: Self.width, height: height(rows: hidden.count, divided: divided))
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { strip.listFrame = $0 }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
