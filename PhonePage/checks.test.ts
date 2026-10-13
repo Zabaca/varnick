@@ -52,7 +52,7 @@ describe("the caller decision", () => {
   test("a real whois answer (redacted), as the user's own untagged node", () => {
     const text = readFileSync(new URL("./fixtures/whois-own-node.json", import.meta.url), "utf8");
     const node = parseWhois(text)!;
-    expect(node).toEqual({ stableID: "nEXAMPLE1CNTRL", label: "mac-mini", tagged: false, sharee: false, userID: FIXTURE_USER });
+    expect(node).toEqual({ stableID: "nEXAMPLE1CNTRL", label: "mac-mini", dnsName: "mac-mini.example.ts.net", tagged: false, sharee: false, userID: FIXTURE_USER });
     expect(decideCaller(node, FIXTURE_USER, [{ id: devices[0].id, node: node.stableID, name: "Mac mini" }]).kind).toBe("device");
     expect(decideCaller(node, OTHER, [{ id: devices[0].id, node: node.stableID, name: "Mac mini" }]).kind).toBe("unlisted");
     // The same answer with the fields that mark it as not the user's own.
