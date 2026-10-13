@@ -204,7 +204,6 @@ struct TabRecord: Codable, Identifiable, Equatable {
     /// The machine its Claude panes run on; nil is this Mac. A tab is one machine's (`SavedTab.splitByMachine`).
     var host: String? { claudeRecords.first?.host }
 
-
     /// Worth listing: a Claude session of it can be resumed.
     var resumable: Bool { claudeRecords.contains(where: \.resumable) }
 
@@ -216,14 +215,14 @@ struct TabRecord: Codable, Identifiable, Equatable {
         pane.tab = nil
         var history: [HeldConversation] = []
         for record in newest.reversed() {
-            history = TabHistory.holding(history, record.conversationID, title: record.title) ?? history
+            history = TabHistory.holding(history, record.conversationID, title: record.title, folder: record.directory) ?? history
         }
         self.init(id: id, layout: .leaf(pane), focused: pane.id, lastUsed: pane.lastUsed, history: history)
     }
 
     /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
     func holds(_ conversation: String) -> Bool {
-        TabHistory.holds(conversation, history: history, panes: claudeRecords.filter { $0.host == nil })
+        TabHistory.holds(conversation, history: history, panes: claudeRecords)
     }
 
     /// The record of the pane it focused if that is a Claude pane, else its first Claude pane: what the card is named after.
@@ -235,6 +234,32 @@ struct TabRecord: Codable, Identifiable, Equatable {
     /// The tab as a saved tab, its panes' marks gone.
     var saved: SessionStore.SavedTab {
         SessionStore.SavedTab(id: id, layout: layout, focused: focused, name: name, showsFiles: showsFiles, history: history)
+    }
+}
+
+/// A closed tab a peer's `resume` reopened on this Mac with only its Claude panes (`LauncherModel.hostResumeConversation`), kept whole with the
+/// pane each resumed session was resumed for, so the tab closes into Recent with its terminals and splits (`PaneLayout.restoring`).
+struct ReopenedTab: Codable, Equatable {
+    var original: TabRecord
+    /// Each pane of the open tab that was resumed for a pane of `original`, by id.
+    var panes: [UUID: UUID] = [:]
+
+    /// `pane` was resumed on `conversation`: it stands for the pane of `original` on that conversation that nothing stands for yet.
+    mutating func resumed(_ pane: UUID, on conversation: String) {
+        let taken = Set(panes.values)
+        let id = conversation.lowercased()
+        if let place = original.claudeRecords.first(where: { $0.conversationID.lowercased() == id && !taken.contains($0.id) }) {
+            panes[pane] = place.id
+        }
+    }
+}
+
+extension UUID {
+    /// Another id made from this one, always the same.
+    var next: UUID {
+        var bytes = uuid
+        bytes.15 = bytes.15 &+ 1
+        return UUID(uuid: bytes)
     }
 }
 
@@ -277,12 +302,12 @@ struct SessionStore {
         var done: Date?
         /// The conversations it has held, newest first (`TabHistory`). Optional so older files load.
         var history: [HeldConversation]?
-        /// The closed tab a peer's `resume` reopened here with only its Claude panes (`LauncherModel.hostResumeConversation`), kept whole so
-        /// the tab closes into Recent with its terminals and splits (`PaneLayout.restoring`). Optional so older files load.
-        var reopenedFrom: TabRecord?
+        /// The closed tab a peer's `resume` reopened here with only its Claude panes, kept so the tab closes into Recent with its terminals and
+        /// splits (`ReopenedTab`). Optional so older files load.
+        var reopenedFrom: ReopenedTab?
 
         init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil,
-             history: [HeldConversation]? = nil, reopenedFrom: TabRecord? = nil) {
+             history: [HeldConversation]? = nil, reopenedFrom: ReopenedTab? = nil) {
             self.id = id
             self.layout = layout
             self.focused = focused
@@ -386,21 +411,28 @@ struct SessionStore {
         /// What `recent` is saved as: Recent's tabs flattened to sessions with their tab set, a session per Claude pane and per conversation
         /// of the history, so an older build still lists them and a later one migrates them again (`recentList`). At most `flatRecentLimit`.
         static func flatRecent(_ tabs: [TabRecord]) -> [SessionRecord] {
-            var flat: [SessionRecord] = []
-            for tab in tabs where tab.host == nil {
-                var held = Set<String>()
-                for var record in tab.claudeRecords {
-                    record.tab = tab.id
-                    held.insert(record.conversationID.lowercased())
-                    flat.append(record)
-                }
-                // A conversation of the history has no pane: a record of its own, made from the id so it is the same at every save and older
-                // than the panes', which is what makes the newest the pane when the group is migrated.
+            // Every tab's panes first and the past conversations after, so the cap (and an older build's own, 20) never cuts a tab for
+            // another's history.
+            let own = tabs.filter { $0.host == nil }
+            var flat = own.flatMap { tab in tab.claudeRecords.map { record -> SessionRecord in
+                var record = record
+                record.tab = tab.id
+                return record
+            } }
+            var used = Set(flat.map(\.id))
+            for tab in own {
+                let held = Set(tab.claudeRecords.map { $0.conversationID.lowercased() })
+                // A past conversation has no pane: a record of its own, with an id made from its conversation's so it is the same at every
+                // save (and not another's: a pane /clear left on a new conversation has the id of the one it left), and older than the
+                // panes', which is what makes the newest the pane when the group is migrated.
                 let oldest = tab.claudeRecords.map(\.lastUsed).min() ?? tab.lastUsed
                 for (offset, past) in (tab.history ?? []).filter({ !held.contains($0.conversation) }).enumerated() {
-                    guard let id = UUID(uuidString: past.conversation), let lead = tab.leading else { continue }
+                    guard var id = UUID(uuidString: past.conversation), let lead = tab.leading else { continue }
+                    while !used.insert(id).inserted { id = id.next }
                     let when = oldest.addingTimeInterval(-TimeInterval(offset + 1))
-                    var record = SessionRecord(id: id, prompt: "", title: past.title ?? "", directory: lead.directory, startedAt: when, lastUsed: when)
+                    var record = SessionRecord(id: id, prompt: "", title: past.title ?? "", directory: past.folder ?? lead.directory,
+                                               startedAt: when, lastUsed: when)
+                    record.conversation = past.conversation
                     record.agent = lead.agent
                     record.tab = tab.id
                     flat.append(record)
