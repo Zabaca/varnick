@@ -179,12 +179,14 @@ don't want your bullets sent to Anthropic, leave Panel access off.
 A session can also change your Outline (`outline_act`) without asking: add bullets, edit a bullet's text or note, complete,
 delete, move, indent, outdent, collapse or mirror one. Each change goes through the Outline's own edits and is one step of
 your undo (⌘Z), and an edit to the bullet you are typing in goes in as if typed, your caret kept at its place in your text. Varnick's log holds the action and a count
-of lines, never a bullet's text. If you don't want a session to change your Outline, leave Panel access off.
+of lines, never a bullet's text. If you don't want a session to change your Outline, leave Panel access off. With
+Settings › Experimental › Outline off, `outline_act` is refused too, even for an edit already under way.
 
 A session can also change what the panel shows (`show`): the search, the board, the Problems tab, the Outline, a pane's tab, or a
 `!` command (`!transcript`, `!kanban`, `!problems`, `!outline`), the same changes your keys make. It never shows, hides or pins the
 panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is
-refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel.
+refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel. Showing the
+Outline (`view: outline` or `!outline`) is refused while the Outline switch in Settings › Experimental is off.
 
 A session can also press keys in the panel (`keys`): text and key combos for the search, the session board or your Outline, sent inside Varnick
 to the panel's own key handling, as your keys go. Nothing is sent to another app and no permission is used. It works only while

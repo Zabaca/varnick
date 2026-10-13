@@ -182,9 +182,9 @@ The Mark tab done and Restart session keys are taken and do nothing, so no key r
 
 ## Added later (2026-10-13)
 
-The user asked: "For resources can that also be a tab in Settings." Settings gains a **Resources** tab that shows the same table, through the same `ResourcesTable` and a model of its own (`LauncherModel.settingsResources`, so its rows, selection and open tabs never reach the panel's view). ⌘⇧M, `!resources` and `!memory` stay as they are.
+The user asked: "For resources can that also be a tab in Settings." Settings gains a **Resources** tab that shows the same table. ⌘⇧M, `!resources` and `!memory` stay as they are.
 
-- **Measuring** follows the tab: every 3 seconds while it shows in a visible panel, off the main actor. It stops, and clears, when Settings closes or another Settings tab is picked, and stops when the panel hides.
-- **Keys** work only while that tab shows: ↑ and ↓, → and ←, ↩ and the End session key (⌘W) are taken by it, and no key reaches the tab underneath. esc is Settings' own and closes Settings.
-- **Show and Close** go through the same paths. ↩ on a tab shows it and so closes Settings. A pane that must ask first brings its tab up as before, which here also closes Settings.
-- **Both places:** ⌘⇧M while Settings shows (this tab or any other) closes Settings and opens the panel's view, as ⌘⇧B and ⌘⇧Y do. The two views are never on screen together, and only one of them measures.
+- It measures only while that tab shows, and stops when Settings closes, another tab is picked or the panel hides.
+- The view's keys work only while the tab shows, and none reaches the tab underneath. esc closes Settings.
+- Showing a tab, or a pane that must ask before it closes, brings the tab up and closes Settings.
+- ⌘⇧M while Settings shows closes Settings and opens the view, so the two are never on screen together.

@@ -369,8 +369,9 @@ struct OutlinePanelView: PanelAccessView {
         guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
         let outline = model.outline
         await outline.loadForSession()
-        // The load may have waited: the switch can have been turned off meanwhile.
+        // The load may have waited: either switch can have been turned off meanwhile.
         guard Settings.shared.panelAccess else { throw PanelRefusal.off }
+        guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
         if let problem = outline.load.problem {
             throw PanelRefusal.outlineUnavailable("The outline isn't available: \(problem)." + (outline.load == .loading
                 ? " Try again." : " Varnick never writes over it; the user can deal with it in the Outline."))
@@ -546,7 +547,7 @@ struct OutlinePanelView: PanelAccessView {
         // Asked again right before the edit, after its waits: a session told "controlled" or cancelled must not have changed the Outline.
         let done = await outline.performForSession(edit, fresh: { tree in
             field.flatMap { ids.outlineStaleness(of: $0.field, at: $0.path, in: tree, caller: caller) }
-        }, allowed: { !Task.isCancelled && ids.mayAct(caller: caller) })
+        }, allowed: { !Task.isCancelled && ids.mayAct(caller: caller) && Settings.shared.outlineOn })
         if let refusal = done.refusal {
             if refusal == .gone { throw PanelRefusal.gone }
             throw PanelRefusal.refused(refusal.reason)

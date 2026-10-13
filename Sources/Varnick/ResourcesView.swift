@@ -38,10 +38,13 @@ struct ResourcesHints: View {
     }
 }
 
-/// The report as a table, or "Measuring…" until the first reading is back. In Settings it sits in the page's own scroll view (`scrolls` false).
+/// The report as a table, or "Measuring…" until the first reading is back. In Settings it sits in the page's own scroll view (`scrolls` false),
+/// whose reader brings the selected tab into view (`SettingsView`), since a reader inside the scroll view would not scroll it.
 struct ResourcesTable: View {
     @ObservedObject var resources: Resources
     let scrolls: Bool
+    /// The height of "Measuring…" in Settings, where nothing else gives the page a size yet.
+    private static let measuringHeight: CGFloat = 120
 
     var body: some View {
         if let report = resources.report {
@@ -50,7 +53,7 @@ struct ResourcesTable: View {
             Text("Measuring…")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: scrolls ? nil : 120, maxHeight: scrolls ? .infinity : nil)
+                .frame(maxWidth: .infinity, minHeight: scrolls ? nil : Self.measuringHeight, maxHeight: scrolls ? .infinity : nil)
         }
     }
 }
@@ -62,13 +65,15 @@ private struct ResourcesBody: View {
     let scrolls: Bool
 
     var body: some View {
-        ScrollViewReader { proxy in
-            Group {
-                if scrolls { ScrollView { content } } else { content }
+        if scrolls {
+            ScrollViewReader { proxy in
+                ScrollView { content }
+                    .onChange(of: resources.selection) { _, id in
+                        if let id { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id) } }
+                    }
             }
-            .onChange(of: resources.selection) { _, id in
-                if let id { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id) } }
-            }
+        } else {
+            content
         }
     }
 

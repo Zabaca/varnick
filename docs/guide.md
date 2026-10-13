@@ -336,8 +336,9 @@ for them, and a headless host decides with `scripts/install-peer.sh <user@host> 
 that has neither runs without). `Varnick --problems` prints the board's columns whatever the switch says.
 
 **Outline** is your bullets, kept in a file on this Mac. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
-the panel's content. Off, which is how it starts, the shortcut and the command do nothing, Settings › Shortcuts does not list
-the Outline, and Claude sessions' Outline tools are refused. If it is showing when you turn it off, the panel goes back to
+the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts
+does not list the Outline, and Claude sessions' Outline tools stay listed but refuse. Its shortcut keeps its binding while hidden,
+and binding ⌘⇧Y to another action leaves it alone. If it is showing when you turn it off, the panel goes back to
 what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
 
 ## TypeSafe

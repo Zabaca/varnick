@@ -208,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // And Resources: it too takes the End session key, so ⌘W closes the selected tab and never reaches the tab underneath.
             if self.model.showingResources, !self.model.showingSettings, self.model.resources.key(event) { return nil }
             // Settings › Resources takes the same keys, but only while that tab shows: the tab underneath gets none of them.
-            if self.model.showingSettings, self.model.settingsResources.isShown, self.model.settingsResources.key(event) { return nil }
+            if self.model.settingsResources.isShown, self.model.settingsResources.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
             return self.perform(action) ? nil : event
         }

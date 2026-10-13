@@ -397,7 +397,7 @@ The decision gets ADR 0030, written by ticket 01: the outline is one JSON file t
 
 - **No test target.** Verification is `make build`, then checking by hand after the user restarts Varnick.
 - **`Varnick --outline-check <file> [<out>]`,** a check like `--embed-check`.
-  - It is a command-line mode among the others, and exits before anything of the app starts. It touches only the paths it is given: never the support folder, `Settings.shared` or the database (where-it-breaks, The rename).
+  - It is a command-line mode among the others, and exits before anything of the app starts. It touches only the paths it is given: never the support folder, the app's settings or the database (where-it-breaks, The rename).
   - It reads a file through the one reader and prints whether it loads, or why not; its version; how many bullets, placements and mirrors it has; and what the rules dropped or recovered.
   - With `<out>`, it writes the tree there through the one writer.
   - It prints no text of any bullet.
@@ -493,10 +493,4 @@ Tickets 08 and 09 build them.
 
 ## Added later (2026-10-13)
 
-The user asked for the Outline to move into Settings › Experimental, the way the Problems board is. A switch there (`Settings.outlineOn`, **off by default for every install**, as the Problems board's is) gates everything that reaches the Outline:
-- ⌘⇧Y does nothing and its row leaves Settings › Shortcuts;
-- `!outline` and `!wf` are not listed or matched;
-- Panel access refuses `outline_read`, `outline_act`, `show` with `view: outline` and `command: outline`, with "The Outline is off: the user can turn it on in Settings › Experimental";
-- if the Outline is showing when the switch turns off, it closes.
-
-The switch never reads, writes, moves or deletes `outline.json` (ADR 0030): off, the file is not loaded at all, and turning it on shows the same Outline. The tools stay in the MCP server's list, since the server runs apart from the app and cannot see the switch, as with the Problems tab; they refuse at the call.
+The user asked for the Outline to move into Settings › Experimental, as the Problems board is. It is off by default for every install. Off, its shortcut, `!outline` and `!wf` do nothing, and Panel access refuses its tools and showing it. If it is showing when the switch turns off, it closes. The switch never reads, changes or removes the Outline's file (ADR 0030), so turning it on again shows the same Outline.
