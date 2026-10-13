@@ -186,7 +186,7 @@ struct LauncherView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(model.tabs.enumerated()), id: \.element.viewID) { i, t in
                         TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record),
-                               sessions: model.tabSummaries[t.viewID] ?? [])
+                               sessions: model.tabSummaries[t.viewID] ?? [], mark: model.tabMarks[t.viewID])
                             .onTapGesture { model.tabDrag.tap { model.activate(t) } }
                             .reorderable(t, in: model, axis: .vertical)
                     }
@@ -860,10 +860,12 @@ struct TabRow: View {
     let pills: SessionPills
     /// What it says of its Claude sessions when it has several (`TabSummary`).
     let sessions: [String]
+    /// What a session of the tab waits on the user for, in the board's orange (`LauncherModel.tabMarks`).
+    var mark: String? = nil
 
     var body: some View {
         SessionRow(session: tab.focused, name: tab.name, panes: tab.sessions.count, sessions: sessions,
-                   otherPanes: tab.sessions.count - tab.claudeSessions.count, selected: selected, pills: pills)
+                   otherPanes: tab.sessions.count - tab.claudeSessions.count, selected: selected, pills: pills, mark: mark)
     }
 }
 
@@ -876,6 +878,8 @@ struct SessionRow: View {
     var otherPanes = 0
     let selected: Bool
     let pills: SessionPills
+    /// A tab's session waits on the user: what for, as the board's card says it.
+    var mark: String? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -885,6 +889,7 @@ struct SessionRow: View {
                 SessionDetailLine(pills: pills, folder: session.record.folderName, host: session.hostName, rest: rest)
             }
             Spacer()
+            if let mark { OrangeMark(text: mark) }
             if selected { KeyHint(label: "Open", keys: ["↩"]).font(.system(size: 11)) }
         }
         .padding(.horizontal, 10)
