@@ -1673,8 +1673,10 @@ final class LauncherModel: ObservableObject {
     /// (`openPeerSession`); else the Mac's Varnick is asked to start `claude --resume` on it, in a
     /// pane here that shows what it answers (the card of any session being started there), and the
     /// user is in control. Always the user's own action: `ClaudeSession.resumesOnPeer` is what tells
-    /// the pane to ask for it, and nothing that runs by itself sets it. With `into`, the pane joins that tab instead of opening one.
-    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?, into existing: ClaudeTab? = nil) {
+    /// the pane to ask for it, and nothing that runs by itself sets it. With `into`, the pane joins that tab instead of opening one;
+    /// `asTab` gives the tab it opens, and the host's, that id and name.
+    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?, into existing: ClaudeTab? = nil,
+                              asTab: (id: UUID, name: String?)? = nil) {
         for tab in tabs {
             if let pane = tab.sessions.first(where: { $0.isClaude && $0.record.conversationID == conversation }) {
                 activate(tab)
@@ -1695,9 +1697,12 @@ final class LauncherModel: ObservableObject {
         recent.removeAll { $0.conversationID == conversation }
         let session = makeSession(record, resuming: true, query: "")
         session.resumesOnPeer = true
+        session.resumeTab = asTab
         if let existing, let last = existing.sessions.last {
             existing.add(session, beside: last, .sideBySide)
             saveSessions()
+        } else if let asTab {
+            addTab(PaneNode(session: session), name: asTab.name, id: asTab.id)
         } else {
             addTab(PaneNode(session: session), awaitsHostTab: true)
         }
@@ -2416,18 +2421,19 @@ final class LauncherModel: ObservableObject {
         saveSessions()
     }
 
-    /// A paired Mac's tab: open there, its listed sessions open in one tab here; closed there, each Claude session is resumed there into
-    /// one tab here, which keeps the first host tab's id. The layout is this Mac's own until option 03.
+    /// A paired Mac's tab: open there, its listed sessions open in one tab here; closed there, each session is resumed into a tab of this id
+    /// and name there and here (the `resume` carries them). The layout is this Mac's own until option 03.
     private func reopenOnPeer(_ record: TabRecord, on host: String) {
         let listed = Set(listedSessions(on: host).filter { $0.tabID == record.id }.map(\.session))
         if !listed.isEmpty {
             for row in peerOpenRows where Zmx.sameID(row.peer.id, host) && listed.contains(row.info.session) { openPeerSession(row) }
             return
         }
-        var tab: ClaudeTab?
+        var tab = tabs.first { $0.id == record.id }
         for held in record.claudeRecords {
             let before = tabs.count
-            resumeOnPeer(conversation: held.conversationID, on: host, folder: held.directory, title: held.title, agent: held.agent, into: tab)
+            resumeOnPeer(conversation: held.conversationID, on: host, folder: held.directory, title: held.title, agent: held.agent, into: tab,
+                         asTab: (record.id, record.name))
             if tab == nil, tabs.count > before { tab = tabs.last }
         }
     }
@@ -2716,8 +2722,19 @@ final class LauncherModel: ObservableObject {
         recent.removeAll { $0.conversationID == conversation }
         let session = makeSession(record, resuming: true, query: "")
         session.startedFor = peer
-        let tab = makeTab(PaneNode(session: session), name: store.tabName(ofSession: conversation))
-        tabs.append(tab)
+        let named = request.tab.flatMap(UUID.init(uuidString:))
+        let tab: ClaudeTab
+        if let named, let open = tabs.first(where: { $0.id == named && $0.host == nil }), let last = open.sessions.last {
+            // The tab the asker reopened is open here already (an earlier session of it joined, or it never closed): the session joins it.
+            open.add(session, beside: last, .sideBySide)
+            tab = open
+        } else {
+            // Else this session makes the tab, under the asker's id and name, unless some tab here has the id already (a peer's).
+            let id = named.flatMap { id in tabs.contains { $0.id == id } ? nil : id }
+            if let id { ended.removeAll { $0.id == id && $0.host == nil } }
+            tab = makeTab(PaneNode(session: session), id: id, name: request.tabName ?? store.tabName(ofSession: conversation))
+            tabs.append(tab)
+        }
         saveSessions()
         session.start()
         return await replyOnceRunning(session, in: folder, tab: tab)

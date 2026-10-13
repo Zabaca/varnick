@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 21
+    public static let version = 22
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -67,7 +67,7 @@ public enum PeerOp: String, Codable, Sendable {
     /// who answers: ADR 0032, which carries on ADR 0028's rules by tab.
     case done
     /// Start `claude --resume` on a conversation that ended there, because the user picked it in
-    /// Recent or search. Its running Varnick does it. Never sent by anything that runs by itself:
+    /// Recent or search, or reopened a tab that held it (`tab`, `tabName`). Its running Varnick does it. Never sent by anything that runs by itself:
     /// `start` with `resume` is the automatic one, which refuses an ended session.
     case resume
     /// The peers the receiving host lists, by name and address and nothing else, for the Phone page's links to the other hosts'
@@ -577,8 +577,11 @@ public struct PeerRequest: Codable, Sendable {
     public var start: PeerStart?
     /// A zmx session name, `varnick-<uuid>`: attach, end, screen and watch.
     public var session: String?
-    /// Done: the host's tab to mark, by its id (ADR 0032).
+    /// Done: the host's tab to mark, by its id (ADR 0032). Resume: the tab to put the session in, so the sessions of a tab reopened from
+    /// Completed land in one (protocol 22). Nil puts it in a tab of its own.
     public var tab: String?
+    /// Resume: the name of the tab (`tab`), given to it if the host creates it.
+    public var tabName: String?
     /// Done: false takes the mark off. Nil or true marks.
     public var mark: Bool?
     /// Attach: relabel control to `by` and detach every client first.

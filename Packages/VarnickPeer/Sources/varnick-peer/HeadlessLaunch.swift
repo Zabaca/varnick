@@ -97,8 +97,8 @@ extension HeadlessPeerHost {
         }
         var reply = PeerReply.success()
         reply.folder = folder
-        // Each record is a tab of one pane, under the record's id (ADR 0032).
-        reply.tab = record.id
+        // A record is a tab under its id, unless a `resume` put it in another (ADR 0032).
+        reply.tab = record.tabID
         return reply
     }
 
