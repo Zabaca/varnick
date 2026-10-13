@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 23
+    public static let version = 24
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -51,9 +51,9 @@ public enum PeerOp: String, Codable, Sendable {
     /// second, until the session ends, Take over or Release detaches the reader, or the channel closes.
     /// The relay answers it from zmx alone.
     case watch
-    /// The Claude sessions open on the receiving Mac that run there, for the session list. The
-    /// relay answers it from saved tabs and zmx alone.
-    case sessions
+    /// The tabs open on the receiving host, whole (protocol 24): each one's layout and name, who is in control of it, its mark and what
+    /// each of its panes shows. The relay answers it from the saved tabs and zmx alone. It replaces `sessions`, which listed Claude panes.
+    case tabs
     /// The session rows the receiving Mac's history sync has read, for the Mac that searches them
     /// (`since` limits them to those changed), and the tabs that hold their conversations, all of them every time. The relay answers it
     /// from the search database alone.
@@ -67,6 +67,17 @@ public enum PeerOp: String, Codable, Sendable {
     /// Marks a tab done on its host (`PeerRequest.tab`), or with `mark` false takes the mark off, without ending anything. Who may ask and
     /// who answers: ADR 0032, which carries on ADR 0028's rules by tab.
     case done
+    /// Take over a tab (`PeerRequest.tab`): relabel every Claude and terminal pane of it for the asker, then detach their clients, in that
+    /// order. The asker then attaches each pane, which finds the label naming it. The relay answers it from zmx and the host's tabs alone.
+    case take
+    /// Move a tab's dividers or rename it (`tab`, `layout`, `tabName`) when the host holds the same panes, re-placed or resized. Only
+    /// the machine in control may ask; a layout that adds or removes a pane is refused.
+    case arrange
+    /// A file pane's text (`tab`, `pane`), read by the host and capped in size. The relay answers it from the saved tabs.
+    case file
+    /// Reopen a tab that closed on the host (`tab`) whole, in its layout: its Claude panes resume, its terminals start fresh, all labelled
+    /// for the asker. Its running Varnick does it.
+    case reopen
     /// Start `claude --resume` on a conversation that ended there, because the user picked it in Recent or search, or reopened a
     /// tab that held it (`tab`, `tabName`). Its running Varnick does it. Never sent by anything that runs by itself: `start` with
     /// `resume` is the automatic one, which refuses an ended session.
@@ -253,15 +264,22 @@ public struct PeerStart: Codable, Equatable, Sendable {
     /// restarted. Only into the pane the host restored for it, which resumes the conversation it
     /// follows itself (`PeerResume`). `id` is still the zmx session's name.
     public var resume: Bool?
+    /// What the pane is: `claude` (nil too) or `terminal`, the account's login shell in the folder. A terminal has no prompt, agent or turn.
+    public var kind: String?
 
-    public init(id: String, folder: String? = nil, prompt: String, agent: String? = nil, skipPermissions: Bool? = nil, resume: Bool? = nil) {
+    public init(id: String, folder: String? = nil, prompt: String, agent: String? = nil, skipPermissions: Bool? = nil, resume: Bool? = nil,
+                kind: String? = nil) {
         self.id = id
         self.folder = folder
         self.prompt = prompt
         self.agent = agent
         self.skipPermissions = skipPermissions
         self.resume = resume
+        self.kind = kind
     }
+
+    public static let terminalKind = "terminal"
+    public var isTerminal: Bool { kind == Self.terminalKind }
 }
 
 /// What a host did with a `start` that has `resume`. Absent means a new session was started.
@@ -606,9 +624,16 @@ public struct PeerRequest: Codable, Sendable {
     /// A zmx session name, `varnick-<uuid>`: attach, end, screen and watch.
     public var session: String?
     /// Done: the host's tab to mark, by its id (ADR 0032). Resume: the tab to put the session in, so the sessions of a tab reopened from
-    /// Completed land in one (protocol 22). Nil puts it in a tab of its own.
+    /// Completed land in one (protocol 22). Nil puts it in a tab of its own. Start: the tab to split a pane of (with `pane` and `axis`),
+    /// which the asker must be in control of; nil makes a tab. Take, arrange, file, reopen and end (the whole tab): the tab acted on.
     public var tab: String?
-    /// Resume: the name of the tab (`tab`), given to it if the host creates it.
+    /// Start: the pane of `tab` to split. File: the file pane to read. A pane's id, a lowercase uuid.
+    public var pane: String?
+    /// Start: `sideBySide` or `stacked`, how the new pane is placed beside `pane`.
+    public var axis: String?
+    /// Arrange: the tab's layout as the asker has it.
+    public var layout: PeerLayout?
+    /// Resume: the name of the tab (`tab`), given to it if the host creates it. Arrange: the tab's name, nil or empty clears it.
     public var tabName: String?
     /// Done: false takes the mark off. Nil or true marks.
     public var mark: Bool?
@@ -667,6 +692,10 @@ public struct PeerReply: Codable, Sendable {
     /// Screen: the session's last screen.
     public var screen: PeerScreen?
     public var open: [PeerOpenSession]?
+    /// Tabs: the host's open tabs.
+    public var tabs: [PeerTab]?
+    /// File: the file's text.
+    public var text: String?
     /// Rows: the sessions that changed, the ids of every session the host has now (so a peer drops
     /// the ones that are gone), and the stamp to ask `since` next time.
     public var rows: [PeerSessionRow]?
@@ -714,7 +743,8 @@ public struct PeerReply: Codable, Sendable {
                 descriptions: [PeerDescriptionRow]? = nil, cursor: PeerPagesCursor? = nil, more: Bool? = nil,
                 pageCount: Int64? = nil, termCount: Int64? = nil, recent: [PeerRecentTab]? = nil,
                 hosts: [PeerHostEntry]? = nil, released: Bool? = nil, unlisted: Bool? = nil,
-                upgrade: PeerUpgradeReport? = nil, restart: PeerRestartReport? = nil, rowTabs: [PeerRowTab]? = nil) {
+                upgrade: PeerUpgradeReport? = nil, restart: PeerRestartReport? = nil, rowTabs: [PeerRowTab]? = nil, tabs: [PeerTab]? = nil,
+                text: String? = nil) {
         self.v = v
         self.ok = ok
         self.error = error
@@ -728,6 +758,8 @@ public struct PeerReply: Codable, Sendable {
         self.status = status
         self.screen = screen
         self.open = open
+        self.tabs = tabs
+        self.text = text
         self.rows = rows
         self.ids = ids
         self.stamp = stamp

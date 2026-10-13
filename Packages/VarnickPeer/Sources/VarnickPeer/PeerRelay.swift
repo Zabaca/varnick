@@ -16,16 +16,19 @@ public protocol PeerHost {
     /// Whether the host lists `id` as a device (`DeviceList`), read from the saved file and never written. An
     /// unreadable file lists nobody.
     func listsDevice(_ id: String?) -> Bool
-    /// Who the host can name as the one in control of a session, for the `controlName` of `status` and `sessions`.
+    /// Who the host can name as the one in control of a session, for the `controlName` of `status` and `tabs`.
     func controllerNames() -> PeerControllerNames
     /// The answer to a hello, which the relay has found to speak this version.
     func hello(line: String) -> PeerReply
-    /// `start`, `resume`, `end`, `done`, `projects` and `agents`, which the host's app does.
+    /// `start`, `resume`, `end`, `done`, `arrange`, `reopen`, `projects` and `agents`, which the host's app does.
     func forward(_ op: PeerOp, line: String) -> PeerForwarded
     /// Fills in what the host's saved state says about running sessions (`status`).
     func follow(_ statuses: inout [String: PeerSessionStatus])
-    /// `sessions`: the Claude sessions open on the host that run there.
-    func openSessions() -> PeerReply
+    /// `tabs`: the tabs open on the host, whole (`PeerTab`), with whether each pane's zmx session runs and who controls it. The relay names
+    /// the controllers and hides what a device may not see.
+    func tabs() -> PeerReply
+    /// `file`: the text of a file pane of a tab, read by the host, or why it can't be (a path outside the tab's folders, too large).
+    func file(tab: String?, pane: String?) -> PeerReply
     func recent() -> PeerReply
     /// `hosts`: the peers the host lists, by name and address, read from the saved list.
     func hosts() -> [PeerHostEntry]
@@ -52,8 +55,8 @@ public enum PeerForwarded {
 /// replaces this process, and `watch`, which goes on writing frames after its reply until its channel or
 /// the session ends.
 ///
-/// What it answers alone, whatever the host: `screen`, `watch` and `attach`, which only need zmx, and the
-/// zmx half of `status`. The rest goes to the host (`PeerHost`).
+/// What it answers alone, whatever the host: `screen`, `watch`, `attach` and `take`, which only need zmx (and, for `take`, the host's tabs),
+/// and the zmx half of `status`. The rest goes to the host (`PeerHost`).
 public enum PeerRelay {
     public static func run(_ argument: String, host: PeerHost) -> Int32 {
         guard let data = Data(base64Encoded: argument.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -73,14 +76,14 @@ public enum PeerRelay {
         var device: String?
         if op != .hello {
             let peer = host.lists(head.by)
-            let macsOnly = op == .rows || op == .pages || op == .done || PeerProtocol.answersAnyVersion(op)
+            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || PeerProtocol.answersAnyVersion(op)
             if !peer, !macsOnly, host.listsDevice(head.by) { device = head.by }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
         }
         switch op {
         case .hello:
             return finish(host.hello(line: line))
-        case .start, .resume, .end, .done, .projects, .agents:
+        case .start, .resume, .end, .done, .arrange, .reopen, .projects, .agents:
             return forwarded(host.forward(op, line: line), host: host, for: device)
         case .status:
             return status(PeerJSON.decode(PeerRequest.self, from: line), host: host, for: device)
@@ -88,8 +91,13 @@ public enum PeerRelay {
             return screen(PeerJSON.decode(PeerRequest.self, from: line), host: host)
         case .watch:
             return watch(PeerJSON.decode(PeerRequest.self, from: line), host: host)
-        case .sessions:
-            return finish(named(host.openSessions(), host: host, for: device))
+        case .tabs:
+            return finish(named(host.tabs(), host: host, for: device))
+        case .take:
+            return take(PeerJSON.decode(PeerRequest.self, from: line), host: host)
+        case .file:
+            let request = PeerJSON.decode(PeerRequest.self, from: line)
+            return finish(host.file(tab: request?.tab, pane: request?.pane))
         case .rows:
             return finish(host.rows(since: PeerJSON.decode(PeerRequest.self, from: line)?.since))
         case .pages:
@@ -161,22 +169,45 @@ public enum PeerRelay {
         return finish(reply)
     }
 
-    /// `sessions` with each session's controller named, so a Mac with a pane for it can say "Phone".
+    /// `tabs` with each controller named, so a Mac with a pane for a tab can say "Phone", and a device told no more than it may be.
     private static func named(_ reply: PeerReply, host: PeerHost, for device: String?) -> PeerReply {
-        guard reply.ok, let open = reply.open else { return reply }
+        guard reply.ok, let tabs = reply.tabs else { return reply }
         let names = host.controllerNames()
         var reply = reply
-        reply.open = open.map { session in
-            var session = session
-            session.controlName = names.name(of: session.control)
-            if let device {
-                if !Zmx.sameID(session.control, device) { session.control = nil }
-                session.work = nil
-                session.doneAge = nil
+        reply.tabs = tabs.map { tab in
+            var tab = tab
+            tab.panes = tab.panes.map { pane in
+                var pane = pane
+                if pane.running == true { pane.controlName = names.name(of: pane.control) }
+                return pane
             }
-            return session
+            tab.controlName = tab.runningPanes.isEmpty ? nil : names.name(of: tab.control)
+            return device.map { tab.hiding(from: $0) } ?? tab
         }
         return reply
+    }
+
+    /// Takes a tab for the asker: every Claude and terminal pane of it that runs is relabelled first, then every client is detached, so a
+    /// client that sees its exit finds each session labelled for someone else. The asker then attaches each pane without `take`. A pane that
+    /// zmx wouldn't relabel is told in the failure; the rest are taken all the same. Answered from zmx and the host's tabs alone.
+    private static func take(_ request: PeerRequest?, host: PeerHost) -> Int32 {
+        guard let request, let tab = request.tab, UUID(uuidString: tab) != nil else { return finish(.failure("Not a Varnick tab id")) }
+        guard Zmx.isAvailable else { return finish(.failure("zmx isn't installed next to Varnick on \(host.name)")) }
+        // Peer ids are UUIDs; anything else would be a label zmx reads differently.
+        guard let by = request.by, UUID(uuidString: by) != nil else { return finish(.failure("The request needs the Mac's id")) }
+        let listing = host.tabs()
+        guard listing.ok else { return finish(listing) }
+        guard let found = listing.tabs?.first(where: { Zmx.sameID($0.tab, tab) }) else {
+            return finish(.failure("That tab isn't open on \(host.name)"))
+        }
+        let sessions = found.runningPanes.compactMap(\.session)
+        guard !sessions.isEmpty else { return finish(.failure("That tab has no running Claude or terminal pane to take: only \(host.name) changes it")) }
+        let refused = sessions.filter { !Zmx.setControl($0, to: by) }
+        for session in sessions where !refused.contains(session) { Zmx.detachClients(of: session) }
+        guard refused.isEmpty else {
+            return finish(.failure("zmx wouldn't relabel \(refused.count) of the tab's \(sessions.count) panes"))
+        }
+        return finish(.success())
     }
 
     /// `recent` without the marks, for a device: the page has no board.

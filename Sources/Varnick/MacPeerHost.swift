@@ -88,13 +88,32 @@ struct MacPeerHost: PeerHost {
         PeerList.saved().map { PeerHostEntry(name: $0.name, address: $0.address) }
     }
 
-    func openSessions() -> PeerReply {
+    func tabs() -> PeerReply {
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         guard let state = SessionStore().load() else { return .failure("The saved tabs on \(name) couldn't be read") }
-        let names = Set(PeerOpenSessions.candidates(in: state).map { Zmx.sessionName($0.id) })
+        let names = Set(PeerOpenTabs.hosted(in: state).flatMap { $0.layout.records }.filter { $0.isClaude || $0.isShell }.map { Zmx.sessionName($0.id) })
         var reply = PeerReply.success()
-        reply.open = PeerOpenSessions.list(in: state, statuses: Zmx.statuses(of: names.sorted()))
+        reply.tabs = PeerOpenTabs.list(in: state, statuses: Zmx.statuses(of: names.sorted()))
         return reply
+    }
+
+    /// A file pane of one of this Mac's tabs, from the saved tabs: the path is the pane's own, never the asker's.
+    func file(tab: String?, pane: String?) -> PeerReply {
+        guard let state = SessionStore().load() else { return .failure("The saved tabs on \(name) couldn't be read") }
+        guard let tab, let pane, let tabID = UUID(uuidString: tab), let paneID = UUID(uuidString: pane),
+              let saved = PeerOpenTabs.hosted(in: state).first(where: { $0.resolvedID == tabID }),
+              let record = saved.layout.records.first(where: { $0.id == paneID }), let path = record.file else {
+            return .failure("That isn't a file pane of a tab open on \(name)")
+        }
+        let folders = saved.layout.records.map(\.directory) + [record.directory]
+        switch PeerFile.read(path: path, folders: folders) {
+        case .success(let text):
+            var reply = PeerReply.success()
+            reply.text = text
+            return reply
+        case .failure(let refusal):
+            return .failure(refusal.message)
+        }
     }
 
     func recent() -> PeerReply {
@@ -177,28 +196,65 @@ extension PeerFollow {
     static func hookReport(for id: UUID) -> String? { PaneFolder.reportedConversation(for: id) }
 }
 
-/// Which of a Mac's open Claude sessions a peer's session list offers.
+/// Which of a Mac's open Claude sessions a peer's follow of them covers.
 enum PeerOpenSessions {
     /// Claude panes the Mac itself runs, in tab order. A pane on a peer is that Mac's to offer.
     static func candidates(in state: SessionStore.State) -> [SessionRecord] {
         state.openTabs.flatMap { $0.layout.records }.filter { $0.isClaude && $0.host == nil }
     }
 
-    /// Those whose zmx session runs, so taking one over has something to attach to.
-    /// Each carries the tab it is in and the tab's name and mark (ADR 0032): the mark is the tab's, the same on every session of it.
-    static func list(in state: SessionStore.State, statuses: [String: PeerSessionStatus], now: Date = Date()) -> [PeerOpenSession] {
-        state.openTabs.flatMap { tab in
-            tab.layout.records.filter { $0.isClaude && $0.host == nil }.compactMap { record -> PeerOpenSession? in
-                let name = Zmx.sessionName(record.id)
-                guard let status = statuses[name], status.running else { return nil }
-                let title = record.title.isEmpty ? record.prompt : record.title
-                let found = PeerTurn.read(for: record.id)
-                return PeerOpenSession(session: name, title: title.isEmpty ? "New session" : title, folder: record.directory,
-                                       agent: record.agent, conversation: record.conversation, control: status.control,
-                                       clients: status.clients, turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: record.id),
-                                       doneAge: tab.done.map { Int(max(0, now.timeIntervalSince($0))) },
-                                       tab: tab.resolvedID.uuidString.lowercased(), tabName: tab.name)
-            }
+}
+
+/// The tabs a peer's `tabs` lists (ADR 0034): this Mac's own, whole.
+enum PeerOpenTabs {
+    /// The open tabs whose panes all run here. A tab that shows another machine's panes is that machine's to offer.
+    static func hosted(in state: SessionStore.State) -> [SessionStore.SavedTab] {
+        state.openTabs.filter { $0.layout.records.allSatisfy { $0.host == nil } }
+    }
+
+    /// Each tab with its layout and every pane. A Claude or terminal pane says whether its zmx session runs (a terminal runs in zmx only
+    /// while Keep sessions running is on) and who controls it; the tab's control is the panes' (`PeerTab.settleControl`).
+    static func list(in state: SessionStore.State, statuses: [String: PeerSessionStatus], now: Date = Date()) -> [PeerTab] {
+        hosted(in: state).map { tab in
+            var listed = PeerTab(tab: tab.resolvedID.uuidString.lowercased(), name: tab.name,
+                                 doneAge: tab.done.map { Int(max(0, now.timeIntervalSince($0))) }, layout: tab.layout.peerLayout,
+                                 panes: tab.layout.records.map { pane(for: $0, status: statuses[Zmx.sessionName($0.id)]) })
+            listed.settleControl()
+            return listed
+        }
+    }
+
+    private static func pane(for record: SessionRecord, status: PeerSessionStatus?) -> PeerPane {
+        let id = record.id.uuidString.lowercased()
+        if let file = record.file {
+            return PeerPane(id: id, kind: .file, title: (file as NSString).lastPathComponent, folder: record.directory, file: file)
+        }
+        if record.isLiveTranscript { return PeerPane(id: id, kind: .transcript, title: "Transcript", folder: record.directory) }
+        if let app = record.app {
+            return PeerPane(id: id, kind: .app, title: app, folder: record.directory, url: record.url, app: app, port: record.appPort)
+        }
+        if let url = record.url {
+            return PeerPane(id: id, kind: .web, title: URL(string: url)?.host() ?? url, folder: record.directory, url: url)
+        }
+        if record.isShell {
+            return PeerPane(id: id, kind: .terminal, title: record.title.isEmpty ? "Terminal" : record.title, folder: record.directory,
+                            running: status?.running == true, clients: status?.clients, control: status?.control)
+        }
+        let title = record.title.isEmpty ? record.prompt : record.title
+        let found = PeerTurn.read(for: record.id)
+        return PeerPane(id: id, kind: .claude, title: title.isEmpty ? "New session" : title, folder: record.directory,
+                        running: status?.running == true, clients: status?.clients, control: status?.control, agent: record.agent,
+                        conversation: record.conversation, turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: record.id))
+    }
+}
+
+extension PaneLayout {
+    /// The layout as the wire has it (`PeerLayout`); a fraction a divider left at an edge is kept inside what the wire takes.
+    var peerLayout: PeerLayout {
+        switch self {
+        case .leaf(let record): .leaf(record.id.uuidString.lowercased())
+        case .split(let axis, let fraction, let first, let second):
+            .split(axis: axis.rawValue, fraction: min(0.95, max(0.05, fraction)), first.peerLayout, second.peerLayout)
         }
     }
 }

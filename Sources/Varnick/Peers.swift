@@ -790,11 +790,11 @@ final class PeerManager: ObservableObject {
         return last.isEmpty ? .ended : .failed(String(last.prefix(120)))
     }
 
-    /// The Claude sessions open on a peer, nil when it couldn't be asked. `timeout` is `send`'s unless given.
-    func openSessions(on id: String, timeout: TimeInterval? = nil) async -> [PeerOpenSession]? {
-        let result = if let timeout { await send(PeerRequest(.sessions), to: id, timeout: timeout) } else { await send(PeerRequest(.sessions), to: id) }
+    /// The tabs open on a peer, whole (ADR 0034), nil when it couldn't be asked. `timeout` is `send`'s unless given.
+    func tabs(on id: String, timeout: TimeInterval? = nil) async -> [PeerTab]? {
+        let result = if let timeout { await send(PeerRequest(.tabs), to: id, timeout: timeout) } else { await send(PeerRequest(.tabs), to: id) }
         guard case .success(let reply) = result else { return nil }
-        return reply.open ?? []
+        return reply.tabs ?? []
     }
 
     /// The Mac in control closed its pane. The host decides: it kills the session and closes its own pane
@@ -903,17 +903,19 @@ final class PeerManager: ObservableObject {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))
             }
             return PeerJSON.line(await model.hostDone(request))
-        case .start, .resume, .end:
+        case .start, .resume, .end, .arrange, .reopen:
             guard let model else { return starting }
-            // Both change what runs here, so only for a Mac in the list, or a device (read from the file the
-            // relay reads, so a hand edit counts at once). The id goes into a zmx label, so it has to be a UUID.
+            // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit
+            // counts at once), except `arrange`, which a Mac alone may send. The id goes into a zmx label, so it has to be a UUID.
             guard let by = request.by, UUID(uuidString: by) != nil,
-                  peers.contains(where: { $0.id == by }) || MacPeerHost().listsDevice(by) else {
+                  peers.contains(where: { $0.id == by }) || (request.op != .arrange && MacPeerHost().listsDevice(by)) else {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
             }
             switch request.op {
             case .start: return PeerJSON.line(await model.hostStart(request, by: by))
             case .resume: return PeerJSON.line(await model.hostResumeConversation(request, by: by))
+            case .arrange: return PeerJSON.line(await model.hostArrange(request, by: by))
+            case .reopen: return PeerJSON.line(await model.hostReopen(request, by: by))
             default: return PeerJSON.line(await model.hostEnd(request, by: by))
             }
         case .projects:
@@ -922,7 +924,7 @@ final class PeerManager: ObservableObject {
         case .agents:
             guard let model else { return starting }
             return PeerJSON.line(await model.hostAgents(folder: request.folder))
-        case .attach, .status, .screen, .watch, .sessions, .rows, .pages, .recent, .hosts, .upgrade, .restart:
+        case .attach, .status, .screen, .watch, .tabs, .take, .file, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))
         }

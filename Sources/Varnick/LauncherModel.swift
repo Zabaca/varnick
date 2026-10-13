@@ -64,6 +64,8 @@ final class LauncherModel: ObservableObject {
     /// The sessions open on each paired Mac by its id, as that Mac last said when the panel opened.
     /// Kept between openings so the last answer shows while the next one is asked for.
     @Published private(set) var peerOpenSessions: [String: [PeerOpenSession]] = [:] { didSet { rebuildRecent() } }
+    /// The tabs open on each paired Mac, whole, as that Mac last said (ADR 0034): `peerOpenSessions` is their running Claude panes.
+    @Published private(set) var peerTabs: [String: [PeerTab]] = [:]
     /// The closed tabs in each paired Mac's Recent, as that Mac last said. Kept between openings
     /// like the open sessions, and kept when a Mac doesn't answer: its last list shows meanwhile.
     @Published private(set) var peerRecent: [String: [PeerRecentTab]] = [:] { didSet { rebuildRecent() } }
@@ -1249,16 +1251,16 @@ final class LauncherModel: ObservableObject {
         let peers = PeerManager.shared.peers.filter { PeerManager.shared.status[$0.id] == .answered }
         // A Mac that isn't asked (it stopped answering, or was never reachable) shows nothing.
         let asked = Set(peers.map(\.id))
-        for id in peerOpenSessions.keys where !asked.contains(id) { updatePeerOpenSessions(nil, for: id) }
+        for id in peerOpenSessions.keys where !asked.contains(id) { updatePeerTabs(nil, for: id) }
         // With the board showing a silent Mac is dropped after `boardAskTimeout`, not the usual 15 s.
         let timeout: TimeInterval? = showingBoard ? Self.boardAskTimeout : nil
         peerOpenSessionsTask?.cancel()
         peerOpenSessionsTask = Task { [weak self] in
-            await withTaskGroup(of: (String, [PeerOpenSession]?).self) { group in
-                for peer in peers { group.addTask { (peer.id, await PeerManager.shared.openSessions(on: peer.id, timeout: timeout)) } }
+            await withTaskGroup(of: (String, [PeerTab]?).self) { group in
+                for peer in peers { group.addTask { (peer.id, await PeerManager.shared.tabs(on: peer.id, timeout: timeout)) } }
                 for await (id, found) in group {
                     guard !Task.isCancelled, let self else { return }
-                    self.updatePeerOpenSessions(found, for: id, sentAt: sentAt)
+                    self.updatePeerTabs(found, for: id, sentAt: sentAt)
                 }
             }
         }
@@ -1670,6 +1672,12 @@ final class LauncherModel: ObservableObject {
 
     private func claudePanes(on host: String) -> [ClaudeSession] {
         tabs.flatMap(\.sessions).filter { $0.isClaude && $0.record.host == host }
+    }
+
+    /// Takes in the tabs a peer said are open on it (nil: nothing, or it didn't answer).
+    private func updatePeerTabs(_ found: [PeerTab]?, for id: String, sentAt: Date = Date()) {
+        peerTabs[id] = found
+        updatePeerOpenSessions(found?.flatMap(\.openSessions), for: id, sentAt: sentAt)
     }
 
     /// Takes in what a peer said is open on it (nil: nothing, or it didn't answer). Rows arriving
@@ -2994,6 +3002,16 @@ final class LauncherModel: ObservableObject {
         }
         if let pane { pane.endSession() } else { Zmx.kill(id) }
         return .success()
+    }
+
+    /// A peer's `arrange`: the machine in control moved a divider or renamed the tab.
+    func hostArrange(_ request: PeerRequest, by peer: String) async -> PeerReply {
+        .failure("Not built yet")
+    }
+
+    /// A peer's `reopen`: a tab of this Mac that closed comes back whole for the peer.
+    func hostReopen(_ request: PeerRequest, by peer: String) async -> PeerReply {
+        .failure("Not built yet")
     }
 
     /// A peer's `done` (ADR 0032): marks a tab of this Mac, or with `mark` false takes the mark off, and ends nothing.
