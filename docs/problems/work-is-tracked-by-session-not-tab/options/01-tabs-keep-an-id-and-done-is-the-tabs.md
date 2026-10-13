@@ -187,7 +187,7 @@ status: shipped
 
 ## Further Notes
 
-- **An ADR once accepted:** "A tab's done mark belongs to its host, and Completed lists tabs". It supersedes the done-mark ADR 0028 (one of the two ADRs numbered 0028, left unrenumbered), and takes the next free number, 0032 at the time of writing.
+- **An ADR once accepted:** "A tab's done mark belongs to its host, and Completed lists tabs". It supersedes the done-mark ADR 0028, and takes the next free number, 0032 at the time of writing.
 - **Docs to update with it:**
   - **CONTEXT.md:** **Tab** gains its id, its host and its done mark. **Session board** becomes a card per tab, and Completed lists tabs.
   - **where-it-breaks:**

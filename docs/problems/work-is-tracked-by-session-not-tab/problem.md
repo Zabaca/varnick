@@ -87,7 +87,7 @@ Verified in the code at 0d1d161 unless marked.
 
 ## Records this changes
 
-- **ADR 0028, the done-mark one, is superseded** by option 01 once that is accepted. Two ADRs are numbered 0028: that one, and the one on ElevenLabs voices. This problem doesn't renumber them.
+- **ADR 0028, the done-mark one, is superseded** by option 01 once that is accepted. The ElevenLabs ADR that shared its number is now 0033.
 - **CONTEXT.md:**
   - **Session**, now "what Recent lists";
   - **Recent**;

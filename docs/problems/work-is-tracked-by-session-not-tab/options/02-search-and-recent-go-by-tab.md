@@ -2,7 +2,7 @@
 problem: work-is-tracked-by-session-not-tab
 title: Search groups sessions under their tab, and Recent lists closed tabs
 summary: On top of option 01. A tab keeps the history of the conversations it has held, the ones left behind by /clear and /resume included. Recent lists closed tabs, and ↩ reopens one whole, on this Mac or on its host. Search still matches sessions, since that is where the text is, but shows them grouped under their tab, and opening any of them opens that tab. The session list's tab rows say how many sessions a tab has and how many wait ("3 sessions · 1 waiting"), and other machines' open sessions are listed by tab. The search database keeps which tab each conversation belongs to, and other machines send it with their rows. A new `reopen` request asks a Mac host to reopen one of its closed tabs (protocol 22). A session with no tab, such as one from before the change, gets a one-pane tab when it is opened.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -27,8 +27,8 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
 
 ## Trade-offs
 
-- **↩ on an old conversation opens its tab, not that conversation** (decision 3). A conversation that no pane of the tab is on now, say one a `/clear` left, is reached with `/resume` inside the tab (open question 2).
-- **Recent drops the conversations a `/clear` left in a tab that is still open.** They stay in the tab's history and in search, under the open tab (open question 1).
+- **↩ on an old conversation opens its tab, not that conversation** (decision 3). A conversation that no pane of the tab is on now, say one a `/clear` left, is reached with `/resume` inside the tab.
+- **Recent drops the conversations a `/clear` left in a tab that is still open.** They stay in the tab's history and in search, under the open tab.
 - **Recent holds 20 tabs rather than 20 sessions.** It reaches more conversations, but a single old session falls off with its tab.
 - **A protocol bump to 22:**
   - `recent` lists tabs;
@@ -132,7 +132,7 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
 ## Out of Scope
 
 - Another machine's tab opened whole, with its layout, terminals and the rest (option 03).
-- Resuming one exact old conversation from search into a pane of its tab (open question 2).
+- Resuming one exact old conversation from search into a pane of its tab.
 - **Folding the session names into the new table:** a refactor worth raising, not asked for. Each tab's name would then be kept once, and the board and search would read it from one place.
 
 ## Further Notes
@@ -155,6 +155,6 @@ A session that belongs to no tab is listed alone, as today. Opening it resumes i
   - a history cap of 50;
   - closed tabs in Recent whether or not they were Done, as today's Done sessions are;
   - a conversation belonging to the latest tab that held it.
-- **Open questions,** each with a recommendation:
-  1. **A conversation a `/clear` or `/resume` left behind in a tab that stays open:** does it stay in the tab's history, or become loose, with its own entry in Recent? **Recommended: it stays in the tab** (the user's leaning). It was part of that tab's work, search still finds it, and Recent then means closed tabs only.
-  2. **↩ on a search match whose conversation no pane of its tab is on:** open the tab only (decision 3), or also offer a second key that resumes that conversation in a new pane of the tab? **Recommended: open the tab only, for now.** `/resume` inside the tab reaches it, and a second key can come later if it's missed.
+- **Decided by the user (2026-10-12),** when accepting this option, each the recommendation:
+  1. **A conversation a `/clear` or `/resume` left behind** stays in its tab's history.
+  2. **↩ on a search match** opens the tab only; the conversation is reached with `/resume` inside it, with no second key for now.

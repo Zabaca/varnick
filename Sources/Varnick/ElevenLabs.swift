@@ -1,12 +1,12 @@
 import AVFoundation
 import Foundation
 
-/// ElevenLabs as the voice Varnick speaks in (ADR 0028): each line streams as raw PCM into Varnick's own engine, and the installed
+/// ElevenLabs as the voice Varnick speaks in (ADR 0033): each line streams as raw PCM into Varnick's own engine, and the installed
 /// voice takes over on a failure or after `deadline`. Nothing sent or received is logged; the key goes only in `xi-api-key`.
 enum ElevenLabs {
-    /// The Keychain account of the key (Settings › Models › Keys); ADR 0028 says why it is never read from a file or the environment.
+    /// The Keychain account of the key (Settings › Models › Keys); ADR 0033 says why it is never read from a file or the environment.
     static let keyAccount = "ELEVENLABS_API_KEY"
-    /// Pinned, with no picker (ADR 0028).
+    /// Pinned, with no picker (ADR 0033).
     static let pinnedModel = "eleven_flash_v2_5"
     /// First audio, and then each stretch of bytes, must come within this, or the line is spoken in the installed voice.
     static let deadline: TimeInterval = 1.5

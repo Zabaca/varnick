@@ -29,7 +29,7 @@ All of this was read in the code at 53e4064 unless it says otherwise.
 
 **Time.** From the end of speech to the first sound, the median is 1.81 s (timing lines on the user's machine); for history, bookmark and session requests the answer step is inside that. Deciding on this Mac costs 1 to 2 s (ADR 0016). Gemma loads in 1.3 s, spends about 2.8 s on shader setup on its first reply after launch, and unloads after 10 idle minutes (ADR 0012).
 
-**What leaves the Mac for Text generation.** Nothing with On this Mac. With Server, the request and the rows go to the user's server on the tailnet. ADR 0015 began as "nothing to a cloud model". ADR 0016 (TypeSafe) and ADR 0028 (ElevenLabs) amended it for those providers. No Varnick feature sends rows from History or Bookmarks to Anthropic; Screen access sessions send what they read of the screen.
+**What leaves the Mac for Text generation.** Nothing with On this Mac. With Server, the request and the rows go to the user's server on the tailnet. ADR 0015 began as "nothing to a cloud model". ADR 0016 (TypeSafe) and ADR 0033 (ElevenLabs) amended it for those providers. No Varnick feature sends rows from History or Bookmarks to Anthropic; Screen access sessions send what they read of the screen.
 
 **How Varnick runs `claude` today** (`ClaudeCommand`, `ClaudeSession`).
 - A pane runs `claude` through the account's login shell (`-l -i`), because that is where the shell's startup files put it on the PATH; a Varnick started by launchd doesn't have that PATH. The environment is built from scratch, never inherited.

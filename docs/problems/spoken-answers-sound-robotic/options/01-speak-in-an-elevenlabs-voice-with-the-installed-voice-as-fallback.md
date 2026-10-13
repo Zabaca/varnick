@@ -86,7 +86,7 @@ One connection to ElevenLabs is kept and reused, and opened when "Hey Varnick" i
 
 **What leaves the Mac, and the docs it changes**
 - With an ElevenLabs voice chosen and a key saved: the text of every line Varnick speaks, the voice's id and the key, to ElevenLabs. Never audio from the Mac, rows, or the request except as the answer repeats it. The warm-up sends only the voice's id and the key.
-- A new ADR once accepted (the next number, 0028 today): spoken answers can be voiced by ElevenLabs and are still played by Varnick's own engine, the answer's text leaves the Mac with that voice, and the installed voice is the fallback. ADR 0015's Consequences gains an "Amended by" line where it says the speech is rendered by the system synthesizer.
+- A new ADR once accepted (the next number, 0033 today): spoken answers can be voiced by ElevenLabs and are still played by Varnick's own engine, the answer's text leaves the Mac with that voice, and the installed voice is the fallback. ADR 0015's Consequences gains an "Amended by" line where it says the speech is rendered by the system synthesizer.
 - Privacy and security › "What leaves your Mac" gains an **ElevenLabs** section in the TypeSafe section's shape: choosing an ElevenLabs voice is consent to send every line Varnick speaks, what such a line can hold, the warm-up, and that the installed voices are the private choice.
 - The README's Privacy list gains a bullet, and the guide's Listening section a sentence on voices.
 - Settings texts: the Voice and Fallback voice rows, the Keys row, and Hey Varnick's detail, which says that with an ElevenLabs voice its answers go to ElevenLabs.

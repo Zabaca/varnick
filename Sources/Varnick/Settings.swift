@@ -209,7 +209,7 @@ final class Settings: ObservableObject {
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
     /// Voice Varnick speaks in (an `AVSpeechSynthesisVoice` identifier); empty is the system voice.
-    /// With an ElevenLabs voice chosen it is the fallback voice, spoken when ElevenLabs fails (ADR 0028).
+    /// With an ElevenLabs voice chosen it is the fallback voice, spoken when ElevenLabs fails (ADR 0033).
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
     /// The ElevenLabs voice's id Varnick speaks in; empty means the installed voice `voice` speaks. Kept when the key is removed.
     @Published var elevenLabsVoice: String { didSet { defaults.set(elevenLabsVoice, forKey: "elevenLabsVoice") } }

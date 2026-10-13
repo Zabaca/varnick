@@ -53,7 +53,7 @@ struct Speech {
 }
 
 /// Varnick's voice: ElevenLabs when chosen, else (or on its failure) the system synthesizer, whose buffers Varnick plays itself.
-/// Either way the sound comes from this process, which the audio tap leaves out (ADR 0015, 0028).
+/// Either way the sound comes from this process, which the audio tap leaves out (ADR 0015, 0033).
 @MainActor
 final class Speaker {
     static let shared = Speaker()
@@ -304,7 +304,7 @@ enum SpokenVoices {
 }
 
 /// Settings › Listening's Voice row: the system voice, an installed voice, or one of the ElevenLabs account's voices. Choosing an
-/// ElevenLabs voice sends everything Varnick speaks to ElevenLabs (ADR 0028).
+/// ElevenLabs voice sends everything Varnick speaks to ElevenLabs (ADR 0033).
 struct VoicePicker: View {
     @ObservedObject var settings: Settings
     /// Tags an ElevenLabs voice's id apart from an installed voice's identifier.

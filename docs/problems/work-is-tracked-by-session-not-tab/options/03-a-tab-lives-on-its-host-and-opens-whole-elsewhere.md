@@ -2,7 +2,7 @@
 problem: work-is-tracked-by-session-not-tab
 title: A tab lives on one host and opens whole on other devices, its terminals and files included
 summary: On top of options 01 and 02. The machine that runs a tab keeps its layout, its panes and its mark, and lists its open tabs whole to other machines and devices with a new `tabs` request (protocol 23). Another Mac opens a host's tab in the host's layout. Claude and terminal panes show on cards until Take over, which now takes the whole tab. File panes are read over SSH, the Transcript stays on its own Mac, and web and app panes on a local address wait for option 04. Only the machine in control of a tab changes its layout. A split starts the new pane on the tab's host. The host's terminals survive another machine attaching to them, and the headless host keeps tabs of several panes, terminals included. The phone shows a tab's panes one at a time.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -91,7 +91,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 
 **Layout changes**
 - **Only the machine or device in control of a tab changes its layout** (picked, to match **In control**: only it types). A viewer's split, close, divider and rename keys are refused with "Take over to change this tab". A tab with no control is changed only on its host.
-- **A split** sends `start` with the tab, the pane it splits, the side and the kind, either Claude or terminal. The host adds the new pane there, labelled for the asker. Web, file and app panes come from the host's own split picker until option 04 (open question 1).
+- **A split** sends `start` with the tab, the pane it splits, the side and the kind, either Claude or terminal. The host adds the new pane there, labelled for the asker. Web, file and app panes come from the host's own split picker until option 04.
 - **A close of one pane** sends `end` for that pane, and the host decides as today.
 - **A divider moved, or a rename,** sends a new `arrange` request with the tab's layout and name. The host takes it only if it holds the same panes, re-placed or resized. Anything that adds or removes a pane is refused.
 - **The host's own changes** (its splits, closes and renames, while it is in control) go into its saved tab, and the others see them at their next ask.
@@ -143,7 +143,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 
 - Web and app panes on a local address from another machine (option 04).
 - A tab spanning machines, and moving a pane between tabs or machines.
-- Splits of web, file and app kinds made from another machine (open question 1).
+- Splits of web, file and app kinds made from another machine.
 - Sharing a browser's logged-in state between machines (decision 4 keeps pixel streaming for that, later).
 
 ## Further Notes
@@ -165,5 +165,5 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
   - that taking over several zmx sessions at once is as safe as one, since each step is today's, per pane;
   - that 5 s is soon enough for a layout change made elsewhere.
 - **Picked:** only the machine in control changes the layout; a split from afar offers Claude and terminal only.
-- **Open questions,** each with a recommendation:
-  1. **Splitting a pane of another machine's tab:** start the new pane on that host, or refuse? **Recommended: start it on the host** (the user's leaning), Claude or terminal. A web or app pane made from afar comes with option 04, since its page would be on the host.
+- **Decided by the user (2026-10-12),** when accepting this option, each the recommendation:
+  1. **Splitting a pane of another machine's tab** starts the new pane on that host.

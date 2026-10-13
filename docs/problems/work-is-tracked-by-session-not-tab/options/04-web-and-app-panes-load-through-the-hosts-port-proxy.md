@@ -2,7 +2,7 @@
 problem: work-is-tracked-by-session-not-tab
 title: Web and app panes of another host's tab load through that host's port proxy
 summary: On top of option 03, as decision 4 has it. Each host runs a reverse proxy in its Phone page server, the one Varnick process that runs between requests on a Mac and on the headless host alike. The proxy listens on the host's tailnet address, on the ports its open tabs' web and app panes use, with a `tailscale cert` certificate for the machine's name, and forwards port N to localhost:N. It forwards websockets and rewrites the Host header so dev servers' host checks pass. Another Mac's web pane loads `https://<host's tailnet name>:N/` in place of `http://localhost:N/`. The phone shows it in the tab's pane view. Only listed devices and paired machines may connect, and a request started by another site is refused. The host's listing gives each such pane's address (protocol 24). A spike first checks `tailscale cert` and the tailnet bind on each kind of host, and Scratch through the proxy.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -20,7 +20,7 @@ The relay, which decision 4 named for a Mac, runs only for one request and exits
 - it maps the listed peers' addresses to tailnet nodes;
 - it is Bun, which serves TLS and websockets.
 
-A host that doesn't serve the Phone page doesn't proxy (open question 1).
+A host that doesn't serve the Phone page doesn't proxy.
 
 **What another machine sees.** The host's listing gives each web and app pane its proxied address, `https://<host's tailnet name>:N/` plus the pane's path. A Mac loads that address in the pane's web view, in place of option 03's card. The phone loads it in the tab's pane view. Navigating in that pane is the viewer's own browsing, and the host's pane keeps its own address.
 
@@ -71,7 +71,7 @@ The results go into this option's Further Notes before the rest is built.
   - each app pane's port;
   - each web pane's port on localhost, 127.0.0.1 or ::1.
 
-  They are read from the host's own `tabs` through its relay, as the server reads every list. It is read again every few seconds and when a page asks. A port no open tab names is closed within that time (open question 2).
+  They are read from the host's own `tabs` through its relay, as the server reads every list. It is read again every few seconds and when a page asks. A port no open tab names is closed within that time.
 - **Bound to the host's tailnet addresses only,** IPv4 and IPv6, never every address. Port 8444 is never one of them.
 - **A port already taken on the tailnet address** is skipped, and logged. The listing says that pane can't be proxied, and why.
 
@@ -83,7 +83,7 @@ The results go into this option's Further Notes before the rest is built.
 - **`tailscale whois` on the connection's own address.** No forwarded header is trusted, since nothing sits in front.
 - **Admitted:**
   - a device the host lists;
-  - the node of a peer the host lists, found from its address as the page already finds the other hosts' nodes for its links (open question 3).
+  - the node of a peer the host lists, found from its address as the page already finds the other hosts' nodes for its links.
 - **Refused,** before anything is forwarded:
   - anyone else;
   - a whois that fails;
@@ -106,7 +106,7 @@ The results go into this option's Further Notes before the rest is built.
 - **The host's `tabs` gives each web and app pane its proxied address,** built from the host's own tailnet name. A Mac never builds the address from a peer's SSH address, which may be an alias.
 - **A Mac's web pane loads the proxied address,** and option 03's card shows only when the listing says the pane can't be proxied. Reload and the address bar act on the viewer's own copy.
 - **The phone's tab view** shows the page in a frame, with "Open alone" beside it. The page's content rules allow frames from the host's own name on the proxied ports.
-- **Splits from afar** (option 03's open question 1) can then offer web and app panes too. The host runs the app, and the viewer loads it through the proxy.
+- **Splits from afar** (option 03's decision 1) can then offer web and app panes too. The host runs the app, and the viewer loads it through the proxy.
 
 **The protocol** goes to 24, for the proxied address and the reason a pane can't be proxied in `tabs`, with the Phone page's constant.
 
@@ -136,7 +136,7 @@ The results go into this option's Further Notes before the rest is built.
 ## Further Notes
 
 - **Decided by the user, 2026-10-12, and not reopened here** (problem.md has the reasons): routing by port; one listener per host on its tailnet address; `tailscale cert`; and the rejection of routing by path prefix, routing by subdomain, one `tailscale serve` per pane and pixel streaming.
-- **A correction to the decision's wording:** "the relay on a Mac" doesn't run between requests (verified: each request is one process that exits after its reply). The Phone page server is the process that does, on both kinds of host (open question 1).
+- **A correction to the decision's wording:** "the relay on a Mac" doesn't run between requests (verified: each request is one process that exits after its reply). The Phone page server is the process that does, on both kinds of host.
 - **An ADR once accepted:** "Remote web and app panes go through a port proxy in each host's Phone page server". It amends ADR 0011 (one door) and ADR 0007 (no listening port).
 - **CONTEXT.md:** **Phone page**, since the server now also proxies, and perhaps a term for the proxy.
 - **where-it-breaks:** a Port proxy section for:
@@ -160,7 +160,7 @@ The results go into this option's Further Notes before the rest is built.
   - that a bind on the tailnet address works under each kind of Tailscale here;
   - `tailscale cert` as the user;
   - whether a Mac's web view sends fetch metadata.
-- **Open questions,** each with a recommendation:
-  1. **Where the proxy runs,** given that the relay doesn't run between requests: the Phone page server on both kinds of host, or Varnick itself on a Mac and the page server on the headless host? **Recommended: the Phone page server on both.** One implementation, on the process that already knows the callers and the name. The cost is that a host must serve the page to proxy.
-  2. **Which ports:** only those the host's open tabs name, or any port N asked for? **Recommended: only the tabs' ports.** "Port N to localhost:N" for any N would put every local service of the host (databases, debuggers) on the tailnet for anyone admitted.
-  3. **Who may connect:** listed devices and paired machines' nodes, or any of the user's own untagged nodes? **Recommended: listed devices and paired machines.** That keeps ADR 0011's choice of a list over any device of the user's.
+- **Decided by the user (2026-10-12),** when accepting this option, each the recommendation:
+  1. **The proxy runs in the Phone page server** on both kinds of host.
+  2. **Only the ports the host's open tabs name** are proxied.
+  3. **Listed devices and paired machines** may connect.

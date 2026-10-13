@@ -4,7 +4,7 @@ description: "Launchy" is also the name of a long-established cross-platform key
 impact: Published as Launchy, it would compete for a name another project has held for years. Searches would lead to the other launcher, and a later rename would break every clone, link and install made in between. A rename after going public would also have to keep strangers' installs working. Renamed now, only the user's own Macs and the Ryzen need migrating. Even so, a careless migration can do real harm. The old and new apps can both run and drive the same conversations. History built over months can be left behind or replaced by an empty database. Paired Macs can drop each other, and Claude sessions, privacy grants and saved keys end with no plan for them.
 severity: mid
 evidence: The user's decisions of 2026-10-09, relayed by the coordinator. Read-only inspection by the planner on 2026-10-09 at db973f1. It covered git grep over the tree, the build, install, restart and installer scripts, and the code named under Today. It also covered the one in-flight branch, plus, on one Mac, the running processes, zmx's session list, the stored settings' key names and the Library folders named after the app. Both GitHub repositories' metadata was read through the API. Nothing was changed. What was inferred rather than checked is marked.
-status: open
+status: closed
 ---
 
 ## What the user wants (2026-10-09)
