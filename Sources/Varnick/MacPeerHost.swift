@@ -11,6 +11,8 @@ struct MacPeerHost: PeerHost {
     /// The host's name in an error message.
     var name: String { PeerIdentity.name ?? PeerIdentity.computerName() }
 
+    var ownID: String? { PeerIdentity.id }
+
     func lists(_ id: String?) -> Bool { PeerList.lists(id) }
 
     /// The devices file in Application Support, which the running Varnick writes.

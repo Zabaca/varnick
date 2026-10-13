@@ -26,6 +26,8 @@ struct HeadlessPeerHost: PeerHost {
         ((try? state.peers()) ?? []).map { PeerHostEntry(name: $0.name, address: $0.address) }
     }
 
+    var ownID: String? { state.identity() }
+
     func hello(line: String) -> PeerReply {
         guard let id = state.identity() else { return .failure("\(name) isn't set up yet: run varnick-peer init") }
         let request = PeerJSON.decode(PeerRequest.self, from: line)

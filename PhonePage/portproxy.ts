@@ -179,7 +179,7 @@ export class PortProxy {
     }
     const facts: PortFacts = {
       reserved: new Set(this.options.reserved), serve, localUp, tailnetUp, held,
-      certificate: this.certificate === null && this.tls ? this.certificateNote ?? noCertificateYet : null,
+      certificate: this.missingCertificate(),
     };
     const plan = planPorts(wanted, facts);
     for (const port of plan.close) this.close(port, plan.notes.get(port) ?? "no tab names it");
@@ -226,6 +226,11 @@ export class PortProxy {
       }
     }
     if (this.listeners.size > 0) this.world.log(`proxy certificate renewed for ${this.listeners.size} ports`);
+  }
+
+  /** Why there is no certificate to serve with, or null when there is one (a renewal that failed leaves the old one serving). */
+  private missingCertificate(): string | null {
+    return this.certificate === null && this.tls ? this.certificateNote ?? noCertificateYet : null;
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -383,7 +388,7 @@ export class PortProxy {
   /** What the relay reads into `tabs`: written each look, so a file older than a minute means this server is not running. */
   private writeStatus(plan: PortPlan): void {
     const status = buildStatus({
-      now: Date.now(), dnsName: this.options.dnsName, certificate: this.tls ? this.certificateNote : null, aims: this.aims, plan,
+      now: Date.now(), dnsName: this.options.dnsName, certificate: this.missingCertificate(), aims: this.aims, plan,
       held: new Set(this.listeners.keys()),
     });
     const temp = `${this.options.statusPath}.${process.pid}.tmp`;

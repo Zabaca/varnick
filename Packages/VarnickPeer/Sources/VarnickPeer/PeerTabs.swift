@@ -1,6 +1,6 @@
 import Foundation
 
-// A host's open tabs as it lists them to other machines (`tabs`, protocol 24): each tab's layout and what each pane shows. The host keeps
+// A host's open tabs as it lists them to other machines (`tabs`, protocol 24, 25 for the proxied address): each tab's layout and what each pane shows. The host keeps
 // the tab (ADR 0034); the machine that asks sees it from this listing and nothing else.
 
 /// How a tab's panes are placed: a pane, or a split of two layouts. On the wire a leaf is `{"pane": id}` and a split
@@ -123,8 +123,7 @@ public enum PeerPaneKind: String, Sendable {
     public var runsInZmx: Bool { self == .claude || self == .terminal }
 }
 
-/// One pane of a listed tab. Which fields are set depends on `kind`; a field is only ever added, as an optional, and option 04 adds a web or
-/// app pane's proxied address and the reason one can't be proxied here.
+/// One pane of a listed tab. Which fields are set depends on `kind`; a field is only ever added, as an optional.
 public struct PeerPane: Codable, Equatable, Sendable {
     /// The pane's id, a lowercase uuid: the name of its zmx session is `varnick-<id>`.
     public var id: String
@@ -160,15 +159,20 @@ public struct PeerPane: Codable, Equatable, Sendable {
     public var app: String?
     public var port: Int?
     public var file: String?
+    /// Web at a local address, and app (protocol 25): the address another machine loads it at through the host's port proxy, with the pane's
+    /// path, or why there is none. The relay fills them in from the page server's status (`PeerProxyStatus`).
+    public var proxy: String?
+    public var proxyNote: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, kindWord = "kind", title, folder, running, clients, control, controlName, agent, conversation, turnWord = "turn", turnAge, work,
-             url, app, port, file
+             url, app, port, file, proxy, proxyNote
     }
 
     public init(id: String, kind: PeerPaneKind, title: String, folder: String, running: Bool? = nil, clients: Int? = nil, control: String? = nil,
                 controlName: String? = nil, agent: String? = nil, conversation: String? = nil, turn: Turn? = nil, turnAge: Int? = nil,
-                work: PeerWork? = nil, url: String? = nil, app: String? = nil, port: Int? = nil, file: String? = nil) {
+                work: PeerWork? = nil, url: String? = nil, app: String? = nil, port: Int? = nil, file: String? = nil, proxy: String? = nil,
+                proxyNote: String? = nil) {
         self.id = id
         self.kindWord = kind.rawValue
         self.title = title
@@ -186,6 +190,8 @@ public struct PeerPane: Codable, Equatable, Sendable {
         self.app = app
         self.port = port
         self.file = file
+        self.proxy = proxy
+        self.proxyNote = proxyNote
     }
 
     /// The zmx session name of a Claude or terminal pane.

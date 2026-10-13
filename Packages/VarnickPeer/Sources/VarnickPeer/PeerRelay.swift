@@ -18,6 +18,8 @@ public protocol PeerHost {
     func listsDevice(_ id: String?) -> Bool
     /// Who the host can name as the one in control of a session, for the `controlName` of `status` and `tabs`.
     func controllerNames() -> PeerControllerNames
+    /// The host's own id, which its Phone page server asks `tabs` and `hosts` as (the port proxy has no device or Mac to ask as).
+    var ownID: String? { get }
     /// The answer to a hello, which the relay has found to speak this version.
     func hello(line: String) -> PeerReply
     /// `start`, `resume`, `end`, `done`, `arrange`, `reopen`, `projects` and `agents`, which the host's app does.
@@ -77,7 +79,13 @@ public enum PeerRelay {
         if op != .hello {
             let peer = host.lists(head.by)
             let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || PeerProtocol.answersAnyVersion(op)
-            if !peer, !macsOnly, host.listsDevice(head.by) { device = head.by }
+            if !peer, !macsOnly, host.listsDevice(head.by) {
+                device = head.by
+            } else if !peer, op == .tabs || op == .hosts, Zmx.sameID(head.by, host.ownID) {
+                // The host's own Phone page server, reading which ports the open tabs use and which Macs are paired, to run the port proxy
+                // (ADR 0035). It is told what a device is. Nothing else is answered to the host's own id.
+                device = head.by
+            }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
         }
         switch op {
@@ -173,6 +181,7 @@ public enum PeerRelay {
     private static func named(_ reply: PeerReply, host: PeerHost, for device: String?) -> PeerReply {
         guard reply.ok, let tabs = reply.tabs else { return reply }
         let names = host.controllerNames()
+        let proxy = PeerProxyStatus.read()
         var reply = reply
         reply.tabs = tabs.map { tab in
             var tab = tab
@@ -182,6 +191,7 @@ public enum PeerRelay {
                 return pane
             }
             tab.controlName = tab.runningPanes.isEmpty ? nil : names.name(of: tab.control)
+            tab = tab.settingProxy(from: proxy)
             return device.map { tab.hiding(from: $0) } ?? tab
         }
         return reply

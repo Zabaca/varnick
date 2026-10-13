@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 24
+    public static let version = 25
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -52,7 +52,7 @@ public enum PeerOp: String, Codable, Sendable {
     /// The relay answers it from zmx alone.
     case watch
     /// The tabs open on the receiving host, whole (protocol 24): each one's layout and name, who is in control of it, its mark and what
-    /// each of its panes shows. The relay answers it from the saved tabs and zmx alone. It replaces `sessions`, which listed Claude panes.
+    /// each of its panes shows, and for a web or app pane at a local address (25) the address it loads at through the host's port proxy. The relay answers it from the saved tabs and zmx alone. It replaces `sessions`, which listed Claude panes.
     case tabs
     /// The session rows the receiving Mac's history sync has read, for the Mac that searches them
     /// (`since` limits them to those changed), and the tabs that hold their conversations, all of them every time. The relay answers it
