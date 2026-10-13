@@ -147,18 +147,10 @@ extension HeadlessPeerHost {
         }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
         guard !running.contains(id) else { return taken }
-        var record = HeadlessSession(id: id, folder: folder, prompt: "", agent: ask.agent, skipPermissions: ask.skipPermissions, origin: by,
+        let record = HeadlessSession(id: id, folder: folder, prompt: "", agent: ask.agent, skipPermissions: ask.skipPermissions, origin: by,
                                      conversation: conversation, bootID: HeadlessSession.currentBootID, started: Date(), starting: true)
-        // The tab the asker reopened (protocol 22): the record joins it. The mark isn't copied: the asker clears it with `done` when it
-        // reopens the tab, and a copy read here would race that clear.
-        if let tab = request.tab.flatMap(UUID.init(uuidString:))?.uuidString.lowercased(), tab != id {
-            record.tab = tab
-            record.tabName = request.tabName
-        }
-        // Beside the tab's last pane when it is open here, else a tab of its own under that id.
-        let placement = record.tab.map { _ in StateFolder.Placement.beside(pane: nil, axis: PeerLayout.sideBySide) } ?? .newTab
         do {
-            switch try state.add(record, placed: placement, refusing: { records in
+            switch try state.add(record, refusing: { records in
                 HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: StateFolder.conversations(of: records))
             }) {
             case .exists: return taken
@@ -200,9 +192,8 @@ extension HeadlessPeerHost {
         return reply
     }
 
-    /// `end` naming a tab: the machine in control closed it. It ends, every pane killed and every record ended with its layout kept, if each
-    /// running pane's origin names the asker (the tab was made for it). Otherwise every pane is released: its clients are detached and its
-    /// control label stays, since a Mac reads a missing one as the host being in control, and nothing here types.
+    /// `end` naming a tab: it ends (every pane killed, its layout kept) if each running pane's origin names the asker, else every pane is
+    /// released: clients detached, the control label kept.
     private func endTab(_ tab: String, by: String) -> PeerReply {
         guard UUID(uuidString: tab) != nil else { return .failure("Not a Varnick tab id") }
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
@@ -233,9 +224,8 @@ extension HeadlessPeerHost {
 
     // MARK: reopen
 
-    /// `reopen`: a closed tab comes back whole, in its layout, for the asker: its Claude panes resume, its terminals start fresh in their
-    /// folders, every one labelled for the asker, and the tab is made for it. A pane that can't start is left out; with none started the
-    /// reply is the first one's failure. Each start waits for its session, so a tab of several panes takes a few seconds.
+    /// `reopen`: a closed tab comes back whole for the asker, Claude panes resumed and terminals fresh, each labelled for it. A pane that
+    /// can't start is left out; with none started the reply is the first failure.
     private func reopen(_ request: PeerRequest, by: String) -> PeerReply {
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         guard let tab = request.tab?.lowercased(), UUID(uuidString: tab) != nil else { return .failure("Not a Varnick tab id") }

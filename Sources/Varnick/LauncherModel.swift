@@ -57,8 +57,6 @@ final class LauncherModel: ObservableObject {
     var closing: [UUID: ClosingTab] = [:]
     /// When this Mac last changed a paired Mac's tab here (a split, a take over, a divider, a name), so a listing asked before then doesn't undo it.
     var layoutActedAt: [UUID: Date] = [:]
-    /// The tab id a peer's `resume` asked for, to the tab made instead when a peer's tab here had that id (`hostResumeConversation`).
-    private var hostTabs: [UUID: UUID] = [:]
     /// `recent` with the paired Macs' closed tabs (`rebuildRecent`), which the session list shows.
     @Published private(set) var allRecent: [TabRecord] = []
     /// Highlighted row in the session list (empty query): open tabs, then recent.
@@ -1737,10 +1735,8 @@ final class LauncherModel: ObservableObject {
     /// (`openPeerSession`); else the Mac's Varnick is asked to start `claude --resume` on it, in a
     /// pane here that shows what it answers (the card of any session being started there), and the
     /// user is in control. Always the user's own action: `ClaudeSession.resumesOnPeer` is what tells
-    /// the pane to ask for it, and nothing that runs by itself sets it. With `into`, the pane joins that tab instead of opening one;
-    /// `asTab` gives the tab it opens, and the host's, that id and name.
-    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?, into existing: ClaudeTab? = nil,
-                              asTab: (id: UUID, name: String?)? = nil) {
+    /// the pane to ask for it, and nothing that runs by itself sets it.
+    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?) {
         for tab in tabs {
             if let pane = tab.sessions.first(where: { $0.isClaude && $0.record.conversationID == conversation }) {
                 activate(tab)
@@ -1765,15 +1761,7 @@ final class LauncherModel: ObservableObject {
         }
         let session = makeSession(record, resuming: true, query: "")
         session.resumesOnPeer = true
-        session.resumeTab = asTab
-        if let existing, let last = existing.sessions.last {
-            existing.add(session, beside: last, .sideBySide)
-            saveSessions()
-        } else if let asTab {
-            addTab(PaneNode(session: session), name: asTab.name, id: asTab.id)
-        } else {
-            addTab(PaneNode(session: session), awaitsHostTab: true)
-        }
+        addTab(PaneNode(session: session), awaitsHostTab: true)
     }
 
     /// The conversation a session open on a peer is on: its own id until /clear or /resume moves it.
@@ -1884,9 +1872,8 @@ final class LauncherModel: ObservableObject {
         if activeTab === tab { tab.focus(tab.focused) }
     }
 
-    /// Whether a change that is this Mac's own (a file pane, the file tree) is refused because the focused pane is on another machine: its tab is
-    /// that machine's, and a pane made here would be on this Mac in a folder that may not exist there. The pane says so. A split is the host's
-    /// (`splitOnHost`).
+    /// Whether a file pane or the file tree is refused because the tab is another machine's: they list this Mac's folders. The pane says so.
+    /// A split is the host's (`splitOnHost`).
     private func refusesLocalChange(to tab: ClaudeTab) -> Bool {
         guard let host = tab.host else { return false }
         tab.focused.showRefusal("This tab is \(PeerManager.shared.name(of: host))'s: its files open there, and a pane splits there.")
@@ -2034,9 +2021,8 @@ final class LauncherModel: ObservableObject {
     }
 
     func makeTab(_ root: PaneNode, id: UUID? = nil, focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
-                         history: [HeldConversation] = [], reopenedFrom: ReopenedTab? = nil) -> ClaudeTab {
-        let tab = ClaudeTab(root: root, id: id ?? UUID(), focused: focused, name: name, completedAt: completedAt, history: history,
-                            reopenedFrom: reopenedFrom)
+                         history: [HeldConversation] = []) -> ClaudeTab {
+        let tab = ClaudeTab(root: root, id: id ?? UUID(), focused: focused, name: name, completedAt: completedAt, history: history)
         tab.onChange = { [weak self, weak tab] in
             self?.saveSessions()
             if let tab { self?.arrangeOnHost(tab) }
@@ -2139,7 +2125,7 @@ final class LauncherModel: ObservableObject {
             guard let layout = saved.layout.pruned(\.restorable) else { return nil }
             let root = node(layout)
             let tab = makeTab(root, id: saved.resolvedID, focused: root.leaves.first { $0.id == saved.focused }, name: saved.name,
-                              completedAt: saved.done, history: saved.history ?? [], reopenedFrom: saved.reopenedFrom)
+                              completedAt: saved.done, history: saved.history ?? [])
             tab.showsFiles = saved.showsFiles ?? false
             return tab
         }
@@ -2343,14 +2329,6 @@ final class LauncherModel: ObservableObject {
                                          done: false, leavesEnded: leavesEnded, waitsForRecent: waitsForRecent)
         var saved = closed.saved
         saved.history = tab.history.isEmpty ? nil : tab.history
-        // A tab a peer reopened with its Claude panes alone closes as it was: its other panes, and the shape, come back from the record.
-        if let reopened = tab.reopenedFrom {
-            saved.layout = saved.layout.restoring(reopened)
-            saved.name = saved.name ?? reopened.original.name
-            saved.focused = saved.layout.records.contains { $0.id == saved.focused } ? saved.focused : reopened.original.focused
-            saved.showsFiles = saved.showsFiles ?? reopened.original.showsFiles
-            saved.reopenedFrom = nil
-        }
         if closed.done || markedAt != nil {
             var done = TabRecord(saved: saved, completedAt: markedAt ?? Date())
             if markedAt != nil, tab.host != nil { done.hostHoldsDone = true }
@@ -2594,7 +2572,12 @@ final class LauncherModel: ObservableObject {
         let id = tab.id
         Task { [weak self] in
             let failure = await PeerManager.shared.take(tab: id, on: host)
-            guard self != nil else { return }
+            guard let self else { return }
+            // This Mac is in control of the tab from here on, whatever a listing asked before the take over says.
+            if failure == nil, self.tabs.contains(where: { $0 === tab }) {
+                tab.inControl = true
+                self.noteLayoutChange(of: id)
+            }
             for card in cards {
                 if let failure { card.takeOverFailed(failure) } else { card.performTakeOver(taken: true) }
             }
@@ -3064,29 +3047,8 @@ final class LauncherModel: ObservableObject {
         guard record.transcriptExists else { return .failure("\(here) has no transcript of that conversation") }
         let session = makeSession(record, resuming: true, query: "")
         session.startedFor = peer
-        // A tab the asker reopened (protocol 22): the session joins it if it is open here, else makes it. A fallback id stands in for one a
-        // peer's tab here has, so the asker's later sessions of that tab join the same tab.
-        let asked = request.tab.flatMap(UUID.init(uuidString:))
-        let wanted = asked.flatMap { hostTabs[$0] }.flatMap { id in tabs.contains { $0.id == id } ? id : nil } ?? asked
-        let tab: ClaudeTab
-        if let wanted, let open = tabs.first(where: { $0.id == wanted && $0.host == nil }), let last = open.sessions.last {
-            // The tab's name goes on once it holds two: a tab of one is named after its conversation (`SessionNames`), which its name must not overwrite.
-            if open.claudeSessions.count == 1, let name = request.tabName, !name.isEmpty { open.name = name }
-            open.reopenedFrom?.resumed(session.id, on: conversation)
-            open.add(session, beside: last, .sideBySide)
-            tab = open
-        } else {
-            let id = wanted.flatMap { id in tabs.contains { $0.id == id } ? nil : id }
-            // The closed tab of that id, if this Mac has it, is the tab reopened with only its Claude panes: it keeps the conversations it held,
-            // and itself whole, for the close (`sessionExited`) to put back in Recent with its terminals and splits.
-            let closed = id.flatMap { id in (recent + ended + completed).first { $0.id == id && $0.host == nil } }
-            var reopened = closed.map { ReopenedTab(original: $0) }
-            reopened?.resumed(session.id, on: conversation)
-            tab = makeTab(PaneNode(session: session), id: id, name: store.tabName(ofSession: conversation), history: closed?.history ?? [],
-                          reopenedFrom: reopened)
-            if let asked { hostTabs[asked] = tab.id != asked ? tab.id : nil }
-            tabs.append(tab)
-        }
+        let tab = makeTab(PaneNode(session: session), name: store.tabName(ofSession: conversation))
+        tabs.append(tab)
         saveSessions()
         session.start()
         return await replyOnceRunning(session, in: folder, tab: tab)
@@ -3219,10 +3181,8 @@ final class LauncherModel: ObservableObject {
         return .success()
     }
 
-    /// A peer's `end` naming a tab: the machine in control closed the whole tab. The same decision as for one pane, made for all of them: if
-    /// each running pane's origin names the asker the tab was made for it, and it ends (every pane closes, the tab goes to Recent as when
-    /// closed here); otherwise every pane the asker holds is released, labelled for nobody with its clients detached, and the host's cards go
-    /// live (ADR 0034). A tab with nothing running has no one in control, so it is the host's alone to close.
+    /// A peer's `end` naming a tab (ADR 0034): the decision for one pane, made for all. If each running pane's origin names the asker the tab
+    /// ends and goes to Recent; else every pane the asker holds is released and the host's cards go live.
     private func hostEndTab(_ request: PeerRequest, by peer: String) async -> PeerReply {
         guard let id = request.tab.flatMap(UUID.init(uuidString:)) else { return .failure("Not a Varnick tab id") }
         // A tab already gone is nothing to end.

@@ -14,6 +14,13 @@ public struct PeerLayout: Codable, Equatable, Sendable {
     public var fraction: Double?
     public var parts: [PeerLayout]?
 
+    public init(pane: String? = nil, axis: String? = nil, fraction: Double? = nil, parts: [PeerLayout]? = nil) {
+        self.pane = pane
+        self.axis = axis
+        self.fraction = fraction
+        self.parts = parts
+    }
+
     public static let sideBySide = "sideBySide"
     public static let stacked = "stacked"
 

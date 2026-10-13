@@ -1,13 +1,11 @@
 import Foundation
 import VarnickPeer
 
-/// What a headless host's tabs are, decided with no I/O (the rules are in `docs/agents/where-it-breaks.md` › Peers). A tab is the records
-/// that name it (`HeadlessSession.tabID`) and, once its layout, name or membership has changed, a `HeadlessTab` record that says how they
-/// are laid out.
+/// What a headless host's tabs are, decided with no I/O (rules: `docs/agents/where-it-breaks.md` › Peers): the records that name a tab
+/// (`HeadlessSession.tabID`) and, once it has changed, a `HeadlessTab` that lays them out.
 enum HeadlessTabs {
-    /// The tab as it stands now: its open records laid out side by side in the order they were started until a record says otherwise, then
-    /// the stored layout cut to the open records, with any open record it has no place for added beside the last pane. A name a stored
-    /// record doesn't have is the records' own (`HeadlessSession.tabName`) only until the tab has a record. Nil when no record of the tab is open.
+    /// The tab as it stands: its open records side by side until a record lays them out, then that layout cut to the open records, with any
+    /// it has no place for beside the last pane. Nil when no record of the tab is open.
     static func record(of id: String, sessions: [HeadlessSession], tabs: [HeadlessTab]) -> HeadlessTab? {
         let open = sessions.filter { $0.tabID == id && $0.ended == nil }
         guard !open.isEmpty, var layout = PeerLayout.evenRow(open.map(\.id)) else { return nil }
@@ -20,15 +18,12 @@ enum HeadlessTabs {
         return HeadlessTab(id: id, layout: layout, name: name, origin: stored?.origin ?? open.first?.origin)
     }
 
-    /// The layout a closed tab reopens in: the stored one cut to the records of the tab that ended (all of them), else those side by side.
+    /// The layout a closed tab reopens in: the stored one cut to the tab's records, so a pane closed on purpose stays closed; a tab with no
+    /// record has its records side by side.
     static func closedLayout(of id: String, sessions: [HeadlessSession], tabs: [HeadlessTab]) -> PeerLayout? {
         let ids = sessions.filter { $0.tabID == id }.map(\.id)
-        guard var layout = PeerLayout.evenRow(ids) else { return nil }
-        if let kept = tabs.first(where: { $0.id == id })?.layout.pruned(keeping: Set(ids)) { layout = kept }
-        for missing in ids where !layout.panes.contains(missing) {
-            layout = layout.splitting(layout.panes.last ?? missing, adding: missing, axis: PeerLayout.sideBySide) ?? layout
-        }
-        return layout
+        guard let stored = tabs.first(where: { $0.id == id }) else { return PeerLayout.evenRow(ids) }
+        return stored.layout.pruned(keeping: Set(ids))
     }
 
     /// Puts the record that is about to be saved in its tab. Returns whether `tabs` changed.

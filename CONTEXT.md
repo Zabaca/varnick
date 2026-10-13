@@ -67,7 +67,7 @@ The custom apps that ship with Varnick, reviewed in its repository, which the us
 _Avoid_: Marketplace, store, built-in app
 
 **Tab**:
-A group of panes, split side by side or stacked, shown together in the panel. It keeps an id across launches, which is how the **Session board**, Completed and other machines name it, and belongs to one machine, its **Host**: a tab here that shows a paired Mac's sessions is that Mac's tab, under its id, and can't be split here. The user's unit of work: Done is a tab's, and it closes every pane in it. It keeps a **Tab history**.
+A group of panes, split side by side or stacked, shown together in the panel. It keeps an id across launches, which is how the **Session board**, Completed and other machines name it, and belongs to one machine, its **Host**, which keeps its layout, panes and mark. A tab here that shows another machine's is a view of it, under its id, in the host's layout with every pane of it ([ADR 0034](docs/adr/0034-a-tab-lives-on-one-host-which-keeps-its-layout-panes-and-mark-and-other-devices-view-or-take-over-the-tab-whole.md)): only the machine **in control** of it changes it, and a split starts the new pane on the host. The user's unit of work: Done is a tab's, and it closes every pane in it. It keeps a **Tab history**.
 _Avoid_: Workspace, window
 
 **Tab history**:
@@ -103,23 +103,23 @@ Another device of the user's on the tailnet, such as the phone, listed on a **Ho
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
 
 **Phone page**:
-The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its sessions under their tabs, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages.
+The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its open tabs, each shown one pane at a time, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages.
 _Avoid_: Web UI, dashboard, remote
 
 **Host**:
-The machine where a session's Claude process runs, kept alive by its zmx: a Mac, or a **Headless host**. A session's host never changes, and a **Tab**'s is the machine its panes run on. The host keeps the tab's done mark.
+The machine where a session's Claude process runs, kept alive by its zmx: a Mac, or a **Headless host**. A session's host never changes, and a **Tab**'s is the machine its panes run on. The host keeps the tab's layout, its panes and its done mark, and lists its open tabs whole to the other machines and devices.
 _Avoid_: Server, remote
 
 **Headless host**:
-A host with no Varnick app, such as an always-on Linux machine: Varnick's relay alone answers for it, and nothing runs between requests. A Mac or a **Device** is always the one **in control** of a session on it.
+A host with no Varnick app, such as an always-on Linux machine: Varnick's relay alone answers for it, and nothing runs between requests. It keeps tabs of several panes, Claude sessions and terminals. A Mac or a **Device** is always the one **in control** of a tab on it.
 _Avoid_: Server, Linux host
 
 **In control**:
-The one Mac or **Device** whose keyboard reaches a session; other Macs show its live screen. On a **Headless host** it is always a Mac or a Device.
+The one Mac or **Device** whose keyboard reaches a **Tab**'s Claude and terminal panes, the same for each; other Macs show their live screens. Only it changes the tab's layout. On a **Headless host** it is always a Mac or a Device.
 _Avoid_: Owner, leader (zmx's word)
 
 **Card**:
-(Not a board card on the **Session board**.) What a pane shows in place of its terminal while another Mac or a **Device** is in control of its session, or its host can't be reached. It holds no process, and closing it on a peer ends nothing (except a Resuming card, which closes the request to start the session again); on the host it asks first, since the card is the only pane that session has there. While another Mac or a Device is in control ("Controlled on Phone") it draws the session's **live screen** under a bar with Take over; when the host can't be reached, or has lost the session, it is a message with Reconnect or Retry.
+(Not a board card on the **Session board**.) What a Claude or terminal pane shows in place of its terminal while another Mac or a **Device** is in control of its tab, or its host can't be reached. It holds no process, and closing it on a peer ends nothing (except a Resuming card, which closes the request to start the session again); on the host it asks first, since the card is the only pane that session has there. While another Mac or a Device is in control ("Controlled on Phone") it draws the pane's **live screen** under a bar with Take over; when the host can't be reached, or has lost the session, or lists the pane as not running, it is a message with Reconnect, Retry or Start. A pane of another machine's tab that stays on it (the Transcript, an app, a page at a local address) is a plainer card that says where it runs.
 
 **Live screen**:
 The session's screen as its host's zmx has it, sent to the card of the Mac that isn't in control while the card is shown, and to the session view of a **Device**'s **Phone page** that isn't in control while the page is visible, as it changes. It is drawn at the grid of the Mac or Device in control, scaled to fit the pane (on the phone, the width, with pinch to zoom), and is read-only: it takes no input.
@@ -130,11 +130,11 @@ The last **live screen** kept in the card while it isn't updating: the pane was 
 _Avoid_: Mirror (an Outline term, see **Mirror**)
 
 **Take over**:
-Moving control of a session to the Mac or **Device** that asks: relabel it, detach every client, attach. Offered on the card. Opening a paired Mac's open tab, from the session list or from ↩ on a Recent or search row, shows the card first, so control moves only when the user presses Take over.
+Moving control of a **Tab** to the Mac or **Device** that asks: relabel every Claude and terminal pane of it, detach their clients, attach each pane. Offered on a card, and it takes all the tab's panes. Opening a paired Mac's open tab, from the session list or from ↩ on a Recent or search row, shows the cards first, so control moves only when the user presses Take over; reopening a closed tab there is the one case that starts it labelled for the asker.
 _Avoid_: Steal, attach
 
 **Release**:
-What closing a pane that is in control does unless the session came from the Mac closing it: the pane closes, control goes back to the host, and the session keeps running there. Closing ends a session only when the host started it for the Mac closing it, as closing a pane always has. Any other Mac or **Device** in control only releases it: the host started it itself (at its own prompt), or for a different Mac or Device. The host decides, since only it knows where the session came from. A headless host has no keyboard to hand control to, so there the label stays: the session shows as last controlled on the Mac or Device that released it ("Last controlled on Phone").
+What closing a pane, or a whole tab, that is in control does unless it came from the Mac closing it: the pane closes, control goes back to the host, and the session keeps running there. Closing ends a session only when the host started it for the Mac closing it, as closing a pane always has; a tab ends when every running pane of it was. Any other Mac or **Device** in control only releases it: the host started it itself (at its own prompt), or for a different Mac or Device. The host decides, since only it knows where it came from. A headless host has no keyboard to hand control to, so there the label stays: the session shows as last controlled on the Mac or Device that released it ("Last controlled on Phone").
 _Avoid_: Detach, hand back
 
 ### Starting a session

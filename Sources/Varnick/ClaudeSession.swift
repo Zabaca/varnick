@@ -198,8 +198,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// can send it again; a pane restored after a restart never has it either, so what the host
     /// restored is all that can be started again without the user (`PeerResume`).
     var resumesOnPeer = false
-    /// A tab reopened from Completed names itself in that `resume`, so the host puts this session in the tab it had there (protocol 22).
-    var resumeTab: (id: UUID, name: String?)?
     /// The last explicit resume failed, so Retry is the user asking for it again.
     private var explicitResumeFailed = false
     /// Polls of a pane showing the card, to look for its session ending now and then.
@@ -379,9 +377,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         }
     }
 
-    /// The user's login shell, like a new terminal window. A restored shell reconnects to its zmx session unless another machine is in
-    /// control of it, which shows the card (`startLocal`); without one it starts fresh in its last known folder. A terminal on a peer is
-    /// an ssh client of its host's zmx, as a Claude pane is.
+    /// The user's login shell, like a new terminal window. A restored shell reconnects to its zmx session unless another machine controls
+    /// it (`startLocal`); without one it starts fresh in its last folder. On a peer it is an ssh client of the host's zmx.
     private func startShell() {
         if let host = record.host { return startOnHost(on: host) }
         startLocal { self.launchShell() }
@@ -498,10 +495,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         startLocal { self.launchClaude() }
     }
 
-    /// Starts a Claude or terminal pane of this Mac with `launch`, unless its zmx session runs already: a session another Mac is in control
-    /// of is never attached from here, since a second client would type into it too, and the card shows instead. A new pane has no session
-    /// yet to ask about (the one a peer's `start` made creates it, labelled for that peer). zmx is asked off the main actor, so the process
-    /// starts a moment after.
+    /// Starts a Claude or terminal pane of this Mac with `launch`, unless its zmx session runs: one another Mac controls is never attached
+    /// from here (a second client would type into it), and the card shows. zmx is asked off the main actor.
     private func startLocal(launch: @escaping () -> Void) {
         guard resuming, Zmx.isEnabled else { return launch() }
         let id = record.id
@@ -643,8 +638,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             request.conversation = record.conversationID
             request.start = PeerStart(id: record.id.uuidString.lowercased(), folder: record.directory, prompt: "", agent: record.agent,
                                       skipPermissions: record.skipPermissions)
-            request.tab = resumeTab?.id.uuidString.lowercased()
-            request.tabName = resumeTab?.name
         }
         let id = record.id, explicit = resumesOnPeer
         Task { [weak self] in

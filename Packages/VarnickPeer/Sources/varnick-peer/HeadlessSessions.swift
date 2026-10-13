@@ -63,9 +63,8 @@ struct HeadlessSession: Codable, Equatable {
     }
 }
 
-/// A tab this host keeps for the machines that use it (ADR 0034): how its panes are laid out, its name and the machine it was made for.
-/// A tab with no record (a session started before tabs had layouts) is its records side by side, and a record is written the first time
-/// its layout, name or membership changes. The mark stays on the tab's session records (`HeadlessSession.done`).
+/// A tab this host keeps (ADR 0034): its layout, its name and the machine it was made for. One with no record is its records side by side;
+/// the mark stays on the session records (`HeadlessSession.done`).
 struct HeadlessTab: Codable, Equatable {
     var id: String
     /// The panes by record id, as the machine in control last arranged them.
@@ -301,10 +300,8 @@ extension StateFolder {
         case claimed([Reopening])
     }
 
-    /// A closed tab's panes marked starting again for `by`, decided and written in one step like `claimResume`, so two Macs can't both
-    /// reopen it. Its layout comes back (`HeadlessTabs.closedLayout`) cut to the panes that can start: a Claude pane whose transcript is
-    /// there and whose conversation no running record has open, and every terminal, which starts fresh in its folder. The tab is made for
-    /// `by`, and its mark comes off.
+    /// A closed tab's panes that can start again (a Claude pane with its transcript and no other record holding it, and every terminal),
+    /// marked starting for `by` in one step like `claimResume`, so two Macs can't both reopen it. The tab is made for `by`; its mark comes off.
     func claimReopen(_ tab: String, by: String, running: Set<String>, now: Date = Date()) throws -> Reopen {
         try locked(exclusive: true) {
             var sessions = try readSessions()

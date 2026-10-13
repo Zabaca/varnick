@@ -254,23 +254,6 @@ struct TabRecord: Codable, Identifiable, Equatable {
     }
 }
 
-/// A closed tab a peer's `resume` reopened on this Mac with only its Claude panes (`LauncherModel.hostResumeConversation`), kept whole with the
-/// pane each resumed session was resumed for, so the tab closes into Recent with its terminals and splits (`PaneLayout.restoring`).
-struct ReopenedTab: Codable, Equatable {
-    var original: TabRecord
-    /// Each pane of the open tab that was resumed for a pane of `original`, by id.
-    var panes: [UUID: UUID] = [:]
-
-    /// `pane` was resumed on `conversation`: it stands for the pane of `original` on that conversation that nothing stands for yet.
-    mutating func resumed(_ pane: UUID, on conversation: String) {
-        let taken = Set(panes.values)
-        let id = conversation.lowercased()
-        if let place = original.claudeRecords.first(where: { $0.conversationID.lowercased() == id && !taken.contains($0.id) }) {
-            panes[pane] = place.id
-        }
-    }
-}
-
 extension UUID {
     /// Another id made from this one, always the same.
     var next: UUID {
@@ -319,12 +302,9 @@ struct SessionStore {
         var done: Date?
         /// The conversations it has held, newest first (`TabHistory`). Optional so older files load.
         var history: [HeldConversation]?
-        /// The closed tab a peer's `resume` reopened here with only its Claude panes, kept so the tab closes into Recent with its terminals and
-        /// splits (`ReopenedTab`). Optional so older files load.
-        var reopenedFrom: ReopenedTab?
 
         init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil,
-             history: [HeldConversation]? = nil, reopenedFrom: ReopenedTab? = nil) {
+             history: [HeldConversation]? = nil) {
             self.id = id
             self.layout = layout
             self.focused = focused
@@ -332,7 +312,6 @@ struct SessionStore {
             self.showsFiles = showsFiles
             self.done = done
             self.history = history
-            self.reopenedFrom = reopenedFrom
         }
 
         /// A layout always holds a record.
@@ -371,7 +350,7 @@ struct SessionStore {
                 pieces.append(SavedTab(id: first ? resolvedID : pruned.records[0].id, layout: pruned,
                                        focused: pruned.records.contains { $0.id == focused } ? focused : nil,
                                        name: first ? name : nil, showsFiles: first ? showsFiles : nil, done: first ? done : nil,
-                                       history: first ? history : nil, reopenedFrom: first ? reopenedFrom : nil))
+                                       history: first ? history : nil))
             }
             return pieces
         }

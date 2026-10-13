@@ -9,9 +9,8 @@ import VarnickPeer
 extension LauncherModel {
     // MARK: Opening
 
-    /// A pane of a host's listed tab as a session here. A Claude or terminal pane opens on its card and never takes control by itself; a file
-    /// pane reads its text from the host; a page at an outside address loads here; the Transcript, an app and a page at a local address show a card
-    /// that says where they run (`SessionRecord.staysOnHost`).
+    /// A pane of a host's listed tab as a session here: a card for Claude and terminal, text read from the host for a file, a page at an
+    /// outside address loaded here, and a card saying where the rest run (`SessionRecord.staysOnHost`).
     func hostPane(_ pane: PeerPane, on peer: String) -> ClaudeSession? {
         guard let id = UUID(uuidString: pane.id), let kind = pane.kind else { return nil }
         var record = SessionRecord(id: id, prompt: "", title: pane.title, directory: pane.folder, startedAt: Date(), lastUsed: Date())
@@ -200,9 +199,8 @@ extension LauncherModel {
         }
     }
 
-    /// A split of a pane of another machine's tab, made here in control of it: the host starts the new pane (a Claude session or a terminal) in
-    /// the split pane's folder and puts it in that place of the tab, and this Mac adds it there and attaches. Browsers, apps and files are the host's
-    /// own picker's.
+    /// A split of another machine's tab, in control of it: the host starts the new Claude or terminal pane in the split pane's folder and
+    /// place, and this Mac adds it there and attaches. Browsers, apps and files are the host's own picker's.
     func splitOnHost(_ tab: ClaudeTab, _ axis: SplitAxis, kind: PaneKind) {
         let target = tab.focused
         guard let host = tab.host else { return }

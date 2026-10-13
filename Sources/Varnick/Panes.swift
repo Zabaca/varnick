@@ -192,22 +192,6 @@ indirect enum PaneLayout: Codable, Equatable {
         mapping { if $0.id == record.id { $0 = record } }
     }
 
-    /// This layout, a reopened tab's, in the shape the tab closed with: a pane resumed for a pane of the original takes its place (whatever
-    /// conversation it is on now), the original's other panes stay as they were, and a pane with no place, added since, joins beside them.
-    func restoring(_ reopened: ReopenedTab) -> PaneLayout {
-        let now = records
-        var placed = Set<UUID>()
-        let shape = reopened.original.layout.mapping { record in
-            guard let pane = now.first(where: { reopened.panes[$0.id] == record.id }) else { return }
-            placed.insert(pane.id)
-            record = pane
-        }
-        return now.filter { !placed.contains($0.id) }.reduce(shape) { layout, pane in
-            let count = Double(layout.records.count)
-            return .split(axis: .sideBySide, fraction: count / (count + 1), first: layout, second: .leaf(pane))
-        }
-    }
-
     /// Drops leaves `keep` rejects; a split left with one side collapses into it.
     func pruned(_ keep: (SessionRecord) -> Bool) -> PaneLayout? {
         switch self {
@@ -357,8 +341,6 @@ final class ClaudeTab: ObservableObject {
     var completedAt: Date?
     /// The conversations it has held, newest first (`TabHistory`); the model keeps it (`LauncherModel.noteHistories`) and it is saved with the tab.
     var history: [HeldConversation] = []
-    /// The closed tab a peer's `resume` reopened with only its Claude panes, for when this tab closes (`SavedTab.reopenedFrom`).
-    var reopenedFrom: ReopenedTab?
     /// Layout changed (divider moved); the model saves.
     var onChange: () -> Void = {}
     /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is.
@@ -367,13 +349,12 @@ final class ClaudeTab: ObservableObject {
     var onEnding: () -> Void = {}
 
     init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
-         history: [HeldConversation] = [], reopenedFrom: ReopenedTab? = nil) {
+         history: [HeldConversation] = []) {
         self.id = id
         self.root = root
         self.name = name
         self.completedAt = completedAt
         self.history = history
-        self.reopenedFrom = reopenedFrom
         self.focused = focused ?? root.leaves[0]
     }
 
@@ -416,7 +397,7 @@ final class ClaudeTab: ObservableObject {
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
         SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt,
-                              history: history.isEmpty ? nil : history, reopenedFrom: reopenedFrom)
+                              history: history.isEmpty ? nil : history)
     }
 
     /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).
@@ -615,7 +596,7 @@ struct TerminalLeaf: View {
                     .frame(width: 230, alignment: .leading)
                     .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
-            } else if hovering && !session.isWeb && !session.isFile {
+            } else if hovering && !session.isWeb && !session.isFile && !session.staysOnHost {
                 HStack(spacing: 2) {
                     if session.canRestart { RestartButton(action: session.onRestart) }
                     if session.isClaude { DoneButton(action: session.onDone) }

@@ -78,9 +78,9 @@ public enum PeerOp: String, Codable, Sendable {
     /// Reopen a tab that closed on the host (`tab`) whole, in its layout: its Claude panes resume, its terminals start fresh, all labelled
     /// for the asker. Its running Varnick does it.
     case reopen
-    /// Start `claude --resume` on a conversation that ended there, because the user picked it in Recent or search, or reopened a
-    /// tab that held it (`tab`, `tabName`). Its running Varnick does it. Never sent by anything that runs by itself: `start` with
-    /// `resume` is the automatic one, which refuses an ended session.
+    /// Start `claude --resume` on a conversation that ended there, because the user picked it in Recent or search. Its running Varnick
+    /// does it, in a tab of its own. Never sent by anything that runs by itself: `start` with `resume` is the automatic one, which refuses
+    /// an ended session. A whole closed tab comes back by `reopen`.
     case resume
     /// The peers the receiving host lists, by name and address and nothing else, for the Phone page's links to the other hosts'
     /// pages (ADR 0011). The list is Varnick's list on a Mac and `state/peers.json` on a headless host. A device may ask it, and
@@ -623,9 +623,8 @@ public struct PeerRequest: Codable, Sendable {
     public var start: PeerStart?
     /// A zmx session name, `varnick-<uuid>`: attach, end, screen and watch.
     public var session: String?
-    /// Done: the host's tab to mark, by its id (ADR 0032). Resume: the tab to put the session in, so the sessions of a tab reopened from
-    /// Completed land in one (protocol 22). Nil puts it in a tab of its own. Start: the tab to split a pane of (with `pane` and `axis`),
-    /// which the asker must be in control of; nil makes a tab. Take, arrange, file, reopen and end (the whole tab): the tab acted on.
+    /// Done: the host's tab to mark, by its id (ADR 0032). Start: the tab to split a pane of (with `pane` and `axis`), which the asker must be
+    /// in control of; nil makes a tab. Take, arrange, file, reopen and end (the whole tab, or with `pane` one pane of it): the tab acted on.
     public var tab: String?
     /// Start: the pane of `tab` to split. File: the file pane to read. A pane's id, a lowercase uuid.
     public var pane: String?
@@ -633,7 +632,7 @@ public struct PeerRequest: Codable, Sendable {
     public var axis: String?
     /// Arrange: the tab's layout as the asker has it.
     public var layout: PeerLayout?
-    /// Resume: the name of the tab (`tab`), given to it if the host creates it. Arrange: the tab's name, nil or empty clears it.
+    /// Arrange: the tab's name, nil or empty clears it.
     public var tabName: String?
     /// Done: false takes the mark off. Nil or true marks.
     public var mark: Bool?

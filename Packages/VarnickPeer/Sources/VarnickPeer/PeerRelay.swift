@@ -187,9 +187,8 @@ public enum PeerRelay {
         return reply
     }
 
-    /// Takes a tab for the asker: every Claude and terminal pane of it that runs is relabelled first, then every client is detached, so a
-    /// client that sees its exit finds each session labelled for someone else. The asker then attaches each pane without `take`. A pane that
-    /// zmx wouldn't relabel is told in the failure; the rest are taken all the same. Answered from zmx and the host's tabs alone.
+    /// Takes a tab for the asker: every running Claude and terminal pane is relabelled, then every client is detached, in that order.
+    /// The asker then attaches each pane without `take`. Answered from zmx and the host's tabs alone.
     private static func take(_ request: PeerRequest?, host: PeerHost) -> Int32 {
         guard let request, let tab = request.tab, UUID(uuidString: tab) != nil else { return finish(.failure("Not a Varnick tab id")) }
         guard Zmx.isAvailable else { return finish(.failure("zmx isn't installed next to Varnick on \(host.name)")) }
