@@ -4,7 +4,7 @@ import VarnickPeer
 // What a headless host does for the requests its app does on a Mac: `start`, `resume`, `end`, `projects`,
 // `agents`, and the session lists. The Mac's equivalents are `LauncherModel.hostStart`, `hostResume`,
 // `hostResumeConversation`, `hostEnd`, `hostProjects` and `hostAgents`, `PeerFollow.fill`,
-// `PeerOpenSessions.list` and `PeerRecentSessions.list`. Every request that reads the records reconciles them
+// `PeerOpenSessions.list` and `PeerRecentTabs.list`. Every request that reads the records reconciles them
 // with zmx first (`StateFolder.reconcile`). Nothing here ends a session by itself, or starts one unasked.
 
 extension HeadlessPeerHost {
@@ -238,9 +238,10 @@ extension HeadlessPeerHost {
         return reply
     }
 
-    /// `recent`: the sessions that ended here, newest first, each conversation once, whose transcript exists
-    /// and that no running or starting session has open (that one is in the session list instead). A session
-    /// that ended by itself (`/exit`, or claude killed) is here once the next request reconciles it.
+    /// `recent`: the tabs that ended here, newest first (protocol 23). A record is a tab of its own unless a `resume` put it in another
+    /// (ADR 0032), and a tab is closed when every record of it has ended; each conversation is listed once, with a transcript to resume and
+    /// no running or starting session holding it (that one is in the session list instead). A session that ended by itself (`/exit`, or
+    /// claude killed) is here once the next request reconciles it.
     func recent() -> PeerReply {
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         state.reconcile()
@@ -248,19 +249,30 @@ extension HeadlessPeerHost {
         do { records = try state.sessions() } catch { return stateFailure(error) }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
         let conversations = StateFolder.conversations(of: records)
+        let stillOpen = Set(records.filter { $0.ended == nil }.map(\.tabID))
         var seen = Set<String>()
-        var reply = PeerReply.success()
-        reply.recent = records.filter { $0.ended != nil }.sorted { ($0.ended ?? .distantPast) > ($1.ended ?? .distantPast) }.compactMap { record in
+        var order: [String] = [], tabs: [String: [(record: HeadlessSession, session: PeerRecentSession)]] = [:]
+        for record in records.filter({ $0.ended != nil && !stillOpen.contains($0.tabID) })
+            .sorted(by: { ($0.ended ?? .distantPast) > ($1.ended ?? .distantPast) }) {
             let conversation = conversations[record.id] ?? record.id
             let folder = record.folder ?? config.defaultFolder
             guard !seen.contains(conversation), FileManager.default.fileExists(atPath: TranscriptReader.path(directory: folder, conversation: conversation)),
-                  !HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: conversations) else { return nil }
+                  !HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: conversations) else { continue }
             seen.insert(conversation)
             let title = TranscriptReader.title(directory: folder, conversation: conversation) ?? Self.firstLine(of: record.prompt) ?? ""
-            return PeerRecentSession(conversation: conversation, title: title, folder: folder, agent: record.agent,
-                                     last: Int64((record.ended ?? Date()).timeIntervalSince1970),
-                                     session: UUID(uuidString: record.id).map(Zmx.sessionName),
-                                     done: record.done.map { Int64($0.timeIntervalSince1970) }, tab: record.tabID)
+            if tabs[record.tabID] == nil { order.append(record.tabID) }
+            tabs[record.tabID, default: []].append((record, PeerRecentSession(
+                conversation: conversation, title: title, folder: folder, agent: record.agent,
+                last: Int64((record.ended ?? Date()).timeIntervalSince1970), session: UUID(uuidString: record.id).map(Zmx.sessionName))))
+        }
+        var reply = PeerReply.success()
+        reply.recent = order.compactMap { id in
+            guard let held = tabs[id] else { return nil }
+            // In the order the sessions were started, which is the order a Mac lays the tab out in.
+            let ordered = held.sorted { ($0.record.started ?? .distantPast) < ($1.record.started ?? .distantPast) }
+            return PeerRecentTab(tab: id, name: held.compactMap(\.record.tabName).first, last: held.map(\.session.last).max() ?? 0,
+                                 done: held.compactMap(\.record.done).max().map { Int64($0.timeIntervalSince1970) },
+                                 sessions: ordered.map(\.session))
         }
         return reply
     }

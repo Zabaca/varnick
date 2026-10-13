@@ -4,7 +4,7 @@
 
 import type { Device } from "./checks";
 import { optional, same, shapeSession, type HomeSession, type RelayResult } from "./home";
-import { isObject, objects, type Json } from "./json";
+import { isObject, objects, uuidPattern, type Json } from "./json";
 import { projectName } from "./page/newrules.js";
 import { launchTimeoutMs } from "./relay";
 
@@ -29,8 +29,6 @@ const nameLimit = 128;
 const controls = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 /** Every control character, for a folder or a name that is one line. */
 const anyControl = /[\x00-\x1f\x7f]/;
-
-export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type Parsed<Value> = { ok: true; value: Value } | { ok: false; error: string };
 const refuse = (error: string): { ok: false; error: string } => ({ ok: false, error });
@@ -69,10 +67,10 @@ export function parseStartBody(body: unknown): Parsed<StartAsk> {
   return { ok: true, value: { folder: body.folder, agent, prompt } };
 }
 
-/** `POST /api/resume`'s body: the conversation, and nothing else. The folder and agent are the host's own, from its Recent. */
+/** `POST /api/resume`'s body: the closed tab, and nothing else. Its sessions, their folders and agents are the host's own, from its Recent. */
 export function parseResumeBody(body: unknown): Parsed<string> {
-  if (!isObject(body) || typeof body.conversation !== "string" || !uuidPattern.test(body.conversation)) return refuse("That isn't a conversation id");
-  return { ok: true, value: body.conversation.toLowerCase() };
+  if (!isObject(body) || typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
+  return { ok: true, value: body.tab.toLowerCase() };
 }
 
 /** `GET /api/agents`'s folder, when one is asked for: a host path. None asks for the host's default folder. */
@@ -189,27 +187,51 @@ export function findOpenSession(sessions: RelayResult, conversation: string, dev
 /** The wording of the host's own refusal, for a conversation already known to be open there. */
 export const openElsewhere = (host: string): string => `That session is open on ${host}: take it over from the list`;
 
-/**
- * Resume. The folder and agent are the host's Recent row's. A conversation a running session has open is answered with that
- * session's row, and `resume` isn't sent for it. When the host refuses all the same (the session opened after the first look),
- * the sessions are read again and the row is returned the same way.
- */
-export async function resumeConversation(asker: Asker, device: Device, host: string, asked: string, newID: () => string): Promise<Launched> {
-  const conversation = asked.toLowerCase();
-  const [recent, sessions] = await Promise.all([asker.ask("recent", device.id), asker.ask("sessions", device.id)]);
-  const open = findOpenSession(sessions, conversation, device);
-  if (open) return failed(409, openElsewhere(host), open);
-  if (!recent.ok) return failed(502, recent.error);
-  const row = objects(recent.reply.recent).find((candidate) => same(candidate.conversation, conversation));
-  if (!row) return failed(404, `That conversation isn't in ${host}'s Recent any more`);
-  if (!isFolder(row.folder)) return failed(502, `${host} didn't say where that conversation ran`);
+type Resumed = { ok: true; session: string } | { ok: false; status: number; error: string; open?: HomeSession };
+
+/** One `resume` of a conversation into the tab, then the host asked whether the session runs all the same, as a start is. */
+async function resumeOne(asker: Asker, device: Device, conversation: string, tab: { id: string; name: string | null }, row: Json, newID: () => string): Promise<Resumed> {
   const agent = optional(row.agent);
   const id = newID();
   const session = sessionNameFor(id);
   const start: Json = { id, folder: row.folder, prompt: "" };
   if (agent !== null && isAgentName(agent)) start.agent = agent;
-  const resumed = await asker.ask("resume", device.id, { conversation, start }, launchTimeoutMs);
-  if (resumed.ok || await isRunning(asker, device, session)) return { status: 200, body: { ok: true, session } };
+  const fields: Json = { conversation, start, tab: tab.id };
+  if (tab.name !== null) fields.tabName = tab.name;
+  const resumed = await asker.ask("resume", device.id, fields, launchTimeoutMs);
+  if (resumed.ok || await isRunning(asker, device, session)) return { ok: true, session };
   const raced = findOpenSession(await asker.ask("sessions", device.id), conversation, device);
-  return raced ? failed(409, resumed.error, raced) : failed(502, resumed.error);
+  return raced ? { ok: false, status: 409, error: resumed.error, open: raced } : { ok: false, status: 502, error: resumed.error };
+}
+
+/**
+ * Resume a closed tab of the host's Recent (protocol 23): each of its sessions is resumed into one tab of the host, which keeps the
+ * tab's id and name, so one Done there marks all of it. The folders and agents are the host's own. A session of it that a running
+ * session has open is answered with that session's row, and nothing is resumed; the same when the host refuses a resume in a race
+ * (the session opened after the first look). The first session's name is the terminal the page opens, the others are the host's.
+ */
+export async function resumeTab(asker: Asker, device: Device, host: string, asked: string, newID: () => string): Promise<Launched> {
+  const tab = asked.toLowerCase();
+  const [recent, sessions] = await Promise.all([asker.ask("recent", device.id), asker.ask("sessions", device.id)]);
+  if (!recent.ok) return failed(502, recent.error);
+  const closed = objects(recent.reply.recent).find((candidate) => same(candidate.tab, tab));
+  const rows = objects(closed?.sessions).filter((row) => typeof row.conversation === "string" && uuidPattern.test(row.conversation));
+  if (!closed || rows.length === 0) return failed(404, `That tab isn't in ${host}'s Recent any more`);
+  for (const row of rows) {
+    const open = findOpenSession(sessions, (row.conversation as string).toLowerCase(), device);
+    if (open) return failed(409, openElsewhere(host), open);
+  }
+  if (!rows.every((row) => isFolder(row.folder))) return failed(502, `${host} didn't say where that tab's sessions ran`);
+  const named = { id: tab, name: optional(closed.name) };
+  let first: string | null = null;
+  for (const row of rows) {
+    const resumed = await resumeOne(asker, device, (row.conversation as string).toLowerCase(), named, row, newID);
+    if (!resumed.ok) {
+      // The first session is the page's terminal: without it the tab didn't reopen. A later one the host refused leaves the rest.
+      if (first === null) return failed(resumed.status, resumed.error, resumed.open);
+      break;
+    }
+    first ??= resumed.session;
+  }
+  return { status: 200, body: { ok: true, session: first! } };
 }

@@ -617,7 +617,7 @@ enum HistorySync {
     private static func syncWork(into archive: Database) {
         guard let state = SessionStore().load() else { return }
         let headless = Set(PeerList.saved().filter { $0.info?.headless == true }.map(\.id))
-        let records = (state.recent + (state.completedList + state.endedList).flatMap(\.records)).filter {
+        let records = (state.recentList + state.completedList + state.endedList).flatMap(\.records).filter {
             $0.isClaude && ($0.host == nil || $0.host.map(headless.contains) == true)
         }
         do {

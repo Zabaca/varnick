@@ -64,8 +64,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// Only read by the same migration: a Completed copy of another Mac's session whose host holds the mark too. Optional so older files load.
     var hostHoldsDone: Bool?
 
-    /// The tab it was in when its pane closed or moved to another conversation, kept on Recent's copies so a Mac's Recent can name the tab
-    /// the session ended in (protocol 21). Nil on a record saved before that: the session then counts as a tab of its own, with its own id.
+    /// Only read by the migration of Recent (`State.recentList`): the tab a session of the old Recent ended in. Recent holds tabs now
+    /// (option 02 of `work-is-tracked-by-session-not-tab`), and nothing writes this again. Optional so older files load.
     var tab: UUID?
 
     /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
@@ -161,9 +161,11 @@ struct TabRecord: Codable, Identifiable, Equatable {
     var hostHoldsDone: Bool?
     /// When it closed (an ended tab), or was last listed by its host (a remembered one).
     var lastUsed: Date
+    /// The conversations it held, newest first (`TabHistory`). Optional so older files load; another machine's tab keeps none here.
+    var history: [HeldConversation]?
 
     init(id: UUID, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, completedAt: Date? = nil,
-         hostHoldsDone: Bool? = nil, lastUsed: Date) {
+         hostHoldsDone: Bool? = nil, lastUsed: Date, history: [HeldConversation]? = nil) {
         self.id = id
         self.layout = layout
         self.focused = focused
@@ -172,12 +174,13 @@ struct TabRecord: Codable, Identifiable, Equatable {
         self.completedAt = completedAt
         self.hostHoldsDone = hostHoldsDone
         self.lastUsed = lastUsed
+        self.history = history
     }
 
     /// A tab saved as it was open, closed now.
     init(saved: SessionStore.SavedTab, completedAt: Date? = nil, lastUsed: Date = Date()) {
         self.init(id: saved.resolvedID, layout: saved.layout, focused: saved.focused, name: saved.name, showsFiles: saved.showsFiles,
-                  completedAt: completedAt, lastUsed: lastUsed)
+                  completedAt: completedAt, lastUsed: lastUsed, history: saved.history)
     }
 
     /// Another machine's tab: the sessions it lists side by side, in this Mac's own layout.
@@ -211,7 +214,9 @@ struct TabRecord: Codable, Identifiable, Equatable {
     var title: String { name ?? leading?.listTitle ?? "Untitled session" }
 
     /// The tab as a saved tab, its panes' marks gone.
-    var saved: SessionStore.SavedTab { SessionStore.SavedTab(id: id, layout: layout, focused: focused, name: name, showsFiles: showsFiles) }
+    var saved: SessionStore.SavedTab {
+        SessionStore.SavedTab(id: id, layout: layout, focused: focused, name: name, showsFiles: showsFiles, history: history)
+    }
 }
 
 /// The names the user gave sessions with ⌘⇧R, for search (`HistorySync.syncNames`): a tab's name names the conversation of its
@@ -251,14 +256,18 @@ struct SessionStore {
         var showsFiles: Bool?
         /// When another machine marked the tab done while it is open here. Optional so older files load.
         var done: Date?
+        /// The conversations it has held, newest first (`TabHistory`). Optional so older files load.
+        var history: [HeldConversation]?
 
-        init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil) {
+        init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil,
+             history: [HeldConversation]? = nil) {
             self.id = id
             self.layout = layout
             self.focused = focused
             self.name = name
             self.showsFiles = showsFiles
             self.done = done
+            self.history = history
         }
 
         /// A layout always holds a record.
@@ -296,7 +305,8 @@ struct SessionStore {
                 let first = pieces.isEmpty
                 pieces.append(SavedTab(id: first ? resolvedID : pruned.records[0].id, layout: pruned,
                                        focused: pruned.records.contains { $0.id == focused } ? focused : nil,
-                                       name: first ? name : nil, showsFiles: first ? showsFiles : nil, done: first ? done : nil))
+                                       name: first ? name : nil, showsFiles: first ? showsFiles : nil, done: first ? done : nil,
+                                       history: first ? history : nil))
             }
             return pieces
         }
@@ -306,7 +316,11 @@ struct SessionStore {
         var tabs: [SavedTab]?
         /// Before splits: one session per tab.
         var open: [SessionRecord]?
+        /// The Recent of builds before Recent held tabs, read once as closed tabs (`recentList`) and saved empty. The key stays and keeps its
+        /// type: a build without `recentTabs` needs it present to decode the file.
         var recent: [SessionRecord] = []
+        /// Recent: the newest closed tabs, Done or not, newest first (`SessionStore.recentLimit`). Optional so older files load; nil when empty.
+        var recentTabs: [TabRecord]?
         /// The keys before marks were the tab's (ADR 0032), read once as one-pane tabs (`completedList` and the others) and saved
         /// absent. Their type stays: a changed one would make the whole file unreadable.
         var completed: [SessionRecord]?
@@ -334,6 +348,26 @@ struct SessionStore {
         var endedList: [TabRecord] { Self.merge(endedTabs, (ended ?? []).map { TabRecord(migrating: $0) }) }
         var rememberedList: [TabRecord] { Self.merge(rememberedTabs, (remembered ?? []).map { TabRecord(migrating: $0) }) }
 
+        /// Recent: its tabs, then the sessions of the old key as closed tabs, the sessions that ended in one tab together. A session of a paired
+        /// Mac is that Mac's Recent to list, so the old key's are left out.
+        var recentList: [TabRecord] {
+            var order: [UUID] = [], grouped: [UUID: [SessionRecord]] = [:]
+            for record in recent where record.isClaude && record.host == nil {
+                let tab = record.tab ?? record.id
+                if grouped[tab] == nil { order.append(tab) }
+                grouped[tab, default: []].append(record)
+            }
+            let old = order.compactMap { id -> TabRecord? in
+                guard let sessions = grouped[id], let last = sessions.map(\.lastUsed).max() else { return nil }
+                return TabRecord(id: id, sessions: sessions.map { held in
+                    var held = held
+                    held.tab = nil
+                    return held
+                }, lastUsed: last)
+            }
+            return Self.merge(recentTabs, old)
+        }
+
         /// The new key's tabs, then the old key's, less any with an id already there.
         private static func merge(_ new: [TabRecord]?, _ old: [TabRecord]) -> [TabRecord] {
             var seen: Set<UUID> = []
@@ -341,6 +375,7 @@ struct SessionStore {
         }
     }
 
+    /// How many closed tabs Recent keeps.
     static let recentLimit = 20
     static let completedLimit = 20
 

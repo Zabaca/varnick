@@ -205,9 +205,9 @@ struct LauncherView: View {
                 SectionLabel(text: "Recent")
                     .frame(height: LauncherModel.sessionHeaderHeight)
                 ForEach(Array(model.shownRecent.enumerated()), id: \.element.id) { i, r in
-                    RecentSessionRow(record: r, selected: model.recentRowsStart + i == model.sessionSelection,
-                                     pills: model.pills(for: r))
-                        .onTapGesture { model.resume(r) }
+                    RecentTabRow(tab: r, selected: model.recentRowsStart + i == model.sessionSelection,
+                                 pills: r.leading.map { model.pills(for: $0) } ?? SessionPills(), done: model.isDone(r))
+                        .onTapGesture { model.openRecent(r) }
                 }
             }
         }
@@ -1066,29 +1066,39 @@ struct PromptSessionRow: View {
     }
 }
 
-struct RecentSessionRow: View {
-    let record: SessionRecord
+/// A closed tab in Recent: ↩ opens it whole. It says its name or its focused session's title, how many sessions it held, its folder, the Mac
+/// when that is another, and when it closed.
+struct RecentTabRow: View {
+    let tab: TabRecord
     let selected: Bool
     let pills: SessionPills
+    /// Marked done, here or by its host.
+    let done: Bool
 
     var body: some View {
         HStack(spacing: 12) {
             SourceTile(source: "claude").opacity(0.6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(record.listTitle)
+                Text(tab.title)
                     .font(.system(size: 13, weight: .medium)).lineLimit(1)
-                SessionDetailLine(pills: pills, folder: record.folderName,
-                                  host: record.host.map { PeerManager.shared.name(of: $0) },
-                                  rest: ["Ended " + record.lastUsed.formatted(.relative(presentation: .named))])
+                SessionDetailLine(pills: pills, folder: tab.leading?.folderName ?? "",
+                                  host: tab.host.map { PeerManager.shared.name(of: $0) }, rest: rest)
             }
             Spacer()
-            if selected { KeyHint(label: "Resume", keys: ["↩"]).font(.system(size: 11)) }
+            if selected { KeyHint(label: "Open", keys: ["↩"]).font(.system(size: 11)) }
         }
         .padding(.horizontal, 10)
         .frame(height: LauncherModel.sessionRowHeight)
         .background(selected ? Theme.selection : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
+    }
+
+    /// How many sessions it held when that is more than one, then when it closed, or "Done" when it was marked.
+    private var rest: [String] {
+        let sessions = tab.claudeRecords.count
+        let when = tab.lastUsed.formatted(.relative(presentation: .named))
+        return (sessions > 1 ? ["\(sessions) sessions"] : []) + [(done ? "Done " : "Closed ") + when]
     }
 }
 

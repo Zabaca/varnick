@@ -3,7 +3,7 @@
 
 import type { Device } from "./checks";
 import type { HostLink } from "./hosts";
-import { objects } from "./json";
+import { objects, uuidPattern } from "./json";
 
 export type RelayResult = { ok: true; reply: Record<string, unknown> } | { ok: false; error: string };
 
@@ -17,14 +17,31 @@ export interface HomeSession {
   mine: boolean;
   /** "Controlled on Mac mini", "Last controlled on this phone": the one wording, from `controlledText`. */
   text: string;
+  /** The tab the host keeps it in (ADR 0032), or null from a host that names none. */
+  tab: string | null;
 }
 
-export interface HomeRecent {
+/** The sessions of one tab of the host, in the host's order. `name` is the tab's own (⌘⇧R), when it has one. */
+export interface HomeTab {
+  tab: string;
+  name: string | null;
+  sessions: HomeSession[];
+}
+
+export interface HomeRecentSession {
   conversation: string;
   title: string;
   folder: string;
   agent: string | null;
-  /** Unix seconds. */
+}
+
+/** A closed tab in the host's Recent: what resuming names is its id, and the host's own Recent says its sessions. */
+export interface HomeRecent {
+  tab: string;
+  /** Its name, else its first session's title. */
+  title: string;
+  sessions: HomeRecentSession[];
+  /** Unix seconds when it closed. */
   last: number;
 }
 
@@ -35,7 +52,7 @@ export interface Home {
   /** Loopback mode: any program on the host can reach the page. */
   loopback: boolean;
   device: { name: string };
-  sessions: Part<HomeSession>;
+  sessions: Part<HomeTab>;
   recent: Part<HomeRecent>;
   /** The other hosts' pages, by name: where each would be, since this host can't know that it serves one. */
   hosts: HostLink[];
@@ -67,7 +84,39 @@ export function shapeSession(open: Record<string, unknown>, device: Device): Hom
     agent: optional(open.agent),
     mine,
     text: controlledText(controller, clients > 0),
+    tab: typeof open.tab === "string" && uuidPattern.test(open.tab) ? open.tab.toLowerCase() : null,
   };
+}
+
+/**
+ * The sessions grouped by the tab the host keeps them in, tabs in the order of their first session. A session the host names no tab
+ * for is a tab of its own, under its session name. A tab's name is the first one a session of it carries.
+ */
+export function groupByTab(open: Record<string, unknown>[], device: Device): HomeTab[] {
+  const tabs: HomeTab[] = [];
+  for (const entry of open) {
+    const session = shapeSession(entry, device);
+    const id = session.tab ?? session.session;
+    let tab = tabs.find((candidate) => candidate.tab === id);
+    if (!tab) {
+      tab = { tab: id, name: null, sessions: [] };
+      tabs.push(tab);
+    }
+    tab.name ??= optional(entry.tabName);
+    tab.sessions.push(session);
+  }
+  return tabs;
+}
+
+/** One closed tab of a `recent` reply; none when it has no id of a tab or no session to resume. */
+export function shapeRecent(row: Record<string, unknown>): HomeRecent[] {
+  const sessions = objects(row.sessions).flatMap((session): HomeRecentSession[] =>
+    typeof session.conversation === "string" && uuidPattern.test(session.conversation)
+      ? [{ conversation: session.conversation.toLowerCase(), title: text(session.title), folder: text(session.folder), agent: optional(session.agent) }]
+      : [],
+  );
+  if (typeof row.tab !== "string" || !uuidPattern.test(row.tab) || sessions.length === 0) return [];
+  return [{ tab: row.tab.toLowerCase(), title: optional(row.name) ?? sessions[0].title, sessions, last: typeof row.last === "number" ? row.last : 0 }];
 }
 
 export function shapeHome(input: {
@@ -84,18 +133,8 @@ export function shapeHome(input: {
     loopback: input.loopback,
     device: { name: device.name },
     hosts: input.hosts,
-    sessions: input.sessions.ok ? { rows: objects(input.sessions.reply.open).map((open) => shapeSession(open, device)) } : { error: input.sessions.error },
-    recent: input.recent.ok
-      ? {
-          rows: objects(input.recent.reply.recent).map((row) => ({
-            conversation: text(row.conversation),
-            title: text(row.title),
-            folder: text(row.folder),
-            agent: optional(row.agent),
-            last: typeof row.last === "number" ? row.last : 0,
-          })),
-        }
-      : { error: input.recent.error },
+    sessions: input.sessions.ok ? { rows: groupByTab(objects(input.sessions.reply.open), device) } : { error: input.sessions.error },
+    recent: input.recent.ok ? { rows: objects(input.recent.reply.recent).flatMap(shapeRecent) } : { error: input.recent.error },
   };
 }
 

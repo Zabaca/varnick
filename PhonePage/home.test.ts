@@ -8,11 +8,15 @@ const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXA
 const mac = "00000000-0000-4000-8000-000000000001";
 const ok = (reply: Record<string, unknown>) => ({ ok: true as const, reply: { v: V, ok: true, ...reply } });
 const host = { name: "Mac mini", headless: false };
+const tabA = "aaaaaaaa-0000-4000-8000-00000000000a";
+const tabB = "bbbbbbbb-0000-4000-8000-00000000000b";
+const conversationA = "cccccccc-0000-4000-8000-00000000000c";
+const conversationB = "dddddddd-0000-4000-8000-00000000000d";
 
 describe("a session row", () => {
   const rows = (open: Record<string, unknown>[]) => {
     const home = shapeHome({ host, loopback: false, device, sessions: ok({ open }), recent: ok({ recent: [] }), hosts: [] });
-    return (home.sessions as { rows: any[] }).rows;
+    return (home.sessions as { rows: any[] }).rows.flatMap((tab) => tab.sessions);
   };
 
   test("says who is in control, and Last when no client is attached", () => {
@@ -54,11 +58,57 @@ describe("a session row", () => {
   });
 });
 
+describe("sessions by tab", () => {
+  const tabs = (open: Record<string, unknown>[]) => {
+    const home = shapeHome({ host, loopback: false, device, sessions: ok({ open }), recent: ok({ recent: [] }), hosts: [] });
+    return (home.sessions as { rows: any[] }).rows;
+  };
+
+  test("sessions the host keeps in one tab are one row, in the host's order, named by the first name any of them carries", () => {
+    const rows = tabs([
+      { session: "varnick-a", title: "A", folder: "/f", tab: tabA },
+      { session: "varnick-b", title: "B", folder: "/f", tab: tabB, tabName: "Other" },
+      { session: "varnick-c", title: "C", folder: "/f", tab: tabA.toUpperCase(), tabName: "Work" },
+    ]);
+    expect(rows.map((tab) => [tab.tab, tab.name, tab.sessions.map((s: any) => s.title)])).toEqual([[tabA, "Work", ["A", "C"]], [tabB, "Other", ["B"]]]);
+  });
+
+  test("a session with no tab is a tab of its own", () => {
+    const rows = tabs([{ session: "varnick-a", title: "A", folder: "/f" }, { session: "varnick-b", title: "B", folder: "/f", tab: "not a tab id" }]);
+    expect(rows.map((tab) => [tab.tab, tab.sessions.length])).toEqual([["varnick-a", 1], ["varnick-b", 1]]);
+    expect(rows[0].sessions[0].tab).toBeNull();
+  });
+});
+
+describe("Recent as closed tabs", () => {
+  const recent = (rows: unknown[]) => (shapeHome({ host, loopback: false, device, sessions: ok({ open: [] }), recent: ok({ recent: rows }), hosts: [] }).recent as { rows: any[] }).rows;
+  const session = (conversation: string, title: string) => ({ conversation, title, folder: "/f" });
+
+  test("a tab is its sessions, named by its own name or its first session's title", () => {
+    const [named, plain] = recent([
+      { tab: tabA, name: "Release", last: 9, sessions: [session(conversationA, "one"), session(conversationB, "two")] },
+      { tab: tabB, last: 3, sessions: [session(conversationB, "two")] },
+    ]);
+    expect([named.title, named.sessions.length, named.last]).toEqual(["Release", 2, 9]);
+    expect(plain.title).toBe("two");
+  });
+
+  test("a tab with no id or no usable session makes no row, and a bad session is dropped", () => {
+    const rows = recent([
+      { tab: "x", sessions: [session(conversationA, "a")] },
+      { tab: tabA, sessions: [] },
+      { tab: tabB, sessions: [session("not a conversation", "a"), session(conversationA, "ok")] },
+    ]);
+    expect(rows.map((row) => [row.tab, row.sessions.map((s: any) => s.conversation)])).toEqual([[tabB, [conversationA]]]);
+  });
+});
+
 describe("the home reply", () => {
   test("one part failing leaves the other", () => {
-    const home = shapeHome({ host, loopback: true, device, sessions: { ok: false, error: "nope" }, recent: ok({ recent: [{ conversation: "c", title: "t", folder: "/f", agent: "", last: 5 }] }), hosts: [] });
+    const closed = { tab: tabA, last: 5, sessions: [{ conversation: conversationA, title: "t", folder: "/f", agent: "" }] };
+    const home = shapeHome({ host, loopback: true, device, sessions: { ok: false, error: "nope" }, recent: ok({ recent: [closed] }), hosts: [] });
     expect(home.sessions).toEqual({ error: "nope" });
-    expect(home.recent).toEqual({ rows: [{ conversation: "c", title: "t", folder: "/f", agent: null, last: 5 }] });
+    expect(home.recent).toEqual({ rows: [{ tab: tabA, title: "t", last: 5, sessions: [{ conversation: conversationA, title: "t", folder: "/f", agent: null }] }] });
     expect(home.loopback).toBe(true);
   });
 
