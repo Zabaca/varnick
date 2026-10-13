@@ -208,7 +208,7 @@ async function resumeOne(asker: Asker, device: Device, conversation: string, tab
  * Resume a closed tab of the host's Recent (protocol 23): each of its sessions is resumed into one tab of the host, which keeps the
  * tab's id and name, so one Done there marks all of it. The folders and agents are the host's own. A session of it that a running
  * session has open is answered with that session's row, and nothing is resumed; the same when the host refuses a resume in a race
- * (the session opened after the first look). The first session's name is the terminal the page opens, the others are the host's.
+ * (the session opened after the first look). The sessions are resumed together, and the page opens the first that started.
  */
 export async function resumeTab(asker: Asker, device: Device, host: string, asked: string, newID: () => string): Promise<Launched> {
   const tab = asked.toLowerCase();
@@ -223,15 +223,12 @@ export async function resumeTab(asker: Asker, device: Device, host: string, aske
   }
   if (!rows.every((row) => isFolder(row.folder))) return failed(502, `${host} didn't say where that tab's sessions ran`);
   const named = { id: tab, name: optional(closed.name) };
-  let first: string | null = null;
-  for (const row of rows) {
-    const resumed = await resumeOne(asker, device, (row.conversation as string).toLowerCase(), named, row, newID);
-    if (!resumed.ok) {
-      // The first session is the page's terminal: without it the tab didn't reopen. A later one the host refused leaves the rest.
-      if (first === null) return failed(resumed.status, resumed.error, resumed.open);
-      break;
-    }
-    first ??= resumed.session;
-  }
-  return { status: 200, body: { ok: true, session: first! } };
+  // All at once: each `resume` waits up to `launchTimeoutMs` on the host, and one after another they would pass the request's own timeout.
+  // The host gathers them into the tab whichever arrives first. Ids are taken in order, before any answer.
+  const results = await Promise.all(rows.map((row) => resumeOne(asker, device, (row.conversation as string).toLowerCase(), named, row, newID)));
+  // The page opens the first session that started. One the host refused leaves the tab reopened with the others; all refused is a failure.
+  const started = results.find((result) => result.ok);
+  if (started?.ok) return { status: 200, body: { ok: true, session: started.session } };
+  const refused = results[0];
+  return refused.ok ? failed(502, "Nothing was resumed") : failed(refused.status, refused.error, refused.open);
 }

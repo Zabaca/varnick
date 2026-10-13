@@ -1152,7 +1152,7 @@ enum HistorySync {
         return (rows, own.map(\.id), own.map(\.modified).max() ?? 0, try rowTabs(archive, of: Set(own.map(\.id))))
     }
 
-    /// This Mac's tab of each of these conversations, one entry per tab (`PeerRowTab`), in the order of their first conversation. A
+    /// This Mac's tab of each of these conversations, one entry per tab (`PeerRowTab`), in tab-id order. A
     /// database an older Varnick made has no table until that Varnick restarts: no tabs are known then.
     private static func rowTabs(_ archive: Database, of ids: Set<String>) throws -> [PeerRowTab] {
         guard try !archive.rows("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_tabs'").isEmpty else { return [] }
@@ -1418,15 +1418,25 @@ enum HistorySync {
                     have.formIntersection(keep)
                     if have != keep { incomplete.append(answer.peer) }
                 }
-                // The Mac's whole list of tabs, so a conversation that moved to another one is not left under the first.
+                // The Mac's whole list of tabs, so a conversation that moved to another one is not left under the first. Only what differs
+                // from the rows held is written: the list comes whole at every sync.
                 if let tabs = answer.tabs, paired.contains(answer.peer) {
-                    try archive.run("DELETE FROM session_tabs WHERE host = ?", [answer.peer])
-                    for tab in tabs {
-                        guard UUID(uuidString: tab.tab) != nil else { continue }
+                    var wanted: [String: (tab: String, name: String)] = [:]
+                    for tab in tabs where UUID(uuidString: tab.tab) != nil {
                         for session in tab.sessions where UUID(uuidString: session) != nil {
-                            try archive.run("INSERT OR REPLACE INTO session_tabs (host, session_id, tab, tab_name) VALUES (?, ?, ?, ?)",
-                                            [answer.peer, session.lowercased(), tab.tab.lowercased(), tab.name ?? ""])
+                            wanted[session.lowercased()] = (tab.tab.lowercased(), tab.name ?? "")
                         }
+                    }
+                    var held: [String: (tab: String, name: String)] = [:]
+                    for row in try archive.rows("SELECT session_id, tab, tab_name FROM session_tabs WHERE host = ?", [answer.peer]) {
+                        if let session = row[0] as? String, let tab = row[1] as? String { held[session] = (tab, row[2] as? String ?? "") }
+                    }
+                    for gone in held.keys where wanted[gone] == nil {
+                        try archive.run("DELETE FROM session_tabs WHERE host = ? AND session_id = ?", [answer.peer, gone])
+                    }
+                    for (session, now) in wanted where held[session]?.tab != now.tab || held[session]?.name != now.name {
+                        try archive.run("INSERT OR REPLACE INTO session_tabs (host, session_id, tab, tab_name) VALUES (?, ?, ?, ?)",
+                                        [answer.peer, session, now.tab, now.name])
                     }
                 }
                 if let stamp = answer.stamp {
