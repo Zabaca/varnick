@@ -208,6 +208,8 @@ final class Settings: ObservableObject {
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
+    /// What the tab strip does with tabs that don't fit (Settings › Claude); absent reads as Shrink.
+    @Published var tabOverflow: TabOverflow { didSet { defaults.set(tabOverflow.rawValue, forKey: "tabOverflow") } }
     /// Voice Varnick speaks in (an `AVSpeechSynthesisVoice` identifier); empty is the system voice.
     /// With an ElevenLabs voice chosen it is the fallback voice, spoken when ElevenLabs fails (ADR 0033).
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
@@ -368,6 +370,7 @@ final class Settings: ObservableObject {
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
+        tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
         voice = defaults.string(forKey: "voice") ?? ""
         elevenLabsVoice = defaults.string(forKey: "elevenLabsVoice") ?? ""
         elevenLabsVoices = defaults.data(forKey: "elevenLabsVoices")
@@ -674,6 +677,13 @@ struct SettingsView: View {
                             if settings.fontSize != Settings.defaultFontSize {
                                 Button("Default") { settings.fontSize = Settings.defaultFontSize }
                             }
+                        }
+                        SettingRow(title: "Tabs that don't fit",
+                                   detail: "When more tabs are open than fit across the top. Shrink narrows them together, down to 140 points; Fixed width makes every tab 180 points; Wrap lets them flow onto up to three rows. The rest go behind a +N button that lists them.") {
+                            Picker("", selection: $settings.tabOverflow) {
+                                ForEach(TabOverflow.allCases) { Text($0.title).tag($0) }
+                            }
+                            .labelsHidden().pickerStyle(.segmented).frame(width: 260)
                         }
                         case .apps:
                         AppsSettingsView(openAppFolders: openAppFolders)

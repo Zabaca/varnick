@@ -30,11 +30,19 @@ final class LauncherModel: ObservableObject {
 
     /// Claude tabs in display order (new ones last, until dragged); each holds one or more
     /// split panes (sessions). They keep running while hidden.
-    @Published var tabs: [ClaudeTab] = [] { didSet { rebuildRecent() } }
+    @Published var tabs: [ClaudeTab] = [] {
+        didSet {
+            rebuildRecent()
+            strip.refresh()
+            strip.watch(tabs)
+        }
+    }
     /// Where a tab being dragged in the header or the Tabs list will land.
     let tabDrag = TabDrag()
+    /// The header's tab strip: which tabs it shows, and the list of those it doesn't.
+    let strip = TabStrip()
     /// Tab on screen; nil shows search (tabs are listed there when the query is empty).
-    @Published var activeTab: ClaudeTab?
+    @Published var activeTab: ClaudeTab? { didSet { strip.refresh() } }
     /// Focused pane of the tab on screen.
     var activeSession: ClaudeSession? { activeTab?.focused }
     /// Closed tabs, Done or not, newest first, at most `SessionStore.recentLimit`; Return on one opens it whole (`openRecent`). A tab open
@@ -129,7 +137,7 @@ final class LauncherModel: ObservableObject {
     /// What the picker offers: the built-ins, then the custom apps found when it opened.
     @Published private(set) var pickerItems = PickerItem.items(apps: [])
     /// Tab whose name is being edited in the header (⌘⇧R).
-    @Published var renamingTab: ClaudeTab?
+    @Published var renamingTab: ClaudeTab? { didSet { strip.refresh() } }
     /// Settings view replaces whatever the panel showed (⌘,).
     @Published var showingSettings = false
     /// The session board replaces the panel's content the way Settings does (⌘⇧B, `!kanban`); Settings shows over it.
@@ -318,6 +326,7 @@ final class LauncherModel: ObservableObject {
         self.textGeneration = TextGeneration(local: textGenerator, server: textGenerationServer, claude: claudeCode)
         board.model = self
         outline.model = self
+        strip.model = self
         restoreSessions()
         // Scanned before the first prompt so `#name` resolves straight away, and again when
         // the folders change (the publisher sends the new value before it's stored).
@@ -2130,7 +2139,10 @@ final class LauncherModel: ObservableObject {
             guard let self, let ended = ref else { return }
             self.sessionExited(ended, code: code, query: prompt)
         }
-        session.onLabelChange = { [weak self] in self?.saveSessions() }
+        session.onLabelChange = { [weak self] in
+            self?.strip.refresh()
+            self?.saveSessions()
+        }
         // A pane of another machine's tab closes alone only for the machine in control of the tab.
         session.closeGate = { [weak self] in
             guard let self, let pane = ref, let tab = self.tabs.first(where: { $0.contains(pane) }) else { return nil }
@@ -2811,6 +2823,7 @@ final class LauncherModel: ObservableObject {
     /// (`keepingBoard`: the tab on screen ended).
     func activate(_ tab: ClaudeTab, keepingBoard: Bool = false) {
         pendingSplit = nil
+        strip.closeList()
         if !keepingBoard {
             hideBoard()
             hideOutline()
@@ -2825,6 +2838,7 @@ final class LauncherModel: ObservableObject {
     /// Back to search without ending anything (⌘N). A session's `show` passes `focusing: false` unless the panel already has the keyboard.
     func showSearch(focusing: Bool = true) {
         pendingSplit = nil
+        strip.closeList()
         startSummaryTicker()
         if let active = activeTab, let i = tabs.firstIndex(where: { $0 === active }) {
             sessionSelection = i
@@ -2874,7 +2888,12 @@ final class LauncherModel: ObservableObject {
 
     /// The tab on screen takes focus, or the search field when none shows.
     private func focusShown() {
-        if let tab = activeTab { tab.focus(tab.focused) } else { focusSearchField() }
+        if let tab = activeTab {
+            tab.focus(tab.focused)
+            if strip.layout.hidden > 0 { startSummaryTicker() }
+        } else {
+            focusSearchField()
+        }
     }
 
     /// ⌘⇧B: the board in place of the current view; again (or esc) goes back. From Settings it closes
@@ -2966,36 +2985,68 @@ final class LauncherModel: ObservableObject {
     /// What each tab's row in the session list says of its Claude sessions ("3 sessions", "1 waiting"), by `ClaudeTab.viewID`. The view reads
     /// this and nothing else: the turns are read where the list is refreshed (`refreshTabSummaries`), never while it is drawn.
     @Published private(set) var tabSummaries: [UUID: [String]] = [:]
+    /// What the first session of a tab waiting on the user waits for (the board's mark: "Needs permission", "Question"), by `ClaudeTab.viewID`;
+    /// only for tabs that have one. A row of the session list and of the hidden tabs' list shows it, and the strip's chip is orange for it.
+    @Published private(set) var tabMarks: [UUID: String] = [:]
     private var summaryTicker: Task<Void, Never>?
 
-    /// Reads each tab's Claude panes' turns (one stat a pane) and publishes the summaries that changed.
+    /// Reads each tab's Claude panes' turns (one stat a pane, none for a pane that reads its own) and publishes what changed.
     func refreshTabSummaries() {
-        var next: [UUID: [String]] = [:]
+        var summaries: [UUID: [String]] = [:]
+        var marks: [UUID: String] = [:]
         for tab in tabs {
             let claude = tab.claudeSessions
+            for pane in claude where !pane.readsOwnTurn { pane.checkTurn() }
+            if let mark = claude.lazy.filter(turnIsLive).compactMap({ $0.turn?.turn.mark }).first { marks[tab.viewID] = mark }
             guard claude.count > 1 else { continue }
-            for pane in claude { pane.checkTurn() }
-            next[tab.viewID] = TabSummary.parts(sessions: claude.count, waiting: claude.filter { $0.turn?.turn.mark != nil }.count,
-                                                working: claude.filter { $0.turn?.turn.isRunning == true }.count)
+            summaries[tab.viewID] = TabSummary.parts(sessions: claude.count, waiting: claude.filter { $0.turn?.turn.mark != nil }.count,
+                                                     working: claude.filter { $0.turn?.turn.isRunning == true }.count)
         }
-        if next != tabSummaries { tabSummaries = next }
+        if summaries != tabSummaries { tabSummaries = summaries }
+        if marks != tabMarks { tabMarks = marks }
     }
 
-    /// Reads the summaries now and once a second while the search is on screen in a visible panel. It ends when the panel hides or a tab, the
-    /// board, the outline or Settings covers the search, and starts again where the search comes back (`panelDidShow`, `showSearch`,
-    /// `focusSearchField`).
-    private func startSummaryTicker() {
-        refreshTabSummaries()
+    /// Zmx's sessions as last asked, off the main actor, for the marks of panes restored and not opened since: a session a reboot ended leaves a
+    /// turn file that still says it waits (the board discards it the same way). Unknown until answered, which counts as there (`SessionBoard`).
+    private var zmxSessions: Set<String>?
+    private var zmxCheck: Task<Void, Never>?
+
+    private func turnIsLive(_ pane: ClaudeSession) -> Bool {
+        if pane.started || pane.isOnPeer { return true }
+        return Zmx.isEnabled && (zmxSessions?.contains(Zmx.sessionName(pane.id)) ?? true)
+    }
+
+    private func checkZmx() {
+        guard Zmx.isEnabled, tabs.contains(where: { $0.sessions.contains { $0.isClaude && !$0.started } }) else { return }
+        zmxCheck?.cancel()
+        zmxCheck = Task { [weak self] in
+            let listed = await Task.detached(priority: .userInitiated) { Zmx.listedSessions() }.value
+            guard !Task.isCancelled, let self else { return }
+            self.zmxSessions = listed
+            self.refreshTabSummaries()
+        }
+    }
+
+    /// Reads the summaries now and once a second while the search is on screen in a visible panel, or a tab is and the strip hides some tabs
+    /// (their turns are what turns the chip orange). It ends when the panel hides or the board, the outline or Settings covers what it
+    /// serves, and starts again where that comes back (`panelDidShow`, `showSearch`, `focusSearchField`, `focusShown`, the strip).
+    func startSummaryTicker(reading: Bool = true) {
+        if reading {
+            refreshTabSummaries()
+            checkZmx()
+        }
         guard summaryTicker == nil else { return }
         summaryTicker = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
-                guard SessionBoard.panelIsVisible, self.activeTab == nil, !self.showingBoard, !self.showingOutline, !self.showingSettings else {
+                let covered = self.showingBoard || self.showingOutline || self.showingSettings
+                let searching = self.activeTab == nil && !covered
+                guard SessionBoard.panelIsVisible, !covered, searching || self.strip.layout.hidden > 0 else {
                     self.summaryTicker = nil
                     return
                 }
-                if self.showsSessionList { self.refreshTabSummaries() }
+                if !searching || self.showsSessionList { self.refreshTabSummaries() }
             }
         }
     }

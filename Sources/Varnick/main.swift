@@ -190,6 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self.model.pickerKey(event)
                 return nil
             }
+            // The hidden tabs' list takes ↑ ↓ ↩ and esc while it is open: the pane under it gets none of them.
+            if self.model.showsTerminal, self.model.strip.key(event) { return nil }
             let mods = event.modifierFlags.intersection(KeyCombo.relevant)
             if self.model.showingSettings, Int(event.keyCode) == kVK_Escape, mods.isEmpty {
                 self.model.toggleSettings()
