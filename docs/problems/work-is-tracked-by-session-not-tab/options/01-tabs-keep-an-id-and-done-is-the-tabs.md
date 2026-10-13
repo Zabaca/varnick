@@ -93,7 +93,7 @@ status: shipped
   A pane that couldn't be restored at launch is left out, and so is a Claude pane whose conversation is open in another pane here. If none is left, the tab that holds that conversation is shown instead. The reopened tab keeps its id, and leaves Completed or the ended cards.
 - **↩ on another machine's tab** depends on whether it is still open there:
   - still open: its listed sessions open in one tab here, on their cards, and `done` clears the mark there;
-  - closed there: each Claude session it held is resumed there, and each `resume` names the tab (its id and name, protocol 22), so the host puts them in one tab of that id, as the tab here is. The host keeps no layout of it (a headless host none at all) until option 03.
+  - closed there: each Claude session it held is resumed there into one tab of this id, each `resume` naming the tab (ADR 0032). The host keeps no layout of it (a headless host none at all) until option 03.
 - **Resuming one of a Completed tab's conversations from Recent or search opens a new tab,** with its own id, and leaves the Completed tab where it is.
 
 **The board**
@@ -129,7 +129,7 @@ status: shipped
   - an unknown id is a failure, so the Done stays "Done on this Mac only".
 
   A clear unmarks an open tab, and takes a closed one out of Completed.
-- **On the headless host each session record is a one-pane tab, with the record's id.** The record's done date is that tab's mark, so nothing changes on disk.
+- **On the headless host each session record is a tab under the record's id,** unless a `resume` named another (ADR 0032). The record's done date is the mark of its tab, so nothing changes on disk for a record that is alone in it.
 - **What the host sends:**
   - `sessions`: each open session gains its tab's id and name, and the mark it carries is the tab's;
   - `recent`: each entry gains the id of the tab it was in when it ended, and the mark is that tab's, read from Completed by tab id;
@@ -218,4 +218,4 @@ status: shipped
   1. **Splitting a pane that runs on another machine is refused** until option 03, which starts it on the host.
   2. **A session waiting on the user outranks a working one** for the tab's column.
   3. **A mark on one pane of a split tab, at migration:** the tab takes it only if all its Claude panes are marked (the recommendation, taken with the acceptance).
-- **Found by hand after it shipped:** `resume` named no tab, so a reopened two-session tab became one host tab per session and a later Done marked only one. `resume` now carries `tab` and `tabName` (protocol 22).
+- **Found by hand after it shipped:** a reopened two-session tab became one host tab per session, since `resume` named no tab. ADR 0032 has the fix (protocol 22).

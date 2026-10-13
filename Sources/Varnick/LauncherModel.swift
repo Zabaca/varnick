@@ -54,6 +54,8 @@ final class LauncherModel: ObservableObject {
         var waitsForRecent = false
     }
     private var closing: [UUID: ClosingTab] = [:]
+    /// The tab id a peer's `resume` asked for, to the tab made instead when a peer's tab here had that id (`hostResumeConversation`).
+    private var hostTabs: [UUID: UUID] = [:]
     /// `recent` with the paired Macs' ended sessions (`rebuildRecent`), which the session list shows.
     @Published private(set) var allRecent: [SessionRecord] = []
     /// Highlighted row in the session list (empty query): open tabs, then recent.
@@ -1489,7 +1491,7 @@ final class LauncherModel: ObservableObject {
         }
         for id in order {
             guard let infos = grouped[id], infos.allSatisfy({ $0.doneAge == nil }), !mine.contains(id), !marked.contains(id) else { continue }
-            // A session with a pane here belongs to the tab it is in (a tab resumed from several of the host's keeps only one of their ids).
+            // A session with a pane here belongs to the tab it is in, whatever tab id its host lists it under (an older host's resume made one each).
             let sessions = infos.compactMap { PeerOpenRow(peer: peer, info: $0).record }
                 .filter { !panes.contains($0.id) && !listingPredatesClose(of: $0.id, on: host) }
             guard !sessions.isEmpty else { continue }
@@ -2434,7 +2436,7 @@ final class LauncherModel: ObservableObject {
             let before = tabs.count
             resumeOnPeer(conversation: held.conversationID, on: host, folder: held.directory, title: held.title, agent: held.agent, into: tab,
                          asTab: (record.id, record.name))
-            if tab == nil, tabs.count > before { tab = tabs.last }
+            if tab == nil, tabs.count > before { tab = tabs.first { $0.id == record.id } }
         }
     }
 
@@ -2722,17 +2724,20 @@ final class LauncherModel: ObservableObject {
         recent.removeAll { $0.conversationID == conversation }
         let session = makeSession(record, resuming: true, query: "")
         session.startedFor = peer
-        let named = request.tab.flatMap(UUID.init(uuidString:))
+        // A tab the asker reopened (protocol 22): the session joins it if it is open here, else makes it. A fallback id stands in for one a
+        // peer's tab here has, so the asker's later sessions of that tab join the same tab.
+        let asked = request.tab.flatMap(UUID.init(uuidString:))
+        let wanted = asked.flatMap { hostTabs[$0] }.flatMap { id in tabs.contains { $0.id == id } ? id : nil } ?? asked
         let tab: ClaudeTab
-        if let named, let open = tabs.first(where: { $0.id == named && $0.host == nil }), let last = open.sessions.last {
-            // The tab the asker reopened is open here already (an earlier session of it joined, or it never closed): the session joins it.
+        if let wanted, let open = tabs.first(where: { $0.id == wanted && $0.host == nil }), let last = open.sessions.last {
+            // The tab's name goes on once it holds two: a tab of one is named after its conversation (`SessionNames`), which its name must not overwrite.
+            if open.claudeSessions.count == 1, let name = request.tabName, !name.isEmpty { open.name = name }
             open.add(session, beside: last, .sideBySide)
             tab = open
         } else {
-            // Else this session makes the tab, under the asker's id and name, unless some tab here has the id already (a peer's).
-            let id = named.flatMap { id in tabs.contains { $0.id == id } ? nil : id }
-            if let id { ended.removeAll { $0.id == id && $0.host == nil } }
-            tab = makeTab(PaneNode(session: session), id: id, name: request.tabName ?? store.tabName(ofSession: conversation))
+            let id = wanted.flatMap { id in tabs.contains { $0.id == id } ? nil : id }
+            tab = makeTab(PaneNode(session: session), id: id, name: store.tabName(ofSession: conversation))
+            if let asked { hostTabs[asked] = tab.id != asked ? tab.id : nil }
             tabs.append(tab)
         }
         saveSessions()

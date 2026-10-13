@@ -110,12 +110,11 @@ extension HeadlessPeerHost {
         guard !running.contains(id) else { return taken }
         var record = HeadlessSession(id: id, folder: folder, prompt: "", agent: ask.agent, skipPermissions: ask.skipPermissions, origin: by,
                                      conversation: conversation, bootID: HeadlessSession.currentBootID, started: Date(), starting: true)
-        // The tab the asker reopened (protocol 22): this record joins it, and takes its mark if the tab has one. A host holds no layout, so
-        // that is all a tab is here.
+        // The tab the asker reopened (protocol 22): the record joins it. The mark isn't copied: the asker clears it with `done` when it
+        // reopens the tab, and a copy read here would race that clear.
         if let tab = request.tab.flatMap(UUID.init(uuidString:))?.uuidString.lowercased(), tab != id {
             record.tab = tab
             record.tabName = request.tabName
-            record.done = (try? state.sessions())?.first { $0.tabID == tab && $0.done != nil }?.done
         }
         do {
             switch try state.add(record, refusing: { records in
