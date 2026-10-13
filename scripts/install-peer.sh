@@ -206,6 +206,7 @@ case "$PAGE_STATE" in
     # Anything but a clean off is a failure: Funnel unread is Funnel unknown.
     [ "$(printf '%s\n' "$OUT" | marker FUNNEL)" = off ] || die "Funnel isn't known to be off for $PUBLISH_PORT on $TARGET ($(printf '%s\n' "$OUT" | marker FUNNEL)): the sessions might be public"
     [ "$(printf '%s\n' "$OUT" | marker LINGER)" = yes ] || warn "linger is off for the user on $TARGET: the page stops when the last login ends. Turn it on: sudo loginctl enable-linger \$USER"
+    [ "$(printf '%s\n' "$OUT" | marker OPERATOR)" != no ] || warn "the user isn't Tailscale's operator on $TARGET: the page's port proxy gets no certificate, so no web or app pane of a tab there loads from another machine. Fix it once: sudo tailscale set --operator=\$USER (or run tailscaled with TS_PERMIT_CERT_UID)"
     BUN_FOUND=$(printf '%s\n' "$OUT" | marker BUN)
     BUN_PIN=$(printf '%s\n' "$OUT" | marker BUNPIN)
     [ "$BUN_FOUND" = "$BUN_PIN" ] || warn "Bun $BUN_FOUND is on $TARGET: the page is checked against $BUN_PIN"
