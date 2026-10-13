@@ -213,4 +213,8 @@ Start from option 03's branch, or from main once option 03 is merged. Only the h
   - **The status file is keyed by pane,** so the relay never works out which port a pane names: the page server does, once. The saved tabs' date (`VARNICK_PROXY_TABS`) says whether the relay need be asked at all, which keeps an idle host near free.
   - **A headless host cannot split a page or an app from afar,** and the request is refused with that reason: its tabs hold Claude sessions and terminals, and it has no browser or custom apps. It lists no web or app pane, so its proxy is idle. Splits of a Mac host's tab can add a page (its address typed in the split picker) or one of that Mac's custom apps (listed by a new `apps` request).
   - **The operator is checked at the first look, not when a port is first wanted,** so Settings shows the command before any pane; the installer warns about a headless host as it does for linger.
-  - **A viewer loads only an address that is https at the peer's own name under `.ts.net`,** not whatever the listing sends.
+  - **The certificate is asked for at the first look and then hourly while no port is wanted** (each minute while one is, a day after a success), where the spec asks for it daily with a minimum validity.
+  - **A caller who is removed (a device unlisted, a Mac unpaired) loses its open websockets and streamed responses** at the next look, not only its next request.
+  - **Every port closes after a minute of the relay failing,** so a pane closed meanwhile can't keep its port open for good.
+  - **A socket may have 8 MB waiting to go to the server,** and is closed past that.
+  - **A viewer finds the proxied address's name from `tailscale status`,** by the peer's saved address, rather than trusting the listing or building it from the `ssh` address.
