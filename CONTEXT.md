@@ -31,7 +31,7 @@ A page's own summary from its `<head>`, fetched once without cookies, so pages b
 ### Workspace
 
 **Session**:
-One Claude Code conversation: what `/clear` starts fresh, what `/resume` brings back, and what Recent lists. A pane can move from one session to another without closing. The process zmx keeps for a pane is a "zmx session", never just a session.
+One Claude Code conversation: what `/clear` starts fresh and what `/resume` brings back. A pane can move from one session to another without closing, and the **Tab** keeps the ones it has held. Search finds sessions, since that is where the text is, and shows each under the tab that holds it. The process zmx keeps for a pane is a "zmx session", never just a session.
 _Avoid_: Conversation, chat
 
 **Exchange**:
@@ -67,7 +67,7 @@ The custom apps that ship with Varnick, reviewed in its repository, which the us
 _Avoid_: Marketplace, store, built-in app
 
 **Tab**:
-A group of panes, split side by side or stacked, shown together in the panel. It keeps an id across launches, which is how the **Session board**, Completed and other machines name it, and belongs to one machine, its **Host**: a tab here that shows a paired Mac's sessions is that Mac's tab, under its id, and can't be split here. The user's unit of work: Done is a tab's, and it closes every pane in it.
+A group of panes, split side by side or stacked, shown together in the panel. It keeps an id across launches, which is how the **Session board**, Completed and other machines name it, and belongs to one machine, its **Host**: a tab here that shows a paired Mac's sessions is that Mac's tab, under its id, and can't be split here. The user's unit of work: Done is a tab's, and it closes every pane in it. It keeps a history of the **Session**s it has held, the ones `/clear` and `/resume` left behind and those of panes closed while it stayed open included, and a session is in the history of the latest tab that held it.
 _Avoid_: Workspace, window
 
 **Default folder**:
@@ -75,8 +75,8 @@ The folder a new session starts in when no project is picked.
 _Avoid_: Working folder, Claude folder, home folder
 
 **Recent**:
-Sessions no longer open in any pane (ended, or left by `/clear` or `/resume`), newest first; any of them can be resumed. A **Peer**'s ended sessions are listed with this Mac's, marked with their Mac, and resumed on that Mac.
-_Avoid_: History, closed sessions
+The tabs that closed, Done or not, newest first (the newest 20); ↩ on one reopens it whole. A **Peer**'s closed tabs are listed with this Mac's, marked with their Mac, and reopened on that Mac. A conversation `/clear` or `/resume` left behind is in its tab's history, not in Recent.
+_Avoid_: History (a **Tab**'s history is its conversations), closed sessions
 
 **Scratch area**:
 A folder in the project, belonging to one Claude pane, where Claude builds a page that Scratch, a **Custom app** split from that pane, shows live. It stays with the pane when the pane moves to another session.
@@ -99,7 +99,7 @@ Another device of the user's on the tailnet, such as the phone, listed on a **Ho
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
 
 **Phone page**:
-The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its sessions, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages.
+The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its sessions under their tabs, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages.
 _Avoid_: Web UI, dashboard, remote
 
 **Host**:
@@ -126,7 +126,7 @@ The last **live screen** kept in the card while it isn't updating: the pane was 
 _Avoid_: Mirror (an Outline term, see **Mirror**)
 
 **Take over**:
-Moving control of a session to the Mac or **Device** that asks: relabel it, detach every client, attach. Offered on the card. Opening a paired Mac's open session, from the session list or from ↩ on a Recent or search row, shows the card first, so control moves only when the user presses Take over.
+Moving control of a session to the Mac or **Device** that asks: relabel it, detach every client, attach. Offered on the card. Opening a paired Mac's open tab, from the session list or from ↩ on a Recent or search row, shows the card first, so control moves only when the user presses Take over.
 _Avoid_: Steal, attach
 
 **Release**:
@@ -136,7 +136,7 @@ _Avoid_: Detach, hand back
 ### Starting a session
 
 **Prompt**:
-What is typed into the panel, unless it starts with `?` (a search) or `!` (a **Command**): it starts a new session. It is an optional peer (`^name`, a **Peer**), project (`#name`) and agent (`@name`), in any order, then the message: the rest, which is what Claude receives. Matching sessions list under it.
+What is typed into the panel, unless it starts with `?` (a search) or `!` (a **Command**): it starts a new session. It is an optional peer (`^name`, a **Peer**), project (`#name`) and agent (`@name`), in any order, then the message: the rest, which is what Claude receives. Matching sessions list under it, each group under a row for the **Tab** that holds them.
 _Avoid_: Ask, command
 
 **Project**:

@@ -38,6 +38,7 @@ Everything else leaves only when you turn it on.
 Between Macs you have paired, Varnick copies, for Recent and search:
 
 - **Your Claude prompts,** with each session's folder, title and agent, and the last thing Claude wrote after each.
+- **Which tab holds each session,** and the tab's name if you gave it one.
 - **Your whole browsing-history archive:** full page addresses, titles, the names of your Chrome profiles, visit
   counts and last visits, the terms you searched, and each page's description.
 
