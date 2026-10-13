@@ -68,6 +68,10 @@ final class FavoritesStore {
     private var matrixIDs: [Int64] = []
     private var matrixIsSession: [Bool] = []
     private var dataVersion: Int64 = -1
+    /// The index's words (porter stems) and how many rows hold each, read when a typo is first looked up after a sync.
+    private var vocabulary: [(term: [Unicode.Scalar], docs: Int)]?
+    /// The last query `match` built: pages and sessions are searched with the same words one after the other.
+    private var lastMatch: (input: String, match: String?)?
 
     static let sessionSource = "session"
     static let sessionKeyPrefix = "session:"
@@ -135,6 +139,8 @@ final class FavoritesStore {
         try prepare(Self.keywordSQL(sessions: false), &keywordStmt)
         try prepare(Self.keywordSQL(sessions: true), &sessionKeywordStmt)
         try prepare(Self.fetchSQL, &fetchStmt)
+        // In this connection's temp schema, so the database itself is not written.
+        sqlite3_exec(db, "CREATE VIRTUAL TABLE IF NOT EXISTS temp.favorites_vocab USING fts5vocab(main, favorites_fts, row)", nil, nil, nil)
         refreshIfChanged()
     }
 
@@ -144,6 +150,8 @@ final class FavoritesStore {
         let version = Self.int(db, "PRAGMA data_version")
         guard version != dataVersion else { return }
         dataVersion = version
+        vocabulary = nil
+        lastMatch = nil
         sqlite3_exec(db, "BEGIN", nil, nil, nil)   // meta and vectors from the same snapshot
         defer { sqlite3_exec(db, "COMMIT", nil, nil, nil) }
         embeddingModel = Self.meta(db, "embedding_model") ?? ""
@@ -167,7 +175,7 @@ final class FavoritesStore {
 
     /// BM25-ranked ids with highlighted snippets, best first: sessions, or everything else.
     func keyword(_ query: String, limit: Int, sessions: Bool = false) -> [(id: Int64, snippet: String, score: Double)] {
-        guard let match = Self.ftsQuery(query) else { return [] }
+        guard let match = match(query) else { return [] }
         let stmt = sessions ? sessionKeywordStmt : keywordStmt
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         sqlite3_reset(stmt)
@@ -179,7 +187,7 @@ final class FavoritesStore {
     /// `keyword` over the sessions a filter keeps. A filter changes the SQL, so this one is prepared per call.
     func keyword(_ query: String, limit: Int, filter: SessionFilter) -> [(id: Int64, snippet: String, score: Double)] {
         guard !filter.isEmpty else { return keyword(query, limit: limit, sessions: true) }
-        guard let match = Self.ftsQuery(query) else { return [] }
+        guard let match = match(query) else { return [] }
         let kept = Self.clauses(filter)
         return rows(Self.keywordSQL(sessions: true, extra: kept.sql), [match] + kept.binds, limit: limit) { stmt in
             (sqlite3_column_int64(stmt, 0), Self.text(stmt, 1), sqlite3_column_double(stmt, 2))
@@ -410,17 +418,68 @@ final class FavoritesStore {
         }
     }
 
+    /// A word in fewer rows than this is looked up as a typo.
+    private static let rareMatches = 3
+
     /// Quote every term so FTS5 operators in user input can't break the query;
-    /// last term gets a prefix `*` for search-as-you-type.
-    static func ftsQuery(_ input: String) -> String? {
+    /// last term gets a prefix `*` for search-as-you-type. A term few rows hold also matches the common words
+    /// one edit from it (two for a long one), so "husdon" finds "hudson"; it still matches itself.
+    private func match(_ input: String) -> String? {
+        if let last = lastMatch, last.input == input { return last.match }
         let terms = input
             .split(whereSeparator: { $0.isWhitespace })
             .map { $0.replacingOccurrences(of: "\"", with: "") }
             .filter { !$0.isEmpty }
-        guard !terms.isEmpty else { return nil }
-        let quoted = terms.map { "\"\($0)\"" }
-        return quoted.dropLast().joined(separator: " ")
-            + (quoted.count > 1 ? " " : "") + quoted.last! + "*"
+        let match = terms.isEmpty ? nil : terms.indices.map { i in
+            let quoted = "\"\(terms[i])\"" + (i == terms.count - 1 ? "*" : "")
+            let near = nearWords(terms[i], quoted: quoted)
+            return near.isEmpty ? quoted : "(" + ([quoted] + near.map { "\"\($0)\"" }).joined(separator: " OR ") + ")"
+        }.joined(separator: " ")
+        lastMatch = (input, match)
+        return match
+    }
+
+    /// Up to two words of the index, the most common first, that `term` is a typo of, when few rows hold it. Words under
+    /// five letters are left alone: too many words are one edit from them.
+    private func nearWords(_ term: String, quoted: String) -> [String] {
+        let word = Array(term.lowercased().unicodeScalars)
+        guard word.count >= 5 else { return [] }
+        let held = rows("SELECT 1 FROM favorites_fts WHERE favorites_fts MATCH ? LIMIT ?", [quoted], limit: Self.rareMatches) { _ in () }.count
+        guard held < Self.rareMatches else { return [] }
+        let reach = word.count >= 8 ? 2 : 1, floor = max(Self.rareMatches, held * 3)
+        return loadVocabulary().lazy
+            .filter { $0.docs >= floor && abs($0.term.count - word.count) <= reach && $0.term != word && Self.within(reach, word, $0.term) }
+            .prefix(2)
+            .map { String(String.UnicodeScalarView($0.term)) }
+    }
+
+    /// The index's words held by `rareMatches` rows or more, the most common first.
+    private func loadVocabulary() -> [(term: [Unicode.Scalar], docs: Int)] {
+        if let vocabulary { return vocabulary }
+        let loaded = rows("SELECT term, doc FROM temp.favorites_vocab WHERE doc >= \(Self.rareMatches) ORDER BY doc DESC LIMIT ?", [], limit: nil) {
+            (Array(Self.text($0, 0).unicodeScalars), Int(sqlite3_column_int64($0, 1)))
+        }
+        vocabulary = loaded
+        return loaded
+    }
+
+    /// Whether `a` becomes `b` in at most `limit` insertions, deletions, substitutions or swaps of neighbours.
+    private static func within(_ limit: Int, _ a: [Unicode.Scalar], _ b: [Unicode.Scalar]) -> Bool {
+        guard !a.isEmpty, !b.isEmpty else { return max(a.count, b.count) <= limit }
+        var before = [Int](repeating: 0, count: b.count + 1), previous = Array(0 ... b.count), current = before
+        for i in 1 ... a.count {
+            current[0] = i
+            var best = i
+            for j in 1 ... b.count {
+                var cost = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1))
+                if i > 1, j > 1, a[i - 1] == b[j - 2], a[i - 2] == b[j - 1] { cost = min(cost, before[j - 2] + 1) }
+                current[j] = cost
+                best = min(best, cost)
+            }
+            if best > limit { return false }
+            (before, previous, current) = (previous, current, before)
+        }
+        return previous[b.count] <= limit
     }
 
     private static func int(_ db: OpaquePointer?, _ sql: String) -> Int64 {
