@@ -14,6 +14,8 @@ enum Theme {
     static let hairline = Color.primary.opacity(0.08)
     static let selection = Color.primary.opacity(0.09)
     static let tileFill = Color.primary.opacity(0.06)
+    /// The ground of a column beside a tab's panes: the file tree and the projects column.
+    static let sidebar = Color(nsColor: NSColor(white: 0.12, alpha: 1))
     /// A word the outline's filter found.
     static let highlight = Color.yellow.opacity(0.35)
     /// A `#tag` or `@tag` in the outline.

@@ -385,8 +385,14 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    /// A full-panel view (Settings, the board, the outline) is over the tabs. A new one is added here, and calls `willCoverTabs` as it opens.
+    var coversTabs: Bool { showingSettings || showingBoard || showingOutline }
+
+    /// A full-panel view is about to cover the tabs: the lists under the strip close.
+    func willCoverTabs() { strip.closeList() }
+
     /// Terminal tabs on screen: the panel takes the user's own size and position.
-    var showsTerminal: Bool { activeTab != nil && !showingSettings && !showingBoard && !showingOutline }
+    var showsTerminal: Bool { activeTab != nil && !coversTabs }
 
     /// What the panel does with a query, read from its first character alone: a `?` or `!` after a space, or
     /// anywhere later, is part of a message.
@@ -2880,7 +2886,7 @@ final class LauncherModel: ObservableObject {
     func toggleProjects() {
         guard let tab = activeTab else { return }
         guard tabProjects.fits(showsFiles: tab.showsFiles) else { return tabProjects.toggleList() }
-        tabProjects.closeList()
+        strip.closeList()
         tabProjects.columnOn.toggle()
         if tabProjects.columnOn { startSummaryTicker() }
         tab.focus(tab.focused)
@@ -2898,7 +2904,7 @@ final class LauncherModel: ObservableObject {
     /// ⌘,: settings in place of the current view; again (or esc) goes back.
     func toggleSettings() {
         pendingSplit = nil
-        strip.closeList()
+        willCoverTabs()
         Settings.shared.recording = nil
         showingSettings.toggle()
         guard !showingSettings, !showingBoard else { return }
@@ -2910,7 +2916,7 @@ final class LauncherModel: ObservableObject {
     /// The search field takes focus, or the caret goes back into its bullet while the outline shows over the search.
     func focusSearchField() {
         if showingOutline { outline.restoreCaret() } else { focusToken += 1 }
-        if activeTab == nil, !showingBoard, !showingOutline, !showingSettings { startSummaryTicker() }
+        if activeTab == nil, !coversTabs { startSummaryTicker() }
     }
 
     /// The tab on screen takes focus, or the search field when none shows.
@@ -2937,7 +2943,7 @@ final class LauncherModel: ObservableObject {
     /// `tab` is the one to show (`!problems`); nil leaves the board on the tab it showed last.
     func showBoard(_ tab: SessionBoard.Tab? = nil) {
         pendingSplit = nil
-        strip.closeList()
+        willCoverTabs()
         hideOutline()
         if let tab { board.show(tab) }
         guard !showingBoard else { return }
@@ -2975,7 +2981,7 @@ final class LauncherModel: ObservableObject {
     /// a bullet, which is what a session's `show` does unless the panel already has the keyboard.
     func showOutline(focusing: Bool = true) {
         pendingSplit = nil
-        strip.closeList()
+        willCoverTabs()
         hideBoard()
         guard !showingOutline else { return }
         showingOutline = true
@@ -3063,8 +3069,8 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// Reads the summaries now, and once a second while the search shows or a tab does with some tabs hidden or the projects column on (their
-    /// turns turn the +N chip orange and mark the projects: `TabStrip.needsMarks`). It ends when the panel hides or the board, the outline or Settings covers them; `panelDidShow` and the like start it again.
+    /// Reads the summaries now, and once a second while the search shows or a tab does and `TabStrip.needsMarks`. When it runs and stops
+    /// is stated once, in docs/agents/where-it-breaks.md (the +N chip's entry).
     func startSummaryTicker(reading: Bool = true) {
         if reading { refreshTabSummaries() }
         guard summaryTicker == nil else { return }
@@ -3073,7 +3079,7 @@ final class LauncherModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
-                let covered = self.showingBoard || self.showingOutline || self.showingSettings
+                let covered = self.coversTabs
                 let searching = self.activeTab == nil && !covered
                 guard SessionBoard.panelIsVisible, !covered, searching || self.strip.needsMarks else {
                     self.summaryTicker = nil

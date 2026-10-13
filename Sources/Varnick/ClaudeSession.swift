@@ -1872,6 +1872,8 @@ struct ClaudePane: View {
     @ObservedObject var tab: ClaudeTab
     @ObservedObject private var strip: TabStrip
     @ObservedObject private var projects: TabProjects
+    @ObservedObject private var hiddenList: StripList
+    @ObservedObject private var projectList: StripList
     @State private var chipX: CGFloat = 0
     @State private var paneWidth: CGFloat = 0
 
@@ -1883,6 +1885,8 @@ struct ClaudePane: View {
         self.tab = tab
         strip = model.strip
         projects = model.tabProjects
+        hiddenList = model.strip.hiddenList
+        projectList = model.strip.projectList
     }
 
     var body: some View {
@@ -1890,7 +1894,7 @@ struct ClaudePane: View {
             HStack(spacing: 10) {
                 // With the column out of sight, the chosen project's name opens the list of projects.
                 if projects.showsChip(for: tab) {
-                    ProjectChip(projects: projects)
+                    ProjectChip(projects: projects, list: projectList)
                         .padding(.top, (LauncherModel.claudeHeaderHeight - TabFit.rowHeight) / 2 + 1)
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
@@ -1932,16 +1936,16 @@ struct ClaudePane: View {
         .coordinateSpace(name: Self.space)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
             paneWidth = $0
-            projects.paneWidth = $0
+            projects.setPaneWidth($0)
         }
         .overlay(alignment: .topLeading) {
             // A click outside it closes it (`TabStrip.mouseDown`, from the mouse monitor), so the click reaches what it landed on.
-            if strip.listOpen {
-                HiddenTabsList(model: model, strip: strip)
+            if hiddenList.isOpen {
+                HiddenTabsList(model: model, strip: strip, list: hiddenList)
                     .offset(x: max(min(chipX, paneWidth - HiddenTabsList.width - 8), 8), y: strip.headerHeight - 4)
             }
-            if projects.listOpen {
-                ProjectsList(model: model, projects: projects)
+            if projectList.isOpen {
+                ProjectsList(model: model, projects: projects, list: projectList)
                     .offset(x: 8, y: strip.headerHeight - 4)
             }
         }

@@ -165,17 +165,17 @@ enum TabMetrics {
     }
 }
 
-/// The strip's state: which tabs show (kept, so the run moves only to bring the tab on screen in), and the hidden tabs' list.
+/// The strip's state: which tabs show (kept, so the run moves only to bring the tab on screen in), and the lists that open under it.
 @MainActor
 final class TabStrip: ObservableObject {
-    weak var model: LauncherModel?
+    weak var model: LauncherModel? { didSet { lists.forEach { $0.model = model } } }
+    /// The tabs the +N chip hides, and the projects (`TabProjects`). At most one is open.
+    let hiddenList = StripList(name: "list of hidden tabs")
+    let projectList = StripList(name: "list of projects")
     @Published private(set) var layout = TabFit.Result.empty
     /// The tabs the strip lays out, in its order: those of the chosen project (`TabProjects`), or all. The run, the drops and the list all
     /// count within this array. Set by `refresh`.
     @Published private(set) var tabs: [ClaudeTab] = []
-    @Published private(set) var listOpen = false
-    /// The highlighted row of the list, an index of `hiddenTabs`.
-    @Published var listSelection = 0
 
     /// The strip's width, reported by its view. Unknown shows every tab until it is.
     private var width: CGFloat = .infinity
@@ -183,19 +183,28 @@ final class TabStrip: ObservableObject {
     private var firstIndex = 0
     /// The next `refresh` keeps the run by place, not by its first tab: set while a drop reorders the tabs, so a tab dropped into the run stays in it.
     private var keepsRunByIndex = false
-    /// Where the chip and the open list are, in the window's space (the top left origin SwiftUI's `.global` has), for a click to tell outside.
-    var chipFrame = CGRect.null
-    var listFrame = CGRect.null
     private var watches: [AnyCancellable] = []
     private var modeWatch: AnyCancellable?
-
-    /// The list shows up to this many rows, then scrolls.
-    static let listRows = 8
 
     init() {
         // The publisher sends before the setting is stored, so the new value comes with it.
         modeWatch = Settings.shared.$tabOverflow.dropFirst().removeDuplicates().sink { [weak self] mode in self?.refresh(mode: mode) }
+        hiddenList.count = { [weak self] in self?.hiddenTabs.count ?? 0 }
+        hiddenList.choose = { [weak self] index in
+            guard let hidden = self?.hiddenTabs, hidden.indices.contains(index) else { return }
+            self?.model?.activate(hidden[index].tab)
+        }
+        projectList.count = { [weak self] in self?.model?.tabProjects.orderedRows.count ?? 0 }
+        projectList.choose = { [weak self] index in
+            guard let rows = self?.model?.tabProjects.orderedRows, rows.indices.contains(index) else { return }
+            self?.model?.tabProjects.choose(rows[index])
+        }
     }
+
+    var lists: [StripList] { [hiddenList, projectList] }
+
+    /// The list that is open, if one is: Panel access refuses while it is.
+    var openList: StripList? { lists.first { $0.isOpen } }
 
     /// The header grows by a row for each row the strip wraps onto.
     var headerHeight: CGFloat {
@@ -233,9 +242,9 @@ final class TabStrip: ObservableObject {
         firstShown = tabs.indices.contains(firstIndex) ? tabs[firstIndex].viewID : nil
         if next != layout { layout = next }
         if next.hidden == 0 {
-            closeHiddenList()
-        } else if listSelection >= next.hidden {
-            listSelection = next.hidden - 1
+            hiddenList.close()
+        } else if hiddenList.selection >= next.hidden {
+            hiddenList.selection = next.hidden - 1
         }
         // The turns are read for the +N chip's mark and for the projects' marks, while a tab shows.
         if needsMarks, model.showsTerminal, SessionBoard.panelIsVisible { model.startSummaryTicker(reading: false) }
@@ -275,56 +284,14 @@ final class TabStrip: ObservableObject {
         return hiddenTabs.filter { marks[$0.tab.viewID] != nil }.count
     }
 
-    func toggleList() {
-        if listOpen { return closeList(refocus: true) }
-        guard layout.hidden > 0 else { return }
-        model?.tabProjects.closeList()
-        listSelection = 0
-        listOpen = true
-        model?.refreshTabSummaries()
-    }
+    /// Closes the lists under the strip (the model's views call this as they cover or replace the tab).
+    func closeList(refocus: Bool = false) { lists.forEach { $0.close(refocus: refocus) } }
 
-    /// Closes the lists under the strip, the hidden tabs' and the projects'.
-    func closeList(refocus: Bool = false) {
-        model?.tabProjects.closeList(refocus: refocus)
-        closeHiddenList(refocus: refocus)
-    }
+    /// A click: an open list closes when it landed outside it.
+    func mouseDown(_ event: NSEvent) { lists.forEach { $0.mouseDown(event) } }
 
-    /// Closes the hidden tabs' list. The keyboard was never taken from the pane, but a click that closed it may have moved it, so it goes back.
-    private func closeHiddenList(refocus: Bool = false) {
-        guard listOpen else { return }
-        listOpen = false
-        if refocus, let tab = model?.activeTab, model?.showsTerminal == true { tab.focus(tab.focused) }
-    }
-
-    /// A click while the list is open: outside it, and not on the chip (which toggles), closes it. The click goes on to what it landed on.
-    func mouseDown(_ event: NSEvent) {
-        model?.tabProjects.mouseDown(event)
-        guard listOpen, let view = event.window?.contentView else { return }
-        let point = CGPoint(x: event.locationInWindow.x, y: view.bounds.height - event.locationInWindow.y)
-        if !listFrame.contains(point), !chipFrame.contains(point) { closeList() }
-    }
-
-    func choose(_ index: Int) {
-        let hidden = hiddenTabs
-        guard hidden.indices.contains(index) else { return }
-        model?.activate(hidden[index].tab)
-    }
-
-    /// The list's keys while it is open, taken before the shortcuts and the panes: ↑ ↓ ↩ esc. Others go on.
-    func key(_ event: NSEvent) -> Bool {
-        if let projects = model?.tabProjects, projects.listOpen { return projects.key(event) }
-        guard listOpen, model?.renamingTab == nil, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
-        let count = hiddenTabs.count
-        switch Int(event.keyCode) {
-        case kVK_Escape: closeList(refocus: true)
-        case kVK_UpArrow: listSelection = max(listSelection - 1, 0)
-        case kVK_DownArrow: listSelection = min(listSelection + 1, max(count - 1, 0))
-        case kVK_Return, kVK_ANSI_KeypadEnter: choose(listSelection)
-        default: return false
-        }
-        return true
-    }
+    /// The open list's keys, taken before the shortcuts and the panes.
+    func key(_ event: NSEvent) -> Bool { openList?.key(event) ?? false }
 }
 
 // MARK: - Views
@@ -375,9 +342,9 @@ struct TabStripView: View {
 
     @ViewBuilder private var buttons: some View {
         if strip.layout.hidden > 0 {
-            HiddenChip(strip: strip, model: model)
+            HiddenChip(strip: strip, list: strip.hiddenList, model: model)
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(ClaudePane.space)).minX } action: { chipX = $0 }
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { strip.chipFrame = $0 }
+                .opens(strip.hiddenList)
         }
         Button { model.showSearch() } label: {
             Image(systemName: "plus")
@@ -394,17 +361,18 @@ struct TabStripView: View {
 /// "+N": the tabs the strip doesn't show. Orange while one of them has a session waiting on the user.
 struct HiddenChip: View {
     @ObservedObject var strip: TabStrip
+    @ObservedObject var list: StripList
     /// Not read directly: redraws the chip when a hidden tab starts or stops waiting (`LauncherModel.tabMarks`).
     @ObservedObject var model: LauncherModel
 
     var body: some View {
         let waiting = strip.hiddenWaiting
-        Button { strip.toggleList() } label: {
+        Button { list.toggle() } label: {
             Text("+\(strip.layout.hidden)")
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(waiting > 0 ? Color.orange : Color.secondary)
                 .frame(width: TabFit.chipWidth, height: 22)
-                .background(waiting > 0 ? Color.orange.opacity(0.2) : (strip.listOpen ? Theme.selection : Theme.tileFill),
+                .background(waiting > 0 ? Color.orange.opacity(0.2) : (list.isOpen ? Theme.selection : Theme.tileFill),
                             in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .contentShape(Rectangle())
         }
@@ -419,10 +387,11 @@ struct HiddenChip: View {
     }
 }
 
-/// The hidden tabs as the session list's tab rows: a line between those before the run and those after it, and up to `TabStrip.listRows` rows.
+/// The hidden tabs as the session list's tab rows: a line between those before the run and those after it, and up to `StripList.rows` rows.
 struct HiddenTabsList: View {
     @ObservedObject var model: LauncherModel
     @ObservedObject var strip: TabStrip
+    @ObservedObject var list: StripList
 
     static let width: CGFloat = 400
     private static let separator: CGFloat = 9
@@ -430,31 +399,18 @@ struct HiddenTabsList: View {
     var body: some View {
         let hidden = strip.hiddenTabs
         let divided = hidden.first?.before == true && hidden.last?.before == false
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(hidden.enumerated()), id: \.element.tab.viewID) { i, item in
-                        if divided, !item.before, hidden[i - 1].before {
-                            Theme.hairline.frame(height: 1).padding(.vertical, 4).padding(.horizontal, 10)
-                        }
-                        TabRow(tab: item.tab, selected: i == strip.listSelection, pills: model.pills(for: item.tab.focused.record),
-                               sessions: model.tabSummaries[item.tab.viewID] ?? [], mark: model.tabMarks[item.tab.viewID])
-                            .id(i)
-                            .onTapGesture { strip.choose(i) }
-                    }
+        let height = CGFloat(min(hidden.count, StripList.rows)) * LauncherModel.sessionRowHeight + (divided ? Self.separator : 0) + 8
+        StripListBox(list: list, width: Self.width, height: height) {
+            ForEach(Array(hidden.enumerated()), id: \.element.tab.viewID) { i, item in
+                if divided, !item.before, hidden[i - 1].before {
+                    Theme.hairline.frame(height: 1).padding(.vertical, 4).padding(.horizontal, 10)
                 }
-                .padding(.vertical, 4)
+                TabRow(tab: item.tab, selected: i == list.selection, pills: model.pills(for: item.tab.focused.record),
+                       sessions: model.tabSummaries[item.tab.viewID] ?? [], mark: model.tabMarks[item.tab.viewID])
+                    .id(i)
+                    .onTapGesture { list.pick(i) }
             }
-            .onChange(of: strip.listSelection) { _, now in proxy.scrollTo(now) }
         }
-        .frame(width: Self.width, height: height(rows: hidden.count, divided: divided))
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { strip.listFrame = $0 }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
-    }
-
-    private func height(rows: Int, divided: Bool) -> CGFloat {
-        CGFloat(min(rows, TabStrip.listRows)) * LauncherModel.sessionRowHeight + (divided ? Self.separator : 0) + 8
     }
 }
+

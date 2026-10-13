@@ -1,5 +1,3 @@
-import AppKit
-import Carbon
 import SwiftUI
 
 // The projects column (option 02 of tabs-past-the-strip-are-hidden): a column left of the panes that lists the projects with open tabs, and
@@ -30,22 +28,14 @@ final class TabProjects: ObservableObject {
     @Published private(set) var rowOf: [UUID: TabProject] = [:]
     /// Whether the column is on (⌘⇧P); it still needs the room (`fits`). Saved.
     @Published var columnOn: Bool { didSet { UserDefaults.standard.set(columnOn, forKey: Self.columnKey) } }
-    /// The same rows as a list under the strip, for a panel too narrow for the column.
-    @Published private(set) var listOpen = false
-    @Published var listSelection = 0
-    /// The Claude pane's width, reported by its view: the column needs the room beside the panes.
-    @Published var paneWidth = LauncherModel.panelWidth
-    /// Where the chip and the open list are, in the window's space, for a click to tell outside.
-    var chipFrame = CGRect.null
-    var listFrame = CGRect.null
+    /// The Claude pane's width, reported by its view (`setPaneWidth`): the column needs the room beside the panes.
+    @Published private(set) var paneWidth = LauncherModel.panelWidth
     /// The tab last shown under each row during this run.
     private var lastShown: [TabProject: UUID] = [:]
     /// The tab on screen and its row as `rebuild` last saw them.
     private var shown: (tab: UUID, row: TabProject)?
 
     private static let columnKey = "projectsColumn"
-    /// The list shows up to this many rows, then scrolls.
-    static let listRows = 8
 
     init() {
         columnOn = UserDefaults.standard.bool(forKey: Self.columnKey)
@@ -101,7 +91,7 @@ final class TabProjects: ObservableObject {
     }
 
     /// The rows with their tab counts and how many of those tabs have a session waiting on the user (`LauncherModel.tabMarks`). The help
-    /// says how many are on each machine when they are on several.
+    /// says how many are on each machine whenever one of them is another Mac's.
     func infos(marks: [UUID: String]) -> [Info] {
         guard let model else { return [] }
         return orderedRows.map { row in
@@ -110,7 +100,7 @@ final class TabProjects: ObservableObject {
             var machines: [String: Int] = [:]
             for tab in tabs { machines[PeerManager.shared.name(of: tab.host), default: 0] += 1 }
             var help = "\(tabs.count) tab\(tabs.count == 1 ? "" : "s")"
-            if machines.count > 1 {
+            if tabs.contains(where: { $0.host != nil }) {
                 help += ": " + machines.sorted { ($1.value, $0.key) < ($0.value, $1.key) }.map { "\($0.value) on \($0.key)" }.joined(separator: ", ")
             }
             if waiting > 0 { help += ", \(waiting) with a session waiting on you" }
@@ -131,12 +121,16 @@ final class TabProjects: ObservableObject {
         model.activate(target)
     }
 
-    /// ⌘⌥[ and ⌘⌥]: the previous or next row, wrapping, All included, whether or not the column shows.
+    /// ⌘⌥[ and ⌘⌥]: the previous or next row, wrapping, All included, whether or not the column shows. Like ⌘⇧[, from search or over a
+    /// full-panel view it shows a tab: All has none of its own to show, so it shows the one `cycleSession` would.
     func cycle(_ delta: Int) {
+        guard let model else { return }
         let rows = orderedRows
         guard rows.count > 1 else { return }
         let i = rows.firstIndex(of: choice) ?? 0
         choose(rows[(i + delta + rows.count) % rows.count])
+        guard choice == .all, !model.showsTerminal else { return }
+        if let tab = model.activeTab { model.activate(tab) } else { model.cycleSession(delta) }
     }
 
     // MARK: The column
@@ -154,55 +148,22 @@ final class TabProjects: ObservableObject {
     /// The chip names the chosen project while the column is out of sight.
     func showsChip(for tab: ClaudeTab) -> Bool { choice != .all && !showsColumn(for: tab) }
 
-    /// The ticker reads the turns while the column is on or its list is open, for the rows' waiting marks.
-    var needsMarks: Bool { columnOn || listOpen }
-
-    // MARK: The list
-
-    func toggleList() {
-        if listOpen { return closeList(refocus: true) }
-        guard let model else { return }
-        model.strip.closeList()
-        listSelection = orderedRows.firstIndex(of: choice) ?? 0
-        listOpen = true
-        model.startSummaryTicker()
+    /// The panel's width changed: the strip is worked out again when the column's room came or went, so the ticker follows it.
+    func setPaneWidth(_ width: CGFloat) {
+        let before = [fits(showsFiles: false), fits(showsFiles: true)]
+        paneWidth = width
+        if before != [fits(showsFiles: false), fits(showsFiles: true)] { model?.strip.refresh() }
     }
 
-    /// Closes the list. The keyboard was never taken from the pane, but a click that closed it may have moved it, so it goes back.
-    func closeList(refocus: Bool = false) {
-        guard listOpen else { return }
-        listOpen = false
-        if refocus, let tab = model?.activeTab, model?.showsTerminal == true { tab.focus(tab.focused) }
+    /// The turns are read for the rows' orange marks while the column shows on the tab on screen, or the list of projects is open.
+    var needsMarks: Bool {
+        model?.strip.projectList.isOpen == true || model?.activeTab.map { showsColumn(for: $0) } == true
     }
 
-    func choose(listRow index: Int) {
-        let rows = orderedRows
-        guard rows.indices.contains(index) else { return }
-        closeList()
-        choose(rows[index])
-    }
-
-    /// A click while the list is open: outside it, and not on the chip (which toggles), closes it. The click goes on to what it landed on.
-    func mouseDown(_ event: NSEvent) {
-        guard listOpen, let view = event.window?.contentView else { return }
-        let point = CGPoint(x: event.locationInWindow.x, y: view.bounds.height - event.locationInWindow.y)
-        if !listFrame.contains(point), !chipFrame.contains(point) { closeList() }
-    }
-
-    /// The list's keys while it is open, taken before the shortcuts and the panes: ↑ ↓ ↩ esc. Others go on.
-    func key(_ event: NSEvent) -> Bool {
-        guard listOpen, model?.renamingTab == nil, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty else { return false }
-        let count = orderedRows.count
-        switch Int(event.keyCode) {
-        case kVK_Escape: closeList(refocus: true)
-        case kVK_UpArrow: listSelection = max(listSelection - 1, 0)
-        case kVK_DownArrow: listSelection = min(listSelection + 1, max(count - 1, 0))
-        case kVK_Return, kVK_ANSI_KeypadEnter: choose(listRow: listSelection)
-        default: return false
-        }
-        return true
-    }
+    /// ⌘⇧P in a panel without the room: the list of projects stands in for the column, with the chosen row highlighted.
+    func toggleList() { model?.strip.projectList.toggle(selecting: orderedRows.firstIndex(of: choice) ?? 0) }
 }
+
 
 // MARK: - Views
 
@@ -249,6 +210,7 @@ struct ProjectsColumn: View {
             .padding(.horizontal, 10)
             .frame(height: 28)
             VStack(alignment: .leading, spacing: 2) {
+                ShortcutHint(label: "Hide", action: .toggleProjects)
                 ShortcutHint(label: "Previous", action: .previousProject)
                 ShortcutHint(label: "Next", action: .nextProject)
             }
@@ -267,13 +229,14 @@ struct ProjectsColumn: View {
             }
         }
         .frame(width: TabProjects.columnWidth)
-        .background(Color(nsColor: NSColor(white: 0.12, alpha: 1)))
+        .background(Theme.sidebar)
     }
 }
 
 /// The chip at the strip's left while the column is out of sight and a project is chosen: its name, and a click opens the list.
 struct ProjectChip: View {
     @ObservedObject var projects: TabProjects
+    @ObservedObject var list: StripList
 
     var body: some View {
         Button { projects.toggleList() } label: {
@@ -287,14 +250,14 @@ struct ProjectChip: View {
             .foregroundStyle(Color.secondary)
             .padding(.horizontal, 8)
             .frame(maxWidth: 130, minHeight: 22, maxHeight: 22)
-            .background(projects.listOpen ? Theme.selection : Theme.tileFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(list.isOpen ? Theme.selection : Theme.tileFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .fixedSize()
         .layoutPriority(1)
         .help("Showing the tabs of \(projects.choice.title)")
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { projects.chipFrame = $0 }
+        .opens(list)
     }
 }
 
@@ -302,28 +265,19 @@ struct ProjectChip: View {
 struct ProjectsList: View {
     @ObservedObject var model: LauncherModel
     @ObservedObject var projects: TabProjects
+    @ObservedObject var list: StripList
 
     static let width: CGFloat = 220
 
     var body: some View {
         let infos = projects.infos(marks: model.tabMarks)
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(infos.enumerated()), id: \.element.id) { i, info in
-                        ProjectRow(info: info, chosen: info.row == projects.choice, highlighted: i == projects.listSelection)
-                            .id(i)
-                            .onTapGesture { projects.choose(listRow: i) }
-                    }
-                }
-                .padding(.vertical, 4)
+        StripListBox(list: list, width: Self.width, height: CGFloat(min(infos.count, StripList.rows)) * ProjectsColumn.rowHeight + 8) {
+            ForEach(Array(infos.enumerated()), id: \.element.id) { i, info in
+                ProjectRow(info: info, chosen: info.row == projects.choice, highlighted: i == list.selection)
+                    .id(i)
+                    .onTapGesture { list.pick(i) }
             }
-            .onChange(of: projects.listSelection) { _, now in proxy.scrollTo(now) }
         }
-        .frame(width: Self.width, height: CGFloat(min(infos.count, TabProjects.listRows)) * ProjectsColumn.rowHeight + 8)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { projects.listFrame = $0 }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
     }
 }
+
