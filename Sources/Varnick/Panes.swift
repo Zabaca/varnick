@@ -192,6 +192,18 @@ indirect enum PaneLayout: Codable, Equatable {
         mapping { if $0.id == record.id { $0 = record } }
     }
 
+    /// This layout, a reopened tab's Claude panes only, put back into the shape of `original`, the tab as it closed: each Claude pane of
+    /// `original` becomes the pane here on the same conversation, one nothing here is on stays as it was, and so does every pane that
+    /// isn't Claude. A pane here that `original` has no place for is left out, though its conversation is in the tab's history.
+    func restoring(_ original: PaneLayout) -> PaneLayout {
+        let now = records.filter(\.isClaude)
+        return original.mapping { record in
+            guard record.isClaude, let same = now.first(where: { $0.conversationID.lowercased() == record.conversationID.lowercased() })
+            else { return }
+            record = same
+        }
+    }
+
     /// Drops leaves `keep` rejects; a split left with one side collapses into it.
     func pruned(_ keep: (SessionRecord) -> Bool) -> PaneLayout? {
         switch self {
@@ -330,18 +342,21 @@ final class ClaudeTab: ObservableObject {
     var completedAt: Date?
     /// The conversations it has held, newest first (`TabHistory`); the model keeps it (`LauncherModel.noteHistories`) and it is saved with the tab.
     var history: [HeldConversation] = []
+    /// The closed tab a peer's `resume` reopened with only its Claude panes, kept whole for when this tab closes (`SavedTab.reopenedFrom`).
+    var reopenedFrom: TabRecord?
     /// Layout changed (divider moved); the model saves.
     var onChange: () -> Void = {}
     /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is.
     var onClosing: () -> Void = {}
 
     init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
-         history: [HeldConversation] = []) {
+         history: [HeldConversation] = [], reopenedFrom: TabRecord? = nil) {
         self.id = id
         self.root = root
         self.name = name
         self.completedAt = completedAt
         self.history = history
+        self.reopenedFrom = reopenedFrom
         self.focused = focused ?? root.leaves[0]
     }
 
@@ -352,8 +367,7 @@ final class ClaudeTab: ObservableObject {
 
     /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
     func holds(_ conversation: String) -> Bool {
-        let id = conversation.lowercased()
-        return history.contains { $0.conversation == id } || claudeSessions.contains { $0.record.conversationID.lowercased() == id }
+        TabHistory.holds(conversation, history: history, panes: claudeSessions.map(\.record))
     }
 
     /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one).
@@ -378,7 +392,7 @@ final class ClaudeTab: ObservableObject {
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
         SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt,
-                              history: history.isEmpty ? nil : history)
+                              history: history.isEmpty ? nil : history, reopenedFrom: reopenedFrom)
     }
 
     /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).

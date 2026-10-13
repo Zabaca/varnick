@@ -64,8 +64,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// Only read by the same migration: a Completed copy of another Mac's session whose host holds the mark too. Optional so older files load.
     var hostHoldsDone: Bool?
 
-    /// Only read by the migration of Recent (`State.recentList`): the tab a session of the old Recent ended in. Recent holds tabs now
-    /// (option 02 of `work-is-tracked-by-session-not-tab`), and nothing writes this again. Optional so older files load.
+    /// The tab a session of the old Recent key ended in. Recent holds tabs now, so this is written only in that key's flattened copy
+    /// (`State.flatRecent`), which an older build still lists, and read by `State.recentList`. Optional so older files load.
     var tab: UUID?
 
     /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
@@ -204,14 +204,27 @@ struct TabRecord: Codable, Identifiable, Equatable {
     /// The machine its Claude panes run on; nil is this Mac. A tab is one machine's (`SavedTab.splitByMachine`).
     var host: String? { claudeRecords.first?.host }
 
-    /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
-    func holds(_ conversation: String) -> Bool {
-        let id = conversation.lowercased()
-        return history?.contains { $0.conversation == id } == true || claudeRecords.contains { $0.conversationID.lowercased() == id }
-    }
 
     /// Worth listing: a Claude session of it can be resumed.
     var resumable: Bool { claudeRecords.contains(where: \.resumable) }
+
+    /// A group of sessions the old Recent listed as ended in one tab: they never ran together, so the newest is the one pane and the
+    /// rest are the tab's history, newest first.
+    init?(migrating group: [SessionRecord], id: UUID) {
+        let newest = group.sorted { $0.lastUsed > $1.lastUsed }
+        guard var pane = newest.first else { return nil }
+        pane.tab = nil
+        var history: [HeldConversation] = []
+        for record in newest.reversed() {
+            history = TabHistory.holding(history, record.conversationID, title: record.title) ?? history
+        }
+        self.init(id: id, layout: .leaf(pane), focused: pane.id, lastUsed: pane.lastUsed, history: history)
+    }
+
+    /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
+    func holds(_ conversation: String) -> Bool {
+        TabHistory.holds(conversation, history: history, panes: claudeRecords.filter { $0.host == nil })
+    }
 
     /// The record of the pane it focused if that is a Claude pane, else its first Claude pane: what the card is named after.
     var leading: SessionRecord? { claudeRecords.first { $0.id == focused } ?? claudeRecords.first }
@@ -264,9 +277,12 @@ struct SessionStore {
         var done: Date?
         /// The conversations it has held, newest first (`TabHistory`). Optional so older files load.
         var history: [HeldConversation]?
+        /// The closed tab a peer's `resume` reopened here with only its Claude panes (`LauncherModel.hostResumeConversation`), kept whole so
+        /// the tab closes into Recent with its terminals and splits (`PaneLayout.restoring`). Optional so older files load.
+        var reopenedFrom: TabRecord?
 
         init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil,
-             history: [HeldConversation]? = nil) {
+             history: [HeldConversation]? = nil, reopenedFrom: TabRecord? = nil) {
             self.id = id
             self.layout = layout
             self.focused = focused
@@ -274,6 +290,7 @@ struct SessionStore {
             self.showsFiles = showsFiles
             self.done = done
             self.history = history
+            self.reopenedFrom = reopenedFrom
         }
 
         /// A layout always holds a record.
@@ -312,7 +329,7 @@ struct SessionStore {
                 pieces.append(SavedTab(id: first ? resolvedID : pruned.records[0].id, layout: pruned,
                                        focused: pruned.records.contains { $0.id == focused } ? focused : nil,
                                        name: first ? name : nil, showsFiles: first ? showsFiles : nil, done: first ? done : nil,
-                                       history: first ? history : nil))
+                                       history: first ? history : nil, reopenedFrom: first ? reopenedFrom : nil))
             }
             return pieces
         }
@@ -354,8 +371,8 @@ struct SessionStore {
         var endedList: [TabRecord] { Self.merge(endedTabs, (ended ?? []).map { TabRecord(migrating: $0) }) }
         var rememberedList: [TabRecord] { Self.merge(rememberedTabs, (remembered ?? []).map { TabRecord(migrating: $0) }) }
 
-        /// Recent: its tabs, then the sessions of the old key as closed tabs, the sessions that ended in one tab together. A session of a paired
-        /// Mac is that Mac's Recent to list, so the old key's are left out.
+        /// Recent: its tabs, then the sessions of the old key as closed tabs (`TabRecord.init(migrating:id:)`), the sessions that ended in one
+        /// tab together. A session of a paired Mac is that Mac's Recent to list, so the old key's are left out.
         var recentList: [TabRecord] {
             var order: [UUID] = [], grouped: [UUID: [SessionRecord]] = [:]
             for record in recent where record.isClaude && record.host == nil {
@@ -363,15 +380,33 @@ struct SessionStore {
                 if grouped[tab] == nil { order.append(tab) }
                 grouped[tab, default: []].append(record)
             }
-            let old = order.compactMap { id -> TabRecord? in
-                guard let sessions = grouped[id], let last = sessions.map(\.lastUsed).max() else { return nil }
-                return TabRecord(id: id, sessions: sessions.map { held in
-                    var held = held
-                    held.tab = nil
-                    return held
-                }, lastUsed: last)
+            return Self.merge(recentTabs, order.compactMap { id in grouped[id].flatMap { TabRecord(migrating: $0, id: id) } })
+        }
+
+        /// What `recent` is saved as: Recent's tabs flattened to sessions with their tab set, a session per Claude pane and per conversation
+        /// of the history, so an older build still lists them and a later one migrates them again (`recentList`). At most `flatRecentLimit`.
+        static func flatRecent(_ tabs: [TabRecord]) -> [SessionRecord] {
+            var flat: [SessionRecord] = []
+            for tab in tabs where tab.host == nil {
+                var held = Set<String>()
+                for var record in tab.claudeRecords {
+                    record.tab = tab.id
+                    held.insert(record.conversationID.lowercased())
+                    flat.append(record)
+                }
+                // A conversation of the history has no pane: a record of its own, made from the id so it is the same at every save and older
+                // than the panes', which is what makes the newest the pane when the group is migrated.
+                let oldest = tab.claudeRecords.map(\.lastUsed).min() ?? tab.lastUsed
+                for (offset, past) in (tab.history ?? []).filter({ !held.contains($0.conversation) }).enumerated() {
+                    guard let id = UUID(uuidString: past.conversation), let lead = tab.leading else { continue }
+                    let when = oldest.addingTimeInterval(-TimeInterval(offset + 1))
+                    var record = SessionRecord(id: id, prompt: "", title: past.title ?? "", directory: lead.directory, startedAt: when, lastUsed: when)
+                    record.agent = lead.agent
+                    record.tab = tab.id
+                    flat.append(record)
+                }
             }
-            return Self.merge(recentTabs, old)
+            return Array(flat.prefix(flatRecentLimit))
         }
 
         /// The new key's tabs, then the old key's, less any with an id already there.
@@ -383,6 +418,8 @@ struct SessionStore {
 
     /// How many closed tabs Recent keeps.
     static let recentLimit = 20
+    /// How many sessions the old `recent` key is written with (`State.flatRecent`).
+    static let flatRecentLimit = 100
     static let completedLimit = 20
 
     /// Where the state is kept; `Settings.storeSkipPermissionsIfAbsent` checks that it exists to tell an existing install.

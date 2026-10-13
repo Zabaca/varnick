@@ -8,6 +8,8 @@ enum Theme {
     static let gutter: CGFloat = 16
     static let listWidth: CGFloat = 300
     static let rowHeight: CGFloat = 48
+    /// How far a session is indented under the row of its tab in the prompt's list and in a search's results.
+    static let underTabIndent: CGFloat = 14
 
     static let hairline = Color.primary.opacity(0.08)
     static let selection = Color.primary.opacity(0.09)
@@ -184,7 +186,7 @@ struct LauncherView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(model.tabs.enumerated()), id: \.element.viewID) { i, t in
                         TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record),
-                               sessions: model.sessionSummary(of: t))
+                               sessions: model.tabSummaries[t.viewID] ?? [])
                             .onTapGesture { model.tabDrag.tap { model.activate(t) } }
                             .reorderable(t, in: model, axis: .vertical)
                     }
@@ -532,7 +534,7 @@ struct ResultRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if underTab { Color.clear.frame(width: 14, height: 1) }
+            if underTab { Color.clear.frame(width: Theme.underTabIndent, height: 1) }
             SourceTile(source: result.source)
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.title)
@@ -613,7 +615,7 @@ struct TabResultRow: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.sourceColor("claude"))
                 .frame(width: 18)
-            Text(result.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+            Text(result.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
             Text(result.snippet).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 0)
             if isSelected { KeyHint(label: "Open tab", keys: ["↩"]).font(.system(size: 11)) }
@@ -1104,7 +1106,7 @@ struct PromptSessionRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if underTab { Color.clear.frame(width: 12, height: 1) }
+            if underTab { Color.clear.frame(width: Theme.underTabIndent, height: 1) }
             SourceTile(source: result.source)
             VStack(alignment: .leading, spacing: 1) {
                 Text(result.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
