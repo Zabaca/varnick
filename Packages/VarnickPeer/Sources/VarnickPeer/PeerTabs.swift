@@ -281,7 +281,7 @@ public enum PeerFile {
     /// The file's text, or the one-line reason the other machine is told it can't be shown.
     public static func read(path: String, folders: [String]) -> Result<String, PeerFileRefusal> {
         guard isInside(path, folders: folders) else { return .failure(PeerFileRefusal(message: "That file is outside the tab's folders")) }
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int else {
+        guard let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.intValue else {
             return .failure(PeerFileRefusal(message: "That file isn't there any more"))
         }
         guard size <= limit else { return .failure(PeerFileRefusal(message: "That file is too large to show here (over 1 MB)")) }
