@@ -21,7 +21,7 @@ describe("the ports a tabs answer names", () => {
   });
 
   test("a web pane on localhost, 127.0.0.1 or ::1 names its port", () => {
-    for (const url of ["http://localhost:3000/", "http://127.0.0.1:3000/", "http://[::1]:3000/"]) {
+    for (const url of ["http://localhost:3000/", "http://127.0.0.1:3000/", "http://[::1]:3000/", "http://127.0.0.2:3000/", "http://app.localhost:3000/", "http://0.0.0.0:3000/", "http://[::]:3000/"]) {
       expect(aimOf({ id: ID, kind: "web", url })).toEqual({ pane: ID, port: 3000, path: "/" });
     }
     expect(aimOf({ id: ID, kind: "web", url: "http://LOCALHOST:3000/a/b?c=d#e" })).toEqual({ pane: ID, port: 3000, path: "/a/b?c=d#e" });
@@ -38,6 +38,7 @@ describe("the ports a tabs answer names", () => {
   test("a page at an outside address, and every other kind, name nothing", () => {
     expect(aimOf({ id: ID, kind: "web", url: "https://example.com/" })).toBeNull();
     expect(aimOf({ id: ID, kind: "web", url: "http://192.168.1.5:3000/" })).toBeNull();
+    expect(aimOf({ id: ID, kind: "web", url: "http://localhost.example.com:3000/" })).toBeNull();
     expect(aimOf({ id: ID, kind: "web", url: "" })).toBeNull();
     expect(aimOf({ id: ID, kind: "terminal" })).toBeNull();
     expect(aimOf({ id: ID, kind: "file", file: "/x" })).toBeNull();

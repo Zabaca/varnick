@@ -7,11 +7,11 @@
 
 import { element, notListed, postJSON } from "/dom.js";
 import { confirmEnd, openSession, releaseSession } from "/session.js";
-import { choosePane, framedAddress, isOpenable, kindWord, offersTake, paneLabel, paneNote, samePanes, tabHash, tabTitle } from "/tabrules.js";
+import { choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersTake, paneLabel, paneNote, samePanes, tabHash, tabTitle } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
 const visible = () => document.visibilityState === "visible";
-const refreshMs = 10_000;
+const refreshMs = 5_000;
 
 /** The open tab, or null. One at a time. */
 let current = null;
@@ -90,7 +90,7 @@ function hideFrame() {
 /** Frames the host's proxied address of a page or an app. Navigating in it is the viewer's own browsing, and the host's pane keeps its address. */
 function showFrame(t, pane) {
   for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
-  $("end").hidden = false;
+  $("end").hidden = !t.data.mine;
   header(t, kindWord(pane.kind));
   const address = framedAddress(pane);
   $("frame").hidden = false;
@@ -103,13 +103,18 @@ function showNote(t, pane) {
   hideFrame();
   for (const id of ["card", "live", "terminal-view"]) $(id).hidden = true;
   $("note").hidden = false;
-  $("end").hidden = false;
+  // End is the phone's to offer only while it holds the tab; otherwise Take over comes first.
+  $("end").hidden = !t.data.mine;
   header(t, pane ? kindWord(pane.kind) : "");
   const note = pane ? paneNote(pane, t.host) : { text: "This tab has no pane.", detail: "" };
   $("note-text").textContent = note.text;
   $("note-detail").textContent = note.detail;
   $("note-text").hidden = note.text === "";
   $("note-detail").hidden = note.detail === "" || pane?.kind === "file";
+  // A page at an outside address opens in the browser, not here.
+  const link = $("note-link");
+  link.hidden = !(pane?.kind === "web" && !isLocalAddress(pane.url) && /^https?:\/\//.test(pane.url));
+  if (!link.hidden) link.href = pane.url;
   paintControl(t);
   const file = $("note-file");
   file.hidden = true;
@@ -165,20 +170,22 @@ async function load(t) {
   const framingChanged = shown && Boolean(framedAddress(shown)) !== Boolean(framedAddress(now ?? shown));
   if (first || !now || now.id !== t.pane || (shown && isOpenable(shown) !== isOpenable(now)) || framingChanged) {
     showPane(t, now);
-  } else if (!t.session && !framedAddress(now)) {
+  } else if (!t.session) {
     header(t, kindWord(now.kind));
-    paintControl(t);
+    $("end").hidden = !t.data.mine;
+    if (!framedAddress(now)) paintControl(t);
   }
 }
 
 function failed(t, error) {
   hideFrame();
-  for (const id of ["live", "terminal-view"]) $(id).hidden = true;
+  for (const id of ["card", "live", "terminal-view"]) $(id).hidden = true;
   $("note").hidden = false;
   $("note-control").hidden = true;
   $("note-take").hidden = true;
   $("note-file").hidden = true;
   $("note-detail").hidden = true;
+  $("note-link").hidden = true;
   $("note-text").hidden = false;
   $("note-text").textContent = error;
   $("end").hidden = true;
@@ -195,7 +202,8 @@ export function openTab({ tab, pane, host, done, take = null }) {
   current = t;
   $("session").hidden = false;
   $("panes").hidden = true;
-  $("note").hidden = true;
+  // Nothing of the session or tab shown before: its card, live screen and terminal are gone from view until a pane is chosen.
+  for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
   $("end").hidden = true;
   header(t, "Opening…");
   load(t);

@@ -67,12 +67,12 @@ export function samePanes(a, b) {
 /** The address the tab view frames a web or app pane at, through the host's port proxy, or null when the pane has none. */
 export const framedAddress = (pane) => ((pane.kind === "web" || pane.kind === "app") && pane.proxy ? pane.proxy : null);
 
-/** An address only the host itself can reach. */
+/** An address only the host itself can reach (localhost and `*.localhost`, 127.0.0.0/8, ::1, the unspecified addresses). */
 export function isLocalAddress(url) {
   if (!url) return true;
   try {
     const host = new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "::" || host === "0.0.0.0" || /^127(\.\d{1,3}){3}$/.test(host);
   } catch {
     return true;
   }
@@ -86,7 +86,7 @@ export function paneNote(pane, host) {
   switch (pane.kind) {
     case "claude":
     case "terminal":
-      return { text: `${kindWord(pane.kind)} isn't running on ${host}.`, detail: "" };
+      return { text: `${kindWord(pane.kind)} isn't running on ${host}.`, detail: pane.note ?? "" };
     case "file":
       return { text: "", detail: pane.file ?? "" };
     case "transcript":

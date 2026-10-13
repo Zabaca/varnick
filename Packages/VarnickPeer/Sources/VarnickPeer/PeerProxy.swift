@@ -64,11 +64,12 @@ public extension PeerPane {
         }
     }
 
-    /// An address on the machine that runs the pane: localhost, 127.0.0.1 and ::1, or none yet.
+    /// An address only the machine it names can reach: localhost and `*.localhost`, 127.0.0.0/8, ::1 and the unspecified addresses, or none yet.
     static func isLocalAddress(_ address: String) -> Bool {
         guard !address.isEmpty else { return true }
         let host = (URL(string: address)?.host ?? "").lowercased()
-        return host.isEmpty || ["localhost", "127.0.0.1", "::1"].contains(host)
+        return host.isEmpty || ["localhost", "::1", "::", "0.0.0.0"].contains(host) || host.hasSuffix(".localhost")
+            || host.range(of: #"^127(\.\d{1,3}){3}$"#, options: .regularExpression) != nil
     }
 
     /// Fills in `proxy` or `proxyNote` from the page server's status, for a host-local web or app pane. With no status the server isn't running.

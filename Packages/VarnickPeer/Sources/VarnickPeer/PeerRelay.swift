@@ -340,7 +340,7 @@ public enum PeerRelay {
             Zmx.detachClients(of: name)
         } else if !Zmx.sameID(Zmx.control(in: labels), by) {
             // Not labelled for the caller, an unlabelled session included (its host is in control).
-            return finish(.failure("That session isn't controlled by the Mac that asked: take it over"))
+            return finish(.failure("That session isn't controlled by the machine that asked: take it over"))
         }
         let environment = Zmx.relayAttachEnvironment(from: ProcessInfo.processInfo.environment)
         // The session was seen to exist, but `zmx attach` has no way to refuse to create one, and

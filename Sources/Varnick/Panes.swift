@@ -270,9 +270,6 @@ final class PaneNode: ObservableObject, Identifiable {
         for (i, split) in chain.enumerated() { split.fraction = 1 / CGFloat(chain.count + 1 - i) }
     }
 
-    /// Becomes a copy of `other` (used when a sibling closes and this split collapses, and when the host's layout replaces the tab's).
-    func become(_ other: PaneNode) { take(other) }
-
     /// The tree of a host's layout (`PeerLayout`) with each pane's session; nil when a pane has none or the layout is malformed.
     static func build(_ layout: PeerLayout, sessions: [String: ClaudeSession]) -> PaneNode? {
         if let pane = layout.pane { return sessions[pane].map { PaneNode(session: $0) } }
@@ -281,8 +278,8 @@ final class PaneNode: ObservableObject, Identifiable {
         return PaneNode(axis: axis, fraction: CGFloat(fraction), first: first, second: second)
     }
 
-    /// Becomes a copy of `other` (used when a sibling closes and this split collapses).
-    private func take(_ other: PaneNode) {
+    /// Becomes a copy of `other`, when a sibling closes and this split collapses, and when the host's layout replaces the tab's.
+    func become(_ other: PaneNode) {
         session = other.session
         axis = other.axis
         fraction = other.fraction
@@ -295,7 +292,7 @@ final class PaneNode: ObservableObject, Identifiable {
     func removeLeaf() -> Bool {
         guard let parent else { return false }
         guard let sibling = parent.children.first(where: { $0 !== self }) else { return false }
-        parent.take(sibling)
+        parent.become(sibling)
         return true
     }
 
@@ -372,8 +369,8 @@ final class ClaudeTab: ObservableObject {
     /// this Mac shows in the host's layout (ADR 0034).
     var host: String? { sessions.lazy.compactMap(\.record.host).first }
 
-    /// Whether this Mac is in control of the tab on its host, as the host's listing last said or a take over just made it. Only the machine in
-    /// control changes the layout.
+    /// Whether this Mac is in control of the tab on its host: every running Claude and terminal pane names it, as the host's listing last said
+    /// or a take over or a start just made it. Saved, and corrected by the next listing.
     var inControl = false
     /// Why this Mac can't change the tab's layout (split, close a pane, move a divider, rename it), or nil when it can. Set by the model.
     var layoutLock: () -> String? = { nil }
@@ -397,7 +394,7 @@ final class ClaudeTab: ObservableObject {
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
         SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt,
-                              history: history.isEmpty ? nil : history)
+                              history: history.isEmpty ? nil : history, inControl: inControl && host != nil ? true : nil)
     }
 
     /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).
@@ -456,12 +453,7 @@ final class ClaudeTab: ObservableObject {
     /// Lays the tab out as its host does (`layout`), with `sessions` by pane id; a pane of the tab that the layout has no place for (one
     /// that is closing) goes beside the last. Focus stays where it was if that pane is still in the tab.
     func rearrange(to layout: PeerLayout, using sessions: [String: ClaudeSession]) {
-        let placed = Set(layout.panes)
-        var layout = layout
-        for (id, _) in sessions.sorted(by: { $0.key < $1.key }) where !placed.contains(id) {
-            layout = layout.splitting(layout.panes.last ?? id, adding: id, axis: PeerLayout.sideBySide) ?? layout
-        }
-        guard let node = PaneNode.build(layout, sessions: sessions) else { return }
+        guard let node = PaneNode.build(layout.addingMissing(sessions.keys.sorted()), sessions: sessions) else { return }
         root.become(node)
         if !contains(focused), let first = root.leaves.first { focused = first }
     }
@@ -677,7 +669,7 @@ struct HostCard: View {
         case .resuming:
             return ("Resuming on \(mac)…", "\(mac)'s Varnick is starting the session again with --resume.", nil)
         case .unavailable:
-            return ("\(session.label) isn't running on \(mac)", "Nothing is running for this pane there. On a Mac, a terminal runs only while Keep sessions running is on.", "Start")
+            return ("\(session.label) isn't running on \(mac)", session.unavailableNote ?? "Nothing is running for this pane there.", "Start")
         case .controlled:
             return nil
         }

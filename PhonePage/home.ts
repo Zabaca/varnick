@@ -24,6 +24,8 @@ export interface HomePane {
   mine: boolean;
   /** "Controlled on Mac mini", "Last controlled on this phone": the one wording, from `controlledText`. Empty for a pane that isn't running. */
   text: string;
+  /** Why a Claude or terminal pane doesn't run, when the host says. */
+  note: string | null;
   /** Web: its address. App: its address on the host, and its name and port. File: its path. */
   url: string | null;
   app: string | null;
@@ -118,6 +120,7 @@ export function shapePane(pane: Record<string, unknown>, device: Device): HomePa
     running,
     mine,
     text: running ? controlledText(controller, clients > 0) : "",
+    note: zmx ? optional(pane.note) : null,
     url: optional(pane.url),
     app: optional(pane.app),
     port: typeof pane.port === "number" && Number.isInteger(pane.port) ? pane.port : null,

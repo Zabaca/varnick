@@ -23,13 +23,17 @@ export const notes = {
   noPort: "This page names no port.",
 } as const;
 
-const localNames = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+/** An address only the machine it names can reach: localhost and `*.localhost`, 127.0.0.0/8, ::1 and the unspecified addresses (as `isLocalAddress` of the page and the app). */
+function isLocalHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "::" || host === "0.0.0.0" || /^127(\.[0-9]{1,3}){3}$/.test(host);
+}
 
 /** The port and path an address names when it is on the host's own localhost, else null. A scheme other than http or https is not one. */
 function localAddress(text: string): { port: number; path: string; secure: boolean } | null {
   let url: URL;
   try { url = new URL(text); } catch { return null; }
-  if ((url.protocol !== "http:" && url.protocol !== "https:") || !localNames.has(url.hostname.toLowerCase())) return null;
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLocalHost(url.hostname)) return null;
   const secure = url.protocol === "https:";
   return { port: url.port !== "" ? Number(url.port) : secure ? 443 : 80, path: `${url.pathname}${url.search}${url.hash}`, secure };
 }

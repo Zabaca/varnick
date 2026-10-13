@@ -210,7 +210,7 @@ struct LauncherView: View {
                 ForEach(Array(model.shownRecent.enumerated()), id: \.element.id) { i, r in
                     RecentTabRow(tab: r, selected: model.recentRowsStart + i == model.sessionSelection,
                                  pills: r.leading.map { model.pills(for: $0) } ?? SessionPills(), done: model.isDone(r),
-                                 note: model.reopening[r.id])
+                                 note: model.reopening[r.id]?.text)
                         .onTapGesture { model.openRecent(r) }
                 }
             }

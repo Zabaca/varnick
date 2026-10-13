@@ -118,13 +118,15 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         return isWeb && (proxyNote != nil || Self.isLocalAddress(url ?? ""))
     }
 
-    /// An address only the machine it names can reach: localhost, 127.0.0.1 and ::1, or none yet.
+    /// An address only the machine it names can reach: localhost and `*.localhost`, 127.0.0.0/8, ::1 and the unspecified addresses, or none yet.
     static func isLocalAddress(_ address: String) -> Bool {
         guard !address.isEmpty else { return true }
         let host = (URL(string: address)?.host(percentEncoded: false) ?? "").lowercased()
-        return host.isEmpty || ["localhost", "127.0.0.1", "::1"].contains(host)
+        return host.isEmpty || ["localhost", "::1", "::", "0.0.0.0"].contains(host) || host.hasSuffix(".localhost") || host.range(of: #"^127(\.\d{1,3}){3}$"#, options: .regularExpression) != nil
     }
     var isClaude: Bool { !isShell && !isWeb && !isFile && !isLiveTranscript }
+    /// A Claude or terminal pane: its process runs in a zmx session another machine can attach to (ADR 0034).
+    var runsInZmx: Bool { isClaude || isShell }
 
     /// Worth bringing back after a relaunch: an app pane while its app exists, shells always (as a
     /// fresh shell), the live transcript always (on that day's file), Claude sessions only with a
@@ -308,9 +310,11 @@ struct SessionStore {
         var done: Date?
         /// The conversations it has held, newest first (`TabHistory`). Optional so older files load.
         var history: [HeldConversation]?
+        /// A tab of another machine's: this Mac was in control of it when it was saved. The host's next listing says whether it still is.
+        var inControl: Bool?
 
         init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil,
-             history: [HeldConversation]? = nil) {
+             history: [HeldConversation]? = nil, inControl: Bool? = nil) {
             self.id = id
             self.layout = layout
             self.focused = focused
@@ -318,6 +322,7 @@ struct SessionStore {
             self.showsFiles = showsFiles
             self.done = done
             self.history = history
+            self.inControl = inControl
         }
 
         /// A layout always holds a record.
@@ -356,14 +361,20 @@ struct SessionStore {
                 pieces.append(SavedTab(id: first ? resolvedID : pruned.records[0].id, layout: pruned,
                                        focused: pruned.records.contains { $0.id == focused } ? focused : nil,
                                        name: first ? name : nil, showsFiles: first ? showsFiles : nil, done: first ? done : nil,
-                                       history: first ? history : nil))
+                                       history: first ? history : nil, inControl: inControl))
             }
             return pieces
         }
     }
 
     struct State: Codable {
+        /// The open tabs that run on this Mac. Another machine's tabs are `hostTabs`, so a build that doesn't know them doesn't restore their file, page
+        /// and Transcript panes as this Mac's own.
         var tabs: [SavedTab]?
+        /// The open tabs that show another machine's (ADR 0034), and the order of all the open tabs. Optional so older files load, and older
+        /// builds ignore both.
+        var hostTabs: [SavedTab]?
+        var tabOrder: [UUID]?
         /// Before splits: one session per tab.
         var open: [SessionRecord]?
         /// The Recent of builds before Recent held tabs, read once as closed tabs (`recentList`) and saved empty. The key stays and keeps its
@@ -387,7 +398,14 @@ struct SessionStore {
 
         /// The open tabs, each with its id, with a mark migrated from its panes, and split by machine (see `SavedTab`).
         var openTabs: [SavedTab] {
-            let saved = tabs ?? (open ?? []).map { SavedTab(layout: .leaf($0), focused: $0.id) }
+            var saved = tabs ?? (open ?? []).map { SavedTab(layout: .leaf($0), focused: $0.id) }
+            saved += hostTabs ?? []
+            if let order = tabOrder {
+                saved = saved.enumerated().sorted {
+                    let (a, b) = (order.firstIndex(of: $0.element.resolvedID) ?? Int.max, order.firstIndex(of: $1.element.resolvedID) ?? Int.max)
+                    return a != b ? a < b : $0.offset < $1.offset
+                }.map(\.element)
+            }
             return saved.flatMap { $0.splitByMachine() }.map { $0.migrated() }
         }
 

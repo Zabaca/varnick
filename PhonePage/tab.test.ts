@@ -114,13 +114,16 @@ describe("what a pane that is not a terminal says", () => {
     expect(paneNote(other(a, "transcript"), "Mac mini").text).toBe("The Transcript stays on Mac mini.");
   });
 
-  test("a pane that should run and doesn't says so, and a kind this page doesn't know says that", () => {
+  test("a pane that should run and doesn't says so, with the host's reason, and a kind this page doesn't know says that", () => {
     expect(paneNote(terminal(a, { running: false }), "linux box").text).toBe("Terminal isn't running on linux box.");
+    expect(paneNote(terminal(a, { running: false, note: "Keep sessions running is off." }), "Mac mini").detail).toBe("Keep sessions running is off.");
     expect(paneNote(other(a, "wasm"), "linux box").text).toBe("This version of the page can't show this pane.");
   });
 
   test("an address is local when only its host can reach it", () => {
     expect([undefined, "", "http://localhost/", "http://127.0.0.1:1/", "http://[::1]/", "not a url"].map(isLocalAddress)).toEqual([true, true, true, true, true, true]);
+    expect(["http://0.0.0.0:3000/", "http://127.1.2.3/", "http://app.localhost:8080/", "http://[::]/"].map(isLocalAddress)).toEqual([true, true, true, true]);
+    expect(["http://127.example.com/", "http://128.0.0.1/"].map(isLocalAddress)).toEqual([false, false]);
     expect(["https://example.com/", "http://192.168.1.5/", "http://localhost.example.com/"].map(isLocalAddress)).toEqual([false, false, false]);
     expect(addressHost("https://example.com:8080/a")).toBe("example.com:8080");
     expect(addressHost("nonsense")).toBe("nonsense");
