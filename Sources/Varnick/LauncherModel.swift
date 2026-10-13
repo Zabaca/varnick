@@ -1233,7 +1233,6 @@ final class LauncherModel: ObservableObject {
     /// The panel came up: each reachable paired Mac is asked what is open on it, off the main actor.
     /// A Mac that doesn't answer loses its rows. (A card's live screen follows its view being shown, not this.)
     func panelDidShow() {
-        refreshTabSummaries()
         startSummaryTicker()
         refreshPeerOpenSessions()
         refreshPeerRecent()
@@ -2013,7 +2012,7 @@ final class LauncherModel: ObservableObject {
     }
 
     private func makeTab(_ root: PaneNode, id: UUID? = nil, focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
-                         history: [HeldConversation] = [], reopenedFrom: TabRecord? = nil) -> ClaudeTab {
+                         history: [HeldConversation] = [], reopenedFrom: ReopenedTab? = nil) -> ClaudeTab {
         let tab = ClaudeTab(root: root, id: id ?? UUID(), focused: focused, name: name, completedAt: completedAt, history: history,
                             reopenedFrom: reopenedFrom)
         tab.onChange = { [weak self] in self?.saveSessions() }
@@ -2120,13 +2119,19 @@ final class LauncherModel: ObservableObject {
         remembered = state.rememberedList
         rememberedSaved = Dictionary(remembered.map { ($0.id, $0.lastUsed) }, uniquingKeysWith: { first, _ in first })
         // The old key's sessions are tabs of this Mac's (`State.recentList`); a session that ran on a paired Mac has its transcript there.
-        // One whose tab is open is not closed: its conversations go into that tab's history, or `rebuildRecent` would drop them unseen.
+        // One whose tab is open is not closed: its conversations go into that tab's history, or `rebuildRecent` would drop them unseen. Not
+        // those another open tab holds, which is the later holder, and the rest are taken out of the closed tabs' histories (`claim`).
         let open = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        recent = Array(state.recentList.filter { closed in
+        var folded: [(conversation: String, tab: UUID)] = []
+        let closedTabs = state.recentList.filter { closed in
             guard let tab = open[closed.id], tab.host == nil else { return true }
-            tab.history = TabHistory.appending(tab.history, closed.history ?? [])
+            let free = (closed.history ?? []).filter { past in !tabs.contains { $0.id != tab.id && $0.holds(past.conversation) } }
+            tab.history = TabHistory.appending(tab.history, free)
+            folded += free.map { ($0.conversation, tab.id) }
             return false
-        }.filter(\.resumable).prefix(SessionStore.recentLimit))
+        }
+        recent = Array(closedTabs.filter(\.resumable).prefix(SessionStore.recentLimit))
+        for (conversation, tab) in folded { claim(conversation, for: tab) }
         updatePeerFollowing()
     }
 
@@ -2271,7 +2276,7 @@ final class LauncherModel: ObservableObject {
         if renamingTab === tab, tab.sessions.count == 1 { renamingTab = nil }
         // A pane closed in a tab that stays open leaves its conversation in the tab's history, with the last title it had. It does not reach
         // Recent: the closed tabs do. A tab on a paired Mac is that Mac's to keep, in its Recent.
-        if record.isClaude, !session.isOnPeer, tab.host == nil { hold(record.conversationID, title: record.title, in: tab, claiming: false) }
+        if record.isClaude, !session.isOnPeer, tab.host == nil { hold(record.conversationID, title: record.title, folder: record.directory, in: tab, claiming: false) }
         // A pane on a paired Mac that closes here: that Mac's cached listing of it is stale from now on.
         if record.isClaude, let host = record.host { noteClosed(record, on: host) }
         // Closing that card ends nothing either, but the card's own check finding the session gone may be an end.
@@ -2301,11 +2306,11 @@ final class LauncherModel: ObservableObject {
         var saved = closed.saved
         saved.history = tab.history.isEmpty ? nil : tab.history
         // A tab a peer reopened with its Claude panes alone closes as it was: its other panes, and the shape, come back from the record.
-        if let original = tab.reopenedFrom {
-            saved.layout = saved.layout.restoring(original.layout)
-            saved.name = saved.name ?? original.name
-            saved.focused = saved.layout.records.contains { $0.id == saved.focused } ? saved.focused : original.focused
-            saved.showsFiles = saved.showsFiles ?? original.showsFiles
+        if let reopened = tab.reopenedFrom {
+            saved.layout = saved.layout.restoring(reopened)
+            saved.name = saved.name ?? reopened.original.name
+            saved.focused = saved.layout.records.contains { $0.id == saved.focused } ? saved.focused : reopened.original.focused
+            saved.showsFiles = saved.showsFiles ?? reopened.original.showsFiles
             saved.reopenedFrom = nil
         }
         if closed.done || markedAt != nil {
@@ -2349,8 +2354,8 @@ final class LauncherModel: ObservableObject {
     /// held it (a conversation belongs to the latest tab that held it). Neither reaches Recent.
     private func conversationChanged(in pane: ClaudeSession?, left: SessionRecord, now: String) {
         if let pane, let tab = tabs.first(where: { $0.contains(pane) }), tab.host == nil {
-            hold(left.conversationID, title: left.title, in: tab, claiming: false)
-            hold(now, title: pane.record.title, in: tab)
+            hold(left.conversationID, title: left.title, folder: left.directory, in: tab, claiming: false)
+            hold(now, title: pane.record.title, folder: pane.record.directory, in: tab)
             claim(now, for: tab.id)
         }
         saveSessions()
@@ -2359,8 +2364,8 @@ final class LauncherModel: ObservableObject {
     // MARK: Tab histories (option 02 of work-is-tracked-by-session-not-tab)
 
     /// `conversation` in `tab`'s history, titled when there is a title. One new to the tab is claimed for it (`claim`) unless `claiming` is off.
-    private func hold(_ conversation: String, title: String?, in tab: ClaudeTab, claiming: Bool = true) {
-        guard let next = TabHistory.holding(tab.history, conversation, title: title) else { return }
+    private func hold(_ conversation: String, title: String?, folder: String, in tab: ClaudeTab, claiming: Bool = true) {
+        guard let next = TabHistory.holding(tab.history, conversation, title: title, folder: folder) else { return }
         let isNew = !tab.history.contains { $0.conversation == conversation.lowercased() }
         tab.history = next
         if isNew, claiming { claim(conversation, for: tab.id) }
@@ -2392,7 +2397,7 @@ final class LauncherModel: ObservableObject {
     private func noteHistories() {
         for tab in tabs where tab.host == nil {
             for pane in tab.claudeSessions where !pane.isOnPeer {
-                hold(pane.record.conversationID, title: pane.record.title, in: tab)
+                hold(pane.record.conversationID, title: pane.record.title, folder: pane.record.directory, in: tab)
             }
         }
     }
@@ -2677,7 +2682,7 @@ final class LauncherModel: ObservableObject {
     /// Back to search without ending anything (⌘N). A session's `show` passes `focusing: false` unless the panel already has the keyboard.
     func showSearch(focusing: Bool = true) {
         pendingSplit = nil
-        refreshTabSummaries()
+        startSummaryTicker()
         if let active = activeTab, let i = tabs.firstIndex(where: { $0 === active }) {
             sessionSelection = i
         }
@@ -2721,6 +2726,7 @@ final class LauncherModel: ObservableObject {
     /// The search field takes focus, or the caret goes back into its bullet while the outline shows over the search.
     func focusSearchField() {
         if showingOutline { outline.restoreCaret() } else { focusToken += 1 }
+        if activeTab == nil, !showingBoard, !showingOutline, !showingSettings { startSummaryTicker() }
     }
 
     /// The tab on screen takes focus, or the search field when none shows.
@@ -2845,14 +2851,21 @@ final class LauncherModel: ObservableObject {
         if next != tabSummaries { tabSummaries = next }
     }
 
-    /// Once a second while the session list shows in a visible panel, as the board reads its cards; it ends with the model.
+    /// Reads the summaries now and once a second while the search is on screen in a visible panel. It ends when the panel hides or a tab, the
+    /// board, the outline or Settings covers the search, and starts again where the search comes back (`panelDidShow`, `showSearch`,
+    /// `focusSearchField`).
     private func startSummaryTicker() {
+        refreshTabSummaries()
         guard summaryTicker == nil else { return }
         summaryTicker = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
-                if self.showsSessionList, SessionBoard.panelIsVisible { self.refreshTabSummaries() }
+                guard SessionBoard.panelIsVisible, self.activeTab == nil, !self.showingBoard, !self.showingOutline, !self.showingSettings else {
+                    self.summaryTicker = nil
+                    return
+                }
+                if self.showsSessionList { self.refreshTabSummaries() }
             }
         }
     }
@@ -2972,6 +2985,7 @@ final class LauncherModel: ObservableObject {
         if let wanted, let open = tabs.first(where: { $0.id == wanted && $0.host == nil }), let last = open.sessions.last {
             // The tab's name goes on once it holds two: a tab of one is named after its conversation (`SessionNames`), which its name must not overwrite.
             if open.claudeSessions.count == 1, let name = request.tabName, !name.isEmpty { open.name = name }
+            open.reopenedFrom?.resumed(session.id, on: conversation)
             open.add(session, beside: last, .sideBySide)
             tab = open
         } else {
@@ -2979,8 +2993,10 @@ final class LauncherModel: ObservableObject {
             // The closed tab of that id, if this Mac has it, is the tab reopened with only its Claude panes: it keeps the conversations it held,
             // and itself whole, for the close (`sessionExited`) to put back in Recent with its terminals and splits.
             let closed = id.flatMap { id in (recent + ended + completed).first { $0.id == id && $0.host == nil } }
+            var reopened = closed.map { ReopenedTab(original: $0) }
+            reopened?.resumed(session.id, on: conversation)
             tab = makeTab(PaneNode(session: session), id: id, name: store.tabName(ofSession: conversation), history: closed?.history ?? [],
-                          reopenedFrom: closed)
+                          reopenedFrom: reopened)
             if let asked { hostTabs[asked] = tab.id != asked ? tab.id : nil }
             tabs.append(tab)
         }

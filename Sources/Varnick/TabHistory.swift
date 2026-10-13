@@ -1,10 +1,12 @@
 import Foundation
 
-/// A conversation a tab has held, with its title as last known.
+/// A conversation a tab has held, with its title and folder as last known.
 struct HeldConversation: Codable, Equatable {
     /// Claude's conversation id, lowercased.
     var conversation: String
     var title: String?
+    /// Where it ran, which is where its transcript is. Nil from a file saved before it was kept: the tab's lead pane's folder then.
+    var folder: String?
 }
 
 /// The rules for a tab's history: the conversations it has held, newest first, capped. A conversation is in the history of one tab, the
@@ -13,16 +15,19 @@ enum TabHistory {
     static let limit = 50
 
     /// `history` with `conversation` held. A new one goes first and the oldest fall off past the cap; one held already keeps its place and
-    /// takes the title when there is one. Returns nil when nothing changed.
-    static func holding(_ history: [HeldConversation], _ conversation: String, title: String?) -> [HeldConversation]? {
+    /// takes the title and folder when there are any. Returns nil when nothing changed.
+    static func holding(_ history: [HeldConversation], _ conversation: String, title: String?, folder: String? = nil) -> [HeldConversation]? {
         let id = conversation.lowercased()
         let title = title.flatMap { $0.isEmpty ? nil : $0 }
         var next = history
         if let at = next.firstIndex(where: { $0.conversation == id }) {
-            guard let title, next[at].title != title else { return nil }
-            next[at].title = title
+            var entry = next[at]
+            if let title { entry.title = title }
+            if let folder { entry.folder = folder }
+            guard entry != next[at] else { return nil }
+            next[at] = entry
         } else {
-            next.insert(HeldConversation(conversation: id, title: title), at: 0)
+            next.insert(HeldConversation(conversation: id, title: title, folder: folder), at: 0)
             next = Array(next.prefix(limit))
         }
         return next

@@ -311,6 +311,16 @@ describe("resuming", () => {
     expect(calls.filter((call) => call.op === "resume")).toHaveLength(2);
   });
 
+  test("a session refused because it opened elsewhere is returned to take over, though another started", async () => {
+    const ids = [fixedID, second];
+    const opened = ok({ open: [{ session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Opened meanwhile", folder, conversation, controlName: "Mac mini", clients: 1 }] });
+    const refused = { ok: false as const, error: "That session is open on linux box: take it over from the list" };
+    const { asker } = fakeRelay({ recent, sessions: [empty, opened], resume: [refused, ok({})], status: ok({ sessions: {} }) });
+    const launched = await resumeTab(asker, device, "linux box", tab, () => ids.shift()!);
+    expect(launched.status).toBe(409);
+    expect(launched.body).toMatchObject({ ok: false, open: { session: "varnick-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } });
+  });
+
   test("the first session refused opens the next that started, and every one refused is the first's failure", async () => {
     const ids = [fixedID, second];
     const refused = { ok: false as const, error: "no transcript" };
