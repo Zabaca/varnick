@@ -2893,7 +2893,9 @@ final class LauncherModel: ObservableObject {
             tab = open
         } else {
             let id = wanted.flatMap { id in tabs.contains { $0.id == id } ? nil : id }
-            tab = makeTab(PaneNode(session: session), id: id, name: store.tabName(ofSession: conversation))
+            // The closed tab of that id, if this Mac has it, is the tab reopened: it keeps the conversations it held.
+            let history = id.flatMap { id in (recent + ended + completed).first { $0.id == id && $0.host == nil }?.history } ?? []
+            tab = makeTab(PaneNode(session: session), id: id, name: store.tabName(ofSession: conversation), history: history)
             if let asked { hostTabs[asked] = tab.id != asked ? tab.id : nil }
             tabs.append(tab)
         }
