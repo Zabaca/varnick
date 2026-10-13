@@ -87,7 +87,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 - **A tab's control is the label on its Claude and terminal panes' zmx sessions,** kept the same on each. A tab with none of those has no control, and only its host changes it.
 - **Take over** (the card's button, ⇧↩) is one new request, `take`, naming the tab. The host relabels every one of its panes for the taker, then detaches their clients. The label always comes before the detach, as today. The taker then attaches each pane with `attach`, which finds the label naming it. The check after each attach runs per pane, as today, so two takers racing end with one keyboard per pane.
 - **Closing the tab in control is one `end` for the tab.** The host ends the tab if its origin names the closer. Otherwise it releases every pane: the labels are cleared, the clients detached, the host's cards go live. That is today's rule, with the tab's origin in place of the session's. On the headless host, release keeps the label, as today.
-- **A tab's origin is set when it is made for a machine:** a `start` that makes a new tab, or a `reopen`. A pane added to the tab later keeps the tab's origin.
+- **A tab's origin is set when it is made for a machine:** a `start` that makes a new tab, or a `resume` that reopens one. A pane added to the tab later keeps the tab's origin.
 
 **Layout changes**
 - **Only the machine or device in control of a tab changes its layout** (picked, to match **In control**: only it types). A viewer's split, close, divider and rename keys are refused with "Take over to change this tab". A tab with no control is changed only on its host.
