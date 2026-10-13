@@ -4,7 +4,7 @@ description: The user works in tabs. A tab of panes is one piece of work, and a 
 impact: Marking a tab of three Claude panes done takes three Dones, and its terminals and pages stay open. Completed and Recent can't bring a tab back, only one session in a fresh tab. The board scatters a tab across cards. Search finds a conversation but not the tab it belongs to. A tab on another machine can't be opened whole, and its terminals, dev servers and pages can't be reached from another Mac or the phone. Each new feature built on sessions widens the gap. Sharing done marks between machines shipped two days before this was written, keyed by session, and already has to be redone.
 severity: high
 evidence: The user's words of 2026-10-12, relayed by the coordinator, with four decisions (below). Code read at 0d1d161 (main). Nothing was run, and no Tailscale command was run.
-status: open
+status: closed
 ---
 
 ## What the user wants (2026-10-12)

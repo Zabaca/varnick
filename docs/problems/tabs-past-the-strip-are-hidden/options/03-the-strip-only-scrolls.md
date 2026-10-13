@@ -2,7 +2,8 @@
 problem: tabs-past-the-strip-are-hidden
 title: The strip keeps scrolling sideways, with faded edges and the tab on screen scrolled into view
 summary: Recommended against. Today's sideways scrolling stays as the only way past the edge, made easier to notice. The strip fades at an edge that has more tabs past it, and showing a tab scrolls it into view. No setting, chip or list. The reason to reject it, should the user agree, is ready in Further Notes.
-status: proposed
+status: rejected
+reason: "today's strip already scrolls, and that is the problem. Scrolling still hides which tabs are past the edge and whether one waits on the user."
 ---
 
 ## Solution

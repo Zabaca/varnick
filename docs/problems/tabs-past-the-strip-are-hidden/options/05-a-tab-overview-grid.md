@@ -2,7 +2,8 @@
 problem: tabs-past-the-strip-are-hidden
 title: A tab overview, every open tab as a tile in a grid, opened with a key
 summary: Recommended against as the fix, and a possible later addition to option 01 or 02. A key replaces the panel's content with a grid of every open tab, each tile with its name, pills, sessions and waiting mark, as Settings and the board replace it. The arrows move and ↩ shows a tab. It shows everything, but only when asked, so the strip keeps cutting tabs off and a waiting hidden tab still goes unseen. The session board already shows every tab with a Claude pane this way. The reason to reject it, should the user agree, is ready in Further Notes.
-status: proposed
+status: rejected
+reason: "it shows the tabs only when asked, so the strip still hides them and a waiting hidden tab still goes unseen. The session board already gives an overview of tabs with a Claude pane."
 ---
 
 ## Solution

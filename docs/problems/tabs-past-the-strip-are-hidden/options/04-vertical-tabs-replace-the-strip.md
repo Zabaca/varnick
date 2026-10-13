@@ -2,7 +2,8 @@
 problem: tabs-past-the-strip-are-hidden
 title: A column of tabs on the left replaces the strip
 summary: Recommended against. The header loses its tab strip, and every open tab becomes a row in a column left of the panes, as in browsers with vertical tabs, with its name, pills, sessions and waiting mark. Rows scroll when they don't fit. It shows every tab with room for long titles, but it takes width all the time from a panel that is often narrow, and moves renaming, dragging and closing out of the header. The reason to reject it, should the user agree, is ready in Further Notes.
-status: proposed
+status: rejected
+reason: "it takes width all the time from a panel that is often narrow, beside the file tree, and moves every tab control. A projects column (option 02) gives the overview from less width."
 ---
 
 ## Solution

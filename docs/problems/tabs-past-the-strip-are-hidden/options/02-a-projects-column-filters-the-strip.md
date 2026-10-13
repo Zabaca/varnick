@@ -2,7 +2,7 @@
 problem: tabs-past-the-strip-are-hidden
 title: A projects column on the left filters the tab strip to one project's tabs
 summary: A column left of the panes lists All, each project with open tabs, then Other, each row with its tab count and an orange mark when one of its tabs waits on the user. ⌘⇧P shows and hides it, as ⌘⇧F does the file tree on the right. ⌘⌥[ and ⌘⌥] choose the previous or next row without it. Choosing a project leaves only its tabs in the strip, and ⌘⇧[ and ⌘⇧] step through those. A tab's project is its first Claude pane's, by the rule the pills use, and other machines' tabs join the same rows. Showing a tab of another project, from search, the board or a new session, moves the choice to that project. Search, the board and the Phone page still cover every tab. Whether the column shows is saved; the choice isn't.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -147,12 +147,12 @@ All three can be rebound, like every shortcut.
   - the last tab shown per row;
   - the chip at the strip's left;
   - All after closing the chosen project's last tab.
-- **Open questions,** each with a recommendation:
-  1. **What is a tab's project?** Recommended: its first Claude pane's, by the pills' rule. It stays put as focus moves, which the header's pills (the focused pane's) don't. Folders in no project go under Other.
-  2. **Do other machines' tabs join the same project rows, or get a section of their own?** Recommended: the same rows. The project is the unit of work, and the machine shows in the row's help, the list's pills and the header.
-  3. **Should the session board follow the chosen project?** Recommended: no. The board is where every waiting session shows. An opt-in could come later, if at all.
-  4. **Is the chosen project kept across restarts?** Recommended: no. Whether the column shows is kept.
-  5. **Does search follow it?** Recommended: no. Search, with its Tabs list, always covers everything.
-  6. **Keys?** Recommended: ⌘⇧P for the column, ⌘⌥[ and ⌘⌥] for the previous and next project.
-  7. **Anything on the Phone page?** Recommended: nothing in this option.
-  8. **A narrow panel?** Recommended: the column shows only while the panes keep 220 points beside it and the file tree. Otherwise the chip's list stands in for it.
+- **Decided by the user (2026-10-13),** each the recommendation:
+  1. **What is a tab's project?** its first Claude pane's, by the pills' rule. It stays put as focus moves, which the header's pills (the focused pane's) don't. Folders in no project go under Other.
+  2. **Do other machines' tabs join the same project rows, or get a section of their own?** the same rows. The project is the unit of work, and the machine shows in the row's help, the list's pills and the header.
+  3. **Should the session board follow the chosen project?** no. The board is where every waiting session shows. An opt-in could come later, if at all.
+  4. **Is the chosen project kept across restarts?** no. Whether the column shows is kept.
+  5. **Does search follow it?** no. Search, with its Tabs list, always covers everything.
+  6. **Keys?** ⌘⇧P for the column, ⌘⌥[ and ⌘⌥] for the previous and next project.
+  7. **Anything on the Phone page?** nothing in this option.
+  8. **A narrow panel?** the column shows only while the panes keep 220 points beside it and the file tree. Otherwise the chip's list stands in for it.

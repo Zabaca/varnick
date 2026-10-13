@@ -2,7 +2,7 @@
 problem: tabs-past-the-strip-are-hidden
 title: A setting for tabs that don't fit (shrink, fixed width or wrap), and a +N chip that lists the hidden ones
 summary: Settings › Claude gains "Tabs that don't fit", with three choices. Shrink, the default, narrows the tabs together down to 140 points, then puts the ones that still don't fit behind a "+N" chip at the strip's right end. Fixed width makes every tab 180 points, then "+N". Wrap lets tabs flow onto up to three rows, then "+N". The chip opens a list of the hidden tabs, drawn as the search's Tabs rows, and turns orange while a hidden tab has a session waiting on the user. The strip always shows a run of neighbouring tabs that holds the tab on screen, so ⌘⇧[ and ⌘⇧] never land on a tab out of sight. The sideways scrolling goes.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -125,7 +125,7 @@ Click or ↩ shows the tab, ↑ and ↓ move, and esc closes. The list shows up 
   - 140 points as the narrowest (the user's figure) and 180 points for Fixed width;
   - three rows in Wrap, and 8 rows in the list;
   - one chip for both sides of the run, after the last tab shown and before the new-session button.
-- **Open questions,** each with a recommendation:
-  1. **Three modes, as the coordinator shaped them?** Recommended: yes, with Shrink the default.
-  2. **Does Fixed width mean one width for every tab, or each tab at today's width, never shrinking?** Recommended: one width (180 points), so tabs don't jump as Claude retitles sessions.
-  3. **Does Wrap stop at three rows and use "+N" after?** Recommended: yes. Rows without a limit would squeeze the panes out of a small panel.
+- **Decided by the user (2026-10-13),** each the recommendation:
+  1. **Three modes, as the coordinator shaped them?** yes, with Shrink the default.
+  2. **Does Fixed width mean one width for every tab, or each tab at today's width, never shrinking?** one width (180 points), so tabs don't jump as Claude retitles sessions.
+  3. **Does Wrap stop at three rows and use "+N" after?** yes. Rows without a limit would squeeze the panes out of a small panel.
