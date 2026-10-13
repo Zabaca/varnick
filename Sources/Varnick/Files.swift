@@ -215,6 +215,8 @@ final class FileViewer: NSView, WKNavigationDelegate {
     private var web: WKWebView?
     /// The page has loaded and takes new bodies through `render`.
     private var webReady = false
+    /// A file of another machine: its host has answered, with the text or a refusal, so the "Reading" line is gone.
+    private var showsAnswer = false
     /// Last text read, so toggling source doesn't read the file again.
     private var lastText: String?
     /// Markdown shown as text instead of rendered.
@@ -258,12 +260,16 @@ final class FileViewer: NSView, WKNavigationDelegate {
         loads += 1
         let load = loads, url = self.url
         if let remote {
+            // Never a blank area: the pane says it is reading until the host's answer, or its refusal, replaces that.
+            let host = PeerManager.shared.name(of: remote.host)
+            if !showsAnswer { showText("Reading \(url.lastPathComponent) from \(host)…") }
             Task { [weak self] in
                 let result = await PeerManager.shared.fileText(pane: remote.pane, on: remote.host)
                 guard let self, load == self.loads else { return }
+                self.showsAnswer = true
                 switch result {
-                case .success(let text): self.showText(text)
-                case .failure(let refusal): self.showText(refusal.message)
+                case .success(let text): self.showText(text.isEmpty ? "\(self.url.lastPathComponent) is empty." : text)
+                case .failure(let refusal): self.showText("\(refusal.message). ⌘R asks \(host) again.")
                 }
             }
             return

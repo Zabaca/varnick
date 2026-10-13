@@ -306,10 +306,15 @@ public enum PeerFile {
         guard let size = (attributes[.size] as? NSNumber)?.intValue, size <= limit else {
             return .failure(PeerFileRefusal(message: "That file is too large to show here (over 1 MB)"))
         }
-        guard let handle = FileHandle(forReadingAtPath: resolved), let data = try? handle.read(upToCount: limit + 1) else {
+        guard let handle = FileHandle(forReadingAtPath: resolved) else { return .failure(PeerFileRefusal(message: "That file couldn't be read")) }
+        defer { try? handle.close() }
+        let data: Data
+        do {
+            // Nil at end of file, so an empty file is empty text, not a failed read.
+            data = try handle.read(upToCount: limit + 1) ?? Data()
+        } catch {
             return .failure(PeerFileRefusal(message: "That file couldn't be read"))
         }
-        try? handle.close()
         guard data.count <= limit, !data.contains(0), let text = String(data: data, encoding: .utf8) else {
             return .failure(PeerFileRefusal(message: data.count > limit ? "That file is too large to show here (over 1 MB)" : "That file isn't text"))
         }
