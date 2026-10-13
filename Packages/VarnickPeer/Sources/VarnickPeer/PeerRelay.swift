@@ -200,8 +200,11 @@ public enum PeerRelay {
         guard let found = listing.tabs?.first(where: { Zmx.sameID($0.tab, tab) }) else {
             return finish(.failure("That tab isn't open on \(host.name)"))
         }
-        let sessions = found.runningPanes.compactMap(\.session)
-        guard !sessions.isEmpty else { return finish(.failure("That tab has no running Claude or terminal pane to take: only \(host.name) changes it")) }
+        guard !found.runningPanes.isEmpty else {
+            return finish(.failure("That tab has no running Claude or terminal pane to take: only \(host.name) changes it"))
+        }
+        // A pane the asker holds already keeps its client.
+        let sessions = found.runningPanes.filter { !Zmx.sameID($0.control, by) }.compactMap(\.session)
         let refused = sessions.filter { !Zmx.setControl($0, to: by) }
         for session in sessions where !refused.contains(session) { Zmx.detachClients(of: session) }
         guard refused.isEmpty else {

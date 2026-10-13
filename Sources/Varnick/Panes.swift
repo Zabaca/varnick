@@ -348,6 +348,8 @@ final class ClaudeTab: ObservableObject {
     var onChange: () -> Void = {}
     /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is.
     var onClosing: () -> Void = {}
+    /// The tab is closing as a whole: the model tells the host of another machine's tab once, in place of each pane doing so (ADR 0034).
+    var onEnding: () -> Void = {}
 
     init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
          history: [HeldConversation] = [], reopenedFrom: TabRecord? = nil) {
@@ -417,6 +419,7 @@ final class ClaudeTab: ObservableObject {
     /// The tab's ×: ends every pane, as ⌘W would one by one; the last one to go closes the tab.
     func close() {
         onClosing()
+        onEnding()
         for session in sessions { session.end() }
     }
 

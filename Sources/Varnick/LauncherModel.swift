@@ -2022,7 +2022,24 @@ final class LauncherModel: ObservableObject {
             guard let self, let tab, self.closing[tab.id] == nil else { return }
             self.closing[tab.id] = ClosingTab(saved: tab.saved, done: false)
         }
+        tab.onEnding = { [weak self, weak tab] in
+            guard let self, let tab else { return }
+            self.endOnHost(tab)
+        }
         return tab
+    }
+
+    /// A pane closed here whose host released its session instead of ending it: it runs on, so it isn't in an ended card. Its ended tab goes, or
+    /// the session leaves an ended tab that held others too.
+    private func noteReleased(_ record: SessionRecord) {
+        ended = ended.compactMap { held in
+            guard held.records.contains(where: { $0.id == record.id }) else { return held }
+            guard let layout = held.layout.pruned({ $0.id != record.id }) else { return nil }
+            var rest = held
+            rest.layout = layout
+            return rest.claudeRecords.isEmpty ? nil : rest
+        }
+        saveSessions()
     }
 
     private func makeSession(_ record: SessionRecord, resuming: Bool, query prompt: String) -> ClaudeSession {
@@ -2033,18 +2050,7 @@ final class LauncherModel: ObservableObject {
         }
         session.onLabelChange = { [weak self] in self?.saveSessions() }
         // Closed on this Mac, but the host released the session and it runs on: not an ended session, and no ended card.
-        session.onReleased = { [weak self] record in
-            guard let self else { return }
-            // Its ended tab, or the session out of an ended tab that held others too.
-            ended = ended.compactMap { held in
-                guard held.records.contains(where: { $0.id == record.id }) else { return held }
-                guard let layout = held.layout.pruned({ $0.id != record.id }) else { return nil }
-                var rest = held
-                rest.layout = layout
-                return rest.claudeRecords.isEmpty ? nil : rest
-            }
-            saveSessions()
-        }
+        session.onReleased = { [weak self] record in self?.noteReleased(record) }
         session.onConversationChange = { [weak self] left, now in self?.conversationChanged(in: ref, left: left, now: now) }
         // A close that doesn't happen (the question answered No, the pane taken over): the tab isn't closing any more, Done or ×.
         session.onKept = { [weak self] in
@@ -2063,6 +2069,10 @@ final class LauncherModel: ObservableObject {
         session.onDone = { [weak self] in
             guard let self, let pane = ref else { return }
             self.requestDone(pane)
+        }
+        session.onTakeOver = { [weak self] in
+            guard let self, let pane = ref else { return }
+            self.takeOver(tabOf: pane)
         }
         session.onRestart = { [weak self] in
             guard let self, let pane = ref else { return }
@@ -2517,6 +2527,37 @@ final class LauncherModel: ObservableObject {
         return true
     }
 
+    /// Closing a paired Mac's tab here sends its host one `end` for the tab, in place of one per pane. The host decides: a tab made for this Mac
+    /// ends, any other is released, and a tab this Mac isn't in control of is left as it is (the host refuses). Either way the view closes.
+    private func endOnHost(_ tab: ClaudeTab) {
+        guard let host = tab.host else { return }
+        for pane in tab.sessions { pane.endsWithTab = true }
+        let id = tab.id, records = tab.sessions.filter(\.runsInZmx).map(\.record)
+        Task { [weak self] in
+            if await PeerManager.shared.end(tab: id, on: host) { for record in records { self?.noteReleased(record) } }
+        }
+    }
+
+    /// Take over on a card: control is the tab's (ADR 0034), so every pane of the tab that shows a card is taken. On a tab of this Mac that is
+    /// each pane in turn; on a paired Mac's it is one `take` for the tab, then each pane attaches and finds the label naming this Mac.
+    func takeOver(tabOf pane: ClaudeSession) {
+        guard let tab = tabs.first(where: { $0.contains(pane) }) else { return pane.performTakeOver() }
+        let cards = tab.sessions.filter(\.canTakeOver)
+        guard let host = tab.host else {
+            for card in cards { card.performTakeOver() }
+            return
+        }
+        for card in cards { card.beginTakeOver() }
+        let id = tab.id
+        Task { [weak self] in
+            let failure = await PeerManager.shared.take(tab: id, on: host)
+            guard self != nil else { return }
+            for card in cards {
+                if let failure { card.takeOverFailed(failure) } else { card.performTakeOver(taken: true) }
+            }
+        }
+    }
+
     /// Done on a paired Mac's open tab that has no tab here: only marked, in Completed with "Still open
     /// on…". This Mac can't end it: the host takes `end` only from the Mac in control.
     func markPeerDone(_ id: UUID) {
@@ -2876,14 +2917,15 @@ final class LauncherModel: ObservableObject {
             reply.tab = tab
             return reply
         }
-        guard let existing, existing.isClaude, !existing.isOnPeer else { return reply(.ended) }
+        guard let existing, existing.runsInZmx, !existing.isOnPeer else { return reply(.ended) }
         tab = tabs.first { $0.contains(existing) }.map { $0.id.uuidString.lowercased() }
         // It may be running again already (shown here, or a retry that crossed this one): the peer
         // looks at who controls it.
         let status = await Task.detached { Zmx.status(of: id) }.value
         if status.running { return reply(.running, status: status) }
         guard !existing.started else { return reply(.closing) }
-        guard existing.record.transcriptExists else { return reply(.ended) }
+        // A terminal has no conversation to resume: it starts fresh in its folder.
+        guard existing.isShell || existing.record.transcriptExists else { return reply(.ended) }
         existing.startedFor = peer
         existing.start()
         let started = await replyOnceRunning(existing, in: existing.record.directory)
@@ -2981,9 +3023,10 @@ final class LauncherModel: ObservableObject {
     /// it shows the card, goes live. A session with no pane here, which nothing would own once
     /// released, ends. A session already gone is nothing to end, but a pane still showing it closes.
     func hostEnd(_ request: PeerRequest, by peer: String) async -> PeerReply {
+        if request.tab != nil { return await hostEndTab(request, by: peer) }
         guard let name = request.session, let id = Zmx.paneID(name) else { return .failure("Not a Varnick session name") }
         let labels = await Task.detached { Zmx.labels(of: name) }.value
-        let pane = tabs.flatMap(\.sessions).first { $0.id == id && $0.isClaude && !$0.isOnPeer }
+        let pane = tabs.flatMap(\.sessions).first { $0.id == id && $0.runsInZmx && !$0.isOnPeer }
         guard let labels else {
             pane?.endSession()
             return .success()
@@ -3012,6 +3055,36 @@ final class LauncherModel: ObservableObject {
     /// A peer's `reopen`: a tab of this Mac that closed comes back whole for the peer.
     func hostReopen(_ request: PeerRequest, by peer: String) async -> PeerReply {
         .failure("Not built yet")
+    }
+
+    /// A peer's `end` naming a tab: the machine in control closed the whole tab. The same decision as for one pane, made for all of them: if
+    /// each running pane's origin names the asker the tab was made for it, and it ends (every pane closes, the tab goes to Recent as when
+    /// closed here); otherwise every pane the asker holds is released, labelled for nobody with its clients detached, and the host's cards go
+    /// live (ADR 0034). A tab with nothing running has no one in control, so it is the host's alone to close.
+    private func hostEndTab(_ request: PeerRequest, by peer: String) async -> PeerReply {
+        guard let id = request.tab.flatMap(UUID.init(uuidString:)) else { return .failure("Not a Varnick tab id") }
+        // A tab already gone is nothing to end.
+        guard let tab = tabs.first(where: { $0.id == id && $0.host == nil }) else { return .success() }
+        let panes = tab.sessions.filter(\.runsInZmx)
+        let names = panes.map { Zmx.sessionName($0.id) }
+        let labels = await Task.detached { names.map { Zmx.labels(of: $0) } }.value
+        let labelled = zip(panes, labels).compactMap { pane, labels in labels.map { (pane, $0) } }
+        guard labelled.contains(where: { Zmx.sameID(Zmx.control(in: $0.1), peer) }) else {
+            return .failure("That tab isn't controlled by the Mac that asked to end it")
+        }
+        if labelled.allSatisfy({ Zmx.sameID(Zmx.origin(in: $0.1), peer) }) {
+            tab.onClosing()
+            for pane in tab.sessions { pane.endSession() }
+            return .success()
+        }
+        for (pane, labels) in labelled where Zmx.sameID(Zmx.control(in: labels), peer) {
+            let name = Zmx.sessionName(pane.id)
+            guard await Task.detached(operation: { Zmx.release(name) }).value else { return .failure("zmx wouldn't release the session") }
+            pane.goLiveAfterRelease()
+        }
+        var reply = PeerReply.success()
+        reply.released = true
+        return reply
     }
 
     /// A peer's `done` (ADR 0032): marks a tab of this Mac, or with `mark` false takes the mark off, and ends nothing.

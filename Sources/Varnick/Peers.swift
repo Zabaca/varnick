@@ -822,6 +822,34 @@ final class PeerManager: ObservableObject {
         }
     }
 
+    /// The Mac in control closed a whole tab of the host's (`end` naming the tab, ADR 0034). The host decides as for one pane: it ends the
+    /// tab if it was made for this Mac, else releases every pane. A failure is only logged. Returns whether the host released it.
+    @discardableResult
+    func end(tab id: UUID, on host: String) async -> Bool {
+        var request = PeerRequest(.end)
+        request.by = PeerIdentity.id
+        request.tab = id.uuidString.lowercased()
+        switch await send(request, to: host) {
+        case .failure(let refusal):
+            NSLog("Varnick: couldn't end tab \(id.uuidString.lowercased()) on \(self.name(of: host)): \(refusal.message)")
+            return false
+        case .success(let reply):
+            return reply.released == true
+        }
+    }
+
+    /// Takes a tab on its host for this Mac (`take`): every Claude and terminal pane of it is relabelled, then every client detached. Nil once
+    /// taken, else why not. The caller attaches each pane, which finds the label naming this Mac.
+    func take(tab id: UUID, on host: String) async -> String? {
+        var request = PeerRequest(.take)
+        request.by = PeerIdentity.id
+        request.tab = id.uuidString.lowercased()
+        switch await send(request, to: host, timeout: 20) {
+        case .failure(let refusal): return refusal.message
+        case .success: return nil
+        }
+    }
+
     /// Marks a tab done on its host, or with `mark` false takes the mark off, and ends nothing (ADR 0032). Whether the host took it:
     /// a failure is only logged, and nothing sends it again.
     func done(tab id: UUID, on host: String, mark: Bool) async -> Bool {
