@@ -56,6 +56,20 @@ public enum TranscriptReader {
         "\(NSHomeDirectory())/.claude/projects/\(Project.claudeFolder(directory))/\(conversation).jsonl"
     }
 
+    /// Whether the conversation has a transcript with something in it. Claude Code can leave an empty file for a session no message was sent
+    /// in: `claude --resume` finds no conversation in it, and `--session-id` refuses its id as in use.
+    public static func hasConversation(directory: String, conversation: String) -> Bool {
+        let size = (try? FileManager.default.attributesOfItem(atPath: path(directory: directory, conversation: conversation)))?[.size] as? NSNumber
+        return (size?.intValue ?? 0) > 0
+    }
+
+    /// Removes the conversation's transcript if it is empty, so a session can start again under its id.
+    public static func removeEmpty(directory: String, conversation: String) {
+        let file = path(directory: directory, conversation: conversation)
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber, size.intValue == 0 else { return }
+        try? FileManager.default.removeItem(atPath: file)
+    }
+
     /// The name Claude Code last gave the conversation (its `ai-title` entries), for a
     /// conversation that is no longer on screen to take its terminal title from.
     public static func title(directory: String, conversation: String) -> String? {

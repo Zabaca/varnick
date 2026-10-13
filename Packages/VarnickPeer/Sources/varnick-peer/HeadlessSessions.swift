@@ -300,7 +300,7 @@ extension StateFolder {
             let conversation = conversations[id] ?? id
             // A terminal has no conversation to resume: one a reboot lost starts fresh in its folder.
             let transcript = before.isTerminal
-                || FileManager.default.fileExists(atPath: TranscriptReader.path(directory: before.folder ?? "", conversation: conversation))
+                || TranscriptReader.hasConversation(directory: before.folder ?? "", conversation: conversation)
             let decision = HeadlessLifecycle.resumeDecision(
                 record: before, running: running.contains(id), bootID: bootID, conversation: conversation, transcriptExists: transcript,
                 held: !before.isTerminal
@@ -325,20 +325,21 @@ extension StateFolder {
     struct Reopening {
         var record: HeadlessSession
         var before: HeadlessSession
-        /// The conversation a Claude pane resumes; nil for a terminal.
+        /// The conversation a Claude pane resumes; nil for a terminal and for a Claude pane that starts fresh.
         var conversation: String?
     }
 
     enum Reopen {
         /// The tab has an open record: it isn't closed.
         case open
-        /// Nothing in it can be started again: no record, or each Claude pane has no transcript or its conversation is open elsewhere.
+        /// Nothing in it can be started again: no record, or each Claude pane with a transcript has its conversation open elsewhere.
         case nothing
         case claimed([Reopening])
     }
 
-    /// A closed tab's panes that can start again (a Claude pane with its transcript and no other record holding it, and every terminal),
-    /// marked starting for `by` in one step like `claimResume`, so two Macs can't both reopen it. The tab is made for `by`; its mark comes off.
+    /// A closed tab's panes that can start again (a Claude pane with its transcript and no other record holding it, one with no transcript, which
+    /// starts fresh, and every terminal), marked starting for `by` in one step like `claimResume`, so two Macs can't both reopen it. The tab is
+    /// made for `by`; its mark comes off.
     func claimReopen(_ tab: String, by: String, running: Set<String>, now: Date = Date()) throws -> Reopen {
         try locked(exclusive: true) {
             var sessions = try readSessions()
@@ -354,10 +355,12 @@ extension StateFolder {
                 var conversation: String?
                 if !before.isTerminal {
                     let held = conversations[id] ?? id
-                    guard FileManager.default.fileExists(atPath: TranscriptReader.path(directory: before.folder ?? "", conversation: held)),
-                          !HeadlessLifecycle.isHeld(held, in: sessions, running: running, conversations: conversations, excluding: id)
-                    else { continue }
-                    conversation = held
+                    if TranscriptReader.hasConversation(directory: before.folder ?? "", conversation: held) {
+                        guard !HeadlessLifecycle.isHeld(held, in: sessions, running: running, conversations: conversations, excluding: id)
+                        else { continue }
+                        conversation = held
+                    }
+                    // Else no message was ever sent in it: it starts fresh in its folder, as a terminal does, and keeps its place.
                 }
                 var record = before
                 (record.ended, record.starting, record.bootID, record.started, record.origin, record.done) = (nil, true, bootID, now, by, nil)

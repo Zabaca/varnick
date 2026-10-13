@@ -155,7 +155,7 @@ extension HeadlessPeerHost {
         let taken = PeerReply.failure("That session already exists on \(name)")
         let folder = HeadlessConfig.expand(given)
         guard Self.isFolder(folder) else { return .failure("\(folder) isn't a folder on \(name)") }
-        guard FileManager.default.fileExists(atPath: TranscriptReader.path(directory: folder, conversation: conversation)) else {
+        guard TranscriptReader.hasConversation(directory: folder, conversation: conversation) else {
             return .failure("\(name) has no transcript of that conversation")
         }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
@@ -420,7 +420,7 @@ extension HeadlessPeerHost {
             .sorted(by: { ($0.ended ?? .distantPast) > ($1.ended ?? .distantPast) }) {
             let conversation = conversations[record.id] ?? record.id
             let folder = record.folder ?? config.defaultFolder
-            guard !seen.contains(conversation), FileManager.default.fileExists(atPath: TranscriptReader.path(directory: folder, conversation: conversation)),
+            guard !seen.contains(conversation), TranscriptReader.hasConversation(directory: folder, conversation: conversation),
                   !HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: conversations) else { continue }
             seen.insert(conversation)
             let title = TranscriptReader.title(directory: folder, conversation: conversation) ?? Self.firstLine(of: record.prompt) ?? ""

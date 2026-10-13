@@ -3190,8 +3190,7 @@ final class LauncherModel: ObservableObject {
         let status = await Task.detached { Zmx.status(of: id) }.value
         if status.running { return reply(.running, status: status) }
         guard !existing.started else { return reply(.closing) }
-        // A terminal has no conversation to resume: it starts fresh in its folder.
-        guard existing.isShell || existing.record.transcriptExists else { return reply(.ended) }
+        // A terminal, and a Claude pane no message was sent in, have no conversation to resume: they start fresh in their folder.
         existing.startedFor = peer
         existing.start()
         let started = await replyOnceRunning(existing, in: existing.record.directory)

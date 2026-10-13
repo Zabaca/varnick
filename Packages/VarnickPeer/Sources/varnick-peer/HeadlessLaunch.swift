@@ -31,6 +31,8 @@ extension HeadlessPeerHost {
         }
         let session = Zmx.sessionName(uuid)
         let folder = record.folder ?? config.defaultFolder
+        // A Claude pane starting fresh under its id (a reopened tab's untouched one) may find an empty transcript there, which claude refuses as in use.
+        if conversation == nil, !record.isTerminal { TranscriptReader.removeEmpty(directory: folder, conversation: record.id) }
 
         // Pane folder: the hooks write here, with no report left from an earlier run; claude must not start without it. A terminal has no hooks.
         if !record.isTerminal {
