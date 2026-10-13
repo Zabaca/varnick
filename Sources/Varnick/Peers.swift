@@ -822,6 +822,50 @@ final class PeerManager: ObservableObject {
         }
     }
 
+    /// A divider moved or the name changed, in control of a tab on its host (`arrange`). Nil once the host took it, else why not.
+    func arrange(tab id: UUID, layout: PeerLayout, name: String?, on host: String) async -> String? {
+        var request = PeerRequest(.arrange)
+        request.by = PeerIdentity.id
+        request.tab = id.uuidString.lowercased()
+        request.layout = layout
+        request.tabName = name ?? ""
+        switch await send(request, to: host) {
+        case .failure(let refusal): return refusal.message
+        case .success: return nil
+        }
+    }
+
+    /// A file pane's text, read by its host (`file`): the host finds the pane in its tabs and refuses a path outside the tab's folders, a
+    /// file that is too large and one that isn't text. The failure is the line to show in the pane.
+    func fileText(pane id: UUID, on host: String) async -> Result<String, Refusal> {
+        var request = PeerRequest(.file)
+        request.by = PeerIdentity.id
+        request.pane = id.uuidString.lowercased()
+        switch await send(request, to: host, timeout: 20) {
+        case .failure(let refusal): return .failure(refusal)
+        case .success(let reply): return reply.text.map { .success($0) } ?? .failure(Refusal(message: "\(self.name(of: host)) sent no text"))
+        }
+    }
+
+    /// Reopens a tab that closed on the host, whole, for this Mac (`reopen`, ADR 0034). The host starts its panes, which takes a few seconds each.
+    func reopen(tab id: UUID, on host: String) async -> Result<PeerReply, Refusal> {
+        var request = PeerRequest(.reopen)
+        request.by = PeerIdentity.id
+        request.tab = id.uuidString.lowercased()
+        return await send(request, to: host, timeout: 80)
+    }
+
+    /// The Mac in control closed a pane of the host's tab that has no session of its own (a page, a file). A failure is only logged.
+    func end(pane: UUID, in tab: UUID, on host: String) async {
+        var request = PeerRequest(.end)
+        request.by = PeerIdentity.id
+        request.tab = tab.uuidString.lowercased()
+        request.pane = pane.uuidString.lowercased()
+        if case .failure(let refusal) = await send(request, to: host) {
+            NSLog("Varnick: couldn't close pane \(pane.uuidString.lowercased()) of a tab on \(self.name(of: host)): \(refusal.message)")
+        }
+    }
+
     /// The Mac in control closed a whole tab of the host's (`end` naming the tab, ADR 0034). The host decides as for one pane: it ends the
     /// tab if it was made for this Mac, else releases every pane. A failure is only logged. Returns whether the host released it.
     @discardableResult

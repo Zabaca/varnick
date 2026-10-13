@@ -201,7 +201,7 @@ struct LauncherView: View {
                         .frame(height: LauncherModel.sessionHeaderHeight)
                 }
                 PeerOpenTabRow(tab: tab, selected: model.peerRowsStart + i == model.sessionSelection,
-                               pills: model.pills(folder: tab.rows[0].info.folder, agent: tab.rows[0].info.agent, host: tab.peer.id))
+                               pills: model.pills(folder: tab.folder, agent: tab.agent, host: tab.peer.id))
                     .onTapGesture { model.openPeerTab(tab) }
             }
             if !model.shownRecent.isEmpty {
@@ -209,7 +209,8 @@ struct LauncherView: View {
                     .frame(height: LauncherModel.sessionHeaderHeight)
                 ForEach(Array(model.shownRecent.enumerated()), id: \.element.id) { i, r in
                     RecentTabRow(tab: r, selected: model.recentRowsStart + i == model.sessionSelection,
-                                 pills: r.leading.map { model.pills(for: $0) } ?? SessionPills(), done: model.isDone(r))
+                                 pills: r.leading.map { model.pills(for: $0) } ?? SessionPills(), done: model.isDone(r),
+                                 note: model.reopening[r.id])
                         .onTapGesture { model.openRecent(r) }
                 }
             }
@@ -1074,14 +1075,13 @@ struct PeerOpenTabRow: View {
     let pills: SessionPills
 
     var body: some View {
-        let first = tab.rows[0]
         HStack(spacing: 12) {
-            SourceTile(source: "claude")
+            SourceTile(source: tab.rows.isEmpty ? (tab.listing.panes.first?.kind?.rawValue ?? "terminal") : "claude")
             VStack(alignment: .leading, spacing: 1) {
-                Text(tab.name ?? first.info.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Text(tab.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 let summary = TabSummary.parts(sessions: tab.rows.count, waiting: tab.waiting, working: tab.working)
-                SessionDetailLine(pills: pills, folder: (first.info.folder as NSString).lastPathComponent, host: tab.peer.name,
-                                  rest: summary.isEmpty ? [first.controlNote] : summary)
+                SessionDetailLine(pills: pills, folder: (tab.folder as NSString).lastPathComponent, host: tab.peer.name,
+                                  rest: summary.isEmpty ? [tab.note] : summary)
             }
             Spacer()
             if selected { KeyHint(label: "Open", keys: ["↩"]).font(.system(size: 11)) }
@@ -1135,6 +1135,8 @@ struct RecentTabRow: View {
     let pills: SessionPills
     /// Marked done, here or by its host.
     let done: Bool
+    /// A reopen under way, or why it failed.
+    var note: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1159,7 +1161,7 @@ struct RecentTabRow: View {
     private var rest: [String] {
         let sessions = tab.claudeRecords.count
         let when = tab.lastUsed.formatted(.relative(presentation: .named))
-        return (sessions > 1 ? ["\(sessions) sessions"] : []) + [(done ? "Done " : "Closed ") + when]
+        return (note.map { [$0] } ?? []) + (sessions > 1 ? ["\(sessions) sessions"] : []) + [(done ? "Done " : "Closed ") + when]
     }
 }
 

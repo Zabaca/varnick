@@ -286,6 +286,17 @@ final class PaneNode: ObservableObject, Identifiable {
         for (i, split) in chain.enumerated() { split.fraction = 1 / CGFloat(chain.count + 1 - i) }
     }
 
+    /// Becomes a copy of `other` (used when a sibling closes and this split collapses, and when the host's layout replaces the tab's).
+    func become(_ other: PaneNode) { take(other) }
+
+    /// The tree of a host's layout (`PeerLayout`) with each pane's session; nil when a pane has none or the layout is malformed.
+    static func build(_ layout: PeerLayout, sessions: [String: ClaudeSession]) -> PaneNode? {
+        if let pane = layout.pane { return sessions[pane].map { PaneNode(session: $0) } }
+        guard let axis = layout.axis.flatMap(SplitAxis.init(rawValue:)), let fraction = layout.fraction, let parts = layout.parts, parts.count == 2,
+              let first = build(parts[0], sessions: sessions), let second = build(parts[1], sessions: sessions) else { return nil }
+        return PaneNode(axis: axis, fraction: CGFloat(fraction), first: first, second: second)
+    }
+
     /// Becomes a copy of `other` (used when a sibling closes and this split collapses).
     private func take(_ other: PaneNode) {
         session = other.session
@@ -376,8 +387,15 @@ final class ClaudeTab: ObservableObject {
         TabHistory.holds(conversation, history: history, panes: claudeSessions.map(\.record))
     }
 
-    /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one).
-    var host: String? { claudeSessions.first?.record.host }
+    /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one). A tab with one is that machine's tab, which
+    /// this Mac shows in the host's layout (ADR 0034).
+    var host: String? { sessions.lazy.compactMap(\.record.host).first }
+
+    /// Whether this Mac is in control of the tab on its host, as the host's listing last said or a take over just made it. Only the machine in
+    /// control changes the layout.
+    var inControl = false
+    /// Why this Mac can't change the tab's layout (split, close a pane, move a divider, rename it), or nil when it can. Set by the model.
+    var layoutLock: () -> String? = { nil }
 
     /// A tab made for a session the user asked a paired Mac to resume takes the id of the tab the host puts it in, once: a later pane
     /// joining it names another host tab, which it ignores.
@@ -454,6 +472,19 @@ final class ClaudeTab: ObservableObject {
         return true
     }
 
+    /// Lays the tab out as its host does (`layout`), with `sessions` by pane id; a pane of the tab that the layout has no place for (one
+    /// that is closing) goes beside the last. Focus stays where it was if that pane is still in the tab.
+    func rearrange(to layout: PeerLayout, using sessions: [String: ClaudeSession]) {
+        let placed = Set(layout.panes)
+        var layout = layout
+        for (id, _) in sessions.sorted(by: { $0.key < $1.key }) where !placed.contains(id) {
+            layout = layout.splitting(layout.panes.last ?? id, adding: id, axis: PeerLayout.sideBySide) ?? layout
+        }
+        guard let node = PaneNode.build(layout, sessions: sessions) else { return }
+        root.become(node)
+        if !contains(focused), let first = root.leaves.first { focused = first }
+    }
+
     /// Nearest pane past the focused pane's edge in `direction`, among those overlapping it
     /// on the other axis; ties go to the one most in line with it.
     func neighbor(of session: ClaudeSession? = nil, _ direction: PaneDirection,
@@ -507,12 +538,15 @@ struct PaneView: View {
                     PaneView(node: node.children[0], tab: tab)
                         .frame(width: sideBySide ? first : nil, height: sideBySide ? nil : first)
                     SplitDivider(sideBySide: sideBySide, space: node.id) { position in
+                        // Only the machine in control of a tab moves its dividers (ADR 0034).
+                        guard tab.layoutLock() == nil else { return }
                         let minSize = sideBySide ? Self.minPane.width : Self.minPane.height
                         let lo = min(0.5, minSize / max(total, 1))
                         node.fraction = min(1 - lo, max(lo, (position - Self.divider / 2) / max(total, 1)))
                     } onEnd: {
-                        tab.onChange()
+                        if let reason = tab.layoutLock() { tab.focused.showRefusal(reason) } else { tab.onChange() }
                     } onReset: {
+                        if let reason = tab.layoutLock() { return tab.focused.showRefusal(reason) }
                         node.fraction = 0.5
                         tab.onChange()
                     }
@@ -532,7 +566,9 @@ struct TerminalLeaf: View {
     var body: some View {
         let split = tab.root.session == nil
         Group {
-            if session.isWeb {
+            if session.staysOnHost {
+                RemotePaneCard(session: session) { tab.focus(session) }
+            } else if session.isWeb {
                 VStack(spacing: 0) {
                     AddressBar(session: session)
                     if session.appExited {
@@ -659,6 +695,8 @@ struct HostCard: View {
             return ("Couldn't resume on \(mac)", reason + "\nThe session isn't running on \(mac) right now.", "Retry")
         case .resuming:
             return ("Resuming on \(mac)…", "\(mac)'s Varnick is starting the session again with --resume.", nil)
+        case .unavailable:
+            return ("\(session.label) isn't running on \(mac)", "Nothing is running for this pane there. On a Mac, a terminal runs only while Keep sessions running is on.", "Start")
         case .controlled:
             return nil
         }

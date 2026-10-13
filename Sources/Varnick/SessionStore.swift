@@ -102,6 +102,22 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var isFile: Bool { file != nil }
     var isApp: Bool { app != nil }
     var isLiveTranscript: Bool { liveTranscript == true }
+
+    /// A pane of another machine's tab that is not shown here: the Transcript, which stays on its Mac, an app, and a page at a local address,
+    /// which only that machine can reach (option 04 of `work-is-tracked-by-session-not-tab` brings them here). Its pane is a card that says so.
+    var staysOnHost: Bool {
+        guard host != nil else { return false }
+        if isLiveTranscript || isApp { return true }
+        guard isWeb else { return false }
+        return Self.isLocalAddress(url ?? "")
+    }
+
+    /// An address only the machine it names can reach: localhost, 127.0.0.1 and ::1, or none yet.
+    static func isLocalAddress(_ address: String) -> Bool {
+        guard !address.isEmpty else { return true }
+        let host = (URL(string: address)?.host(percentEncoded: false) ?? "").lowercased()
+        return host.isEmpty || ["localhost", "127.0.0.1", "::1"].contains(host)
+    }
     var isClaude: Bool { !isShell && !isWeb && !isFile && !isLiveTranscript }
 
     /// Worth bringing back after a relaunch: an app pane while its app exists, shells always (as a
@@ -110,9 +126,10 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// has none yet when it was started without a message, but killing it would end that Mac's
     /// session, so it stays too.
     var restorable: Bool {
+        // Any pane of a tab that is another machine's is: its file, its app and its page are on that machine.
+        if host != nil { return true }
         if let file { return FileManager.default.fileExists(atPath: file) }
         if let app { return CustomApp.find(app, from: directory) != nil }
-        if host != nil { return true }
         return isShell || isWeb || isLiveTranscript || transcriptExists || controlledByPeer
     }
 
@@ -201,8 +218,8 @@ struct TabRecord: Codable, Identifiable, Equatable {
     var records: [SessionRecord] { layout.records }
     var claudeRecords: [SessionRecord] { records.filter(\.isClaude) }
 
-    /// The machine its Claude panes run on; nil is this Mac. A tab is one machine's (`SavedTab.splitByMachine`).
-    var host: String? { claudeRecords.first?.host }
+    /// The machine its panes run on; nil is this Mac. A tab is one machine's (`SavedTab.splitByMachine`).
+    var host: String? { records.lazy.compactMap(\.host).first }
 
     /// Worth listing: a Claude session of it can be resumed.
     var resumable: Bool { claudeRecords.contains(where: \.resumable) }

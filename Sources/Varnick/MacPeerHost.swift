@@ -34,7 +34,7 @@ struct MacPeerHost: PeerHost {
 
     func forward(_ op: PeerOp, line: String) -> PeerForwarded {
         // A start waits for the session to exist, so it gets longer than a lookup.
-        guard let answer = PeerSocket.request(line, timeout: op == .start || op == .resume ? 25 : 10) else {
+        guard let answer = PeerSocket.request(line, timeout: op == .reopen ? 60 : op == .start || op == .resume ? 25 : 10) else {
             return .reply(.failure("Varnick isn't running on \(name)"))
         }
         return .line(answer)
@@ -100,12 +100,16 @@ struct MacPeerHost: PeerHost {
     /// A file pane of one of this Mac's tabs, from the saved tabs: the path is the pane's own, never the asker's.
     func file(tab: String?, pane: String?) -> PeerReply {
         guard let state = SessionStore().load() else { return .failure("The saved tabs on \(name) couldn't be read") }
-        guard let tab, let pane, let tabID = UUID(uuidString: tab), let paneID = UUID(uuidString: pane),
-              let saved = PeerOpenTabs.hosted(in: state).first(where: { $0.resolvedID == tabID }),
+        // The tab may be left out when the asker only knows the pane.
+        let wanted = tab.flatMap { UUID(uuidString: $0) }
+        guard let pane, let paneID = UUID(uuidString: pane),
+              let saved = PeerOpenTabs.hosted(in: state).first(where: { candidate in
+                  (wanted == nil || candidate.resolvedID == wanted) && candidate.layout.records.contains { $0.id == paneID }
+              }),
               let record = saved.layout.records.first(where: { $0.id == paneID }), let path = record.file else {
             return .failure("That isn't a file pane of a tab open on \(name)")
         }
-        let folders = saved.layout.records.map(\.directory) + [record.directory]
+        let folders = saved.layout.records.map(\.directory)
         switch PeerFile.read(path: path, folders: folders) {
         case .success(let text):
             var reply = PeerReply.success()
