@@ -1939,15 +1939,16 @@ final class LauncherModel: ObservableObject {
     func toggleFiles() {
         guard let tab = activeTab else { return }
         if tab.host != nil {
-            // Showing the tree is a layout change: the machine in control makes it, and the host keeps it (`arrange`) and lists it to the others.
+            // Showing the tree is a layout change: the machine in control asks, and it shows once the host has taken it (`arrange`).
             if let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
-            tab.showsFiles.toggle()
-            tab.focus(tab.focused)
-            saveSessions()
-            return arrangeOnHost(tab, showing: tab.focused)
+            return arrangeOnHost(tab, showing: tab.focused, files: !tab.showsFiles)
         }
         guard !refusesLocalChange(to: tab) else { return }
-        tab.showsFiles.toggle()
+        setFiles(!tab.showsFiles, in: tab)
+    }
+
+    func setFiles(_ shown: Bool, in tab: ClaudeTab) {
+        tab.showsFiles = shown
         tab.focus(tab.focused)
         saveSessions()
     }
@@ -1977,26 +1978,11 @@ final class LauncherModel: ObservableObject {
         saveSessions()
     }
 
-    /// A file picked in the tree of another machine's tab: the machine in control asks the host to open it there, as a pick in the host's own tree
-    /// does, and the pane comes with the host's next listing, which is asked for at once.
+    /// A file picked in the tree of another machine's tab: the machine in control asks the host to open it there, as its own tree does.
     private func openFileOnHost(_ path: String, in tab: ClaudeTab) {
-        guard let host = tab.host else { return }
         if let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
-        var request = PeerRequest(.start)
-        request.by = PeerIdentity.id
-        request.start = PeerStart(id: UUID().uuidString.lowercased(), folder: tab.files.root, prompt: "", kind: .file, file: path)
-        request.tab = tab.id.uuidString.lowercased()
-        let id = tab.id
-        beginLayoutChange(of: id)
-        Task { [weak self] in
-            let result = await PeerManager.shared.send(request, to: host, timeout: 40)
-            guard let self else { return }
-            self.endLayoutChange(of: id)
-            switch result {
-            case .failure(let refusal): tab.focused.showRefusal(refusal.message)
-            case .success: await self.followShownHostTab()
-            }
-        }
+        askHost(toStart: PeerStart(id: UUID().uuidString.lowercased(), folder: tab.files.root, prompt: "", kind: .file, file: path),
+                in: tab, beside: tab.focused)
     }
 
     // MARK: Split picker (⌘⌃⇧E / ⌘⌃⇧O)
@@ -3085,9 +3071,8 @@ final class LauncherModel: ObservableObject {
         return await replyOnceRunning(session, in: target, tab: tab)
     }
 
-    /// A peer's `start` of a file: the machine in control of the tab picked it in the tree it shows of this Mac's folders, and it opens here as a
-    /// pick in this Mac's own tree does. The file and the tree's folder must be inside the folders of the tab's panes, as `file` reads them, and
-    /// the file a file (a link is followed). One the tab shows already is not opened twice.
+    /// A peer's `start` of a file, picked in the tree it shows of this Mac's folders: it opens as a pick in this Mac's own tree does. The file
+    /// and the tree's folder must be inside the tab's folders (as `file` reads them) and the file a regular file.
     private func hostOpenFile(_ request: PeerRequest, start: PeerStart, id: UUID, here: String, by peer: String) async -> PeerReply {
         guard let wanted = request.tab.flatMap(UUID.init(uuidString:)), let path = start.file, let folder = start.folder else {
             return .failure("A file is added to a tab: the request named no tab, folder or file")
@@ -3190,7 +3175,9 @@ final class LauncherModel: ObservableObject {
         let status = await Task.detached { Zmx.status(of: id) }.value
         if status.running { return reply(.running, status: status) }
         guard !existing.started else { return reply(.closing) }
-        // A terminal, and a Claude pane no message was sent in, have no conversation to resume: they start fresh in their folder.
+        // A terminal has no conversation to resume: it starts fresh in its folder, as a Claude pane nothing was sent in does. One that lost its
+        // transcript is over.
+        guard existing.isShell || existing.record.transcriptExists || existing.record.isUntouched else { return reply(.ended) }
         existing.startedFor = peer
         existing.start()
         let started = await replyOnceRunning(existing, in: existing.record.directory)

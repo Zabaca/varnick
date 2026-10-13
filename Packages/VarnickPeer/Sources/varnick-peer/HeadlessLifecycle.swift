@@ -53,19 +53,23 @@ enum HeadlessLifecycle {
         case ended(mark: Bool)
         /// Start `claude --resume` on this conversation.
         case start(conversation: String)
+        /// Start claude fresh under this conversation's id, with no prompt: nothing was ever sent in it.
+        case startFresh(conversation: String)
     }
 
-    /// `conversation` is the one the record follows, `held` whether another running or starting record has
-    /// it open, and `transcriptExists` whether claude can resume it.
+    /// `conversation` is the one the record follows, `held` whether another running or starting record has it open, `transcriptExists`
+    /// whether claude can resume it, and `untouched` that it has none because no prompt was ever sent.
     static func resumeDecision(record: HeadlessSession?, running: Bool, bootID: String?, conversation: String,
-                               transcriptExists: Bool, held: Bool) -> Resume {
+                               transcriptExists: Bool, untouched: Bool, held: Bool) -> Resume {
         guard let record, record.ended == nil else { return .ended(mark: false) }
         if running { return .running }
         if record.starting == true { return .closing }
         // With no boot id nothing can be called lost, and reconcile left the record: so does this.
         guard bootID != nil else { return .ended(mark: false) }
         guard isLost(record, bootID: bootID) else { return .ended(mark: true) }
-        return transcriptExists && !held ? .start(conversation: conversation) : .ended(mark: true)
+        guard !held else { return .ended(mark: true) }
+        if transcriptExists { return .start(conversation: conversation) }
+        return untouched ? .startFresh(conversation: conversation) : .ended(mark: true)
     }
 
     /// Whether a running or starting record other than `excluding` has `conversation` open. A second claude on

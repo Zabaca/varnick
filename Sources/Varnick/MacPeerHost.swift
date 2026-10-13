@@ -249,7 +249,7 @@ enum PeerOpenTabs {
                                      var listed = pane(for: record, status: statuses[Zmx.sessionName(record.id)])
                                      if keepOff, listed.running == false { listed.note = why }
                                      return listed
-                                 }, files: tab.showsFiles == true ? true : nil)
+                                 }, showsFiles: tab.showsFiles == true ? true : nil)
             listed.settleControl()
             return listed
         }

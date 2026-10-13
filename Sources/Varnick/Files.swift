@@ -13,9 +13,8 @@ struct RemoteTree: Equatable {
     let tab: UUID
 }
 
-/// The file tree beside a tab's panes (⌘⇧F). Folders list when opened; dependency and
-/// build folders are hidden; it follows changes on disk (Claude editing files) through FSEvents.
-/// The tree of another machine's tab (`RemoteTree`) lists what its host does, a folder at a time, and is asked again with each listing of the tab.
+/// The file tree beside a tab's panes (⌘⇧F). Folders list when opened; dependency and build folders are hidden; it follows changes on
+/// disk (Claude editing files) through FSEvents. The tree of another machine's tab (`RemoteTree`) is its host's, a folder at a time.
 @MainActor
 final class FileTree: ObservableObject {
     struct Row: Identifiable, Equatable {
@@ -34,9 +33,12 @@ final class FileTree: ObservableObject {
     private var listings: [String: [(name: String, isDirectory: Bool)]] = [:]
     nonisolated(unsafe) private var stream: FSEventStreamRef?
     private var remote: RemoteTree?
-    /// A remote tree: the folders being asked, what the host said of a folder it wouldn't list or cut, and a count that drops answers to a root
-    /// that has changed since.
+    /// A remote tree: the folders asked or waiting (`maxAsking` at once, so ssh's channels aren't used up), what the host refused or cut,
+    /// and a count that drops answers to a root that has changed since.
     private var asking: Set<String> = []
+    private var queued: [String] = []
+    private var inFlight = 0
+    private static let maxAsking = 2
     private var refusals: [String: String] = [:]
     private var cuts: Set<String> = []
     private var epoch = 0
@@ -72,6 +74,8 @@ final class FileTree: ObservableObject {
         expanded = []
         listings = [:]
         asking = []
+        queued = []
+        inFlight = 0
         refusals = [:]
         cuts = []
         epoch += 1
@@ -79,22 +83,38 @@ final class FileTree: ObservableObject {
         ask(path)
     }
 
-    /// A remote tree asks the host for the folder again: the root and the folders opened (the rest are asked when they open), every time the
-    /// tab's listing comes in.
-    func refreshRemote() {
-        guard remote != nil, !root.isEmpty else { return }
+    /// A remote tree asks the host again for the root and the folders opened (the rest are asked when they open), with each listing of the tab.
+    /// A tab that has taken another id, or a root that moved, starts over.
+    func refreshRemote(_ path: String, _ remote: RemoteTree) {
+        guard path == root, remote == self.remote else { return showRemote(path, remote) }
         ask(root)
         for dir in expanded.prefix(8) { ask(dir) }
     }
 
-    private func ask(_ dir: String) {
-        guard let remote, !asking.contains(dir) else { return }
+    /// Queues the folder; the ones a click asked for go first.
+    private func ask(_ dir: String, urgent: Bool = false) {
+        guard remote != nil, !asking.contains(dir) else { return }
         asking.insert(dir)
+        if urgent { queued.insert(dir, at: 0) } else { queued.append(dir) }
+        pump()
+    }
+
+    private func pump() {
+        while inFlight < Self.maxAsking, !queued.isEmpty, let remote {
+            let dir = queued.removeFirst()
+            inFlight += 1
+            fetch(dir, from: remote)
+        }
+    }
+
+    private func fetch(_ dir: String, from remote: RemoteTree) {
         let epoch = epoch
         Task { [weak self] in
             let result = await PeerManager.shared.folderEntries(tab: remote.tab, folder: dir, on: remote.host)
             guard let self, epoch == self.epoch else { return }
             self.asking.remove(dir)
+            self.inFlight -= 1
+            defer { self.pump() }
             switch result {
             case .success(let listing):
                 self.listings[dir] = listing.entries
@@ -127,7 +147,7 @@ final class FileTree: ObservableObject {
         guard row.isDirectory else { return }
         if expanded.remove(row.path) == nil {
             expanded.insert(row.path)
-            if remote != nil, listings[row.path] == nil { ask(row.path) }
+            if remote != nil, listings[row.path] == nil { ask(row.path, urgent: true) }
         }
         rebuild()
     }
@@ -257,6 +277,7 @@ struct FileTreeView: View {
         .background(Color(nsColor: NSColor(white: 0.12, alpha: 1)))
         .onAppear { tree.show(root, remote: remote) }
         .onChange(of: root) { _, new in tree.show(new, remote: remote) }
+        .onChange(of: remote) { _, new in tree.show(root, remote: new) }
         .onDisappear { tree.stop() }
     }
 }

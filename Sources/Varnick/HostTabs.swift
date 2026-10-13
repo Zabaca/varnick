@@ -77,7 +77,7 @@ extension LauncherModel {
         dropPeerRows(Set(listing.panes.compactMap(\.session)), on: peer.id)
         let tab = addTab(root, focused: root.leaves.first { $0.runsInZmx }, name: listing.name, id: id, show: false)
         tab.inControl = Zmx.sameID(listing.control, PeerIdentity.id)
-        tab.showsFiles = listing.files == true
+        tab.showsFiles = listing.showsFiles == true
         return tab
     }
 
@@ -159,8 +159,8 @@ extension LauncherModel {
         guard !stale else { return saveIfChanged(changed) }
         tab.inControl = Zmx.sameID(listing.control, PeerIdentity.id)
         // The file tree is the host's: shown as a column when the host shows it, and only then.
-        if tab.showsFiles != (listing.files == true) {
-            tab.showsFiles = listing.files == true
+        if tab.showsFiles != (listing.showsFiles == true) {
+            tab.showsFiles = listing.showsFiles == true
             changed = true
         }
         if tab.name != listing.name {
@@ -210,7 +210,7 @@ extension LauncherModel {
         guard let found = await PeerManager.shared.tabs(on: host) else { return }
         updatePeerTabs(found, for: host, sentAt: sentAt)
         // The host's tree is read again with the tab's listing, since Claude edits files there while it shows.
-        if let tab = activeTab, tab.host == host, tab.showsFiles { tab.files.refreshRemote() }
+        if let tab = activeTab, tab.host == host, tab.showsFiles { tab.files.refreshRemote(tab.focused.record.directory, RemoteTree(host: host, tab: tab.id)) }
     }
 
     // MARK: Changing the layout from here
@@ -228,15 +228,18 @@ extension LauncherModel {
         tab.host == nil ? nil : layoutLockReason(of: tab)
     }
 
-    /// A divider moved, the tab renamed or its file tree shown or hidden here, in control of it: the host takes the layout, the name and the tree,
-    /// and checks the layout holds the same panes. `showing` says why to the pane when the host won't, else only the log does.
-    func arrangeOnHost(_ tab: ClaudeTab, showing pane: ClaudeSession? = nil) {
+    /// A divider moved, the tab renamed or its tree asked shown (`files`) or hidden here, in control of it: the host takes them, checking the
+    /// layout holds the same panes. `showing` is told when the host won't; else only the log is.
+    func arrangeOnHost(_ tab: ClaudeTab, showing pane: ClaudeSession? = nil, files: Bool? = nil) {
         guard let host = tab.host, tab.inControl else { return }
-        let id = tab.id, layout = tab.root.layout.peerLayout, name = tab.name, files = tab.showsFiles
+        let id = tab.id, layout = tab.root.layout.peerLayout, name = tab.name, wanted = files ?? tab.showsFiles
         beginLayoutChange(of: id)
         Task { [weak self] in
-            let refusal = await PeerManager.shared.arrange(tab: id, layout: layout, name: name, showsFiles: files, on: host)
-            self?.endLayoutChange(of: id)
+            let refusal = await PeerManager.shared.arrange(tab: id, layout: layout, name: name, showsFiles: wanted, on: host)
+            guard let self else { return }
+            // The tree shows here once the host has taken it, not before.
+            if refusal == nil, let files { self.setFiles(files, in: tab) }
+            self.endLayoutChange(of: id)
             if let refusal {
                 NSLog("Varnick: \(PeerManager.shared.name(of: host)) wouldn't arrange tab \(id.uuidString.lowercased()): \(refusal)")
                 pane?.showRefusal(refusal)
@@ -271,40 +274,52 @@ extension LauncherModel {
             return target.showRefusal("An app of this Mac runs here: open \(hostName)'s own from the split picker's tiles for its tab.")
         }
         let start = ask
+        askHost(toStart: start, in: tab, beside: target, axis: axis) { [self] reply in
+            // The pane may be in the tab already (a listing believed meanwhile); a tab or a pane closed meanwhile has nowhere to put it.
+            guard tabs.contains(where: { $0 === tab }), tab.contains(target), !tab.sessions.contains(where: { $0.id == id }) else { return }
+            var record = SessionRecord(id: id, prompt: "", title: "", directory: reply.folder ?? target.record.directory,
+                                       startedAt: Date(), lastUsed: Date())
+            record.host = host
+            record.shell = kind == .terminal ? true : nil
+            record.skipPermissions = start.skipPermissions
+            // A page loads from where it is (or waits on its card, if it is at the host's localhost); an app waits on its card for its address.
+            if case .web = kind { record.url = pageURL }
+            if case .hostApp(let app) = kind {
+                record.app = app.folder
+                record.url = ""
+            }
+            // It attaches with take: the host labelled it for this Mac as it made it.
+            let session = makeSession(record, resuming: false, query: "")
+            tab.add(session, beside: target, axis)
+            tab.focus(session)
+            saveSessions()
+        }
+    }
+
+    /// `start` for another machine's tab, in control of it: the host adds the pane (a split beside `target` along `axis`, or a file where its tree
+    /// puts it). A refusal shows in `target`; `added` runs on success, and the listing is asked for at once.
+    func askHost(toStart start: PeerStart, in tab: ClaudeTab, beside target: ClaudeSession, axis: SplitAxis? = nil,
+                 added: @escaping (PeerReply) -> Void = { _ in }) {
+        guard let host = tab.host else { return }
         var request = PeerRequest(.start)
         request.by = PeerIdentity.id
         request.start = start
         let tabID = tab.id
         request.tab = tabID.uuidString.lowercased()
         request.pane = target.id.uuidString.lowercased()
-        request.axis = axis.rawValue
+        request.axis = axis?.rawValue
         beginLayoutChange(of: tabID)
         Task { [weak self] in
             let result = await PeerManager.shared.send(request, to: host, timeout: 40)
             guard let self else { return }
-            defer { self.endLayoutChange(of: tabID) }
             switch result {
             case .failure(let refusal):
                 target.showRefusal(refusal.message)
+                self.endLayoutChange(of: tabID)
             case .success(let reply):
-                // The pane may be in the tab already (a listing believed meanwhile); a tab or a pane closed meanwhile has nowhere to put it.
-                guard self.tabs.contains(where: { $0 === tab }), tab.contains(target), !tab.sessions.contains(where: { $0.id == id }) else { return }
-                var record = SessionRecord(id: id, prompt: "", title: "", directory: reply.folder ?? target.record.directory,
-                                           startedAt: Date(), lastUsed: Date())
-                record.host = host
-                record.shell = kind == .terminal ? true : nil
-                record.skipPermissions = start.skipPermissions
-                // A page loads from where it is (or waits on its card, if it is at the host's localhost); an app waits on its card for its address.
-                if case .web = kind { record.url = pageURL }
-                if case .hostApp(let app) = kind {
-                    record.app = app.folder
-                    record.url = ""
-                }
-                // It attaches with take: the host labelled it for this Mac as it made it.
-                let session = self.makeSession(record, resuming: false, query: "")
-                tab.add(session, beside: target, axis)
-                tab.focus(session)
-                self.saveSessions()
+                added(reply)
+                self.endLayoutChange(of: tabID)
+                await self.followShownHostTab()
             }
         }
     }

@@ -122,14 +122,25 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// A Claude or terminal pane: its process runs in a zmx session another machine can attach to (ADR 0034).
     var runsInZmx: Bool { isClaude || isShell }
 
-    /// Worth bringing back after a relaunch or a reopen: an app pane while its app exists, a file while it exists, and every other pane. A shell
-    /// comes back fresh, the live transcript on that day's file, and a Claude session resumed, or fresh in its folder when no message was ever
-    /// sent in it (`transcriptExists`), so a tab keeps its shape. A pane of another machine's tab is on that machine.
+    /// Worth bringing back after a relaunch or a reopen: a file or an app while it exists, shells, pages and the live transcript, and a Claude
+    /// pane with a transcript, untouched (fresh) or controlled by another Mac. A pane of another machine's tab is on that machine.
     var restorable: Bool {
         if host != nil { return true }
         if let file { return FileManager.default.fileExists(atPath: file) }
         if let app { return CustomApp.find(app, from: directory) != nil }
-        return true
+        return isShell || isWeb || isLiveTranscript || isUntouched || transcriptExists || controlledByPeer
+    }
+
+    /// A Claude pane nothing was ever sent in: no prompt and no transcript. It comes back fresh, like a shell. One with a prompt and no
+    /// transcript lost it (Claude deletes old ones) and never starts with that prompt again.
+    var isUntouched: Bool { isClaude && prompt.isEmpty && !transcriptExists }
+
+    /// The pane's zmx session runs, labelled for another Mac. Asks zmx, so only for a record that has no transcript yet. It blocks the main
+    /// thread for one short `zmx get` each, once at launch, before any view exists.
+    private var controlledByPeer: Bool {
+        guard isClaude, Zmx.isAvailable else { return false }
+        let status = Zmx.status(of: id)
+        return status.running && status.control != nil
     }
 
     /// The conversation has a transcript with something in it. Claude Code writes the transcript only once the conversation has a message, and
@@ -208,9 +219,8 @@ struct TabRecord: Codable, Identifiable, Equatable {
     /// The machine its panes run on; nil is this Mac. A tab is one machine's (`SavedTab.splitByMachine`).
     var host: String? { records.lazy.compactMap(\.host).first }
 
-    /// Worth listing: a Claude session of it can be resumed, or it has a Claude pane beside another pane, which reopens fresh and keeps the
-    /// layout. A tab of one untouched Claude pane is not: there is nothing to bring back.
-    var resumable: Bool { claudeRecords.contains(where: \.resumable) || (!claudeRecords.isEmpty && records.count > 1) }
+    /// Worth listing: a Claude session of it can be resumed, or an untouched one is beside another pane and reopens fresh in its place.
+    var resumable: Bool { claudeRecords.contains(where: \.resumable) || (records.count > 1 && claudeRecords.contains(where: \.isUntouched)) }
 
     /// A group of sessions the old Recent listed as ended in one tab: they never ran together, so the newest is the one pane and the
     /// rest are the tab's history, newest first.

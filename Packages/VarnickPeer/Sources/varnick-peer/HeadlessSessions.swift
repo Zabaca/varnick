@@ -40,6 +40,11 @@ struct HeadlessSession: Codable, Equatable {
 
     var isTerminal: Bool { kind == .terminal }
 
+    /// A Claude pane nothing was ever sent in: no prompt, and no transcript for `conversation`. One that lost its transcript had a prompt.
+    func isUntouched(conversation: String) -> Bool {
+        !isTerminal && (prompt ?? "").isEmpty && !TranscriptReader.hasConversation(directory: folder ?? "", conversation: conversation)
+    }
+
     /// The conversation claude is on: the hook's last report, else the one saved, else the session's own id.
     func conversationID(reported: String?) -> String { reported ?? conversation ?? id }
 
@@ -294,7 +299,7 @@ extension StateFolder {
             let bootID = HeadlessSession.currentBootID
             let conversations = Self.conversations(of: sessions)
             guard let index = sessions.firstIndex(where: { $0.id == id }) else {
-                return (HeadlessLifecycle.resumeDecision(record: nil, running: false, bootID: bootID, conversation: id, transcriptExists: false, held: false), nil)
+                return (HeadlessLifecycle.resumeDecision(record: nil, running: false, bootID: bootID, conversation: id, transcriptExists: false, untouched: false, held: false), nil)
             }
             let before = sessions[index]
             let conversation = conversations[id] ?? id
@@ -303,12 +308,13 @@ extension StateFolder {
                 || TranscriptReader.hasConversation(directory: before.folder ?? "", conversation: conversation)
             let decision = HeadlessLifecycle.resumeDecision(
                 record: before, running: running.contains(id), bootID: bootID, conversation: conversation, transcriptExists: transcript,
+                untouched: before.isUntouched(conversation: conversation),
                 held: !before.isTerminal
                     && HeadlessLifecycle.isHeld(conversation, in: sessions, running: running, conversations: conversations, excluding: id))
             switch decision {
             case .ended(mark: true):
                 sessions[index] = before.ending(at: now, reported: conversation)
-            case .start:
+            case .start, .startFresh:
                 sessions[index].starting = true
                 sessions[index].bootID = bootID
                 sessions[index].started = now
@@ -327,6 +333,8 @@ extension StateFolder {
         var before: HeadlessSession
         /// The conversation a Claude pane resumes; nil for a terminal and for a Claude pane that starts fresh.
         var conversation: String?
+        /// The conversation a Claude pane nothing was sent in starts fresh under.
+        var freshUnder: String?
     }
 
     enum Reopen {
@@ -337,9 +345,8 @@ extension StateFolder {
         case claimed([Reopening])
     }
 
-    /// A closed tab's panes that can start again (a Claude pane with its transcript and no other record holding it, one with no transcript, which
-    /// starts fresh, and every terminal), marked starting for `by` in one step like `claimResume`, so two Macs can't both reopen it. The tab is
-    /// made for `by`; its mark comes off.
+    /// A closed tab's panes that can start again (Claude with a transcript, or untouched and fresh, and not held; every terminal), marked
+    /// starting for `by` in one step like `claimResume`. The tab is made for `by`; its mark comes off.
     func claimReopen(_ tab: String, by: String, running: Set<String>, now: Date = Date()) throws -> Reopen {
         try locked(exclusive: true) {
             var sessions = try readSessions()
@@ -352,21 +359,24 @@ extension StateFolder {
             for id in layout.panes {
                 guard let index = sessions.firstIndex(where: { $0.id == id }) else { continue }
                 let before = sessions[index]
-                var conversation: String?
+                var conversation: String?, freshUnder: String?
                 if !before.isTerminal {
                     let held = conversations[id] ?? id
+                    guard !HeadlessLifecycle.isHeld(held, in: sessions, running: running, conversations: conversations, excluding: id)
+                    else { continue }
                     if TranscriptReader.hasConversation(directory: before.folder ?? "", conversation: held) {
-                        guard !HeadlessLifecycle.isHeld(held, in: sessions, running: running, conversations: conversations, excluding: id)
-                        else { continue }
                         conversation = held
+                    } else if before.isUntouched(conversation: held) {
+                        freshUnder = held
+                    } else {
+                        continue
                     }
-                    // Else no message was ever sent in it: it starts fresh in its folder, as a terminal does, and keeps its place.
                 }
                 var record = before
                 (record.ended, record.starting, record.bootID, record.started, record.origin, record.done) = (nil, true, bootID, now, by, nil)
                 if let conversation { record.conversation = conversation }
                 sessions[index] = record
-                claimed.append(Reopening(record: record, before: before, conversation: conversation))
+                claimed.append(Reopening(record: record, before: before, conversation: conversation, freshUnder: freshUnder))
             }
             guard !claimed.isEmpty, let kept = layout.pruned(keeping: Set(claimed.map(\.record.id))) else { return .nothing }
             let name = tabs.first { $0.id == tab }?.name ?? sessions.filter { $0.tabID == tab }.compactMap(\.tabName).first

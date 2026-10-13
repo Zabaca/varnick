@@ -126,10 +126,12 @@ extension HeadlessPeerHost {
             reply.resume = .closing
         case .ended:
             reply.resume = .ended
-        case .start(let conversation):
+        case .start(let conversation), .startFresh(let conversation):
             guard let before = claim.before else { return .failure("That session has no record on \(name)") }
+            var fresh: String?
+            if case .startFresh = claim.decision { fresh = conversation }
             // Labelled for the Mac that asked, with the record's own origin.
-            reply = launch(before, control: by, origin: before.origin, resuming: conversation) {
+            reply = launch(before, control: by, origin: before.origin, resuming: fresh == nil ? conversation : nil, freshUnder: fresh) {
                 // Only what the claim changed goes back, so a mark made or cleared during the start stays.
                 _ = try? state.update(id) {
                     guard $0.ended == nil, $0.starting == true else { return }
@@ -259,7 +261,7 @@ extension HeadlessPeerHost {
             let replies = LockedBox([PeerReply?](repeating: nil, count: panes.count))
             DispatchQueue.concurrentPerform(iterations: panes.count) { index in
                 let pane = panes[index]
-                let reply = launch(pane.record, control: by, origin: by, resuming: pane.conversation) {
+                let reply = launch(pane.record, control: by, origin: by, resuming: pane.conversation, freshUnder: pane.freshUnder) {
                     // Only what the claim changed goes back, so the record is ended as it was.
                     _ = try? state.update(pane.record.id) { if $0.ended == nil, $0.starting == true { $0 = pane.before } }
                 }

@@ -307,7 +307,7 @@ public enum PeerResume: String, Codable, Sendable {
     /// The pane for it is still closing: ask again shortly.
     case closing
     /// Nothing to resume: no pane restored for it, so it ended here on purpose (the user ended it
-    /// there; a headless host also says it for a Claude pane no message was sent in). The asker's pane closes, as when it sees the end.
+    /// there), or its conversation has no transcript and the pane had a prompt. The asker's pane closes, as when it sees the end.
     case ended
 }
 

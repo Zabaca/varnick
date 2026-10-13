@@ -229,17 +229,17 @@ public struct PeerTab: Codable, Equatable, Sendable {
     /// In layout order.
     public var panes: [PeerPane]
     /// The file tree shows as a column beside the panes (protocol 26). Nil: it doesn't, or the host has none.
-    public var files: Bool?
+    public var showsFiles: Bool?
 
     public init(tab: String, name: String? = nil, doneAge: Int? = nil, control: String? = nil, controlName: String? = nil, clients: Int? = nil,
-                layout: PeerLayout, panes: [PeerPane], files: Bool? = nil) {
+                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil) {
         self.tab = tab
         self.name = name
         self.doneAge = doneAge
         self.control = control
         self.controlName = controlName
         self.clients = clients
-        self.files = files
+        self.showsFiles = showsFiles
         self.layout = layout
         self.panes = panes
     }
