@@ -2,7 +2,8 @@
 problem: memory-use-is-invisible
 title: A custom app that shows the process table in a pane
 summary: Recommended against. A custom app, built like Scratch, runs `ps` and `footprint` and draws the table in a pane. Varnick doesn't change. The reason to reject it, should the user agree, is ready in Further Notes.
-status: proposed
+status: rejected
+reason: "it can't say which tab a process belongs to, which is what the user needs in order to choose what to close, and it can't split the app's memory."
 ---
 
 ## Solution

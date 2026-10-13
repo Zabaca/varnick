@@ -2,7 +2,8 @@
 problem: memory-use-is-invisible
 title: Memory badges on board cards and tab rows, and nothing else
 summary: Recommended against. Each board card and each tab row in the session list shows its tab's memory, such as "1.2 GB", measured while the board or the list shows. There is no view of its own. The reason to reject it, should the user agree, is ready in Further Notes.
-status: proposed
+status: rejected
+reason: "it shows which tab is heavy, but not how much Varnick uses, which was the question. The app, its models and its helpers have no place on a card."
 ---
 
 ## Solution

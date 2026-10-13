@@ -2,7 +2,7 @@
 problem: memory-use-is-invisible
 title: A Resources view, with memory by tab, pane and helper and a Close on each tab
 summary: Recommended. ⌘⇧M or `!resources` shows Resources in place of the panel's content, as ⌘⇧B shows the board. It gives Varnick's total, the same processes again by kind, and the app's own memory split into on-device models and the rest. Then come the tabs, biggest first, each opening into its panes and their processes, with Close on each tab. Below the tabs it lists the helpers that belong to no tab, other machines' tabs open here (where they run, with no figures), and, greyed, Claude Code outside Varnick. Every process is counted once, read through libproc with no subprocess, and only while the view shows.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -174,7 +174,7 @@ The Mark tab done and Restart session keys are taken and do nothing, so no key r
   - the order fixed while Resources is open;
   - Close offered only on tabs that run here.
 - **A third tab of the board** would reuse the board's showing, keys and panel height. The user chose a view of its own. The board is about turns, and its Problems tab is behind an experimental switch.
-- **Questions for the user,** each with its recommendation:
+- **Decided by the user (2026-10-13),** each the recommendation:
   1. **Put each page under its pane, through WebKit's private process id?** Yes, with the responsibility call for the shared processes. Without it, all pages are one row under Not in a tab, and Varnick uses one private call fewer.
   2. **Show Claude Code outside Varnick?** Yes: one greyed row with a count and a total, and no list, so the figures match Activity Monitor.
   3. **⌘⇧M and `!resources` (`!memory`)?** Yes. Both are free, and M is for memory.

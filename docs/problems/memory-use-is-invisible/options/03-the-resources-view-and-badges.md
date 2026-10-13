@@ -2,7 +2,8 @@
 problem: memory-use-is-invisible
 title: The Resources view, and memory badges on board cards and tab rows
 summary: Recommended not now. Option 01's view, plus option 02's badges on board cards and session list rows. Worth building after 01 if the user finds they open Resources mostly to pick a tab to close. The reason to reject it for now, should the user agree, is ready in Further Notes.
-status: proposed
+status: rejected
+reason: "option 01 answers both questions. The badges would add measuring to the board and the search, for a figure that is one key away."
 ---
 
 ## Solution
