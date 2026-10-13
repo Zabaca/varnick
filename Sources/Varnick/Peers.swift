@@ -986,6 +986,9 @@ final class PeerManager: ObservableObject {
         case .agents:
             guard let model else { return starting }
             return PeerJSON.line(await model.hostAgents(folder: request.folder))
+        case .apps:
+            guard let model else { return starting }
+            return PeerJSON.line(await model.hostApps(folder: request.folder))
         case .attach, .status, .screen, .watch, .tabs, .take, .file, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))

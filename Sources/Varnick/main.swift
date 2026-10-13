@@ -185,6 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // The Restart Varnick card takes every key.
             if self.model.answerRestartKey(event) { return nil }
             if self.model.pendingSplit != nil {
+                // The address of a page for another machine's tab is typed into the picker's field: its keys go there.
+                if self.model.pickerAsksAddress { return event }
                 self.model.pickerKey(event)
                 return nil
             }

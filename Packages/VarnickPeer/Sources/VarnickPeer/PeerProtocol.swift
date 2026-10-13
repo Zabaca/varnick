@@ -43,6 +43,9 @@ public enum PeerOp: String, Codable, Sendable {
     case end
     case projects
     case agents
+    /// The custom apps the receiving host can run from a folder (`PeerRequest.folder`), for the split picker of a tab of its own that another
+    /// Mac is in control of: each with the key the host's picker would give it. A host with no Varnick app lists none.
+    case apps
     /// A session's last screen (`zmx history --vt`, without the mode sets that make a terminal
     /// talk back), for the Mac that isn't in control. The relay answers it from zmx alone.
     case screen
@@ -263,11 +266,14 @@ public struct PeerStart: Codable, Equatable, Sendable {
     /// restarted. Only into the pane the host restored for it, which resumes the conversation it
     /// follows itself (`PeerResume`). `id` is still the zmx session's name.
     public var resume: Bool?
-    /// What the pane is: Claude (nil too) or a terminal, the account's login shell in the folder, with no prompt, agent or turn.
+    /// What the pane is: Claude (nil too), a terminal (the account's login shell in the folder, with no prompt, agent or turn), or, in a split of
+    /// the host's own tab and only on a Mac, a web page (`url`) or a custom app (`app`, the folder name `apps` listed).
     public var kind: PeerPaneKind?
+    public var url: String?
+    public var app: String?
 
     public init(id: String, folder: String? = nil, prompt: String, agent: String? = nil, skipPermissions: Bool? = nil, resume: Bool? = nil,
-                kind: PeerPaneKind? = nil) {
+                kind: PeerPaneKind? = nil, url: String? = nil, app: String? = nil) {
         self.id = id
         self.folder = folder
         self.prompt = prompt
@@ -275,9 +281,13 @@ public struct PeerStart: Codable, Equatable, Sendable {
         self.skipPermissions = skipPermissions
         self.resume = resume
         self.kind = kind
+        self.url = url
+        self.app = app
     }
 
     public var isTerminal: Bool { kind == .terminal }
+    /// A page or an app: panes with no zmx session of the tab's own, that only a Mac host can start.
+    public var isPage: Bool { kind == .web || kind == .app }
 }
 
 /// What a host did with a `start` that has `resume`. Absent means a new session was started.
@@ -301,6 +311,21 @@ public struct PeerProject: Codable, Equatable, Sendable {
     public init(path: String, lastUsed: Date? = nil) {
         self.path = path
         self.lastUsed = lastUsed
+    }
+}
+
+/// A custom app a host can run: its folder name (what `PeerStart.app` names), its name, its SF Symbol and the key its picker gives it.
+public struct PeerApp: Codable, Equatable, Sendable {
+    public var folder: String
+    public var name: String
+    public var icon: String?
+    public var key: String?
+
+    public init(folder: String, name: String, icon: String?, key: String?) {
+        self.folder = folder
+        self.name = name
+        self.icon = icon
+        self.key = key
     }
 }
 
@@ -682,6 +707,8 @@ public struct PeerReply: Codable, Sendable {
     public var sessions: [String: PeerSessionStatus]?
     public var projects: [PeerProject]?
     public var agents: [PeerAgent]?
+    /// Apps: the custom apps the host can run from the folder.
+    public var apps: [PeerApp]?
     /// Start with `resume`: what the host did. None of these is an error, so the reply is `ok`.
     public var resume: PeerResume?
     /// Start with `resume` answered `running`: the session as the host sees it.
@@ -741,8 +768,9 @@ public struct PeerReply: Codable, Sendable {
                 pageCount: Int64? = nil, termCount: Int64? = nil, recent: [PeerRecentTab]? = nil,
                 hosts: [PeerHostEntry]? = nil, released: Bool? = nil, unlisted: Bool? = nil,
                 upgrade: PeerUpgradeReport? = nil, restart: PeerRestartReport? = nil, rowTabs: [PeerRowTab]? = nil, tabs: [PeerTab]? = nil,
-                text: String? = nil) {
+                text: String? = nil, apps: [PeerApp]? = nil) {
         self.v = v
+        self.apps = apps
         self.ok = ok
         self.error = error
         self.hello = hello

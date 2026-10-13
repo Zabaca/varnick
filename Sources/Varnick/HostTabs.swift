@@ -229,18 +229,35 @@ extension LauncherModel {
         }
     }
 
-    /// A split of another machine's tab, in control of it: the host starts the new Claude or terminal pane in the split pane's folder and
-    /// place, and this Mac adds it there and attaches. Browsers, apps and files are the host's own picker's.
-    func splitOnHost(_ tab: ClaudeTab, _ axis: SplitAxis, kind: PaneKind) {
+    /// A split of another machine's tab, in control of it: the host starts the new pane in the split pane's folder and place, and this Mac adds it
+    /// there. A Claude session or terminal attaches; a page (at `address`) or one of the host's custom apps runs there, and loads here through
+    /// the host's port proxy once the host lists it (ADR 0035). Files are the host's own.
+    func splitOnHost(_ tab: ClaudeTab, _ axis: SplitAxis, kind: PaneKind, address: String? = nil) {
         let target = tab.focused
         guard let host = tab.host else { return }
         if let reason = layoutLockReason(of: tab) { return target.showRefusal(reason) }
-        guard kind == .claude || kind == .terminal else {
-            return target.showRefusal("Browsers, apps and files split from \(PeerManager.shared.name(of: host)) itself.")
-        }
+        let hostName = PeerManager.shared.name(of: host)
         let id = UUID()
-        let start = PeerStart(id: id.uuidString.lowercased(), prompt: "", skipPermissions: kind == .claude ? Settings.shared.skipPermissions : nil,
+        var ask = PeerStart(id: id.uuidString.lowercased(), prompt: "", skipPermissions: kind == .claude ? Settings.shared.skipPermissions : nil,
                               kind: kind == .terminal ? .terminal : nil)
+        var pageURL: String?
+        switch kind {
+        case .claude, .terminal: break
+        case .web:
+            guard let address, let url = ClaudeSession.url(from: address.trimmingCharacters(in: .whitespaces)), let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                return target.showRefusal("Pick Browser in the split picker and give an http or https address: it opens on \(hostName).")
+            }
+            pageURL = url.absoluteString
+            ask.kind = .web
+            ask.url = pageURL
+        case .hostApp(let app):
+            ask.kind = .app
+            ask.app = app.folder
+        case .app:
+            return target.showRefusal("An app of this Mac runs here: open \(hostName)'s own from the split picker's tiles for its tab.")
+        }
+        let start = ask
         var request = PeerRequest(.start)
         request.by = PeerIdentity.id
         request.start = start
@@ -264,6 +281,12 @@ extension LauncherModel {
                 record.host = host
                 record.shell = kind == .terminal ? true : nil
                 record.skipPermissions = start.skipPermissions
+                // A page loads from where it is (or waits on its card, if it is at the host's localhost); an app waits on its card for its address.
+                if case .web = kind { record.url = pageURL }
+                if case .hostApp(let app) = kind {
+                    record.app = app.folder
+                    record.url = ""
+                }
                 // It attaches with take: the host labelled it for this Mac as it made it.
                 let session = self.makeSession(record, resuming: false, query: "")
                 tab.add(session, beside: target, axis)

@@ -12,6 +12,8 @@ enum PaneDirection { case left, down, up, right }
 enum PaneKind: Equatable {
     case claude, terminal, web
     case app(CustomApp)
+    /// A custom app of the host of another machine's tab, listed by `apps`: it runs there (ADR 0035).
+    case hostApp(PeerApp)
 
     static let builtIns: [PaneKind] = [.claude, .terminal, .web]
 
@@ -21,6 +23,7 @@ enum PaneKind: Equatable {
         case .terminal: "Terminal"
         case .web: "Browser"
         case .app(let app): app.name
+        case .hostApp(let app): app.name
         }
     }
     /// Picker shortcut of a built-in; an app's is assigned when the picker opens (`PickerItem`).
@@ -29,7 +32,7 @@ enum PaneKind: Equatable {
         case .claude: "c"
         case .terminal: "t"
         case .web: "b"
-        case .app: nil
+        case .app, .hostApp: nil
         }
     }
     var source: String {
@@ -37,12 +40,16 @@ enum PaneKind: Equatable {
         case .claude: "claude"
         case .terminal: "terminal"
         case .web: "web"
-        case .app: "app"
+        case .app, .hostApp: "app"
         }
     }
     /// SF Symbol in place of the source's own.
     var symbol: String? {
-        if case .app(let app) = self { app.symbol } else { nil }
+        switch self {
+        case .app(let app): app.symbol
+        case .hostApp(let app): CustomApp.symbol(for: app.icon)
+        default: nil
+        }
     }
 }
 
@@ -75,6 +82,16 @@ struct PickerItem: Equatable {
     }
 }
 
+extension PickerItem {
+    /// The built-ins, then the apps another machine's tab can run, each with the key that machine gave it unless a built-in has it.
+    static func items(hostApps: [PeerApp]) -> [PickerItem] {
+        let taken = Set(PaneKind.builtIns.compactMap(\.key))
+        return items(apps: []) + hostApps.map { app in
+            PickerItem(kind: .hostApp(app), key: app.key.flatMap { $0.count == 1 && !taken.contains($0.lowercased()) ? $0.lowercased() : nil })
+        }
+    }
+}
+
 /// Card over the panes asking what a ⌘⌃⇧E / ⌘⌃⇧O split should hold. Keys go through the
 /// app's key monitor (LauncherModel.pickerKey), so the terminal never sees them.
 struct SplitPicker: View {
@@ -89,10 +106,14 @@ struct SplitPicker: View {
                 Text(axis == .sideBySide ? "Split side by side with…" : "Split top and bottom with…")
                     .font(.system(size: 13, weight: .semibold))
             }
-            grid
+            if model.pickerAsksAddress {
+                addressField
+            } else {
+                grid
+            }
             HStack(spacing: 12) {
-                KeyHint(label: "Pick", keys: ["↩"])
-                KeyHint(label: "Cancel", keys: ["esc"])
+                KeyHint(label: model.pickerAsksAddress ? "Open" : "Pick", keys: ["↩"])
+                KeyHint(label: model.pickerAsksAddress ? "Back" : "Cancel", keys: ["esc"])
             }
             .font(.system(size: 11))
         }
@@ -100,6 +121,19 @@ struct SplitPicker: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
+    }
+
+    @FocusState private var addressFocused: Bool
+
+    /// The address of a page in a tab of another machine, typed here: it opens there, where it is loaded from.
+    private var addressField: some View {
+        TextField("localhost:3000 or a URL, opened on the host", text: $model.pickerAddress)
+            .textFieldStyle(.roundedBorder)
+            .focused($addressFocused)
+            .onAppear { DispatchQueue.main.async { addressFocused = true } }
+            .onSubmit { model.finishSplit(.web, address: model.pickerAddress) }
+            .onKeyPress(.escape) { model.cancelAddress(); return .handled }
+            .frame(width: 360)
     }
 
     private static let tileWidth: CGFloat = 92, tileHeight: CGFloat = 96, tileSpacing: CGFloat = 8

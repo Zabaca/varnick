@@ -21,6 +21,8 @@ extension HeadlessPeerHost {
         case .reopen: return .reply(reopen(request, by: by))
         case .projects: return .reply(projects())
         case .agents: return .reply(agents(folder: request.folder))
+        // A headless host runs no custom apps, so there are none to offer.
+        case .apps: return .reply(PeerReply(v: PeerProtocol.version, ok: true, apps: []))
         default: return .reply(.failure("The request isn't one a host answers"))
         }
     }
@@ -34,6 +36,7 @@ extension HeadlessPeerHost {
         guard let ask = request.start, let uuid = UUID(uuidString: ask.id) else { return .failure("The request had no session id") }
         state.reconcile()
         if ask.resume == true { return startAgain(uuid, by: by) }
+        guard !ask.isPage else { return .failure("\(name) has no browser or custom apps: its tabs hold Claude sessions and terminals") }
         guard ask.kind == nil || ask.kind == .claude || ask.isTerminal else { return .failure("\(name) doesn't start that kind of pane") }
         let id = uuid.uuidString.lowercased()
         let taken = PeerReply.failure("That session already exists on \(name)")

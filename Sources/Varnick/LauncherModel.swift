@@ -112,7 +112,19 @@ final class LauncherModel: ObservableObject {
     /// Highlighted `!` command.
     @Published var commandSelection = 0
     /// ⌘⌃⇧E / ⌘⌃⇧O: waiting for the user to pick what the new pane holds.
-    @Published var pendingSplit: SplitAxis?
+    @Published var pendingSplit: SplitAxis? {
+        didSet {
+            if pendingSplit == nil {
+                pickerAsksAddress = false
+                pickerAddress = ""
+                pickerAppsTask?.cancel()
+            }
+        }
+    }
+    /// The picker of a tab of another machine asks for the address of a page to open there, instead of showing its tiles.
+    @Published var pickerAsksAddress = false
+    @Published var pickerAddress = ""
+    private var pickerAppsTask: Task<Void, Never>?
     @Published var pickerSelection = 1
     /// What the picker offers: the built-ins, then the custom apps found when it opened.
     @Published private(set) var pickerItems = PickerItem.items(apps: [])
@@ -1902,16 +1914,17 @@ final class LauncherModel: ObservableObject {
 
     /// The new pane is fresh, in the focused pane's folder; a web pane starts with its
     /// address bar focused.
-    func split(_ axis: SplitAxis, kind: PaneKind) {
+    func split(_ axis: SplitAxis, kind: PaneKind, address: String? = nil) {
         guard let tab = activeTab else { return }
         // The tab of another machine splits on that machine, when this Mac is in control of it; this Mac's own, unless another machine is.
-        if tab.host != nil { return splitOnHost(tab, axis, kind: kind) }
+        if tab.host != nil { return splitOnHost(tab, axis, kind: kind, address: address) }
         if let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
         var record = Self.newRecord(prompt: "", directory: tab.focused.record.directory)
         switch kind {
         case .claude: break
         case .terminal: record.shell = true
         case .web: record.url = ""
+        case .hostApp: return
         case .app(let app):
             record.app = app.folderName
             record.splitFrom = tab.focused.id
@@ -1961,14 +1974,35 @@ final class LauncherModel: ObservableObject {
         guard showsTerminal, let tab = activeTab else { return }
         let focused = tab.focused
         if let reason = layoutLockReason(of: tab) { return focused.showRefusal(reason) }
-        if tab.host != nil {
-            // Another machine's tab splits into a Claude session or a terminal there, for the machine in control of it.
-            pickerItems = PickerItem.items(apps: []).filter { $0.kind == .claude || $0.kind == .terminal }
+        if let host = tab.host {
+            // Another machine's tab splits there, for the machine in control of it: Claude, a terminal, a page, and the apps that machine lists.
+            pickerItems = PickerItem.items(hostApps: [])
+            askHostApps(host, folder: focused.record.directory, tab: tab)
         } else {
             pickerItems = PickerItem.items(apps: CustomApp.available(from: focused.record.directory))
         }
         pickerSelection = pickerItems.firstIndex { $0.kind == .terminal } ?? 0
         pendingSplit = axis
+    }
+
+    /// Asks the host of a tab for the apps it can run, and adds their tiles when the picker is still up for that tab. A host that doesn't answer, or
+    /// runs none (a headless one), leaves the built-ins.
+    private func askHostApps(_ host: String, folder: String, tab: ClaudeTab) {
+        pickerAppsTask?.cancel()
+        var request = PeerRequest(.apps)
+        request.folder = folder
+        pickerAppsTask = Task { [weak self] in
+            guard case .success(let reply) = await PeerManager.shared.send(request, to: host, timeout: 8), !Task.isCancelled, let self,
+                  self.pendingSplit != nil, self.activeTab === tab else { return }
+            self.pickerItems = PickerItem.items(hostApps: reply.apps ?? [])
+            self.pickerSelection = min(self.pickerSelection, self.pickerItems.count - 1)
+        }
+    }
+
+    /// Esc over the address of a page: back to the tiles.
+    func cancelAddress() {
+        pickerAsksAddress = false
+        pickerAddress = ""
     }
 
     /// Keys while the picker is up: a tile's key picks it, arrows move, ↩ picks, esc cancels.
@@ -1987,11 +2021,16 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    func finishSplit(_ kind: PaneKind?) {
+    func finishSplit(_ kind: PaneKind?, address: String? = nil) {
         guard let axis = pendingSplit else { return }
+        // A page in a tab of another machine needs its address before it can open there.
+        if kind == .web, address == nil, activeTab?.host != nil {
+            pickerAsksAddress = true
+            return
+        }
         pendingSplit = nil
         if let kind {
-            split(axis, kind: kind)
+            split(axis, kind: kind, address: address)
         } else if let tab = activeTab {
             tab.focus(tab.focused)
         }
@@ -2969,7 +3008,8 @@ final class LauncherModel: ObservableObject {
         let existing = tabs.flatMap(\.sessions).first { $0.id == id }
         if start.resume == true { return await hostResume(id: id, by: peer, existing: existing) }
         guard existing == nil else { return .failure("That session already exists on \(here)") }
-        guard start.kind == nil || start.kind == .claude || start.isTerminal else { return .failure("\(here) doesn't start that kind of pane") }
+        guard start.kind == nil || start.kind == .claude || start.isTerminal || start.isPage else { return .failure("\(here) doesn't start that kind of pane") }
+        guard !start.isPage || request.tab != nil else { return .failure("A page or an app is added to a tab: the request named none") }
         // A split of a tab of this Mac, in the place the asker named, which only the machine in control of the tab may ask (ADR 0034). The new
         // pane starts in the split pane's folder and takes the tab's origin: closing the tab on the machine it was made for ends it.
         var split: (tab: ClaudeTab, beside: ClaudeSession, axis: SplitAxis)?
@@ -2986,6 +3026,7 @@ final class LauncherModel: ObservableObject {
         }
         let target = folder ?? Self.claudeDirectory
         guard Self.isFolder(target) else { return .failure("\(target) isn't a folder on \(here)") }
+        if start.isPage, let split { return hostSplitPage(start, id: id, folder: target, in: split, origin: origin, here: here) }
         var record = SessionRecord(id: id, prompt: start.isTerminal ? "" : start.prompt, title: "", directory: target, startedAt: Date(), lastUsed: Date())
         if start.isTerminal {
             record.shell = true
@@ -3007,6 +3048,39 @@ final class LauncherModel: ObservableObject {
         saveSessions()
         session.start()
         return await replyOnceRunning(session, in: target, tab: tab)
+    }
+
+    /// A split of this Mac's tab into a page (an http or https address) or a custom app it runs, for the machine in control: no zmx session of the
+    /// tab's, so the reply is at once. The app runs here and the other machine loads it through the port proxy (ADR 0035).
+    private func hostSplitPage(_ start: PeerStart, id: UUID, folder: String, in split: (tab: ClaudeTab, beside: ClaudeSession, axis: SplitAxis),
+                               origin: String?, here: String) -> PeerReply {
+        var record = SessionRecord(id: id, prompt: "", title: "", directory: folder, startedAt: Date(), lastUsed: Date())
+        record.origin = origin
+        var app: CustomApp?
+        if start.kind == .web {
+            let text = (start.url ?? "").trimmingCharacters(in: .whitespaces)
+            guard let url = ClaudeSession.url(from: text), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+                return .failure("\(here) opens only http and https addresses")
+            }
+            record.url = url.absoluteString
+        } else {
+            guard let name = start.app, let found = CustomApp.find(name, from: folder) else { return .failure("\(here) has no app called \(start.app ?? "that")") }
+            app = found
+            record.app = found.folderName
+            record.splitFrom = split.beside.id
+            let port = CustomApp.freePort()
+            record.appPort = port
+            record.url = CustomApp.serverURL(port: port)
+        }
+        let session = makeSession(record, resuming: false, query: "")
+        session.customApp = app
+        split.tab.add(session, beside: split.beside, split.axis)
+        saveSessions()
+        session.start()
+        var reply = PeerReply.success()
+        reply.folder = folder
+        reply.tab = split.tab.id.uuidString.lowercased()
+        return reply
     }
 
     /// The labels of the tab's running Claude and terminal panes, read off the main actor.
@@ -3291,6 +3365,17 @@ final class LauncherModel: ObservableObject {
         let found = await Task.detached(priority: .userInitiated) { Project.scan(roots: roots) }.value
         var reply = PeerReply.success()
         reply.projects = found.map { PeerProject(path: $0.path, lastUsed: $0.lastUsed) }
+        return reply
+    }
+
+    /// A peer's `apps`: the custom apps this Mac can run from `folder` (the default folder when it names none), each with the key its own picker gives it.
+    func hostApps(folder: String?) async -> PeerReply {
+        let folder = folder ?? Self.claudeDirectory
+        let found = await Task.detached(priority: .userInitiated) { CustomApp.available(from: folder) }.value
+        let keys = CustomApp.assignKeys(taken: PaneKind.builtIns.compactMap(\.key), to: found)
+        var reply = PeerReply.success()
+        reply.folder = folder
+        reply.apps = zip(found, keys).map { PeerApp(folder: $0.folderName, name: $0.name, icon: $0.icon, key: $1) }
         return reply
     }
 
