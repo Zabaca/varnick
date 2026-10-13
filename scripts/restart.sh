@@ -44,6 +44,11 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   pgrep -a -f "$VARNICK" >/dev/null || pgrep -a -f "$LAUNCHY" >/dev/null || break
   sleep 1
 done
+# One that outlived its SIGTERM would refuse the new one at launch (AccountLock) and keep running the old build, so nothing starts.
+if pgrep -a -f "$VARNICK" >/dev/null || pgrep -a -f "$LAUNCHY" >/dev/null; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') restart: process $(pgrep -a -f "$VARNICK|$LAUNCHY" | tr '\n' ' ')still runs 10 s after its SIGTERM, so the new build wasn't started; quit it from its menu bar menu, or kill -9 it, then restart again" >> "$LOG" 2>/dev/null
+  exit 1
+fi
 # Which launchd job starts Varnick. AGENT_LABEL is the Makefile's LABEL; change them together.
 ROOT=$(pwd -P)
 BINARY="$ROOT/.build/release/Varnick"
