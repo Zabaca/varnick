@@ -66,9 +66,9 @@ public enum PeerOp: String, Codable, Sendable {
     /// Marks a tab done on its host (`PeerRequest.tab`), or with `mark` false takes the mark off, without ending anything. Who may ask and
     /// who answers: ADR 0032, which carries on ADR 0028's rules by tab.
     case done
-    /// Start `claude --resume` on a conversation that ended there, because the user picked it in
-    /// Recent or search, or reopened a tab that held it (`tab`, `tabName`). Its running Varnick does it. Never sent by anything that runs by itself:
-    /// `start` with `resume` is the automatic one, which refuses an ended session.
+    /// Start `claude --resume` on a conversation that ended there, because the user picked it in Recent or search, or reopened a
+    /// tab that held it (`tab`, `tabName`). Its running Varnick does it. Never sent by anything that runs by itself: `start` with
+    /// `resume` is the automatic one, which refuses an ended session.
     case resume
     /// The peers the receiving host lists, by name and address and nothing else, for the Phone page's links to the other hosts'
     /// pages (ADR 0011). The list is Varnick's list on a Mac and `state/peers.json` on a headless host. A device may ask it, and
@@ -398,8 +398,8 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
     /// How many seconds ago the host marked the session's tab done, by the host's clock like `turnAge`. Nil: not marked. A device isn't sent it.
     public var doneAge: Int?
 
-    /// The tab the host keeps the session in (ADR 0032): its id, and its name (⌘⇧R) when it has one. A headless host's records are
-    /// one-pane tabs under the record's id. Nil from a build before protocol 21.
+    /// The tab the host keeps the session in (ADR 0032): its id, and its name (⌘⇧R) when it has one. A headless host's record is a tab
+    /// under its own id unless a `resume` named another. Nil from a build before protocol 21.
     public var tab: String?
     public var tabName: String?
 

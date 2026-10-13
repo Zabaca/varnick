@@ -25,7 +25,7 @@ struct HeadlessSession: Codable, Equatable {
     /// True from the record's first save until `start` has handed the session over.
     var starting: Bool?
     /// When a Mac marked the session's tab done (`done`), running or ended: the one place a headless host keeps the mark. Each record is
-    /// a tab of one pane under the record's id (ADR 0032), so the record's date is the tab's mark. Nil: not marked.
+    /// a tab under its id unless it has `tab` (ADR 0032), and `done` sets the date on every record of the tab. Nil: not marked.
     var done: Date?
     /// The tab (ADR 0032) a `resume` that named one put the session in, and its name. Nil: the record is a tab of its own, under its id.
     /// A headless host holds no layout, so a tab's records are its panes only in what the host lists; each carries the tab's mark in `done`.
