@@ -330,6 +330,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// Written by the SIGTERM handler, which may call only async-signal-safe functions: `write` to this pipe is one.
     private nonisolated(unsafe) static var terminatePipe: Int32 = -1
+    /// The pipe's reader, held for Varnick's life: a dispatch source nothing references is released, and a SIGTERM then only fills the pipe.
+    private nonisolated(unsafe) static var terminateSource: DispatchSourceRead?
 
     /// What a SIGTERM does (`make run`, `scripts/restart.sh` and `make stop` end Varnick with one): saved audio is closed, then
     /// `_exit(0)`, and nothing else. No `applicationWillTerminate`, no `stopAppServers`, so app servers and zmx sessions survive a
@@ -347,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             _exit(0)
         }
         source.resume()
+        terminateSource = source
         signal(SIGTERM) { _ in
             var byte: UInt8 = 1
             _ = write(AppDelegate.terminatePipe, &byte, 1)
