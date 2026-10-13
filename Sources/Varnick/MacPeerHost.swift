@@ -115,6 +115,7 @@ struct MacPeerHost: PeerHost {
             reply.rows = found.rows
             reply.ids = found.ids
             reply.stamp = found.stamp
+            reply.rowTabs = found.tabs
             return reply
         } catch is HistorySync.RepliesNotRead {
             return .failure("\(name) hasn't read its sessions with Claude's replies yet")

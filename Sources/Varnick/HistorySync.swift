@@ -91,6 +91,16 @@ enum HistorySync {
           session_id TEXT PRIMARY KEY,             -- lowercased, as in sessions
           name       TEXT NOT NULL
         );
+        -- The tab that holds each conversation (option 02 of work-is-tracked-by-session-not-tab). This Mac's (host '') are written from the
+        -- saved tabs at each sync (`SessionTabs`) and at once when a tab is named or closes; a paired Mac's are what it sent with `rows`, all
+        -- of them each time. Kept after the tab leaves the saved state, so search still groups an old session under its tab.
+        CREATE TABLE IF NOT EXISTS session_tabs (
+          host       TEXT NOT NULL DEFAULT '',     -- '' for this Mac; a paired Mac's peer id
+          session_id TEXT NOT NULL,                -- the conversation, lowercased, as in sessions
+          tab        TEXT NOT NULL,                -- the tab's id, lowercased
+          tab_name   TEXT NOT NULL DEFAULT '',     -- its ⌘⇧R name when it was written, '' if none
+          PRIMARY KEY (host, session_id)
+        ) WITHOUT ROWID;
         -- The problems and options each Claude session on this Mac or a headless host worked on (ADR 0020), written when its pane closes
         -- and copied from the saved sessions at each sync. Never deleted and never read by search, so which sessions worked on a problem
         -- outlives Recent, Completed and sessions.json. One row per session and link.
@@ -309,6 +319,7 @@ enum HistorySync {
                 try upsertProfiles(into: archive)
                 try syncSessions(into: archive)
                 try syncNames(into: archive)
+                try syncTabs(into: archive)
                 syncWork(into: archive)
                 return try toFetch(archive)
             }.value
@@ -562,6 +573,35 @@ enum HistorySync {
             guard let archive = try? Database(path) else { return }
             if let name { try? writeName(name, ofSession: id, in: archive) }
             else { _ = try? archive.run("DELETE FROM session_names WHERE session_id = ?", [id]) }
+        }
+    }
+
+    /// Keeps the tab of each conversation this Mac's saved state holds (`SessionTabs`), and drops the rows of sessions that are gone. A
+    /// `sessions.json` that doesn't decode skips the step. Ids and names are bound as parameters, never logged.
+    private static func syncTabs(into archive: Database) throws {
+        guard let state = SessionStore().load() else { return }
+        let entries = SessionTabs.read(state)
+        try archive.transaction {
+            for entry in entries { try writeTab(entry, in: archive) }
+            try archive.exec("DELETE FROM session_tabs WHERE host = '' AND session_id NOT IN (SELECT session_id FROM sessions)")
+        }
+    }
+
+    private static func writeTab(_ entry: SessionTabs.Entry, in archive: Database) throws {
+        try archive.run("""
+            INSERT INTO session_tabs (host, session_id, tab, tab_name) VALUES ('', ?1, ?2, ?3)
+            ON CONFLICT(host, session_id) DO UPDATE SET tab = excluded.tab, tab_name = excluded.tab_name
+            WHERE tab != excluded.tab OR tab_name != excluded.tab_name
+            """, [entry.conversation, entry.tab.uuidString.lowercased(), entry.name ?? ""])
+    }
+
+    /// Writes the tabs of conversations when a tab is named or closes rather than at the next sync, so a tab closed before then is
+    /// still the one search groups them under. Off the main thread, since the sync may hold the database.
+    static func keepTabs(_ entries: [SessionTabs.Entry], databasePath path: String) {
+        guard !entries.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            guard let archive = try? Database(path) else { return }
+            try? archive.transaction { for entry in entries { try writeTab(entry, in: archive) } }
         }
     }
 
@@ -1088,8 +1128,10 @@ enum HistorySync {
     /// holds them (folder present here, newest copy of each conversation) changed at or after `since`,
     /// with the ids of all of them and the stamp to ask from next time. This Mac's own transcripts
     /// only: the rows it holds for other Macs aren't passed on. Opens the database read-only, so it
-    /// works with Varnick not running.
-    static func peerRows(databasePath path: String, since: Int64?) throws -> (rows: [PeerSessionRow], ids: [String], stamp: Int64) {
+    /// works with Varnick not running. The tabs that hold those sessions come whole whatever `since` is: a conversation moves to another tab
+    /// or a tab is named with no change to its transcript.
+    static func peerRows(databasePath path: String, since: Int64?)
+        throws -> (rows: [PeerSessionRow], ids: [String], stamp: Int64, tabs: [PeerRowTab]) {
         let archive = try Database(path, readOnly: true)
         // Rows read before this build kept replies would go out without them, and the asker, asking only for later changes,
         // would get them only at its next launch. It keeps what it has and asks again at its next sync. A sync ends with no
@@ -1107,7 +1149,23 @@ enum HistorySync {
             PeerSessionRow(id: e.id, folder: e.directory, title: e.title, agent: e.agent.isEmpty ? nil : e.agent, prompts: e.prompts,
                            replies: e.replies, first: e.first, last: e.last, modified: e.modified)
         }
-        return (rows, own.map(\.id), own.map(\.modified).max() ?? 0)
+        return (rows, own.map(\.id), own.map(\.modified).max() ?? 0, try rowTabs(archive, of: Set(own.map(\.id))))
+    }
+
+    /// This Mac's tab of each of these conversations, one entry per tab (`PeerRowTab`), in the order of their first conversation. A
+    /// database an older Varnick made has no table until that Varnick restarts: no tabs are known then.
+    private static func rowTabs(_ archive: Database, of ids: Set<String>) throws -> [PeerRowTab] {
+        guard try !archive.rows("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_tabs'").isEmpty else { return [] }
+        var order: [String] = [], tabs: [String: PeerRowTab] = [:]
+        for row in try archive.rows("SELECT session_id, tab, tab_name FROM session_tabs WHERE host = '' ORDER BY tab, session_id") {
+            guard let session = row[0] as? String, ids.contains(session), let tab = row[1] as? String else { continue }
+            if tabs[tab] == nil {
+                order.append(tab)
+                tabs[tab] = PeerRowTab(tab: tab, name: (row[2] as? String).flatMap { $0.isEmpty ? nil : $0 }, sessions: [])
+            }
+            tabs[tab]?.sessions.append(session)
+        }
+        return order.compactMap { tabs[$0] }
     }
 
     // MARK: Peers' pages
@@ -1183,6 +1241,8 @@ enum HistorySync {
         let rows: [PeerSessionRow]
         let ids: [String]?
         let stamp: Int64?
+        /// The tab that holds each of its conversations, all of them; nil when the reply had none.
+        let tabs: [PeerRowTab]?
     }
 
     /// Where one Mac's pages have been read up to, kept in `meta` with the rows it covers. No cursor reads from zero.
@@ -1270,7 +1330,7 @@ enum HistorySync {
                     }
                 } else {
                     readInFull.insert(id)
-                    answers.append(PeerPull(peer: id, rows: reply.rows ?? [], ids: reply.ids, stamp: reply.stamp))
+                    answers.append(PeerPull(peer: id, rows: reply.rows ?? [], ids: reply.ids, stamp: reply.stamp, tabs: reply.rowTabs))
                 }
                 // It answered, whatever its row said at launch: the lists that ask only answering Macs include
                 // it. Not from `--sync`, which has no app and must not write the peer list.
@@ -1325,6 +1385,10 @@ enum HistorySync {
                     try archive.run("DELETE FROM \(table) WHERE peer_id = ?", [gone])
                 }
             }
+            for gone in try archive.rows("SELECT DISTINCT host FROM session_tabs WHERE host != ''").compactMap({ $0[0] as? String })
+            where !paired.contains(gone) {
+                try archive.run("DELETE FROM session_tabs WHERE host = ?", [gone])
+            }
             for gone in peerPagesReads(archive).keys where !paired.contains(gone) {
                 try archive.run("DELETE FROM meta WHERE key = ?", [pagesReadPrefix + gone])
             }
@@ -1353,6 +1417,17 @@ enum HistorySync {
                     }
                     have.formIntersection(keep)
                     if have != keep { incomplete.append(answer.peer) }
+                }
+                // The Mac's whole list of tabs, so a conversation that moved to another one is not left under the first.
+                if let tabs = answer.tabs, paired.contains(answer.peer) {
+                    try archive.run("DELETE FROM session_tabs WHERE host = ?", [answer.peer])
+                    for tab in tabs {
+                        guard UUID(uuidString: tab.tab) != nil else { continue }
+                        for session in tab.sessions where UUID(uuidString: session) != nil {
+                            try archive.run("INSERT OR REPLACE INTO session_tabs (host, session_id, tab, tab_name) VALUES (?, ?, ?, ?)",
+                                            [answer.peer, session.lowercased(), tab.tab.lowercased(), tab.name ?? ""])
+                        }
+                    }
                 }
                 if let stamp = answer.stamp {
                     try archive.run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [peerStampPrefix + answer.peer, String(stamp)])

@@ -350,6 +350,12 @@ final class ClaudeTab: ObservableObject {
     /// The Claude panes, in layout order.
     var claudeSessions: [ClaudeSession] { sessions.filter(\.isClaude) }
 
+    /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
+    func holds(_ conversation: String) -> Bool {
+        let id = conversation.lowercased()
+        return history.contains { $0.conversation == id } || claudeSessions.contains { $0.record.conversationID.lowercased() == id }
+    }
+
     /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one).
     var host: String? { claudeSessions.first?.record.host }
 

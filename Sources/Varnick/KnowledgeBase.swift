@@ -22,6 +22,9 @@ struct SearchResult: Identifiable, Hashable {
     var relevance: Double?   // probability the result is what the search is after, from the relevance filter
     /// The paired Mac (its peer id) whose session this is, or that alone visited this page; nil for this Mac's own.
     var host: String?
+    /// For a session match, the tab that holds it when one is known; for a tab's row (`isTab`), the tab. Set when the matches are grouped
+    /// (`LauncherModel.groupedByTab`).
+    var tab: TabRef?
 
     var isSession: Bool { source == FavoritesStore.sessionSource }
     /// The Claude session's id; empty for a page.
@@ -328,6 +331,18 @@ final class FavoritesStore {
     func tabName(ofSession id: String) -> String? {
         rows("SELECT name FROM session_names WHERE session_id = ?", [id.lowercased()], limit: nil) { Self.text($0, 0) }
             .first { !$0.isEmpty }
+    }
+
+    /// The tab that holds each of these sessions' conversations, by row id: this Mac's own (`session_tabs`, host '') or the Mac the row came
+    /// from. A database from before the table, or a session no tab is known for, has none.
+    func tabs(ofSessions results: [SearchResult]) -> [Int64: TabRef] {
+        var found: [Int64: TabRef] = [:]
+        for result in results where result.isSession {
+            let sql = "SELECT tab, tab_name FROM session_tabs WHERE host = ? AND session_id = ?"
+            let row = rows(sql, [result.host ?? "", result.sessionID.lowercased()], limit: nil) { (Self.text($0, 0), Self.text($0, 1)) }.first
+            if let row, let id = UUID(uuidString: row.0) { found[result.id] = TabRef(id: id, host: result.host, name: row.1.isEmpty ? nil : row.1) }
+        }
+        return found
     }
 
     /// The `--agent` a session was started with, from the transcript copy the search row was built

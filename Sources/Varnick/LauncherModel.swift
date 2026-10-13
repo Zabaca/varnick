@@ -271,6 +271,8 @@ final class LauncherModel: ObservableObject {
     static let outlineHeight: CGFloat = 600
     static let sessionRowHeight: CGFloat = 44
     static let sessionHeaderHeight: CGFloat = 30
+    /// A tab's row above its matching sessions, in the prompt's list and in a search's results; a session's is `sessionRowHeight` in the prompt's.
+    static let tabRowHeight: CGFloat = 30
     static let suggestionRowHeight: CGFloat = 40
     static let suggestionsShown = 6
     static let commandRowHeight: CGFloat = 44
@@ -320,6 +322,11 @@ final class LauncherModel: ObservableObject {
         return max(searchPanelHeight, Self.restartCardHeight + min(lines * Self.restartListLineHeight, Self.restartListMaxHeight))
     }
 
+    /// The rows under the prompt line: a session each, and a shorter row for the tab above its sessions.
+    private var resultRowsHeight: CGFloat {
+        results.reduce(0) { $0 + ($1.isTab ? Self.tabRowHeight : Self.sessionRowHeight) }
+    }
+
     private var searchPanelHeight: CGFloat {
         switch mode {
         case .prompt:
@@ -327,7 +334,7 @@ final class LauncherModel: ObservableObject {
             let shown = suggestions.count
             if shown > 0 { return prompt + 1 + CGFloat(shown) * Self.suggestionRowHeight + 8 }
             if results.isEmpty { return prompt }
-            return prompt + 1 + Self.sessionHeaderHeight + CGFloat(results.count) * Self.sessionRowHeight + 8
+            return prompt + 1 + Self.sessionHeaderHeight + resultRowsHeight + 8
         case .command:
             let shown = commands.count
             return Self.searchHeight + 1 + (shown == 0 ? Self.emptyHeight : CGFloat(shown) * Self.commandRowHeight + 8)
@@ -717,6 +724,12 @@ final class LauncherModel: ObservableObject {
 
     var selected: SearchResult? { results.indices.contains(selection) ? results[selection] : nil }
 
+    /// What the preview shows: the selected result, or for a tab's row its best matching session, the first below it.
+    var previewed: SearchResult? {
+        guard let row = selected, row.isTab else { return selected }
+        return results.drop { $0.id != row.id }.dropFirst().first { $0.isSession && $0.tab == row.tab }
+    }
+
     // MARK: Search
 
     /// Three passes, each refining the last:
@@ -760,7 +773,7 @@ final class LauncherModel: ObservableObject {
         let search = self.search
         var ranking = search.keyword(q)
         relevantCount = nil
-        setResults(ranking.rows, sessions: ranking.sessions.count, keepSelection: false)
+        setRanking(ranking, keepSelection: false)
 
         semanticStatus = embedder != nil && !q.isEmpty ? .pending : .off
         if semanticStatus == .off, !q.isEmpty, !ranking.hasKeywordMatches {
@@ -781,7 +794,7 @@ final class LauncherModel: ObservableObject {
                     guard !Task.isCancelled else { return }
                     if let meaning = withMeaning.meaning {
                         ranking = withMeaning
-                        self.setResults(ranking.rows, sessions: ranking.sessions.count, keepSelection: true)
+                        self.setRanking(ranking, keepSelection: true)
                         self.semanticVia = meaning.source
                         self.semanticStatus = .ok
                         if self.results.isEmpty {
@@ -807,7 +820,7 @@ final class LauncherModel: ObservableObject {
                 let judged = try await search.filtered(ranking, for: q, by: judge)
                 guard !Task.isCancelled else { return }
                 self.relevantCount = judged.relevantCount
-                self.setResults(judged.rows, sessions: judged.sessions.count, keepSelection: true)
+                self.setRanking(judged, keepSelection: true)
                 self.rerankedBy = judge.backend
                 self.rerankStatus = .ok
             } catch {
@@ -857,11 +870,12 @@ final class LauncherModel: ObservableObject {
 
     /// A new query puts the highlight on the prompt line; a row the user moved to keeps it by id as matches arrive,
     /// and if it drops out the first row takes it, never the prompt line.
-    private func setPromptResults(_ new: [SearchResult], keepSelection: Bool) {
+    private func setPromptResults(_ matches: [SearchResult], keepSelection: Bool) {
         let held = promptSession?.id
+        let new = groupedByTab(matches)
         sessionCount = new.count
         results = new
-        promptPills = Dictionary(uniqueKeysWithValues: new.map { r in
+        promptPills = Dictionary(uniqueKeysWithValues: new.filter(\.isSession).map { r in
             let agent = r.host.map { store.agent(ofSession: r.sessionID, host: $0) } ?? store.agent(ofSession: r.sessionID, directory: r.url)
             return (r.id, pills(folder: r.url, agent: agent, host: r.host))
         })
@@ -969,6 +983,12 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    /// A `?` search's ranking as rows: the session matches under a row for their tab (`groupedByTab`), then the pages.
+    private func setRanking(_ ranking: RelevanceSearch.Ranking, keepSelection: Bool) {
+        let sessions = groupedByTab(ranking.sessions)
+        setResults(sessions + ranking.pages, sessions: sessions.count, keepSelection: keepSelection)
+    }
+
     private func setResults(_ new: [SearchResult], sessions: Int, keepSelection: Bool) {
         let prev = selected?.id
         if !keepSelection { userPicked = false }
@@ -1015,15 +1035,15 @@ final class LauncherModel: ObservableObject {
             return
         }
         guard let r = selected else { return }
-        if r.isSession { return openSession(r) }
+        if r.isSession || r.isTab { return openMatch(r) }
         guard let url = URL(string: r.url) else { return }
         NSWorkspace.shared.open(url)
         if !pinned { onDismiss() }
     }
 
-    /// ⌘↩: nothing on a session, which has no link.
+    /// ⌘↩: nothing on a session or a tab, which have no link.
     func copySelectedURL() {
-        guard let r = selected, !r.isSession else { return }
+        guard let r = selected, !r.isSession, !r.isTab else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(r.url, forType: .string)
         if !pinned { onDismiss() }
@@ -1082,7 +1102,7 @@ final class LauncherModel: ObservableObject {
     /// is pending, completes the highlighted suggestion while its word is still being typed (unless the word
     /// already spells it), else starts the session.
     func submitPrompt() {
-        if let session = promptSession { return openSession(session) }
+        if let session = promptSession { return openMatch(session) }
         guard peerStarting == nil else { return }
         let shown = suggestions
         if let word = leadingWords.words.last, shown.indices.contains(suggestionSelection),
@@ -1588,7 +1608,7 @@ final class LauncherModel: ObservableObject {
     }
 
     /// The tabs the cached listings have open.
-    private func listedTabIDs(on host: String? = nil) -> Set<UUID> {
+    func listedTabIDs(on host: String? = nil) -> Set<UUID> {
         Set(listedSessions(on: host).compactMap(\.tabID))
     }
 
@@ -1713,7 +1733,7 @@ final class LauncherModel: ObservableObject {
     /// user is in control. Always the user's own action: `ClaudeSession.resumesOnPeer` is what tells
     /// the pane to ask for it, and nothing that runs by itself sets it. With `into`, the pane joins that tab instead of opening one;
     /// `asTab` gives the tab it opens, and the host's, that id and name.
-    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?, into existing: ClaudeTab? = nil,
+    func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?, into existing: ClaudeTab? = nil,
                               asTab: (id: UUID, name: String?)? = nil) {
         for tab in tabs {
             if let pane = tab.sessions.first(where: { $0.isClaude && $0.record.conversationID == conversation }) {
@@ -1765,9 +1785,42 @@ final class LauncherModel: ObservableObject {
         openHere.union(listedSessions().compactMap(Self.conversation(of:)))
     }
 
-    /// ↩ on a session match: switches to the pane that has it, else resumes it in a new tab, from
-    /// Recent's record when it has one, else a record made from the search row (its url is the folder).
-    private func openSession(_ result: SearchResult) {
+    /// ↩ on a match, a session or the row of its tab: the tab opens (`openTab`). A session no tab is known for is resumed in a new one-pane
+    /// tab, which holds it from then on.
+    private func openMatch(_ result: SearchResult) {
+        claudeError = nil
+        if result.isTab {
+            // The best match of the tab, the first session below its row, is the one to resume if the tab has gone.
+            let below = results.drop { $0.id != result.id }.dropFirst().first { $0.isSession && $0.tab == result.tab }
+            if let tab = result.tab { openTab(tab, matching: below) }
+        } else if let tab = result.tab {
+            openTab(tab, matching: result)
+        } else {
+            resumeSession(result)
+        }
+    }
+
+    /// The tab that holds a match: shown if it is open here, with the pane on that conversation focused when it has one; opened as the
+    /// paired Mac's tab if it is open there; else reopened from Completed, Recent or the ended cards, here or on its Mac. A tab with no
+    /// record left (it fell off Recent) resumes the matching session alone, in a new tab.
+    private func openTab(_ ref: TabRef, matching result: SearchResult?) {
+        if let tab = tabs.first(where: { $0.id == ref.id && $0.host == ref.host }) {
+            activate(tab)
+            if let result, let pane = tab.claudeSessions.first(where: { $0.record.conversationID.lowercased() == result.sessionID.lowercased() }) {
+                tab.focus(pane)
+            }
+            return
+        }
+        if let host = ref.host, let open = peerListTabs.first(where: { $0.peer.id == host && $0.id == ref.id }) { return openPeerTab(open) }
+        if completed.contains(where: { $0.id == ref.id && $0.host == ref.host }) { return openCompleted(ref.id) }
+        if let closed = allRecent.first(where: { $0.id == ref.id && $0.host == ref.host }) { return openRecent(closed) }
+        if ended.contains(where: { $0.id == ref.id && $0.host == ref.host }) { return openEnded(ref.id) }
+        if let result { resumeSession(result) }
+    }
+
+    /// A session no tab opens: switches to the pane that has it, else resumes it in a new tab from a record made from the search row (its
+    /// url is the folder). One on a paired Mac is resumed there.
+    private func resumeSession(_ result: SearchResult) {
         let id = result.sessionID
         for tab in tabs {
             if let pane = tab.sessions.first(where: { $0.isClaude && $0.record.conversationID == id }) {
@@ -1776,7 +1829,6 @@ final class LauncherModel: ObservableObject {
             }
         }
         if let host = result.host {
-            claudeError = nil
             return resumeOnPeer(conversation: id, on: host, folder: result.url, title: result.title,
                                 agent: store.agent(ofSession: id, host: host))
         }
@@ -1812,6 +1864,10 @@ final class LauncherModel: ObservableObject {
             // At once, not at the next sync: a tab closed before then would lose the name.
             if tab.sessions.count == 1, let only = tab.sessions.first, only.isClaude, !only.isOnPeer {
                 HistorySync.keepName(tab.name, ofSession: only.record.conversationID, databasePath: store.path)
+            }
+            if tab.host == nil {
+                HistorySync.keepTabs(SessionTabs.entries(of: tab.id, name: tab.name, history: tab.history, records: tab.root.layout.records),
+                                     databasePath: store.path)
             }
         }
         if activeTab === tab { tab.focus(tab.focused) }
@@ -2232,7 +2288,13 @@ final class LauncherModel: ObservableObject {
             addClosed(TabRecord(saved: saved), waitsForRecent: closed.waitsForRecent)
         }
         // Done or not, a tab of this Mac that closes is the newest in Recent. One on a paired Mac is in that Mac's Recent, which this one lists.
-        if tab.host == nil { addRecent(TabRecord(saved: saved)) }
+        // Search finds its sessions under it from now on, written at once rather than at the next sync.
+        if tab.host == nil {
+            let closedTab = TabRecord(saved: saved)
+            addRecent(closedTab)
+            HistorySync.keepTabs(SessionTabs.entries(of: closedTab.id, name: closedTab.name, history: closedTab.history, records: closedTab.records),
+                                 databasePath: store.path)
+        }
         sessionSelection = min(sessionSelection, max(0, tabs.count - 1))
         guard activeTab === tab else { return }   // a background tab ended
 

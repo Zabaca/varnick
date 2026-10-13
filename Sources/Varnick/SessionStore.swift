@@ -204,6 +204,12 @@ struct TabRecord: Codable, Identifiable, Equatable {
     /// The machine its Claude panes run on; nil is this Mac. A tab is one machine's (`SavedTab.splitByMachine`).
     var host: String? { claudeRecords.first?.host }
 
+    /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
+    func holds(_ conversation: String) -> Bool {
+        let id = conversation.lowercased()
+        return history?.contains { $0.conversation == id } == true || claudeRecords.contains { $0.conversationID.lowercased() == id }
+    }
+
     /// Worth listing: a Claude session of it can be resumed.
     var resumable: Bool { claudeRecords.contains(where: \.resumable) }
 

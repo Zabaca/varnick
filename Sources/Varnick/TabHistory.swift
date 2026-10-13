@@ -57,22 +57,24 @@ enum SessionTabs {
         var name: String?
     }
 
-    /// The open tabs first, then Recent, the ended cards and Completed, each tab's history and then the conversations its Claude panes
-    /// are on: a conversation is listed once, under the first tab that holds it.
+    /// The conversations one tab of this Mac holds: those its Claude panes are on, then its history. A tab on a paired Mac has none here.
+    static func entries(of tab: UUID, name: String?, history: [HeldConversation]?, records: [SessionRecord]) -> [Entry] {
+        let name = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let panes = records.filter { $0.isClaude && $0.host == nil }.map { $0.conversationID.lowercased() }
+        var seen: Set<String> = []
+        return (panes + (history ?? []).map(\.conversation)).filter { seen.insert($0).inserted }
+            .map { Entry(conversation: $0, tab: tab, name: name?.isEmpty == false ? name : nil) }
+    }
+
+    /// The open tabs first, then Recent, the ended cards and Completed: a conversation is listed once, under the first tab that holds it.
     static func read(_ state: SessionStore.State) -> [Entry] {
         var seen: Set<String> = []
-        var entries: [Entry] = []
-        func add(_ id: UUID, name: String?, history: [HeldConversation]?, records: [SessionRecord]) {
-            let name = name?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let panes = records.filter { $0.isClaude && $0.host == nil }.map { $0.conversationID.lowercased() }
-            for conversation in panes + (history ?? []).map(\.conversation) where seen.insert(conversation).inserted {
-                entries.append(Entry(conversation: conversation, tab: id, name: name?.isEmpty == false ? name : nil))
-            }
-        }
-        for tab in state.openTabs { add(tab.resolvedID, name: tab.name, history: tab.history, records: tab.layout.records) }
+        var found: [Entry] = []
+        func add(_ entries: [Entry]) { found += entries.filter { seen.insert($0.conversation).inserted } }
+        for tab in state.openTabs { add(entries(of: tab.resolvedID, name: tab.name, history: tab.history, records: tab.layout.records)) }
         for tab in state.recentList + state.endedList + state.completedList where tab.host == nil {
-            add(tab.id, name: tab.name, history: tab.history, records: tab.records)
+            add(entries(of: tab.id, name: tab.name, history: tab.history, records: tab.records))
         }
-        return entries
+        return found
     }
 }
