@@ -169,7 +169,7 @@ tools at once. Varnick's log holds the tool, the outcome's kind, a count of line
 text. Reading a pane's screen resizes, writes to and focuses nothing in it. If you don't want what a terminal shows
 sent to Anthropic, leave Panel access off.
 
-They can also read **your Outline** (`outline_read`), which is otherwise kept in a file on this Mac and nowhere else:
+They can also read **your Outline** (`outline_read`, only while Settings › Experimental › Outline is on), which is otherwise kept in a file on this Mac and nowhere else:
 every bullet's text and note and whether it is completed, collapsed or a mirror, from Home or from a bullet down, or the
 rows as you see them with your zoom, filter and caret. All of it goes to Anthropic with the session and stays in its
 transcript on this Mac. The read loads `outline.json` as showing the Outline would and never writes it, and a file
@@ -179,12 +179,14 @@ don't want your bullets sent to Anthropic, leave Panel access off.
 A session can also change your Outline (`outline_act`) without asking: add bullets, edit a bullet's text or note, complete,
 delete, move, indent, outdent, collapse or mirror one. Each change goes through the Outline's own edits and is one step of
 your undo (⌘Z), and an edit to the bullet you are typing in goes in as if typed, your caret kept at its place in your text. Varnick's log holds the action and a count
-of lines, never a bullet's text. If you don't want a session to change your Outline, leave Panel access off.
+of lines, never a bullet's text. If you don't want a session to change your Outline, leave Panel access off. With
+Settings › Experimental › Outline off, `outline_act` is refused too, even for an edit already under way.
 
 A session can also change what the panel shows (`show`): the search, the board, the Problems tab, the Outline, a pane's tab, or a
 `!` command (`!transcript`, `!kanban`, `!problems`, `!outline`), the same changes your keys make. It never shows, hides or pins the
 panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is
-refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel.
+refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel. Showing the
+Outline (`view: outline` or `!outline`) is refused while the Outline switch in Settings › Experimental is off.
 
 A session can also press keys in the panel (`keys`): text and key combos for the search, the session board or your Outline, sent inside Varnick
 to the panel's own key handling, as your keys go. Nothing is sent to another app and no permission is used. It works only while

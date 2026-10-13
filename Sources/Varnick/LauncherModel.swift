@@ -154,9 +154,12 @@ final class LauncherModel: ObservableObject {
     /// The outline replaces the panel's content the same way (⌘⇧Y, `!outline`); never together with the board, and Settings shows over it.
     @Published private(set) var showingOutline = false
     let outline = Outline()
+    private var outlineSwitch: AnyCancellable?
     /// Resources replaces the panel's content the same way (⌘⇧M, `!resources`); never with the board or the outline, and Settings shows over it.
     @Published private(set) var showingResources = false
     let resources = Resources()
+    /// Settings › Resources has a model of its own (`Resources.inSettings`).
+    let settingsResources = Resources(inSettings: true)
     /// Bumped to move keyboard focus back into the search field.
     @Published var focusToken = 0
 
@@ -338,7 +341,12 @@ final class LauncherModel: ObservableObject {
         self.textGeneration = TextGeneration(local: textGenerator, server: textGenerationServer, claude: claudeCode)
         board.model = self
         outline.model = self
+        // Turning the Outline off while it shows (Settings opens over it) closes it. The publisher sends before the value is stored.
+        outlineSwitch = Settings.shared.$outlineOn.removeDuplicates().sink { [weak self] on in
+            if !on { self?.hideOutline() }
+        }
         resources.model = self
+        settingsResources.model = self
         strip.model = self
         tabProjects.model = self
         restoreSessions()
@@ -1284,6 +1292,7 @@ final class LauncherModel: ObservableObject {
         Task { await followPeerSessions() }
         if showingBoard { board.appear() }
         if showingResources { resources.appear() }
+        settingsResources.panelDidShow()
     }
 
     /// `minInterval` skips the ask when one started that recently: the list shows again whenever a
@@ -2216,6 +2225,8 @@ final class LauncherModel: ObservableObject {
         session.onNeedsConfirmation = { [weak self] in
             guard let self, let ended = ref, let tab = self.tabs.first(where: { $0.contains(ended) }) else { return }
             self.activate(tab)
+            // A close from Settings › Resources asks on the pane's own card, so Settings closes over it, as Resources does.
+            if self.settingsResources.isShown { self.toggleSettings() }
             tab.focus(ended)
         }
         session.fileViewer?.onOpenFile = { [weak self] path in self?.openFile(path) }
@@ -2980,6 +2991,7 @@ final class LauncherModel: ObservableObject {
 
     /// ⌘⇧Y: the outline in place of the current view; again (or esc) goes back. From Settings it closes Settings and shows the outline.
     func toggleOutline() {
+        guard Settings.shared.outlineOn else { return }
         pendingSplit = nil
         if showingSettings {
             showingSettings = false
@@ -2992,6 +3004,7 @@ final class LauncherModel: ObservableObject {
     /// The board and the outline never show together: showing either closes the other. `focusing` false shows it without placing the caret in
     /// a bullet, which is what a session's `show` does unless the panel already has the keyboard.
     func showOutline(focusing: Bool = true) {
+        guard Settings.shared.outlineOn else { return }
         pendingSplit = nil
         willCoverTabs()
         hideBoard()
@@ -3597,9 +3610,9 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The commands `!` lists and matches: `!problems` only with the Problems board switch on (Settings › Experimental).
+    /// The commands `!` lists and matches: `!problems` and `!outline` only with their switches on (Settings › Experimental).
     @MainActor static var available: [LauncherCommand] {
-        allCases.filter { $0 != .problems || Settings.shared.problemsBoard }
+        allCases.filter { ($0 != .problems || Settings.shared.problemsBoard) && ($0 != .outline || Settings.shared.outlineOn) }
     }
 
     /// What matches it after `!`: `!tabs` is another name for `!kanban` and `!wf` for `!outline`, so both find the one row.

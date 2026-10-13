@@ -4,11 +4,23 @@ import Foundation
 import MLX
 import VarnickPeer
 
-/// The Resources view's model (⌘⇧M, `!resources`): reads the panes and the processes only while it shows in a visible panel, every `interval`,
-/// off the main actor, and publishes one report (`ResourceReport.build` does the attribution). The view reads only that.
+/// The Resources view's model (⌘⇧M, `!resources`, Settings › Resources): reads the panes and the processes only while it shows in a visible
+/// panel, every `interval`, off the main actor, and publishes one report (`ResourceReport.build` does the attribution). The view reads only that.
 @MainActor
 final class Resources: ObservableObject {
     weak var model: LauncherModel?
+    /// The Settings tab has a model of its own, so neither place's rows or selection reach the other.
+    private let inSettings: Bool
+    /// Set by the Settings tab's view as it appears and disappears.
+    private var settingsTabShown = false
+
+    init(inSettings: Bool = false) { self.inSettings = inSettings }
+
+    /// Whether it is on screen now: the panel's view with nothing over it, or the Settings tab while Settings shows it.
+    var isShown: Bool {
+        guard let model else { return false }
+        return inSettings ? model.showingSettings && settingsTabShown : model.showingResources && !model.showingSettings
+    }
 
     /// Nil until the first reading has come back.
     @Published private(set) var report: ResourceReport?
@@ -30,6 +42,17 @@ final class Resources: ObservableObject {
     func appear() {
         measure()
         startTicker()
+    }
+
+    /// The Settings tab's view came up or went away: measuring starts, or stops and clears.
+    func settingsTab(shown: Bool) {
+        settingsTabShown = shown
+        if shown { if SessionBoard.panelIsVisible { appear() } } else { close() }
+    }
+
+    /// The panel came up: the Settings tab, if it is showing, measures again.
+    func panelDidShow() {
+        if inSettings, isShown { appear() }
     }
 
     func close() {
@@ -66,7 +89,7 @@ final class Resources: ObservableObject {
     /// Reads the panes on the main actor, then the processes off it. A reading still under way is left to finish, and nothing is read once
     /// Resources has closed, while Settings covers it or while the panel is hidden.
     func measure() {
-        guard reading == nil, let model, model.showingResources, !model.showingSettings, SessionBoard.panelIsVisible else { return }
+        guard reading == nil, let model, isShown, SessionBoard.panelIsVisible else { return }
         let tabs = model.tabs.map(Self.input)
         // The kernel reports a process's path with links resolved, so the helpers' folder is too.
         let context = ResourceContext(ownPid: getpid(), ownBinaries: Self.binaryNames,
@@ -152,7 +175,7 @@ final class Resources: ObservableObject {
     func key(_ event: NSEvent) -> Bool {
         let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
         switch Int(event.keyCode) {
-        case kVK_Escape where plain: model?.closeResources()
+        case kVK_Escape where plain && !inSettings: model?.closeResources()
         case kVK_UpArrow where plain: move(-1)
         case kVK_DownArrow where plain: move(1)
         case kVK_RightArrow where plain: if let selection { expanded.insert(selection) }
@@ -179,9 +202,11 @@ final class Resources: ObservableObject {
 
     private func tab(_ id: UUID) -> ClaudeTab? { model?.tabs.first { $0.viewID == id } }
 
+    /// In Settings the tab comes up by Settings closing over it.
     func show(_ id: UUID) {
-        guard let tab = tab(id) else { return }
-        model?.activate(tab)
+        guard let tab = tab(id), let model else { return }
+        model.activate(tab)
+        if inSettings { model.toggleSettings() }
     }
 
     func closeSelected() {

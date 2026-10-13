@@ -397,7 +397,7 @@ The decision gets ADR 0030, written by ticket 01: the outline is one JSON file t
 
 - **No test target.** Verification is `make build`, then checking by hand after the user restarts Varnick.
 - **`Varnick --outline-check <file> [<out>]`,** a check like `--embed-check`.
-  - It is a command-line mode among the others, and exits before anything of the app starts. It touches only the paths it is given: never the support folder, `Settings.shared` or the database (where-it-breaks, The rename).
+  - It is a command-line mode among the others, and exits before anything of the app starts. It touches only the paths it is given: never the support folder, the app's settings or the database (where-it-breaks, The rename).
   - It reads a file through the one reader and prints whether it loads, or why not; its version; how many bullets, placements and mirrors it has; and what the rules dropped or recovered.
   - With `<out>`, it writes the tree there through the one writer.
   - It prints no text of any bullet.
@@ -490,3 +490,7 @@ Answered later the same day, on the planner's questions:
 7. **The planner's other choices stand as defaults:** everything else in Selection and Copying and pasting bullets.
 
 Tickets 08 and 09 build them.
+
+## Added later (2026-10-13)
+
+The user asked for the Outline to move into Settings › Experimental, as the Problems board is. It is off by default for every install. Off, its shortcut, `!outline` and `!wf` do nothing, and Panel access refuses its tools and showing it. If it is showing when the switch turns off, it closes. The switch never reads, changes or removes the Outline's file (ADR 0030), so turning it on again shows the same Outline.

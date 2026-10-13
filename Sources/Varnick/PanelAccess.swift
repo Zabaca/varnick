@@ -21,6 +21,8 @@ enum PanelRefusal: Error {
     case gone
     /// The Problems board switch (Settings › Experimental) is off.
     case problemsOff
+    /// The Outline switch (Settings › Experimental) is off.
+    case outlineOff
     /// The arguments are not ones the tool takes.
     case bad(String)
     /// The Outline can't be read from its file (unreadable, newer, or still loading); the message is the Outline's own reason.
@@ -44,6 +46,7 @@ enum PanelRefusal: Error {
         case .unknownID: "No such id. Ids come from panel, board_read and outline_read (s1… for panes and cards, o1… for the Outline's rows): read one of those first"
         case .gone: "gone: read again"
         case .problemsOff: "The Problems board is off: the user can turn it on in Settings › Experimental"
+        case .outlineOff: "The Outline is off: the user can turn it on in Settings › Experimental"
         case .bad(let why): why
         case .outlineUnavailable(let why): why
         case .refused(let why): "Nothing was changed: \(why)"
@@ -70,6 +73,7 @@ enum PanelRefusal: Error {
         case .unknownID: "unknown id"
         case .gone: "gone"
         case .problemsOff: "problems off"
+        case .outlineOff: "outline off"
         case .bad: "bad arguments"
         case .outlineUnavailable: "outline unavailable"
         case .refused: "edit refused"
@@ -337,7 +341,9 @@ final class PanelAccess {
                 guard Settings.shared.problemsBoard else { throw PanelRefusal.problemsOff }
                 act = { model.showBoard(.problems) }
             // The caret goes into a bullet only if the panel has the keyboard already; the file is read as showing it would.
-            case "outline": act = { model.showOutline(focusing: key) }
+            case "outline":
+                guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
+                act = { model.showOutline(focusing: key) }
             default: throw PanelRefusal.bad("view is search, board, problems or outline")
             }
         case "pane":
@@ -362,7 +368,7 @@ final class PanelAccess {
             }
             // It turns on the microphone.
             guard command != .listen else { throw PanelRefusal.bad("A session may not run !listen: it turns on the microphone") }
-            guard LauncherCommand.available.contains(command) else { throw PanelRefusal.problemsOff }
+            guard LauncherCommand.available.contains(command) else { throw command == .outline ? PanelRefusal.outlineOff : PanelRefusal.problemsOff }
             opensTab = command == .transcript
             act = { model.run(command, clearingQuery: false, focusing: key) }
         }

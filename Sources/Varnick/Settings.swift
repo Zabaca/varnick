@@ -90,6 +90,10 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     /// Registered system-wide, so never matched against keys pressed in the panel.
     var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening }
 
+    /// Not offered now: the Outline's shortcut while its switch is off. A hidden action keeps its binding but takes no key and counts in no
+    /// conflict, so binding its keys to another action leaves it as it was.
+    @MainActor var isHidden: Bool { self == .outline && !Settings.shared.outlineOn }
+
     var title: String {
         switch self {
         case .toggleLauncher: "Show / hide Varnick (anywhere)"
@@ -215,6 +219,10 @@ final class Settings: ObservableObject {
     /// sessions this Mac starts. Off by default, for every install. The work links already recorded are kept either way.
     @Published var problemsBoard: Bool { didSet { defaults.set(problemsBoard, forKey: Self.problemsBoardKey) } }
     static let problemsBoardKey = "problemsBoard"
+    /// Experimental (Settings › Experimental): the Outline, its shortcut and `!outline` (`!wf`), and Panel access's Outline tools. Off by
+    /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
+    @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineOnKey) } }
+    static let outlineOnKey = "outlineOn"
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
@@ -378,6 +386,7 @@ final class Settings: ObservableObject {
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
+        outlineOn = defaults.bool(forKey: Self.outlineOnKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
@@ -527,7 +536,7 @@ final class Settings: ObservableObject {
     func set(_ action: ShortcutAction, _ combo: KeyCombo?) {
         var next = overrides
         if let combo {
-            for other in ShortcutAction.allCases where other != action && self.combo(other) == combo {
+            for other in ShortcutAction.allCases where other != action && !other.isHidden && self.combo(other) == combo {
                 next[other] = .some(nil)
             }
         }
@@ -547,7 +556,7 @@ final class Settings: ObservableObject {
 
     /// The shortcut a key would run, as the panel's key monitor matches it (`keys` asks this before it presses one).
     func action(for pressed: KeyCombo) -> ShortcutAction? {
-        let local = ShortcutAction.allCases.filter { !$0.isGlobal }
+        let local = ShortcutAction.allCases.filter { !$0.isGlobal && !$0.isHidden }
         if let hit = local.first(where: { combo($0) == pressed }) { return hit }
         if pressed.flags.contains(.shift), Int(pressed.keyCode) == kVK_ANSI_Equal {
             let unshifted = KeyCombo(keyCode: kVK_ANSI_Equal, pressed.flags.subtracting(.shift))
@@ -588,6 +597,8 @@ struct SettingsView: View {
     @ObservedObject var embeddingServer: ModelServerState
     @ObservedObject var textGenerationServer: ModelServerState
     @ObservedObject var claudeCode: ClaudeCodeState
+    /// The Resources tab's model (`LauncherModel.settingsResources`).
+    @ObservedObject var resources: Resources
     let close: () -> Void
     /// Opens the Restart Varnick card (`LauncherModel.askRestart`): a restart without a build.
     let askRestart: () -> Void
@@ -619,335 +630,358 @@ struct SettingsView: View {
             HStack(spacing: 0) {
                 sidebar
                 Theme.hairline.frame(width: 1)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(section.title)
-                            .font(.system(size: 20, weight: .semibold))
-                            .padding(.horizontal, 14)
-                            .padding(.top, 14)
-                            .padding(.bottom, 6)
-                        switch section {
-                        case .claude:
-                            SettingRow(title: "Default folder", detail: "Where new sessions start when no #project is picked. Resumed sessions keep their own folder.") {
-                                Text(folderLabel)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(section.title)
+                                .font(.system(size: 20, weight: .semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.top, 14)
+                                .padding(.bottom, 6)
+                            switch section {
+                            case .claude:
+                                SettingRow(title: "Default folder", detail: "Where new sessions start when no #project is picked. Resumed sessions keep their own folder.") {
+                                    Text(folderLabel)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(settings.claudeDirectory.isEmpty ? .secondary : .primary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                    Button("Choose…") {
+                                        if let path = pickFolders(multiple: false, from: LauncherModel.claudeDirectory).first {
+                                            settings.claudeDirectory = path
+                                        }
+                                    }
+                                    if !settings.claudeDirectory.isEmpty {
+                                        Button("Default") { settings.claudeDirectory = "" }
+                                    }
+                            }
+                            SettingRow(title: "Project folders", detail: "Searched for git repos to start in with #name.") {
+                                Text(settings.projectFolders.joined(separator: ", "))
                                     .font(.system(size: 12, design: .monospaced))
-                                    .foregroundStyle(settings.claudeDirectory.isEmpty ? .secondary : .primary)
                                     .lineLimit(1).truncationMode(.middle)
                                 Button("Choose…") {
-                                    if let path = pickFolders(multiple: false, from: LauncherModel.claudeDirectory).first {
-                                        settings.claudeDirectory = path
+                                    let folders = pickFolders(multiple: true, from: settings.projectFolders.first ?? "~")
+                                    if !folders.isEmpty {
+                                        settings.projectFolders = folders.map { ($0 as NSString).abbreviatingWithTildeInPath }
                                     }
                                 }
-                                if !settings.claudeDirectory.isEmpty {
-                                    Button("Default") { settings.claudeDirectory = "" }
-                                }
-                        }
-                        SettingRow(title: "Project folders", detail: "Searched for git repos to start in with #name.") {
-                            Text(settings.projectFolders.joined(separator: ", "))
-                                .font(.system(size: 12, design: .monospaced))
-                                .lineLimit(1).truncationMode(.middle)
-                            Button("Choose…") {
-                                let folders = pickFolders(multiple: true, from: settings.projectFolders.first ?? "~")
-                                if !folders.isEmpty {
-                                    settings.projectFolders = folders.map { ($0 as NSString).abbreviatingWithTildeInPath }
+                                if settings.projectFolders != Settings.defaultProjectFolders {
+                                    Button("Default") { settings.projectFolders = Settings.defaultProjectFolders }
                                 }
                             }
-                            if settings.projectFolders != Settings.defaultProjectFolders {
-                                Button("Default") { settings.projectFolders = Settings.defaultProjectFolders }
+                            SettingRow(title: "Skip permissions",
+                                       detail: "Start sessions with --dangerously-skip-permissions: Claude runs tools without asking.") {
+                                Toggle("", isOn: $settings.skipPermissions).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
-                        }
-                        SettingRow(title: "Skip permissions",
-                                   detail: "Start sessions with --dangerously-skip-permissions: Claude runs tools without asking.") {
-                            Toggle("", isOn: $settings.skipPermissions).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
-                        SettingRow(title: "Screen access",
-                                   detail: "Sessions started or restarted while this is on get tools to look at a window, point at things with the arrow, click, type, drag and move or resize windows, on this Mac's screen. What they are shown (a window's title, its controls' names and visible text, which control has focus, and short text read from a picture of it) goes to Anthropic with the session. So does a picture of the window when they ask for one: it shows everything on the window, including what you typed, with password fields Varnick can see painted black. A picture of the screen, which they can also ask for, shows everything on every display or the one asked for: Varnick's own window and other sessions, what you typed, and password fields, none of it blacked out. Nothing asks before an action: the arrow shows on the target for a second first. Nothing is typed into a password field Varnick can see. Every pane already has Varnick's permissions: see SECURITY.md.") {
-                            ScreenPermissionsView(askRestart: askRestart)
-                            Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
-                        SettingRow(title: "Panel access",
-                                   detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. And they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. And they can press keys in the panel, as your own keys go, while it is open and you are not typing in it (never the keys that end, mark done or restart a session, start one, quit or paste). It works through Varnick itself and needs no permission.") {
-                            Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
-                        SettingRow(title: "Keep sessions running",
-                                   detail: "Claude and terminal panes keep running when Varnick restarts, quits or crashes, and reconnect when it is back. Closing a pane ends it.") {
-                            if !Zmx.isAvailable {
-                                Text("Needs zmx: build with make").font(.system(size: 12)).foregroundStyle(.orange)
-                            }
-                            Toggle("", isOn: $settings.keepSessionsRunning).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                .disabled(!Zmx.isAvailable)
-                        }
-                        if ResourceFolder.current.inBundle { OpenAtLoginRow() }
-                        SettingRow(title: "Text size", detail: "Terminal font size in points.") {
-                            Button { settings.adjustFont(-0.5) } label: { Image(systemName: "minus") }
-                            Text(String(format: "%.1f", settings.fontSize))
-                                .font(.system(size: 12).monospacedDigit())
-                                .frame(width: 34)
-                            Button { settings.adjustFont(0.5) } label: { Image(systemName: "plus") }
-                            if settings.fontSize != Settings.defaultFontSize {
-                                Button("Default") { settings.fontSize = Settings.defaultFontSize }
-                            }
-                        }
-                        SettingRow(title: "Tabs that don't fit",
-                                   detail: "When more tabs are open than fit across the top. Shrink narrows them together, down to 140 points; Fixed width makes every tab 180 points; Wrap lets them flow onto up to three rows. The rest go behind a +N chip that lists them.") {
-                            Picker("", selection: $settings.tabOverflow) {
-                                ForEach(TabOverflow.allCases) { Text($0.title).tag($0) }
-                            }
-                            .labelsHidden().pickerStyle(.segmented).frame(width: 260)
-                        }
-                        case .apps:
-                        AppsSettingsView(openAppFolders: openAppFolders)
-                        case .search:
-                        SettingRow(title: "Semantic search",
-                                   detail: "Also finds pages and sessions by meaning, not only matching words. Runs on \(embeddingsPlace).") {
-                            if settings.semanticSearch, let need = embedderNeed {
-                                modelsLink(need)
-                            }
-                            Toggle("", isOn: $settings.semanticSearch).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
-                        SettingRow(title: "Relevance filter",
-                                   detail: "On a ? search, after you pause typing, moves the results that match what you meant to the top. Runs on \(settings.relevanceFilter.place).") {
-                            if settings.relevanceFilterOn, let need = relevanceNeed {
-                                modelsLink(need)
-                            }
-                            Toggle("", isOn: $settings.relevanceFilterOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
-                        case .listening:
-                        SettingRow(title: "Hey Varnick",
-                                   detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. Varnick answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads go to Anthropic to write the answer. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
-                            if Listener.shared.state.isUnavailable {
-                                Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
-                            } else if let need = textGenerationNeed {
-                                modelsLink(need)
-                            } else if textGenerationFallsBack {
-                                modelsLink("Using this Mac's model")
-                            }
-                            Toggle("", isOn: $settings.heyVarnick).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                .disabled(!settings.heyVarnick && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
-                        }
-                        SettingRow(title: "Save audio",
-                                   detail: "While Listening is on, saves what the microphone and the Mac's audio hear, other people on calls included, as audio files on this Mac only, so you can test voice recognition on real calls. Each time Listening starts (and after a change of microphone or output) it writes two files, one for the mic and one for the Mac's audio, into \(SavedAudio.displayPath)/<day>/, starting new ones every 15 minutes. Nothing is sent anywhere, and nothing is deleted automatically: remove the files yourself. Turning it on or off takes effect the next time Listening starts or restarts.") {
-                            Toggle("", isOn: $settings.saveAudio).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
-                        SettingRow(title: "Point at the screen",
-                                   detail: "Ask \"Hey Varnick, where's the Allow button\" and Varnick draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Varnick can't place. With Varnick's panel open, it is read too, so its session, project, Mac and page names go. A rebuild may need both permissions again. Every session and shell in Varnick's panes gets them too, kept running in zmx or not: see SECURITY.md.") {
-                            // Above the permissions in one column, at its natural width: beside them the note would get no width.
-                            VStack(alignment: .trailing, spacing: 6) {
-                                if !settings.heyVarnick {
-                                    Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                                } else if !screenGateOpen {
-                                    Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
-                                        .buttonStyle(.link)
-                                        .font(.system(size: 12))
-                                }
+                            SettingRow(title: "Screen access",
+                                       detail: "Sessions started or restarted while this is on get tools to look at a window, point at things with the arrow, click, type, drag and move or resize windows, on this Mac's screen. What they are shown (a window's title, its controls' names and visible text, which control has focus, and short text read from a picture of it) goes to Anthropic with the session. So does a picture of the window when they ask for one: it shows everything on the window, including what you typed, with password fields Varnick can see painted black. A picture of the screen, which they can also ask for, shows everything on every display or the one asked for: Varnick's own window and other sessions, what you typed, and password fields, none of it blacked out. Nothing asks before an action: the arrow shows on the target for a second first. Nothing is typed into a password field Varnick can see. Every pane already has Varnick's permissions: see SECURITY.md.") {
                                 ScreenPermissionsView(askRestart: askRestart)
+                                Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
-                            .fixedSize()
-                            Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !screenGateOpen))
-                        }
-                        SettingRow(title: "Voice",
-                                   detail: "What Varnick speaks in. An ElevenLabs voice sends every line Varnick speaks to ElevenLabs, answers included, which can repeat words of your request and name your pages, sessions and folders; the voices installed on this Mac send nothing.") {
-                            VStack(alignment: .trailing, spacing: 4) {
-                                if !settings.elevenLabsKeyInKeychain {
-                                    Button("ElevenLabs voices: add a key in Settings › Models") { sectionID = SettingsSection.models.rawValue }
-                                        .buttonStyle(.link)
-                                        .font(.system(size: 12))
+                            SettingRow(title: "Panel access",
+                                       detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. While the Outline is on (Settings › Experimental), they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. And they can press keys in the panel, as your own keys go, while it is open and you are not typing in it (never the keys that end, mark done or restart a session, start one, quit or paste). It works through Varnick itself and needs no permission.") {
+                                Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Keep sessions running",
+                                       detail: "Claude and terminal panes keep running when Varnick restarts, quits or crashes, and reconnect when it is back. Closing a pane ends it.") {
+                                if !Zmx.isAvailable {
+                                    Text("Needs zmx: build with make").font(.system(size: 12)).foregroundStyle(.orange)
                                 }
-                                VoicePicker(settings: settings)
-                                if let note = settings.elevenLabsNote {
-                                    Text(note).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
-                                }
+                                Toggle("", isOn: $settings.keepSessionsRunning).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .disabled(!Zmx.isAvailable)
                             }
-                        }
-                        // With no key the installed voice is the main voice, and the Voice row above is its picker.
-                        if settings.speaksInElevenLabs {
-                            SettingRow(title: "Fallback voice", detail: "Speaks on this Mac when ElevenLabs fails or is slow.") {
-                                InstalledVoicePicker(settings: settings)
-                            }
-                        }
-                        case .peers:
-                        PeersSettingsView()
-                        case .models:
-                        SettingRow(title: "Search embeddings",
-                                   detail: "Qwen3-Embedding 0.6B. Semantic search uses it to find pages and sessions by meaning. It is the only choice: another model would mean embedding the whole archive again.") {
-                            Picker("", selection: $settings.searchEmbeddingsRunOn) {
-                                ForEach(ModelRunOn.allCases) { Text($0.title).tag($0) }
-                            }
-                            .labelsHidden().pickerStyle(.segmented).frame(width: 240)
-                        }
-                        switch settings.searchEmbeddingsRunOn {
-                        case .server:
-                            ServerSettingRow(
-                                detail: "Sends your searches, the words of what you ask out loud with Hey Varnick, the prompts you type in the panel, and the text of your pages and Claude sessions (titles, sites, descriptions, search terms and prompts, with Claude's last reply to each, your paired Macs' too) to \(ModelServer.name(of: settings.embeddingServerAddress) ?? "the server below"), over your tailnet.",
-                                addressPlaceholder: "http://linux-box:11434", address: $settings.embeddingServerAddress,
-                                model: $settings.embeddingServerModel, server: embeddingServer)
-                        case .local:
-                        SettingRow(title: "On this Mac",
-                                   detail: "8-bit, runs on this Mac after a one-time \(Embedder.downloadSize) download.") {
-                            switch embedder.state {
-                            case .unavailable:
-                                Text("Needs mlx.metallib: build with make").font(.system(size: 12)).foregroundStyle(.orange)
-                            case .missing:
-                                Button("Download") { Task { await embedder.download() } }
-                            case .downloading(let fraction):
-                                ProgressView(value: fraction).frame(width: 120)
-                                Text("\(Int(fraction * 100))%")
+                            if ResourceFolder.current.inBundle { OpenAtLoginRow() }
+                            SettingRow(title: "Text size", detail: "Terminal font size in points.") {
+                                Button { settings.adjustFont(-0.5) } label: { Image(systemName: "minus") }
+                                Text(String(format: "%.1f", settings.fontSize))
                                     .font(.system(size: 12).monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 34, alignment: .trailing)
-                            case .ready:
-                                Text("Installed").font(.system(size: 12)).foregroundStyle(.secondary)
-                            case .failed(let message):
-                                Text(message).font(.system(size: 12)).foregroundStyle(.orange)
-                                    .lineLimit(1).truncationMode(.tail)
-                                Button("Retry") { Task { await embedder.download() } }
-                            }
-                        }
-                        }
-                        SettingRow(title: "Relevance filter",
-                                   detail: "Judges which of the top 20 results of a ? search, or of a request to Hey Varnick, match what it is after.") {
-                            Picker("", selection: $settings.relevanceFilter) {
-                                ForEach(RelevanceBackend.allCases) { Text($0.title).tag($0) }
-                            }
-                            .labelsHidden().pickerStyle(.segmented).frame(width: 240)
-                        }
-                        switch settings.relevanceFilter {
-                        case .typesafe:
-                            SettingRow(title: "TypeSafe",
-                                       detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe. A request to Hey Varnick sends the words you say after \"Hey Varnick\" to choose where to look, and then its search words with the top 20 pages the same way. With Point at the screen on, a request about the screen sends the window's title and its controls' names, kinds and nearby text instead, and after a miss the window's short lines of text read from a picture of it. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe.") {
-                                if settings.typesafeKeyInKeychain {
-                                    Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
-                                } else if settings.typesafeKey != nil {
-                                    envKeyNote
-                                } else {
-                                    Text("Needs a key").font(.system(size: 12)).foregroundStyle(.orange)
+                                    .frame(width: 34)
+                                Button { settings.adjustFont(0.5) } label: { Image(systemName: "plus") }
+                                if settings.fontSize != Settings.defaultFontSize {
+                                    Button("Default") { settings.fontSize = Settings.defaultFontSize }
                                 }
                             }
-                        case .local:
+                            SettingRow(title: "Tabs that don't fit",
+                                       detail: "When more tabs are open than fit across the top. Shrink narrows them together, down to 140 points; Fixed width makes every tab 180 points; Wrap lets them flow onto up to three rows. The rest go behind a +N chip that lists them.") {
+                                Picker("", selection: $settings.tabOverflow) {
+                                    ForEach(TabOverflow.allCases) { Text($0.title).tag($0) }
+                                }
+                                .labelsHidden().pickerStyle(.segmented).frame(width: 260)
+                            }
+                            case .apps:
+                            AppsSettingsView(openAppFolders: openAppFolders)
+                            case .search:
+                            SettingRow(title: "Semantic search",
+                                       detail: "Also finds pages and sessions by meaning, not only matching words. Runs on \(embeddingsPlace).") {
+                                if settings.semanticSearch, let need = embedderNeed {
+                                    modelsLink(need)
+                                }
+                                Toggle("", isOn: $settings.semanticSearch).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Relevance filter",
+                                       detail: "On a ? search, after you pause typing, moves the results that match what you meant to the top. Runs on \(settings.relevanceFilter.place).") {
+                                if settings.relevanceFilterOn, let need = relevanceNeed {
+                                    modelsLink(need)
+                                }
+                                Toggle("", isOn: $settings.relevanceFilterOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            case .listening:
+                            SettingRow(title: "Hey Varnick",
+                                       detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. Varnick answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads go to Anthropic to write the answer. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
+                                if Listener.shared.state.isUnavailable {
+                                    Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
+                                } else if let need = textGenerationNeed {
+                                    modelsLink(need)
+                                } else if textGenerationFallsBack {
+                                    modelsLink("Using this Mac's model")
+                                }
+                                Toggle("", isOn: $settings.heyVarnick).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .disabled(!settings.heyVarnick && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
+                            }
+                            SettingRow(title: "Save audio",
+                                       detail: "While Listening is on, saves what the microphone and the Mac's audio hear, other people on calls included, as audio files on this Mac only, so you can test voice recognition on real calls. Each time Listening starts (and after a change of microphone or output) it writes two files, one for the mic and one for the Mac's audio, into \(SavedAudio.displayPath)/<day>/, starting new ones every 15 minutes. Nothing is sent anywhere, and nothing is deleted automatically: remove the files yourself. Turning it on or off takes effect the next time Listening starts or restarts.") {
+                                Toggle("", isOn: $settings.saveAudio).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Point at the screen",
+                                       detail: "Ask \"Hey Varnick, where's the Allow button\" and Varnick draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Varnick can't place. With Varnick's panel open, it is read too, so its session, project, Mac and page names go. A rebuild may need both permissions again. Every session and shell in Varnick's panes gets them too, kept running in zmx or not: see SECURITY.md.") {
+                                // Above the permissions in one column, at its natural width: beside them the note would get no width.
+                                VStack(alignment: .trailing, spacing: 6) {
+                                    if !settings.heyVarnick {
+                                        Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
+                                    } else if !screenGateOpen {
+                                        Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
+                                            .buttonStyle(.link)
+                                            .font(.system(size: 12))
+                                    }
+                                    ScreenPermissionsView(askRestart: askRestart)
+                                }
+                                .fixedSize()
+                                Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !screenGateOpen))
+                            }
+                            SettingRow(title: "Voice",
+                                       detail: "What Varnick speaks in. An ElevenLabs voice sends every line Varnick speaks to ElevenLabs, answers included, which can repeat words of your request and name your pages, sessions and folders; the voices installed on this Mac send nothing.") {
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    if !settings.elevenLabsKeyInKeychain {
+                                        Button("ElevenLabs voices: add a key in Settings › Models") { sectionID = SettingsSection.models.rawValue }
+                                            .buttonStyle(.link)
+                                            .font(.system(size: 12))
+                                    }
+                                    VoicePicker(settings: settings)
+                                    if let note = settings.elevenLabsNote {
+                                        Text(note).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
+                                    }
+                                }
+                            }
+                            // With no key the installed voice is the main voice, and the Voice row above is its picker.
+                            if settings.speaksInElevenLabs {
+                                SettingRow(title: "Fallback voice", detail: "Speaks on this Mac when ElevenLabs fails or is slow.") {
+                                    InstalledVoicePicker(settings: settings)
+                                }
+                            }
+                            case .peers:
+                            PeersSettingsView()
+                            case .models:
+                            SettingRow(title: "Search embeddings",
+                                       detail: "Qwen3-Embedding 0.6B. Semantic search uses it to find pages and sessions by meaning. It is the only choice: another model would mean embedding the whole archive again.") {
+                                Picker("", selection: $settings.searchEmbeddingsRunOn) {
+                                    ForEach(ModelRunOn.allCases) { Text($0.title).tag($0) }
+                                }
+                                .labelsHidden().pickerStyle(.segmented).frame(width: 240)
+                            }
+                            switch settings.searchEmbeddingsRunOn {
+                            case .server:
+                                ServerSettingRow(
+                                    detail: "Sends your searches, the words of what you ask out loud with Hey Varnick, the prompts you type in the panel, and the text of your pages and Claude sessions (titles, sites, descriptions, search terms and prompts, with Claude's last reply to each, your paired Macs' too) to \(ModelServer.name(of: settings.embeddingServerAddress) ?? "the server below"), over your tailnet.",
+                                    addressPlaceholder: "http://linux-box:11434", address: $settings.embeddingServerAddress,
+                                    model: $settings.embeddingServerModel, server: embeddingServer)
+                            case .local:
                             SettingRow(title: "On this Mac",
-                                       detail: "A model trained on your own history judges the results. Nothing is sent anywhere.") {
-                                if let error = localReranker.importError {
-                                    Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
-                                }
-                                switch localReranker.state {
+                                       detail: "8-bit, runs on this Mac after a one-time \(Embedder.downloadSize) download.") {
+                                switch embedder.state {
                                 case .unavailable:
                                     Text("Needs mlx.metallib: build with make").font(.system(size: 12)).foregroundStyle(.orange)
                                 case .missing:
-                                    chooseCheckpointButton
-                                case .importing:
-                                    ProgressView().controlSize(.small)
-                                    Text("Importing…").font(.system(size: 12)).foregroundStyle(.secondary)
+                                    Button("Download") { Task { await embedder.download() } }
+                                case .downloading(let fraction):
+                                    ProgressView(value: fraction).frame(width: 120)
+                                    Text("\(Int(fraction * 100))%")
+                                        .font(.system(size: 12).monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 34, alignment: .trailing)
                                 case .ready:
                                     Text("Installed").font(.system(size: 12)).foregroundStyle(.secondary)
-                                    chooseCheckpointButton
                                 case .failed(let message):
                                     Text(message).font(.system(size: 12)).foregroundStyle(.orange)
                                         .lineLimit(1).truncationMode(.tail)
-                                    Button("Retry") { Task { await localReranker.retry() } }
-                                    chooseCheckpointButton
+                                    Button("Retry") { Task { await embedder.download() } }
                                 }
                             }
-                        }
-                        SettingRow(title: "Text generation",
-                                   detail: "Writes short text for Varnick's features, such as Hey Varnick's answers.") {
-                            Picker("", selection: $settings.textGenerationRunOn) {
-                                ForEach(TextRunOn.allCases) { Text($0.title).tag($0) }
                             }
-                            .labelsHidden().pickerStyle(.segmented).frame(width: 330)
-                        }
-                        switch settings.textGenerationRunOn {
-                        case .claude:
-                            ClaudeCodeSettingRow(
-                                detail: "Runs your own Claude Code on your Claude subscription, with Claude Haiku: no tools, none of your settings, hooks, plugins, CLAUDE.md or memory, and no transcript saved. With Hey Varnick on, Anthropic gets what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too). Each answer counts toward your plan's usage limits.",
-                                state: claudeCode)
-                            gemmaRow(title: "Fallback on this Mac",
-                                     detail: "Writes the text when Claude Code can't: claude missing or logged out, offline, at your plan's limit, or too slow. Gemma 4 E2B, 4-bit, on this Mac; nothing is sent anywhere. One-time \(TextGenerator.downloadSize) download, about 2.5 GB of memory while in use, freed after 10 idle minutes. Optional.")
-                        case .server:
-                            ServerSettingRow(
-                                detail: "With Hey Varnick on, \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below") gets, over your tailnet, what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too).",
-                                addressPlaceholder: "http://linux-box:8080", address: $settings.textGenerationServerAddress,
-                                model: $settings.textGenerationServerModel, server: textGenerationServer)
-                        case .local:
-                            gemmaRow(title: "On this Mac",
-                                     detail: "Gemma 4 E2B, 4-bit. Runs on this Mac; nothing is sent anywhere. One-time \(TextGenerator.downloadSize) download. Uses about 2.5 GB of memory while in use, and frees it after 10 idle minutes.")
-                        }
-                        SectionLabel(text: "Keys")
-                        SettingRow(title: "TypeSafe",
-                                   detail: "Used by the relevance filter when it runs on TypeSafe, for searches and for Hey Varnick, which also uses it to choose where to look. Kept in the macOS Keychain.") {
-                            if let error = settings.typesafeKeyError {
-                                Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
+                            SettingRow(title: "Relevance filter",
+                                       detail: "Judges which of the top 20 results of a ? search, or of a request to Hey Varnick, match what it is after.") {
+                                Picker("", selection: $settings.relevanceFilter) {
+                                    ForEach(RelevanceBackend.allCases) { Text($0.title).tag($0) }
+                                }
+                                .labelsHidden().pickerStyle(.segmented).frame(width: 240)
                             }
-                            if settings.typesafeKeyInKeychain {
-                                Button("Remove key") { settings.setTypesafeKey("") }
-                            } else {
-                                if settings.typesafeKey != nil { envKeyNote }
-                                SecureField("TypeSafe API key", text: $typesafeKeyDraft)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 170)
-                                    .onSubmit { saveTypesafeKey() }
-                                Button("Save") { saveTypesafeKey() }
-                                    .disabled(typesafeKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                            switch settings.relevanceFilter {
+                            case .typesafe:
+                                SettingRow(title: "TypeSafe",
+                                           detail: "Sends your search and the titles, sites and page descriptions (not full addresses) of the top 20 results to TypeSafe. A request to Hey Varnick sends the words you say after \"Hey Varnick\" to choose where to look, and then its search words with the top 20 pages the same way. With Point at the screen on, a request about the screen sends the window's title and its controls' names, kinds and nearby text instead, and after a miss the window's short lines of text read from a picture of it. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe.") {
+                                    if settings.typesafeKeyInKeychain {
+                                        Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
+                                    } else if settings.typesafeKey != nil {
+                                        envKeyNote
+                                    } else {
+                                        Text("Needs a key").font(.system(size: 12)).foregroundStyle(.orange)
+                                    }
+                                }
+                            case .local:
+                                SettingRow(title: "On this Mac",
+                                           detail: "A model trained on your own history judges the results. Nothing is sent anywhere.") {
+                                    if let error = localReranker.importError {
+                                        Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
+                                    }
+                                    switch localReranker.state {
+                                    case .unavailable:
+                                        Text("Needs mlx.metallib: build with make").font(.system(size: 12)).foregroundStyle(.orange)
+                                    case .missing:
+                                        chooseCheckpointButton
+                                    case .importing:
+                                        ProgressView().controlSize(.small)
+                                        Text("Importing…").font(.system(size: 12)).foregroundStyle(.secondary)
+                                    case .ready:
+                                        Text("Installed").font(.system(size: 12)).foregroundStyle(.secondary)
+                                        chooseCheckpointButton
+                                    case .failed(let message):
+                                        Text(message).font(.system(size: 12)).foregroundStyle(.orange)
+                                            .lineLimit(1).truncationMode(.tail)
+                                        Button("Retry") { Task { await localReranker.retry() } }
+                                        chooseCheckpointButton
+                                    }
+                                }
+                            }
+                            SettingRow(title: "Text generation",
+                                       detail: "Writes short text for Varnick's features, such as Hey Varnick's answers.") {
+                                Picker("", selection: $settings.textGenerationRunOn) {
+                                    ForEach(TextRunOn.allCases) { Text($0.title).tag($0) }
+                                }
+                                .labelsHidden().pickerStyle(.segmented).frame(width: 330)
+                            }
+                            switch settings.textGenerationRunOn {
+                            case .claude:
+                                ClaudeCodeSettingRow(
+                                    detail: "Runs your own Claude Code on your Claude subscription, with Claude Haiku: no tools, none of your settings, hooks, plugins, CLAUDE.md or memory, and no transcript saved. With Hey Varnick on, Anthropic gets what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too). Each answer counts toward your plan's usage limits.",
+                                    state: claudeCode)
+                                gemmaRow(title: "Fallback on this Mac",
+                                         detail: "Writes the text when Claude Code can't: claude missing or logged out, offline, at your plan's limit, or too slow. Gemma 4 E2B, 4-bit, on this Mac; nothing is sent anywhere. One-time \(TextGenerator.downloadSize) download, about 2.5 GB of memory while in use, freed after 10 idle minutes. Optional.")
+                            case .server:
+                                ServerSettingRow(
+                                    detail: "With Hey Varnick on, \(ModelServer.name(of: settings.textGenerationServerAddress) ?? "the server below") gets, over your tailnet, what you ask out loud and the kind, title, site or folder, date and description of the few results it reads (for a Claude session, its prompts, your paired Macs' too).",
+                                    addressPlaceholder: "http://linux-box:8080", address: $settings.textGenerationServerAddress,
+                                    model: $settings.textGenerationServerModel, server: textGenerationServer)
+                            case .local:
+                                gemmaRow(title: "On this Mac",
+                                         detail: "Gemma 4 E2B, 4-bit. Runs on this Mac; nothing is sent anywhere. One-time \(TextGenerator.downloadSize) download. Uses about 2.5 GB of memory while in use, and frees it after 10 idle minutes.")
+                            }
+                            SectionLabel(text: "Keys")
+                            SettingRow(title: "TypeSafe",
+                                       detail: "Used by the relevance filter when it runs on TypeSafe, for searches and for Hey Varnick, which also uses it to choose where to look. Kept in the macOS Keychain.") {
+                                if let error = settings.typesafeKeyError {
+                                    Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
+                                }
+                                if settings.typesafeKeyInKeychain {
+                                    Button("Remove key") { settings.setTypesafeKey("") }
+                                } else {
+                                    if settings.typesafeKey != nil { envKeyNote }
+                                    SecureField("TypeSafe API key", text: $typesafeKeyDraft)
+                                        .textFieldStyle(.roundedBorder)
+                                        .frame(width: 170)
+                                        .onSubmit { saveTypesafeKey() }
+                                    Button("Save") { saveTypesafeKey() }
+                                        .disabled(typesafeKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                                }
+                            }
+                            SettingRow(title: "Model server",
+                                       detail: "Sent to a model server that asks for one, whichever role it serves. A headless host's embedding service doesn't.") {
+                                if let error = settings.modelServerKeyError {
+                                    Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
+                                }
+                                if settings.modelServerKeyInKeychain {
+                                    Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
+                                    Button("Remove key") { settings.setModelServerKey("") }
+                                } else {
+                                    SecureField("Model server key", text: $modelServerKeyDraft)
+                                        .textFieldStyle(.roundedBorder)
+                                        .frame(width: 170)
+                                        .onSubmit { saveModelServerKey() }
+                                    Button("Save") { saveModelServerKey() }
+                                        .disabled(modelServerKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                                }
+                            }
+                            SettingRow(title: "ElevenLabs",
+                                       detail: "Speaks Hey Varnick's answers in an ElevenLabs voice, chosen in Settings › Listening. The key needs the Text to Speech and Voices Read permissions. With a key saved, Varnick asks ElevenLabs for your voices (the request carries only the key). Kept in the macOS Keychain.") {
+                                if let error = settings.elevenLabsKeyError {
+                                    Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
+                                }
+                                if settings.elevenLabsKeyInKeychain {
+                                    Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
+                                    Button("Remove key") { settings.setElevenLabsKey("") }
+                                } else {
+                                    SecureField("ElevenLabs API key", text: $elevenLabsKeyDraft)
+                                        .textFieldStyle(.roundedBorder)
+                                        .frame(width: 170)
+                                        .onSubmit { saveElevenLabsKey() }
+                                    Button("Save") { saveElevenLabsKey() }
+                                        .disabled(elevenLabsKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                                }
+                            }
+                            case .shortcuts:
+                            ForEach(groups, id: \.self) { group in
+                                SectionLabel(text: group)
+                                ForEach(ShortcutAction.allCases.filter { $0.group == group && !$0.isHidden }) { action in
+                                    ShortcutRow(action: action, settings: settings)
+                                }
+                            }
+                            HStack {
+                                Text("Click a shortcut, then press the new keys. esc cancels, ⌫ clears.")
+                                    .font(.system(size: 11.5)).foregroundStyle(.tertiary)
+                                Spacer()
+                                Button("Restore default shortcuts") { settings.resetAllShortcuts() }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            case .resources:
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 14) {
+                                    KeyHint(label: "Select", keys: ["↑", "↓"])
+                                    ResourcesHints()
+                                }
+                                .font(.system(size: 11.5))
+                                .padding(.horizontal, 14)
+                                ResourcesTable(resources: resources, scrolls: false)
+                            }
+                            // It measures only while this tab shows (`Resources.settingsTab`).
+                            .onAppear { resources.settingsTab(shown: true) }
+                            .onDisappear { resources.settingsTab(shown: false) }
+                            case .experimental:
+                            SettingRow(title: "Problems board",
+                                       detail: "The Problems tab and work links, for projects that plan work in docs/problems. Experimental.") {
+                                Toggle("", isOn: $settings.problemsBoard).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Outline",
+                                       detail: "Your bullets, shown by \(settings.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac. Turning it off hides it, and Claude sessions' Outline tools stay listed but refuse; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
+                                Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
                             }
                         }
-                        SettingRow(title: "Model server",
-                                   detail: "Sent to a model server that asks for one, whichever role it serves. A headless host's embedding service doesn't.") {
-                            if let error = settings.modelServerKeyError {
-                                Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
-                            }
-                            if settings.modelServerKeyInKeychain {
-                                Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
-                                Button("Remove key") { settings.setModelServerKey("") }
-                            } else {
-                                SecureField("Model server key", text: $modelServerKeyDraft)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 170)
-                                    .onSubmit { saveModelServerKey() }
-                                Button("Save") { saveModelServerKey() }
-                                    .disabled(modelServerKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                            }
-                        }
-                        SettingRow(title: "ElevenLabs",
-                                   detail: "Speaks Hey Varnick's answers in an ElevenLabs voice, chosen in Settings › Listening. The key needs the Text to Speech and Voices Read permissions. With a key saved, Varnick asks ElevenLabs for your voices (the request carries only the key). Kept in the macOS Keychain.") {
-                            if let error = settings.elevenLabsKeyError {
-                                Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
-                            }
-                            if settings.elevenLabsKeyInKeychain {
-                                Text("Key saved").font(.system(size: 12)).foregroundStyle(.secondary)
-                                Button("Remove key") { settings.setElevenLabsKey("") }
-                            } else {
-                                SecureField("ElevenLabs API key", text: $elevenLabsKeyDraft)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 170)
-                                    .onSubmit { saveElevenLabsKey() }
-                                Button("Save") { saveElevenLabsKey() }
-                                    .disabled(elevenLabsKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                            }
-                        }
-                        case .shortcuts:
-                        ForEach(groups, id: \.self) { group in
-                            SectionLabel(text: group)
-                            ForEach(ShortcutAction.allCases.filter { $0.group == group }) { action in
-                                ShortcutRow(action: action, settings: settings)
-                            }
-                        }
-                        HStack {
-                            Text("Click a shortcut, then press the new keys. esc cancels, ⌫ clears.")
-                                .font(.system(size: 11.5)).foregroundStyle(.tertiary)
-                            Spacer()
-                            Button("Restore default shortcuts") { settings.resetAllShortcuts() }
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        case .experimental:
-                        SettingRow(title: "Problems board",
-                                   detail: "The Problems tab and work links, for projects that plan work in docs/problems. Experimental.") {
-                            Toggle("", isOn: $settings.problemsBoard).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
-                        }
+                        .padding(.horizontal, 6)
+                        .padding(.bottom, 6)
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 6)
+                    // Settings › Resources: the selected tab scrolls into view in this page's own scroll view.
+                    .onChange(of: resources.selection) { _, id in
+                        if let id { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id) } }
+                    }
                 }
             }
         }
@@ -1144,7 +1178,7 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, apps, search, listening, peers, models, shortcuts, experimental
+    case claude, apps, search, listening, peers, models, shortcuts, resources, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -1157,6 +1191,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .peers: "desktopcomputer"
         case .models: "cpu"
         case .shortcuts: "keyboard"
+        case .resources: "memorychip"
         case .experimental: "testtube.2"
         }
     }

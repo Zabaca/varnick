@@ -51,7 +51,7 @@ The panel's view of the **Tab**s with a Claude pane on this Mac and the tabs ope
 _Avoid_: Kanban (the command's name), dashboard; "card" alone, which is a pane's **Card**
 
 **Resources**:
-The panel's view of what Varnick's memory is made of, opened by ⌘⇧M or `!resources` (also `!memory`): the total and its process count, the same processes grouped by kind, the app's own memory split into on-device models and the rest, then the **Tab**s that run on this Mac biggest first, each opening into its **Pane**s and their processes and each with a Close that does what the tab's × does, and below them what Varnick runs that belongs to no tab, the tabs of other machines open here (where they run, with no figures from the host) and, greyed, Claude Code outside Varnick. Every figure is a footprint, the figure Activity Monitor's Memory column shows, and every process is counted once, by ancestry from the pane's zmx session, never by name. It reads the processes only while it shows.
+The panel's view of what Varnick's memory is made of, opened by ⌘⇧M or `!resources` (also `!memory`): the total and its process count, the same processes grouped by kind, the app's own memory split into on-device models and the rest, then the **Tab**s that run on this Mac biggest first, each opening into its **Pane**s and their processes and each with a Close that does what the tab's × does, and below them what Varnick runs that belongs to no tab, the tabs of other machines open here (where they run, with no figures from the host) and, greyed, Claude Code outside Varnick. Every figure is a footprint, the figure Activity Monitor's Memory column shows, and every process is counted once, by ancestry from the pane's zmx session, never by name. Settings › Resources shows the same table. It reads the processes only while it shows.
 _Avoid_: Memory view, task manager, process list, Activity Monitor
 
 **Pane**:
@@ -182,7 +182,7 @@ _Avoid_: Tag, assignment
 ### Outline
 
 **Outline**:
-The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic, and can edit it without asking). It replaces the panel's content as Settings and the **Session board** do.
+The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic, and can edit it without asking). It replaces the panel's content as Settings and the **Session board** do. It is behind a switch, off by default (Settings › Experimental); the switch never touches the file.
 _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 
 **Bullet**:

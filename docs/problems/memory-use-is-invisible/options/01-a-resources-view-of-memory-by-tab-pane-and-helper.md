@@ -179,3 +179,12 @@ The Mark tab done and Restart session keys are taken and do nothing, so no key r
   2. **Show Claude Code outside Varnick?** Yes: one greyed row with a count and a total, and no list, so the figures match Activity Monitor.
   3. **⌘⇧M and `!resources` (`!memory`)?** Yes. Both are free, and M is for memory.
   4. **Show other machines' tabs with "Runs on" and no figures from the host?** Yes. Their figures would need a protocol bump on both relays.
+
+## Added later (2026-10-13)
+
+The user asked: "For resources can that also be a tab in Settings." Settings gains a **Resources** tab that shows the same table. ⌘⇧M, `!resources` and `!memory` stay as they are.
+
+- It measures only while that tab shows, and stops when Settings closes, another tab is picked or the panel hides.
+- The view's keys work only while the tab shows, and none reaches the tab underneath. esc closes Settings.
+- Showing a tab, or a pane that must ask before it closes, brings the tab up and closes Settings.
+- ⌘⇧M while Settings shows closes Settings and opens the view, so the two are never on screen together.

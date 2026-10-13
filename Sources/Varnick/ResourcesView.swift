@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Resources (⌘⇧M, `!resources`): what Varnick's memory is made of, by tab, pane and helper, in place of the panel's content like the board.
-/// It reads only what `Resources` published; the rows keep their order while it shows.
+/// It reads only what `Resources` published; the rows keep their order while it shows. Settings › Resources shows `ResourcesTable` too.
 struct ResourcesView: View {
     @ObservedObject var resources: Resources
     let close: () -> Void
@@ -12,9 +12,7 @@ struct ResourcesView: View {
                 Image(systemName: "memorychip").foregroundStyle(.secondary)
                 Text("Resources").font(.system(size: 15, weight: .semibold))
                 Spacer()
-                KeyHint(label: "Open", keys: ["→"])
-                KeyHint(label: "Show", keys: ["↩"])
-                ShortcutHint(label: "Close tab", action: .endPane)
+                ResourcesHints()
                 Button(action: close) { KeyHint(label: "Back", keys: ["esc"]) }
                     .buttonStyle(.plain)
             }
@@ -24,14 +22,38 @@ struct ResourcesView: View {
             .background(WindowDragArea())
             Theme.hairline.frame(height: 1)
 
-            if let report = resources.report {
-                ResourcesBody(resources: resources, report: report, app: resources.app)
-            } else {
-                Text("Measuring…")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            ResourcesTable(resources: resources, scrolls: true)
+        }
+    }
+}
+
+/// The keys besides ↑, ↓ and esc, which the view's header and Settings show their own way.
+struct ResourcesHints: View {
+    var body: some View {
+        HStack(spacing: 14) {
+            KeyHint(label: "Open", keys: ["→"])
+            KeyHint(label: "Show", keys: ["↩"])
+            ShortcutHint(label: "Close tab", action: .endPane)
+        }
+    }
+}
+
+/// The report as a table, or "Measuring…" until the first reading is back. In Settings it sits in the page's own scroll view (`scrolls` false),
+/// whose reader brings the selected tab into view (`SettingsView`), since a reader inside the scroll view would not scroll it.
+struct ResourcesTable: View {
+    @ObservedObject var resources: Resources
+    let scrolls: Bool
+    /// The height of "Measuring…" in Settings, where nothing else gives the page a size yet.
+    private static let measuringHeight: CGFloat = 120
+
+    var body: some View {
+        if let report = resources.report {
+            ResourcesBody(resources: resources, report: report, app: resources.app, scrolls: scrolls)
+        } else {
+            Text("Measuring…")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: scrolls ? nil : Self.measuringHeight, maxHeight: scrolls ? .infinity : nil)
         }
     }
 }
@@ -40,49 +62,57 @@ private struct ResourcesBody: View {
     @ObservedObject var resources: Resources
     let report: ResourceReport
     let app: ResourceApp?
+    let scrolls: Bool
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    summary
-                    if let app { appSplit(app) }
-                    if !report.tabs.isEmpty { section("Tabs", count: report.tabs.count) { ForEach(report.tabs) { tab in TabBlock(resources: resources, tab: tab) } } }
-                    if !report.helpers.isEmpty {
-                        section("Not in a tab") {
-                            ForEach(report.helpers) { helper in
-                                FigureRow(title: helper.helper.title, detail: ResourceFigure.processes(helper.processes.count), figure: helper.total)
-                            }
-                        }
+        if scrolls {
+            ScrollViewReader { proxy in
+                ScrollView { content }
+                    .onChange(of: resources.selection) { _, id in
+                        if let id { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id) } }
                     }
-                    if !report.elsewhere.isEmpty {
-                        section("Tabs on other machines") {
-                            ForEach(report.elsewhere) { tab in
-                                FigureRow(title: tab.name, detail: "Runs on \(tab.host)", figure: tab.count > 0 ? tab.share : nil)
-                            }
-                        }
-                    }
-                    if report.outsideCount > 0 {
-                        Text("Claude Code: \(ResourceFigure.processes(report.outsideCount)) in other apps and terminals · \(ResourceFigure.text(report.outsideTotal))")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.secondary)
-                            .opacity(0.6)
-                            .padding(.horizontal, 10)
-                    }
-                    if !WebKitProcess.canTellResponsibility {
-                        Text("macOS's responsible-process call is missing here, so WebKit's shared processes and any page no pane names are not counted.")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 10)
+            }
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            summary
+            if let app { appSplit(app) }
+            if !report.tabs.isEmpty { section("Tabs", count: report.tabs.count) { ForEach(report.tabs) { tab in TabBlock(resources: resources, tab: tab) } } }
+            if !report.helpers.isEmpty {
+                section("Not in a tab") {
+                    ForEach(report.helpers) { helper in
+                        FigureRow(title: helper.helper.title, detail: ResourceFigure.processes(helper.processes.count), figure: helper.total)
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 12)
             }
-            .onChange(of: resources.selection) { _, id in
-                if let id { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id) } }
+            if !report.elsewhere.isEmpty {
+                section("Tabs on other machines") {
+                    ForEach(report.elsewhere) { tab in
+                        FigureRow(title: tab.name, detail: "Runs on \(tab.host)", figure: tab.count > 0 ? tab.share : nil)
+                    }
+                }
+            }
+            if report.outsideCount > 0 {
+                Text("Claude Code: \(ResourceFigure.processes(report.outsideCount)) in other apps and terminals · \(ResourceFigure.text(report.outsideTotal))")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .opacity(0.6)
+                    .padding(.horizontal, 10)
+            }
+            if !WebKitProcess.canTellResponsibility {
+                Text("macOS's responsible-process call is missing here, so WebKit's shared processes and any page no pane names are not counted.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 10)
             }
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var summary: some View {

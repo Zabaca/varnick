@@ -207,6 +207,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.model.showingOutline, !self.model.showingSettings, self.model.outline.key(event) { return nil }
             // And Resources: it too takes the End session key, so ⌘W closes the selected tab and never reaches the tab underneath.
             if self.model.showingResources, !self.model.showingSettings, self.model.resources.key(event) { return nil }
+            // Settings › Resources takes the same keys, but only while that tab shows: the tab underneath gets none of them.
+            if self.model.settingsResources.isShown, self.model.settingsResources.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
             return self.perform(action) ? nil : event
         }
@@ -295,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .previousProject: model.tabProjects.cycle(-1)
         case .nextProject: model.tabProjects.cycle(1)
         case .sessionBoard: model.toggleBoard()
-        case .outline: model.toggleOutline()
+        case .outline where Settings.shared.outlineOn: model.toggleOutline()
         case .resources: model.toggleResources()
         case .splitSideBySide where inSession: model.split(.sideBySide)
         case .splitStacked where inSession: model.split(.stacked)
