@@ -111,7 +111,7 @@ enum PanelMCP {
             + "opens a tab, or while a tab shows.",
         properties: [
             "view": ["type": "string", "enum": ["search", "board", "problems", "outline"],
-                     "description": "Show the search, the session board, the board's Problems tab (only while the Problems board switch is on) or the Outline (also !wf). Showing the Outline puts the caret in a bullet only if the panel already has the keyboard."],
+                     "description": "Show the search, the session board, the board's Problems tab (only while the Problems board switch is on) or the Outline (also !wf; only while the Outline switch is on). Showing the Outline puts the caret in a bullet only if the panel already has the keyboard."],
             "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused. A card's id from board_read shows its tab, with its most urgent session focused."],
             "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs, outline is also wf, resources is also memory). Not listen: it turns on the microphone."],
         ]))

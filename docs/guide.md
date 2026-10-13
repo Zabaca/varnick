@@ -57,7 +57,7 @@ To build it yourself instead, see [`building.md`](building.md).
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
-  Phone page and the Problems board (Experimental, below).
+  Phone page, the Problems board and the Outline (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
 A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
@@ -263,7 +263,7 @@ shows them, or with `tab: problems` the Problems tab's, while that switch is on.
 (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
 title and, for a terminal (a Claude session or a shell, this session's own included), the text its screen shows now,
 never its scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or
-a custom app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** `outline_read` gives
+a custom app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** `outline_read` (only while Settings › Experimental › Outline is on; both Outline tools are refused otherwise) gives
 your Outline's bullets: by default the tree from Home, or
 from a bullet, three levels down (`depth` 0 for all), with each bullet's id (`o1`, the same every time), text, whether it
 is done, collapsed or a mirror, its tags and its note, and which ones your view hides; with `as_shown`, the rows exactly
@@ -334,6 +334,11 @@ after that get none of those hooks; sessions already running keep the hooks they
 recorded are kept, so turning it on again shows them. Each Mac decides for the sessions it starts, whoever asks
 for them, and a headless host decides with `scripts/install-peer.sh <user@host> --problems` or `--no-problems` (a host
 that has neither runs without). `Varnick --problems` prints the board's columns whatever the switch says.
+
+**Outline** is your bullets, kept in a file on this Mac. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
+the panel's content. Off, which is how it starts, the shortcut and the command do nothing, Settings › Shortcuts does not list
+the Outline, and Claude sessions' Outline tools are refused. If it is showing when you turn it off, the panel goes back to
+what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
 
 ## TypeSafe
 

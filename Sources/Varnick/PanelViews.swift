@@ -304,7 +304,7 @@ struct PanePanelView: PanelAccessView {
 struct OutlinePanelView: PanelAccessView {
     static let name = "outline"
     static let readSpec = PanelToolSpec(
-        summary: "Reads the user's Outline (the bullets they keep on this Mac), whether or not it is showing. By default the tree from Home, "
+        summary: "Reads the user's Outline (the bullets they keep on this Mac), whether or not it is showing; refused while the Outline switch (Settings › Experimental) is off. By default the tree from Home, "
             + "or from the bullet `at`, `depth` levels down (3 by default, 0 for all), the user's zoom and filter not applied: one line per "
             + "bullet, indented by depth, with its id (o1…), its text in quotes, [done], why the user's view hides it (hidden:), (collapsed) "
             + "and how many are nested past the depth, (mirror, N places) for a bullet placed in several spots, its tags, and its note's "
@@ -365,6 +365,8 @@ struct OutlinePanelView: PanelAccessView {
 
     /// The Outline with its file read, or why a session can't use it now (the same words for a read and an edit).
     @MainActor fileprivate func ready() async throws -> Outline {
+        // Before the file is touched: with the switch off a session reads and edits nothing, and nothing is loaded for it.
+        guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
         let outline = model.outline
         await outline.loadForSession()
         // The load may have waited: the switch can have been turned off meanwhile.

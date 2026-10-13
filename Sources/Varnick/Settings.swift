@@ -215,6 +215,10 @@ final class Settings: ObservableObject {
     /// sessions this Mac starts. Off by default, for every install. The work links already recorded are kept either way.
     @Published var problemsBoard: Bool { didSet { defaults.set(problemsBoard, forKey: Self.problemsBoardKey) } }
     static let problemsBoardKey = "problemsBoard"
+    /// Experimental (Settings › Experimental): the Outline, its shortcut and `!outline` (`!wf`), and Panel access's Outline tools. Off by
+    /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
+    @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineKey) } }
+    static let outlineKey = "outlineOn"
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
@@ -378,6 +382,7 @@ final class Settings: ObservableObject {
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
+        outlineOn = defaults.bool(forKey: Self.outlineKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
@@ -668,7 +673,7 @@ struct SettingsView: View {
                             Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Panel access",
-                                   detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. And they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. And they can press keys in the panel, as your own keys go, while it is open and you are not typing in it (never the keys that end, mark done or restart a session, start one, quit or paste). It works through Varnick itself and needs no permission.") {
+                                   detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. While the Outline is on (Settings › Experimental), they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. And they can press keys in the panel, as your own keys go, while it is open and you are not typing in it (never the keys that end, mark done or restart a session, start one, quit or paste). It works through Varnick itself and needs no permission.") {
                             Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         SettingRow(title: "Keep sessions running",
@@ -929,7 +934,7 @@ struct SettingsView: View {
                         case .shortcuts:
                         ForEach(groups, id: \.self) { group in
                             SectionLabel(text: group)
-                            ForEach(ShortcutAction.allCases.filter { $0.group == group }) { action in
+                            ForEach(ShortcutAction.allCases.filter { $0.group == group && ($0 != .outline || settings.outlineOn) }) { action in
                                 ShortcutRow(action: action, settings: settings)
                             }
                         }
@@ -958,6 +963,10 @@ struct SettingsView: View {
                         SettingRow(title: "Problems board",
                                    detail: "The Problems tab and work links, for projects that plan work in docs/problems. Experimental.") {
                             Toggle("", isOn: $settings.problemsBoard).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        }
+                        SettingRow(title: "Outline",
+                                   detail: "Your bullets, shown by \(Settings.shared.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac. Turning it off hides it and its tools for Claude sessions; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
+                            Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         }
                         }
                     }

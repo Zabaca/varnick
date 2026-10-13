@@ -490,3 +490,13 @@ Answered later the same day, on the planner's questions:
 7. **The planner's other choices stand as defaults:** everything else in Selection and Copying and pasting bullets.
 
 Tickets 08 and 09 build them.
+
+## Added later (2026-10-13)
+
+The user asked for the Outline to move into Settings › Experimental, the way the Problems board is. A switch there (`Settings.outlineOn`, **off by default for every install**, as the Problems board's is) gates everything that reaches the Outline:
+- ⌘⇧Y does nothing and its row leaves Settings › Shortcuts;
+- `!outline` and `!wf` are not listed or matched;
+- Panel access refuses `outline_read`, `outline_act`, `show` with `view: outline` and `command: outline`, with "The Outline is off: the user can turn it on in Settings › Experimental";
+- if the Outline is showing when the switch turns off, it closes.
+
+The switch never reads, writes, moves or deletes `outline.json` (ADR 0030): off, the file is not loaded at all, and turning it on shows the same Outline. The tools stay in the MCP server's list, since the server runs apart from the app and cannot see the switch, as with the Problems tab; they refuse at the call.

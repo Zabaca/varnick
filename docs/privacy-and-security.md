@@ -169,7 +169,7 @@ tools at once. Varnick's log holds the tool, the outcome's kind, a count of line
 text. Reading a pane's screen resizes, writes to and focuses nothing in it. If you don't want what a terminal shows
 sent to Anthropic, leave Panel access off.
 
-They can also read **your Outline** (`outline_read`), which is otherwise kept in a file on this Mac and nowhere else:
+They can also read **your Outline** (`outline_read`, only while Settings › Experimental › Outline is on), which is otherwise kept in a file on this Mac and nowhere else:
 every bullet's text and note and whether it is completed, collapsed or a mirror, from Home or from a bullet down, or the
 rows as you see them with your zoom, filter and caret. All of it goes to Anthropic with the session and stays in its
 transcript on this Mac. The read loads `outline.json` as showing the Outline would and never writes it, and a file

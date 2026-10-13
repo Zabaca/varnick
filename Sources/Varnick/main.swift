@@ -297,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .previousProject: model.tabProjects.cycle(-1)
         case .nextProject: model.tabProjects.cycle(1)
         case .sessionBoard: model.toggleBoard()
-        case .outline: model.toggleOutline()
+        case .outline where Settings.shared.outlineOn: model.toggleOutline()
         case .resources: model.toggleResources()
         case .splitSideBySide where inSession: model.split(.sideBySide)
         case .splitStacked where inSession: model.split(.stacked)

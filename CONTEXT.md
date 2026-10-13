@@ -182,7 +182,7 @@ _Avoid_: Tag, assignment
 ### Outline
 
 **Outline**:
-The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic, and can edit it without asking). It replaces the panel's content as Settings and the **Session board** do.
+The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic, and can edit it without asking). It replaces the panel's content as Settings and the **Session board** do. It is behind a switch, off by default (Settings › Experimental); the switch never touches the file.
 _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 
 **Bullet**:
