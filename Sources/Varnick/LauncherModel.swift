@@ -336,8 +336,7 @@ final class LauncherModel: ObservableObject {
             return Self.searchHeight + 1 + Self.emptyHeight   // "No results", or the hint under a bare `?`
         case .sessions:
             guard showsSessionList else { return Self.searchHeight }
-            let peerRows = peerOpenRows
-            let headers = (tabs.isEmpty ? 0 : 1) + Set(peerRows.map(\.peer.id)).count + (shownRecent.isEmpty ? 0 : 1)
+            let headers = (tabs.isEmpty ? 0 : 1) + Set(peerListTabs.map(\.peer.id)).count + (shownRecent.isEmpty ? 0 : 1)
             return Self.searchHeight + 1 + CGFloat(headers) * Self.sessionHeaderHeight
                 + CGFloat(sessionListCount) * Self.sessionRowHeight + 8
         }
@@ -648,6 +647,12 @@ final class LauncherModel: ObservableObject {
         let rows: [PeerOpenRow]
         /// The host's name for the tab; nil when it has none.
         var name: String? { rows.lazy.compactMap(\.info.tabName).first }
+        /// What a list identifies the row by: two Macs could keep a tab under one id.
+        var viewID: String { "peertab|" + peer.id + "|" + id.uuidString }
+
+        /// How many of its sessions wait on the user mid-turn, and how many work, as its host last said.
+        var waiting: Int { rows.filter { $0.info.turn?.mark != nil }.count }
+        var working: Int { rows.filter { $0.info.turn?.isRunning == true }.count }
     }
 
     /// The paired Macs' tabs the board shows: those `peerOpenRows` lists that no tab here has the id of, less those marked done here or by
@@ -673,18 +678,34 @@ final class LauncherModel: ObservableObject {
         return TabRecord(id: tab.id, sessions: sessions, name: tab.name, completedAt: completedAt, hostHoldsDone: hostHoldsDone, lastUsed: lastUsed)
     }
 
-    /// The session list's rows, in order: this Mac's tabs, then the peers' open sessions, then
+    /// What the session list shows of the paired Macs' open sessions: one row per tab, under the Mac's name, in the order of the peers and of
+    /// the host's listing. A session the host names no tab for is a tab of its own. Without those this Mac has a pane for (`peerOpenRows`).
+    var peerListTabs: [PeerOpenTab] {
+        var order: [String] = [], grouped: [String: [PeerOpenRow]] = [:]
+        for row in peerOpenRows {
+            guard let tab = row.info.tabID else { continue }
+            let key = row.peer.id + "|" + tab.uuidString
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(row)
+        }
+        return order.compactMap { key in
+            guard let rows = grouped[key], let id = rows[0].info.tabID else { return nil }
+            return PeerOpenTab(peer: rows[0].peer, id: id, rows: rows)
+        }
+    }
+
+    /// The session list's rows, in order: this Mac's tabs, then the peers' open tabs, then
     /// Recent. Every index into it (`sessionSelection`, `move`, `openSelected`, the view) comes from
     /// these, so a section can't be miscounted in one place.
     var peerRowsStart: Int { tabs.count }
-    var recentRowsStart: Int { tabs.count + peerOpenRows.count }
+    var recentRowsStart: Int { tabs.count + peerListTabs.count }
     var sessionListCount: Int { recentRowsStart + shownRecent.count }
 
     /// Identifies a row of the session list across updates, so the highlight can follow it.
     private func sessionRowID(at index: Int) -> String? {
-        let peerRows = peerOpenRows
+        let peerTabs = peerListTabs
         if tabs.indices.contains(index) { return "tab|" + tabs[index].viewID.uuidString }
-        if peerRows.indices.contains(index - peerRowsStart) { return peerRows[index - peerRowsStart].id }
+        if peerTabs.indices.contains(index - peerRowsStart) { return peerTabs[index - peerRowsStart].viewID }
         let recentIndex = index - recentRowsStart
         let shown = shownRecent
         return shown.indices.contains(recentIndex) ? "recent|" + shown[recentIndex].id.uuidString : nil
@@ -983,11 +1004,11 @@ final class LauncherModel: ObservableObject {
 
     func openSelected() {
         if showsSessionList {
-            let peerRows = peerOpenRows
+            let peerTabs = peerListTabs
             if tabs.indices.contains(sessionSelection) {
                 activate(tabs[sessionSelection])
-            } else if peerRows.indices.contains(sessionSelection - peerRowsStart) {
-                openPeerSession(peerRows[sessionSelection - peerRowsStart])
+            } else if peerTabs.indices.contains(sessionSelection - peerRowsStart) {
+                openPeerTab(peerTabs[sessionSelection - peerRowsStart])
             } else if shownRecent.indices.contains(sessionSelection - recentRowsStart) {
                 openRecent(shownRecent[sessionSelection - recentRowsStart])
             }
@@ -2676,6 +2697,20 @@ final class LauncherModel: ObservableObject {
     func openPeerTab(_ id: UUID, focusing pane: UUID? = nil) {
         for row in boardPeerTabs.first(where: { $0.id == id })?.rows ?? [] { openPeerSession(row) }
         showTab(id, focusing: pane)
+    }
+
+    /// ↩ on a paired Mac's tab in the session list: the same, for a tab of the list (`peerListTabs`).
+    func openPeerTab(_ tab: PeerOpenTab) {
+        for row in tab.rows { openPeerSession(row) }
+        showTab(tab.id)
+    }
+
+    /// What a tab's row in the session list says of its Claude sessions ("3 sessions", "1 waiting"); the turns are read now, one stat a pane.
+    func sessionSummary(of tab: ClaudeTab) -> [String] {
+        let claude = tab.claudeSessions
+        for pane in claude { pane.checkTurn() }
+        return TabSummary.parts(sessions: claude.count, waiting: claude.filter { $0.turn?.turn.mark != nil }.count,
+                                working: claude.filter { $0.turn?.turn.isRunning == true }.count)
     }
 
     /// New text size for every terminal (⌘= / ⌘- / ⌘0 and Settings).

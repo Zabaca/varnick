@@ -183,23 +183,24 @@ struct LauncherView: View {
                 .frame(height: LauncherModel.sessionHeaderHeight)
                 VStack(spacing: 0) {
                     ForEach(Array(model.tabs.enumerated()), id: \.element.viewID) { i, t in
-                        TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record))
+                        TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record),
+                               sessions: model.sessionSummary(of: t))
                             .onTapGesture { model.tabDrag.tap { model.activate(t) } }
                             .reorderable(t, in: model, axis: .vertical)
                     }
                 }
                 .tabDropMarker(model.tabDrag, in: model.tabs, axis: .vertical)
             }
-            // Each paired Mac's open sessions, under its name; ↩ takes one over.
-            let peerRows = model.peerOpenRows
-            ForEach(Array(peerRows.enumerated()), id: \.element.id) { i, row in
-                if i == 0 || peerRows[i - 1].peer.id != row.peer.id {
-                    SectionLabel(text: row.peer.name)
+            // Each paired Mac's open tabs, under its name; ↩ opens one, its sessions on their cards.
+            let peerTabs = model.peerListTabs
+            ForEach(Array(peerTabs.enumerated()), id: \.element.viewID) { i, tab in
+                if i == 0 || peerTabs[i - 1].peer.id != tab.peer.id {
+                    SectionLabel(text: tab.peer.name)
                         .frame(height: LauncherModel.sessionHeaderHeight)
                 }
-                PeerOpenSessionRow(row: row, selected: model.peerRowsStart + i == model.sessionSelection,
-                                   pills: model.pills(folder: row.info.folder, agent: row.info.agent, host: row.peer.id))
-                    .onTapGesture { model.openPeerSession(row) }
+                PeerOpenTabRow(tab: tab, selected: model.peerRowsStart + i == model.sessionSelection,
+                               pills: model.pills(folder: tab.rows[0].info.folder, agent: tab.rows[0].info.agent, host: tab.peer.id))
+                    .onTapGesture { model.openPeerTab(tab) }
             }
             if !model.shownRecent.isEmpty {
                 SectionLabel(text: "Recent")
@@ -812,9 +813,12 @@ struct TabRow: View {
     @ObservedObject var tab: ClaudeTab
     let selected: Bool
     let pills: SessionPills
+    /// What it says of its Claude sessions when it has several (`TabSummary`).
+    let sessions: [String]
 
     var body: some View {
-        SessionRow(session: tab.focused, name: tab.name, panes: tab.sessions.count, selected: selected, pills: pills)
+        SessionRow(session: tab.focused, name: tab.name, panes: tab.sessions.count, sessions: sessions,
+                   otherPanes: tab.sessions.count - tab.claudeSessions.count, selected: selected, pills: pills)
     }
 }
 
@@ -822,6 +826,9 @@ struct SessionRow: View {
     @ObservedObject var session: ClaudeSession
     var name: String? = nil
     let panes: Int
+    /// A tab of several Claude sessions: how many, and how many wait or work. Then only the panes that aren't sessions are counted.
+    var sessions: [String] = []
+    var otherPanes = 0
     let selected: Bool
     let pills: SessionPills
 
@@ -846,7 +853,11 @@ struct SessionRow: View {
     private var rest: [String] {
         var parts: [String] = []
         if let note = session.awayNote { parts.append(note) }
-        if panes > 1 { parts.append("\(panes) panes") }
+        if !sessions.isEmpty {
+            parts += sessions + (otherPanes > 0 ? ["\(otherPanes) other pane\(otherPanes == 1 ? "" : "s")"] : [])
+        } else if panes > 1 {
+            parts.append("\(panes) panes")
+        }
         parts.append(session.started ? "Started \(session.startedAt.formatted(.relative(presentation: .named)))" : "Resumes when opened")
         return parts
     }
@@ -1011,19 +1022,22 @@ struct SessionDetailLine: View {
     }
 }
 
-/// A session open on a paired Mac, in the session list: ↩ opens it on the card, where Take over is.
-struct PeerOpenSessionRow: View {
-    let row: LauncherModel.PeerOpenRow
+/// A tab open on a paired Mac, in the session list: ↩ opens its sessions on their cards, where Take over is. It says its name or its first
+/// session's title, and for a tab of several sessions how many there are and how many wait or work; for one, who is in control.
+struct PeerOpenTabRow: View {
+    let tab: LauncherModel.PeerOpenTab
     let selected: Bool
     let pills: SessionPills
 
     var body: some View {
+        let first = tab.rows[0]
         HStack(spacing: 12) {
             SourceTile(source: "claude")
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.info.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                SessionDetailLine(pills: pills, folder: (row.info.folder as NSString).lastPathComponent,
-                                  host: row.peer.name, rest: [row.controlNote])
+                Text(tab.name ?? first.info.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                let summary = TabSummary.parts(sessions: tab.rows.count, waiting: tab.waiting, working: tab.working)
+                SessionDetailLine(pills: pills, folder: (first.info.folder as NSString).lastPathComponent, host: tab.peer.name,
+                                  rest: summary.isEmpty ? [first.controlNote] : summary)
             }
             Spacer()
             if selected { KeyHint(label: "Open", keys: ["↩"]).font(.system(size: 11)) }

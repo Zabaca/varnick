@@ -37,6 +37,16 @@ enum TabHistory {
     }
 }
 
+/// What a tab's row in the session list says of the Claude sessions in it ("3 sessions · 1 waiting").
+enum TabSummary {
+    /// "3 sessions", then "1 waiting" (on the user, mid-turn) and "2 working" when there are any. Nothing for a tab with one session or none:
+    /// its row says what it said before.
+    static func parts(sessions: Int, waiting: Int, working: Int) -> [String] {
+        guard sessions > 1 else { return [] }
+        return ["\(sessions) sessions"] + (waiting > 0 ? ["\(waiting) waiting"] : []) + (working > 0 ? ["\(working) working"] : [])
+    }
+}
+
 /// Which tab holds each conversation, for the search database (`session_tabs`). This Mac's own tabs only: a paired Mac's tab is its own to send.
 enum SessionTabs {
     struct Entry: Equatable {

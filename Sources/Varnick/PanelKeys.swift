@@ -234,15 +234,15 @@ struct SearchPanelView: PanelKeyView {
         case .prompt:
             return "↩ on a prompt starts a Claude session with the field's text as its prompt"
         case .search:
-            return "↩ on a ? result opens the page in the browser or resumes a session"
+            return "↩ on a ? result opens a page in the browser or a session's tab, which may start sessions"
         case .command:
             let shown = model.commands
             return shown.indices.contains(model.commandSelection) && shown[model.commandSelection] == .listen
                 ? "↩ on !listen turns on the microphone" : nil
         case .sessions:
-            // An open tab comes up; Recent resumes a session and a paired Mac's opens a pane on its card.
+            // An open tab comes up; Recent reopens a closed tab and a paired Mac's open tab opens its sessions on cards.
             return !model.showsSessionList || model.tabs.indices.contains(model.sessionSelection)
-                ? nil : "↩ on this row would resume a session or open a paired Mac's"
+                ? nil : "↩ on this row would reopen a closed tab or open a paired Mac's, which starts sessions"
         }
     }
 }
