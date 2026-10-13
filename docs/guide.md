@@ -103,16 +103,16 @@ or an MCP request), and that tab's row carries the same orange mark, as a row in
 open tabs, by name, then **Other** for tabs in no project (the home folder, say). Each row shows how many tabs it has, and an orange
 mark with how many of them have a session waiting on you.
 
-- **A tab's project** is its first Claude pane's: the project whose folder is exactly that pane's folder. It doesn't change as you
-  move between panes. A pane in a subfolder or a worktree has no project, so its tab is under Other. Another Mac's tabs join the
+- **A tab's project** is its first Claude pane's (a tab with none, its first pane's): the project whose folder is exactly that pane's
+  folder when Varnick first saw it. It doesn't change as you move between panes, or when a shell in it changes folder. A pane in a subfolder or a worktree has no project, so its tab is under Other. Another Mac's tabs join the
   same rows by the project's name; hover a row to see how many tabs are on each Mac.
 - **Choosing a row** shows only that project's tabs in the strip and brings up the one you last had open there, or its first.
   ⌘⇧[ and ⌘⇧] step through them. **All** brings every tab back and leaves the one on screen as it is.
 - **⌘⌥[ and ⌘⌥]** choose the previous or next row, All included, with the column hidden too. Showing a tab of another project, from the
   search, the board or a new session, moves the choice to that project; closing the last tab of the chosen project moves it to All.
 - **With the column hidden,** a chip at the strip's left names the chosen project, and clicking it lists the rows.
-- **A narrow panel** shows the column only while the panes keep 220 points beside it and the file tree. Otherwise ⌘⇧P lists the
-  rows under the strip, as the chip does.
+- **A narrow panel** shows the column only while the panes keep their minimum width beside it and the file tree. Otherwise ⌘⇧P
+  lists the rows under the strip, as the chip does.
 - **What it doesn't filter:** the search, the session board, Recent and the Phone page always cover every tab.
 
 Whether the column shows is kept across restarts; the chosen project isn't, and the strip starts on All. The three keys can be
