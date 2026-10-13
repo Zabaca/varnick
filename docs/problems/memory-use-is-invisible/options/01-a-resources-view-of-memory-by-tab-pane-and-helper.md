@@ -179,3 +179,12 @@ The Mark tab done and Restart session keys are taken and do nothing, so no key r
   2. **Show Claude Code outside Varnick?** Yes: one greyed row with a count and a total, and no list, so the figures match Activity Monitor.
   3. **⌘⇧M and `!resources` (`!memory`)?** Yes. Both are free, and M is for memory.
   4. **Show other machines' tabs with "Runs on" and no figures from the host?** Yes. Their figures would need a protocol bump on both relays.
+
+## Added later (2026-10-13)
+
+The user asked: "For resources can that also be a tab in Settings." Settings gains a **Resources** tab that shows the same table, through the same `ResourcesTable` and a model of its own (`LauncherModel.settingsResources`, so its rows, selection and open tabs never reach the panel's view). ⌘⇧M, `!resources` and `!memory` stay as they are.
+
+- **Measuring** follows the tab: every 3 seconds while it shows in a visible panel, off the main actor. It stops, and clears, when Settings closes or another Settings tab is picked, and stops when the panel hides.
+- **Keys** work only while that tab shows: ↑ and ↓, → and ←, ↩ and the End session key (⌘W) are taken by it, and no key reaches the tab underneath. esc is Settings' own and closes Settings.
+- **Show and Close** go through the same paths. ↩ on a tab shows it and so closes Settings. A pane that must ask first brings its tab up as before, which here also closes Settings.
+- **Both places:** ⌘⇧M while Settings shows (this tab or any other) closes Settings and opens the panel's view, as ⌘⇧B and ⌘⇧Y do. The two views are never on screen together, and only one of them measures.

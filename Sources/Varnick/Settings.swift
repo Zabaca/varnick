@@ -588,6 +588,8 @@ struct SettingsView: View {
     @ObservedObject var embeddingServer: ModelServerState
     @ObservedObject var textGenerationServer: ModelServerState
     @ObservedObject var claudeCode: ClaudeCodeState
+    /// The Resources tab's model (`LauncherModel.settingsResources`).
+    @ObservedObject var resources: Resources
     let close: () -> Void
     /// Opens the Restart Varnick card (`LauncherModel.askRestart`): a restart without a build.
     let askRestart: () -> Void
@@ -939,6 +941,19 @@ struct SettingsView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
+                        case .resources:
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 14) {
+                                KeyHint(label: "Select", keys: ["↑", "↓"])
+                                ResourcesHints()
+                            }
+                            .font(.system(size: 11.5))
+                            .padding(.horizontal, 14)
+                            ResourcesTable(resources: resources, scrolls: false)
+                        }
+                        // It measures only while this tab shows (`Resources.settingsTab`).
+                        .onAppear { resources.settingsTab(shown: true) }
+                        .onDisappear { resources.settingsTab(shown: false) }
                         case .experimental:
                         SettingRow(title: "Problems board",
                                    detail: "The Problems tab and work links, for projects that plan work in docs/problems. Experimental.") {
@@ -1144,7 +1159,7 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, apps, search, listening, peers, models, shortcuts, experimental
+    case claude, apps, search, listening, peers, models, shortcuts, resources, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -1157,6 +1172,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .peers: "desktopcomputer"
         case .models: "cpu"
         case .shortcuts: "keyboard"
+        case .resources: "memorychip"
         case .experimental: "testtube.2"
         }
     }

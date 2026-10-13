@@ -247,6 +247,10 @@ shows in a visible panel; Varnick runs no other program to read them. WebKit giv
 web page, so Varnick asks WebKit's private interface and macOS's private "responsible process" call; if a macOS update removes
 either, pages show together outside the tabs, or drop out of the total (the view says so in that case).
 
+Settings › **Resources** shows the same table inside Settings, and measures only while that tab shows. ↑, ↓, →, ←, ↩ and your
+End session key work there as in the view, and only while that tab is open; esc closes Settings. ↩ on a tab, or a tab that must
+ask before it closes, brings the tab up, which closes Settings. ⌘⇧M while Settings shows closes Settings and opens the view.
+
 ## Panel access
 
 Settings › Claude › **Panel access** (off by default, and independent of Screen access) gives the Claude sessions

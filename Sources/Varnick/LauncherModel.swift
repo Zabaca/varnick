@@ -157,6 +157,8 @@ final class LauncherModel: ObservableObject {
     /// Resources replaces the panel's content the same way (⌘⇧M, `!resources`); never with the board or the outline, and Settings shows over it.
     @Published private(set) var showingResources = false
     let resources = Resources()
+    /// Settings › Resources has a model of its own (`Resources.inSettings`).
+    let settingsResources = Resources(inSettings: true)
     /// Bumped to move keyboard focus back into the search field.
     @Published var focusToken = 0
 
@@ -339,6 +341,7 @@ final class LauncherModel: ObservableObject {
         board.model = self
         outline.model = self
         resources.model = self
+        settingsResources.model = self
         strip.model = self
         tabProjects.model = self
         restoreSessions()
@@ -1284,6 +1287,7 @@ final class LauncherModel: ObservableObject {
         Task { await followPeerSessions() }
         if showingBoard { board.appear() }
         if showingResources { resources.appear() }
+        settingsResources.panelDidShow()
     }
 
     /// `minInterval` skips the ask when one started that recently: the list shows again whenever a
@@ -2216,6 +2220,8 @@ final class LauncherModel: ObservableObject {
         session.onNeedsConfirmation = { [weak self] in
             guard let self, let ended = ref, let tab = self.tabs.first(where: { $0.contains(ended) }) else { return }
             self.activate(tab)
+            // A close from Settings › Resources asks on the pane's own card, so Settings closes over it, as Resources does.
+            if self.settingsResources.isShown { self.toggleSettings() }
             tab.focus(ended)
         }
         session.fileViewer?.onOpenFile = { [weak self] path in self?.openFile(path) }
