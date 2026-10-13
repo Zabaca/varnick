@@ -1607,9 +1607,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var layoutChange: () -> () -> Void = { {} }
     var lastPaneOfHostTab: () -> UUID? = { nil }
 
-    /// Closing a pane in control of a session on a peer tells its host, which ends it as closing it there would. The last pane of a tab closes
-    /// the tab, which the host decides (`LauncherModel.hostEndTab`). A card isn't in control, so it sends nothing; a pane with no client
-    /// running doesn't know whether it is, so the host is asked first.
+    /// Closing a pane in control of a session on a peer tells its host, which ends it as closing it there would; the last pane closes its tab
+    /// (`hostEndTab`). A card sends nothing; a pane with no client running asks the host first.
     private func endSessionOnHost() {
         guard let host = record.host, runsInZmx, !finished, away == nil, !endsWithTab else { return }
         let id = record.id, unknown = clientEnded || view.process.shellPid <= 0
