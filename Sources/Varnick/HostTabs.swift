@@ -23,21 +23,32 @@ extension LauncherModel {
             // The links it was listed with, so the ended card it becomes keeps them.
             record.workLinks = pane.work?.paneWork.history
         case .terminal: record.shell = true
-        case .web: record.url = pane.proxy ?? pane.url ?? ""
+        case .web: record.url = pane.url ?? ""
         case .app:
             record.app = pane.app
-            record.url = pane.proxy ?? pane.url ?? ""
+            record.url = pane.url ?? ""
             record.appPort = pane.port
         case .file: record.file = pane.file
         case .transcript: record.liveTranscript = true
         }
-        record.proxied = pane.proxy
-        record.proxyNote = pane.proxyNote
+        let proxy = trustedProxy(of: pane, on: peer)
+        record.proxy = proxy.address
+        record.proxyNote = proxy.note
+        if let address = proxy.address { record.url = address }
         let session = makeSession(record, resuming: false, query: "")
         session.opensOnCard = kind.runsInZmx
         session.opensUnavailable = kind.runsInZmx && pane.running != true
         session.unavailableNote = pane.note
         return session
+    }
+
+    /// The proxied address a listing gives a pane, if it names the host's own proxy (`PeerProxyAddress.accepts`): a host's listing doesn't get to
+    /// send this Mac's web view anywhere else. Else the note, which says so.
+    private func trustedProxy(of pane: PeerPane, on host: String) -> (address: String?, note: String?) {
+        guard let address = pane.proxy else { return (nil, pane.proxyNote) }
+        let peerAddress = PeerManager.shared.peers.first { $0.id == host }?.address ?? ""
+        if PeerProxyAddress.accepts(address, forPeer: peerAddress) { return (address, nil) }
+        return (nil, "The address \(PeerManager.shared.name(of: host)) listed isn't one of its own.")
     }
 
     /// A listing's layout with the panes this build can show: one it can't is left out, and one the layout has no place for goes beside the last.
@@ -136,7 +147,10 @@ extension LauncherModel {
             guard let session = sessions[pane.id] else { continue }
             if pane.kind == .terminal, session.updateHostFolder(pane.folder) { changed = true }
             if pane.kind?.runsInZmx == true, pane.running == true { session.hostSaysRunning() }
-            if pane.kind == .web || pane.kind == .app, session.applyHostProxy(pane.proxy, note: pane.proxyNote) { changed = true }
+            if pane.kind == .web || pane.kind == .app {
+                let proxy = trustedProxy(of: pane, on: peer.id)
+                if session.applyHostProxy(proxy.address, note: proxy.note) { changed = true }
+            }
         }
         guard !stale else { return saveIfChanged(changed) }
         tab.inControl = Zmx.sameID(listing.control, PeerIdentity.id)

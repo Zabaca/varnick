@@ -22,6 +22,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     @Published var editingAddress = false
     private var webObservers: [NSKeyValueObservation] = []
     private var retry: DispatchWorkItem?
+    /// The page last asked for failed to load and hasn't loaded since: a proxied address that returns tries again at once.
+    private var loadFailed = false
     /// Terminal title Claude Code sets (it names the conversation once it has a topic).
     @Published private(set) var title = ""
     @Published private(set) var started = false
@@ -273,14 +275,20 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// address becomes the page; a page already loading stays the viewer's own browsing. True when the record changed.
     @discardableResult
     func applyHostProxy(_ address: String?, note: String?) -> Bool {
-        guard record.host != nil, record.isWeb, record.proxied != address || record.proxyNote != note else { return false }
+        guard record.host != nil, record.isWeb, record.proxy != address || record.proxyNote != note else { return false }
         objectWillChange.send()
-        record.proxied = address
+        record.proxy = address
         record.proxyNote = note
         if let address, webView == nil {
             record.url = address
             makeWebView()
             if started { load(address) }
+        } else if let address, loadFailed {
+            // The address is back after a page failed to load: try it now, not at the next retry (at the new address if the port moved).
+            retry?.cancel()
+            loadFailed = false
+            let wanted = record.url.flatMap(URL.init(string:))
+            if let wanted, wanted.port == URL(string: address)?.port { webView?.load(URLRequest(url: wanted)) } else { load(address) }
         }
         return true
     }
@@ -350,7 +358,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // A card says where the pane runs and starts nothing.
         if staysOnHost { return }
         if isWeb {
-            if isApp, customApp != nil {
+            if isApp, customApp != nil, record.host == nil {
                 // A restored pane reconnects to its server if the session is still there.
                 startApp(reconnecting: resuming && Zmx.hasSession(record.id))
                 watchExit()
@@ -442,7 +450,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Runs the app's server in the pane's zmx session, whatever Keep sessions running says: a
     /// server has no screen to reattach. Without zmx it runs directly and ends with Varnick.
     private func startApp(reconnecting: Bool) {
-        guard let app = customApp else { return }
+        guard record.host == nil, let app = customApp else { return }
         let fm = FileManager.default
         try? fm.createDirectory(at: app.dataDirectory, withIntermediateDirectories: true)
         try? fm.createDirectory(at: CustomApp.logsDirectory, withIntermediateDirectories: true)
@@ -1512,24 +1520,45 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         Task { @MainActor in self.showLoadError(error) }
     }
 
+    /// A page that loads through the port proxy of this pane's host: the host's own name, whatever its listing says now.
+    private func isHostProxy(_ url: URL) -> Bool {
+        guard let host = record.host, let peer = PeerManager.shared.peers.first(where: { $0.id == host }) else { return false }
+        return PeerProxyAddress.accepts(url.absoluteString, forPeer: peer.address)
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor in
+            // The error page this class loads is about:blank; a real page that finished means the failure is over.
+            if let url = webView.url, url.scheme != "about" { self.loadFailed = false }
+        }
+    }
+
     private func showLoadError(_ error: Error) {
         guard let web = webView, let target = record.url.flatMap(URL.init(string:)) else { return }
         if (error as NSError).code == NSURLErrorCancelled { return }
-        let local = ["localhost", "127.0.0.1", "0.0.0.0"].contains(target.host() ?? "")
-        // A page of another machine's tab loaded through its port proxy: a load refused means its server, or the host's Phone page server, stopped.
-        let viaProxy = record.host != nil && record.proxied.flatMap(URL.init(string:))?.host() == target.host()
-        let hostName = self.hostName ?? "the host"
-        let message = viaProxy ? record.proxyNote.map { "\(hostName): \($0)" } ?? "\(hostName)'s Phone page server isn't running, or this page's server has stopped."
-            : local ? "Waiting for \(target.absoluteString) to start…" : error.localizedDescription
+        loadFailed = true
+        // A load refused for a page of another machine's tab means its server, or the host's Phone page server, stopped; the host's own reason wins.
+        var retryAfter: TimeInterval?
+        let message: String
+        if isHostProxy(target) {
+            let host = hostName ?? "the host"
+            message = record.proxyNote.map { "\(host): \($0)" } ?? "\(host)'s Phone page server isn't running, or this page's server has stopped."
+            retryAfter = 3
+        } else if ["localhost", "127.0.0.1", "0.0.0.0"].contains(target.host() ?? "") {
+            message = "Waiting for \(target.absoluteString) to start…"
+            retryAfter = 1.5
+        } else {
+            message = error.localizedDescription
+        }
         let html = """
             <body style="background:#1a1a1a;color:#999;font:13px -apple-system;display:grid;place-items:center;height:90vh">
             <div>\(message.replacingOccurrences(of: "<", with: "&lt;"))</div></body>
             """
         web.loadHTMLString(html, baseURL: nil)
-        guard local || viaProxy else { return }
+        guard let retryAfter else { return }
         let work = DispatchWorkItem { [weak self] in self?.webView?.load(URLRequest(url: target)) }
         retry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (viaProxy ? 3 : 1.5), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + retryAfter, execute: work)
     }
 
     func setFontSize(_ size: Double) {

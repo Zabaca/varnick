@@ -70,7 +70,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
 
     /// A web or app pane of another machine's tab (`host`): the address the host's port proxy serves it at, from the host's listing, and why
     /// it has none while that is so (ADR 0035). Optional so older saved records still load.
-    var proxied: String?
+    var proxy: String?
     var proxyNote: String?
 
     /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
@@ -113,17 +113,11 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var staysOnHost: Bool {
         guard host != nil else { return false }
         if isLiveTranscript { return true }
-        if proxied != nil { return false }
+        if proxy != nil { return false }
         if isApp { return true }
-        return isWeb && (proxyNote != nil || Self.isLocalAddress(url ?? ""))
+        return isWeb && (proxyNote != nil || PeerPane.isLocalAddress(url ?? ""))
     }
 
-    /// An address only the machine it names can reach: localhost and `*.localhost`, 127.0.0.0/8, ::1 and the unspecified addresses, or none yet.
-    static func isLocalAddress(_ address: String) -> Bool {
-        guard !address.isEmpty else { return true }
-        let host = (URL(string: address)?.host(percentEncoded: false) ?? "").lowercased()
-        return host.isEmpty || ["localhost", "::1", "::", "0.0.0.0"].contains(host) || host.hasSuffix(".localhost") || host.range(of: #"^127(\.\d{1,3}){3}$"#, options: .regularExpression) != nil
-    }
     var isClaude: Bool { !isShell && !isWeb && !isFile && !isLiveTranscript }
     /// A Claude or terminal pane: its process runs in a zmx session another machine can attach to (ADR 0034).
     var runsInZmx: Bool { isClaude || isShell }

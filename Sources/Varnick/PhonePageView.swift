@@ -91,7 +91,7 @@ struct PhonePageSettingsSection: View {
     @ViewBuilder private func proxyRows(_ look: PhonePageServer.Look) -> some View {
         SettingRow(title: "Port proxy", detail: proxyText(look.proxy)) {}
         // The usual cause of no certificate has one fix, run once.
-        if look.proxy?.note?.contains("operator") == true { commandLine(PhonePage.operatorCommand, copy: true) }
+        if let command = look.proxy?.command { commandLine(command, copy: true) }
     }
 
     private func proxyText(_ status: PeerProxyStatus?) -> String {

@@ -10,8 +10,9 @@ public struct PeerProxyStatus: Codable, Equatable, Sendable {
     public var at: Int
     /// The host's tailnet name.
     public var name: String
-    /// Why the proxy opens nothing at all (it has no certificate), when that is so.
+    /// Why the proxy opens nothing at all (it has no certificate), when that is so, and the command that would fix it, when there is one.
     public var note: String?
+    public var command: String?
     /// The ports it holds, for Settings.
     public var ports: [Int]
     /// Each web or app pane the server looked at, by pane id: its proxied address, or why it has none.
@@ -27,16 +28,18 @@ public struct PeerProxyStatus: Codable, Equatable, Sendable {
         }
     }
 
-    public init(at: Int, name: String, note: String? = nil, ports: [Int] = [], panes: [String: Pane] = [:]) {
+    public init(at: Int, name: String, note: String? = nil, command: String? = nil, ports: [Int] = [], panes: [String: Pane] = [:]) {
         self.at = at
         self.name = name
         self.note = note
+        self.command = command
         self.ports = ports
         self.panes = panes
     }
 
-    /// Older than this, the server is not running.
+    /// Older than this, the server is not running; so is a file dated further ahead than this, which no clock skew explains.
     public static let lifetime: TimeInterval = 60
+    public static let skew: TimeInterval = 5
 
     public static var file: URL { SupportFolder.url.appendingPathComponent("proxy-status.json") }
 
@@ -44,7 +47,7 @@ public struct PeerProxyStatus: Codable, Equatable, Sendable {
     public static func read(now: Date = Date(), from file: URL = file) -> PeerProxyStatus? {
         guard let data = try? Data(contentsOf: file), let status = try? JSONDecoder().decode(PeerProxyStatus.self, from: data) else { return nil }
         let age = now.timeIntervalSince1970 - TimeInterval(status.at)
-        return age < lifetime ? status : nil
+        return age < lifetime && age > -skew ? status : nil
     }
 
     /// Why a pane of a host whose page server isn't running has no proxied address.
@@ -59,17 +62,9 @@ public extension PeerPane {
     var isHostLocal: Bool {
         switch kind {
         case .app: return true
-        case .web: return !(url ?? "").isEmpty && PeerPane.isLocalAddress(url ?? "")
+        case .web: return PeerProxyAddress.isProxiable(url ?? "")
         default: return false
         }
-    }
-
-    /// An address only the machine it names can reach: localhost and `*.localhost`, 127.0.0.0/8, ::1 and the unspecified addresses, or none yet.
-    static func isLocalAddress(_ address: String) -> Bool {
-        guard !address.isEmpty else { return true }
-        let host = (URL(string: address)?.host ?? "").lowercased()
-        return host.isEmpty || ["localhost", "::1", "::", "0.0.0.0"].contains(host) || host.hasSuffix(".localhost")
-            || host.range(of: #"^127(\.\d{1,3}){3}$"#, options: .regularExpression) != nil
     }
 
     /// Fills in `proxy` or `proxyNote` from the page server's status, for a host-local web or app pane. With no status the server isn't running.
@@ -101,5 +96,29 @@ public extension PeerTab {
             return pane
         }
         return tab
+    }
+}
+
+/// What a viewer accepts as a pane's proxied address, and which addresses the proxy is for.
+public enum PeerProxyAddress {
+    /// A web address at the host's localhost over http: the ones the proxy serves. A blank one has nothing yet, and any other scheme is nobody's.
+    public static func isProxiable(_ address: String) -> Bool {
+        guard !address.isEmpty, PeerPane.isLocalAddress(address), let scheme = URL(string: address)?.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+
+    /// Whether an address a listing sent is the host's own proxy: https, a name under `.ts.net` that is the peer's (its address as saved, or that
+    /// name with the tailnet's suffix), and a port from 1024. A host's listing is not trusted to send the viewer anywhere else.
+    public static func accepts(_ address: String, forPeer peerAddress: String) -> Bool {
+        guard let url = URL(string: address), url.scheme == "https", url.user == nil, url.password == nil, let port = url.port, port >= 1024,
+              let host = url.host?.lowercased(), host.hasSuffix(".ts.net"), let want = peerName(peerAddress) else { return false }
+        return host == want || (!want.contains(".") && host.hasPrefix(want + "."))
+    }
+
+    /// The name in what is typed after `ssh` ("alex@linux-box" is "linux-box"); nil for anything that isn't a plain name.
+    static func peerName(_ address: String) -> String? {
+        let name = (address.split(separator: "@", omittingEmptySubsequences: false).last.map(String.init) ?? "").lowercased()
+        guard !name.isEmpty, name.range(of: #"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"#, options: .regularExpression) != nil else { return nil }
+        return name
     }
 }

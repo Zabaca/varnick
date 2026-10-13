@@ -155,10 +155,10 @@ enum PhonePage {
     /// The server's environment, and nothing else of Varnick's. `VARNICK_ZMX_DIR` goes along only when Varnick has it
     /// (a check's throwaway folder), so the relay the server runs looks in the same zmx folder.
     static func environment(mode: Mode, socketPath: String, relay: String, devices: String, tailscale: String?,
-                            home: String, zmxDirectory: String?, proxyFolder: String, proxyStatus: String) -> [String] {
+                            home: String, zmxDirectory: String?, proxyFolder: String, proxyStatus: String, proxyTabs: String) -> [String] {
         var environment = [mode == .socket ? "VARNICK_PAGE_SOCKET=\(socketPath)" : "VARNICK_PAGE_LOOPBACK=\(loopbackPort)",
                            "VARNICK_PAGE_PORT=\(publishedPort)", "VARNICK_RELAY=\(relay)", "VARNICK_DEVICES=\(devices)",
-                           "VARNICK_PROXY_FOLDER=\(proxyFolder)", "VARNICK_PROXY_STATUS=\(proxyStatus)"]
+                           "VARNICK_PROXY_FOLDER=\(proxyFolder)", "VARNICK_PROXY_STATUS=\(proxyStatus)", "VARNICK_PROXY_TABS=\(proxyTabs)"]
         if let tailscale { environment.append("VARNICK_TAILSCALE=\(tailscale)") }
         environment += ["HOME=\(home)", "PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"]
         if let zmxDirectory { environment.append("VARNICK_ZMX_DIR=\(zmxDirectory)") }
@@ -191,9 +191,6 @@ enum PhonePage {
         /// Tailscale didn't answer, or answered something unreadable.
         case unreadable(String)
     }
-
-    /// What gives the user's account Tailscale's certificates, which the port proxy asks for: root runs it once per Mac.
-    static let operatorCommand = "sudo tailscale set --operator=$USER"
 
     /// `https://<MagicDNS name>:8444/`, which the user opens on the device.
     static func address(dnsName: String) -> String { "https://\(dnsName):\(publishedPort)/" }

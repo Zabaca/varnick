@@ -2131,7 +2131,8 @@ final class LauncherModel: ObservableObject {
         switch layout {
         case .leaf(let record):
             let session = makeSession(record, resuming: true, query: "")
-            if let app = record.app { session.customApp = CustomApp.find(app, from: record.directory) }
+            // An app pane of another machine's tab runs on that machine: this Mac never starts its own copy.
+            if record.host == nil, let app = record.app { session.customApp = CustomApp.find(app, from: record.directory) }
             return PaneNode(session: session)
         case .split(let axis, let fraction, let a, let b):
             return PaneNode(axis: axis, fraction: fraction, first: node(a), second: node(b))
