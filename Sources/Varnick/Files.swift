@@ -326,6 +326,8 @@ final class FileViewer: NSView, WKNavigationDelegate {
     private var text: NSTextView?
     private var preview: QLPreviewView?
     private var web: WKWebView?
+    /// The Markdown page, once it has been made (the Resources view asks WebKit which process it runs in).
+    var pageView: WKWebView? { web }
     /// The page has loaded and takes new bodies through `render`.
     private var webReady = false
     /// A file of another machine: its host has answered, with the text or a refusal, so the "Reading" line is gone.

@@ -138,6 +138,9 @@ final class LauncherModel: ObservableObject {
     /// The outline replaces the panel's content the same way (⌘⇧Y, `!outline`); never together with the board, and Settings shows over it.
     @Published private(set) var showingOutline = false
     let outline = Outline()
+    /// Resources replaces the panel's content the same way (⌘⇧M, `!resources`); never with the board or the outline, and Settings shows over it.
+    @Published private(set) var showingResources = false
+    let resources = Resources()
     /// Bumped to move keyboard focus back into the search field.
     @Published var focusToken = 0
 
@@ -287,6 +290,7 @@ final class LauncherModel: ObservableObject {
     static let restartListMaxHeight: CGFloat = 110
     static let boardHeight: CGFloat = 600
     static let outlineHeight: CGFloat = 600
+    static let resourcesHeight: CGFloat = 600
     static let sessionRowHeight: CGFloat = 44
     static let sessionHeaderHeight: CGFloat = 30
     /// A tab's row above its matching sessions, in the prompt's list and in a search's results; a session's is `sessionRowHeight` in the prompt's.
@@ -318,6 +322,7 @@ final class LauncherModel: ObservableObject {
         self.textGeneration = TextGeneration(local: textGenerator, server: textGenerationServer, claude: claudeCode)
         board.model = self
         outline.model = self
+        resources.model = self
         restoreSessions()
         // Scanned before the first prompt so `#name` resolves straight away, and again when
         // the folders change (the publisher sends the new value before it's stored).
@@ -333,6 +338,7 @@ final class LauncherModel: ObservableObject {
         if showingSettings { return Self.settingsHeight }
         if showingBoard { return Self.boardHeight }
         if showingOutline { return Self.outlineHeight }
+        if showingResources { return Self.resourcesHeight }
         if activeTab != nil { return Self.claudeHeaderHeight + 1 + Self.claudeTerminalHeight }
         // The card needs more than a bare search field or a short list has.
         guard askingRestart else { return searchPanelHeight }
@@ -368,7 +374,7 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Terminal tabs on screen: the panel takes the user's own size and position.
-    var showsTerminal: Bool { activeTab != nil && !showingSettings && !showingBoard && !showingOutline }
+    var showsTerminal: Bool { activeTab != nil && !showingSettings && !showingBoard && !showingOutline && !showingResources }
 
     /// What the panel does with a query, read from its first character alone: a `?` or `!` after a space, or
     /// anywhere later, is part of a message.
@@ -1113,6 +1119,9 @@ final class LauncherModel: ObservableObject {
         case .outline:
             if clearingQuery { query = "" }
             showOutline(focusing: focusing)
+        case .resources:
+            if clearingQuery { query = "" }
+            showResources()
         }
     }
 
@@ -1232,7 +1241,7 @@ final class LauncherModel: ObservableObject {
                 // A resume on the host later passes it again, as a local resume does.
                 record.skipPermissions = start.skipPermissions
                 // Opens at once unless the prompt moved on while the host was starting it.
-                let waiting = self.query == typed && !self.showingBoard && !self.showingOutline
+                let waiting = self.query == typed && !self.showingBoard && !self.showingOutline && !self.showingResources
                 // The tab here is the host's tab for it, under the host's id (ADR 0032).
                 let tab = self.addTab(PaneNode(session: self.makeSession(record, resuming: false, query: typed)),
                                       id: reply.tab.flatMap(UUID.init(uuidString:)), show: waiting)
@@ -1250,6 +1259,7 @@ final class LauncherModel: ObservableObject {
         loadProjectsForRows()
         Task { await followPeerSessions() }
         if showingBoard { board.appear() }
+        if showingResources { resources.appear() }
     }
 
     /// `minInterval` skips the ask when one started that recently: the list shows again whenever a
@@ -2814,6 +2824,7 @@ final class LauncherModel: ObservableObject {
         if !keepingBoard {
             hideBoard()
             hideOutline()
+            hideResources()
         }
         activeTab = tab
         // A tab under the board, the outline or Settings isn't on screen: a card of it must not take the keys.
@@ -2860,7 +2871,7 @@ final class LauncherModel: ObservableObject {
         pendingSplit = nil
         Settings.shared.recording = nil
         showingSettings.toggle()
-        guard !showingSettings, !showingBoard else { return }
+        guard !showingSettings, !showingBoard, !showingResources else { return }
         // The outline needs a first responder of its own: the caret goes back into its bullet.
         if showingOutline { return outline.restoreCaret() }
         focusShown()
@@ -2892,6 +2903,7 @@ final class LauncherModel: ObservableObject {
     func showBoard(_ tab: SessionBoard.Tab? = nil) {
         pendingSplit = nil
         hideOutline()
+        hideResources()
         if let tab { board.show(tab) }
         guard !showingBoard else { return }
         showingBoard = true
@@ -2929,6 +2941,7 @@ final class LauncherModel: ObservableObject {
     func showOutline(focusing: Bool = true) {
         pendingSplit = nil
         hideBoard()
+        hideResources()
         guard !showingOutline else { return }
         showingOutline = true
         outline.appear(focusing: focusing)
@@ -2946,6 +2959,41 @@ final class LauncherModel: ObservableObject {
         guard showingOutline else { return }
         showingOutline = false
         outline.close()
+    }
+
+    /// ⌘⇧M: Resources in place of the current view; again (or esc) goes back. From Settings it closes Settings and shows Resources.
+    func toggleResources() {
+        pendingSplit = nil
+        if showingSettings {
+            showingSettings = false
+            return showResources()
+        }
+        if showingResources { closeResources() } else { showResources() }
+    }
+
+    /// Resources, the board and the outline never show together: showing any closes the others.
+    func showResources() {
+        pendingSplit = nil
+        hideBoard()
+        hideOutline()
+        guard !showingResources else { return }
+        showingResources = true
+        // A hidden panel reads nothing; `panelDidShow` calls it when the panel comes up.
+        if SessionBoard.panelIsVisible { resources.appear() }
+    }
+
+    /// Back to the tab underneath, focused, or to search with focus in the field.
+    func closeResources() {
+        guard showingResources else { return }
+        hideResources()
+        focusShown()
+    }
+
+    /// Closes Resources without moving focus, for a caller that is about to focus a pane or the search itself.
+    func hideResources() {
+        guard showingResources else { return }
+        showingResources = false
+        resources.close()
     }
 
     /// A pane's tab, with focus on that pane.
@@ -3454,7 +3502,7 @@ extension PeerRecentTab {
 
 /// A `!` command; its name is what's typed after `!`. Run by `LauncherModel.runCommand`.
 enum LauncherCommand: String, CaseIterable, Identifiable {
-    case listen, transcript, kanban, outline, problems
+    case listen, transcript, kanban, outline, problems, resources
 
     var id: String { rawValue }
 
@@ -3468,6 +3516,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         switch self {
         case .kanban: [rawValue, "tabs"]
         case .outline: [rawValue, "wf"]
+        case .resources: [rawValue, "memory"]
         case .listen, .transcript, .problems: [rawValue]
         }
     }
@@ -3479,6 +3528,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .kanban: "rectangle.split.3x1"
         case .outline: "list.bullet.indent"
         case .problems: "tray.full"
+        case .resources: "memorychip"
         }
     }
 
@@ -3490,6 +3540,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .kanban: "Show session board"
         case .outline: "Show outline"
         case .problems: "Show problems board"
+        case .resources: "Show Resources"
         }
     }
 
@@ -3500,6 +3551,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .kanban: "Claude sessions by turn: Running, Stopped, Completed (also !tabs)"
         case .outline: "Your bullets, kept on this Mac (also !wf)"
         case .problems: "Problems by stage: Backlog, Decided, Building, Shipped, Closed"
+        case .resources: "Memory by tab, pane and helper (also !memory)"
         }
     }
 
@@ -3507,7 +3559,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     @MainActor var needsAttention: Bool {
         switch self {
         case .listen: Listener.shared.state.needsAttention
-        case .transcript, .kanban, .outline, .problems: false
+        case .transcript, .kanban, .outline, .problems, .resources: false
         }
     }
 }

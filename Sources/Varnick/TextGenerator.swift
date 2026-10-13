@@ -38,6 +38,8 @@ final class TextGenerator: ObservableObject {
     private var container: ModelContainer?
     private var loading: Task<ModelContainer, Error>?
     private var idleTimer: Task<Void, Never>?
+    /// Whether the weights are in memory now (they drop after 10 idle minutes), for the Resources view.
+    var isLoaded: Bool { container != nil }
 
     /// Only checks that the files exist: this runs on the main thread at launch, and touches no MLX.
     init() {

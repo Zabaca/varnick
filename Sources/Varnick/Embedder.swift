@@ -35,6 +35,8 @@ final class Embedder: ObservableObject {
     private var container: EmbedderModelContainer?
     private var loading: Task<EmbedderModelContainer, Error>?
     private var idleTimer: Task<Void, Never>?
+    /// Whether the weights are in memory now (they drop after 10 idle minutes), for the Resources view.
+    var isLoaded: Bool { container != nil }
 
     init() {
         if !MLXRuntime.hasMetalLibrary {

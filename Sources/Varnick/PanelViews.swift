@@ -57,6 +57,7 @@ enum PanelViews {
         if model.showingSettings { return NoKeys("Settings is showing: its switches govern sessions, so a session may not press keys there") }
         if model.showingBoard { return BoardPanelView(model: model) }
         if model.showingOutline { return OutlinePanelView(model: model) }
+        if model.showingResources { return NoKeys("Resources is showing: its keys close tabs, so a session may not press keys there") }
         if model.activeTab != nil { return PanePanelView(model: model) }
         return SearchPanelView(model: model)
     }

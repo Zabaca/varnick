@@ -189,13 +189,33 @@ still asking for `click`, `type`, `drag` and `window` (not checked). A session g
 Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
 for what a session is shown.
 
+## Resources
+
+⌘⇧M (or `!resources`, also found as `!memory`) shows how much memory Varnick uses and what uses it, in place of the panel's
+content as the session board does; the same key again, or esc, goes back. The figures are footprints, the number Activity
+Monitor's Memory column shows. At the top are Varnick's total and its process count, and the same processes grouped by
+kind (the app, Claude Code, MCP tools, web pages, the Phone page server, app servers, zmx, shells and other). Under it is the
+app's own memory: what the on-device models hold (MLX's own count, naming the models loaded now), its graphics memory
+beyond that, and everything else. The tabs that run on this Mac follow, biggest first; → opens one into its panes and their
+processes (Claude Code, its MCP tool, the commands it runs, a terminal's shell and what runs in it, an app's server, a page's
+WebKit process, zmx), and ↩ shows the tab. The Close button on a tab, or your End session key (⌘W) on the selected one, closes
+it as its × does, so a tab with a Claude conversation goes to Stopped and Recent, and a session that must ask first brings its
+tab up to ask. Below the tabs are what Varnick runs that belongs to no tab (the Phone page server, the text helper, WebKit's
+shared processes, links to other machines), the tabs of other machines open here (they show where they run and no figures,
+since their memory is on that machine), and, greyed, the Claude Code that runs in other apps and terminals, so the figures
+add up to Activity Monitor's. A process is Varnick's only when its ancestry leads to Varnick or to one of its zmx sessions,
+never by its name. Rows keep their order while the view is open, and the figures are read every 3 seconds only while it
+shows in a visible panel; Varnick runs no other program to read them. WebKit gives no public way to tell which process runs a
+web page, so Varnick asks WebKit's private interface and macOS's private "responsible process" call; if a macOS update removes
+either, pages show together outside the tabs, or drop out of the total (the view says so in that case).
+
 ## Panel access
 
 Settings › Claude › **Panel access** (off by default, and independent of Screen access) gives the Claude sessions
 you start or restart in Varnick's panes tools for Varnick itself, from the same `varnick` MCP server. `panel` says
 whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
-the Outline, with its zoom, filter and caret; Settings) and what has the keyboard. `board_read` gives the session
+the Outline, with its zoom, filter and caret; Resources, by name only; Settings) and what has the keyboard. `board_read` gives the session
 board's cards, one per tab with its sessions listed under it, by column (Running, Stopped, Completed) as the board
 shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane gets an id such as `s1`
 (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
@@ -218,7 +238,7 @@ method is composing there, it waits for the composition to end.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
 board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows
-that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`, `outline`).
+that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`, `outline`, `resources`).
 It never shows, hides or pins the panel: with the panel hidden, what it showed is there the next time you open it.
 It never runs `!listen`, which turns on the microphone. It never takes the keyboard from the app you are in, never clears what you typed in the search, and is refused while
 Settings, the Restart Varnick card or the split picker shows, for two seconds after you press a key in the panel,

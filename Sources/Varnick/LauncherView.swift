@@ -77,6 +77,8 @@ struct LauncherView: View {
                 SessionBoardView(board: model.board) { model.closeBoard() }
             } else if model.showingOutline {
                 OutlineView(outline: model.outline) { model.closeOutline() }
+            } else if model.showingResources {
+                ResourcesView(resources: model.resources) { model.closeResources() }
             } else if let tab = model.activeTab {
                 ClaudePane(model: model, tab: tab)
             } else {

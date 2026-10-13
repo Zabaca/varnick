@@ -201,6 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.model.showingBoard, !self.model.showingSettings, self.model.board.key(event) { return nil }
             // So does the outline, and it too takes the End session key: ⌘W never reaches the tab underneath.
             if self.model.showingOutline, !self.model.showingSettings, self.model.outline.key(event) { return nil }
+            // And Resources: it too takes the End session key, so ⌘W closes the selected tab and never reaches the tab underneath.
+            if self.model.showingResources, !self.model.showingSettings, self.model.resources.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
             return self.perform(action) ? nil : event
         }
@@ -287,6 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .toggleFiles where inSession: model.toggleFiles()
         case .sessionBoard: model.toggleBoard()
         case .outline: model.toggleOutline()
+        case .resources: model.toggleResources()
         case .splitSideBySide where inSession: model.split(.sideBySide)
         case .splitStacked where inSession: model.split(.stacked)
         case .splitSideBySideOther where inSession: model.askSplit(.sideBySide)

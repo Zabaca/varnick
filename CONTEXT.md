@@ -43,12 +43,16 @@ What Claude is doing in a **Session** right now: working, waiting for the user's
 _Avoid_: Status, state, running (a session "runs" while its zmx session is alive)
 
 **Panel**:
-Varnick's one floating window, shown and hidden with its show/hide shortcut and pinnable, that shows one view at a time: the search, a **Tab** of **Pane**s, the **Session board** or the **Outline**, with Settings over it.
+Varnick's one floating window, shown and hidden with its show/hide shortcut and pinnable, that shows one view at a time: the search, a **Tab** of **Pane**s, the **Session board**, the **Outline** or **Resources**, with Settings over it.
 _Avoid_: Window (another app's, which **Screen access** reaches), popup
 
 **Session board**:
 The panel's view of the **Tab**s with a Claude pane on this Mac and the tabs open on paired Macs, each as one **board card**, listing the tab's sessions, in one of three columns by the **Turn** of its most urgent session (waiting on the user mid-turn, then working, then background, then waiting for the next prompt): Running (working or background), Stopped (everything else, marked when Claude waits on the user mid-turn, and below the live cards the **ended cards** of tabs that closed without Done, or that a paired Mac's Recent says closed there after this Mac listed them open, kept until the user marks them done or opens them) and Completed (reached only by Done, which is a tab's and closes all its panes, and shared between the paired Macs through each tab's host: [ADR 0032](docs/adr/0032-a-tabs-done-mark-belongs-to-its-host-and-completed-lists-tabs.md)). ↩ on a Completed or ended card reopens the tab whole. It replaces the panel's content as Settings does. Beside Sessions it has a Problems tab, while Settings › Experimental › Problems board is on: a card per problem of the projects that keep `docs/problems`, in Backlog, Decided, Building, Shipped or Closed by what the problem and option files say, the branches tied to options and the **Work links** of live sessions, not by **Turn**, with a chip for each session that worked on it.
 _Avoid_: Kanban (the command's name), dashboard; "card" alone, which is a pane's **Card**
+
+**Resources**:
+The panel's view of what Varnick's memory is made of, opened by ⌘⇧M or `!resources` (also `!memory`): the total and its process count, the same processes grouped by kind, the app's own memory split into on-device models and the rest, then the **Tab**s that run on this Mac biggest first, each opening into its **Pane**s and their processes and each with a Close that does what the tab's × does, and below them what Varnick runs that belongs to no tab, the tabs of other machines open here (where they run, with no figures from the host) and, greyed, Claude Code outside Varnick. Every figure is a footprint, the figure Activity Monitor's Memory column shows, and every process is counted once, by ancestry from the pane's zmx session, never by name. It reads the processes only while it shows.
+_Avoid_: Memory view, task manager, process list, Activity Monitor
 
 **Pane**:
 One box inside a tab, showing a session, a terminal, a web page, a **Custom app**, a file or the live **Transcript**.
