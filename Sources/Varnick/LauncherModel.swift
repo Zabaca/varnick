@@ -30,11 +30,21 @@ final class LauncherModel: ObservableObject {
 
     /// Claude tabs in display order (new ones last, until dragged); each holds one or more
     /// split panes (sessions). They keep running while hidden.
-    @Published var tabs: [ClaudeTab] = [] { didSet { rebuildRecent() } }
+    @Published var tabs: [ClaudeTab] = [] {
+        didSet {
+            rebuildRecent()
+            strip.refresh()
+            strip.watch(tabs)
+        }
+    }
     /// Where a tab being dragged in the header or the Tabs list will land.
     let tabDrag = TabDrag()
+    /// The header's tab strip: which tabs it shows, and the list of those it doesn't.
+    let strip = TabStrip()
+    /// The projects column, and the project the strip is filtered to (⌘⇧P, ⌘⌥[ and ⌘⌥]).
+    let tabProjects = TabProjects()
     /// Tab on screen; nil shows search (tabs are listed there when the query is empty).
-    @Published var activeTab: ClaudeTab?
+    @Published var activeTab: ClaudeTab? { didSet { strip.refresh() } }
     /// Focused pane of the tab on screen.
     var activeSession: ClaudeSession? { activeTab?.focused }
     /// Closed tabs, Done or not, newest first, at most `SessionStore.recentLimit`; Return on one opens it whole (`openRecent`). A tab open
@@ -91,7 +101,12 @@ final class LauncherModel: ObservableObject {
     /// time a prompt is begun or that folder changes.
     @Published var agents: [Agent] = [] { didSet { promptWordsResolved() } }
     /// Git repos for `#name`, rescanned in the background each time a prompt is begun.
-    @Published var projects: [Project] = [] { didSet { if mode == .prompt { loadAgents(); promptWordsResolved() } } }
+    @Published var projects: [Project] = [] {
+        didSet {
+            if mode == .prompt { loadAgents(); promptWordsResolved() }
+            strip.refresh()   // a tab's project may change
+        }
+    }
     /// Highlighted suggestion while a `^host`, `#project` or `@agent` word is being typed.
     @Published var suggestionSelection = 0
     /// Set while a session is being started on a peer (its name): the host answers once the
@@ -103,6 +118,7 @@ final class LauncherModel: ObservableObject {
         // A project that just resolved changes the folder whose agents the prompt wants. Only the named
         // peer's list matters: a row's ask of another peer leaves the prompt alone.
         didSet {
+            if peerProjects != oldValue { strip.refresh() }   // a tab on that Mac may change its project
             guard mode == .prompt, let id = claudePeer?.id, peerProjects[id] != oldValue[id] else { return }
             loadPeerLists()
             promptWordsResolved()
@@ -129,7 +145,7 @@ final class LauncherModel: ObservableObject {
     /// What the picker offers: the built-ins, then the custom apps found when it opened.
     @Published private(set) var pickerItems = PickerItem.items(apps: [])
     /// Tab whose name is being edited in the header (⌘⇧R).
-    @Published var renamingTab: ClaudeTab?
+    @Published var renamingTab: ClaudeTab? { didSet { strip.refresh() } }
     /// Settings view replaces whatever the panel showed (⌘,).
     @Published var showingSettings = false
     /// The session board replaces the panel's content the way Settings does (⌘⇧B, `!kanban`); Settings shows over it.
@@ -323,6 +339,8 @@ final class LauncherModel: ObservableObject {
         board.model = self
         outline.model = self
         resources.model = self
+        strip.model = self
+        tabProjects.model = self
         restoreSessions()
         // Scanned before the first prompt so `#name` resolves straight away, and again when
         // the folders change (the publisher sends the new value before it's stored).
@@ -373,8 +391,14 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    /// A full-panel view (Settings, the board, the outline, Resources) is over the tabs. A new one is added here, and calls `willCoverTabs` as it opens.
+    var coversTabs: Bool { showingSettings || showingBoard || showingOutline || showingResources }
+
+    /// A full-panel view is about to cover the tabs: the lists under the strip close.
+    func willCoverTabs() { strip.closeList() }
+
     /// Terminal tabs on screen: the panel takes the user's own size and position.
-    var showsTerminal: Bool { activeTab != nil && !showingSettings && !showingBoard && !showingOutline && !showingResources }
+    var showsTerminal: Bool { activeTab != nil && !coversTabs }
 
     /// What the panel does with a query, read from its first character alone: a `?` or `!` after a space, or
     /// anywhere later, is part of a message.
@@ -1874,6 +1898,7 @@ final class LauncherModel: ObservableObject {
     func beginRename() {
         // Only the machine in control of a tab renames it: refused here before anything is typed.
         if let tab = activeTab, let reason = layoutLockReason(of: tab) { return tab.focused.showRefusal(reason) }
+        strip.closeList()
         renamingTab = activeTab
     }
 
@@ -2000,6 +2025,7 @@ final class LauncherModel: ObservableObject {
     /// Reads the custom apps from disk each time, for the focused pane's project.
     func askSplit(_ axis: SplitAxis) {
         guard showsTerminal, let tab = activeTab else { return }
+        strip.closeList()
         let focused = tab.focused
         if let reason = layoutLockReason(of: tab) { return focused.showRefusal(reason) }
         if let host = tab.host {
@@ -2140,7 +2166,10 @@ final class LauncherModel: ObservableObject {
             guard let self, let ended = ref else { return }
             self.sessionExited(ended, code: code, query: prompt)
         }
-        session.onLabelChange = { [weak self] in self?.saveSessions() }
+        session.onLabelChange = { [weak self] in
+            self?.strip.refresh()
+            self?.saveSessions()
+        }
         // A pane of another machine's tab closes alone only for the machine in control of the tab.
         session.closeGate = { [weak self] in
             guard let self, let pane = ref, let tab = self.tabs.first(where: { $0.contains(pane) }) else { return nil }
@@ -2422,6 +2451,7 @@ final class LauncherModel: ObservableObject {
 
         // The last pane is out: the tab goes to Completed, or is an ended card when it held a Claude pane.
         closing[tab.id] = nil
+        let inStrip = strip.tabs
         tabs.remove(at: index)
         let closed = going ?? ClosingTab(saved: .init(id: tab.id, layout: .leaf(record), focused: record.id, name: tab.name,
                                                       showsFiles: tab.showsFiles ? true : nil),
@@ -2458,8 +2488,10 @@ final class LauncherModel: ObservableObject {
             query = prompt
             focusSearchField()
         } else if !tabs.isEmpty {
-            // Like closing a tab: show the neighbour.
-            activate(tabs[min(index, tabs.count - 1)], keepingBoard: true)
+            // Like closing a tab: show the neighbour in the strip, or in all the tabs when the chosen project ended with this one.
+            let rest = inStrip.filter { $0 !== tab }
+            let at = inStrip.firstIndex { $0 === tab } ?? 0
+            activate(rest.isEmpty ? tabs[min(index, tabs.count - 1)] : rest[min(at, rest.count - 1)], keepingBoard: true)
         } else {
             showSearch()
         }
@@ -2812,6 +2844,7 @@ final class LauncherModel: ObservableObject {
         guard let from = tabs.firstIndex(where: { $0 === tab }), gap != from, gap != from + 1,
               (0...tabs.count).contains(gap) else { return }
         let selected = tabs.indices.contains(sessionSelection) ? tabs[sessionSelection] : nil
+        strip.keepRunByIndex()
         tabs.move(fromOffsets: [from], toOffset: gap)
         if let selected, let i = tabs.firstIndex(where: { $0 === selected }) { sessionSelection = i }
         saveSessions()
@@ -2821,6 +2854,7 @@ final class LauncherModel: ObservableObject {
     /// (`keepingBoard`: the tab on screen ended).
     func activate(_ tab: ClaudeTab, keepingBoard: Bool = false) {
         pendingSplit = nil
+        strip.closeList()
         if !keepingBoard {
             hideBoard()
             hideOutline()
@@ -2836,6 +2870,7 @@ final class LauncherModel: ObservableObject {
     /// Back to search without ending anything (⌘N). A session's `show` passes `focusing: false` unless the panel already has the keyboard.
     func showSearch(focusing: Bool = true) {
         pendingSplit = nil
+        strip.closeList()
         startSummaryTicker()
         if let active = activeTab, let i = tabs.firstIndex(where: { $0 === active }) {
             sessionSelection = i
@@ -2847,14 +2882,25 @@ final class LauncherModel: ObservableObject {
         refreshPeerRecent(minInterval: 5)
     }
 
-    /// ⌘⇧[ / ⌘⇧]: previous / next tab, wrapping. From search it opens the last (or first) tab.
+    /// ⌘⇧[ / ⌘⇧]: previous / next tab of the strip (the chosen project's), wrapping. From search it opens the last (or first) tab.
     func cycleSession(_ delta: Int) {
+        let tabs = strip.tabs
         guard !tabs.isEmpty else { return }
         guard let active = activeTab, let i = tabs.firstIndex(where: { $0 === active }) else {
             activate(delta < 0 ? tabs[tabs.count - 1] : tabs[0])
             return
         }
         activate(tabs[(i + delta + tabs.count) % tabs.count])
+    }
+
+    /// ⌘⇧P: the projects column shows or hides. In a panel too narrow for it (with the file tree, if shown) the list of projects opens instead.
+    func toggleProjects() {
+        guard let tab = activeTab else { return }
+        guard tabProjects.fits(showsFiles: tab.showsFiles) else { return tabProjects.toggleList() }
+        strip.closeList()
+        tabProjects.columnOn.toggle()
+        if tabProjects.columnOn { startSummaryTicker() }
+        tab.focus(tab.focused)
     }
 
     /// Where Claude starts: the folder from Settings, else VARNICK_CLAUDE_DIR, else the launcher's working directory from a checkout (the repo,
@@ -2869,6 +2915,7 @@ final class LauncherModel: ObservableObject {
     /// ⌘,: settings in place of the current view; again (or esc) goes back.
     func toggleSettings() {
         pendingSplit = nil
+        willCoverTabs()
         Settings.shared.recording = nil
         showingSettings.toggle()
         guard !showingSettings, !showingBoard, !showingResources else { return }
@@ -2880,12 +2927,17 @@ final class LauncherModel: ObservableObject {
     /// The search field takes focus, or the caret goes back into its bullet while the outline shows over the search.
     func focusSearchField() {
         if showingOutline { outline.restoreCaret() } else { focusToken += 1 }
-        if activeTab == nil, !showingBoard, !showingOutline, !showingResources, !showingSettings { startSummaryTicker() }
+        if activeTab == nil, !coversTabs { startSummaryTicker() }
     }
 
     /// The tab on screen takes focus, or the search field when none shows.
     private func focusShown() {
-        if let tab = activeTab { tab.focus(tab.focused) } else { focusSearchField() }
+        if let tab = activeTab {
+            tab.focus(tab.focused)
+            if strip.needsMarks { startSummaryTicker() }
+        } else {
+            focusSearchField()
+        }
     }
 
     /// ⌘⇧B: the board in place of the current view; again (or esc) goes back. From Settings it closes
@@ -2902,6 +2954,7 @@ final class LauncherModel: ObservableObject {
     /// `tab` is the one to show (`!problems`); nil leaves the board on the tab it showed last.
     func showBoard(_ tab: SessionBoard.Tab? = nil) {
         pendingSplit = nil
+        willCoverTabs()
         hideOutline()
         hideResources()
         if let tab { board.show(tab) }
@@ -2940,6 +2993,7 @@ final class LauncherModel: ObservableObject {
     /// a bullet, which is what a session's `show` does unless the panel already has the keyboard.
     func showOutline(focusing: Bool = true) {
         pendingSplit = nil
+        willCoverTabs()
         hideBoard()
         hideResources()
         guard !showingOutline else { return }
@@ -2974,6 +3028,7 @@ final class LauncherModel: ObservableObject {
     /// Resources, the board and the outline never show together: showing any closes the others.
     func showResources() {
         pendingSplit = nil
+        willCoverTabs()
         hideBoard()
         hideOutline()
         guard !showingResources else { return }
@@ -3014,37 +3069,72 @@ final class LauncherModel: ObservableObject {
     /// What each tab's row in the session list says of its Claude sessions ("3 sessions", "1 waiting"), by `ClaudeTab.viewID`. The view reads
     /// this and nothing else: the turns are read where the list is refreshed (`refreshTabSummaries`), never while it is drawn.
     @Published private(set) var tabSummaries: [UUID: [String]] = [:]
+    /// What the first session of a tab waiting on the user waits for (the board's mark: "Needs permission", "Question"), by `ClaudeTab.viewID`;
+    /// only for tabs that have one. A row of the session list and of the hidden tabs' list shows it, and the strip's chip is orange for it.
+    @Published private(set) var tabMarks: [UUID: String] = [:]
     private var summaryTicker: Task<Void, Never>?
 
-    /// Reads each tab's Claude panes' turns (one stat a pane) and publishes the summaries that changed.
+    /// Reads each tab's Claude panes' turns (one stat a pane, none for a pane that reads its own) and publishes what changed.
     func refreshTabSummaries() {
-        var next: [UUID: [String]] = [:]
+        var summaries: [UUID: [String]] = [:]
+        var marks: [UUID: String] = [:]
         for tab in tabs {
             let claude = tab.claudeSessions
+            for pane in claude where !pane.readsOwnTurn { pane.checkTurn() }
+            if let mark = claude.lazy.filter(turnIsLive).compactMap({ $0.turn?.turn.mark }).first { marks[tab.viewID] = mark }
             guard claude.count > 1 else { continue }
-            for pane in claude { pane.checkTurn() }
-            next[tab.viewID] = TabSummary.parts(sessions: claude.count, waiting: claude.filter { $0.turn?.turn.mark != nil }.count,
-                                                working: claude.filter { $0.turn?.turn.isRunning == true }.count)
+            summaries[tab.viewID] = TabSummary.parts(sessions: claude.count, waiting: claude.filter { turnIsLive($0) && $0.turn?.turn.mark != nil }.count,
+                                                     working: claude.filter { $0.turn?.turn.isRunning == true }.count)
         }
-        if next != tabSummaries { tabSummaries = next }
+        if summaries != tabSummaries { tabSummaries = summaries }
+        if marks != tabMarks { tabMarks = marks }
     }
 
-    /// Reads the summaries now and once a second while the search is on screen in a visible panel. It ends when the panel hides or a tab, the
-    /// board, the outline or Settings covers the search, and starts again where the search comes back (`panelDidShow`, `showSearch`,
-    /// `focusSearchField`).
-    private func startSummaryTicker() {
-        refreshTabSummaries()
+    /// The zmx sessions as last asked (the board asks when it opens, the ticker when it starts); nil until zmx answers or if it couldn't be asked.
+    private var zmxSessions: Set<String>?
+    private var zmxCheck: Task<Void, Never>?
+
+    /// Whether a pane not started yet has a zmx session. Before zmx has answered, or when it couldn't be asked, it is taken to have one: only an
+    /// answer may say a session is gone, and with Keep sessions running off none is there.
+    func hasZmxSession(_ pane: ClaudeSession) -> Bool {
+        guard Zmx.isEnabled else { return false }
+        return zmxSessions?.contains(Zmx.sessionName(pane.id)) ?? true
+    }
+
+    /// Whether a pane's turn file can be believed: a session a reboot ended leaves one that still says it waits, and a restored pane not opened
+    /// since shows only what zmx still lists.
+    private func turnIsLive(_ pane: ClaudeSession) -> Bool { pane.started || pane.isOnPeer || hasZmxSession(pane) }
+
+    /// Which restored panes still have a zmx session, asked off the main actor.
+    func checkZmx() {
+        guard Zmx.isEnabled, tabs.contains(where: { $0.sessions.contains { $0.isClaude && !$0.started } }) else { return }
+        zmxCheck?.cancel()
+        zmxCheck = Task { [weak self] in
+            let listed = await Task.detached(priority: .userInitiated) { Zmx.listedSessions() }.value
+            guard !Task.isCancelled, let self else { return }
+            self.zmxSessions = listed
+            self.refreshTabSummaries()
+            if self.showingBoard { self.board.refresh() }
+        }
+    }
+
+    /// Reads the summaries now, and once a second while the search shows or a tab does and `TabStrip.needsMarks`. When it runs and stops
+    /// is stated once, in docs/agents/where-it-breaks.md (the +N chip's entry).
+    func startSummaryTicker(reading: Bool = true) {
+        if reading { refreshTabSummaries() }
         guard summaryTicker == nil else { return }
+        checkZmx()
         summaryTicker = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
-                guard SessionBoard.panelIsVisible, self.activeTab == nil, !self.showingBoard, !self.showingOutline, !self.showingResources,
-                      !self.showingSettings else {
+                let covered = self.coversTabs
+                let searching = self.activeTab == nil && !covered
+                guard SessionBoard.panelIsVisible, !covered, searching || self.strip.needsMarks else {
                     self.summaryTicker = nil
                     return
                 }
-                if self.showsSessionList { self.refreshTabSummaries() }
+                if !searching || self.showsSessionList { self.refreshTabSummaries() }
             }
         }
     }

@@ -152,7 +152,7 @@ What is typed into the panel, unless it starts with `?` (a search) or `!` (a **C
 _Avoid_: Ask, command
 
 **Project**:
-A git repo under the project folders that a session can start in instead of the default folder.
+A git repo under the project folders that a session can start in instead of the default folder. A **Tab**'s project is its first Claude pane's (else its first pane's).
 _Avoid_: Repo, workspace
 
 **Agent**:

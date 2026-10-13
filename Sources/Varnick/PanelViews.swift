@@ -54,6 +54,7 @@ enum PanelViews {
         if model.askingRestart { return NoKeys("The Restart Varnick card is showing: ask the user to answer it first") }
         if model.pendingSplit != nil { return NoKeys("The split picker is showing: ask the user to answer it first") }
         if model.renamingTab != nil { return NoKeys("A tab is being renamed: ask the user to finish first") }
+        if let list = model.strip.openList { return NoKeys("The \(list.name) is showing: ask the user to answer it first") }
         if model.showingSettings { return NoKeys("Settings is showing: its switches govern sessions, so a session may not press keys there") }
         if model.showingBoard { return BoardPanelView(model: model) }
         if model.showingOutline { return OutlinePanelView(model: model) }

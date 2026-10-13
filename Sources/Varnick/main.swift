@@ -161,6 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         // A click in a split pane (terminal, page or file) focuses that pane.
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            // The hidden tabs' list closes on a click outside it; the click goes on.
+            if let self, event.window === self.panel { self.model.strip.mouseDown(event) }
             guard let self, event.window === self.panel,
                   var view = self.panel.contentView?.hitTest(event.locationInWindow) else { return event }
             // A file pane's rendered Markdown is a WKWebView inside its FileViewer.
@@ -190,6 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self.model.pickerKey(event)
                 return nil
             }
+            // The hidden tabs' list takes ↑ ↓ ↩ and esc while it is open: the pane under it gets none of them.
+            if self.model.showsTerminal, self.model.strip.key(event) { return nil }
             let mods = event.modifierFlags.intersection(KeyCombo.relevant)
             if self.model.showingSettings, Int(event.keyCode) == kVK_Escape, mods.isEmpty {
                 self.model.toggleSettings()
@@ -287,6 +291,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .previousTab: model.cycleSession(-1)
         case .nextTab: model.cycleSession(1)
         case .toggleFiles where inSession: model.toggleFiles()
+        case .toggleProjects where inSession: model.toggleProjects()
+        case .previousProject: model.tabProjects.cycle(-1)
+        case .nextProject: model.tabProjects.cycle(1)
         case .sessionBoard: model.toggleBoard()
         case .outline: model.toggleOutline()
         case .resources: model.toggleResources()

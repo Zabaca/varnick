@@ -370,6 +370,7 @@ final class PanelAccess {
         if model.showingSettings { throw PanelRefusal.bad("Settings is showing: ask the user to close it first") }
         if model.askingRestart { throw PanelRefusal.bad("The Restart Varnick card is showing: ask the user to answer it first") }
         if model.pendingSplit != nil { throw PanelRefusal.bad("The split picker is showing: ask the user to answer it first") }
+        if let list = model.strip.openList { throw PanelRefusal.bad("The \(list.name) is showing: ask the user to answer it first") }
         if let lastKey, lastKey.duration(to: .now) < Self.typingQuiet {
             throw PanelRefusal.bad("The user pressed a key in the panel a moment ago and may be typing there: try again in a few seconds")
         }
@@ -432,6 +433,10 @@ final class PanelAccess {
         if model.pendingSplit != nil {
             lines.append("Over it: the split picker")
             focus = "the split picker"
+        }
+        if let list = model.strip.openList {
+            lines.append("Over it: the \(list.name)")
+            focus = "the \(list.name)"
         }
         if model.askingRestart {
             lines.append("Over it: the Restart Varnick card")

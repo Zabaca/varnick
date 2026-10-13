@@ -274,7 +274,7 @@ struct FileTreeView: View {
             }
         }
         .frame(width: Self.width)
-        .background(Color(nsColor: NSColor(white: 0.12, alpha: 1)))
+        .background(Theme.sidebar)
         .onAppear { tree.show(root, remote: remote) }
         .onChange(of: root) { _, new in tree.show(new, remote: remote) }
         .onChange(of: remote) { _, new in tree.show(root, remote: new) }
