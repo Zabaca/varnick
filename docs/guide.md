@@ -108,7 +108,7 @@ mark with how many of them have a session waiting on you.
   same rows by the project's name; hover a row to see how many tabs are on each Mac.
 - **Choosing a row** shows only that project's tabs in the strip and brings up the one you last had open there, or its first.
   ⌘⇧[ and ⌘⇧] step through them. **All** brings every tab back and leaves the one on screen as it is.
-- **⌘⌥[ and ⌘⌥]** choose the previous or next row, All included, with the column hidden too. Showing a tab of another project, from the
+- **⌃⌘[ and ⌃⌘]** choose the previous or next row, All included, with the column hidden too. Showing a tab of another project, from the
   search, the board or a new session, moves the choice to that project; closing the last tab of the chosen project moves it to All.
 - **With the column hidden,** a chip at the strip's left names the chosen project, and clicking it lists the rows.
 - **A narrow panel** shows the column only while the panes keep their minimum width beside it and the file tree. Otherwise ⌘⇧P

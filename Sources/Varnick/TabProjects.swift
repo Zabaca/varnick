@@ -121,7 +121,7 @@ final class TabProjects: ObservableObject {
         model.activate(target)
     }
 
-    /// ⌘⌥[ and ⌘⌥]: the previous or next row, wrapping, All included, whether or not the column shows. Like ⌘⇧[, from search or over a
+    /// ⌃⌘[ and ⌃⌘]: the previous or next row, wrapping, All included, whether or not the column shows. Like ⌘⇧[, from search or over a
     /// full-panel view it shows a tab: All has none of its own to show, so it shows the one `cycleSession` would.
     func cycle(_ delta: Int) {
         guard let model else { return }

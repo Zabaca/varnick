@@ -41,7 +41,7 @@ final class LauncherModel: ObservableObject {
     let tabDrag = TabDrag()
     /// The header's tab strip: which tabs it shows, and the list of those it doesn't.
     let strip = TabStrip()
-    /// The projects column, and the project the strip is filtered to (⌘⇧P, ⌘⌥[ and ⌘⌥]).
+    /// The projects column, and the project the strip is filtered to (⌘⇧P, ⌃⌘[ and ⌃⌘]).
     let tabProjects = TabProjects()
     /// Tab on screen; nil shows search (tabs are listed there when the query is empty).
     @Published var activeTab: ClaudeTab? { didSet { strip.refresh() } }

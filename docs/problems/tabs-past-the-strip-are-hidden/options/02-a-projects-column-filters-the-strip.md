@@ -1,7 +1,7 @@
 ---
 problem: tabs-past-the-strip-are-hidden
 title: A projects column on the left filters the tab strip to one project's tabs
-summary: A column left of the panes lists All, each project with open tabs, then Other, each row with its tab count and an orange mark when one of its tabs waits on the user. ⌘⇧P shows and hides it, as ⌘⇧F does the file tree on the right. ⌘⌥[ and ⌘⌥] choose the previous or next row without it. Choosing a project leaves only its tabs in the strip, and ⌘⇧[ and ⌘⇧] step through those. A tab's project is its first Claude pane's, by the rule the pills use, and other machines' tabs join the same rows. Showing a tab of another project, from search, the board or a new session, moves the choice to that project. Search, the board and the Phone page still cover every tab. Whether the column shows is saved; the choice isn't.
+summary: A column left of the panes lists All, each project with open tabs, then Other, each row with its tab count and an orange mark when one of its tabs waits on the user. ⌘⇧P shows and hides it, as ⌘⇧F does the file tree on the right. ⌃⌘[ and ⌃⌘] choose the previous or next row without it. Choosing a project leaves only its tabs in the strip, and ⌘⇧[ and ⌘⇧] step through those. A tab's project is its first Claude pane's, by the rule the pills use, and other machines' tabs join the same rows. Showing a tab of another project, from search, the board or a new session, moves the choice to that project. Search, the board and the Phone page still cover every tab. Whether the column shows is saved; the choice isn't.
 status: accepted
 ---
 
@@ -18,7 +18,7 @@ The chosen row is highlighted, and clicking a row chooses it.
 
 **Keys.**
 - **⌘⇧P** shows and hides the column.
-- **⌘⌥[ and ⌘⌥]** choose the previous or next row, All included, wrapping, whether or not the column shows. From search they choose and show the tab, as ⌘⇧[ does.
+- **⌃⌘[ and ⌃⌘]** choose the previous or next row, All included, wrapping, whether or not the column shows. From search they choose and show the tab, as ⌘⇧[ does.
 
 All three can be rebound, like every shortcut.
 
@@ -83,7 +83,7 @@ All three can be rebound, like every shortcut.
 - **The panel's, not a tab's.** Whether it shows is saved in UserDefaults on change. The file tree is a tab's because it shows that tab's folder; the column lists every tab.
 
 **Keys**
-- **Three new actions in the Tabs group:** Show / hide projects (⌘⇧P), Previous project (⌘⌥[) and Next project (⌘⌥]).
+- **Three new actions in the Tabs group:** Show / hide projects (⌘⇧P), Previous project (⌃⌘[) and Next project (⌃⌘]).
 - **Where they act:** the column's key while a tab shows, as ⌘⇧F does. The project keys also act from search, as ⌘⇧[ does.
 - **Hints:** the column's top shows the keys through the usual shortcut hint, so a rebinding shows.
 
@@ -107,7 +107,7 @@ All three can be rebound, like every shortcut.
 - **By hand,** after the user restarts Varnick:
   - **The column:** ⌘⇧P shows it with All, the projects with open tabs and their counts, and Other for a tab in the home folder. ⌘⇧P again hides it, and it stays hidden after a restart.
   - **Filtering:** choosing a project leaves only its tabs in the strip, and ⌘⇧] steps through them alone.
-  - **The project keys:** with the column hidden, ⌘⌥] moves to the next project and shows its tab, and the chip at the strip's left names it.
+  - **The project keys:** with the column hidden, ⌃⌘] moves to the next project and shows its tab, and the chip at the strip's left names it.
   - **A waiting tab:** in another project, a session asks a question. That project's row gets the orange mark, and so does All.
   - **Opening from elsewhere:** filtered to one project, ↩ on another project's tab in search shows it, and the choice moves to its project.
   - **Closing the last tab** of the chosen project moves the choice to All.
@@ -137,7 +137,7 @@ All three can be rebound, like every shortcut.
   - a tab's panes all run on one machine, and a split starts in the focused pane's folder;
   - the file tree is 250 points, belongs to its tab and is saved with it;
   - a divider keeps a pane at least 220 points wide, and the panel narrows to 480;
-  - ⌘⇧P, ⌘⌥[ and ⌘⌥] are bound to nothing, by default or as a fixed key;
+  - ⌘⇧P, ⌃⌘[ and ⌃⌘] are bound to nothing, by default or as a fixed key;
   - closing the tab on screen shows its neighbour in the full order;
   - every way of showing a tab goes through one activation.
 - **Inferred:** mixed tabs are rare, from how splits pick their folder.
@@ -153,6 +153,6 @@ All three can be rebound, like every shortcut.
   3. **Should the session board follow the chosen project?** no. The board is where every waiting session shows. An opt-in could come later, if at all.
   4. **Is the chosen project kept across restarts?** no. Whether the column shows is kept.
   5. **Does search follow it?** no. Search, with its Tabs list, always covers everything.
-  6. **Keys?** ⌘⇧P for the column, ⌘⌥[ and ⌘⌥] for the previous and next project.
+  6. **Keys?** ⌘⇧P for the column, ⌃⌘[ and ⌃⌘] for the previous and next project. Changed by the user on 2026-10-13: ⌃⌘[ and ⌃⌘] step through projects, in place of ⌘⌥[ and ⌘⌥].
   7. **Anything on the Phone page?** nothing in this option.
   8. **A narrow panel?** the column shows only while the panes keep 220 points beside it and the file tree. Otherwise the chip's list stands in for it.
