@@ -1,7 +1,7 @@
 ---
 problem: work-is-tracked-by-session-not-tab
 title: Web and app panes of another host's tab load through that host's port proxy
-summary: On top of option 03, as decision 4 has it. Each host runs a reverse proxy in its Phone page server, the one Varnick process that runs between requests on a Mac and on the headless host alike. The proxy listens on the host's tailnet address, on the ports its open tabs' web and app panes use, with a `tailscale cert` certificate for the machine's name, and forwards port N to localhost:N. It forwards websockets and rewrites the Host header so dev servers' host checks pass. Another Mac's web pane loads `https://<host's tailnet name>:N/` in place of `http://localhost:N/`. The phone shows it in the tab's pane view. Only listed devices and paired machines may connect, and a request started by another site is refused. The host's listing gives each such pane's address (protocol 24). A spike first checks `tailscale cert` and the tailnet bind on each kind of host, and Scratch through the proxy.
+summary: On top of option 03, as decision 4 has it. Each host runs a reverse proxy in its Phone page server, the one Varnick process that runs between requests on a Mac and on the headless host alike. The proxy listens on the host's tailnet address, on the ports its open tabs' web and app panes use, with a `tailscale cert` certificate for the machine's name, and forwards port N to localhost:N. It forwards websockets and rewrites the Host header so dev servers' host checks pass. Another Mac's web pane loads `https://<host's tailnet name>:N/` in place of `http://localhost:N/`. The phone shows it in the tab's pane view. Only listed devices and paired machines may connect, and a request started by another site is refused. The host's listing gives each such pane's address (protocol 25). A spike first checks `tailscale cert` and the tailnet bind on each kind of host, and Scratch through the proxy.
 status: proposed
 ---
 
@@ -42,7 +42,7 @@ A host that doesn't serve the Phone page doesn't proxy (open question 1).
 - **A server bound to every address of the host** (0.0.0.0) holds the port on the tailnet address too. The proxy can't listen there, and the pane says why. The server is then reachable straight over plain HTTP, unchecked, as it already is (inferred).
 - **It needs the Phone page server on the host.** A host with the page off keeps option 03's card for these panes.
 - **`tailscale cert` and the bind are untested on these hosts.** A Mac host may refuse `tailscale cert` to a user who isn't root, as one refused `serve` to a socket (ADR 0011's note). Linux may need the user made an operator, or `TS_PERMIT_CERT_UID` set for tailscaled (inferred from Tailscale's docs). Hence the spike.
-- **A protocol bump to 24,** for the proxied address in the listing.
+- **A protocol bump to 25,** for the proxied address in the listing.
 
 ## User Stories
 
@@ -108,7 +108,7 @@ The results go into this option's Further Notes before the rest is built.
 - **The phone's tab view** shows the page in a frame, with "Open alone" beside it. The page's content rules allow frames from the host's own name on the proxied ports.
 - **Splits from afar** (option 03's open question 1) can then offer web and app panes too. The host runs the app, and the viewer loads it through the proxy.
 
-**The protocol** goes to 24, for the proxied address and the reason a pane can't be proxied in `tabs`, with the Phone page's constant.
+**The protocol** goes to 25, for the proxied address and the reason a pane can't be proxied in `tabs`, with the Phone page's constant.
 
 ## Testing Decisions
 

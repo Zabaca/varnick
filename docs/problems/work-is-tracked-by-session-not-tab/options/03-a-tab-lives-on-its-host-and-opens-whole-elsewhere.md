@@ -1,7 +1,7 @@
 ---
 problem: work-is-tracked-by-session-not-tab
 title: A tab lives on one host and opens whole on other devices, its terminals and files included
-summary: On top of options 01 and 02. The machine that runs a tab keeps its layout, its panes and its mark, and lists its open tabs whole to other machines and devices with a new `tabs` request (protocol 23). Another Mac opens a host's tab in the host's layout. Claude and terminal panes show on cards until Take over, which now takes the whole tab. File panes are read over SSH, the Transcript stays on its own Mac, and web and app panes on a local address wait for option 04. Only the machine in control of a tab changes its layout. A split starts the new pane on the tab's host. The host's terminals survive another machine attaching to them, and the headless host keeps tabs of several panes, terminals included. The phone shows a tab's panes one at a time.
+summary: On top of options 01 and 02. The machine that runs a tab keeps its layout, its panes and its mark, and lists its open tabs whole to other machines and devices with a new `tabs` request (protocol 24). Another Mac opens a host's tab in the host's layout. Claude and terminal panes show on cards until Take over, which now takes the whole tab. File panes are read over SSH, the Transcript stays on its own Mac, and web and app panes on a local address wait for option 04. Only the machine in control of a tab changes its layout. A split starts the new pane on the tab's host. The host's terminals survive another machine attaching to them, and the headless host keeps tabs of several panes, terminals included. The phone shows a tab's panes one at a time.
 status: proposed
 ---
 
@@ -43,7 +43,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 - **Terminals on a Mac host are reachable only with Keep sessions running on there,** since a terminal runs in zmx only then (verified). Without it, the host lists them and says why they can't be opened.
 - **Web pages on a local address, and app panes, aren't reachable until option 04.** This option ships without the proxy.
 - **The Transcript never leaves its Mac** (Listening's privacy rule).
-- **Protocol 23.**
+- **Protocol 24.**
 
 ## User Stories
 
@@ -114,7 +114,7 @@ Every other Mac and device sees it from the host's own listing. `tabs` replaces 
 - **Take over takes the tab,** and a refused or raced take is told as today.
 - **A new session from the phone** is still a one-pane tab.
 
-**The protocol** goes to 23, with the Phone page's constant:
+**The protocol** goes to 24, with the Phone page's constant:
 - `tabs` is new;
 - `sessions` is gone;
 - `start` gains the tab, the pane split, the side and the kind;
