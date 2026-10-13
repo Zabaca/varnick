@@ -238,10 +238,8 @@ extension HeadlessPeerHost {
         return reply
     }
 
-    /// `recent`: the tabs that ended here, newest first (protocol 23). A record is a tab of its own unless a `resume` put it in another
-    /// (ADR 0032), and a tab is closed when every record of it has ended; each conversation is listed once, with a transcript to resume and
-    /// no running or starting session holding it (that one is in the session list instead). A session that ended by itself (`/exit`, or
-    /// claude killed) is here once the next request reconciles it.
+    /// `recent`: the tabs whose every record has ended, newest first (protocol 23), each conversation once and only with a transcript and
+    /// no running session holding it. A session that ended by itself is here once the next request reconciles it.
     func recent() -> PeerReply {
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         state.reconcile()

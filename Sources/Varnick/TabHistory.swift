@@ -7,9 +7,8 @@ struct HeldConversation: Codable, Equatable {
     var title: String?
 }
 
-/// The rules for a tab's history: the conversations it has held, newest first, capped (option 02 of `work-is-tracked-by-session-not-tab`).
-/// A conversation is in the history of one tab, the latest that held it: the model takes it out of the others' (`LauncherModel.claim`).
-/// Foundation only, so the rules need no tab, pane or clock.
+/// The rules for a tab's history: the conversations it has held, newest first, capped. A conversation is in the history of one tab, the
+/// latest that held it (`LauncherModel.claim`). Foundation only, so the rules need no tab, pane or clock.
 enum TabHistory {
     static let limit = 50
 

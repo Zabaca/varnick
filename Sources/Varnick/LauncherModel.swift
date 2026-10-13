@@ -568,10 +568,8 @@ final class LauncherModel: ObservableObject {
     var showsSessionList: Bool { query.isEmpty && !(tabs.isEmpty && allRecent.isEmpty && peerOpenRows.isEmpty) }
     var shownRecent: ArraySlice<TabRecord> { allRecent.prefix(Self.recentShown) }
 
-    /// Rebuilds `allRecent` from this Mac's Recent and the paired Macs': newest first, one entry per tab (this Mac's when the times are
-    /// equal). A peer's entry is a tab of its listed sessions under the host's id, so a row keeps its identity from one fetch to the next. A
-    /// tab open here or on a peer, or whose Claude conversations are all open, isn't closed, and a Mac that is no longer paired has no
-    /// entries. Runs when any of those change (the observers of its inputs, and every save, which a pane's conversation moving ends in).
+    /// Rebuilds `allRecent` from this Mac's Recent and the paired Macs': newest first, one entry per tab under the host's id. A tab open
+    /// here or on a peer, or whose Claude conversations are all open, isn't closed. Runs when its inputs change, and at every save.
     private func rebuildRecent() {
         // A Mac that removed this one has nothing here: its prompts and sessions were copied while it listed this Mac.
         let peers = PeerManager.shared.peers.filter { PeerManager.shared.status[$0.id] != .removedThisMac }
@@ -1711,9 +1709,8 @@ final class LauncherModel: ObservableObject {
         tab.completedAt != nil || completed.contains { $0.id == tab.id }
     }
 
-    /// ↩ on a closed tab in Recent: it comes back whole, here or on its Mac (`reopen`), and leaves Recent and the ended cards. A tab still
-    /// in Completed is reopened from there, which takes its mark off (`openCompleted`); one a paired Mac's Recent lists as done has its mark
-    /// taken off there.
+    /// ↩ on a closed tab in Recent: it comes back whole, here or on its Mac (`reopen`), and leaves Recent and the ended cards. One still in
+    /// Completed is reopened from there (`openCompleted`), and a paired Mac's mark on it comes off.
     func openRecent(_ tab: TabRecord) {
         recent.removeAll { $0.id == tab.id }
         if completed.contains(where: { $0.id == tab.id }) { return openCompleted(tab.id) }
@@ -1800,9 +1797,8 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// The tab that holds a match: shown if it is open here, with the pane on that conversation focused when it has one; opened as the
-    /// paired Mac's tab if it is open there; else reopened from Completed, Recent or the ended cards, here or on its Mac. A tab with no
-    /// record left (it fell off Recent) resumes the matching session alone, in a new tab.
+    /// The tab that holds a match: shown if it is open here, opened as a paired Mac's if it is open there, else reopened from Completed,
+    /// Recent or the ended cards. One with no record left resumes the matching session alone, in a new tab.
     private func openTab(_ ref: TabRef, matching result: SearchResult?) {
         if let tab = tabs.first(where: { $0.id == ref.id && $0.host == ref.host }) {
             activate(tab)
