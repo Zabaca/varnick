@@ -161,10 +161,11 @@ export class PortProxy {
     const tabs = await this.world.tabs();
     // A relay that didn't answer changes nothing this time: the ports stay as they were.
     if (tabs.ok) this.aims = aimsOf(tabs.reply.tabs);
-    await this.ensureCertificate();
 
     const wanted = new Set(this.aims.flatMap((aim) => (aim.port === null ? [] : [aim.port])));
     const held = new Set(this.listeners.keys());
+    // The certificate is asked for only while a port is wanted or held: a host with no web or app pane never runs `tailscale cert`.
+    if (wanted.size > 0 || held.size > 0) await this.ensureCertificate();
     const candidates = new Set([...wanted, ...held]);
     let serve: ReadonlySet<number> = new Set();
     let addresses: string[] = [];
@@ -230,7 +231,7 @@ export class PortProxy {
 
   /** Why there is no certificate to serve with, or null when there is one (a renewal that failed leaves the old one serving). */
   private missingCertificate(): string | null {
-    return this.certificate === null && this.tls ? this.certificateNote ?? noCertificateYet : null;
+    return this.certificate === null && this.tls && this.certificateAskedAt !== 0 ? this.certificateNote ?? noCertificateYet : null;
   }
 
   // -------------------------------------------------------------------------------------------------------------

@@ -323,6 +323,16 @@ describe.skipIf(!ipv6 || !openssl)("the certificate", () => {
     socket.close();
   });
 
+  test("a host with no web or app pane never asks for a certificate", async () => {
+    let asked = 0;
+    const r = await rig({ tls: true, certificate: async () => { asked += 1; return { ok: false, note: "x" }; } });
+    r.tabs.value = { tabs: [{ panes: [{ id: "t", kind: "terminal" }] }] };
+    await r.proxy.look();
+    await r.proxy.look();
+    expect(asked).toBe(0);
+    expect(r.status().note).toBeNull();
+  });
+
   test("with no certificate nothing opens, and the status says why", async () => {
     const r = await rig({ tls: true, certificate: async () => ({ ok: false, note: "No certificate: because." }) });
     await r.proxy.look();

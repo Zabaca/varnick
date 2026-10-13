@@ -103,8 +103,12 @@ Another device of the user's on the tailnet, such as the phone, listed on a **Ho
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
 
 **Phone page**:
-The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its open tabs, each shown one pane at a time, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages.
+The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its open tabs, each shown one pane at a time, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages. The same server runs the host's **Port proxy**.
 _Avoid_: Web UI, dashboard, remote
+
+**Port proxy**:
+The reverse proxy in a **Host**'s **Phone page** server that lets another Mac or a **Device** load the host's web and app panes, which run at the host's localhost. It listens on the host's tailnet addresses, one TLS listener for each port an open tab's web or app pane uses, only while that pane's server answers, and only for the user's listed devices and paired Macs. The host's `tabs` listing gives each such pane its proxied address, or says why it has none.
+_Avoid_: Tunnel, forward (a forward is one request through it)
 
 **Host**:
 The machine where a session's Claude process runs, kept alive by its zmx: a Mac, or a **Headless host**. A session's host never changes, and a **Tab**'s is the machine its panes run on. The host keeps the tab's layout, its panes and its done mark, and lists its open tabs whole to the other machines and devices.

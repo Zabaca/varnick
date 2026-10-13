@@ -247,6 +247,8 @@ WorkingDirectory=%h/.varnick/PhonePage
 ExecStart=%h/.bun/bin/bun server.ts
 Environment=VARNICK_PAGE_SOCKET=%h/.varnick/phone/page.sock
 Environment=VARNICK_PAGE_PORT=$PAGE_PORT
+Environment=VARNICK_PROXY_FOLDER=%h/.varnick/phone
+Environment=VARNICK_PROXY_STATUS=%h/.varnick/state/proxy-status.json
 Environment=VARNICK_RELAY=%h/.varnick/varnick-peer
 Environment=VARNICK_DEVICES=%h/.varnick/state/devices.json
 Environment=VARNICK_TAILSCALE=/usr/bin/tailscale
