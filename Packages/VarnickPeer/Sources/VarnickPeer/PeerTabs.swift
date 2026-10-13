@@ -243,7 +243,7 @@ public struct PeerTab: Codable, Equatable, Sendable {
     public mutating func settleControl() {
         let running = runningPanes
         control = Set(running.map { $0.control?.lowercased() }).count <= 1 ? running.first?.control : nil
-        controlName = running.first?.controlName
+        controlName = control == nil ? nil : running.first?.controlName
         clients = running.isEmpty ? nil : running.compactMap(\.clients).reduce(0, +)
     }
 
