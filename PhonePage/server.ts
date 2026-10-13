@@ -16,11 +16,13 @@ import {
 import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
 import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
-import { hostLinks, parseNodeNames, type HostLink } from "./hosts";
+import { hostLinks, hostNodes, parseNodeNames, type HostLink } from "./hosts";
 import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, reopenTab, shapeProjects, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
 import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
+import { certificateFiles, certificateNote, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
+import { parseSelfAddresses, parseServePorts } from "./proxy";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 24;
@@ -48,6 +50,22 @@ async function capture(argv: string[], timeout: number): Promise<string | null> 
     }
   } catch {
     return null;
+  }
+}
+
+/** Like `capture`, with the error stream too: `tailscale cert` says why it refuses there. */
+async function captureBoth(argv: string[], timeout: number): Promise<{ ok: boolean; out: string; err: string }> {
+  try {
+    const process = Bun.spawn(argv, { env: { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const timer = setTimeout(() => process.kill(), timeout);
+    try {
+      const [out, err] = await Promise.all([new Response(process.stdout).text(), new Response(process.stderr).text()]);
+      return { ok: (await process.exited) === 0, out, err };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return { ok: false, out: "", err: "" };
   }
 }
 
@@ -128,6 +146,8 @@ async function main(): Promise<void> {
   const identity = hello.reply.hello as { name?: unknown; headless?: unknown } | undefined;
   if (!identity || typeof identity.name !== "string" || identity.name === "") fail("the relay's hello didn't say the host's name");
   const host = { name: identity.name, headless: identity.headless === true };
+  // The host's own id is how this server asks `tabs` and `hosts` for the proxy: it is no device's, and a peer's request for them is refused unlisted.
+  const ownID = typeof (identity as { id?: unknown }).id === "string" ? String((identity as { id: string }).id) : null;
 
   const wantHost = expectedHost(self.dnsName, config.port);
   const wantOrigin = expectedOrigin(self.dnsName, config.port);
@@ -194,7 +214,8 @@ async function main(): Promise<void> {
     ...security,
     // xterm.js's renderer writes <style> elements, which `style-src 'self'` would refuse: styles may be inline, scripts may not.
     // The terminal's websocket is named outright: not every browser takes 'self' to cover wss.
-    "content-security-policy": `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://${wantHost}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    // Frames only from this host's own name, on the proxied ports (proxy.ts): the tab view shows an app of the tab in one.
+    "content-security-policy": `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://${wantHost}; frame-src https://${self.dnsName}:*; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
   };
 
   function respond(body: BodyInit | null, status: number, type: string, extra: Record<string, string> = {}): Response {
@@ -223,6 +244,45 @@ async function main(): Promise<void> {
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
+
+  // The port proxy (portproxy.ts), only where the environment gives it a folder and a status file, and the relay gave this host's id.
+  let proxy: PortProxy | null = null;
+  if (config.proxy && ownID) {
+    const { folder, status } = config.proxy;
+    const certFiles = certificateFiles(folder);
+    // The Macs this host lists, by tailnet name: asked of the relay as the host itself, kept for a minute like the other hosts' links.
+    let peersCache: { at: number; names: Set<string> } | null = null;
+    const world: ProxyWorld = {
+      tabs: () => relay.ask("tabs", ownID, {}, undefined, "proxy"),
+      servePorts: async () => {
+        const text = await capture([config.tailscale, "serve", "status", "--json"], 8000);
+        return text ? parseServePorts(text) : new Set<number>();
+      },
+      addresses: async () => {
+        const text = await capture([config.tailscale, "status", "--json"], 10_000);
+        return text ? parseSelfAddresses(text) : [];
+      },
+      certificate: async (): Promise<CertificateResult> => {
+        const asked = await captureBoth([config.tailscale, "cert", "--cert-file", certFiles.cert, "--key-file", certFiles.key, "--min-validity", "720h", self.dnsName], 120_000);
+        if (!asked.ok) return { ok: false, note: certificateNote(asked.err) };
+        try { return { ok: true, cert: readFileSync(certFiles.cert, "utf8"), key: readFileSync(certFiles.key, "utf8") }; } catch { return { ok: false, note: certificateNote("") }; }
+      },
+      whois,
+      devices: () => {
+        try { return readDevices(readFileSync(config.devices, "utf8")); } catch { return []; }
+      },
+      peers: async () => {
+        if (peersCache && Date.now() - peersCache.at < linksLifetime) return peersCache.names;
+        const [listed, statusNow] = await Promise.all([relay.ask("hosts", ownID, {}, undefined, "proxy-hosts"), capture([config.tailscale, "status", "--json"], 10_000)]);
+        const nodes = statusNow ? parseNodeNames(statusNow) : new Set<string>();
+        const names = listed.ok && nodes.size > 0 ? new Set(hostNodes(listed.reply, self!.dnsName, nodes).map((node) => node.dns)) : new Set<string>();
+        peersCache = { at: Date.now(), names };
+        return names;
+      },
+      log,
+    };
+    proxy = new PortProxy(world, { dnsName: self.dnsName, userID: self.userID, reserved: [config.port, ...(config.mode === "loopback" ? [config.loopbackPort] : [])], statusPath: status });
+  }
   const terminals = new Terminals(config, relay, PROTOCOL_VERSION, homedir(), log);
   const watches = new Watches(config, PROTOCOL_VERSION, homedir(), log);
   const json = (value: unknown, status = 200) => respond(JSON.stringify(value), status, "application/json; charset=utf-8");
@@ -311,6 +371,7 @@ async function main(): Promise<void> {
       return json({ ...decideOpen(await relay.ask("status", device.id, { sessions: [session] }), session, device), host: host.name });
     }
     if (path === "/api/tab" && request.method === "GET") {
+      proxy?.touch();
       const tab = new URL(request.url).searchParams.get("tab");
       if (tab === null || !uuidPattern.test(tab)) return plain(400, "Not a Varnick tab id");
       const listed = await relay.ask("tabs", device.id);
@@ -338,6 +399,7 @@ async function main(): Promise<void> {
       return json(agents.body, agents.status);
     }
     if (path === "/api/home" && request.method === "GET") {
+      proxy?.touch();
       // The tabs and Recent run at once, each its own relay as the device the server found; the other hosts' links come
       // from the cache or the one shared fetch (`otherHosts`), which has a slot key of its own.
       const [tabs, recent, hosts] = await Promise.all([relay.ask("tabs", device.id), relay.ask("recent", device.id), otherHosts(device)]);
@@ -375,11 +437,13 @@ async function main(): Promise<void> {
   const stop = () => {
     server.stop(true);
     if (config.mode === "socket") rmSync(config.socketPath, { force: true });
-    process.exit(0);
+    // Its status file goes first, so the relay stops listing proxied addresses at once.
+    void (proxy ? proxy.stop() : Promise.resolve()).finally(() => process.exit(0));
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
 
+  proxy?.start();
   console.log(`${new Date().toISOString()} listening ${config.mode === "socket" ? config.socketPath : `127.0.0.1:${config.loopbackPort}`} as ${self.dnsName}:${config.port} for ${host.name}${host.headless ? " (headless)" : ""}, protocol ${PROTOCOL_VERSION}`);
 }
 

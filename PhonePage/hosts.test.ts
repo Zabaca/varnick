@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addressHost, hostLinks, parseNodeNames } from "./hosts";
+import { addressHost, hostLinks, hostNodes, parseNodeNames } from "./hosts";
 import { shapeHome } from "./home";
 
 const own = "mac-mini.example.ts.net";
@@ -16,6 +16,13 @@ describe("the address of a listed host", () => {
 
   test("is nothing for a port, an IPv6 address, a zone, an option or an empty name", () => {
     for (const address of ["alex@linux-box:2222", "[fd7a::1]", "fe80::1%en0", "-oProxyCommand=x", "", "alex@", "a b", "linux_box"]) expect(addressHost(address)).toBeNull();
+  });
+});
+
+describe("the nodes of the listed hosts", () => {
+  test("are the tailnet names the links are built on, this host's own left out", () => {
+    expect(hostNodes(reply(["linux box", "alex@linux-box"], ["Self", "alex@mac-mini"], ["Check", "alex@check"]), own, nodes))
+      .toEqual([{ name: "linux box", dns: "linux-box.example.ts.net" }]);
   });
 });
 

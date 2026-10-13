@@ -37,14 +37,14 @@ export function parseNodeNames(text: string): Set<string> {
 }
 
 /**
- * The links for a relay's `hosts` reply. An address gets a link only if it names a node of this tailnet: a name with no dot
+ * The nodes of a relay's `hosts` reply. An address names a node only if it is one of this tailnet: a name with no dot
  * is read under this host's own tailnet suffix ("linux-box" is "linux-box.example.ts.net", as a Mac saves a headless host), a dotted
  * one must be a node as it stands, and `nodes` (the tailnet's own list) is what says so, so an address such as
- * `alex@check`, or one outside the tailnet, gets none. This host's own page is left out, and a host listed twice shows once.
+ * `alex@check`, or one outside the tailnet, names none. This host itself is left out, and a host listed twice shows once.
  */
-export function hostLinks(reply: Record<string, unknown>, own: string, nodes: Set<string>, port: number): HostLink[] {
+export function hostNodes(reply: Record<string, unknown>, own: string, nodes: Set<string>): { name: string; dns: string }[] {
   const suffix = own.includes(".") ? own.slice(own.indexOf(".") + 1) : "";
-  const links: HostLink[] = [];
+  const found: { name: string; dns: string }[] = [];
   const seen = new Set<string>([own.toLowerCase()]);
   for (const entry of objects(reply.hosts)) {
     const host = typeof entry.address === "string" ? addressHost(entry.address) : null;
@@ -53,7 +53,12 @@ export function hostLinks(reply: Record<string, unknown>, own: string, nodes: Se
     if (dns === null || !nodes.has(dns) || seen.has(dns)) continue;
     seen.add(dns);
     const named = typeof entry.name === "string" ? entry.name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80) : "";
-    links.push({ name: named || dns.split(".")[0], url: `https://${dns}:${port}/` });
+    found.push({ name: named || dns.split(".")[0], dns });
   }
-  return links;
+  return found;
+}
+
+/** The links to the other hosts' pages: each node `hostNodes` finds, at the page's port. */
+export function hostLinks(reply: Record<string, unknown>, own: string, nodes: Set<string>, port: number): HostLink[] {
+  return hostNodes(reply, own, nodes).map(({ name, dns }) => ({ name, url: `https://${dns}:${port}/` }));
 }
