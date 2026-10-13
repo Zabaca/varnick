@@ -55,11 +55,11 @@ public struct PeerProxyStatus: Codable, Equatable, Sendable {
 
 public extension PeerPane {
     /// Whether this is a web or app pane at an address only its host can reach: the ones the proxy is for. A page at an outside address loads
-    /// from where it is.
+    /// from where it is, and one with no address yet has nothing to proxy.
     var isHostLocal: Bool {
         switch kind {
         case .app: return true
-        case .web: return PeerPane.isLocalAddress(url ?? "")
+        case .web: return !(url ?? "").isEmpty && PeerPane.isLocalAddress(url ?? "")
         default: return false
         }
     }

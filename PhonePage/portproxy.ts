@@ -47,7 +47,7 @@ export interface ProxyOptions {
   tls?: boolean;
   /** Where a forward goes, in order; a check has no use for the second. */
   upstreams?: string[];
-  /** How long between looks. */
+  /** How long between looks while a port is wanted or held; with none, three times as long (each look runs the relay). */
   intervalMs?: number;
 }
 
@@ -117,7 +117,9 @@ export class PortProxy {
   start(): void {
     const again = () => {
       if (this.stopped) return;
-      this.timer = setTimeout(() => { void this.look().finally(again); }, this.options.intervalMs ?? 5000);
+      const active = this.options.intervalMs ?? 5000;
+      const idle = this.aims.length === 0 && this.listeners.size === 0;
+      this.timer = setTimeout(() => { void this.look().finally(again); }, idle ? active * 3 : active);
     };
     void this.look().finally(again);
   }
