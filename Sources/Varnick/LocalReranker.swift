@@ -195,6 +195,8 @@ final class LocalReranker: ObservableObject, RelevanceJudge {
     private static let directory = URL.applicationSupportDirectory.appending(components: "Varnick", "models", "laya-relevance")
 
     private var scorer: LayaScorer?
+    /// Whether the weights are in memory now (they drop after 10 idle minutes), for the Resources view.
+    var isLoaded: Bool { scorer != nil }
     private var loading: Task<LayaScorer, Error>?
     /// Bumped when an import replaces the model, so a load that started before it isn't kept.
     private var generation = 0

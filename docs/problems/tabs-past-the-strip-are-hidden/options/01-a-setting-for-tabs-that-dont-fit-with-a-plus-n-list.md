@@ -2,7 +2,7 @@
 problem: tabs-past-the-strip-are-hidden
 title: A setting for tabs that don't fit (shrink, fixed width or wrap), and a +N chip that lists the hidden ones
 summary: Settings › Claude gains "Tabs that don't fit", with three choices. Shrink, the default, narrows the tabs together down to 140 points, then puts the ones that still don't fit behind a "+N" chip at the strip's right end. Fixed width makes every tab 180 points, then "+N". Wrap lets tabs flow onto up to three rows, then "+N". The chip opens a list of the hidden tabs, drawn as the search's Tabs rows, and turns orange while a hidden tab has a session waiting on the user. The strip always shows a run of neighbouring tabs that holds the tab on screen, so ⌘⇧[ and ⌘⇧] never land on a tab out of sight. The sideways scrolling goes.
-status: accepted
+status: shipped
 ---
 
 ## Solution

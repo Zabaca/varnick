@@ -2,7 +2,7 @@
 problem: memory-use-is-invisible
 title: A Resources view, with memory by tab, pane and helper and a Close on each tab
 summary: Recommended. ⌘⇧M or `!resources` shows Resources in place of the panel's content, as ⌘⇧B shows the board. It gives Varnick's total, the same processes again by kind, and the app's own memory split into on-device models and the rest. Then come the tabs, biggest first, each opening into its panes and their processes, with Close on each tab. Below the tabs it lists the helpers that belong to no tab, other machines' tabs open here (where they run, with no figures), and, greyed, Claude Code outside Varnick. Every process is counted once, read through libproc with no subprocess, and only while the view shows.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -77,7 +77,7 @@ The Mark tab done and Restart session keys are taken and do nothing, so no key r
 
 **Which processes are Varnick's**
 - **One walk of the user's processes.** For each process: its parent, its path and its footprint, through libproc. No `ps`, `footprint` or zmx call.
-- **Arguments are read (sysctl) of a few processes only:** zmx, Varnick's binary, the MCP tool's link, and any process whose path can't be read. They are only used to match processes, never shown or logged, because a Claude pane's carry its prompt.
+- **Arguments are read (sysctl) of a few processes only:** zmx, ssh (a background connection's title names its socket in Varnick's folder, which tells Varnick's links from the user's own), Varnick's binary, the MCP tool's link, and any process whose path can't be read. They are only used to match processes, never shown or logged, because a Claude pane's carry its prompt.
 - **Varnick's processes are:**
   - Varnick and its descendants;
   - each zmx process whose arguments name one of Varnick's sessions (a pane's, or another of Varnick's own), and its descendants;

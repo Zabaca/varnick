@@ -78,8 +78,9 @@ struct KeyCombo: Codable, Equatable {
 }
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-    case toggleLauncher, pinLauncher, toggleListening, settings, outline
+    case toggleLauncher, pinLauncher, toggleListening, settings, outline, resources
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
+    case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
     case webAddress, webReload
     case fontBigger, fontSmaller, fontReset
@@ -96,6 +97,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleListening: "Start / stop Listening (anywhere)"
         case .settings: "Settings"
         case .outline: "Show / hide outline"
+        case .resources: "Show / hide Resources"
         case .backToSearch: "Back to search / new session"
         case .newTerminalTab: "New terminal tab"
         case .renameTab: "Rename tab"
@@ -107,6 +109,9 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .nextTab: "Next tab"
         case .toggleFiles: "Show / hide file tree"
         case .sessionBoard: "Show / hide session board"
+        case .toggleProjects: "Show / hide projects"
+        case .previousProject: "Previous project"
+        case .nextProject: "Next project"
         case .splitSideBySide: "Split side by side"
         case .splitStacked: "Split top and bottom"
         case .splitSideBySideOther: "Split side by side, choose Claude / terminal / browser"
@@ -125,8 +130,9 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var group: String {
         switch self {
-        case .toggleLauncher, .pinLauncher, .toggleListening, .settings, .outline: "Varnick"
-        case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard: "Tabs"
+        case .toggleLauncher, .pinLauncher, .toggleListening, .settings, .outline, .resources: "Varnick"
+        case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard,
+             .toggleProjects, .previousProject, .nextProject: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight: "Splits"
         case .webAddress, .webReload: "Web"
         case .fontBigger, .fontSmaller, .fontReset: "Terminal"
@@ -140,6 +146,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleListening: KeyCombo(keyCode: kVK_ANSI_L, [.control, .option])
         case .settings: KeyCombo(keyCode: kVK_ANSI_Comma, .command)
         case .outline: KeyCombo(keyCode: kVK_ANSI_Y, [.command, .shift])
+        case .resources: KeyCombo(keyCode: kVK_ANSI_M, [.command, .shift])
         case .backToSearch: KeyCombo(keyCode: kVK_ANSI_N, .command)
         case .newTerminalTab: KeyCombo(keyCode: kVK_ANSI_T, [.command, .shift])
         case .renameTab: KeyCombo(keyCode: kVK_ANSI_R, [.command, .shift])
@@ -151,6 +158,9 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .nextTab: KeyCombo(keyCode: kVK_ANSI_RightBracket, [.command, .shift])
         case .toggleFiles: KeyCombo(keyCode: kVK_ANSI_F, [.command, .shift])
         case .sessionBoard: KeyCombo(keyCode: kVK_ANSI_B, [.command, .shift])
+        case .toggleProjects: KeyCombo(keyCode: kVK_ANSI_P, [.command, .shift])
+        case .previousProject: KeyCombo(keyCode: kVK_ANSI_LeftBracket, [.command, .control])
+        case .nextProject: KeyCombo(keyCode: kVK_ANSI_RightBracket, [.command, .control])
         case .splitSideBySide: KeyCombo(keyCode: kVK_ANSI_E, [.command, .shift])
         case .splitStacked: KeyCombo(keyCode: kVK_ANSI_O, [.command, .shift])
         case .splitSideBySideOther: KeyCombo(keyCode: kVK_ANSI_E, [.command, .control, .shift])
@@ -208,6 +218,8 @@ final class Settings: ObservableObject {
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
+    /// What the tab strip does with tabs that don't fit (Settings › Claude); absent reads as Shrink.
+    @Published var tabOverflow: TabOverflow { didSet { defaults.set(tabOverflow.rawValue, forKey: "tabOverflow") } }
     /// Voice Varnick speaks in (an `AVSpeechSynthesisVoice` identifier); empty is the system voice.
     /// With an ElevenLabs voice chosen it is the fallback voice, spoken when ElevenLabs fails (ADR 0033).
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
@@ -368,6 +380,7 @@ final class Settings: ObservableObject {
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
+        tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
         voice = defaults.string(forKey: "voice") ?? ""
         elevenLabsVoice = defaults.string(forKey: "elevenLabsVoice") ?? ""
         elevenLabsVoices = defaults.data(forKey: "elevenLabsVoices")
@@ -674,6 +687,13 @@ struct SettingsView: View {
                             if settings.fontSize != Settings.defaultFontSize {
                                 Button("Default") { settings.fontSize = Settings.defaultFontSize }
                             }
+                        }
+                        SettingRow(title: "Tabs that don't fit",
+                                   detail: "When more tabs are open than fit across the top. Shrink narrows them together, down to 140 points; Fixed width makes every tab 180 points; Wrap lets them flow onto up to three rows. The rest go behind a +N chip that lists them.") {
+                            Picker("", selection: $settings.tabOverflow) {
+                                ForEach(TabOverflow.allCases) { Text($0.title).tag($0) }
+                            }
+                            .labelsHidden().pickerStyle(.segmented).frame(width: 260)
                         }
                         case .apps:
                         AppsSettingsView(openAppFolders: openAppFolders)

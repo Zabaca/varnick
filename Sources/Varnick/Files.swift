@@ -274,7 +274,7 @@ struct FileTreeView: View {
             }
         }
         .frame(width: Self.width)
-        .background(Color(nsColor: NSColor(white: 0.12, alpha: 1)))
+        .background(Theme.sidebar)
         .onAppear { tree.show(root, remote: remote) }
         .onChange(of: root) { _, new in tree.show(new, remote: remote) }
         .onChange(of: remote) { _, new in tree.show(root, remote: new) }
@@ -326,6 +326,8 @@ final class FileViewer: NSView, WKNavigationDelegate {
     private var text: NSTextView?
     private var preview: QLPreviewView?
     private var web: WKWebView?
+    /// The Markdown page, once it has been made (the Resources view asks WebKit which process it runs in).
+    var pageView: WKWebView? { web }
     /// The page has loaded and takes new bodies through `render`.
     private var webReady = false
     /// A file of another machine: its host has answered, with the text or a refusal, so the "Reading" line is gone.

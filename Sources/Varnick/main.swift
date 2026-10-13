@@ -161,6 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         // A click in a split pane (terminal, page or file) focuses that pane.
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            // The hidden tabs' list closes on a click outside it; the click goes on.
+            if let self, event.window === self.panel { self.model.strip.mouseDown(event) }
             guard let self, event.window === self.panel,
                   var view = self.panel.contentView?.hitTest(event.locationInWindow) else { return event }
             // A file pane's rendered Markdown is a WKWebView inside its FileViewer.
@@ -190,6 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self.model.pickerKey(event)
                 return nil
             }
+            // The hidden tabs' list takes ↑ ↓ ↩ and esc while it is open: the pane under it gets none of them.
+            if self.model.showsTerminal, self.model.strip.key(event) { return nil }
             let mods = event.modifierFlags.intersection(KeyCombo.relevant)
             if self.model.showingSettings, Int(event.keyCode) == kVK_Escape, mods.isEmpty {
                 self.model.toggleSettings()
@@ -201,6 +205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.model.showingBoard, !self.model.showingSettings, self.model.board.key(event) { return nil }
             // So does the outline, and it too takes the End session key: ⌘W never reaches the tab underneath.
             if self.model.showingOutline, !self.model.showingSettings, self.model.outline.key(event) { return nil }
+            // And Resources: it too takes the End session key, so ⌘W closes the selected tab and never reaches the tab underneath.
+            if self.model.showingResources, !self.model.showingSettings, self.model.resources.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
             return self.perform(action) ? nil : event
         }
@@ -285,8 +291,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .previousTab: model.cycleSession(-1)
         case .nextTab: model.cycleSession(1)
         case .toggleFiles where inSession: model.toggleFiles()
+        case .toggleProjects where inSession: model.toggleProjects()
+        case .previousProject: model.tabProjects.cycle(-1)
+        case .nextProject: model.tabProjects.cycle(1)
         case .sessionBoard: model.toggleBoard()
         case .outline: model.toggleOutline()
+        case .resources: model.toggleResources()
         case .splitSideBySide where inSession: model.split(.sideBySide)
         case .splitStacked where inSession: model.split(.stacked)
         case .splitSideBySideOther where inSession: model.askSplit(.sideBySide)

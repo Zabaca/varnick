@@ -113,7 +113,7 @@ enum PanelMCP {
             "view": ["type": "string", "enum": ["search", "board", "problems", "outline"],
                      "description": "Show the search, the session board, the board's Problems tab (only while the Problems board switch is on) or the Outline (also !wf). Showing the Outline puts the caret in a bullet only if the panel already has the keyboard."],
             "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused. A card's id from board_read shows its tab, with its most urgent session focused."],
-            "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs, outline is also wf). Not listen: it turns on the microphone."],
+            "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs, outline is also wf, resources is also memory). Not listen: it turns on the microphone."],
         ]))
 
     private static let keys = tool("keys", PanelToolSpec(
@@ -124,7 +124,7 @@ enum PanelMCP {
             + "sent: the keys that end, mark done or restart a session, Varnick's own shortcuts, a new terminal, Settings, quit, paste, and ⌃ with a letter (a control character). "
             + "Refused by the view as it stands when the key comes: in the search, ↩ on a prompt (it starts a session), on !listen, on a ? result "
             + "or on a closed tab or a paired Mac's tab to open, and esc (it hides the panel); on the board, D and R, and ↩ on a card that is not a pane open here. "
-            + "Never with a tab, Settings, the Restart Varnick card or the split picker showing. Text is at most \(ScreenKeys.maxCharacters) "
+            + "Never with a tab, Resources, Settings, the Restart Varnick card or the split picker showing. Text is at most \(ScreenKeys.maxCharacters) "
             + "characters with no line break or tab; keys are at most \(ScreenKeys.maxKeys), such as Return, Tab, shift+Tab, cmd+z, Down. It "
             + "reports what it sent, never what happened: read `panel`, `board_read` or `outline_read` with `as_shown` afterwards.",
         properties: [

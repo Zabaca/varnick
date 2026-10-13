@@ -54,6 +54,8 @@ To build it yourself instead, see [`building.md`](building.md).
   runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
+- **Tabs that don't fit** is Shrink (below).
+- **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
   Phone page and the Problems board (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
@@ -79,6 +81,42 @@ would void stay. It starts Varnick through launchd, so Varnick holds its own per
 it was restarted from. If a build has run since Varnick started, the restart starts that build; if it is signed ad hoc,
 macOS asks for the permissions again, and the question says so. The item is hidden when the checkout's `scripts/restart.sh` or the
 database can't be found from where Varnick runs, and a restart waits while a build is running.
+
+## Tabs that don't fit
+
+The tabs sit in a strip across the top of a tab. Settings › Claude › **Tabs that don't fit** says what it does when
+more tabs are open than fit:
+
+- **Shrink** (the default) narrows the tabs together, widest first, down to 140 points, then puts the ones that still don't fit behind a
+  **+N** chip at the end of the strip.
+- **Fixed width** makes every tab 180 points, whatever its title, then **+N**.
+- **Wrap** lets the tabs flow onto up to three rows, then **+N**. The tab loses the height of the extra rows.
+
+The strip always shows the tab you are in, and ⌘⇧[ and ⌘⇧] bring the tab they switch to into view. **+N** chip opens a list of the
+hidden tabs as the search lists them, with a line between those before the shown ones and those after; click or ↩ shows one, ↑ and ↓
+move, esc closes. The chip turns orange while a hidden tab has a session waiting on you (a permission, a question, a plan to approve
+or an MCP request), and that tab's row carries the same orange mark, as a row in the search does. Dragging reorders the tabs shown.
+
+## The projects column
+
+**⌘⇧P** shows a column left of the panes, as ⌘⇧F shows the file tree on the right. It lists **All**, then each project that has
+open tabs, by name, then **Other** for tabs in no project (the home folder, say). Each row shows how many tabs it has, and an orange
+mark with how many of them have a session waiting on you.
+
+- **A tab's project** is its first Claude pane's (a tab with none, its first pane's): the project whose folder is exactly that pane's
+  folder when Varnick first saw it. It doesn't change as you move between panes, or when a shell in it changes folder. A pane in a subfolder or a worktree has no project, so its tab is under Other. Another Mac's tabs join the
+  same rows by the project's name; hover a row to see how many tabs are on each Mac.
+- **Choosing a row** shows only that project's tabs in the strip and brings up the one you last had open there, or its first.
+  ⌘⇧[ and ⌘⇧] step through them. **All** brings every tab back and leaves the one on screen as it is.
+- **⌃⌘[ and ⌃⌘]** choose the previous or next row, All included, with the column hidden too. Showing a tab of another project, from the
+  search, the board or a new session, moves the choice to that project; closing the last tab of the chosen project moves it to All.
+- **With the column hidden,** a chip at the strip's left names the chosen project, and clicking it lists the rows.
+- **A narrow panel** shows the column only while the panes keep their minimum width beside it and the file tree. Otherwise ⌘⇧P
+  lists the rows under the strip, as the chip does.
+- **What it doesn't filter:** the search, the session board, Recent and the Phone page always cover every tab.
+
+Whether the column shows is kept across restarts; the chosen project isn't, and the strip starts on All. The three keys can be
+rebound in Settings › Shortcuts.
 
 ## Peers
 
@@ -189,13 +227,33 @@ still asking for `click`, `type`, `drag` and `window` (not checked). A session g
 Point at the screen and Hey Varnick. See [privacy and security](privacy-and-security.md#anthropic-through-screen-access)
 for what a session is shown.
 
+## Resources
+
+⌘⇧M (or `!resources`, also found as `!memory`) shows how much memory Varnick uses and what uses it, in place of the panel's
+content as the session board does; the same key again, or esc, goes back. The figures are footprints, the number Activity
+Monitor's Memory column shows. At the top are Varnick's total and its process count, and the same processes grouped by
+kind (the app, Claude Code, MCP tools, web pages, the Phone page server, app servers, zmx, shells and other). Under it is the
+app's own memory: what the on-device models hold (MLX's own count, naming the models loaded now), its graphics memory
+beyond that, and everything else. The tabs that run on this Mac follow, biggest first; → opens one into its panes and their
+processes (Claude Code, its MCP tool, the commands it runs, a terminal's shell and what runs in it, an app's server, a page's
+WebKit process, zmx), and ↩ shows the tab. The Close button on a tab, or your End session key (⌘W) on the selected one, closes
+it as its × does, so a tab with a Claude conversation goes to Stopped and Recent, and a session that must ask first brings its
+tab up to ask. Below the tabs are what Varnick runs that belongs to no tab (the Phone page server, the text helper, WebKit's
+shared processes, links to other machines), the tabs of other machines open here (they show where they run and no figures,
+since their memory is on that machine), and, greyed, the Claude Code that runs in other apps and terminals, so the figures
+add up to Activity Monitor's. A process is Varnick's only when its ancestry leads to Varnick or to one of its zmx sessions,
+never by its name. Rows keep their order while the view is open, and the figures are read every 3 seconds only while it
+shows in a visible panel; Varnick runs no other program to read them. WebKit gives no public way to tell which process runs a
+web page, so Varnick asks WebKit's private interface and macOS's private "responsible process" call; if a macOS update removes
+either, pages show together outside the tabs, or drop out of the total (the view says so in that case).
+
 ## Panel access
 
 Settings › Claude › **Panel access** (off by default, and independent of Screen access) gives the Claude sessions
 you start or restart in Varnick's panes tools for Varnick itself, from the same `varnick` MCP server. `panel` says
 whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
-the Outline, with its zoom, filter and caret; Settings) and what has the keyboard. `board_read` gives the session
+the Outline, with its zoom, filter and caret; Resources, by name only; Settings) and what has the keyboard. `board_read` gives the session
 board's cards, one per tab with its sessions listed under it, by column (Running, Stopped, Completed) as the board
 shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane gets an id such as `s1`
 (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
@@ -218,7 +276,7 @@ method is composing there, it waits for the composition to end.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
 board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows
-that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`, `outline`).
+that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`, `outline`, `resources`).
 It never shows, hides or pins the panel: with the panel hidden, what it showed is there the next time you open it.
 It never runs `!listen`, which turns on the microphone. It never takes the keyboard from the app you are in, never clears what you typed in the search, and is refused while
 Settings, the Restart Varnick card or the split picker shows, for two seconds after you press a key in the panel,

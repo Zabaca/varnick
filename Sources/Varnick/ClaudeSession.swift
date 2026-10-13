@@ -1204,6 +1204,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         onConversationChange(left, record.conversationID)
     }
 
+    /// The pane's own watch reads its turn twice a second, so no one else need (the hidden tabs' reads skip it).
+    var readsOwnTurn: Bool { exitWatch != nil }
+
     /// Reads the turn file when its date changes, and the transcript when its date does, whatever the word
     /// (`PaneFolder.corrected`). The board calls it for panes with no watch of their own. A peer's file is on its host.
     func checkTurn() {
@@ -1867,34 +1870,54 @@ final class HostContainer: NSView {
 struct ClaudePane: View {
     @ObservedObject var model: LauncherModel
     @ObservedObject var tab: ClaudeTab
+    @ObservedObject private var strip: TabStrip
+    @ObservedObject private var projects: TabProjects
+    @ObservedObject private var hiddenList: StripList
+    @ObservedObject private var projectList: StripList
+    @State private var chipX: CGFloat = 0
+    @State private var paneWidth: CGFloat = 0
+
+    /// The pane's own space, for the hidden tabs' list to sit under its chip.
+    static let space = "claudePane"
+
+    init(model: LauncherModel, tab: ClaudeTab) {
+        self.model = model
+        self.tab = tab
+        strip = model.strip
+        projects = model.tabProjects
+        hiddenList = model.strip.hiddenList
+        projectList = model.strip.projectList
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                // Tabs take only the width they need, so the rest of the header is
-                // empty chrome that drags the window (a ScrollView would swallow those
-                // clicks). They scroll only once they no longer fit.
-                ViewThatFits(in: .horizontal) {
-                    tabs
-                    ScrollView(.horizontal, showsIndicators: false) { tabs }
+                // With the column out of sight, the chosen project's name opens the list of projects.
+                if projects.showsChip(for: tab) {
+                    ProjectChip(projects: projects, list: projectList)
+                        .padding(.top, (LauncherModel.claudeHeaderHeight - TabFit.rowHeight) / 2 + 1)
+                        .frame(maxHeight: .infinity, alignment: .top)
                 }
-                .coordinateSpace(name: TabDrag.viewportSpace)
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { model.tabDrag.viewportWidth = $0 }
-                Spacer(minLength: 0)
+                // The strip fills what the pills and the pin leave, and reports only its width; the header's empty part drags the window.
+                TabStripView(model: model, strip: strip, tab: tab, chipX: $chipX)
                 // The focused pane's pills, as in its row in the session list (`LauncherModel.pills`). With no
                 // detail line to fall back on, the folder and an unpaired Mac's name stand in for a missing pill.
                 let pills = model.pills(for: tab.focused.record)
                 ForEach([pills.host ?? tab.focused.hostName.map { LauncherModel.peerPrefix + $0 },
                          pills.project ?? "#" + tab.focused.record.folderName,
-                         pills.agent].compactMap { $0 }, id: \.self) { WordBadge(text: $0) }
-                PinButton(model: model)
+                         pills.agent].compactMap { $0 }, id: \.self) { WordBadge(text: $0).layoutPriority(1) }
+                PinButton(model: model).layoutPriority(1)
             }
             .font(.system(size: 11.5))
             .padding(.horizontal, 10)
-            .frame(height: LauncherModel.claudeHeaderHeight)
+            .frame(height: strip.headerHeight)
             .background(WindowDragArea())
             Theme.hairline.frame(height: 1)
             HStack(spacing: 0) {
+                if projects.showsColumn(for: tab) {
+                    ProjectsColumn(model: model, projects: projects)
+                    Theme.hairline.frame(width: 1)
+                }
                 PaneView(node: tab.root, tab: tab)
                     .id(tab.viewID)   // swap the whole tree when switching tabs
                     .padding(.leading, 2)
@@ -1910,29 +1933,21 @@ struct ClaudePane: View {
                 }
             }
         }
-    }
-
-    private var tabs: some View {
-        HStack(spacing: 4) {
-            ForEach(model.tabs, id: \.viewID) { t in
-                HeaderTab(tab: t, active: t === tab, renaming: model.renamingTab === t,
-                          onTap: { model.tabDrag.tap { model.activate(t) } },
-                          onRename: { model.finishRename(t, name: $0) })
-                    .reorderable(t, in: model, axis: .horizontal, enabled: model.renamingTab !== t)
-            }
-            Button { model.showSearch() } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("New session (\(Settings.shared.combo(.backToSearch)?.label ?? "no shortcut"))")
+        .coordinateSpace(name: Self.space)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+            paneWidth = $0
+            projects.setPaneWidth($0)
         }
-        .tabDropMarker(model.tabDrag, in: model.tabs, axis: .horizontal)
-        .onGeometryChange(for: CGFloat.self) { -$0.frame(in: .named(TabDrag.viewportSpace)).minX } action: {
-            model.tabDrag.scrolled = $0
+        .overlay(alignment: .topLeading) {
+            // A click outside it closes it (`TabStrip.mouseDown`, from the mouse monitor), so the click reaches what it landed on.
+            if hiddenList.isOpen {
+                HiddenTabsList(model: model, strip: strip, list: hiddenList)
+                    .offset(x: max(min(chipX, paneWidth - HiddenTabsList.width - 8), 8), y: strip.headerHeight - 4)
+            }
+            if projectList.isOpen {
+                ProjectsList(model: model, projects: projects, list: projectList)
+                    .offset(x: 8, y: strip.headerHeight - 4)
+            }
         }
     }
 }
@@ -1953,6 +1968,8 @@ struct HeaderTab: View {
     @ObservedObject var tab: ClaudeTab
     let active: Bool
     let renaming: Bool
+    /// The width the strip gave it (`TabFit`).
+    let width: CGFloat
     let onTap: () -> Void
     /// nil cancels; "" clears the custom name.
     let onRename: (String?) -> Void
@@ -1961,7 +1978,7 @@ struct HeaderTab: View {
         if renaming {
             RenameField(initial: tab.name ?? tab.focused.label, onDone: onRename)
         } else {
-            SessionTab(session: tab.focused, name: tab.name, panes: tab.sessions.count, active: active,
+            SessionTab(session: tab.focused, name: tab.name, panes: tab.sessions.count, active: active, width: width,
                        onTap: onTap, onClose: tab.close)
         }
     }
@@ -1987,7 +2004,7 @@ struct RenameField: View {
                 if now { hadFocus = true } else if hadFocus { onDone(nil) }
             }
             .padding(.horizontal, 9)
-            .frame(width: 200, height: 24)
+            .frame(width: TabMetrics.renameWidth, height: 24)
             .background(Theme.selection, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 1))
@@ -2005,6 +2022,8 @@ struct SessionTab: View {
     var name: String? = nil
     let panes: Int
     let active: Bool
+    /// The whole tab's width, from the strip: the title takes what the rest leaves and is cut short when it is more.
+    let width: CGFloat
     let onTap: () -> Void
     let onClose: () -> Void
     @State private var hovering = false
@@ -2013,13 +2032,14 @@ struct SessionTab: View {
         HStack(spacing: 2) {
             Button(action: onTap) { label }
                 .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
             // Always laid out, so tabs don't shift when it appears.
             CloseButton(help: panes > 1 ? "Close tab (\(panes) panes)" : "Close tab", action: onClose)
                 .opacity(active || hovering ? 1 : 0)
                 .allowsHitTesting(active || hovering)
         }
         .padding(.trailing, 4)
-        .frame(height: 24)
+        .frame(width: width, height: 24)
         .background(active ? Theme.selection : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .foregroundStyle(active ? .primary : .secondary)
         .onHover { hovering = $0 }
@@ -2030,17 +2050,18 @@ struct SessionTab: View {
                 Image(systemName: panes > 1 ? "rectangle.split.2x1" : Theme.sourceSymbol(session.kind))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.sourceColor(session.kind).opacity(active ? 1 : 0.6))
+                    .frame(width: TabMetrics.iconWidth)
                 Text(name ?? session.label)
                     .font(.system(size: 12, weight: active ? .semibold : .regular))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 170, alignment: .leading)
                 if panes > 1 {
                     Text("\(panes)")
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 9)
             .frame(height: 24)
             .contentShape(Rectangle())
