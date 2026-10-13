@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 25
+    public static let version = 26
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -78,6 +78,9 @@ public enum PeerOp: String, Codable, Sendable {
     case arrange
     /// A file pane's text (`tab`, `pane`), read by the host and capped in size. The relay answers it from the saved tabs.
     case file
+    /// One level of a folder of a tab (`tab`, `folder`), for the file tree of a Mac that views the tab (protocol 26): the entries, folders first,
+    /// at most `PeerFolder.limit` of them. Only inside the tab's folders. The relay answers it from the saved tabs. For a listed Mac only.
+    case files
     /// Reopen a tab that closed on the host (`tab`) whole, in its layout: its Claude panes resume, its terminals start fresh, all labelled
     /// for the asker. Its running Varnick does it.
     case reopen
@@ -267,13 +270,15 @@ public struct PeerStart: Codable, Equatable, Sendable {
     /// follows itself (`PeerResume`). `id` is still the zmx session's name.
     public var resume: Bool?
     /// What the pane is: Claude (nil too), a terminal (the account's login shell in the folder, with no prompt, agent or turn), or, in a split of
-    /// the host's own tab and only on a Mac, a web page (`url`) or a custom app (`app`, the folder name `apps` listed).
+    /// the host's own tab and only on a Mac, a web page (`url`), a custom app (`app`, the folder name `apps` listed) or a file (`file`, a path
+    /// inside the tab's folders, with `folder` the tree's folder it was picked in; protocol 26).
     public var kind: PeerPaneKind?
     public var url: String?
     public var app: String?
+    public var file: String?
 
     public init(id: String, folder: String? = nil, prompt: String, agent: String? = nil, skipPermissions: Bool? = nil, resume: Bool? = nil,
-                kind: PeerPaneKind? = nil, url: String? = nil, app: String? = nil) {
+                kind: PeerPaneKind? = nil, url: String? = nil, app: String? = nil, file: String? = nil) {
         self.id = id
         self.folder = folder
         self.prompt = prompt
@@ -283,11 +288,13 @@ public struct PeerStart: Codable, Equatable, Sendable {
         self.kind = kind
         self.url = url
         self.app = app
+        self.file = file
     }
 
     public var isTerminal: Bool { kind == .terminal }
     /// A web page or a custom app: panes with no zmx session of the tab's own, that only a Mac host can start.
     public var isWebOrApp: Bool { kind == .web || kind == .app }
+    public var isFile: Bool { kind == .file }
 }
 
 /// What a host did with a `start` that has `resume`. Absent means a new session was started.
@@ -657,13 +664,15 @@ public struct PeerRequest: Codable, Sendable {
     public var layout: PeerLayout?
     /// Arrange: the tab's name, nil or empty clears it.
     public var tabName: String?
+    /// Arrange (protocol 26): whether the file tree shows beside the panes; nil leaves it as it is.
+    public var showsFiles: Bool?
     /// Done: false takes the mark off. Nil or true marks.
     public var mark: Bool?
     /// Attach: relabel control to `by` and detach every client first.
     public var take: Bool?
     /// Status: the zmx session names to report.
     public var sessions: [String]?
-    /// Agents: the folder on the host; nil is its default folder.
+    /// Agents: the folder on the host; nil is its default folder. Files: the folder to list (`tab` names the tab it must be inside).
     public var folder: String?
     /// Rows: only those whose transcript changed at or after this many unix milliseconds. Nil: all.
     public var since: Int64?
@@ -720,6 +729,8 @@ public struct PeerReply: Codable, Sendable {
     public var tabs: [PeerTab]?
     /// File: the file's text.
     public var text: String?
+    /// Files (protocol 26): the folder's entries, folders first; `more` says the list was cut at `PeerFolder.limit`.
+    public var entries: [PeerFileEntry]?
     /// Rows: the sessions that changed, the ids of every session the host has now (so a peer drops
     /// the ones that are gone), and the stamp to ask `since` next time.
     public var rows: [PeerSessionRow]?

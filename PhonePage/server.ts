@@ -25,7 +25,7 @@ import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } 
 import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */

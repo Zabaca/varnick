@@ -31,6 +31,9 @@ public protocol PeerHost {
     func tabs() -> PeerReply
     /// `file`: the text of a file pane of a tab, read by the host, or why it can't be (a path outside the tab's folders, too large).
     func file(tab: String?, pane: String?) -> PeerReply
+    /// `files`: one level of a folder of a tab, listed by the host, or why it can't be (a folder outside the tab's folders). A host with no file
+    /// tree says so.
+    func files(tab: String?, folder: String?) -> PeerReply
     func recent() -> PeerReply
     /// `hosts`: the peers the host lists, by name and address, read from the saved list.
     func hosts() -> [PeerHostEntry]
@@ -78,7 +81,7 @@ public enum PeerRelay {
         var device: String?
         if op != .hello {
             let peer = host.lists(head.by)
-            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || op == .apps || PeerProtocol.answersAnyVersion(op)
+            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || op == .apps || op == .files || PeerProtocol.answersAnyVersion(op)
             if !peer, !macsOnly, host.listsDevice(head.by) {
                 device = head.by
             } else if !peer, op == .tabs || op == .hosts, Zmx.sameID(head.by, host.ownID) {
@@ -106,6 +109,9 @@ public enum PeerRelay {
         case .file:
             let request = PeerJSON.decode(PeerRequest.self, from: line)
             return finish(host.file(tab: request?.tab, pane: request?.pane))
+        case .files:
+            let request = PeerJSON.decode(PeerRequest.self, from: line)
+            return finish(host.files(tab: request?.tab, folder: request?.folder))
         case .rows:
             return finish(host.rows(since: PeerJSON.decode(PeerRequest.self, from: line)?.since))
         case .pages:

@@ -1901,8 +1901,8 @@ struct ClaudePane: View {
                     }
                 if tab.showsFiles {
                     Theme.hairline.frame(width: 1)
-                    FileTreeView(tree: tab.files, root: tab.focused.record.directory,
-                                 selected: tab.focused.record.file) { model.openFile($0) }
+                    FileTreeView(tree: tab.files, root: tab.focused.record.directory, selected: tab.focused.record.file,
+                                 remote: tab.host.map { RemoteTree(host: $0, tab: tab.id) }) { model.openFile($0) }
                         .id(tab.viewID)   // per tab, so switching tabs shows and stops each tab's own tree
                 }
             }

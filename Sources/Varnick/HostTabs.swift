@@ -77,6 +77,7 @@ extension LauncherModel {
         dropPeerRows(Set(listing.panes.compactMap(\.session)), on: peer.id)
         let tab = addTab(root, focused: root.leaves.first { $0.runsInZmx }, name: listing.name, id: id, show: false)
         tab.inControl = Zmx.sameID(listing.control, PeerIdentity.id)
+        tab.showsFiles = listing.files == true
         return tab
     }
 
@@ -157,6 +158,11 @@ extension LauncherModel {
         }
         guard !stale else { return saveIfChanged(changed) }
         tab.inControl = Zmx.sameID(listing.control, PeerIdentity.id)
+        // The file tree is the host's: shown as a column when the host shows it, and only then.
+        if tab.showsFiles != (listing.files == true) {
+            tab.showsFiles = listing.files == true
+            changed = true
+        }
         if tab.name != listing.name {
             tab.name = listing.name
             changed = true
@@ -203,6 +209,8 @@ extension LauncherModel {
         let sentAt = Date()
         guard let found = await PeerManager.shared.tabs(on: host) else { return }
         updatePeerTabs(found, for: host, sentAt: sentAt)
+        // The host's tree is read again with the tab's listing, since Claude edits files there while it shows.
+        if let tab = activeTab, tab.host == host, tab.showsFiles { tab.files.refreshRemote() }
     }
 
     // MARK: Changing the layout from here
@@ -220,15 +228,19 @@ extension LauncherModel {
         tab.host == nil ? nil : layoutLockReason(of: tab)
     }
 
-    /// A divider moved or the tab renamed here, in control of it: the host takes the layout and the name, which it checks hold the same panes.
-    func arrangeOnHost(_ tab: ClaudeTab) {
+    /// A divider moved, the tab renamed or its file tree shown or hidden here, in control of it: the host takes the layout, the name and the tree,
+    /// and checks the layout holds the same panes. `showing` says why to the pane when the host won't, else only the log does.
+    func arrangeOnHost(_ tab: ClaudeTab, showing pane: ClaudeSession? = nil) {
         guard let host = tab.host, tab.inControl else { return }
-        let id = tab.id, layout = tab.root.layout.peerLayout, name = tab.name
+        let id = tab.id, layout = tab.root.layout.peerLayout, name = tab.name, files = tab.showsFiles
         beginLayoutChange(of: id)
         Task { [weak self] in
-            let refusal = await PeerManager.shared.arrange(tab: id, layout: layout, name: name, on: host)
+            let refusal = await PeerManager.shared.arrange(tab: id, layout: layout, name: name, showsFiles: files, on: host)
             self?.endLayoutChange(of: id)
-            if let refusal { NSLog("Varnick: \(PeerManager.shared.name(of: host)) wouldn't arrange tab \(id.uuidString.lowercased()): \(refusal)") }
+            if let refusal {
+                NSLog("Varnick: \(PeerManager.shared.name(of: host)) wouldn't arrange tab \(id.uuidString.lowercased()): \(refusal)")
+                pane?.showRefusal(refusal)
+            }
         }
     }
 

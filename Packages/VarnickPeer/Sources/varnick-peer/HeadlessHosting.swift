@@ -36,7 +36,7 @@ extension HeadlessPeerHost {
         guard let ask = request.start, let uuid = UUID(uuidString: ask.id) else { return .failure("The request had no session id") }
         state.reconcile()
         if ask.resume == true { return startAgain(uuid, by: by) }
-        guard !ask.isWebOrApp else { return .failure("\(name) has no browser or custom apps: its tabs hold Claude sessions and terminals") }
+        guard !ask.isWebOrApp, !ask.isFile else { return .failure("\(name) has no browser, custom apps or files: its tabs hold Claude sessions and terminals") }
         guard ask.kind == nil || ask.kind == .claude || ask.isTerminal else { return .failure("\(name) doesn't start that kind of pane") }
         let id = uuid.uuidString.lowercased()
         let taken = PeerReply.failure("That session already exists on \(name)")
@@ -281,6 +281,7 @@ extension HeadlessPeerHost {
         guard let tab = request.tab?.lowercased(), UUID(uuidString: tab) != nil, let layout = request.layout else {
             return .failure("The request needs a tab and a layout")
         }
+        guard request.showsFiles != true else { return .failure("\(self.name) has no file tree") }
         state.reconcile()
         if let denied = controlled(tab: tab, by: by) { return denied }
         let name = request.tabName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -396,6 +397,11 @@ extension HeadlessPeerHost {
     /// A headless host has no file panes.
     func file(tab: String?, pane: String?) -> PeerReply {
         .failure("\(name) has no file panes")
+    }
+
+    /// Nor a file tree: its tabs list none (`PeerTab.files` is nil).
+    func files(tab: String?, folder: String?) -> PeerReply {
+        .failure("\(name) has no file tree")
     }
 
     /// `recent`: the tabs whose every record has ended, newest first (protocol 23), each conversation once and only with a transcript and

@@ -2,12 +2,20 @@ import AppKit
 import CoreServices
 import Quartz
 import SwiftUI
+import VarnickPeer
 import WebKit
 
 // MARK: - Tree
 
+/// Where the tree of another machine's tab is read from: its host lists each folder (`files`).
+struct RemoteTree: Equatable {
+    let host: String
+    let tab: UUID
+}
+
 /// The file tree beside a tab's panes (⌘⇧F). Folders list when opened; dependency and
 /// build folders are hidden; it follows changes on disk (Claude editing files) through FSEvents.
+/// The tree of another machine's tab (`RemoteTree`) lists what its host does, a folder at a time, and is asked again with each listing of the tab.
 @MainActor
 final class FileTree: ObservableObject {
     struct Row: Identifiable, Equatable {
@@ -20,16 +28,22 @@ final class FileTree: ObservableObject {
 
     @Published private(set) var root = ""
     @Published private(set) var rows: [Row] = []
+    /// A remote tree: what the column says when it has nothing to list, or why a folder is missing from it. Never blank.
+    @Published private(set) var status: String?
     private(set) var expanded: Set<String> = []
     private var listings: [String: [(name: String, isDirectory: Bool)]] = [:]
     nonisolated(unsafe) private var stream: FSEventStreamRef?
+    private var remote: RemoteTree?
+    /// A remote tree: the folders being asked, what the host said of a folder it wouldn't list or cut, and a count that drops answers to a root
+    /// that has changed since.
+    private var asking: Set<String> = []
+    private var refusals: [String: String] = [:]
+    private var cuts: Set<String> = []
+    private var epoch = 0
 
     /// Never shown: large, generated, and noisy on disk while building. Matched by name at
     /// any depth. Git-ignored files otherwise show (.scratch specs, .env).
-    private static let hidden: Set<String> = [
-        ".git", ".DS_Store", "node_modules", ".build", "dist", "target", ".next", ".venv",
-        "__pycache__", "DerivedData",
-    ]
+    private static let hidden = PeerFolder.hidden
 
     deinit {
         if let stream { FSEventStreamStop(stream); FSEventStreamInvalidate(stream); FSEventStreamRelease(stream) }
@@ -37,7 +51,8 @@ final class FileTree: ObservableObject {
 
     /// Shows `path` (a no-op when it already is the root) and starts following it. Symlinks
     /// are resolved first: FSEvents reports real paths (/tmp is /private/tmp).
-    func show(_ path: String) {
+    func show(_ path: String, remote: RemoteTree? = nil) {
+        if let remote { return showRemote(path, remote) }
         let path = Self.realPath(path)
         guard path != root || stream == nil else { return }
         stop()
@@ -46,6 +61,52 @@ final class FileTree: ObservableObject {
         listings = [:]
         rebuild()
         watch()
+    }
+
+    /// The host's folder `path`, listed by the host: nothing is read here, and the column says it is reading until the host answers.
+    private func showRemote(_ path: String, _ remote: RemoteTree) {
+        guard path != root || self.remote != remote else { return }
+        stop()
+        self.remote = remote
+        root = path
+        expanded = []
+        listings = [:]
+        asking = []
+        refusals = [:]
+        cuts = []
+        epoch += 1
+        rebuild()
+        ask(path)
+    }
+
+    /// A remote tree asks the host for the folder again: the root and the folders opened (the rest are asked when they open), every time the
+    /// tab's listing comes in.
+    func refreshRemote() {
+        guard remote != nil, !root.isEmpty else { return }
+        ask(root)
+        for dir in expanded.prefix(8) { ask(dir) }
+    }
+
+    private func ask(_ dir: String) {
+        guard let remote, !asking.contains(dir) else { return }
+        asking.insert(dir)
+        let epoch = epoch
+        Task { [weak self] in
+            let result = await PeerManager.shared.folderEntries(tab: remote.tab, folder: dir, on: remote.host)
+            guard let self, epoch == self.epoch else { return }
+            self.asking.remove(dir)
+            switch result {
+            case .success(let listing):
+                self.listings[dir] = listing.entries
+                    .map { (name: $0.name, isDirectory: $0.isDirectory) }
+                    .sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                self.refusals[dir] = nil
+                if listing.more { self.cuts.insert(dir) } else { self.cuts.remove(dir) }
+            case .failure(let refusal):
+                self.refusals[dir] = refusal.message
+            }
+            self.rebuild()
+        }
     }
 
     private static func realPath(_ path: String) -> String {
@@ -64,7 +125,10 @@ final class FileTree: ObservableObject {
 
     func toggle(_ row: Row) {
         guard row.isDirectory else { return }
-        if expanded.remove(row.path) == nil { expanded.insert(row.path) }
+        if expanded.remove(row.path) == nil {
+            expanded.insert(row.path)
+            if remote != nil, listings[row.path] == nil { ask(row.path) }
+        }
         rebuild()
     }
 
@@ -79,11 +143,30 @@ final class FileTree: ObservableObject {
         }
         add(root, depth: 0)
         if out != rows { rows = out }
+        let said = remote == nil ? nil : remoteStatus()
+        if said != status { status = said }
     }
 
-    /// Folders first, then files, by name; cached until FSEvents says the folder changed.
+    /// What a remote tree says when something is wrong or not there yet: the host's refusal of the root, that it is reading, that the folder is
+    /// empty, then the refusal of a folder opened and the cut of a long one.
+    private func remoteStatus() -> String? {
+        let host = remote.map { PeerManager.shared.name(of: $0.host) } ?? "the host"
+        if let refusal = refusals[root] { return "\(refusal)." }
+        guard let top = listings[root] else { return "Reading the folder from \(host)…" }
+        if top.isEmpty { return "This folder is empty." }
+        if let (dir, refusal) = refusals.first(where: { expanded.contains($0.key) }) {
+            return "\((dir as NSString).lastPathComponent): \(refusal)."
+        }
+        if let dir = cuts.first(where: { $0 == root || expanded.contains($0) }) {
+            return "\((dir as NSString).lastPathComponent) lists only its first \(PeerFolder.limit) entries."
+        }
+        return nil
+    }
+
+    /// Folders first, then files, by name; cached until FSEvents says the folder changed. A remote tree has only what its host listed.
     private func listing(_ dir: String) -> [(name: String, isDirectory: Bool)] {
         if let cached = listings[dir] { return cached }
+        if remote != nil { return [] }
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: URL(fileURLWithPath: dir), includingPropertiesForKeys: [.isDirectoryKey])) ?? []
         let entries = urls
@@ -134,6 +217,8 @@ struct FileTreeView: View {
     let root: String
     /// File open in the focused pane, highlighted.
     let selected: String?
+    /// The tab is another machine's: its host lists the folders.
+    var remote: RemoteTree?
     let onOpen: (String) -> Void
 
     static let width: CGFloat = 250
@@ -151,6 +236,13 @@ struct FileTreeView: View {
             .padding(.horizontal, 10)
             .frame(height: 28)
             Theme.hairline.frame(height: 1)
+            if let status = tree.status {
+                Text(status)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(tree.rows) { row in
@@ -163,8 +255,8 @@ struct FileTreeView: View {
         }
         .frame(width: Self.width)
         .background(Color(nsColor: NSColor(white: 0.12, alpha: 1)))
-        .onAppear { tree.show(root) }
-        .onChange(of: root) { _, new in tree.show(new) }
+        .onAppear { tree.show(root, remote: remote) }
+        .onChange(of: root) { _, new in tree.show(new, remote: remote) }
         .onDisappear { tree.stop() }
     }
 }
