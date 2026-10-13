@@ -328,16 +328,20 @@ final class ClaudeTab: ObservableObject {
     let files = FileTree()
     /// When another Mac marked the tab done while it is open here; nil is not marked. A tab of another machine's has its host's.
     var completedAt: Date?
+    /// The conversations it has held, newest first (`TabHistory`); the model keeps it (`LauncherModel.noteHistories`) and it is saved with the tab.
+    var history: [HeldConversation] = []
     /// Layout changed (divider moved); the model saves.
     var onChange: () -> Void = {}
     /// The tab is about to close its panes (its ×, or Done): the model keeps the tab as it is.
     var onClosing: () -> Void = {}
 
-    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil) {
+    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
+         history: [HeldConversation] = []) {
         self.id = id
         self.root = root
         self.name = name
         self.completedAt = completedAt
+        self.history = history
         self.focused = focused ?? root.leaves[0]
     }
 
@@ -345,6 +349,12 @@ final class ClaudeTab: ObservableObject {
 
     /// The Claude panes, in layout order.
     var claudeSessions: [ClaudeSession] { sessions.filter(\.isClaude) }
+
+    /// Whether the tab holds the conversation (any case): in its history, or a Claude pane of it is on it.
+    func holds(_ conversation: String) -> Bool {
+        let id = conversation.lowercased()
+        return history.contains { $0.conversation == id } || claudeSessions.contains { $0.record.conversationID.lowercased() == id }
+    }
 
     /// The machine its panes run on; nil is this Mac (`SavedTab.splitByMachine` keeps a tab to one).
     var host: String? { claudeSessions.first?.record.host }
@@ -367,7 +377,8 @@ final class ClaudeTab: ObservableObject {
 
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
-        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt)
+        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt,
+                              history: history.isEmpty ? nil : history)
     }
 
     /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).

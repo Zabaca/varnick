@@ -178,6 +178,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// can send it again; a pane restored after a restart never has it either, so what the host
     /// restored is all that can be started again without the user (`PeerResume`).
     var resumesOnPeer = false
+    /// A tab reopened from Completed names itself in that `resume`, so the host puts this session in the tab it had there (protocol 22).
+    var resumeTab: (id: UUID, name: String?)?
     /// The last explicit resume failed, so Retry is the user asking for it again.
     private var explicitResumeFailed = false
     /// Polls of a pane showing the card, to look for its session ending now and then.
@@ -589,6 +591,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             request.conversation = record.conversationID
             request.start = PeerStart(id: record.id.uuidString.lowercased(), folder: record.directory, prompt: "", agent: record.agent,
                                       skipPermissions: record.skipPermissions)
+            request.tab = resumeTab?.id.uuidString.lowercased()
+            request.tabName = resumeTab?.name
         }
         let id = record.id, explicit = resumesOnPeer
         Task { [weak self] in

@@ -736,8 +736,8 @@ final class PeerManager: ObservableObject {
         return reply.sessions ?? [:]
     }
 
-    /// What a peer's Recent holds, nil when it couldn't be asked.
-    func recentSessions(on id: String) async -> [PeerRecentSession]? {
+    /// The closed tabs a peer's Recent holds, nil when it couldn't be asked.
+    func recentTabs(on id: String) async -> [PeerRecentTab]? {
         var request = PeerRequest(.recent)
         request.by = PeerIdentity.id
         guard case .success(let reply) = await send(request, to: id) else { return nil }

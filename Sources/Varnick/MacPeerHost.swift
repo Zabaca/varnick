@@ -100,7 +100,7 @@ struct MacPeerHost: PeerHost {
     func recent() -> PeerReply {
         guard let state = SessionStore().load() else { return .failure("The saved tabs on \(name) couldn't be read") }
         var reply = PeerReply.success()
-        reply.recent = PeerRecentSessions.list(in: state)
+        reply.recent = PeerRecentTabs.list(in: state)
         return reply
     }
 
@@ -115,6 +115,7 @@ struct MacPeerHost: PeerHost {
             reply.rows = found.rows
             reply.ids = found.ids
             reply.stamp = found.stamp
+            reply.rowTabs = found.tabs
             return reply
         } catch is HistorySync.RepliesNotRead {
             return .failure("\(name) hasn't read its sessions with Claude's replies yet")
@@ -202,19 +203,21 @@ enum PeerOpenSessions {
     }
 }
 
-/// Which of a Mac's ended sessions a peer's Recent lists.
-enum PeerRecentSessions {
-    /// This Mac's own Claude sessions with a transcript to resume (one it holds for another Mac is that Mac's to offer), newest first. Each
-    /// names the tab it ended in (else its own id) and carries that tab's mark, read from Completed: Recent's copies carry none.
-    static func list(in state: SessionStore.State) -> [PeerRecentSession] {
+/// Which of a Mac's closed tabs a peer's Recent lists.
+enum PeerRecentTabs {
+    /// This Mac's own closed tabs (one it holds for another Mac is that Mac's to offer), newest first, each with its Claude sessions that
+    /// have a transcript to resume, in layout order, and the tab's mark, read from Completed: Recent's copies carry none.
+    static func list(in state: SessionStore.State) -> [PeerRecentTab] {
         let marks = Dictionary(state.completedList.compactMap { tab in tab.completedAt.map { (tab.id, $0) } }) { first, _ in first }
-        return state.recent.filter { $0.isClaude && $0.host == nil && $0.transcriptExists }.map { record in
-            let title = record.title.isEmpty ? String(record.prompt.split(whereSeparator: \.isNewline).first?.prefix(80) ?? "") : record.title
-            let tab = record.tab ?? record.id
-            return PeerRecentSession(conversation: record.conversationID, title: title, folder: record.directory,
-                                     agent: record.agent, last: Int64(record.lastUsed.timeIntervalSince1970),
-                                     session: Zmx.sessionName(record.id), done: marks[tab].map { Int64($0.timeIntervalSince1970) },
-                                     tab: tab.uuidString.lowercased())
+        return state.recentList.filter { $0.host == nil }.compactMap { tab -> PeerRecentTab? in
+            let sessions = tab.claudeRecords.filter(\.transcriptExists).map { record in
+                let title = record.title.isEmpty ? String(record.prompt.split(whereSeparator: \.isNewline).first?.prefix(80) ?? "") : record.title
+                return PeerRecentSession(conversation: record.conversationID, title: title, folder: record.directory, agent: record.agent,
+                                         last: Int64(record.lastUsed.timeIntervalSince1970), session: Zmx.sessionName(record.id))
+            }
+            guard !sessions.isEmpty else { return nil }
+            return PeerRecentTab(tab: tab.id.uuidString.lowercased(), name: tab.name, last: Int64(tab.lastUsed.timeIntervalSince1970),
+                                 done: marks[tab.id].map { Int64($0.timeIntervalSince1970) }, sessions: sessions)
         }
     }
 }

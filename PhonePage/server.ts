@@ -17,12 +17,12 @@ import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
 import { loopbackNote, shapeHome, unlistedPage } from "./home";
 import { hostLinks, parseNodeNames, type HostLink } from "./hosts";
-import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, resumeConversation, shapeProjects, startSession } from "./launch";
+import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, resumeTab, shapeProjects, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
 import { decideOpen, endText, isSessionName } from "./terminal";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 23;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */
@@ -281,9 +281,9 @@ async function main(): Promise<void> {
         const launched = await startSession(relay, device, host.name, ask.value, () => crypto.randomUUID());
         return json(launched.body, launched.status);
       }
-      const conversation = parseResumeBody(body);
-      if (!conversation.ok) return json({ ok: false, error: conversation.error }, 400);
-      const launched = await resumeConversation(relay, device, host.name, conversation.value, () => crypto.randomUUID());
+      const tab = parseResumeBody(body);
+      if (!tab.ok) return json({ ok: false, error: tab.error }, 400);
+      const launched = await resumeTab(relay, device, host.name, tab.value, () => crypto.randomUUID());
       return json(launched.body, launched.status);
     }
 

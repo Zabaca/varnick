@@ -52,6 +52,10 @@ li { background: var(--panel); border: 1px solid var(--line); border-radius: 10p
 .control { margin-top: 6px; font-size: 13px; color: var(--muted); }
 .control.mine { color: var(--accent); }
 
+/* A tab of several sessions: its name over a list of its sessions, which are boxed as rows are. */
+li.tab-group { padding: 8px; }
+.tab-name { margin: 0 4px 8px; font-size: 13px; font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }
+
 .hint { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
 .empty, .error { margin: 0; padding: 12px 0; font-size: 14px; color: var(--muted); }
 .error { color: var(--warn); }
