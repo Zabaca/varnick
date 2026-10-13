@@ -54,7 +54,7 @@ To build it yourself instead, see [`building.md`](building.md).
   runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
-- **Tabs that don't fit** is Shrink (above).
+- **Tabs that don't fit** is Shrink (below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
   Phone page and the Problems board (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
@@ -87,13 +87,13 @@ The tabs sit in a strip across the top of a tab. Settings › Claude › **Tabs 
 more tabs are open than fit:
 
 - **Shrink** (the default) narrows the tabs together, widest first, down to 140 points, then puts the ones that still don't fit behind a
-  **+N** button at the end of the strip.
+  **+N** chip at the end of the strip.
 - **Fixed width** makes every tab 180 points, whatever its title, then **+N**.
 - **Wrap** lets the tabs flow onto up to three rows, then **+N**. The tab loses the height of the extra rows.
 
-The strip always shows the tab you are in, and ⌘⇧[ and ⌘⇧] bring the tab they switch to into view. **+N** opens a list of the
+The strip always shows the tab you are in, and ⌘⇧[ and ⌘⇧] bring the tab they switch to into view. **+N** chip opens a list of the
 hidden tabs as the search lists them, with a line between those before the shown ones and those after; click or ↩ shows one, ↑ and ↓
-move, esc closes. The button turns orange while a hidden tab has a session waiting on you (a permission, a question, a plan to approve
+move, esc closes. The chip turns orange while a hidden tab has a session waiting on you (a permission, a question, a plan to approve
 or an MCP request), and that tab's row carries the same orange mark, as a row in the search does. Dragging reorders the tabs shown.
 
 ## Peers
