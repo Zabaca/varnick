@@ -10,7 +10,7 @@ import { choosePane, isLocalAddress, isOpenable, kindWord, offersTake, paneLabel
 
 const $ = (id) => document.getElementById(id);
 const visible = () => document.visibilityState === "visible";
-const refreshMs = 10_000;
+const refreshMs = 5_000;
 
 /** The open tab, or null. One at a time. */
 let current = null;
