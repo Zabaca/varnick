@@ -150,8 +150,9 @@ extension LauncherModel {
                 rebuilt = true
             }
         }
+        // A pane the host has closed but whose session hasn't ended here yet stays where it is, and doesn't count as a change of shape.
         if let wanted = hostLayout(listing, known: Set(sessions.keys)),
-           rebuilt || !tab.root.layout.peerLayout.sameShape(as: wanted) {
+           rebuilt || tab.root.layout.peerLayout.pruned(keeping: Set(wanted.panes)).map({ !$0.sameShape(as: wanted) }) ?? true {
             tab.rearrange(to: wanted, using: sessions)
             changed = true
         }

@@ -2,6 +2,8 @@
 
 Supersedes the done-mark ADR 0028 ([a session's done mark belongs to its host](0028-a-sessions-done-mark-belongs-to-its-host-and-every-macs-completed-is-its-own-marks-plus-its-hosts.md)). The user works in tabs, and a Claude session is one kind of pane in one. Done, Completed and the board were a session's; now they are the tab's. The problem and its option are in `docs/problems/work-is-tracked-by-session-not-tab/`.
 
+[ADR 0034](0034-a-tab-lives-on-one-host-which-keeps-its-layout-panes-and-mark-and-other-devices-view-or-take-over-the-tab-whole.md) replaces what it says of another machine's tab opening with only its Claude panes, of splits being refused, and of reopening a closed tab one `resume` at a time.
+
 The rule is across machines and the protocol encodes it (version 22), so it is hard to undo:
 - **A tab has an id and a host.** The id is saved with the tab and kept across launches; a tab saved without one takes its first pane's id, and the app and the relay both apply that rule. A tab's panes all run on one machine, its host. A tab here that shows another machine's sessions takes that machine's tab id, from the host's listing or its reply to `start` or `resume`.
 - **Done is the tab's.** It closes every pane of the tab, and the tab goes to Completed once its last pane has closed. Nothing marks a session any more. Closing one pane marks nothing.

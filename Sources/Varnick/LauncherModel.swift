@@ -2553,6 +2553,8 @@ final class LauncherModel: ObservableObject {
     private func endOnHost(_ tab: ClaudeTab) {
         guard let host = tab.host else { return }
         for pane in tab.sessions { pane.endsWithTab = true }
+        // A tab whose every Claude and terminal pane shows a card is another machine's to end: nothing to tell the host.
+        guard tab.inControl || tab.sessions.contains(where: { $0.runsInZmx && $0.away == nil }) else { return }
         let id = tab.id, records = tab.sessions.filter(\.runsInZmx).map(\.record)
         Task { [weak self] in
             if await PeerManager.shared.end(tab: id, on: host) { for record in records { self?.noteReleased(record) } }
