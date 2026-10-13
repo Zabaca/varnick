@@ -190,7 +190,9 @@ public enum PeerRelay {
                 if pane.running == true { pane.controlName = names.name(of: pane.control) }
                 return pane
             }
-            tab.controlName = tab.runningPanes.isEmpty ? nil : names.name(of: tab.control)
+            // The host holding every running pane is a name; a mix of holders is nobody's.
+            let held = tab.control != nil || tab.runningPanes.allSatisfy { $0.control == nil }
+            tab.controlName = tab.runningPanes.isEmpty || !held ? nil : names.name(of: tab.control)
             tab = tab.settingProxy(from: proxy)
             return device.map { tab.hiding(from: $0) } ?? tab
         }

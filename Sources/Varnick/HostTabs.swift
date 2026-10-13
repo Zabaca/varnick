@@ -211,7 +211,6 @@ extension LauncherModel {
         Task { [weak self] in
             let refusal = await PeerManager.shared.arrange(tab: id, layout: layout, name: name, on: host)
             self?.endLayoutChange(of: id)
-            guard !Task.isCancelled else { return }
             if let refusal { NSLog("Varnick: \(PeerManager.shared.name(of: host)) wouldn't arrange tab \(id.uuidString.lowercased()): \(refusal)") }
         }
     }
@@ -231,15 +230,15 @@ extension LauncherModel {
         var request = PeerRequest(.start)
         request.by = PeerIdentity.id
         request.start = start
-        request.tab = tab.id.uuidString.lowercased()
+        let tabID = tab.id
+        request.tab = tabID.uuidString.lowercased()
         request.pane = target.id.uuidString.lowercased()
         request.axis = axis.rawValue
-        beginLayoutChange(of: tab.id)
+        beginLayoutChange(of: tabID)
         Task { [weak self] in
             let result = await PeerManager.shared.send(request, to: host, timeout: 40)
             guard let self else { return }
-            defer { self.endLayoutChange(of: tab.id) }
-            guard !Task.isCancelled else { return }
+            defer { self.endLayoutChange(of: tabID) }
             switch result {
             case .failure(let refusal):
                 target.showRefusal(refusal.message)

@@ -87,18 +87,20 @@ extension HeadlessPeerHost {
         return (running.map(\.control), running.isEmpty ? .failure("Nothing in that tab is running on \(name)") : nil)
     }
 
-    /// Whether the asker may change a tab: every running pane of it names the asker, the tab being its whole. Nil when it may, else the refusal.
+    /// Whether every one of the labels names the asker: a tab is one machine's whole.
+    private func allName(_ by: String, in labels: [String?]) -> Bool { labels.allSatisfy { Zmx.sameID($0, by) } }
+
+    /// Whether the asker may change a tab: every running pane of it names the asker. Nil when it may, else the refusal.
     private func controlled(tab: String, by: String) -> PeerReply? {
         let found = runningControls(of: tab)
         if let refusal = found.refusal { return refusal }
-        return found.labels.allSatisfy({ Zmx.sameID($0, by) }) ? nil : .failure("That tab isn't controlled by the machine that asked: take it over")
+        return allName(by, in: found.labels) ? nil : .failure("That tab isn't controlled by the machine that asked: take it over")
     }
 
     /// Nil unless a running pane of the tab is held by someone other than the asker: Start on a lost pane would otherwise relabel it for
     /// the asker, and a tab's panes are held by one machine.
     private func notHeldElsewhere(tab: String, by: String) -> PeerReply? {
-        let found = runningControls(of: tab)
-        return found.labels.allSatisfy({ Zmx.sameID($0, by) }) ? nil : .failure("That tab is controlled by another machine: take it over first")
+        allName(by, in: runningControls(of: tab).labels) ? nil : .failure("That tab is controlled by another machine: take it over first")
     }
 
     /// A `start` with `resume`, answered by `claimResume` (the rules are in `docs/agents/where-it-breaks.md` ›
@@ -173,10 +175,10 @@ extension HeadlessPeerHost {
 
     // MARK: end
 
-    /// The machine in control closed a pane (named by its session, or by `pane`): it ends, as closing it on the host would, whoever started it.
-    /// Only the machine in control may, so the label has to name it. Closing a whole tab is `endTab`'s rule.
+    /// The machine in control closed a pane (by session, or `pane`). Naming its tab it is ⌘W in a tab it controls: the pane ends, or the tab
+    /// does if this host finds it is the last. With no tab (the phone's) it ends if its origin names the asker, else is released.
     private func end(_ request: PeerRequest, by: String) -> PeerReply {
-        if let tab = request.tab, request.pane == nil { return endTab(tab, by: by) }
+        if let tab = request.tab, request.pane == nil, request.session == nil { return endTab(tab, by: by) }
         let session = request.session ?? request.pane.flatMap(UUID.init(uuidString:)).map(Zmx.sessionName)
         guard let session, let id = Zmx.paneID(session) else { return .failure("Not a Varnick session name") }
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
@@ -187,6 +189,16 @@ extension HeadlessPeerHost {
         }
         guard Zmx.sameID(Zmx.control(in: labels), by) else {
             return .failure("That session isn't controlled by the machine that asked to end it")
+        }
+        if let tab = request.tab {
+            if let refusal = controlled(tab: tab, by: by) { return refusal }
+            let open = ((try? state.sessions()) ?? []).filter { $0.tabID == tab.lowercased() && $0.ended == nil }
+            if open.count <= 1 { return endTab(tab, by: by) }
+        } else if !Zmx.sameID(Zmx.origin(in: labels), by) {
+            Zmx.detachClients(of: session)
+            var reply = PeerReply.success()
+            reply.released = true
+            return reply
         }
         Zmx.killNow(id)
         // zmx has killed it: a record that can't be written is no reason to fail the end.
@@ -210,14 +222,14 @@ extension HeadlessPeerHost {
             ended(panes.map(\.record.id))
             return .success()
         }
-        guard labels.allSatisfy({ Zmx.sameID(Zmx.control(in: $0.labels), by) }) else {
+        guard allName(by, in: labels.map { Zmx.control(in: $0.labels) }) else {
             return .failure("That tab isn't controlled by the machine that asked to end it")
         }
         var reply = PeerReply.success()
-        if labels.allSatisfy({ Zmx.sameID(Zmx.origin(in: $0.labels), by) }) {
-            for found in labels { Zmx.killNow(found.pane.uuid) }
-            // All at once, so the tab's layout stays whole for a `reopen`.
+        if allName(by, in: labels.map { Zmx.origin(in: $0.labels) }) {
+            // The records end first and all at once, so a reconcile can't shrink the layout meanwhile and the tab keeps it whole for a `reopen`.
             ended(panes.map(\.record.id))
+            for found in labels { Zmx.killNow(found.pane.uuid) }
         } else {
             for found in labels { Zmx.detachClients(of: found.pane.name) }
             reply.released = true
@@ -240,14 +252,18 @@ extension HeadlessPeerHost {
         case .open: return .failure("That tab is open on \(name): take it over from the list")
         case .nothing: return .failure("Nothing in that tab can be reopened on \(name)")
         case .claimed(let panes):
-            var started: PeerReply?, firstFailure: PeerReply?
-            for pane in panes {
+            // Together, each start waiting for its own session, so a large tab answers inside the asker's wait.
+            let replies = LockedBox([PeerReply?](repeating: nil, count: panes.count))
+            DispatchQueue.concurrentPerform(iterations: panes.count) { index in
+                let pane = panes[index]
                 let reply = launch(pane.record, control: by, origin: by, resuming: pane.conversation) {
                     // Only what the claim changed goes back, so the record is ended as it was.
                     _ = try? state.update(pane.record.id) { if $0.ended == nil, $0.starting == true { $0 = pane.before } }
                 }
-                if reply.ok { started = started ?? reply } else { firstFailure = firstFailure ?? reply }
+                replies.set(index, reply)
             }
+            let all = replies.value.compactMap { $0 }
+            let started = all.first { $0.ok }, firstFailure = all.first { !$0.ok }
             guard var reply = started else { return firstFailure ?? .failure("Nothing in that tab started on \(name)") }
             reply.tab = tab
             return reply

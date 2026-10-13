@@ -41,3 +41,23 @@ enum HeadlessTabs {
         }
     }
 }
+
+/// Slots written from several threads at once, one each: the replies of a tab's panes starting together.
+final class LockedBox<Element>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [Element]
+
+    init(_ items: [Element]) { self.items = items }
+
+    func set(_ index: Int, _ item: Element) {
+        lock.lock()
+        items[index] = item
+        lock.unlock()
+    }
+
+    var value: [Element] {
+        lock.lock()
+        defer { lock.unlock() }
+        return items
+    }
+}
