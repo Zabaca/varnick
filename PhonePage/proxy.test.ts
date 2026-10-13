@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Device, WhoisNode } from "./checks";
 import {
   aimOf, aimsOf, buildStatus, checkProxyFetch, checkProxyHost, decideProxyCaller, downstreamHeaders, notes, parseSelfAddresses, parseServePorts,
-  planPorts, proxiedAddress, rewriteLocation, upstreamHeaders, type PortFacts,
+  certificateFailure, operatorCommand, planPorts, proxiedAddress, rewriteLocation, upstreamHeaders, type PortFacts,
 } from "./proxy";
 
 const ID = "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11";
@@ -130,9 +130,9 @@ describe("what the listing is told", () => {
   test("a held port gives its panes' proxied addresses, the others the reason", () => {
     const held = new Set([5173]);
     const plan = planPorts([5173, 3000], { reserved: new Set(), serve: new Set(), localUp: new Set([5173]), tailnetUp: new Set(), held, certificate: null });
-    const status = buildStatus({ now: 1_760_000_123_456, dnsName: "mac-mini.example.ts.net", certificate: null, aims, plan, held });
+    const status = buildStatus({ now: 1_760_000_123_456, dnsName: "mac-mini.example.ts.net", certificate: null, command: null, aims, plan, held });
     expect(status).toEqual({
-      at: 1_760_000_123, name: "mac-mini.example.ts.net", note: null, ports: [5173],
+      at: 1_760_000_123, name: "mac-mini.example.ts.net", note: null, command: null, ports: [5173],
       panes: { a: { url: "https://mac-mini.example.ts.net:5173/deep" }, b: { note: notes.down }, c: { note: notes.secure } },
     });
   });
@@ -140,7 +140,7 @@ describe("what the listing is told", () => {
   test("a port closing this look is not given as an address", () => {
     const held = new Set([5173]);
     const plan = planPorts([5173], { reserved: new Set(), serve: new Set(), localUp: new Set(), tailnetUp: new Set(), held, certificate: null });
-    const status = buildStatus({ now: 0, dnsName: "mac-mini.example.ts.net", certificate: null, aims, plan, held });
+    const status = buildStatus({ now: 0, dnsName: "mac-mini.example.ts.net", certificate: null, command: null, aims, plan, held });
     expect(status.panes.a).toEqual({ note: notes.down });
   });
 
@@ -293,12 +293,33 @@ describe("what is rewritten", () => {
     }
   });
 
+  test("a header the Connection header names goes too, with the connection's own", () => {
+    const out = upstreamHeaders([["Connection", "close, X-Hop"], ["X-Hop", "1"], ["X-Keep", "2"]], 5173, ORIGIN);
+    expect([...out.keys()].sort()).toEqual(["host", "x-keep"]);
+    const back = downstreamHeaders([["Connection", "X-Hop"], ["X-Hop", "1"], ["X-Keep", "2"]], 5173, ORIGIN);
+    expect([...back.keys()]).toEqual(["x-keep"]);
+  });
+
   test("a response keeps its headers but loses the connection's own, and its Location is rewritten", () => {
     const out = downstreamHeaders([["Content-Type", "text/html"], ["Transfer-Encoding", "chunked"], ["Location", "http://localhost:5173/x"], ["Set-Cookie", "a=b"]], 5173, ORIGIN);
     expect(out.get("content-type")).toBe("text/html");
     expect(out.get("set-cookie")).toBe("a=b");
     expect(out.get("location")).toBe(`${ORIGIN}/x`);
     expect(out.has("transfer-encoding")).toBe(false);
+  });
+});
+
+describe("what Tailscale's refusal of a certificate says", () => {
+  test("the operator is named, with the one command", () => {
+    const failure = certificateFailure("Access denied: cert access denied\n");
+    expect(failure.command).toBe(operatorCommand);
+    expect(failure.note).toContain(operatorCommand);
+  });
+
+  test("anything else is Tailscale's first line, cut, with no command", () => {
+    expect(certificateFailure("\nHTTPS isn't enabled on this tailnet.\nmore")).toEqual({ note: "No certificate: Tailscale said HTTPS isn't enabled on this tailnet.", command: null });
+    expect(certificateFailure("x".repeat(500)).note.length).toBeLessThan(200);
+    expect(certificateFailure("")).toEqual({ note: "No certificate: Tailscale didn't answer.", command: null });
   });
 });
 

@@ -5,6 +5,7 @@
 import { isIP } from "node:net";
 import { decideCaller, mayBeListed, parseTailnetJSON, type Device, type WhoisNode } from "./checks";
 import { isObject, objects, type Json } from "./json";
+import { isLocalAddress } from "./page/tabrules.js";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Which ports
@@ -12,7 +13,7 @@ import { isObject, objects, type Json } from "./json";
 /** What a web or app pane of a listed tab asks of the proxy: its port on the host's localhost, and the path it is at. */
 export type PaneAim = { pane: string; port: number; path: string } | { pane: string; port: null; note: string };
 
-/** Why a pane's port isn't open, in the words the pane's card gives. Kept here, once: the relay and the viewers only pass them on. */
+/** Why a port isn't open, in the words the pane's card gives. All of the proxy's reasons are in this file, and the relay and the viewers only pass them on. */
 export const notes = {
   reserved: "That is the Phone page's own port.",
   low: "Ports below 1024 can't be opened without root.",
@@ -21,19 +22,28 @@ export const notes = {
   taken: "A server on that machine already answers on every address at this port, so the proxy leaves it alone.",
   secure: "An HTTPS server isn't proxied: it speaks TLS, which the proxy doesn't.",
   noPort: "This page names no port.",
+  noCertificate: "No certificate yet.",
+  noAddress: "Tailscale gave no address for this machine.",
 } as const;
 
-/** An address only the machine it names can reach: localhost and `*.localhost`, 127.0.0.0/8, ::1 and the unspecified addresses (as `isLocalAddress` of the page and the app). */
-function isLocalHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "::" || host === "0.0.0.0" || /^127(\.[0-9]{1,3}){3}$/.test(host);
+/** The one fix for a refused certificate, which takes root once. Settings shows it from the status file; no other file spells it. */
+export const operatorCommand = "sudo tailscale set --operator=$USER";
+
+/** Why the proxy couldn't open a port, by the error's code. */
+export const openFailure = (code: string): string => `The proxy couldn't open this port (${code || "error"}).`;
+
+/** How `tailscale cert`'s refusal is told: the operator is the usual cause, and the fix has a command. */
+export function certificateFailure(stderr: string): { note: string; command: string | null } {
+  const line = stderr.split("\n").map((text) => text.trim()).find((text) => text !== "") ?? "";
+  if (/access denied/i.test(line)) return { note: `No certificate: Tailscale gives one only to its operator. Run ${operatorCommand} once.`, command: operatorCommand };
+  return { note: line === "" ? "No certificate: Tailscale didn't answer." : `No certificate: Tailscale said ${line.slice(0, 160)}`, command: null };
 }
 
 /** The port and path an address names when it is on the host's own localhost, else null. A scheme other than http or https is not one. */
 function localAddress(text: string): { port: number; path: string; secure: boolean } | null {
   let url: URL;
   try { url = new URL(text); } catch { return null; }
-  if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLocalHost(url.hostname)) return null;
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLocalAddress(text)) return null;
   const secure = url.protocol === "https:";
   return { port: url.port !== "" ? Number(url.port) : secure ? 443 : 80, path: `${url.pathname}${url.search}${url.hash}`, secure };
 }
@@ -123,20 +133,24 @@ export interface ProxyStatus {
   name: string;
   /** Why the proxy opens nothing at all (no certificate), or null. */
   note: string | null;
+  /** The command that would fix it, when there is one (the operator): Settings shows it from here. */
+  command: string | null;
   /** The ports held now, for Settings. */
   ports: number[];
   /** Each web or app pane's proxied address, or why it has none. */
   panes: Record<string, { url: string } | { note: string }>;
 }
 
-export function buildStatus(input: { now: number; dnsName: string; certificate: string | null; aims: PaneAim[]; plan: PortPlan; held: ReadonlySet<number> }): ProxyStatus {
+export function buildStatus(input: {
+  now: number; dnsName: string; certificate: string | null; command: string | null; aims: PaneAim[]; plan: PortPlan; held: ReadonlySet<number>;
+}): ProxyStatus {
   const panes: ProxyStatus["panes"] = {};
   for (const aim of input.aims) {
     if (aim.port === null) panes[aim.pane] = { note: aim.note };
     else if (input.held.has(aim.port) && !input.plan.close.includes(aim.port)) panes[aim.pane] = { url: proxiedAddress(input.dnsName, aim.port, aim.path) };
     else panes[aim.pane] = { note: input.plan.notes.get(aim.port) ?? notes.down };
   }
-  return { at: Math.floor(input.now / 1000), name: input.dnsName, note: input.certificate, ports: [...input.held].sort((a, b) => a - b), panes };
+  return { at: Math.floor(input.now / 1000), name: input.dnsName, note: input.certificate, command: input.command, ports: [...input.held].sort((a, b) => a - b), panes };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -218,15 +232,26 @@ export function checkProxyFetch(method: string, headers: HeaderReader, origin: s
 
 const hopByHop = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host"]);
 
+/** The headers a `Connection` header names are the connection's own too (`Connection: close, X-Foo` drops X-Foo). */
+function connectionNames(headers: [string, string][]): Set<string> {
+  const names = new Set<string>();
+  for (const [name, value] of headers) {
+    if (name.toLowerCase() === "connection") for (const token of value.split(",")) names.add(token.trim().toLowerCase());
+  }
+  return names;
+}
+
 /**
  * The headers a request goes to the server with: Host as the server's own (dev servers refuse any other), Origin as the server's own
  * when it is the proxied address, nothing else changed. Websocket handshake headers are the client's own to make, so they go too.
  */
 export function upstreamHeaders(headers: Iterable<[string, string]>, port: number, origin: string, websocket = false): Headers {
   const out = new Headers();
-  for (const [name, value] of headers) {
+  const listed = [...headers];
+  const named = connectionNames(listed);
+  for (const [name, value] of listed) {
     const lower = name.toLowerCase();
-    if (hopByHop.has(lower) || (websocket && (lower.startsWith("sec-websocket-")))) continue;
+    if (hopByHop.has(lower) || named.has(lower) || (websocket && (lower.startsWith("sec-websocket-")))) continue;
     out.set(name, lower === "origin" && value === origin ? `http://localhost:${port}` : value);
   }
   out.set("host", `localhost:${port}`);
@@ -236,9 +261,11 @@ export function upstreamHeaders(headers: Iterable<[string, string]>, port: numbe
 /** The headers of a response: the connection's own are the proxy's. */
 export function downstreamHeaders(headers: Iterable<[string, string]>, port: number, origin: string): Headers {
   const out = new Headers();
-  for (const [name, value] of headers) {
+  const listed = [...headers];
+  const named = connectionNames(listed);
+  for (const [name, value] of listed) {
     const lower = name.toLowerCase();
-    if (hopByHop.has(lower)) continue;
+    if (hopByHop.has(lower) || named.has(lower)) continue;
     out.set(name, lower === "location" ? rewriteLocation(value, port, origin) : value);
   }
   return out;

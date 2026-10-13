@@ -125,6 +125,11 @@ describe("what a pane that is not a terminal says", () => {
     expect(["http://0.0.0.0:3000/", "http://127.1.2.3/", "http://app.localhost:8080/", "http://[::]/"].map(isLocalAddress)).toEqual([true, true, true, true]);
     expect(["http://127.example.com/", "http://128.0.0.1/"].map(isLocalAddress)).toEqual([false, false]);
     expect(["https://example.com/", "http://192.168.1.5/", "http://localhost.example.com/"].map(isLocalAddress)).toEqual([false, false, false]);
+    // The forms of the same machine, and the schemes that would load the viewer's own: the Swift copy answers the same for each (`PeerPane.isLocalAddress`).
+    for (const same of ["http://127.1/", "http://2130706433/", "http://0x7f.1/", "http://0177.0.0.1/", "http://localhost./", "http://[::ffff:127.0.0.1]/",
+      "http://[0:0:0:0:0:0:0:1]/", "http://0.0.0.0/", "http://[::]/", "http://foo.localhost/", "about:blank", "file:///etc/hosts", "javascript:1", "data:text/html,x"]) {
+      expect(isLocalAddress(same)).toBe(true);
+    }
     expect(addressHost("https://example.com:8080/a")).toBe("example.com:8080");
     expect(addressHost("nonsense")).toBe("nonsense");
   });

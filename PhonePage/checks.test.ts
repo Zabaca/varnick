@@ -268,7 +268,9 @@ describe("the configuration", () => {
   test("the port proxy has a folder and a status file together, or is off", () => {
     const read = (extra: Record<string, string>) => readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "18449", ...extra });
     expect((read({}) as any).config.proxy).toBeUndefined();
-    expect((read({ VARNICK_PROXY_FOLDER: "/p", VARNICK_PROXY_STATUS: "/s.json" }) as any).config.proxy).toEqual({ folder: "/p", status: "/s.json" });
+    expect((read({ VARNICK_PROXY_FOLDER: "/p", VARNICK_PROXY_STATUS: "/s.json" }) as any).config.proxy).toEqual({ folder: "/p", status: "/s.json", tabs: undefined });
+    expect((read({ VARNICK_PROXY_FOLDER: "/p", VARNICK_PROXY_STATUS: "/s.json", VARNICK_PROXY_TABS: "/t.json" }) as any).config.proxy.tabs).toBe("/t.json");
+    expect("error" in read({ VARNICK_PROXY_FOLDER: "/p", VARNICK_PROXY_STATUS: "/s.json", VARNICK_PROXY_TABS: "t.json" })).toBe(true);
     expect("error" in read({ VARNICK_PROXY_FOLDER: "/p" })).toBe(true);
     expect("error" in read({ VARNICK_PROXY_STATUS: "/s.json" })).toBe(true);
     expect("error" in read({ VARNICK_PROXY_FOLDER: "p", VARNICK_PROXY_STATUS: "/s.json" })).toBe(true);

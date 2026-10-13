@@ -5,7 +5,7 @@
 // Who is calling is never taken from the client. The server alone sets `by`: whois on the address serve puts in
 // X-Forwarded-For, then the node, then devices.json. Logs hold the method, the path, the status, the device's name and the time.
 
-import { chmodSync, lstatSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { isIP } from "node:net";
@@ -21,8 +21,8 @@ import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, reopenTab
 import { clean, Relay, Slots } from "./relay";
 import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
-import { certificateFiles, certificateNote, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
-import { parseSelfAddresses, parseServePorts } from "./proxy";
+import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
+import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 25;
@@ -38,23 +38,8 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function capture(argv: string[], timeout: number): Promise<string | null> {
-  try {
-    const process = Bun.spawn(argv, { env: { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-    const timer = setTimeout(() => process.kill(), timeout);
-    try {
-      const output = await new Response(process.stdout).text();
-      return (await process.exited) === 0 ? output : null;
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    return null;
-  }
-}
-
-/** Like `capture`, with the error stream too: `tailscale cert` says why it refuses there. */
-async function captureBoth(argv: string[], timeout: number): Promise<{ ok: boolean; out: string; err: string }> {
+/** Runs a command with a plain environment and a deadline: whether it succeeded, and both its streams (`tailscale cert` says why it refuses on stderr). */
+async function run(argv: string[], timeout: number): Promise<{ ok: boolean; out: string; err: string }> {
   try {
     const process = Bun.spawn(argv, { env: { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => process.kill(), timeout);
@@ -67,6 +52,12 @@ async function captureBoth(argv: string[], timeout: number): Promise<{ ok: boole
   } catch {
     return { ok: false, out: "", err: "" };
   }
+}
+
+/** A command's output, or null when it failed. */
+async function capture(argv: string[], timeout: number): Promise<string | null> {
+  const done = await run(argv, timeout);
+  return done.ok ? done.out : null;
 }
 
 /** The socket's folder must be the user's own and closed to everyone else: Bun binds the socket before it can be chmodded. */
@@ -248,12 +239,19 @@ async function main(): Promise<void> {
   // The port proxy (portproxy.ts), only where the environment gives it a folder and a status file, and the relay gave this host's id.
   let proxy: PortProxy | null = null;
   if (config.proxy && ownID) {
-    const { folder, status } = config.proxy;
+    const { folder, status, tabs: tabsFile } = config.proxy;
     const certFiles = certificateFiles(folder);
-    // The Macs this host lists, by tailnet name: asked of the relay as the host itself, kept for a minute like the other hosts' links.
-    let peersCache: { at: number; names: Set<string> } | null = null;
+    // The Macs this host lists, by tailnet name: asked of the relay as the host itself. One ask is shared by every request that comes while it runs,
+    // and its answer is kept for a minute, a failure for ten seconds, like the other hosts' links.
+    let peersCache: { at: number; ttl: number; names: Set<string> } | null = null;
+    let peersFetch: Promise<Set<string>> | null = null;
     const world: ProxyWorld = {
       tabs: () => relay.ask("tabs", ownID, {}, undefined, "proxy"),
+      // The saved tabs' date and size: a look that finds them as they were doesn't run the relay. A host that gives no file is asked only every few minutes.
+      tabsStamp: () => {
+        if (!tabsFile) return "none";
+        try { const info = statSync(tabsFile); return `${info.mtimeMs}:${info.size}`; } catch { return "missing"; }
+      },
       servePorts: async () => {
         const text = await capture([config.tailscale, "serve", "status", "--json"], 8000);
         return text ? parseServePorts(text) : new Set<number>();
@@ -263,21 +261,35 @@ async function main(): Promise<void> {
         return text ? parseSelfAddresses(text) : [];
       },
       certificate: async (): Promise<CertificateResult> => {
-        const asked = await captureBoth([config.tailscale, "cert", "--cert-file", certFiles.cert, "--key-file", certFiles.key, "--min-validity", "720h", self.dnsName], 120_000);
-        if (!asked.ok) return { ok: false, note: certificateNote(asked.err) };
-        try { return { ok: true, cert: readFileSync(certFiles.cert, "utf8"), key: readFileSync(certFiles.key, "utf8") }; } catch { return { ok: false, note: certificateNote("") }; }
+        // Under the status file's minute, with the status written before and after: a first issuance takes seconds, not minutes.
+        const asked = await run([config.tailscale, "cert", "--cert-file", certFiles.cert, "--key-file", certFiles.key, "--min-validity", "720h", self.dnsName], 50_000);
+        if (!asked.ok) return { ok: false, ...certificateFailure(asked.err) };
+        try {
+          return { ok: true, cert: readFileSync(certFiles.cert, "utf8"), key: readFileSync(certFiles.key, "utf8") };
+        } catch {
+          const failure = certificateFailure("");
+          return { ok: false, note: failure.note };
+        }
       },
       whois,
       devices: () => {
         try { return readDevices(readFileSync(config.devices, "utf8")); } catch { return []; }
       },
-      peers: async () => {
-        if (peersCache && Date.now() - peersCache.at < linksLifetime) return peersCache.names;
-        const [listed, statusNow] = await Promise.all([relay.ask("hosts", ownID, {}, undefined, "proxy-hosts"), capture([config.tailscale, "status", "--json"], 10_000)]);
-        const nodes = statusNow ? parseNodeNames(statusNow) : new Set<string>();
-        const names = listed.ok && nodes.size > 0 ? new Set(hostNodes(listed.reply, self!.dnsName, nodes).map((node) => node.dns)) : new Set<string>();
-        peersCache = { at: Date.now(), names };
-        return names;
+      peers: () => {
+        if (peersCache && Date.now() - peersCache.at < peersCache.ttl) return Promise.resolve(peersCache.names);
+        peersFetch ??= (async () => {
+          try {
+            const [listed, statusNow] = await Promise.all([relay.ask("hosts", ownID, {}, undefined, "proxy-hosts"), capture([config.tailscale, "status", "--json"], 10_000)]);
+            const nodes = statusNow ? parseNodeNames(statusNow) : new Set<string>();
+            const ok = listed.ok && nodes.size > 0;
+            const names = ok ? new Set(hostNodes(listed.reply, self!.dnsName, nodes).map((node) => node.dns)) : new Set<string>();
+            peersCache = { at: Date.now(), ttl: ok ? linksLifetime : linksFailureLifetime, names };
+            return names;
+          } finally {
+            peersFetch = null;
+          }
+        })();
+        return peersFetch;
       },
       log,
     };

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Device, WhoisNode } from "./checks";
 import { notes, type ProxyStatus } from "./proxy";
-import { answers, certificateNote, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
+import { answers, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
 
 // The proxy on throwaway ports and a copy of its code, never the running page. The "tailnet address" is ::1 and the server is on 127.0.0.1,
 // the same port on two addresses as on a real host. Nothing here listens on a tailnet address. Run it from a shell with no HTTP_PROXY or
@@ -26,10 +26,12 @@ const openssl = Bun.spawnSync(["openssl", "version"]).exitCode === 0;
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => { for (const clean of cleanups.splice(0).reverse()) await clean(); });
 
-interface Rig { port: number; proxy: PortProxy; status: () => ProxyStatus; tabs: { value: Record<string, unknown> }; backend: Bun.Server<unknown>; logs: string[]; world: ProxyWorld; url: (path: string) => string; host: string }
+interface Rig { dir: string; port: number; proxy: PortProxy; status: () => ProxyStatus; tabs: { value: Record<string, unknown> }; backend: Bun.Server<unknown>; logs: string[]; world: ProxyWorld; url: (path: string) => string; host: string }
 
 /** A server on 127.0.0.1 that echoes what it was asked, a proxy on ::1 in front of it, and a tabs answer naming its port. */
-async function rig(change: { certificate?: () => Promise<CertificateResult>; tls?: boolean; serve?: number[]; whois?: WhoisNode | null; peers?: string[] } = {}): Promise<Rig> {
+async function rig(change: {
+  certificate?: () => Promise<CertificateResult>; tls?: boolean; serve?: number[]; whois?: WhoisNode | null; peers?: string[]; relayGraceMs?: number; stamp?: () => string;
+} = {}): Promise<Rig> {
   const folder = mkdtempSync(join(tmpdir(), "portproxy-"));
   cleanups.push(() => rmSync(folder, { recursive: true, force: true }));
   const backend = Bun.serve({
@@ -63,12 +65,13 @@ async function rig(change: { certificate?: () => Promise<CertificateResult>; tls
     devices: () => [DEVICE],
     peers: async () => new Set(change.peers ?? []),
     log: (line) => logs.push(line),
+    ...(change.stamp ? { tabsStamp: change.stamp } : {}),
   };
   const statusPath = join(folder, "status.json");
-  const proxy = new PortProxy(world, { dnsName: NAME, userID: "1", reserved: [], statusPath, tls: change.tls ?? false, upstreams: ["127.0.0.1"] });
+  const proxy = new PortProxy(world, { dnsName: NAME, userID: "1", reserved: [], statusPath, tls: change.tls ?? false, upstreams: ["127.0.0.1"], relayGraceMs: change.relayGraceMs });
   cleanups.push(() => proxy.stop());
   const host = `${NAME}:${port}`;
-  return { port, proxy, tabs, backend, logs, world, host, status: () => JSON.parse(readFileSync(statusPath, "utf8")), url: (path) => `http://[::1]:${port}${path}` };
+  return { dir: folder, port, proxy, tabs, backend, logs, world, host, status: () => JSON.parse(readFileSync(statusPath, "utf8")), url: (path) => `http://[::1]:${port}${path}` };
 }
 
 interface Answer { status: number; location: string | undefined; text: string; json: () => Record<string, string> }
@@ -184,6 +187,89 @@ describe.skipIf(!ipv6)("who and what is refused", () => {
     await ask(r, "/secret-path?token=1", { headers: { host: "wrong:1" } });
     expect(r.logs.some((line) => line === `proxy :${r.port} 421`)).toBe(true);
     expect(r.logs.join("\n")).not.toContain("secret");
+  });
+});
+
+describe.skipIf(!ipv6)("what stays open", () => {
+  const openSocket = async (r: Rig) => {
+    const socket = new WebSocket(`ws://[::1]:${r.port}/ws`, { headers: { host: r.host, origin: `https://${NAME}:${r.port}`, ...SAME_ORIGIN } } as unknown as string[]);
+    await new Promise<void>((resolve, reject) => { socket.onmessage = () => resolve(); socket.onerror = () => reject(new Error("socket error")); setTimeout(() => reject(new Error("no message")), 3000); });
+    return socket;
+  };
+  const closed = (socket: WebSocket) => new Promise<number>((resolve) => { socket.onclose = (event) => resolve(event.code); setTimeout(() => resolve(-1), 3000); });
+
+  test("closing a port closes the sockets open on it", async () => {
+    const r = await rig();
+    await r.proxy.look();
+    const socket = await openSocket(r);
+    const ended = closed(socket);
+    r.tabs.value = { tabs: [] };
+    await r.proxy.look();
+    expect(r.proxy.heldPorts()).toEqual([]);
+    expect(await ended).not.toBe(-1);
+  });
+
+  test("a socket of a caller no longer admitted is closed at the next look", async () => {
+    const r = await rig();
+    await r.proxy.look();
+    const socket = await openSocket(r);
+    const ended = closed(socket);
+    r.world.devices = () => [];
+    // The page's whois answer is kept for a minute in the real server; here it is fresh each time.
+    await r.proxy.look();
+    expect(await ended).toBe(1008);
+    expect(r.proxy.heldPorts()).toEqual([r.port]);
+  });
+
+  test("a caller whose whois fails for a moment is not cut off", async () => {
+    const r = await rig();
+    await r.proxy.look();
+    const socket = await openSocket(r);
+    let ended = false;
+    socket.onclose = () => { ended = true; };
+    r.world.whois = async () => null;
+    await r.proxy.look();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(ended).toBe(false);
+    socket.close();
+  });
+
+  test("a relay that keeps failing closes every port, after its grace", async () => {
+    const r = await rig({ relayGraceMs: 50 });
+    await r.proxy.look();
+    expect(r.proxy.heldPorts()).toEqual([r.port]);
+    r.world.tabs = async () => ({ ok: false, error: "busy" });
+    await r.proxy.look();
+    expect(r.proxy.heldPorts()).toEqual([r.port]);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await r.proxy.look();
+    expect(r.proxy.heldPorts()).toEqual([]);
+  });
+
+  test("the relay is not asked again while the saved tabs are as they were", async () => {
+    let stamp = "a";
+    let asked = 0;
+    const r = await rig({ stamp: () => stamp });
+    const real = r.world.tabs;
+    r.world.tabs = async () => { asked += 1; return real(); };
+    await r.proxy.look();
+    await r.proxy.look();
+    await r.proxy.look();
+    expect(asked).toBe(1);
+    expect(r.proxy.heldPorts()).toEqual([r.port]);
+    stamp = "b";
+    r.tabs.value = { tabs: [] };
+    await r.proxy.look();
+    expect(asked).toBe(2);
+    expect(r.proxy.heldPorts()).toEqual([]);
+  });
+
+  test("a port that is not opened is logged once with its reason", async () => {
+    const r = await rig({ serve: [] });
+    r.world.servePorts = async () => new Set([r.port]);
+    await r.proxy.look();
+    await r.proxy.look();
+    expect(r.logs.filter((line) => line.startsWith(`proxy :${r.port} not opened`))).toEqual([`proxy :${r.port} not opened: ${notes.serve}`]);
   });
 });
 
@@ -323,14 +409,25 @@ describe.skipIf(!ipv6 || !openssl)("the certificate", () => {
     socket.close();
   });
 
-  test("a host with no web or app pane never asks for a certificate", async () => {
+  test("a host with no web or app pane asks once, so the operator shows before the first pane, and not again for an hour", async () => {
     let asked = 0;
-    const r = await rig({ tls: true, certificate: async () => { asked += 1; return { ok: false, note: "x" }; } });
+    const r = await rig({ tls: true, certificate: async () => { asked += 1; return { ok: false, note: "No certificate: x.", command: "do it" }; } });
     r.tabs.value = { tabs: [{ panes: [{ id: "t", kind: "terminal" }] }] };
     await r.proxy.look();
     await r.proxy.look();
-    expect(asked).toBe(0);
-    expect(r.status().note).toBeNull();
+    expect(asked).toBe(1);
+    expect(r.status().note).toBe("No certificate: x.");
+    expect(r.status().command).toBe("do it");
+  });
+
+  test("the status is written while a slow certificate is awaited, so it never looks stale", async () => {
+    let release = () => {};
+    const r = await rig({ tls: true, certificate: () => new Promise((resolve) => { release = () => resolve({ ok: false, note: "late" }); }) });
+    const looking = r.proxy.look();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(Math.abs(Date.now() / 1000 - r.status().at)).toBeLessThan(5);
+    release();
+    await looking;
   });
 
   test("with no certificate nothing opens, and the status says why", async () => {
@@ -339,17 +436,5 @@ describe.skipIf(!ipv6 || !openssl)("the certificate", () => {
     expect(r.proxy.heldPorts()).toEqual([]);
     expect(r.status().note).toBe("No certificate: because.");
     expect(r.status().panes.a).toEqual({ note: "No certificate: because." });
-  });
-});
-
-describe("what Tailscale's refusal of a certificate says", () => {
-  test("the operator is named, with the one fix", () => {
-    expect(certificateNote("Access denied: cert access denied\n")).toContain("sudo tailscale set --operator=$USER");
-  });
-
-  test("anything else is Tailscale's first line, cut", () => {
-    expect(certificateNote("\nHTTPS isn't enabled on this tailnet.\nmore")).toBe("No certificate: Tailscale said HTTPS isn't enabled on this tailnet.");
-    expect(certificateNote("x".repeat(500)).length).toBeLessThan(200);
-    expect(certificateNote("")).toBe("No certificate: Tailscale didn't answer.");
   });
 });

@@ -67,15 +67,24 @@ export function samePanes(a, b) {
 /** The address the tab view frames a web or app pane at, through the host's port proxy, or null when the pane has none. */
 export const framedAddress = (pane) => ((pane.kind === "web" || pane.kind === "app") && pane.proxy ? pane.proxy : null);
 
-/** An address only the host itself can reach (localhost and `*.localhost`, 127.0.0.0/8, ::1, the unspecified addresses). */
+/**
+ * Whether an address can't be loaded from another machine: none yet, one that doesn't parse, a scheme other than http and https (`about:`,
+ * `file:` would load the viewer's own), or a host that is the machine itself: localhost and `*.localhost`, 127.0.0.0/8 however it is written
+ * (`127.1`, `2130706433`: the URL parser turns them into dotted form), ::1, the unspecified addresses and IPv4-mapped IPv6. The Swift copy is
+ * `PeerPane.isLocalAddress`, which `SessionRecord` uses; this one is the page's and the proxy's.
+ */
 export function isLocalAddress(url) {
   if (!url) return true;
+  let parsed;
   try {
-    const host = new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "::" || host === "0.0.0.0" || /^127(\.\d{1,3}){3}$/.test(host);
+    parsed = new URL(url);
   } catch {
     return true;
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return true;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  return host === "" || host === "localhost" || host.endsWith(".localhost") || host === "::" || host === "::1" || host.startsWith("::ffff:")
+    || host === "0.0.0.0" || /^127(\.\d{1,3}){3}$/.test(host);
 }
 
 /**

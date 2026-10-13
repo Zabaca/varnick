@@ -10,18 +10,20 @@ import { renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Device, WhoisNode } from "./checks";
 import {
-  aimsOf, buildStatus, checkProxyFetch, checkProxyHost, decideProxyCaller, downstreamHeaders, notes, planPorts, proxiedOrigin, upstreamHeaders,
+  aimsOf, buildStatus, checkProxyFetch, checkProxyHost, decideProxyCaller, downstreamHeaders, notes, openFailure, planPorts, proxiedOrigin, upstreamHeaders,
   type Admission, type PaneAim, type PortFacts, type PortPlan,
 } from "./proxy";
 import { Slots } from "./relay";
 
-/** The certificate and key as PEM text, or why there is none. */
-export type CertificateResult = { ok: true; cert: string; key: string } | { ok: false; note: string };
+/** The certificate and key as PEM text, or why there is none (and the command that would give one, when there is one). */
+export type CertificateResult = { ok: true; cert: string; key: string } | { ok: false; note: string; command?: string | null };
 
 /** What the proxy asks of the world. server.ts gives the real ones; a check gives fakes. */
 export interface ProxyWorld {
   /** The host's own `tabs` reply, as the relay printed it. */
   tabs(): Promise<{ ok: true; reply: Record<string, unknown> } | { ok: false; error: string }>;
+  /** A stamp of the saved tabs that changes when they do, so a look with the same stamp as the last doesn't run the relay. Absent: the relay is run each look. */
+  tabsStamp?(): string | null;
   /** The ports `tailscale serve` publishes. */
   servePorts(): Promise<ReadonlySet<number>>;
   /** The host's tailnet addresses. */
@@ -47,17 +49,27 @@ export interface ProxyOptions {
   tls?: boolean;
   /** Where a forward goes, in order; a check has no use for the second. */
   upstreams?: string[];
-  /** How long between looks while a port is wanted or held; with none, three times as long (each look runs the relay). */
+  /** How long between looks while a port is wanted or held; with none, three times as long. */
   intervalMs?: number;
+  /** How long a relay may fail before every port closes (a minute). */
+  relayGraceMs?: number;
 }
 
 const websocketsInAll = 32;
 const websocketsPerCaller = 8;
 const requestsInAll = 512;
 const requestsPerCaller = 256;
-const noCertificateYet = "No certificate yet.";
+/** The most a socket may have waiting to go to the server before it is closed. */
+const upstreamBacklog = 8 << 20;
 const certificateRetryMs = 60_000;
+/** With no port wanted there is no hurry to find the operator set, but Settings shows it, so it is asked now and then. */
+const certificateIdleRetryMs = 3600_000;
 const certificateRefreshMs = 24 * 3600_000;
+/** The saved tabs are read by the relay at least this often, whatever their stamp says. */
+const relayRefreshMs = 300_000;
+/** A relay that keeps failing for this long no longer vouches for the ports it once named: they close. */
+const relayFailureMs = 60_000;
+const addressesLifetimeMs = 60_000;
 
 /** Whether something accepts a TCP connection at `hostname:port`. */
 export function answers(hostname: string, port: number, timeoutMs = 1000): Promise<boolean> {
@@ -70,11 +82,17 @@ export function answers(hostname: string, port: number, timeoutMs = 1000): Promi
   });
 }
 
+type ProxiedWebSocket = Bun.ServerWebSocket<ProxiedSocket>;
+
 interface Listener {
   port: number;
+  /** The tailnet addresses it is bound to. */
+  addresses: string[];
   servers: Bun.Server<ProxiedSocket>[];
   sockets: Slots;
   requests: Slots;
+  /** The sockets open now, so a caller no longer admitted is cut off. */
+  open: Set<ProxiedWebSocket>;
 }
 
 interface ProxiedSocket {
@@ -83,18 +101,32 @@ interface ProxiedSocket {
   /** What the server sent between its socket opening and the browser's upgrade being answered. */
   queued: (string | ArrayBuffer)[];
   closed: boolean;
+  /** The caller's address, asked about again at each look. */
+  address: string;
+  open: Set<ProxiedWebSocket>;
 }
 
 /** A close code a socket may send: 1005, 1006 and 1015 are only ever reported, never sent. */
 const sendableCode = (code: number): number => (code === 1000 || (code >= 3000 && code <= 4999) ? code : 1000);
 
+const emptyPlan = (): PortPlan => ({ open: [], keep: [], close: [], notes: new Map() });
+const plain = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
+
 export class PortProxy {
   private listeners = new Map<number, Listener>();
   private certificate: { cert: string; key: string } | null = null;
-  private certificateNote: string | null = null;
+  private certificateNote: { note: string; command: string | null } | null = null;
   private certificateAskedAt = 0;
   private certificateOKAt = 0;
   private aims: PaneAim[] = [];
+  private plan: PortPlan = emptyPlan();
+  private stamp: string | null = null;
+  private relayAt = 0;
+  private relayWasOK = false;
+  private relayOKAt = Date.now();
+  private addressList: { at: number; list: string[] } = { at: 0, list: [] };
+  /** The reason last logged for each port that isn't open, so a look every few seconds doesn't repeat it. */
+  private logged = new Map<number, string>();
   private looking: Promise<void> | null = null;
   private lookAgain = false;
   private lookedAt = 0;
@@ -160,20 +192,22 @@ export class PortProxy {
   private async lookOnce(): Promise<void> {
     if (this.stopped) return;
     this.lookedAt = Date.now();
-    const tabs = await this.world.tabs();
-    // A relay that didn't answer changes nothing this time: the ports stay as they were.
-    if (tabs.ok) this.aims = aimsOf(tabs.reply.tabs);
-
+    await this.readTabs();
     const wanted = new Set(this.aims.flatMap((aim) => (aim.port === null ? [] : [aim.port])));
     const held = new Set(this.listeners.keys());
-    // The certificate is asked for only while a port is wanted or held: a host with no web or app pane never runs `tailscale cert`.
-    if (wanted.size > 0 || held.size > 0) await this.ensureCertificate();
+    if (this.certificateDue(wanted.size > 0 || held.size > 0)) {
+      // The status is written before and after the slow call, so a certificate that takes a while never makes the file look stale.
+      this.writeStatus(this.plan);
+      await this.renewCertificate();
+      this.writeStatus(this.plan);
+    }
+
     const candidates = new Set([...wanted, ...held]);
     let serve: ReadonlySet<number> = new Set();
     let addresses: string[] = [];
     const localUp = new Set<number>(), tailnetUp = new Set<number>();
     if (candidates.size > 0) {
-      [serve, addresses] = await Promise.all([this.world.servePorts(), this.world.addresses()]);
+      [serve, addresses] = await Promise.all([this.world.servePorts(), this.tailnetAddresses()]);
       await Promise.all([...candidates].map(async (port) => { if (await this.answersOnLocalhost(port)) localUp.add(port); }));
       // A held port answers on the tailnet address itself, so only the others are looked at there.
       await Promise.all([...wanted].filter((port) => !held.has(port) && localUp.has(port)).map(async (port) => {
@@ -182,7 +216,7 @@ export class PortProxy {
     }
     const facts: PortFacts = {
       reserved: new Set(this.options.reserved), serve, localUp, tailnetUp, held,
-      certificate: this.missingCertificate(),
+      certificate: this.missingCertificate()?.note ?? null,
     };
     const plan = planPorts(wanted, facts);
     for (const port of plan.close) this.close(port, plan.notes.get(port) ?? "no tab names it");
@@ -190,17 +224,61 @@ export class PortProxy {
       const failure = this.open(port, addresses);
       if (failure) plan.notes.set(port, failure);
     }
+    this.logRefusals(plan, wanted);
+    this.plan = plan;
     this.writeStatus(plan);
+    await this.cutOffRemoved();
+  }
+
+  /** The tabs the relay lists, unless the saved tabs have not changed since it was last asked; a relay failing for a minute closes every port. */
+  private async readTabs(): Promise<void> {
+    const now = Date.now();
+    const stamp = this.world.tabsStamp ? this.world.tabsStamp() : null;
+    if (stamp !== null && stamp === this.stamp && this.relayWasOK && now - this.relayAt < relayRefreshMs) {
+      this.relayOKAt = now;
+      return;
+    }
+    const tabs = await this.world.tabs();
+    this.relayAt = Date.now();
+    this.relayWasOK = tabs.ok;
+    if (tabs.ok) {
+      this.aims = aimsOf(tabs.reply.tabs);
+      this.stamp = stamp;
+      this.relayOKAt = now;
+    } else if (now - this.relayOKAt > (this.options.relayGraceMs ?? relayFailureMs)) {
+      // Nothing vouches for the ports any more: a pane closed meanwhile would keep its port open for good.
+      if (this.aims.length > 0) this.world.log("proxy: the relay has not answered for a minute, so every port closes");
+      this.aims = [];
+      this.stamp = null;
+    }
+  }
+
+  private async tailnetAddresses(): Promise<string[]> {
+    if (this.addressList.list.length === 0 || Date.now() - this.addressList.at > addressesLifetimeMs) {
+      this.addressList = { at: Date.now(), list: await this.world.addresses() };
+    }
+    return this.addressList.list;
+  }
+
+  /** A port that isn't open is logged with its reason, once for as long as the reason stands. */
+  private logRefusals(plan: PortPlan, wanted: Set<number>): void {
+    for (const port of [...this.logged.keys()]) if (!wanted.has(port) || !plan.notes.has(port)) this.logged.delete(port);
+    for (const [port, note] of plan.notes) {
+      if (this.logged.get(port) === note) continue;
+      this.logged.set(port, note);
+      this.world.log(`proxy :${port} not opened: ${note}`);
+    }
   }
 
   // -------------------------------------------------------------------------------------------------------------
   // The certificate
 
-  private async ensureCertificate(): Promise<void> {
-    if (!this.tls) return;
+  private certificateDue(wanted: boolean): boolean {
+    if (!this.tls) return false;
+    if (this.certificateAskedAt === 0) return true;
     const now = Date.now();
-    const due = this.certificate === null ? now - this.certificateAskedAt >= certificateRetryMs : now - this.certificateOKAt >= certificateRefreshMs;
-    if (due || this.certificateAskedAt === 0) await this.renewCertificate();
+    if (this.certificate === null) return now - this.certificateAskedAt >= (wanted ? certificateRetryMs : certificateIdleRetryMs);
+    return now - this.certificateOKAt >= certificateRefreshMs;
   }
 
   /** Asks for the certificate. A new one replaces the old on every port held: Bun's reload of TLS options keeps serving the old one, so each listener is stopped and served again. */
@@ -208,7 +286,7 @@ export class PortProxy {
     this.certificateAskedAt = Date.now();
     const result = await this.world.certificate();
     if (!result.ok) {
-      this.certificateNote = result.note;
+      this.certificateNote = { note: result.note, command: result.command ?? null };
       this.world.log("proxy certificate: none");
       return;
     }
@@ -218,12 +296,15 @@ export class PortProxy {
     this.certificate = { cert: result.cert, key: result.key };
     if (!changed) return;
     for (const listener of [...this.listeners.values()]) {
-      const hostnames = listener.servers.map((server) => server.hostname).filter((name): name is string => typeof name === "string");
+      // Connections open now finish on the old certificate; new ones get the new.
       for (const server of listener.servers) void server.stop(false);
       try {
-        listener.servers = this.serve(listener, hostnames);
+        listener.servers = this.serve(listener, listener.addresses);
       } catch {
-        // The port couldn't be served again: it is not held, and the next look opens it.
+        listener.servers = [];
+      }
+      if (listener.servers.length === 0) {
+        // Nothing is serving it: not held, and the next look opens it.
         this.listeners.delete(listener.port);
         this.world.log(`proxy close :${listener.port} (certificate swap failed)`);
       }
@@ -232,8 +313,9 @@ export class PortProxy {
   }
 
   /** Why there is no certificate to serve with, or null when there is one (a renewal that failed leaves the old one serving). */
-  private missingCertificate(): string | null {
-    return this.certificate === null && this.tls && this.certificateAskedAt !== 0 ? this.certificateNote ?? noCertificateYet : null;
+  private missingCertificate(): { note: string; command: string | null } | null {
+    if (this.certificate !== null || !this.tls || this.certificateAskedAt === 0) return null;
+    return this.certificateNote ?? { note: notes.noCertificate, command: null };
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -241,24 +323,22 @@ export class PortProxy {
 
   /** Opens `port` on every tailnet address that takes it. Returns why it couldn't, or null. */
   private open(port: number, addresses: string[]): string | null {
-    if (addresses.length === 0) return "Tailscale gave no address for this machine.";
-    const listener: Listener = { port, servers: [], sockets: new Slots(websocketsInAll, websocketsPerCaller), requests: new Slots(requestsInAll, requestsPerCaller) };
+    if (addresses.length === 0) return notes.noAddress;
+    const listener: Listener = {
+      port, addresses: [], servers: [], sockets: new Slots(websocketsInAll, websocketsPerCaller), requests: new Slots(requestsInAll, requestsPerCaller), open: new Set(),
+    };
     let code = "";
-    const bound: string[] = [];
     for (const address of addresses) {
       try {
         listener.servers.push(...this.serve(listener, [address]));
-        bound.push(address);
+        listener.addresses.push(address);
       } catch (error) {
         code = (error as NodeJS.ErrnoException)?.code ?? (error as Error)?.name ?? "error";
       }
     }
-    if (listener.servers.length === 0) {
-      this.world.log(`proxy open :${port} failed ${code}`);
-      return `The proxy couldn't open this port (${code}).`;
-    }
+    if (listener.servers.length === 0) return openFailure(code);
     this.listeners.set(port, listener);
-    this.world.log(`proxy open :${port} on ${bound.length} address${bound.length === 1 ? "" : "es"}`);
+    this.world.log(`proxy open :${port} on ${listener.addresses.length} address${listener.addresses.length === 1 ? "" : "es"}`);
     return null;
   }
 
@@ -277,43 +357,63 @@ export class PortProxy {
         }));
       } catch (error) {
         // One address of two may not bind (no IPv6 on the tailnet, say): the port is held if any does.
-        if (hostnames.length === 1 && servers.length === 0) throw error;
-        this.world.log(`proxy open :${listener.port} failed ${(error as NodeJS.ErrnoException)?.code ?? "error"}`);
+        if (hostnames.length === 1) throw error;
       }
     }
     return servers;
   }
 
-  private close(port: number, why: string): void {
+  /**
+   * Closes the port and everything open on it, websockets too: a tunnel left open would go on serving a port no tab names. A forward that
+   * found the server gone closes it `gently`, so the answer it is giving still goes out.
+   */
+  private close(port: number, why: string, gently = false): void {
     const listener = this.listeners.get(port);
     if (!listener) return;
     this.listeners.delete(port);
-    for (const server of listener.servers) void server.stop(false);
+    for (const server of listener.servers) void server.stop(!gently);
     this.world.log(`proxy close :${port} (${why.length > 60 ? "see status" : why})`);
+  }
+
+  /** Sockets of a caller the host no longer admits (a device removed, a Mac unpaired) are closed. A caller whose whois failed this time stays. */
+  private async cutOffRemoved(): Promise<void> {
+    const verdicts = new Map<string, Admission>();
+    for (const listener of this.listeners.values()) {
+      for (const ws of [...listener.open]) {
+        const address = ws.data.address;
+        let verdict = verdicts.get(address);
+        if (!verdict) {
+          verdict = await this.admit(address);
+          verdicts.set(address, verdict);
+        }
+        if (!verdict.admitted && verdict.reason !== "unknown") ws.close(1008, "not admitted");
+      }
+    }
   }
 
   // -------------------------------------------------------------------------------------------------------------
   // A request
 
+  private refusal(port: number, status: number, text: string): Response {
+    this.world.log(`proxy :${port} ${status}`);
+    return new Response(`${text}\n`, { status, headers: plain });
+  }
+
   private async handle(listener: Listener, request: Request, server: Bun.Server<ProxiedSocket>): Promise<Response | undefined> {
     const { port } = listener;
-    const refuse = (status: number, text: string) => {
-      this.world.log(`proxy :${port} ${status}`);
-      return new Response(`${text}\n`, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
-    };
-    if (!checkProxyHost(request.headers.get("host"), this.options.dnsName, port)) return refuse(421, "Misdirected request");
+    if (!checkProxyHost(request.headers.get("host"), this.options.dnsName, port)) return this.refusal(port, 421, "Misdirected request");
     const address = server.requestIP(request)?.address;
-    if (!address) return refuse(403, "Not admitted");
+    if (!address) return this.refusal(port, 403, "Not admitted");
     const admission = await this.admit(address);
-    if (!admission.admitted) return refuse(403, "Not admitted");
+    if (!admission.admitted) return this.refusal(port, 403, "Not admitted");
     const origin = proxiedOrigin(this.options.dnsName, port);
-    if (!checkProxyFetch(request.method, request.headers, origin)) return refuse(403, "cross-site");
+    if (!checkProxyFetch(request.method, request.headers, origin)) return this.refusal(port, 403, "cross-site");
 
     const url = new URL(request.url);
     const target = `${url.pathname}${url.search}`;
-    if ((request.headers.get("upgrade") ?? "").toLowerCase() === "websocket") return this.upgrade(listener, request, server, admission.key, target, origin);
+    if ((request.headers.get("upgrade") ?? "").toLowerCase() === "websocket") return this.upgrade(listener, request, server, admission.key, address, target, origin);
 
-    if (!listener.requests.acquire(admission.key)) return refuse(429, "Too many requests");
+    if (!listener.requests.acquire(admission.key)) return this.refusal(port, 429, "Too many requests");
     try {
       return await this.forward(listener, request, target, origin);
     } finally {
@@ -347,9 +447,8 @@ export class PortProxy {
       }
     }
     // Nothing answered: if the server has gone, the port goes with it at once, so a restart doesn't find it held.
-    if (!(await this.answersOnLocalhost(port))) this.close(port, notes.down);
-    this.world.log(`proxy :${port} 502`);
-    return new Response(`${notes.down}\n`, { status: 502, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+    if (!(await this.answersOnLocalhost(port))) this.close(port, notes.down, true);
+    return this.refusal(port, 502, notes.down);
   }
 
   private async answersOnLocalhost(port: number): Promise<boolean> {
@@ -357,14 +456,10 @@ export class PortProxy {
   }
 
   /** The upstream socket is opened before the browser's upgrade is answered, so the subprotocol the server picked can go back in the answer. */
-  private async upgrade(listener: Listener, request: Request, server: Bun.Server<ProxiedSocket>, key: string, target: string, origin: string): Promise<Response | undefined> {
+  private async upgrade(listener: Listener, request: Request, server: Bun.Server<ProxiedSocket>, key: string, address: string, target: string, origin: string): Promise<Response | undefined> {
     const { port } = listener;
-    const refuse = (status: number, text: string) => {
-      this.world.log(`proxy :${port} ${status}`);
-      return new Response(`${text}\n`, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
-    };
-    if (request.method !== "GET") return refuse(405, "Method not allowed");
-    if (!listener.sockets.acquire(key)) return refuse(429, "Too many sockets");
+    if (request.method !== "GET") return this.refusal(port, 405, "Method not allowed");
+    if (!listener.sockets.acquire(key)) return this.refusal(port, 429, "Too many sockets");
     let released = false;
     const release = () => { if (!released) { released = true; listener.sockets.release(key); } };
     const protocols = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((word) => word.trim()).filter(Boolean);
@@ -372,17 +467,17 @@ export class PortProxy {
     for (const host of this.upstreams) {
       const upstream = await openUpstream(`ws://${host}:${port}${target}`, protocols, headers);
       if (!upstream) continue;
-      const data: ProxiedSocket = { upstream, release, queued: [], closed: false };
+      const data: ProxiedSocket = { upstream, release, queued: [], closed: false, address, open: listener.open };
       upstream.onmessage = (event) => { data.queued.push(event.data as string | ArrayBuffer); };
       const picked = upstream.protocol;
       if (server.upgrade(request, { data, headers: picked ? { "sec-websocket-protocol": picked } : undefined })) return undefined;
       upstream.close();
       release();
-      return refuse(400, "Upgrade failed");
+      return this.refusal(port, 400, "Upgrade failed");
     }
     release();
-    if (!(await this.answersOnLocalhost(port))) this.close(port, notes.down);
-    return refuse(502, notes.down);
+    if (!(await this.answersOnLocalhost(port))) this.close(port, notes.down, true);
+    return this.refusal(port, 502, notes.down);
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -390,8 +485,9 @@ export class PortProxy {
 
   /** What the relay reads into `tabs`: written each look, so a file older than a minute means this server is not running. */
   private writeStatus(plan: PortPlan): void {
+    const missing = this.missingCertificate();
     const status = buildStatus({
-      now: Date.now(), dnsName: this.options.dnsName, certificate: this.missingCertificate(), aims: this.aims, plan,
+      now: Date.now(), dnsName: this.options.dnsName, certificate: missing?.note ?? null, command: missing?.command ?? null, aims: this.aims, plan,
       held: new Set(this.listeners.keys()),
     });
     const temp = `${this.options.statusPath}.${process.pid}.tmp`;
@@ -435,30 +531,26 @@ const socketHandlers: Bun.WebSocketHandler<ProxiedSocket> = {
       ws.data.release();
       return ws.close(1011, "upstream closed");
     }
+    ws.data.open.add(ws);
     for (const message of queued.splice(0)) ws.send(message);
     upstream.onmessage = (event) => { if (!ws.data.closed) ws.send(event.data as string | ArrayBuffer); };
     upstream.onclose = (event) => { ws.data.closed = true; ws.data.release(); ws.close(sendableCode(event.code), event.reason.slice(0, 100)); };
     upstream.onerror = () => { ws.data.closed = true; ws.data.release(); ws.close(1011, "upstream error"); };
   },
   message(ws, message) {
-    if (ws.data.upstream.readyState === WebSocket.OPEN) ws.data.upstream.send(message);
+    const { upstream } = ws.data;
+    if (upstream.readyState !== WebSocket.OPEN) return;
+    // A server that reads slower than the browser sends is not allowed to hold the rest in memory.
+    if (upstream.bufferedAmount > upstreamBacklog) return ws.close(1013, "too much waiting");
+    upstream.send(message);
   },
   close(ws, code, reason) {
     ws.data.closed = true;
+    ws.data.open.delete(ws);
     ws.data.release();
     try { ws.data.upstream.close(sendableCode(code), reason.slice(0, 100)); } catch { /* already closing */ }
   },
 };
 
-// ---------------------------------------------------------------------------------------------------------------
-// The real world
-
-/** The folder's files `tailscale cert` writes to and the certificate read back from them. */
+/** The folder's files `tailscale cert` writes to. */
 export const certificateFiles = (folder: string) => ({ cert: join(folder, "proxy.crt"), key: join(folder, "proxy.key") });
-
-/** How `tailscale cert`'s refusal is told: the operator is the usual cause, and the fix takes root once. */
-export function certificateNote(stderr: string): string {
-  const line = stderr.split("\n").map((text) => text.trim()).find((text) => text !== "") ?? "";
-  if (/access denied|cert access denied/i.test(line)) return 'No certificate: Tailscale gives one only to its operator. Run "sudo tailscale set --operator=$USER" once.';
-  return line === "" ? "No certificate: Tailscale didn't answer." : `No certificate: Tailscale said ${line.slice(0, 160)}`;
-}

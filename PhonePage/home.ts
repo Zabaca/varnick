@@ -83,7 +83,7 @@ const text = (value: unknown): string => (typeof value === "string" ? value : ""
 export const optional = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
 
 /** An address the page may frame: https, and nothing else. The host's relay sent it, and the page's content rules name the host's own name too. */
-function framedAddress(value: unknown): string | null {
+function httpsAddress(value: unknown): string | null {
   if (typeof value !== "string") return null;
   try { return new URL(value).protocol === "https:" ? value : null; } catch { return null; }
 }
@@ -125,7 +125,7 @@ export function shapePane(pane: Record<string, unknown>, device: Device): HomePa
     app: optional(pane.app),
     port: typeof pane.port === "number" && Number.isInteger(pane.port) ? pane.port : null,
     file: optional(pane.file),
-    proxy: framedAddress(pane.proxy),
+    proxy: httpsAddress(pane.proxy),
     proxyNote: optional(pane.proxyNote),
   };
 }

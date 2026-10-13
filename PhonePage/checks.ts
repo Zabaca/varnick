@@ -15,8 +15,11 @@ interface CommonConfig {
   /** Passed on to the relay when set, for checks. */
   zmxDir?: string;
   userHome?: string;
-  /** The port proxy (proxy.ts): an owner-only folder for its certificate, and the file it writes its status to. Both set, or no proxy. */
-  proxy?: { folder: string; status: string };
+  /**
+   * The port proxy (proxy.ts): an owner-only folder for its certificate, and the file it writes its status to. Both set, or no proxy.
+   * `tabs` is the saved-tabs file whose date says whether to ask the relay again; without it the relay is asked only now and then.
+   */
+  proxy?: { folder: string; status: string; tabs?: string };
 }
 
 /** Socket mode (an owner-only Unix socket) or loopback (a port on 127.0.0.1): exactly one. */
@@ -39,10 +42,13 @@ export function readConfig(env: Record<string, string | undefined>): { config: C
   const tailscale = env.VARNICK_TAILSCALE || "tailscale";
   const folder = env.VARNICK_PROXY_FOLDER || undefined, status = env.VARNICK_PROXY_STATUS || undefined;
   if ((folder === undefined) !== (status === undefined)) return { error: "Set VARNICK_PROXY_FOLDER and VARNICK_PROXY_STATUS together, or neither" };
-  if ((folder && !folder.startsWith("/")) || (status && !status.startsWith("/"))) return { error: "VARNICK_PROXY_FOLDER and VARNICK_PROXY_STATUS must be absolute paths" };
+  const tabs = env.VARNICK_PROXY_TABS || undefined;
+  if ((folder && !folder.startsWith("/")) || (status && !status.startsWith("/")) || (tabs && !tabs.startsWith("/"))) {
+    return { error: "VARNICK_PROXY_FOLDER, VARNICK_PROXY_STATUS and VARNICK_PROXY_TABS must be absolute paths" };
+  }
   const shared = {
     port, relay, devices, tailscale, zmxDir: env.VARNICK_ZMX_DIR || undefined, userHome: env.CFFIXED_USER_HOME || undefined,
-    proxy: folder && status ? { folder, status } : undefined,
+    proxy: folder && status ? { folder, status, tabs } : undefined,
   };
   if (socketPath) {
     if (!socketPath.startsWith("/")) return { error: "VARNICK_PAGE_SOCKET must be an absolute path" };
