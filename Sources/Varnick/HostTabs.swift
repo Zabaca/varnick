@@ -145,7 +145,7 @@ extension LauncherModel {
     private func applyHostTab(_ listing: PeerTab, to tab: ClaudeTab, on peer: Peer, sentAt: Date) {
         let stale = layoutAskPredatesChange(tab.id, sentAt)
         var changed = false
-        var sessions = Dictionary(tab.sessions.map { ($0.id.uuidString.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        var sessions = tab.sessionsByID
         // A terminal's folder moves as its shell changes directory there.
         for pane in listing.panes {
             guard let session = sessions[pane.id] else { continue }

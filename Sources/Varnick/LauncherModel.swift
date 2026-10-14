@@ -2121,9 +2121,7 @@ final class LauncherModel: ObservableObject {
         movePane(moved, in: tab) { tab.swap(moved, other) }
     }
 
-    /// Changes `tab`'s layout by moving `moved`, as a divider's end does: refused with the reason on a tab this Mac can't change (only the
-    /// machine in control does, ADR 0034), else saved and, on another machine's tab this Mac controls, sent to the host as `arrange`,
-    /// which tells `moved` if it won't. `change` says whether it changed anything.
+    /// Runs `change`, a move of `moved` that says whether it moved anything, as a divider's end does: lock, save, `arrange` on the host.
     func movePane(_ moved: ClaudeSession, in tab: ClaudeTab, _ change: () -> Bool) {
         if let reason = layoutLockReason(of: tab) { return moved.showRefusal(reason) }
         guard change() else { return }

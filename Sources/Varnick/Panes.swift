@@ -355,12 +355,6 @@ final class PaneNode: ObservableObject, Identifiable {
         return children[0].leafRects(in: a) + children[1].leafRects(in: b)
     }
 
-    /// The tree by pane id alone, as `PaneLayout.peerLayout` has it, without copying the records: a pane drag reads it at every move.
-    var peerLayout: PeerLayout {
-        if let session { return .leaf(session.id.layoutID) }
-        return .split(axis: axis.rawValue, fraction: min(0.95, max(0.05, Double(fraction))), children[0].peerLayout, children[1].peerLayout)
-    }
-
     var layout: PaneLayout {
         if let session { return .leaf(session.snapshot) }
         return .split(axis: axis, fraction: fraction, first: children[0].layout, second: children[1].layout)
@@ -408,6 +402,11 @@ final class ClaudeTab: ObservableObject {
     }
 
     var sessions: [ClaudeSession] { root.leaves }
+
+    /// The panes by id as a layout names them (lowercase).
+    var sessionsByID: [String: ClaudeSession] {
+        Dictionary(sessions.map { ($0.id.uuidString.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+    }
 
     /// The Claude panes, in layout order.
     var claudeSessions: [ClaudeSession] { sessions.filter(\.isClaude) }

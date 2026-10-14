@@ -91,6 +91,8 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     /// Registered system-wide, so never matched against keys pressed in the panel.
     var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening }
 
+    var isSwap: Bool { self == .swapLeft || self == .swapDown || self == .swapUp || self == .swapRight }
+
     /// Not offered now: the Outline's shortcut while its switch is off. A hidden action keeps its binding but takes no key and counts in no
     /// conflict, so binding its keys to another action leaves it as it was.
     @MainActor var isHidden: Bool { self == .outline && !Settings.shared.outlineOn }
@@ -536,6 +538,8 @@ final class Settings: ObservableObject {
 
     func combo(_ action: ShortcutAction) -> KeyCombo? {
         if let override = overrides[action] { return override }
+        // A default added after users bound keys leaves a key they already gave another action to it.
+        if action.isSwap, overrides.contains(where: { $0.key != action && $0.value == action.defaultCombo }) { return nil }
         return action.defaultCombo
     }
 

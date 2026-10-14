@@ -35,7 +35,6 @@ struct PaneDropReading: Equatable {
             }
         }
 
-        /// Where the area's symbol sits.
         func symbolPoint(_ side: PaneDirection) -> CGPoint {
             let corners = zone(side)
             return CGPoint(x: corners.map(\.x).reduce(0, +) / 4, y: corners.map(\.y).reduce(0, +) / 4)
@@ -65,14 +64,8 @@ enum PaneDropZones {
     static let bandDepth: CGFloat = 16
     static let sides: [PaneDirection] = [.left, .right, .up, .down]
 
-    /// The first of these that applies to `point` decides:
-    /// 1. outside the tab's panes: nothing;
-    /// 2. over the dragged pane (its stretch of band included): nothing;
-    /// 3. within a band's depth of a side of the tab: that band, the nearer side in a corner;
-    /// 4. over a divider: nothing;
-    /// 5. over a pane: its centre if the pointer is in the middle half of the pane less the bands, else the side it is nearest, by share of
-    ///    the pane's width or height;
-    /// 6. a drop that leaves every pane where it is, sizes aside: nothing.
+    /// What takes a drop at `point`, the first of the spec's rules that applies: outside the panes, the dragged pane and dividers take none;
+    /// a band within its depth of a side (the nearer in a corner); else the pane's centre or the side it is nearest; none if nothing moves.
     static func read(at point: CGPoint, area: CGRect, frames: [UUID: CGRect], dragged: UUID, layout: PeerLayout) -> PaneDropReading {
         let draggedFrame = frames[dragged]
         var reading = PaneDropReading(target: nil, veil: draggedFrame, bands: bands(in: area, leaving: draggedFrame))
@@ -90,36 +83,41 @@ enum PaneDropZones {
         }
         guard let result = resulting(target, moving: dragged, in: layout), !result.sameArrangement(as: layout) else { return reading }
         reading.target = target
-        reading.preview = result.rects(in: area, divider: PaneView.divider)[dragged.layoutID]
+        reading.preview = result.rects(in: area, divider: PaneView.divider)[dragged.uuidString.lowercased()]
         return reading
     }
 
     /// The layout a drop would leave; nil when a pane in it is gone.
     static func resulting(_ target: PaneDropTarget, moving moved: UUID, in layout: PeerLayout) -> PeerLayout? {
+        let moved = moved.uuidString.lowercased()
         switch target {
-        case .swap(let other): layout.panes.contains(other.layoutID) && layout.panes.contains(moved.layoutID) ? layout.swapping(moved.layoutID, other.layoutID) : nil
-        case .edge(let other, let side): layout.docking(moved.layoutID, on: side, of: other.layoutID)
-        case .band(let side): layout.docking(moved.layoutID, along: side)
+        case .swap(let other):
+            let other = other.uuidString.lowercased()
+            return layout.panes.contains(moved) && layout.panes.contains(other) ? layout.swapping(moved, other) : nil
+        case .edge(let other, let side):
+            return layout.docking(moved, beside: other.uuidString.lowercased(), axis: side.splitAxis.rawValue, first: side.comesFirst)
+        case .band(let side):
+            return layout.docking(moved, alongAxis: side.splitAxis.rawValue, first: side.comesFirst)
         }
     }
 
     /// The side of the tab whose band holds `point`, the nearer in a corner.
     static func bandSide(at point: CGPoint, in area: CGRect) -> PaneDirection? {
-        let distances: [(PaneDirection, CGFloat)] = [(.left, point.x - area.minX), (.right, area.maxX - point.x),
-                                                     (.up, point.y - area.minY), (.down, area.maxY - point.y)]
-        var nearest = distances[0]
-        for entry in distances.dropFirst() where entry.1 < nearest.1 { nearest = entry }
-        return nearest.1 < bandDepth ? nearest.0 : nil
+        let nearest = nearest([(.left, point.x - area.minX), (.right, area.maxX - point.x), (.up, point.y - area.minY), (.down, area.maxY - point.y)])
+        return nearest.distance < bandDepth ? nearest.side : nil
     }
 
     /// The side of `rect` that `point` is nearest, measured as a share of its width or height: the four areas the diagonals from its corners
     /// to the centre's cut it into.
     static func nearestSide(of point: CGPoint, in rect: CGRect) -> PaneDirection {
         let u = (point.x - rect.minX) / rect.width, v = (point.y - rect.minY) / rect.height
-        let shares: [(PaneDirection, CGFloat)] = [(.left, u), (.right, 1 - u), (.up, v), (.down, 1 - v)]
-        var nearest = shares[0]
-        for entry in shares.dropFirst() where entry.1 < nearest.1 { nearest = entry }
-        return nearest.0
+        return nearest([(.left, u), (.right, 1 - u), (.up, v), (.down, 1 - v)]).side
+    }
+
+    /// The side with the least distance; the first of equals.
+    private static func nearest(_ distances: [(PaneDirection, CGFloat)]) -> (side: PaneDirection, distance: CGFloat) {
+        let least = distances.min { $0.1 < $1.1 }!
+        return (least.0, least.1)
     }
 
     /// The four bands, each less the stretch the dragged pane covers.
@@ -127,7 +125,7 @@ enum PaneDropZones {
         sides.map { side in
             let band = bandRect(side, in: area)
             guard let dragged, band.intersects(dragged) else { return .init(side: side, stretches: [band]) }
-            let vertical = side == .left || side == .right
+            let vertical = side.isHorizontal
             let cut = vertical ? (dragged.minY, dragged.maxY) : (dragged.minX, dragged.maxX)
             let from = vertical ? band.minY : band.minX, to = vertical ? band.maxY : band.maxX
             let stretches = [(from, min(cut.0, to)), (max(cut.1, from), to)].filter { $0.1 > $0.0 }.map { start, end in
@@ -148,67 +146,12 @@ enum PaneDropZones {
     }
 }
 
-extension UUID {
-    /// How a pane is named in a `PeerLayout`.
-    var layoutID: String { uuidString.lowercased() }
-}
-
-/// The moves, on the layout as ids alone. The tab is laid out again from the result (`ClaudeTab.rearrange`), so every split a move doesn't touch
-/// keeps its size.
-extension PeerLayout {
-    /// `a` and `b` in each other's places.
-    func swapping(_ a: String, _ b: String) -> PeerLayout {
-        if let pane { return .leaf(pane == a ? b : pane == b ? a : pane) }
-        return PeerLayout(axis: axis, fraction: fraction, parts: parts?.map { $0.swapping(a, b) })
-    }
-
-    /// `moved` taken out, its split closing up as a close does, and put on `side` of `target`, which is split at half: `moved` first for the
-    /// left or top. Nil when either is not in the layout, or they are one.
-    func docking(_ moved: String, on side: PaneDirection, of target: String) -> PeerLayout? {
-        guard moved != target, panes.contains(moved), let rest = removing(moved), rest.panes.contains(target) else { return nil }
-        let first = side == .left || side == .up
-        return rest.replacing(target) { leaf in
-            .split(axis: side.layoutAxis, fraction: 0.5, first ? .leaf(moved) : leaf, first ? leaf : .leaf(moved))
-        }
-    }
-
-    /// `moved` taken out and put along `side` of the whole tab at half of it, the rest of the tab as it was in the other half.
-    func docking(_ moved: String, along side: PaneDirection) -> PeerLayout? {
-        guard panes.contains(moved), let rest = removing(moved) else { return nil }
-        let first = side == .left || side == .up
-        return .split(axis: side.layoutAxis, fraction: 0.5, first ? .leaf(moved) : rest, first ? rest : .leaf(moved))
-    }
-
-    private func replacing(_ target: String, with make: (PeerLayout) -> PeerLayout) -> PeerLayout {
-        if let pane { return pane == target ? make(self) : self }
-        return PeerLayout(axis: axis, fraction: fraction, parts: parts?.map { $0.replacing(target, with: make) })
-    }
-
-    /// Whether the two place every pane the same way, each split's size aside.
-    func sameArrangement(as other: PeerLayout) -> Bool {
-        if let pane { return other.pane == pane }
-        guard let parts, let theirs = other.parts, parts.count == theirs.count, axis == other.axis else { return false }
-        return zip(parts, theirs).allSatisfy { $0.sameArrangement(as: $1) }
-    }
-
-    /// Where each pane is in `area`, as `PaneView` lays it out: `divider` between the two sides, the first taking its share of what is left, rounded.
-    func rects(in area: CGRect, divider: CGFloat) -> [String: CGRect] {
-        if let pane { return [pane: area] }
-        guard let parts, parts.count == 2, let fraction else { return [:] }
-        let sideBySide = axis == Self.sideBySide
-        let total = (sideBySide ? area.width : area.height) - divider
-        let first = (total * fraction).rounded()
-        let a = sideBySide ? CGRect(x: area.minX, y: area.minY, width: first, height: area.height)
-                           : CGRect(x: area.minX, y: area.minY, width: area.width, height: first)
-        let b = sideBySide ? CGRect(x: area.minX + first + divider, y: area.minY, width: total - first, height: area.height)
-                           : CGRect(x: area.minX, y: area.minY + first + divider, width: area.width, height: total - first)
-        return parts[0].rects(in: a, divider: divider).merging(parts[1].rects(in: b, divider: divider)) { $1 }
-    }
-}
-
 extension PaneDirection {
-    /// The split a pane put on this side makes: left or right is side by side, top or bottom stacked.
-    var layoutAxis: String { self == .left || self == .right ? PeerLayout.sideBySide : PeerLayout.stacked }
+    var splitAxis: SplitAxis { isHorizontal ? .sideBySide : .stacked }
+    /// Left or right.
+    var isHorizontal: Bool { self == .left || self == .right }
+    /// Left or top: where the first part of a split sits.
+    var comesFirst: Bool { self == .left || self == .up }
 }
 
 /// What the overlay draws, apart from the drag so that the grips (which only care whether a drag is on) don't redraw with the pointer.
@@ -217,8 +160,7 @@ final class PaneDrop: ObservableObject {
     @Published var reading: PaneDropReading?
 }
 
-/// A drag of one pane of a tab. It holds sessions' ids, never tree nodes: a host's listing can lay the tab out again mid-drag, and a pane can
-/// close. A drop whose pane is gone does nothing, and a grip leaving the screen mid-drag ends it.
+/// A drag of one pane of a tab, held by session ids: a host's listing can lay the tab out again mid-drag, and a pane can close.
 @MainActor
 final class PaneDrag: ObservableObject {
     nonisolated static let space = "paneDrag"
@@ -229,7 +171,6 @@ final class PaneDrag: ObservableObject {
     let drop = PaneDrop()
     /// Each pane's frame in `space`, reported by the panes. Not published, so nothing publishes while the views lay out.
     var frames: [UUID: CGRect] = [:]
-    /// The panes' area in `space`.
     var area: CGRect = .zero
     /// Set by the model: no drag starts while the split picker shows.
     var isBlocked: () -> Bool = { false }
@@ -238,8 +179,10 @@ final class PaneDrag: ObservableObject {
     private var owner: UUID?
     /// A drag refused or cancelled: the gesture goes on to its end, and drops nothing.
     private var ignoring = false
+    /// The tab's layout as the drag began, so a move doesn't read every pane's record.
+    private var layout = PeerLayout.leaf("")
+    private var holdsCursor = false
 
-    /// Whether a drag is on and can still drop.
     var isActive: Bool { dragged != nil && !ignoring }
 
     /// The grip moved to `point`, in `space`.
@@ -248,29 +191,29 @@ final class PaneDrag: ObservableObject {
             finish(owner)
             begin(session)
         }
-        guard !ignoring, let tab else { return }
+        guard !ignoring else { return }
         NSCursor.closedHand.set()
-        drop.reading = PaneDropZones.read(at: point, area: area, frames: frames, dragged: session.id, layout: tab.root.peerLayout)
+        holdsCursor = true
+        drop.reading = PaneDropZones.read(at: point, area: area, frames: frames, dragged: session.id, layout: layout)
     }
 
     private func begin(_ session: ClaudeSession) {
         owner = session.id
-        // Only the machine in control of a tab moves its panes (ADR 0034): the lock is checked as the drag starts, and the pane says why.
-        if isBlocked() { ignoring = true; return }
-        if let reason = tab?.layoutLock() {
+        guard let tab, !isBlocked() else { ignoring = true; return }
+        // Only the machine in control of a tab moves its panes (ADR 0034): checked as the drag starts, and the pane says why.
+        if let reason = tab.layoutLock() {
             session.showRefusal(reason)
             ignoring = true
             return
         }
         dragged = session.id
+        layout = tab.root.layout.idLayout
     }
 
-    /// The grip let go at `point`: the pane moves if a zone takes it.
-    func ended(_ session: ClaudeSession, at point: CGPoint) {
+    /// The grip let go: the pane moves where the last move highlighted, so what was drawn is what happens.
+    func ended(_ session: ClaudeSession) {
         defer { finish(session.id) }
-        guard owner == session.id, !ignoring, let tab else { return }
-        let reading = PaneDropZones.read(at: point, area: area, frames: frames, dragged: session.id, layout: tab.root.peerLayout)
-        guard let target = reading.target else { return }
+        guard let target = drop.reading?.target, let tab else { return }
         tab.onMove(session) { tab.drop(session, on: target) }
     }
 
@@ -280,6 +223,7 @@ final class PaneDrag: ObservableObject {
         ignoring = true
         drop.reading = nil
         dragged = nil
+        releaseCursor()
     }
 
     /// The gesture of `pane`'s grip is over, or its grip left the screen.
@@ -289,12 +233,18 @@ final class PaneDrag: ObservableObject {
         ignoring = false
         if dragged != nil { dragged = nil }
         if drop.reading != nil { drop.reading = nil }
+        releaseCursor()
+    }
+
+    private func releaseCursor() {
+        guard holdsCursor else { return }
+        holdsCursor = false
+        NSCursor.arrow.set()
     }
 }
 
 extension ClaudeTab {
-    /// Moves `moved` to where `target` says, in one step: the tree is rebuilt once, so each terminal gets at most one resize. Focus goes to
-    /// it. False when nothing changed, as when a pane in the drop has gone.
+    /// Moves `moved` where `target` says, in one step so each terminal gets at most one resize, and focuses it. False when nothing changed.
     @discardableResult
     func drop(_ moved: ClaudeSession, on target: PaneDropTarget) -> Bool {
         guard contains(moved) else { return false }
@@ -303,9 +253,9 @@ extension ClaudeTab {
             focus(moved)
             return true
         }
-        let layout = root.peerLayout
+        let layout = root.layout.idLayout
         guard let next = PaneDropZones.resulting(target, moving: moved.id, in: layout), !next.sameArrangement(as: layout) else { return false }
-        rearrange(to: next, using: Dictionary(sessions.map { ($0.id.layoutID, $0) }, uniquingKeysWith: { first, _ in first }))
+        rearrange(to: next, using: sessionsByID)
         focus(moved)
         return true
     }
@@ -322,8 +272,7 @@ private struct PaneFrames: PreferenceKey {
 }
 
 extension View {
-    /// Has the pane report its frame for a drag.
-    func reportsPaneFrame(of session: ClaudeSession) -> some View {
+        func reportsPaneFrame(of session: ClaudeSession) -> some View {
         background(GeometryReader { geo in
             Color.clear.preference(key: PaneFrames.self, value: [session.id: geo.frame(in: .named(PaneDrag.space))])
         })
@@ -373,10 +322,10 @@ struct PaneGrip: View {
                     DragGesture(minimumDistance: 4, coordinateSpace: .named(PaneDrag.space))
                         .updating($live) { _, state, _ in state = true }
                         .onChanged { drag.changed(session, at: $0.location) }
-                        .onEnded { drag.ended(session, at: $0.location) }
+                        .onEnded { _ in drag.ended(session) }
                 )
-                // A cancelled gesture never ends, and a grip taken off the screen mid-drag can't: both leave the drag as it was.
-                .onChange(of: live) { _, now in if !now { drag.finish(session.id) } }
+                // A cancelled gesture never ends, and a grip taken off the screen mid-drag can't. A turn later, so `ended` runs first.
+                .onChange(of: live) { _, now in if !now { DispatchQueue.main.async { drag.finish(session.id) } } }
                 .onDisappear {
                     if overGrip { overGrip = false; NSCursor.pop() }
                     drag.finish(session.id)
@@ -403,6 +352,7 @@ struct PaneDropOverlay: View {
     private func canvas(_ reading: PaneDropReading) -> some View {
         Canvas { context, _ in
             let accent = Color.accentColor
+            // Drawn over the pane, not an opacity: that isn't known to reach a hosted AppKit view.
             if let veil = reading.veil { context.fill(Path(veil), with: .color(.black.opacity(0.5))) }
             for band in reading.bands {
                 let taken = reading.target == .band(band.side)
@@ -437,7 +387,7 @@ struct PaneDropOverlay: View {
                 Self.draw(Self.symbols[side] ?? "", at: areas.symbolPoint(side), taken: taken, in: context)
             }
             if reading.target == .swap(areas.pane) { context.stroke(Path(areas.centre), with: .color(accent), lineWidth: 2) }
-            Self.draw("arrow.triangle.swap", at: CGPoint(x: areas.centre.midX, y: areas.centre.midY), taken: reading.target == .swap(areas.pane), in: context)
+            Self.draw("shuffle", at: CGPoint(x: areas.centre.midX, y: areas.centre.midY), taken: reading.target == .swap(areas.pane), in: context)
         }
         .allowsHitTesting(false)
     }
