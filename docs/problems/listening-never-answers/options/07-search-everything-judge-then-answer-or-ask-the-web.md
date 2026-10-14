@@ -151,8 +151,9 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   - **recent:** the titles of its last three sessions;
   - **last used.**
 - **Which projects:**
-  - `Project.scan`'s repos under the project folders, and the root of each folder sessions ran in (`Project.root(of:)`), so a worktree's sessions count under its project;
-  - the most recently used first, at most 40 (a named constant), each criterion cut to 240 characters.
+  - `Project.scan`'s repos under the project folders, and the repo above each folder sessions ran in (`Project.repoRoot(of:)`), so a worktree's sessions count under its project (a path under `.claude/worktrees/`);
+  - a folder in no repo is no project (CONTEXT.md: a Project is a git repo), so a subagent's scratchpad is no label; a paired Mac's folders can't be checked for a repo from here, so they count by name (the reviewer's finding, 2026-10-14);
+  - the most recently used first, at most 40 (a named constant), each criterion cut to 240 characters. **How the cuts are made** (chosen in the build): a session title to 60 characters, an other name to 40, at most 2 other names, the description to 120; over 240, the oldest recent titles go first (keeping one), then the description is shortened, then the whole is cut.
 - **Paired Macs:** their projects come only from what session sync already brings: the folder names and session titles of their sessions. They have no other names or description. Sharing each Mac's index over the peer protocol is Later.
 - **When it's built:** after each project scan and each session sync, kept in memory, and never logged.
 - **Size, estimated:** about 50 tokens per entry, so about 2,000 for 40, and 2,000 more with the list in the state as well as in the labels (`projects`, added after the eval's call, which had only the labels). The call goes from the eval's measured 3,800–4,200 input tokens to about 6,000 with the labels, and to about 8,000 with the state's copy: about $0.00035 per call at the evals' rate.
@@ -489,6 +490,10 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   7. one result or several (`asksForSeveral`'s plural rules) → `several`.
 
   Not moved: the wake phrase (ADR 0037's scope). Still code, as mechanical: dropping a chosen folder's words from the session words, the replies' cleaning, the hold, the voice, and the rules over decided facts.
+- **Built at the coordinator's decision, 2026-10-14, not measured:**
+  - the Text generation fallback's wording: the projects are listed once in the prompt, the project question says "listed above" and adds "Answer with the project's name, the word before its colon, or none.", and its example JSON holds quoted placeholders (a bare `<…>` a model copies is quoted before the reply is read);
+  - a window that filters sessions (with `own`) ranks them by the search words with no similarity floor, and shows the most recently used when the words match none, as a named project does;
+  - with no projects in the index the project question is left out, and its absence reads as none.
 - **Added by the user on 2026-10-14 while the amended spec was being built,** relayed by the coordinator: the project index is also in the route call's state as `projects`, and the `own` question refers to it; the fallback prompt lists the projects once for both questions to refer to. The folder labels' criteria stay as measured. It adds about 2,000 input tokens to the call and is not in the eval's call.
 - **Amended by the user on 2026-10-14 after the route-decisions eval** (`5b4b069`), relayed by the coordinator:
   1. The folder question reads a project index built on the Mac: each project's other names, a one-line description and its recent session titles. Paired Macs' projects come by folder name and session titles only.

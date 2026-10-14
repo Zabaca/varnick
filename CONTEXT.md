@@ -256,7 +256,7 @@ What the **Route** reads to tell a **Project** from a word: for each of up to 40
 _Avoid_: Project list (that is `#name`'s)
 
 **Judge**:
-The Jev call that scores the first 20 pages and up to 3 sessions of a **Spoken request** for whether each helps answer it. Rows at 0.5 or more are kept, as are the sessions a named folder or a time-only window selected. For a typed search the **Relevance filter** is a call of its own.
+The Jev call that scores the first 20 pages and up to 3 sessions of a **Spoken request** for whether each helps answer it. Rows at 0.5 or more are kept, as are the sessions a named **Project** or a window with `own` selected. For a typed search the **Relevance filter** is a call of its own.
 _Avoid_: Filter (for the spoken call), reranker
 
 **Writer**:
