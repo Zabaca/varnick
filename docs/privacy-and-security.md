@@ -53,15 +53,21 @@ Mac** or leave it off (it is off by default): then none of this happens.
 
 - **Searches.** Each search, with the title, site and page description of up to 20 results. Never full addresses
   or tags.
-- **Hey Varnick.** Two calls. The text you say after "Hey Varnick" goes to TypeSafe's Jev to see whether it is about
-  your screen or something Varnick can't do, with no titles, names or results. Then the same text goes again, with
+- **Hey Varnick.** Two calls. The text you say after "Hey Varnick" goes to TypeSafe's Jev, with today's date and time and
+  **a list of your projects**, to decide what you mean: the time, something Varnick can't do, the screen, which project
+  and which time it names, whether only your own things can answer it, and which of its words to search for. Each
+  project in the list (up to 40, most recently used first) has its folder name, its other names (from its git remote
+  and the title of its `CLAUDE.md` or README), a one-line description from its README or `CLAUDE.md` (cut to 120
+  characters), its last three session titles and when it was last used; the list is sent twice in the call, once to
+  choose among and once to refer to. Your paired Macs' projects go by folder name and session titles only. Then the
+  same text goes again in a second call, with
   today's date and where this week started, and for each row Varnick found: its kind (page, bookmark or Claude
   session), title, site or the session's folder name, when (its weekday and part of the day, such as "Monday
   evening, 2 days ago", for the past week), and its own description or a session's prompts, cut to 300 characters.
   That is the top 20 pages, as a typed search sends them, and up to 3 sessions, which a typed search never sends.
-  Never an address or a paired Mac's name. Which session folder a request names, and which time window, are worked
-  out on this Mac and not sent. Both calls start before you have quite finished, so words said so far may be sent
-  and then discarded.
+  Never an address or a paired Mac's name. A time window's hours are worked out on this Mac from the label chosen.
+  Both calls start before you have quite finished, so words said so far may be sent and then discarded. If TypeSafe
+  doesn't answer in time, the first call's questions go to Text generation instead (below).
 - **Point at the screen** (off by default). A request about the screen also sends the title of the window in
   front and, for each of its first 255 elements, the label, kind, nearby text and whether it is dimmed. That is
   the window's visible text, not only the text near its controls: a message list's subjects and senders, an open
@@ -105,6 +111,10 @@ setting says so; nothing is sent before that. To keep the text on this Mac, choo
 already answered with it stays there when it upgrades.
 
 - **What you say.** The request after "Hey Varnick", cut to 500 characters.
+- **The decisions,** when TypeSafe isn't used (the relevance filter is On this Mac or off, or no key is saved) or doesn't
+  answer in time: the same questions as TypeSafe's first call, as one prompt, with today's date and time and the list
+  of your projects above. With Claude Code that goes to Anthropic, with a server to the server, and with this Mac's
+  model nowhere.
 - **The results it reads,** for the answer: each one's kind, title, site or folder, when (its weekday and part of the
   day, how long ago), and description (cut to 300 characters), and for a Claude session its prompts, your paired Macs'
   too. With them go today's date and where this week started, so "this week" is answered right.

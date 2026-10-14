@@ -62,8 +62,9 @@ Anything else leaves only when you turn it on:
 
 - **Pairing a Mac** copies your browsing history and Claude prompts to it.
 - **Choosing TypeSafe** for the relevance filter sends your searches, and the titles, sites and descriptions of
-  their results, to TypeSafe. With Hey Varnick on, so does what you say, with the titles, sites and descriptions of
-  the pages Varnick found for it and the titles, folders and prompts of the sessions, and with Point at the screen,
+  their results, to TypeSafe. With Hey Varnick on, so does what you say, with a list of your projects (names, a one-line description and recent
+  session titles), the titles, sites and descriptions of the pages Varnick found for it and the titles, folders and
+  prompts of the sessions, and with Point at the screen,
   the text of the window you ask about.
 - **Hey Varnick, once on,** has your own Claude Code write its answers (Settings › Models › Text generation, the
   default for a new install), which sends what you say and the results it reads to Anthropic under your Claude

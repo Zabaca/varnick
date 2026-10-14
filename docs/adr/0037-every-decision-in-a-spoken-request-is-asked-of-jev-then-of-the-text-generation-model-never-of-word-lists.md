@@ -58,7 +58,7 @@ So a choice among the user's folder names, or among the past week's times, is on
 - **More goes to TypeSafe in the route call:**
   - the request, as before;
   - today's date and time;
-  - the project index (amended after the route-decisions eval, `5b4b069`): up to 40 of the user's projects, most recently used first, each with its other names, a one-line description from its `README` or `CLAUDE.md`, and its last three session titles. A bare folder name was not enough to pick a project. It costs about 2,000 tokens per call.
+  - the project index (amended after the route-decisions eval, `5b4b069`): up to 40 of the user's projects, most recently used first, each with its other names, a one-line description from its `README` or `CLAUDE.md`, and its last three session titles. A bare folder name was not enough to pick a project. It costs about 2,000 tokens per call, and about 2,000 more since the list is also in the call's state, for the own question to refer to (added while the spec was built; unmeasured).
 
   It follows ADR 0016's amendment of 2026-10-09: choosing TypeSafe is consent to send what its features need. With the fallback, the same goes to wherever Text generation runs.
 - **Thresholds are measured for "time" and "do" only** (0.5, `2d09ffb`). The folder, the time, own, several and the words are new questions. An eval measures them, Jev and each fallback model, before they ship.

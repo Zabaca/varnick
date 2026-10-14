@@ -248,8 +248,12 @@ What the user says after the **Wake phrase**. **History**, **Bookmark**s and **S
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
 
 **Route**:
-Jev's reading of a **Spoken request**, before the search is judged: how likely each source is, whether it is about the screen, and whether it is about none of the user's things. It only orders the rows, sends a screen request to the screen and cuts something Varnick can't do short; it never shuts a source out.
-_Avoid_: Router, decide step (the step is gone)
+The one call that decides what a **Spoken request** means, Jev's or, when Jev isn't used or fails, the Text generation model's: how likely each source is, whether it asks the time or asks for something Varnick can't do, whether it is about the screen, which **Project** and which time it names, whether only the user's own things can answer it, one result or several, and which of its words to search for. It orders the rows and shapes the session search; it never shuts a source out, and no phrase list decides anything.
+_Avoid_: Router, decide step, classifier
+
+**Project index**:
+What the **Route** reads to tell a **Project** from a word: for each of up to 40 projects, its name, other names (its git remote's repo name, the title of its `CLAUDE.md` or README), a one-line description and its last three **Session** titles. Built on this Mac after each project scan and session sync, and kept in memory.
+_Avoid_: Project list (that is `#name`'s)
 
 **Judge**:
 The Jev call that scores the first 20 pages and up to 3 sessions of a **Spoken request** for whether each helps answer it. Rows at 0.5 or more are kept, as are the sessions a named folder or a time-only window selected. For a typed search the **Relevance filter** is a call of its own.

@@ -157,16 +157,18 @@ the run started. A run longer than 15 minutes goes on in new files named by thei
 loses at most the last 15 minutes. A source that delivered no audio leaves no file. The setting is read each time
 Listening starts or restarts. The files stay on this Mac and Varnick never deletes them.
 
-Hey Varnick searches your History, Bookmarks and Claude sessions together for every request, judges which rows help,
-and answers from those out loud, saying "Let me check." first when the answer isn't ready. A project's folder name in
-the request ("what did I do in <project>") keeps the sessions to that project's, and a time ("this morning",
-"yesterday evening", "last week", "on Monday") keeps them to the sessions used then. "What time is it" and "what's
-the date" are answered from the Mac's clock, and "set a timer" is told plainly that Varnick can't.
+Hey Varnick asks TypeSafe's Jev (or, without it, your Text generation model) what each request means, then searches your
+History, Bookmarks and Claude sessions together, judges which rows help, and answers from those out loud, saying "Let
+me check." first when the answer isn't ready. A project you name or mean ("what did I do in <project>"; Varnick knows
+each project's other names and what it does from its remote, `CLAUDE.md` and README) keeps the sessions to that
+project's, and a time ("this morning", "yesterday evening", "last week", "on Monday") keeps them to the sessions used
+then when only your own things can answer. "What time is it" and "what's the date" are answered from the Mac's clock,
+and "set a timer" is told plainly that Varnick can't.
 
 Settings › Listening › **Answer from the web** (off by default) answers from the web what none of that can, such as
 when a shop opens: your own Claude Code searches for it, on your plan, and Varnick says "Looking that up." and then
 where the answer came from. It needs Hey Varnick, the relevance filter on TypeSafe with a key, and Claude Code found
-and logged in. A request that names a project folder, or is only a time, never goes to the web: Varnick says it found no
+and logged in. A request that names a project, or that only your own things can answer, never goes to the web: Varnick says it found no
 sessions then. What is sent is in [privacy and security](privacy-and-security.md#anthropic-and-a-search-provider-through-answer-from-the-web).
 
 Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,
