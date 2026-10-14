@@ -74,14 +74,17 @@ struct RelevanceSearch {
     /// and, when no words are left, the sessions in a time window. Returns at most `sessionsShown` sessions.
     /// - With no words: the sessions the filter keeps, most recently used first.
     /// - With words: ranked as the panel ranks a project's sessions (`LauncherModel.listPromptSessions`): keyword and meaning fused,
-    ///   with the similarity floor, or none when a folder is named. A named folder always shows its sessions, so one the words don't
-    ///   match comes most recently used first. Sessions in `boost` go ahead of the others found, before the cut; the boost adds none.
+    ///   with the similarity floor, or none when a project or a window chose the sessions. A named project or a filtering window always shows its sessions, so one the words
+    ///   don't match comes most recently used first. Sessions in `boost` go ahead of the others found, before the cut; the boost adds none.
     func spokenSessions(words: String, filter: SessionFilter, boost: DateInterval?) async throws -> [SearchResult] {
         store.refreshIfChanged()
         guard !words.isEmpty else {
             return store.sessionRows(filter, limit: Self.sessionsShown, promoted: []).compactMap { store.fetch($0) }
         }
         let keyword = store.keyword(words, limit: Self.candidateLimit, filter: filter)
+        // A named project or a filtering window chose these sessions: the words only rank them, with no similarity floor, and when
+        // they match none the most recently used come first.
+        let selecting = !filter.folderNames.isEmpty || filter.window != nil
         var semantic: [(id: Int64, score: Float)] = []
         do {
             if let (vector, _) = try await embedQuery(words) {
@@ -92,9 +95,9 @@ struct RelevanceSearch {
             try Task.checkCancellation()
         }
         var found = fuse(keyword: keyword, semantic: semantic, limit: Self.candidateLimit,
-                         semanticOnlyFloor: filter.folderNames.isEmpty ? Self.sessionSimilarityFloor : -1,
+                         semanticOnlyFloor: selecting ? -1 : Self.sessionSimilarityFloor,
                          promoted: store.rowIDs(ofSessions: openHere()))
-        if found.isEmpty, !filter.folderNames.isEmpty {
+        if found.isEmpty, selecting {
             found = store.sessionRows(filter, limit: Self.sessionsShown, promoted: []).compactMap { store.fetch($0) }
         }
         if let boost {
