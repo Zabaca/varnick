@@ -1,8 +1,8 @@
 ---
 problem: panes-cant-be-moved
 title: Swap the focused pane with its neighbour by key
-summary: ⌃⌘⇧H/J/K/L swap the focused pane with the pane that ⌘⇧H/J/K/L would focus. The tab's shape and dividers stay as they are, the two panes trade places and sizes, and focus moves with the pane. This is the smallest change, but it can't change a tab's shape. It carries the groundwork every option needs.
-status: proposed
+summary: ⌃⌘⇧H/J/K/L swap the focused pane with the pane that ⌘⇧H/J/K/L would focus. The tab's shape and dividers stay as they are, the two panes trade places and sizes, and focus moves with the pane. This is the smallest change, but it can't change a tab's shape. It carries the groundwork every option needs, and is built with option 02 on one branch.
+status: accepted
 ---
 
 ## Solution
@@ -38,6 +38,8 @@ For example, in A | (B / C) with A focused, Swap with pane right gives B | (A / 
 6. As the user viewing a tab I'm not in control of, I want to be told why the swap didn't happen.
 
 ## Implementation Decisions
+
+**Built with option 02 on one branch.** This option's groundwork comes first: each pane's view keyed by its session, the swap, the lock and `arrange` path, and the projects row. Then its keys, then option 02, which uses all four.
 
 **The swap**
 - **The neighbour** is the focus keys' own: the nearest pane past the focused pane's edge that overlaps it on the other axis. A tie goes to the pane most in line with it.
@@ -86,13 +88,14 @@ For example, in A | (B / C) with A focused, Swap with pane right gives B | (A / 
 
 ## Out of Scope
 
-- Changing a tab's shape (option 02).
+- Changing a tab's shape by key (option 02 does it by drag).
 - Whole-tab presets (option 03).
 - Moving a pane to another tab.
 - Undo.
 
 ## Further Notes
 
+- **The user's decisions of 2026-10-14, relayed by the coordinator:** options 01 and 02 together, on one branch. The swap trades sizes, as recommended. The rest of the decisions are option 02's.
 - **No ADR.** ADR 0034 already names `arrange` as the way the machine in control re-places panes. No change to CONTEXT.md.
 - **where-it-breaks to update:**
   - **Sessions and tabs:** a pane's view is keyed by its session, and why;
