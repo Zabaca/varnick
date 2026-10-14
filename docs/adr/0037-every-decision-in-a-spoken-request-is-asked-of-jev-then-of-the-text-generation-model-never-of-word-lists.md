@@ -58,8 +58,10 @@ So a choice among the user's folder names, or among the past week's times, is on
 - **More goes to TypeSafe in the route call:**
   - the request, as before;
   - today's date and time;
-  - the names of the user's session folders, up to 100, most recently used first.
+  - the project index (amended after the route-decisions eval, `5b4b069`): up to 40 of the user's projects, most recently used first, each with its other names, a one-line description from its `README` or `CLAUDE.md`, and its last three session titles. A bare folder name was not enough to pick a project. It costs about 2,000 tokens per call.
 
   It follows ADR 0016's amendment of 2026-10-09: choosing TypeSafe is consent to send what its features need. With the fallback, the same goes to wherever Text generation runs.
 - **Thresholds are measured for "time" and "do" only** (0.5, `2d09ffb`). The folder, the time, own, several and the words are new questions. An eval measures them, Jev and each fallback model, before they ship.
+  - **The route-decisions eval** (`5b4b069`) measured one call with every decision at a p90 of 171–178 ms. "Time", "do", the window and several held. The folder (28–29 of 40) and own (0.86 with the screen on) did not, until the project index and written criteria (option 07, re-run next).
+  - Haiku passed every bar as the fallback, at a p90 of 3.2 s. This Mac's Gemma was unusable as a decider, and the user chose to leave it so.
 - **Amends** ADR 0016: the decide step's Text generation fallback returns, as the fallback for every question. **Amends** ADR 0036: the clock and can't-do lists, and the folder and time rules, are replaced by these questions. The problem and the full specification are option 07 of `docs/problems/listening-never-answers/`.

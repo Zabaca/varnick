@@ -1,7 +1,7 @@
 ---
 problem: listening-never-answers
 title: Every spoken request searches History, Bookmarks and sessions together, Jev judges the rows, and the answer comes from them or from the web
-summary: The source router goes. Every spoken request searches History, Bookmarks and Claude sessions in one fused search, and finds sessions by a project's folder name and by when they were used ("this morning", "yesterday"). One Jev call, the judge, scores each of the top rows and keeps those at 0.5 or more. Text generation writes from the kept rows. With Answer from the web on, the web is asked when nothing is kept, or when the writer finds the kept rows too thin, but never when a session was kept or the request stays local (it names a session folder, or it is only a time): then the writer says what the sessions show, or Varnick says it found no sessions then. Every request ends in an answer. The user hears "Let me check." once the hold ends, and "Looking that up." when the web is asked. Jev's route only orders the rows, cuts the can't-do line short and sends screen requests to the screen. Replaces option 06's web triggers; keeps 06's web call, switch and privacy text, the clock answer and the screen path. Amended after two evals (2026-10-14): the judge's answer-or-web choice is dropped, sessions a folder or a time selected are never dropped, and a row's "when" names the window it fell in. Amended by ADR 0037 (2026-10-14): every decision is asked of Jev in the route call, then of the Text generation model, and no word list decides.
+summary: The source router goes. Every spoken request searches History, Bookmarks and Claude sessions in one fused search, and finds sessions by a project's folder name and by when they were used ("this morning", "yesterday"). One Jev call, the judge, scores each of the top rows and keeps those at 0.5 or more. Text generation writes from the kept rows. With Answer from the web on, the web is asked when nothing is kept, or when the writer finds the kept rows too thin, but never when a session was kept or the request stays local (it names a session folder, or it is only a time): then the writer says what the sessions show, or Varnick says it found no sessions then. Every request ends in an answer. The user hears "Let me check." once the hold ends, and "Looking that up." when the web is asked. Jev's route only orders the rows, cuts the can't-do line short and sends screen requests to the screen. Replaces option 06's web triggers; keeps 06's web call, switch and privacy text, the clock answer and the screen path. Amended after two evals (2026-10-14): the judge's answer-or-web choice is dropped, sessions a folder or a time selected are never dropped, and a row's "when" names the window it fell in. Amended by ADR 0037 (2026-10-14): every decision is asked of Jev in the route call, then of the Text generation model, and no word list decides. Amended after the route-decisions eval (2026-10-14): the folder question reads a project index (aliases, a one-line description, recent session titles), "own" and "several" have written criteria, and the window offers labels for the future.
 status: accepted
 ---
 
@@ -71,7 +71,8 @@ When Jev isn't used or fails, the Text generation model answers the same questio
 - **Every decision is a model's, never a word list's** (ADR 0037, the user's principle of 2026-10-14). The clock and can't-do lists caught 16 of 30 and 5 of 20 made-up phrasings, and Jev's route caught 30 of 30 and 20 of 20 (`2d09ffb`). The folder, time and word rules are replaced the same way.
   - The search now waits for the route call, about 0.1–0.25 s during speech, mostly inside the hold (estimated).
   - When Jev isn't used, the Text generation model answers the decisions, one more call per run: about 0.5–1 s on this Mac's Gemma and 1.5–2.5 s on Claude Code (estimated). It runs during speech, often hidden.
-  - The route call also sends today's date and time and up to 100 of the user's session folder names to TypeSafe.
+  - The route call also sends today's date and time and the project index to TypeSafe: up to 40 projects with their other names, a one-line description and their last three session titles (amended after the route-decisions eval).
+  - With the fallback on this Mac's Gemma, the decisions are poor: in the eval it copied the prompt's example line (several always false, the window always "today"). The user chose to leave it so ("let it be bad"). Haiku as the fallback passed every bar, at a p90 of 3.2 s.
 - **Answers start with a general line.** "Let me check." confirms the request was heard, but no longer says where Varnick is looking. A wrong turn is no longer audible, and there are fewer wrong turns to hear, since nothing is shut out.
 - **Slower when the web is asked late.** A web question with nothing kept is answered in about 6–10 s, as in option 06. When the writer is the one to send it to the web, about 8–12 s (estimated).
 - **A local answer** is heard at about 3–4.5 s after speech ends with Haiku writing, and about 2.6–3.6 s with Gemma (estimated, from the writers' measured times). Today's estimate is 2.5–3.5 s. The knowledge-base flow this follows measured about 4 s from a typed question.
@@ -115,31 +116,52 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   action:   choice   today's, plus two answers, worded as measured (route-time-do, 2d09ffb):
             time: "The person asks the current time, date or day here and now, not the time somewhere else, at another time, or when something happens."
             do:   "The person asks Varnick to do something it can't: set a timer or alarm, remind them, call, text or message someone, play music."
-  folder:   choice   "Which of the person's own project folders does `request` name, if any?"
-            one label per folder name; none: "It names none of these, or uses the word in its ordinary sense."
+  folder:   choice   "Which of the person's own projects does `request` name or mean, if any? A project may be called by its
+                     folder name, another name, a near spelling or what it does."
+            one label per project in the project index (below), its criterion that project's entry, such as
+            launchy: also called Varnick. "Varnick, a macOS launcher." Recent: "Spoken requests judge then web", "Tabs that don't fit".
+            none: "It names or means none of these projects, or uses a word in its ordinary sense ("what's in the news today")."
   window:   choice   "Which time does `request` ask about, if any? `today` says when now is."
-            today, this morning, this afternoon, this evening, last night, yesterday, yesterday morning, yesterday afternoon,
-            yesterday evening, this week, last week, and each of the five days before yesterday by name, alone and with
-            morning, afternoon or evening ("Monday evening");
-            none: "No time, a time still to come, a time somewhere else, or a vague one such as recently."
-  own:      yes/no   "Does `request` ask about what the person themselves did, worked on, read or decided, so that only their
-                     own pages, bookmarks or Claude sessions can answer it?"
+            each label described by its dates and hours, built from now:
+            past and present: today, this morning, this afternoon, this evening (once under way), last night, yesterday and
+            its morning, afternoon and evening, this week, last week, and each of the five days before yesterday by name and
+            date, alone and with a part of the day ("Monday evening, October 12");
+            future: later today, this evening (before it starts), tomorrow, and each of the next six days by name and date
+            ("Thursday, October 15");
+            none: "No time, this very moment ("right now"), a time somewhere else, or a vague one such as recently."
+  own:      yes/no   "Does `request` ask about the person's own things?"
+            true:  "It asks for one of their own pages, bookmarks or Claude sessions ("find the page about…", "that article I
+                    read"), about what they did, worked on, read or decided, or about one of their own projects ("what is
+                    <one of their projects>")."
+            false: "It asks for a fact about the world that anyone could look up, even about a topic they may have read about
+                    ("what is MLX", "when does the library open")."
   several:  yes/no   "Does `request` ask for several results rather than one?"
+            true:  "It asks for more than one: which pages, all of my bookmarks, anything else like it, what else."
+            false: "It asks for one thing: one page, one session, one fact or one answer."
   w<i>:     yes/no   one per word: "Is the word "<word>" in `request` part of what to search the person's pages and sessions for?"
                      true: "It names the topic, a thing, a name or a project."
                      false: "It is a word of asking, remembering or time, or a small grammatical word."
   ```
 
-  - Only `source` and `action` are measured wording. The rest is the starting point for the eval below.
-- **The folder labels:**
-  - the distinct folder names of the user's sessions, on any Mac, most recently used first, at most 100 (a named constant, well under the 255 a choice takes);
-  - a worktree's sessions count under the folder that holds it (a path under `.claude/worktrees/`).
+  - `source` and `action` are measured wording, and so is the window's past and present (55 of 59 in the route-decisions eval). The project index, the future labels and the written criteria for `own` and `several` are new since that eval, and the re-run measures them (below).
+- **The project index** (amended after the route-decisions eval: a bare folder name lost common-word and misspelled projects, 28–29 of 40). Varnick builds it on the Mac, mechanically, with one entry per Project (CONTEXT.md):
+  - **the name:** the folder's, the choice's label;
+  - **other names:** the git remote's repo name (from the repo's own config file, with no git command run), and the title of its `CLAUDE.md` or `README` (the first `#` heading), when they differ from the folder's (launchy → "Varnick");
+  - **a one-line description:** the first line of prose in its `README`, else its `CLAUDE.md`, cut to 120 characters;
+  - **recent:** the titles of its last three sessions;
+  - **last used.**
+- **Which projects:**
+  - `Project.scan`'s repos under the project folders, and the root of each folder sessions ran in (`Project.root(of:)`), so a worktree's sessions count under its project;
+  - the most recently used first, at most 40 (a named constant), each criterion cut to 240 characters.
+- **Paired Macs:** their projects come only from what session sync already brings: the folder names and session titles of their sessions. They have no other names or description. Sharing each Mac's index over the peer protocol is Later.
+- **When it's built:** after each project scan and each session sync, kept in memory, and never logged.
+- **Size, estimated:** about 50 tokens per entry, so about 2,000 for 40. The call goes from the eval's measured 3,800–4,200 input tokens to about 6,000, about $0.00025 per call at the evals' rate.
 
-  Building them is mechanical. Picking one is Jev's.
+  Building the entries is mechanical. Picking one is Jev's.
 - **The words:** one question per distinct word of the request, in order, at most 24 (a named constant). The words at 0.5 or more are the search words, at most 8, in the request's order.
 - **Reading it:**
   - "time" and "do" at 0.5, as measured.
-  - `folder` and `window`: the chosen label, unless it is "none".
+  - `folder` and `window`: the chosen label, unless it is "none". A future label is kept as said, and it never shapes the session search (below).
   - `own` and `several` at 0.5. The words at 0.5.
   - The order of the rows from `source`, as today. "Other" is no longer read.
   - A reply that lacks a question counts as a failure.
@@ -174,13 +196,15 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   - parts of a day are named constants: morning 5 AM to noon, afternoon noon to 5 PM, evening 5 PM to midnight;
   - "last night" is 5 PM yesterday to 5 AM today;
   - a week starts on the Mac's calendar's first weekday, which is Sunday on a US calendar, as the eval used;
-  - a weekday is the latest one before yesterday;
-  - "today" and "this week" run to now.
+  - a weekday is the one its label's date names;
+  - "today" and "this week" run to now;
+  - a part of today that hasn't begun ("this evening" at 3 PM) is a future label, and one under way is past and present.
 - **The search words** are the decisions' words, so time words leave them when Jev or the fallback says so, and not by a list.
 - **A session is in the window** when its first prompt is before the window's end and its last prompt after its start. Both times are already stored for this Mac's sessions and the paired Macs', and the store reads them as it reads a session's agent.
 - **Filter or boost** (amended by ADR 0037: by `own`, not by whether search words are left):
   - With `own` at 0.5 or more, the window filters: the session search returns the sessions in the window, in the folder when one is named, ranked by the search words, or most recently used first when there are none, up to 3.
   - Otherwise the sessions in the window go ahead of the others in the search's order, before the cut to 3. The boost only reorders sessions the search found; it adds none. "How windy is it today" has a window, and it only boosts.
+  - A future window, or a request about this very moment, never filters sessions and never boosts them: no session was used then. "What's the weather tomorrow" searches as if it named no time.
 - **Selected sessions are kept.** Sessions a named folder or a filtering window selected are kept whatever the judge scores them. Their score only orders them. Sessions the boost moved up are judged as usual.
 - **Never the web, for a request that stays local** (corrected by the coordinator to the user's intent, 2026-10-14; amended by ADR 0037 to Jev's answers). It never goes to the web, by the judge or the writer, with the switch on or off, when either holds:
   - the decisions name a session folder;
@@ -273,8 +297,8 @@ When Jev isn't used or fails, the Text generation model answers the same questio
 
 **Latency** (from the end of speech; estimated unless marked measured)
 - **The hold ends at about 1.5–2.5 s:** the transcriber's final result 1–2 s after speech ends, then the 0.5 s hold.
-  - The route call (p50 94–96 ms with "time" and "do", measured; with the folder, window, own, several and word questions, about 0.1–0.25 s, estimated), then the search (about 0.05 s warm), then the judge.
-  - With the fallback deciding: about 0.5–1 s on this Mac's Gemma, 1.5–2.5 s on Claude Code, a server unknown (estimated), in place of the route call.
+  - The route call: p50 110 ms and p90 171–178 ms with every decision in it, at about 4,000 input tokens (measured, route-decisions). With the project index, about 6,000 tokens, an estimated p90 of 0.2–0.25 s. Then the search (about 0.05 s warm), then the judge.
+  - With the fallback deciding, in place of the route call: Haiku through Claude Code, p50 2.37 s and p90 3.23 s (measured); this Mac's Gemma, 0.43 s, with poor decisions; a server, unmeasured.
   - The judge's p50 is 111 ms and its p90 171 ms with 23 rows in the first eval, and its p90 183 ms in the second. The route and the judge were measured in the evals.
   - All of it is mostly within the hold. A window or a folder adds an indexed query on this Mac.
 - "Let me check." is heard from about 2–3 s and lasts about 0.6 s.
@@ -292,10 +316,10 @@ When Jev isn't used or fails, the Text generation model answers the same questio
 
 **Privacy and logs**
 - **TypeSafe,** with the filter on TypeSafe:
-  - the route call: the request, as before; new with ADR 0037, today's date and time and up to 100 of the user's session folder names;
+  - the route call: the request, as before; new with ADR 0037, today's date and time; and the project index (amended after the route-decisions eval): up to 40 projects with their other names, a one-line description from their `README` or `CLAUDE.md`, and their last three session titles, paired Macs' projects by folder name and session titles;
   - the judge: the request, and the first 20 pages' title, site and own description (as `SpokenText.judgeRows` builds them), as today;
   - new: up to 3 sessions' title, folder name, when and prompts cut to 300 characters.
-- **Worked out on this Mac:** a window's hours from its label. The folder and the time are now Jev's choices, so the folder names go in the route call (above). With the fallback, the request, today and the folder names go to wherever Text generation runs.
+- **Worked out on this Mac:** a window's hours from its label. The folder and the time are now Jev's choices, so the folder names go in the route call (above). With the fallback, the request, today and the project index go to wherever Text generation runs.
 - **New with the second eval's fix:** the judge's state and the writer's prompt name today's weekday and date and where this week started. A session row's "when" can name the window it fell in. The privacy doc's Text generation section, which says the date is never sent, is amended with option 06's.
 - **The writer:** as today, wherever Text generation runs.
 - **The web:** as option 06: the request's words, the date, the time and the units, to Anthropic, and Claude's search words to its search provider.
@@ -352,7 +376,22 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   - The two other findings have theirs: no web for folder and time requests, and today and the week's start given to the writer.
   - The user chose to build with those three fixes rather than hold the build for a third run. The fixes are unmeasured.
 - **No third run before building.** The eval can be re-run on the built code: about 3 minutes and $0.10, per its README, with the search ported from what is built. That is worth doing once it lands.
-- **The decisions eval, before this amendment is built** (agent-lab, through the `eval` agent, Varnick pinned by commit; nothing of the user's). Jev, and each fallback model (Haiku 5.5 through Claude Code, this Mac's Gemma 4 E2B, and a server if one is set up), get the decisions questions on:
+- **The decisions eval, run** (agent-lab `experiments/2026-10-14-route-decisions`, `5b4b069`, against the branch at `b00a0f6`):
+  - **Jev passed:** "time" 30/30, "do" 20/20, no hard negative, the window 55/59 and several 40/40, all in one call at a p90 of 171–178 ms.
+  - **Jev failed:**
+    - Folder named was 28–29 of 40, against 36. Each label said only `The project folder "<name>".`, so common-word projects ("relay", "tasks", "site") and near spellings ("varnik", "var nick") went to none. No ordinary use was taken for a folder.
+    - Own was 0.86 with the screen on, against 0.9. It was asked with no criteria. The misses were "what is <project>", public-topic names, and pages described by a public topic.
+    - Window misses: "tomorrow" picked last Thursday, and "this evening" at 3 PM picked the past label.
+  - **Haiku as the fallback** passed every bar: folder 38/40, own 88/91, p90 3.23 s.
+  - **Gemma as the fallback** was unusable: it copied the example JSON. The user leaves it so.
+  - The amendment above answers each failure: the project index, the written criteria, and the future labels.
+- **The re-run, next** (agent-lab, the same sets and the same bars), with:
+  - the made-up user's 30 folders given made-up index entries (other names, a description, recent titles);
+  - future time requests added ("tomorrow", "this evening" before the evening, an upcoming weekday);
+  - `own` and `several` with their written criteria.
+
+  The gold for `own` follows the written criterion: a public topic ("what is MLX") is not own, and "what is <project>" and "find the page about…" are. The first run counted public topics as own, which the eval itself called arguable.
+- **The decisions eval, as first specified** (agent-lab, through the `eval` agent, Varnick pinned by commit; nothing of the user's). Jev, and each fallback model (Haiku 5.5 through Claude Code, this Mac's Gemma 4 E2B, and a server if one is set up), get the decisions questions on:
   - **route-time-do's sets:**
     - its 30 clock phrasings, 20 things to do and 25 look-alikes;
     - the 30 world, 61 own, 43 screen and 15 off-topic requests;
@@ -367,7 +406,7 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   - **words:** the existing sets' requests, against the words the old rule kept and the gold targets' words.
 
   Measured for each decider: accuracy per question with 95% CIs, the call's time, input tokens, and for the fallback how often its JSON is unreadable.
-- **Rules,** proposed, for Jev:
+- **Rules,** for Jev, as first set and kept for the re-run:
   - "time" and "do" as route-time-do's (28/30, 18/20, 0/25);
   - the folder right on at least 9 in 10 named, and wrong on at most 1 in 30 ordinary uses;
   - the window right on at least 9 in 10;
@@ -381,7 +420,7 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   - A session's prompts decide whether its words are found.
   - None of these rates can be measured on made-up rows. The hand check covers them on the user's machine, with figures kept locally.
 - **No test target.** Pure seams for a first test:
-  - building the decisions call: the folder labels from the session folders, the window labels from a moment;
+  - building the decisions call: the project index from a project's files and sessions, the window labels (past, present and future) from a moment;
   - a window label and a moment in, its hours out;
   - reading Jev's reply, and the fallback's JSON, into the decisions, with a missing or unknown answer as a failure or none;
   - reading the judge's reply: scores in, kept rows out;
@@ -450,6 +489,12 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   7. one result or several (`asksForSeveral`'s plural rules) → `several`.
 
   Not moved: the wake phrase (ADR 0037's scope). Still code, as mechanical: dropping a chosen folder's words from the session words, the replies' cleaning, the hold, the voice, and the rules over decided facts.
+- **Amended by the user on 2026-10-14 after the route-decisions eval** (`5b4b069`), relayed by the coordinator:
+  1. The folder question reads a project index built on the Mac: each project's other names, a one-line description and its recent session titles. Paired Macs' projects come by folder name and session titles only.
+  2. `own` and `several` get written true and false criteria. `own` is true for the user's own work, pages, bookmarks, sessions or projects, "what is <one of their projects>" included.
+  3. The window gets labels for the future (later today, tomorrow, upcoming days by name and date), and a request about the future or about now never filters sessions. "This evening" before the evening is the future.
+  4. The eval is re-run with made-up index entries and the same bars, as the next step.
+  5. Gemma as the fallback decider stays as it is, poor ("let it be bad").
 - **The eval's gap-fills, now the spec's choices:**
   - a week starts on the Mac's calendar's first weekday (Sunday on a US calendar, as the eval used);
   - "last night" is 5 PM to 5 AM;
@@ -514,7 +559,8 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   - with Answer from the web off, nothing kept gets "I couldn't find that in your pages, bookmarks or Claude sessions." at once, with no writer call;
   - ~~the Text generation decide call goes~~: reversed by ADR 0037, which brings it back as the fallback for every decision;
   - the clock says the time and the date together, rather than asking which was meant;
-  - at most 100 folder labels, most recently used first, a worktree under the folder that holds it;
+  - at most 40 projects in the index, most recently used first, a worktree under its project, each criterion cut to 240 characters;
+  - a project's other names from its remote's repo name and its `CLAUDE.md` or `README` title, and its description from the first line of prose;
   - the typed `?` search doesn't read time words or spoken folder names;
   - pages get no time window.
 - **Left to the user,** recommendation first:
@@ -544,9 +590,12 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   - the stopped branch's queue speaks two lines, holds the span over the wait for the second (its uncommitted change ends it early), and its route signal reports per-route lines;
   - at `6550890`: the lists and rules listed under the ADR 0037 amendment, in `SpokenText` and `SpokenTime`; the panel's typed syntax; the wake patterns;
   - the TypeSafe SDK (0.6.0): yes/no, choice and score questions, many per call, labels built by the caller, no free-text answer; the screen code's note that a choice takes 255 labels.
+  - `Project.scan` finds the repos under the project folders with when Claude last ran in each, and `Project.root(of:)` maps a session's folder, a worktree's included, to its repo;
+  - the sessions tables keep each session's title and folder, this Mac's and the paired Macs'.
 - **Inferred, not measured:**
   - every latency figure but the route's, the judge's and the writers' times in the eval;
   - the three fixes of the second amendment (the window in "when", no web for folder and time requests, selected sessions never dropped), which no eval has run;
   - the time window's and the folder filter's effect on the user's own sessions;
   - the writer's handling of a session that doesn't say whether it landed, with the new line;
-  - every decision but "time" and "do", by Jev and by each fallback model, and the grown call's time.
+  - the project index, the future labels and the written criteria for `own` and `several`, by Jev and by Haiku, and the call's time with the index (the re-run);
+  - how often a real project's README or CLAUDE.md gives a usable description and other name.
