@@ -43,7 +43,7 @@ final class SpokenRequests {
         case answering
     }
 
-    /// The route, search and judge run on the request's text as it stands, from when it last changed, through `hold` (ADR 0017).
+    /// The decisions, search and judge run on the request's text as it stands, from when it last changed, through `hold` (ADR 0017).
     /// Keyed by that exact text: a result is read only for the request dispatched, so a stale one is never used.
     private struct Speculation {
         let text: String
@@ -202,7 +202,7 @@ final class SpokenRequests {
 
     // MARK: Answering
 
-    /// Starts routing, searching and judging for `text` at once, unless that already runs for exactly this text. A run for
+    /// Starts deciding, searching and judging for `text` at once, unless that already runs for exactly this text. A run for
     /// older text is cancelled and its result dropped whenever it ends. Nothing is written or spoken from here.
     private func speculate(on text: String) {
         var restarts = 0
@@ -364,12 +364,13 @@ final class SpokenRequests {
               + "voice \(speeches.last?.by ?? "-")")
     }
 
-    /// The route, search, judge and kept count of the timing line: durations, kinds and counts, never a word, a folder's name or a row.
+    /// The decisions, search, judge and kept count of the timing line: durations, kinds and counts, never a word, a project's name or a row.
     private static func searchTiming(_ run: SpokenPipeline.Run?) -> String {
         guard let run else { return "" }
         func seconds(_ duration: Duration) -> String { duration.seconds.secondsText }
-        let scope = "folder " + (run.scope.folders.isEmpty ? "no" : "named") + ", window " + (run.scope.window?.kind ?? "none")
-        return "route \(seconds(run.routing)) (\(run.routedBy)), "
+        let scope = "folder " + (run.scope.folder == nil ? "no" : "named") + ", window " + (run.scope.window?.kind ?? "none")
+            + ", own \(run.scope.own), several \(run.decisions?.several ?? false)"
+        return "decisions \(seconds(run.deciding)) (\(run.decidedBy)), "
             + "search \(seconds(run.search)) (meaning by \(run.meaningBy); \(scope); sessions \(run.sessionsBy)), "
             + "judge \(seconds(run.judge)) (\(run.judgedBy)), kept \(run.rows.count) of \(run.judged.count) rows, "
     }

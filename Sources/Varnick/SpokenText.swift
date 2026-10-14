@@ -41,60 +41,18 @@ enum SpokenText {
 
     // MARK: The clock and what Varnick can't do
 
-    /// What a request about the clock asks for.
-    enum ClockQuestion: Equatable { case time, date }
-
-    /// The words that may come before, after or among a clock question without making it another question. What is left after them
-    /// must be the one word the question is about.
-    private static let clockFillers: Set<String> = [
-        "please", "now", "right", "currently", "current", "tell", "me", "can", "you", "could", "do", "know", "hey",
-        "what", "whats", "is", "its", "it", "the", "today", "todays",
-    ]
-
-    /// The request's words with apostrophes dropped ("what's" is "whats").
-    private static func plainTokens(_ request: String) -> [String] {
-        tokens(request.replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "\u{2019}", with: ""))
-    }
-
-    /// Whether the whole request, and nothing more, is a question about the time or the date: "what time is it", "what's the date",
-    /// "what is today's date", "what day is it", "what day is today", with "now", "today", "please" or "tell me" around it.
-    /// "What time is it in Tokyo" is not.
-    static func clockQuestion(in request: String) -> ClockQuestion? {
-        let left = plainTokens(request).filter { !clockFillers.contains($0) }
-        switch left {
-        case ["time"]: return .time
-        case ["date"], ["day"], ["day", "of", "week"]: return .date
-        default: return nil
-        }
-    }
-
-    /// The clock's answer, in the Mac's own formats: "It's 9:41 AM." or "It's Wednesday, October 14.".
-    static func clockAnswer(_ question: ClockQuestion, at now: Date = Date(), locale: Locale = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        switch question {
-        case .time: formatter.timeStyle = .short
-        case .date: formatter.setLocalizedDateFormatFromTemplate("EEEEMMMMd")
-        }
+    /// The clock's answer, in the Mac's own formats, the time and the date together ("It's 9:41 AM, Wednesday, October 14."): "time"
+    /// covers the time, the date and the day, so which was meant needs no further decision (ADR 0037).
+    static func clockAnswer(at now: Date = Date(), locale: Locale = .current) -> String {
+        let time = DateFormatter()
+        time.locale = locale
+        time.timeStyle = .short
+        let date = DateFormatter()
+        date.locale = locale
+        date.setLocalizedDateFormatFromTemplate("EEEEMMMMd")
         // The narrow no-break space before AM and PM is not a pause worth keeping.
-        let said = formatter.string(from: now).replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ")
-        return "It's \(said)."
-    }
-
-    /// Phrases that ask Varnick to do something. Checked only on a request Jev found off-topic: the same words turn up in requests
-    /// about the user's things ("remind me what I decided about Kestrel"). Bare "call" and "text" are left out: "what do you call a
-    /// baby kangaroo" is a question. The web prompt's UNABLE catches what this list misses.
-    private static let cantDoPhrases = [
-        "set a timer", "timer for", "set an alarm", "wake me", "remind me to", "turn on", "turn off", "turn up", "turn down",
-        "send a message",
-    ]
-
-    /// Whether the request asks Varnick to do something it can't, such as setting a timer or playing music.
-    static func asksToDo(_ request: String) -> Bool {
-        let words = plainTokens(request)
-        let spaced = " " + words.joined(separator: " ") + " "
-        if cantDoPhrases.contains(where: { spaced.contains(" \($0) ") }) { return true }
-        return words.contains("play") && !Set(words).isDisjoint(with: ["music", "song", "songs"])
+        func plain(_ text: String) -> String { text.replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ") }
+        return "It's \(plain(time.string(from: now))), \(plain(date.string(from: now)))."
     }
 
     /// What Varnick says to a request it can't do, with what it does do.
@@ -103,64 +61,47 @@ enum SpokenText {
         return "I can't do that. I look up \(looks)" + (web ? ", and answer questions from the web." : ".")
     }
 
-    // MARK: What the request names: a session folder, a time
+    // MARK: What the decisions name: a project, a time
 
-    /// The session folder and the time a request names (option 07). Both are worked out on this Mac and sent nowhere.
+    /// The project and the time a request names, as the decisions chose them (option 07, ADR 0037), and whether only the user's own
+    /// things can answer it. Worked out on this Mac from a model's choice of labels.
     struct Scope: Equatable {
-        /// The session folders named, as `sessionFolderNames` lowercases them.
-        var folders: [String] = []
+        /// The project's name, as the index labels it.
+        var folder: String?
+        /// The time asked about, when a session could have been used then: a future window never gets here.
         var window: SpokenTime.Window?
-        /// The window chose the sessions itself: no search words are left once the time and folder words are taken out, so it filters
-        /// them. With words left it only moves the sessions in it up.
-        var timeOnly = false
+        /// Only the user's own pages, bookmarks, sessions and projects can answer it.
+        var own = false
 
         /// A folder or a window shapes the session search.
-        var shapesSessions: Bool { !folders.isEmpty || window != nil }
+        var shapesSessions: Bool { folder != nil || window != nil }
 
-        /// The request stays local, never to the web: the web can't know what the user did in a project, or at a time the request
-        /// alone chose the sessions for. A time with search words ("when does Costco open today") is not that.
-        var staysLocal: Bool { !folders.isEmpty || timeOnly }
+        /// The window chooses the sessions: with `own`, it filters them. Otherwise it only moves the sessions in it up.
+        var windowFilters: Bool { own && window != nil }
+
+        /// The request stays local, never to the web: it names a project, or only the user's own things can answer it. The web can't
+        /// know what the user did in a project or at a time.
+        var staysLocal: Bool { folder != nil || own }
 
         /// What is said when nothing was found for it: "I found no sessions in pantry today."
         var nothingFound: String {
-            "I found no sessions" + (folders.isEmpty ? "" : " in " + folders.joined(separator: " and "))
-                + (window.map { " " + $0.spoken } ?? "") + "."
+            "I found no sessions" + (folder.map { " in " + $0 } ?? "") + (window.map { " " + $0.spoken } ?? "") + "."
         }
     }
 
-    static func scope(of request: String, folders: Set<String>, now: Date = Date(), calendar: Calendar = .current) -> Scope {
-        var scope = Scope(folders: namedFolders(request, in: folders), window: SpokenTime.window(in: request, now: now, calendar: calendar))
-        scope.timeOnly = scope.window != nil && sessionWords(from: queryWords(from: request), scope: scope).isEmpty
-        return scope
+    /// The scope the decisions chose. A future window, and a request about no time, leave none: no session was used then.
+    static func scope(from decisions: SpokenDecisions) -> Scope {
+        Scope(folder: decisions.folder, window: decisions.window.flatMap { $0.future ? nil : $0 }, own: decisions.own)
     }
 
-    /// Words that, just before a one-word folder name, say it is a place ("in varnick", "my pantry").
-    private static let folderCues: Set<String> = ["in", "on", "into", "within", "from", "my", "our"]
-    /// Words that, just after one, do the same ("the varnick repo").
-    private static let folderNouns: Set<String> = ["repo", "repos", "project", "projects", "folder", "directory", "codebase", "app"]
-
-    /// The `folders` (lowercased names) the request names. A name of several words ("my-app") counts bare, as those words one after
-    /// another or joined as one ("myapp"): that is not a phrase people say by chance. A one-word name ("news", "pantry") is also a
-    /// word, so "what's the news" must not name a "news" folder: it counts only after a cue (`folderCues`) or before a noun
-    /// (`folderNouns`), as in "what did I do in news" or "the news repo". Case, punctuation and the folder's `-`, `_`, `.` and spaces
-    /// are ignored. A folder of under three letters, or of stop words only, is never named. Sorted, so a request names them the same way.
-    static func namedFolders(_ request: String, in folders: Set<String>) -> [String] {
-        let words = tokens(request)
-        guard !words.isEmpty else { return [] }
-        return folders.filter { folder in
+    /// The words the session search uses: the decisions' words less those of the project's name, which only say where to look. The
+    /// pages keep every word.
+    static func sessionWords(from words: [String], scope: Scope) -> String {
+        let dropped = Set(scope.folder.map { folder -> [String] in
             let parts = tokens(folder)
-            let joined = parts.joined()
-            guard joined.count >= 3, !parts.allSatisfy(stopWords.contains) else { return false }
-            if parts.count == 1 {
-                return words.indices.contains { i in
-                    words[i] == joined && ((i > 0 && folderCues.contains(words[i - 1]))
-                        || (i + 1 < words.count && folderNouns.contains(words[i + 1])))
-                }
-            }
-            return words.contains(joined) || words.indices.contains { start in
-                start + parts.count <= words.count && Array(words[start..<start + parts.count]) == parts
-            }
-        }.sorted()
+            return parts + [parts.joined()]
+        } ?? [])
+        return words.filter { word in tokens(word).allSatisfy { !dropped.contains($0) } }.joined(separator: " ")
     }
 
     /// Lowercased runs of letters and digits.
@@ -168,45 +109,8 @@ enum SpokenText {
         text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
     }
 
-    /// The words worth searching for: the request without words of asking, remembering, a kind (page, session) or a time, and
-    /// small grammatical words, and without "'s". Measured locally this matched Jev's word-by-word judgments.
-    static func queryWords(from request: String) -> String {
-        let kept = request.split(whereSeparator: \.isWhitespace).compactMap { raw -> String? in
-            var word = cleaned(String(raw).replacingOccurrences(of: "\u{2019}", with: "'"))
-            if word.lowercased().hasSuffix("'s") { word = String(word.dropLast(2)) }
-            guard !word.isEmpty, !stopWords.contains(word.lowercased().replacingOccurrences(of: "'", with: "")) else { return nil }
-            return word
-        }
-        return kept.prefix(maxQueryWords).joined(separator: " ")
-    }
-
-    /// The words the session search uses: the search words less those that named a folder, which only say where to look. The pages
-    /// keep every word.
-    static func sessionWords(from words: String, scope: Scope) -> String {
-        let dropped = Set(scope.folders.flatMap { folder -> [String] in
-            let parts = tokens(folder)
-            return parts + [parts.joined()]
-        })
-        return words.split(whereSeparator: \.isWhitespace).filter { word in
-            tokens(String(word)).allSatisfy { !dropped.contains($0) }
-        }.joined(separator: " ")
-    }
-
     /// The most of a request that is kept and sent anywhere.
     static let maxRequestCharacters = 500
-    static let maxQueryWords = 8
-
-    private static let stopWords: Set<String> = Set("""
-        a an the and or but so if then than as of on in at to for from by with about into off up out over under
-        i me my mine we our you your he she it its they them their this that these those there here
-        is are was were be been am im ive id ill what whats which who whom whose when where why how
-        did do does done have has had can could would should will just also ever again please hey
-        any anything some something one thing things stuff kind sort
-        find found show showed tell told give look looked looking search open start pull bring get got decide decided
-        remember remind recall leave left doing work working worked read reading watched watching visited saw seen like
-        page pages article articles site sites link links bookmark bookmarks bookmarked saved save session sessions claude history
-        today yesterday tomorrow tonight morning afternoon evening night last latest recently recent earlier week month year ago
-        """.split(whereSeparator: \.isWhitespace).map(String.init)).union(SpokenTime.weekdayWords)
 
     // MARK: Step 2: read
 
@@ -363,15 +267,16 @@ enum SpokenText {
     static let severalAnswerTokens = 144
     static let maxSeveralSentences = 3
 
-    static func answerLimits(for request: String) -> (tokens: Int, sentences: Int) {
-        asksForSeveral(request) ? (severalAnswerTokens, maxSeveralSentences) : (answerTokens, maxSentences)
+    /// `several` is the decisions' answer: the request asks for several results rather than one.
+    static func answerLimits(several: Bool) -> (tokens: Int, sentences: Int) {
+        several ? (severalAnswerTokens, maxSeveralSentences) : (answerTokens, maxSentences)
     }
 
     /// What the writer replies, alone, to hand the request to the web.
     static let escalation = "NEED_WEB"
 
     /// The answer prompt, in one place so it can be tuned with `Varnick --ask`. The small model follows one instruction better than
-    /// a choice between two, so code picks (`asksForSeveral`, `fit`).
+    /// a choice between two, so code picks (`several`, `fit`).
     private static let answerTemplate = """
         You answer a spoken request aloud. The results below come from the user's own browsing history, bookmarks and Claude Code sessions.
         {instruction}
@@ -406,9 +311,9 @@ enum SpokenText {
 
     /// `escalation` takes the place of "say so plainly" when it is offered, as the first eval measured it; withheld, "say so plainly"
     /// stays, as the second did, and a session adds its own line. `today` is `SpokenTime.today`.
-    static func answerPrompt(for request: String, rows: String, today: String, escalation offered: Bool, session: Bool) -> String {
+    static func answerPrompt(for request: String, rows: String, today: String, several: Bool, escalation offered: Bool, session: Bool) -> String {
         let fit = offered ? escalationLine : plainlyLine + (session ? "\n" + sessionLine : "")
-        return answerTemplate.replacingOccurrences(of: "{instruction}", with: asksForSeveral(request) ? severalInstruction : oneInstruction)
+        return answerTemplate.replacingOccurrences(of: "{instruction}", with: several ? severalInstruction : oneInstruction)
             .replacingOccurrences(of: "{fit}", with: fit)
             .replacingOccurrences(of: "{today}", with: today)
             .replacingOccurrences(of: "{rows}", with: rows)
@@ -417,28 +322,6 @@ enum SpokenText {
 
     /// Whether the writer's reply is the marker: it holds `escalation`.
     static func escalates(_ reply: String) -> Bool { reply.contains(escalation) }
-
-    /// Whether the request asks for several results rather than one: "any other pages like X", "similar", "what else", or
-    /// "which"/"what"/"all" with a plural ("which pages", "all my bookmarks"). "The other day" and "which of my bookmarks is
-    /// about X" ask for one. A plain plural is not enough ("the pages I read" is a miss), which costs only a shorter answer.
-    static func asksForSeveral(_ request: String) -> Bool {
-        let words = tokens(request)
-        if words.contains(where: { ["else", "similar", "alike"].contains($0) }) { return true }
-        let timeWords: Set<String> = ["day", "days", "week", "weeks", "night", "nights", "time", "times", "morning", "month", "months", "year", "years"]
-        let plurals: Set<String> = ["pages", "bookmarks", "sessions", "articles", "sites", "links", "things", "ones", "results"]
-        return words.indices.contains { i in
-            switch words[i] {
-            case "other", "others":
-                return i > 0 && ["any", "the", "some"].contains(words[i - 1]) && !(i + 1 < words.count && timeWords.contains(words[i + 1]))
-            case "which", "what":
-                return i + 1 < words.count && plurals.contains(words[i + 1])
-            case "all":
-                return i + 1 < words.count && (plurals.contains(words[i + 1]) || ["the", "my", "of"].contains(words[i + 1]))
-            default:
-                return false
-            }
-        }
-    }
 
     /// Plain text for the speech: no markdown, one line, the first `sentences` sentences. Nil when the reply holds no text.
     static func spoken(fromReply reply: String, sentences limit: Int) -> String? {
@@ -459,7 +342,7 @@ enum SpokenText {
 /// written from those it keeps or asked of the web.
 @MainActor
 enum SpokenPipeline {
-    /// The writer failed; the log names the error's kind.
+    /// Nothing could decide, or the writer failed; the log names the error's kind.
     struct Failure: Error {
         let underlying: Error
     }
@@ -468,9 +351,9 @@ enum SpokenPipeline {
         case answer(String)
         /// The request was empty: the wake phrase and nothing after it.
         case nothingToSearch
-        /// The whole request asked for the time or the date: answered from the Mac's clock, at the moment it is said.
-        case clock(SpokenText.ClockQuestion)
-        /// Jev found it off-topic and it asks Varnick to do something (a timer, music): said plainly, with what Varnick does do.
+        /// The decisions found the request asks the time, the date or the day: answered from the Mac's clock, at the moment it is said.
+        case clock
+        /// The decisions found it asks Varnick to do something it can't (a timer, music): said plainly, with what Varnick does do.
         /// `screen` and `web` are what Varnick does besides looking things up.
         case cantDo(screen: Bool, web: Bool)
         /// Nothing was kept, and the web can't be asked (the switch is off or its needs aren't met).
@@ -491,7 +374,7 @@ enum SpokenPipeline {
             switch self {
             case .answer(let text): text
             case .nothingToSearch: "Ask me to find a page, a bookmark or a Claude session."
-            case .clock(let question): SpokenText.clockAnswer(question)
+            case .clock: SpokenText.clockAnswer()
             case .cantDo(let screen, let web): SpokenText.cantDoLine(screen: screen, web: web)
             case .nothingKept: "I couldn't find that in your pages, bookmarks or Claude sessions."
             case .noSessions(let sentence): sentence
@@ -581,7 +464,11 @@ enum SpokenPipeline {
 
     struct Run {
         var outcome = Outcome.nothingToSearch
-        /// The session folder and time the request names.
+        /// What the decisions chose, and who made them (Jev, or the Text generation model and why Jev wasn't used or failed).
+        var decisions: SpokenDecisions?
+        var decidedBy = "-"
+        var deciding: Duration = .zero
+        /// The project and time the decisions named, and whether only the user's own things can answer.
         var scope = SpokenText.Scope()
         /// The search words, and what `prepare` found by them.
         var words = ""
@@ -591,10 +478,8 @@ enum SpokenPipeline {
         var judged: [SearchResult] = []
         /// The sessions a named folder or a time-only window selected: kept whatever the judge scores them.
         var selected: Set<Int64> = []
-        /// The route Jev gave, when it was asked, and who routed or why nobody did.
+        /// The sources' probabilities, when the decisions gave them: they order the rows.
         var route: SpokenRouter.Route?
-        var routedBy = "-"
-        var routing: Duration = .zero
         /// The keyword and meaning passes, who answered the meaning pass, and how the sessions were found.
         var search: Duration = .zero
         var meaningBy = "-"
@@ -637,67 +522,41 @@ enum SpokenPipeline {
         return reply.text
     }
 
-    /// Search, judge and keep: everything up to the rows to read, with no answer and no speech. Runs while a spoken request is still
-    /// being collected; throws `CancellationError` when more speech cancels it. Jev's route and the search run side by side.
+    /// Decide, search, judge and keep: everything up to the rows to read, with no answer and no speech. Runs while a spoken request is
+    /// still being collected; throws `CancellationError` when more speech cancels it, and `Failure` when nothing can decide. The
+    /// decisions come first, since the search takes its words, project and time from them (ADR 0037).
     static func prepare(_ request: String, on model: LauncherModel, screen: ScreenOptions? = nil, now: Date = Date()) async throws -> Run {
         let screen = screen ?? ScreenOptions()
         var run = Run()
         run.context.now = now
 
         guard !SpokenText.cleaned(request).isEmpty else { return run }
-        // The clock is answered before anything else, and nothing is sent, not even to Jev.
-        if let question = SpokenText.clockQuestion(in: request) {
-            run.outcome = .clock(question)
-            return run
-        }
+        run.web = Settings.shared.webAnswersOn
 
         let clock = ContinuousClock()
-        run.scope = SpokenText.scope(of: request, folders: model.store.sessionFolderNames(), now: now)
-        run.web = Settings.shared.webAnswersOn
-        run.words = SpokenText.queryWords(from: request)
-        let scope = run.scope
+        let questions = DecisionQuestions(request: request, screen: screen.on, index: model.projectIndex, now: now)
+        let decisions = try await decide(questions, on: model, into: &run)
+        run.decisions = decisions
+        run.route = decisions.route
 
-        // The search starts at once and the route is asked beside it. It is cancelled by a route that ends the request, and on any
-        // way out of this function (a cancel while waiting for the route included).
-        let words = run.words
-        let searching = Task { () throws -> Found in
-            try await search(request, words: words, scope: scope, on: model, now: now)
+        // "Time" and "do" are read before the screen, since the source question still sends these requests there.
+        if decisions.asksTime {
+            run.outcome = .clock
+            return run
         }
-        defer { searching.cancel() }
-
-        // Jev only when the relevance filter is set to TypeSafe and a key is saved, and it answers in time (ADR 0016).
-        var route: SpokenRouter.Route?
-        run.routedBy = "Jev"
-        let began = clock.now
-        if Settings.shared.activeRelevanceFilter != .typesafe {
-            run.routedBy = "relevance filter not on TypeSafe"
-        } else if let key = Settings.shared.typesafeKey {
-            do {
-                route = try await SpokenRouter(apiKey: key).route(request, screen: screen.on)
-            } catch {
-                try Task.checkCancellation()
-                run.routedBy = "Jev failed: \(error.logKind)"
-            }
-        } else {
-            run.routedBy = "no TypeSafe key"
+        if decisions.asksToDo {
+            run.outcome = .cantDo(screen: screen.on, web: run.web)
+            return run
         }
-        run.routing = began.duration(to: clock.now)
-        run.route = route
-
-        if let route {
-            // The window in front is read, not searched: no judge runs.
-            if route.screen > max(route.history, route.bookmarks, route.sessions) {
-                return try await lookAtScreen(request, into: run, screen: screen)
-            }
-            // A thing to do is cut short, whatever the rows hold. Only on a request Jev found off-topic: the same words turn up in
-            // requests about the user's things.
-            if route.isOffTopic, SpokenText.asksToDo(request) {
-                run.outcome = .cantDo(screen: screen.on, web: run.web)
-                return run
-            }
+        // The window in front is read, not searched: no judge runs.
+        if let route = decisions.route, route.screen > max(route.history, route.bookmarks, route.sessions) {
+            return try await lookAtScreen(request, into: run, screen: screen)
         }
 
-        let found = try await searching.value
+        let scope = SpokenText.scope(from: decisions)
+        run.scope = scope
+        run.words = decisions.words.joined(separator: " ")
+        let found = try await search(request, words: decisions.words, scope: scope, on: model)
         run.search = found.took
         run.meaningBy = found.meaningBy
         run.sessionsBy = found.sessionsBy
@@ -717,31 +576,74 @@ enum SpokenPipeline {
         }
         run.judged = rows
 
-        // Kept: those the judge scored at the threshold or more, and the sessions a folder or a time selected whatever it scored them.
-        // Unjudged, the top rows are read, as a typed search shows them.
+        // Kept: those the judge scored at the threshold or more, and the sessions a project or a filtering window selected whatever it
+        // scored them. Unjudged, the top rows are read, as a typed search shows them.
+        let namesProject = scope.folder != nil
         if verdict.scores == nil {
-            run.rows = SpokenText.topRows(rows, route: route, namesFolder: !scope.folders.isEmpty)
+            run.rows = SpokenText.topRows(rows, route: decisions.route, namesFolder: namesProject)
         } else {
             let kept = rows.filter { run.selected.contains($0.id) || ($0.relevance ?? 0) >= RelevanceSearch.threshold }
-            run.rows = SpokenText.ordered(kept, route: route, namesFolder: !scope.folders.isEmpty)
+            run.rows = SpokenText.ordered(kept, route: decisions.route, namesFolder: namesProject)
         }
 
         if !run.rows.isEmpty {
             run.outcome = .reading
         } else if scope.staysLocal {
-            // The web can't know what the user did in a project or at a time.
-            run.outcome = .noSessions(scope.nothingFound)
+            // The web can't know what the user did in a project or at a time, and only their own things can answer an `own` request.
+            run.outcome = scope.shapesSessions ? .noSessions(scope.nothingFound) : .nothingKept
         } else {
             run.outcome = run.web ? .asking : .nothingKept
         }
         return run
     }
 
+    /// Nothing could decide: Jev wasn't used or failed, and the Text generation model's reply held no decisions.
+    struct Undecided: Error {}
+
+    /// The decisions, by Jev when the relevance filter is on TypeSafe with a key and it answers in time, else by the Text generation
+    /// model the user set, as one prompt. Throws `Failure` when nothing can decide, with Text generation's own error under it when it
+    /// is the one that is unavailable.
+    private static func decide(_ questions: DecisionQuestions, on model: LauncherModel, into run: inout Run) async throws -> SpokenDecisions {
+        let clock = ContinuousClock()
+        let began = clock.now
+        var why = "relevance filter not on TypeSafe"
+        if Settings.shared.activeRelevanceFilter == .typesafe {
+            if let key = Settings.shared.typesafeKey {
+                do {
+                    let decisions = try await SpokenRouter(apiKey: key).decide(questions)
+                    run.decidedBy = "Jev"
+                    run.deciding = began.duration(to: clock.now)
+                    return decisions
+                } catch {
+                    try Task.checkCancellation()
+                    why = "Jev failed: \(error.logKind)"
+                }
+            } else {
+                why = "no TypeSafe key"
+            }
+        }
+        var places: [String] = []
+        let reply: String
+        do {
+            reply = try await generate(questions.fallbackPrompt, fallbackTokens, on: model, places: &places)
+        } catch {
+            try Task.checkCancellation()
+            throw Failure(underlying: error)
+        }
+        guard let decisions = questions.read(fallback: reply) else { throw Failure(underlying: Undecided()) }
+        run.decidedBy = "\(places.first ?? "-") (\(why))"
+        run.deciding = began.duration(to: clock.now)
+        return decisions
+    }
+
+    /// The fallback's reply is one line of JSON.
+    static let fallbackTokens = 160
+
     /// What the search found.
     private struct Found {
         var pages: [SearchResult]
         var sessions: [SearchResult]
-        /// The sessions (row ids) a named folder, or a time with no other words, selected.
+        /// The sessions (row ids) a named project, or a filtering window, selected.
         var selected: Set<Int64>
         var took: Duration
         var meaningBy: String
@@ -749,14 +651,14 @@ enum SpokenPipeline {
     }
 
     /// The pages and the sessions, as the panel ranks them (ADR 0017), with the spoken request's own inputs for the sessions: the
-    /// folders and the time window it names. The pages keep every word and get no window.
-    private static func search(_ request: String, words: String, scope: SpokenText.Scope, on model: LauncherModel, now: Date) async throws -> Found {
+    /// project and the time window it asks about. The pages keep every word and get no window.
+    private static func search(_ request: String, words: [String], scope: SpokenText.Scope, on model: LauncherModel) async throws -> Found {
         let clock = ContinuousClock()
         let began = clock.now
         let search = model.search
         let sessionWords = SpokenText.sessionWords(from: words, scope: scope)
-        // A request with only a time, or a folder, and no other words has nothing to search the pages for.
-        let pageWords = words.isEmpty ? (scope.shapesSessions ? "" : SpokenText.cleaned(request)) : words
+        // A request with only a project or a time, and no words, has nothing to search the pages for.
+        let pageWords = words.isEmpty ? (scope.shapesSessions ? "" : SpokenText.cleaned(request)) : words.joined(separator: " ")
         var ranking = pageWords.isEmpty ? RelevanceSearch.Ranking() : search.keyword(pageWords)
         var meaningBy = pageWords.isEmpty ? "no page words" : "keyword only"
         if !pageWords.isEmpty {
@@ -775,12 +677,12 @@ enum SpokenPipeline {
         var selected: Set<Int64> = []
         var sessionsBy = "searched"
         if scope.shapesSessions {
-            // Sessions in a named folder only; with no words left, those in the window (and the folder), most recent first; with words,
-            // those in the window go ahead of the others found.
-            let filter = SessionFilter(folderNames: scope.folders, window: scope.timeOnly ? scope.window?.interval : nil)
-            sessions = try await search.spokenSessions(words: sessionWords, filter: filter, boost: scope.timeOnly ? nil : scope.window?.interval)
-            if !scope.folders.isEmpty || scope.timeOnly { selected = Set(sessions.map(\.id)) }
-            sessionsBy = (scope.folders.isEmpty ? "" : "folder, ") + (scope.window.map { "\($0.kind) window, \(scope.timeOnly ? "filter" : "boost")" } ?? "")
+            // Sessions in the named project only. A window with `own` filters them too, ranked by the words, or most recent first
+            // when there are none; otherwise the sessions in it go ahead of the others found.
+            let filter = SessionFilter(folderNames: scope.folder.map { [$0.lowercased()] } ?? [], window: scope.windowFilters ? scope.window?.interval : nil)
+            sessions = try await search.spokenSessions(words: sessionWords, filter: filter, boost: scope.windowFilters ? nil : scope.window?.interval)
+            if scope.folder != nil || scope.windowFilters { selected = Set(sessions.map(\.id)) }
+            sessionsBy = (scope.folder == nil ? "" : "folder, ") + (scope.window.map { "\($0.kind) window, \(scope.windowFilters ? "filter" : "boost")" } ?? "")
             sessionsBy = sessionsBy.trimmingCharacters(in: CharacterSet(charactersIn: ", "))
         }
         try Task.checkCancellation()
@@ -967,9 +869,10 @@ enum SpokenPipeline {
         let session = run.rows.contains(where: \.isSession)
         let offered = SpokenText.offersEscalation(rows: run.rows, web: run.web, scope: run.scope)
         run.writer = WriterNote(offered: offered, withheld: offered ? nil : withheld(run: run, session: session))
-        let limits = SpokenText.answerLimits(for: request)
+        let several = run.decisions?.several ?? false
+        let limits = SpokenText.answerLimits(several: several)
         let prompt = SpokenText.answerPrompt(for: request, rows: rows, today: SpokenTime.today(now: context.now, calendar: context.calendar),
-                                             escalation: offered, session: session)
+                                             several: several, escalation: offered, session: session)
         let text: String
         do {
             text = try await generate(prompt, limits.tokens, on: model, places: &textPlaces)
@@ -1061,10 +964,22 @@ extension Double {
 /// `--draw` also shows the arrow for 8 s, to check placement.
 @MainActor
 enum SpokenCommand {
-    private static func describe(_ route: SpokenRouter.Route) -> String {
+    /// The decisions and who made them: the sources' probabilities with "time" and "do", the project and time labels, own, several and
+    /// the words. A fallback gives one label for each source, so its probabilities are 0 or 1.
+    private static func describe(_ decisions: SpokenDecisions?, by: String, took: Duration) -> [String] {
+        guard let decisions else { return ["decisions: none"] }
         let p = { (value: Double) in String(format: "%.2f", value) }
-        return "jev: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), "
-            + "screen \(p(route.screen)), other \(p(route.other))"
+        var lines = ["decisions: by \(by)  [\(took.seconds.secondsText)]"]
+        if let route = decisions.route {
+            lines.append("  source: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), "
+                         + "screen \(p(route.screen)); time \(p(route.time)), do \(p(route.doing))")
+        } else {
+            lines.append("  source: none named")
+        }
+        lines.append("  project: \(decisions.folder ?? "none"), time: \(decisions.window.map { $0.label + ($0.future ? " (future)" : "") } ?? "none"), "
+                     + "own \(decisions.own), several \(decisions.several)")
+        lines.append("  words: \(decisions.words.joined(separator: " "))")
+        return lines
     }
 
     private static func describe(_ look: SpokenPipeline.ScreenLook, outcome: SpokenPipeline.Outcome) -> [String] {
@@ -1153,7 +1068,7 @@ enum SpokenCommand {
             }
             // Said as is; when no answer was written (nothing to search, nothing found) it is Varnick's own sentence.
             var says = run.outcome.spoken
-            if case .clock(let question) = run.outcome { says = SpokenText.clockAnswer(question, at: now) }
+            if case .clock = run.outcome { says = SpokenText.clockAnswer(at: now) }
             print("says: \(says)  [\(run.respond.seconds.secondsText)]")
             return 0
         } catch let failure as SpokenPipeline.Failure {
@@ -1165,20 +1080,16 @@ enum SpokenCommand {
         }
     }
 
-    /// What `prepare` did: the route, what the request names, the search, the judge and the rows. `run` is the answered run.
+    /// What `prepare` did: the decisions and who made them, the search, the judge and the rows. `run` is the answered run.
     private static func describe(_ prepared: SpokenPipeline.Run, run: SpokenPipeline.Run, draw: Bool) async {
         switch prepared.outcome {
         case .nothingToSearch:
             print("search: nothing to search")
-        case .clock:
-            print("clock: answered from the Mac's clock, nothing sent")
-        case .cantDo:
-            print("route: can't do  [\(prepared.routedBy), \(prepared.routing.seconds.secondsText)]")
-            if let route = prepared.route { print(describe(route)) }
+        case .clock, .cantDo:
+            describe(prepared.decisions, by: prepared.decidedBy, took: prepared.deciding).forEach { print($0) }
         default:
             if let look = prepared.screen {
-                print("route: screen  [\(prepared.routedBy), \(prepared.routing.seconds.secondsText)]")
-                if let route = prepared.route { print(describe(route)) }
+                describe(prepared.decisions, by: prepared.decidedBy, took: prepared.deciding).forEach { print($0) }
                 describe(look, outcome: run.outcome).forEach { print($0) }
                 if draw, case .point(let target) = run.outcome {
                     NSApplication.shared.setActivationPolicy(.accessory)
@@ -1188,11 +1099,10 @@ enum SpokenCommand {
                 }
                 return
             }
-            print("route: \(prepared.routedBy)  [\(prepared.routing.seconds.secondsText)]")
-            if let route = prepared.route { print(describe(route)) }
+            describe(prepared.decisions, by: prepared.decidedBy, took: prepared.deciding).forEach { print($0) }
             let scope = prepared.scope
-            print("sessions: \(scope.folders.isEmpty ? "no folder named" : "folder " + scope.folders.joined(separator: ", ")), "
-                  + "\(scope.window.map { "window \($0.label) (\($0.kind))" } ?? "no time named"), found \(prepared.sessionsBy)")
+            print("sessions: \(scope.folder.map { "project " + $0 } ?? "no project named"), "
+                  + "\(scope.window.map { "window \($0.label) (\($0.kind))" } ?? "no time used"), found \(prepared.sessionsBy)")
             print("search: \"\(prepared.words)\", meaning by \(prepared.meaningBy)  [\(prepared.search.seconds.secondsText)]")
             print("judge: \(prepared.judgedBy)  [\(prepared.judge.seconds.secondsText)]")
             let kept = Set(prepared.rows.map(\.id))

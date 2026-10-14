@@ -118,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             await HistorySync.run(databasePath: model.store.path,
                                   embedder: { [embedder, embeddingServer] in await HistorySync.chosenEmbedder(embedder, server: embeddingServer) },
                                   pullingPeers: true, embedding: { Settings.shared.semanticSearch })
+            model.rebuildProjectIndex()
         } while syncAgain
     }
 
