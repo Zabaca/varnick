@@ -59,35 +59,70 @@ final class Speaker {
     static let shared = Speaker()
 
     private let synthesizer = AVSpeechSynthesizer()
-    private var playback: SpeechPlayback?
-    /// The ElevenLabs request under way, cancelled by `stop`.
-    private var elevenLabs: Task<ElevenLabs.Outcome, Never>?
+    /// Renders the line queued behind another while the first still plays, which one synthesizer would only do after it.
+    private let queuedSynthesizer = AVSpeechSynthesizer()
+    /// The lines being spoken or waiting their turn (two at most), so `stop` reaches each.
+    private var lines: [Line] = []
     /// Bumped by `stop`, so a speech that was stopped doesn't go on to the fallback.
     private var stops = 0
+
+    /// One line's playback and ElevenLabs request, what `stop` has to reach.
+    private final class Line {
+        var playback: SpeechPlayback?
+        /// The ElevenLabs request under way, cancelled by `stop`.
+        var elevenLabs: Task<ElevenLabs.Outcome, Never>?
+    }
 
     /// Speaks `text` in the chosen voice and returns when it ends or `stop()` is called. A span is open for `SpeechSpans` for the
     /// whole of it, the wait for ElevenLabs and the fallback after it included.
     @discardableResult
     func speak(_ text: String) async -> Speech {
+        await speak(text, then: { nil }).first
+    }
+
+    /// Speaks `first`, and the line `next` returns, queued behind it: its audio is fetched or rendered while `first` plays and
+    /// starts when `first`'s last sound ends, never over it. One span covers both, so the mic ignores both, and `stop()` drops both.
+    /// `next` returns nil for no second line, and is awaited meanwhile on the caller's task. Returns when both have ended.
+    func speak(_ first: String, then next: @MainActor () async -> String?) async -> (first: Speech, then: Speech?) {
         stop()
         let stopsAtStart = stops
         let settings = Settings.shared
         // The key is read before the span opens: a Keychain prompt must not hold it open.
         let viaElevenLabs = settings.speaksInElevenLabs
         let key = viaElevenLabs ? await ElevenLabs.apiKey() : nil
-        guard stops == stopsAtStart else { return Speech(first: nil, by: "stopped") }
+        let voice = settings.elevenLabsVoice
+        guard stops == stopsAtStart else { return (Speech(first: nil, by: "stopped"), nil) }
         let token = SpeechSpans.shared.began()
         defer { SpeechSpans.shared.ended(token) }
 
+        func play(_ text: String, behind previous: Task<Speech, Never>?) -> Task<Speech, Never> {
+            Task {
+                await self.speakLine(text, viaElevenLabs: viaElevenLabs, key: key, voice: voice, stopsAtStart: stopsAtStart, behind: previous)
+            }
+        }
+        let starting = play(first, behind: nil)
+        guard let line = await next(), stops == stopsAtStart else { return (await starting.value, nil) }
+        let queued = play(line, behind: starting)
+        return (await starting.value, await queued.value)
+    }
+
+    /// One line in the voice chosen, ElevenLabs first when it is. Held back until `previous` has ended, when there is one.
+    private func speakLine(_ text: String, viaElevenLabs: Bool, key: String?, voice: String, stopsAtStart: Int,
+                           behind previous: Task<Speech, Never>?) async -> Speech {
+        // A stop since the line was handed over (before this task started) has nothing to reach yet.
+        guard stops == stopsAtStart else { return Speech(first: nil, by: "stopped") }
+        let line = Line()
+        lines.append(line)
+        defer { lines.removeAll { $0 === line } }
         var by = "installed voice"
         if viaElevenLabs {
-            switch await speakInElevenLabs(text, key: key, voice: settings.elevenLabsVoice, stopsAtStart: stopsAtStart) {
+            switch await speakInElevenLabs(text, key: key, voice: voice, stopsAtStart: stopsAtStart, line: line, behind: previous) {
             case .spoke(let speech): return speech
             case .stopped: return Speech(first: nil, by: "stopped")
             case .failed(let kind): by = "installed voice (ElevenLabs: \(kind))"
             }
         }
-        return Speech(first: await speakInstalled(text, stopsAtStart: stopsAtStart), by: by)
+        return Speech(first: await speakInstalled(text, stopsAtStart: stopsAtStart, line: line, behind: previous), by: by)
     }
 
     private enum Attempt {
@@ -97,22 +132,34 @@ final class Speaker {
         case failed(String)
     }
 
-    private func speakInElevenLabs(_ text: String, key: String?, voice: String, stopsAtStart: Int) async -> Attempt {
+    /// A playback for a line: held back until `previous` has ended when it is queued behind one.
+    private func makePlayback(for line: Line, behind previous: Task<Speech, Never>?) -> SpeechPlayback {
+        let playback = SpeechPlayback(held: previous != nil)
+        line.playback = playback
+        if let previous {
+            Task {
+                _ = await previous.value
+                playback.release()
+            }
+        }
+        return playback
+    }
+
+    private func speakInElevenLabs(_ text: String, key: String?, voice: String, stopsAtStart: Int, line: Line,
+                                   behind previous: Task<Speech, Never>?) async -> Attempt {
         let settings = Settings.shared
-        let playback = SpeechPlayback()
-        self.playback = playback
+        let playback = makePlayback(for: line, behind: previous)
         // Sound may have begun: stop it, so a failed line is never heard over the fallback.
         func end() {
             playback.stop()
-            if self.playback === playback { self.playback = nil }
+            if line.playback === playback { line.playback = nil }
         }
         var outcome = ElevenLabs.Outcome.failed(.noKey)
         if let key {
             let request = Task { await ElevenLabs.speak(text, voice: voice, key: key, into: playback) }
-            elevenLabs = request
+            line.elevenLabs = request
             outcome = await withTaskCancellationHandler { await request.value } onCancel: { request.cancel() }
-            // A newer speak may have replaced the handle meanwhile.
-            if elevenLabs == request { elevenLabs = nil }
+            line.elevenLabs = nil
         }
         switch outcome {
         case .played(let sent):
@@ -147,14 +194,18 @@ final class Speaker {
     }
 
     /// The installed voice, through the synthesizer.
-    private func speakInstalled(_ text: String, stopsAtStart: Int) async -> Date? {
-        let playback = SpeechPlayback()
-        self.playback = playback
+    /// A line queued behind another renders on `queuedSynthesizer` and is held until the first has ended.
+    private func speakInstalled(_ text: String, stopsAtStart: Int, line: Line, behind previous: Task<Speech, Never>?) async -> Date? {
+        let synthesizer = previous == nil ? synthesizer : queuedSynthesizer
+        let playback = makePlayback(for: line, behind: previous)
         synthesizer.write(utterance(text)) { buffer in playback.add(buffer) }
         await playback.finished()
-        if self.playback === playback { self.playback = nil }
+        if line.playback === playback { line.playback = nil }
         if let first = playback.firstSound { return first }
 
+        guard stops == stopsAtStart else { return nil }
+        // Spoken directly, so not over the line before it.
+        if let previous { _ = await previous.value }
         guard stops == stopsAtStart else { return nil }
         NSLog("Varnick: the synthesizer rendered no audio; speaking it directly")
         synthesizer.speak(utterance(text))
@@ -167,13 +218,16 @@ final class Speaker {
         return first
     }
 
-    /// Stops any speech now, and any ElevenLabs request; the awaiting `speak` returns.
+    /// Stops any speech now, queued lines included, and any ElevenLabs request; the awaiting `speak` returns.
     func stop() {
         stops += 1
-        elevenLabs?.cancel()
+        for line in lines {
+            line.elevenLabs?.cancel()
+            line.playback?.stop()
+            line.playback = nil
+        }
         synthesizer.stopSpeaking(at: .immediate)
-        playback?.stop()
-        playback = nil
+        queuedSynthesizer.stopSpeaking(at: .immediate)
     }
 
     private func utterance(_ text: String) -> AVSpeechUtterance {
@@ -204,8 +258,12 @@ final class SpeechPlayback: @unchecked Sendable {
     private var started = false
     private var waiting: CheckedContinuation<Void, Never>?
     private(set) var firstSound: Date?
+    /// A line queued behind another: its buffers are kept, and its engine made ready, until `release`.
+    private var held: Bool
+    private var heldBuffers: [AVAudioPCMBuffer] = []
 
-    init() {
+    init(held: Bool = false) {
+        self.held = held
         DispatchQueue.global().asyncAfter(deadline: .now() + Self.limit) { [self] in stop() }
         DispatchQueue.global().asyncAfter(deadline: .now() + Self.startLimit) { [self] in
             lock.lock()
@@ -222,25 +280,51 @@ final class SpeechPlayback: @unchecked Sendable {
         defer { lock.unlock() }
         guard !done else { return }
         started = true
+        if held {
+            // The engine starts now, so the first sound is not waiting for it when the line before ends.
+            if buffer.frameLength > 0 { startEngine(for: buffer.format) }
+            heldBuffers.append(buffer)
+            return
+        }
+        schedule(buffer)
+    }
+
+    /// Lets a held line's sound begin: what has arrived is scheduled, and what arrives later plays as it comes.
+    func release() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard held else { return }
+        held = false
+        let buffers = heldBuffers
+        heldBuffers = []
+        for buffer in buffers where !done { schedule(buffer) }
+    }
+
+    /// With the lock held. Does nothing when the engine is up already; ends the speech when it won't start.
+    private func startEngine(for bufferFormat: AVAudioFormat) {
+        guard engine == nil else { return }
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: bufferFormat)
+        do { try engine.start() } catch {
+            NSLog("Varnick: the speech engine didn't start: \(error.localizedDescription)")
+            return finish()
+        }
+        player.play()
+        (self.engine, self.player, format) = (engine, player, bufferFormat)
+    }
+
+    /// With the lock held.
+    private func schedule(_ buffer: AVAudioPCMBuffer) {
         if buffer.frameLength == 0 {
             rendered = true
             // The scheduled sound is over this long after it was all handed over, even if the engine never says so.
             DispatchQueue.global().asyncAfter(deadline: .now() + seconds + 3) { [self] in stop() }
             return finishIfPlayed()
         }
-        if engine == nil {
-            let engine = AVAudioEngine()
-            let player = AVAudioPlayerNode()
-            engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
-            do { try engine.start() } catch {
-                NSLog("Varnick: the speech engine didn't start: \(error.localizedDescription)")
-                return finish()
-            }
-            player.play()
-            (self.engine, self.player, format) = (engine, player, buffer.format)
-        }
-        guard buffer.format == format else { return }
+        startEngine(for: buffer.format)
+        guard !done, buffer.format == format else { return }
         pending += 1
         seconds += Double(buffer.frameLength) / buffer.format.sampleRate
         if firstSound == nil { firstSound = Date() }
