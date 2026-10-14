@@ -11,7 +11,16 @@ import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { minimalOptions, run } from '@zabaca/agent'
 
-type Request = { prompt: string; model: string; claude: string; filter: string; cwd: string }
+type Request = {
+  prompt: string
+  model: string
+  claude: string
+  filter: string
+  cwd: string
+  /** The call's whole tool set, allowed without a prompt. Absent is none: Text generation's calls carry no tools. */
+  tools?: string[]
+  maxTurns?: number
+}
 
 type Failure = { kind: string; stopReason?: string }
 
@@ -87,7 +96,10 @@ async function answer(request: Request): Promise<void> {
     request.prompt,
     {
       // Effort low is what stops Haiku 5.5 thinking: `thinking: disabled`, which minimalOptions() also sets, is accepted and ignored.
-      ...minimalOptions({ model: request.model, effort: 'low', abortController }),
+      ...minimalOptions({ model: request.model, effort: 'low', abortController, tools: request.tools ?? [] }),
+      // A tool that would ask is refused when no one can answer, so a tool the call has is allowed outright.
+      ...(request.tools?.length ? { allowedTools: request.tools } : {}),
+      ...(request.maxTurns ? { maxTurns: request.maxTurns } : {}),
       pathToClaudeCodeExecutable: request.claude,
       persistSession: false,
       includePartialMessages: true,
@@ -124,7 +136,18 @@ async function answer(request: Request): Promise<void> {
           if (failure) finish({ ok: false, ...failure, stopReason: message.subtype })
           else if (message.is_error || message.subtype !== 'success') finish({ ok: false, kind: 'error result', stopReason: message.subtype })
           else {
-            finish({ ok: true, text: text.trim(), firstTokenMs, durationMs: message.duration_ms, apiMs: message.duration_api_ms, stopReason: message.subtype })
+            // With tools the turns before the answer have text of their own ("Let me search for that."): the answer is the last
+            // turn's, which the SDK's result carries.
+            const answer = request.tools?.length ? message.result : text
+            finish({
+              ok: true,
+              text: answer.trim(),
+              firstTokenMs,
+              durationMs: message.duration_ms,
+              apiMs: message.duration_api_ms,
+              turns: message.num_turns,
+              stopReason: message.subtype,
+            })
           }
         }
       },
@@ -148,6 +171,10 @@ input.on('line', (line) => {
     if (![request.prompt, request.model, request.claude, request.filter, request.cwd].every((v) => typeof v === 'string' && v)) {
       throw new Error('incomplete')
     }
+    if (request.tools !== undefined && !(Array.isArray(request.tools) && request.tools.every((t) => typeof t === 'string' && t))) {
+      throw new Error('tools')
+    }
+    if (request.maxTurns !== undefined && !(Number.isInteger(request.maxTurns) && request.maxTurns > 0)) throw new Error('maxTurns')
   } catch {
     return emit({ type: 'result', ok: false, kind: 'bad request' })
   }

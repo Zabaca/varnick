@@ -44,8 +44,12 @@ struct SessionFilter: Equatable {
     /// A paired peer's id; this Mac's own sessions have none, so no host keeps every peer's.
     var host: String?
     var agent: String?
+    /// A spoken request's: sessions in, or under, a folder of one of these names (lowercased), on any Mac. A spoken name has no path.
+    var folderNames: [String] = []
+    /// A spoken request's: the sessions whose first prompt is before the window's end and whose last is after its start.
+    var window: DateInterval?
 
-    var isEmpty: Bool { folder == nil && host == nil && agent == nil }
+    var isEmpty: Bool { folder == nil && host == nil && agent == nil && folderNames.isEmpty && window == nil }
 }
 
 /// Local SQLite index of Chrome history, bookmarks and Claude sessions: FTS5 for keywords, an in-memory
@@ -110,6 +114,28 @@ final class FavoritesStore {
         if let host = filter.host {
             sql += " AND f.host = ?"
             binds.append(host)
+        }
+        if !filter.folderNames.isEmpty {
+            // The last part of the folder's path, compared lowercased with a project's name (`ProjectIndex`).
+            func escape(_ name: String) -> String {
+                name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
+            }
+            let each = "(lower(f.url) LIKE ? ESCAPE '\\' OR lower(f.url) LIKE ? ESCAPE '\\')"
+            sql += " AND (" + Array(repeating: each, count: filter.folderNames.count).joined(separator: " OR ") + ")"
+            for name in filter.folderNames { binds += ["%/" + escape(name), "%/" + escape(name) + "/%"] }
+        }
+        if let window = filter.window {
+            // This Mac's sessions keep their prompt times in `sessions` (the copy in the row's folder), a paired Mac's in `peer_sessions`.
+            let id = "substr(f.favorite_key, \(sessionKeyPrefix.count + 1))"
+            func prompt(_ column: String) -> String {
+                """
+                (CASE WHEN f.host IS NULL
+                   THEN (SELECT s.\(column) FROM sessions s WHERE s.session_id = \(id) AND s.directory = f.url ORDER BY s.modified DESC LIMIT 1)
+                   ELSE (SELECT p.\(column) FROM peer_sessions p WHERE p.peer_id = f.host AND p.session_id = \(id)) END)
+                """
+            }
+            sql += " AND \(prompt("first_prompt")) < CAST(? AS INTEGER) AND \(prompt("last_prompt")) > CAST(? AS INTEGER)"
+            binds += [String(Int(window.end.timeIntervalSince1970)), String(Int(window.start.timeIntervalSince1970))]
         }
         if let agent = filter.agent {
             let id = "substr(f.favorite_key, \(sessionKeyPrefix.count + 1))"
@@ -305,11 +331,25 @@ final class FavoritesStore {
         Set(sessionRows(filter, limit: nil, promoted: []))
     }
 
-    /// The folder names of all the sessions, this Mac's and the paired Macs', lowercased: the projects the user has worked on with
-    /// Claude. A spoken request is compared with them here and they go nowhere (ADR 0016).
-    func sessionFolderNames() -> Set<String> {
-        let sql = "SELECT DISTINCT url FROM favorites WHERE source = '\(Self.sessionSource)' LIMIT ?"
-        return Set(rows(sql, [], limit: nil) { ((Self.text($0, 0) as NSString).lastPathComponent).lowercased() })
+    /// The newest sessions' folder, title, last use and Mac (a paired Mac's peer id; nil is this Mac): what the project index is built
+    /// from (ADR 0037). Read on a connection of its own, so it can run off the main thread.
+    static func sessionFolders(databasePath: String, limit: Int = 3000) -> [ProjectIndex.Session] {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(databasePath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return [] }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 2000)
+        var stmt: OpaquePointer?
+        let sql = "SELECT url, title, coalesce(created_at, ''), host FROM favorites WHERE source = '\(sessionSource)' ORDER BY created_at DESC LIMIT ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        var sessions: [ProjectIndex.Session] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            sessions.append(ProjectIndex.Session(directory: text(stmt, 0), title: text(stmt, 1),
+                                                 used: timestamps.date(from: text(stmt, 2)) ?? .distantPast,
+                                                 host: sqlite3_column_type(stmt, 3) == SQLITE_TEXT ? text(stmt, 3) : nil))
+        }
+        return sessions
     }
 
     /// The sessions a filter keeps, with no words to match: the `promoted` rows first, then the most recently used.

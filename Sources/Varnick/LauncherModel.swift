@@ -1049,8 +1049,33 @@ final class LauncherModel: ObservableObject {
         projectScan?.cancel()
         projectScan = Task { [weak self] in
             let found = await Task.detached(priority: .userInitiated) { Project.scan(roots: roots) }.value
-            guard !Task.isCancelled, let self, found != self.projects else { return }
-            self.projects = found
+            guard !Task.isCancelled, let self else { return }
+            if found != self.projects { self.projects = found }
+            self.rebuildProjectIndex()
+        }
+    }
+
+    /// The projects as a spoken request's route call reads them (ADR 0037): built after each project scan and each session sync, kept
+    /// in memory, never logged. The file reads are off the main thread.
+    private(set) var projectIndex: [ProjectIndex.Entry] = []
+    private var indexBuild: Task<Void, Never>?
+
+    /// Returns once the project scan under way and the index built from it are done: `--ask` waits for them, a spoken request in the
+    /// app doesn't.
+    func projectIndexReady() async {
+        await projectScan?.value
+        await indexBuild?.value
+    }
+
+    func rebuildProjectIndex() {
+        let (projects, path) = (self.projects, store.path)
+        indexBuild?.cancel()
+        indexBuild = Task { [weak self] in
+            let built = await Task.detached(priority: .utility) {
+                ProjectIndex.build(projects: projects, sessions: FavoritesStore.sessionFolders(databasePath: path))
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.projectIndex = built
         }
     }
 

@@ -69,6 +69,46 @@ struct RelevanceSearch {
         return next
     }
 
+    /// A spoken request's sessions (listening-never-answers, option 07), searched apart from the pages since the folder a request
+    /// names and the time it names are inputs a typed search doesn't take. `filter` keeps the sessions of the named folders on any Mac,
+    /// and, when no words are left, the sessions in a time window. Returns at most `sessionsShown` sessions.
+    /// - With no words: the sessions the filter keeps, most recently used first.
+    /// - With words: ranked as the panel ranks a project's sessions (`LauncherModel.listPromptSessions`): keyword and meaning fused,
+    ///   with the similarity floor, or none when a project or a window chose the sessions. A named project or a filtering window always shows its sessions, so one the words
+    ///   don't match comes most recently used first. Sessions in `boost` go ahead of the others found, before the cut; the boost adds none.
+    func spokenSessions(words: String, filter: SessionFilter, boost: DateInterval?) async throws -> [SearchResult] {
+        store.refreshIfChanged()
+        guard !words.isEmpty else {
+            return store.sessionRows(filter, limit: Self.sessionsShown, promoted: []).compactMap { store.fetch($0) }
+        }
+        let keyword = store.keyword(words, limit: Self.candidateLimit, filter: filter)
+        // A named project or a filtering window chose these sessions: the words only rank them, with no similarity floor, and when
+        // they match none the most recently used come first.
+        let selecting = !filter.folderNames.isEmpty || filter.window != nil
+        var semantic: [(id: Int64, score: Float)] = []
+        do {
+            if let (vector, _) = try await embedQuery(words) {
+                semantic = store.semanticSessions(vector, limit: Self.candidateLimit, filter: filter)
+            }
+        } catch {
+            // A failure costs the meaning pass only: the keyword matches stay.
+            try Task.checkCancellation()
+        }
+        var found = fuse(keyword: keyword, semantic: semantic, limit: Self.candidateLimit,
+                         semanticOnlyFloor: selecting ? -1 : Self.sessionSimilarityFloor,
+                         promoted: store.rowIDs(ofSessions: openHere()))
+        if found.isEmpty, selecting {
+            found = store.sessionRows(filter, limit: Self.sessionsShown, promoted: []).compactMap { store.fetch($0) }
+        }
+        if let boost {
+            var window = filter
+            window.window = boost
+            let inside = store.sessionRowIDs(window)
+            found = found.filter { inside.contains($0.id) } + found.filter { !inside.contains($0.id) }
+        }
+        return Array(found.prefix(Self.sessionsShown))
+    }
+
     /// Why `words` get no judge.
     enum Unjudged: Error {
         case off, tooShort, noKey, notReady

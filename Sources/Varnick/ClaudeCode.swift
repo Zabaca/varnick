@@ -195,6 +195,28 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
         }
     }
 
+    /// A web answer (`WebAnswer`, listening-never-answers): one question through the helper with WebSearch as its only tool. Returns how
+    /// the call ended. A login or account failure, or `claude` missing or not starting, rests Claude Code as a Text generation failure
+    /// does; any other failure is logged and left to the caller to say, and rests nothing. It ignores resting (that exists to hand work to
+    /// this Mac's model, and here there is none to hand it to), and sets neither `lastOutcome` nor the row's "Answers in …", which time
+    /// Text generation.
+    func lookUp(_ prompt: String) async -> TextHelper.Outcome {
+        let found = await environment()
+        guard let claude = found.claude else {
+            failed(Failure(kind: "claude not found"))
+            return TextHelper.Outcome(end: .failed("claude not found"), total: .zero)
+        }
+        guard TextHelper.isInstalled else { return TextHelper.Outcome(end: .failed("text helper missing"), total: .zero) }
+        let outcome = await TextHelper.run(prompt, claude: claude, environment: found.variables, tools: WebAnswer.tools,
+                                           maxTurns: WebAnswer.maxTurns, deadline: WebAnswer.deadline)
+        if case .failed(let kind) = outcome.end {
+            NSLog("Varnick: Claude Code web answer failed: \(kind) after \(outcome.total.seconds.secondsText)"
+                  + (outcome.stopReason.map { ", stop reason \($0)" } ?? ""))
+            if WebAnswer.endsLogin(kind) { failed(Failure(kind: kind)) }
+        }
+        return outcome
+    }
+
     /// A call failed: Claude Code rests for a minute, and the next requests go to this Mac's model. A login that no longer works
     /// shows as such; `claude` that didn't start is looked for again.
     func failed(_ failure: Failure) {

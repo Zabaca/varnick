@@ -22,7 +22,7 @@ What was typed into a search engine before clicking through to a page of **Histo
 _Avoid_: Keyword, query (the query is what's typed into Varnick)
 
 **Relevance filter**:
-Search's last pass: a model judges which of the top 20 pages match what the search is after and moves them to the top, leaving the rest below in their order. Runs on TypeSafe or on this Mac, for a **Spoken request** as for a typed search; a Claude session is never judged.
+Search's last pass: a model judges which of the top 20 pages match what the search is after and moves them to the top, leaving the rest below in their order. Runs on TypeSafe or on this Mac, for a **Spoken request** as for a typed search; for a typed search a Claude session is never judged, and for a **Spoken request** it also scores up to 3 sessions.
 _Avoid_: Reranker (in the UI), Jev
 
 **Page description**:
@@ -244,8 +244,32 @@ The signed copy of Bun inside Varnick.app and the `agent.js` it runs, which writ
 _Avoid_: Agent (an **Agent** is a Claude Code definition), Claude session
 
 **Spoken request**:
-What the user says after the **Wake phrase**. It is answered aloud from **History**, **Bookmark**s and **Session**s. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
+What the user says after the **Wake phrase**. **History**, **Bookmark**s and **Session**s are all searched for it, sessions also by a project's folder name and by when they were used, and it is answered aloud from the rows the **Relevance filter** keeps or, with **Answer from the web** on, from the web when they can't answer it. A question about the time or the date is answered from this Mac's clock. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
+
+**Route**:
+The one call that decides what a **Spoken request** means, Jev's or, when Jev isn't used or fails, the Text generation model's: how likely each source is, whether it asks the time or asks for something Varnick can't do, whether it is about the screen, which **Project** and which time it names, whether only the user's own things can answer it, one result or several, and which of its words to search for. It orders the rows and shapes the session search; it never shuts a source out, and no phrase list decides anything.
+_Avoid_: Router, decide step, classifier
+
+**Project index**:
+What the **Route** reads to tell a **Project** from a word: for each of up to 40 projects, its name, other names (its git remote's repo name, the title of its `CLAUDE.md` or README), a one-line description and its last three **Session** titles. Built on this Mac after each project scan and session sync, and kept in memory.
+_Avoid_: Project list (that is `#name`'s)
+
+**Judge**:
+The Jev call that scores the first 20 pages and up to 3 sessions of a **Spoken request** for whether each helps answer it. Rows at 0.5 or more are kept, as are the sessions a named **Project** or a window with `own` selected. For a typed search the **Relevance filter** is a call of its own.
+_Avoid_: Filter (for the spoken call), reranker
+
+**Writer**:
+Text generation as it writes the answer to a **Spoken request** from the rows the **Judge** kept. With **Answer from the web** on, and no session among the rows, it may reply that they don't hold the answer, and the request goes to the web.
+_Avoid_: Answerer, model
+
+**Acknowledgement**:
+The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and not written to the transcript. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
+_Avoid_: Cue, earcon (the wake sound is a sound, not a line)
+
+**Answer from the web**:
+The setting (Settings › Listening, off by default) that answers a **Spoken request** from the web, through the user's own Claude Code and its search tool, when the rows can't. A request that names a session folder, or is only a time, is never asked of the web.
+_Avoid_: Web search (the tool is Claude Code's, not Varnick's)
 
 **Arrow**:
 What Varnick draws over the screen to point at the thing a **Spoken request** asked about, or that a **Session** points at with its screen tools: a big arrow with a sign holding the note Varnick says aloud, or the session's name and note. It lets clicks through, never takes focus and goes by itself.

@@ -33,6 +33,18 @@ grep -q -- '--no-session-persistence' "$work/fake.log" && grep -q -- '"--tools",
 grep -q -- '"--effort", "low"' "$work/fake.log" && ok "claude is asked for effort low" || bad "effort low"
 [ "$(grep -o -- '--plugin-dir' "$work/fake.log" | wc -l | tr -d ' ')" -eq 1 ] && ok "one reminders filter, ours: the package's own default is replaced, not added to" || bad "plugin directories"
 
+# A call with tools (the web answer): the whole tool set, allowed outright, a turn limit, and the turn count in the result.
+printf '{"prompt":"Say OK","model":"claude-haiku-5-5","claude":"%s","filter":"%s","cwd":"%s","tools":["WebSearch"],"maxTurns":3}\n' "$fake" "$build/mods/reminders" "$work/cwd" > "$work/web.json"
+with FAKE_CLAUDE_LOG="$work/web.log" helper "$work/web.json" "$work/web.out"
+grep -q '"type":"result","ok":true,"text":"OK"' "$work/web.out" && grep -q '"turns":1' "$work/web.out" \
+  && ok "a call with tools answers with the last turn and its turn count" || bad "a call with tools"
+grep -q -- '"--tools", "WebSearch"' "$work/web.log" && grep -q -- '"--allowedTools", "WebSearch"' "$work/web.log" && grep -q -- '"--max-turns", "3"' "$work/web.log" \
+  && ok "claude is started with WebSearch as its only tool, allowed, and a turn limit" || bad "claude's arguments for a call with tools"
+
+printf '{"prompt":"Say OK","model":"claude-haiku-5-5","claude":"%s","filter":"%s","cwd":"%s","tools":"WebSearch"}\n' "$fake" "$build/mods/reminders" "$work/cwd" > "$work/badtools.json"
+helper "$work/badtools.json" "$work/badtools.out"
+grep -q '"kind":"bad request"' "$work/badtools.out" && ok "tools that are not a list of names fail the request" || bad "bad tools"
+
 request "$fake" "$work/no-such-filter" > "$work/nofilter.json"
 helper "$work/nofilter.json" "$work/nofilter.out"
 grep -q '"ok":false,"kind":"filter missing"' "$work/nofilter.out" && ok "a missing filter fails the request" || bad "a missing filter"

@@ -269,7 +269,9 @@ final class LocalReranker: ObservableObject, RelevanceJudge {
     // MARK: Scoring
 
     func relevance(query: String, candidates: [SearchResult]) async throws -> [Double] {
-        let pages = candidates.map { (site: URL(string: $0.url)?.host?.lowercased() ?? "", title: $0.title) }
+        // A session has no site: its folder's name stands in for it (a spoken request judges sessions; a typed search never does).
+        let pages = candidates.map { (site: $0.isSession ? ($0.url as NSString).lastPathComponent.lowercased() : URL(string: $0.url)?.host?.lowercased() ?? "",
+                                      title: $0.title) }
         let scorer = try await loaded()
         let scores = try await scorer.relevance(query: query.trimmingCharacters(in: .whitespaces), pages: pages)
         guard scores.count == candidates.count else { throw LocalRerankerError.wrongScoreCount }

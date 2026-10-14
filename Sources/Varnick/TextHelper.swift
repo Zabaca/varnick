@@ -123,6 +123,9 @@ enum TextHelper {
         var claude: String
         var filter: String
         var cwd: String
+        /// The call's whole tool set, allowed without a prompt; absent is no tools, as Text generation calls. Varnick decides both.
+        var tools: [String]?
+        var maxTurns: Int?
     }
 
     /// What the helper said about a request.
@@ -135,6 +138,8 @@ enum TextHelper {
         var firstTokenMs: Double?
         var durationMs: Double?
         var apiMs: Double?
+        /// The model turns the call took (a search and its answer are two).
+        var turns: Int?
     }
 
     /// The helper's output cut into lines as it arrives.
@@ -158,6 +163,7 @@ enum TextHelper {
             var firstTokenMs: Double?
             var durationMs: Double?
             var apiMs: Double?
+            var turns: Int?
         }
 
         mutating func add(_ data: Data) -> [Line] {
@@ -173,7 +179,8 @@ enum TextHelper {
                 case "text": lines.append(.text(wire.text ?? ""))
                 case "result":
                     lines.append(.result(Reply(ok: wire.ok == true, text: wire.text ?? "", kind: wire.kind, stopReason: wire.stopReason,
-                                               firstTokenMs: wire.firstTokenMs, durationMs: wire.durationMs, apiMs: wire.apiMs)))
+                                               firstTokenMs: wire.firstTokenMs, durationMs: wire.durationMs, apiMs: wire.apiMs,
+                                               turns: wire.turns)))
                 default: unreadable += 1
                 }
             }
@@ -234,17 +241,22 @@ enum TextHelper {
         var firstTokenMs: Double?
         var durationMs: Double?
         var apiMs: Double?
+        var turns: Int?
         /// Nil when the result came first and the helper was left to wind down.
         var exitStatus: Int32?
     }
 
     /// Runs `bun --no-env-file --no-install` on `agent.js` in the empty working folder with the request on its input. Returns when
     /// the `result` arrives, not when `claude` has stopped; a cancel or the deadline (SIGTERM, SIGKILL a second later) waits for it.
-    static func run(_ prompt: String, claude: String, environment: [String: String]) async -> Outcome {
+    /// `tools`, `maxTurns` and `deadline` are for a call that searches the web (`WebAnswer`); Text generation's calls pass none and
+    /// get the defaults.
+    static func run(_ prompt: String, claude: String, environment: [String: String], tools: [String]? = nil, maxTurns: Int? = nil,
+                    deadline: TimeInterval = TextHelper.deadline) async -> Outcome {
         let clock = ContinuousClock()
         let began = clock.now
         try? FileManager.default.createDirectory(at: workingFolder, withIntermediateDirectories: true)
-        let request = Request(prompt: prompt, model: model, claude: claude, filter: filter.path, cwd: workingFolder.path)
+        let request = Request(prompt: prompt, model: model, claude: claude, filter: filter.path, cwd: workingFolder.path, tools: tools,
+                              maxTurns: maxTurns)
         guard var line = try? JSONEncoder().encode(request) else { return Outcome(end: .failed("request unwritable"), total: .zero) }
         line.append(0x0A)
         let (signal, signaller) = AsyncStream<Void>.makeStream()
@@ -268,7 +280,7 @@ enum TextHelper {
                               startup: found.readyAt.map { began.duration(to: $0) },
                               total: began.duration(to: found.resultAt ?? clock.now),
                               firstTokenMs: found.reply?.firstTokenMs, durationMs: found.reply?.durationMs, apiMs: found.reply?.apiMs,
-                              exitStatus: result?.status)
+                              turns: found.reply?.turns, exitStatus: result?.status)
         if result?.cancelled == true { outcome.end = .cancelled }
         else if result?.launchFailed == true { outcome.end = .failed("bun did not start") }
         // A result that arrived is the answer even when the deadline fell just after it. A failed one that the deadline's SIGTERM

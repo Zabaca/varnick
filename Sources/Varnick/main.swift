@@ -118,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             await HistorySync.run(databasePath: model.store.path,
                                   embedder: { [embedder, embeddingServer] in await HistorySync.chosenEmbedder(embedder, server: embeddingServer) },
                                   pullingPeers: true, embedding: { Settings.shared.semanticSearch })
+            model.rebuildProjectIndex()
         } while syncAgain
     }
 
@@ -784,10 +785,11 @@ runTextCommand { text, generator, place in
     return "\(reply)\nmade on \(place): \(times)generation \(generation)\(split)"
 }
 
-// `Varnick --ask <file>` treats the file's text as a spoken request (what follows "Hey Varnick") and prints what each of its three
+// `Varnick --ask <file>` treats the file's text as a spoken request (what follows "Hey Varnick") and prints what each of its
 // steps did and took, without speaking (see SpokenCommand). `--restart-after <seconds>` first runs the request's first half and
 // cancels it after that long, as more speech does in the app. `--app <name>` reads that app's focused window for a request about
-// the screen, and `--draw` also shows the arrow for 8 s (ADR 0019). Request files are personal: keep them out of the repo.
+// the screen, and `--draw` also shows the arrow for 8 s (ADR 0019). `--at <ISO 8601 date and time>` asks it at that moment, to tune time
+// words on fixed sessions. Request files are personal: keep them out of the repo.
 if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.arguments.count {
     DatabaseLocation.refuseCommandLineWithoutDatabase(supportFolder: SupportFolder.url)
     MainActor.assumeIsolated {
@@ -798,11 +800,21 @@ if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.ar
         let app = CommandLine.arguments.firstIndex(of: "--app")
             .flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil }
         let draw = CommandLine.arguments.contains("--draw")
+        var now = Date()
+        if let at = CommandLine.arguments.firstIndex(of: "--at") {
+            guard at + 1 < CommandLine.arguments.count, let date = ISO8601DateFormatter().date(from: CommandLine.arguments[at + 1]) else {
+                print("--at needs an ISO 8601 date and time with its offset, such as 2026-10-14T15:00:00-07:00")
+                exit(1)
+            }
+            now = date
+        }
         Task { @MainActor in
-            // The login shell is read once, here, as at launch, so it doesn't land in the decide step's figure.
+            // The login shell is read once, here, as at launch, so it doesn't land in the first request's figure.
             if Settings.shared.activeTextGeneration.runOn == .claude { await delegate.claudeCode.checkLogin() }
+            // The project scan and the index built from it, which the app has long done by its first request.
+            await delegate.model.projectIndexReady()
             exit(await SpokenCommand.run(file: CommandLine.arguments[i + 1], restartAfter: restartAfter, app: app, draw: draw,
-                                         model: delegate.model))
+                                         now: now, model: delegate.model))
         }
         RunLoop.main.run()
     }
