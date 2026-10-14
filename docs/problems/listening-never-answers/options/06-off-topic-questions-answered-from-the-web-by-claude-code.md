@@ -1,13 +1,31 @@
 ---
 problem: listening-never-answers
 title: Every spoken request is acknowledged by its route, and a question the user's own things don't answer is answered from the web by their own Claude Code
-summary: Two changes. First, every spoken request is acknowledged as soon as its route is known after the hold ("Checking your sessions.", "Checking your pages.", "Looking at your screen.", "Looking that up."), and the answer follows the acknowledgement without cutting it off. This changes the shipped local and screen answers for every Hey Varnick user. "What time is it" is answered from the clock and "set a timer" gets a fixed line, with no acknowledgement. Second, a new switch, Answer from the web, off by default, answers from the web a request Jev finds off-topic, instead of refusing it, and a request led by History whose local search finds nothing, instead of saying so. The text helper runs the user's own `claude` with one tool, WebSearch, on their plan, and Varnick speaks a one- or two-sentence answer naming its source. Only the question's words, the date, the time and the units go to Anthropic, and Claude's search words to its search provider. The switch needs Hey Varnick, the relevance filter on TypeSafe (Jev's off-topic and the filter's verdict decide what goes) and Claude Code logged in.
+summary: Its web triggers and per-route acknowledgements are superseded by option 07 (2026-10-14); its web call, switch, privacy text, clock answer and can't-do line stand. Two changes. First, every spoken request is acknowledged as soon as its route is known after the hold ("Checking your sessions.", "Checking your pages.", "Looking at your screen.", "Looking that up."), and the answer follows the acknowledgement without cutting it off. This changes the shipped local and screen answers for every Hey Varnick user. "What time is it" is answered from the clock and "set a timer" gets a fixed line, with no acknowledgement. Second, a new switch, Answer from the web, off by default, answers from the web a request Jev finds off-topic, instead of refusing it, and a request led by History whose local search finds nothing, instead of saying so. The text helper runs the user's own `claude` with one tool, WebSearch, on their plan, and Varnick speaks a one- or two-sentence answer naming its source. Only the question's words, the date, the time and the units go to Anthropic, and Claude's search words to its search provider. The switch needs Hey Varnick, the relevance filter on TypeSafe (Jev's off-topic and the filter's verdict decide what goes) and Claude Code logged in.
 status: accepted
 ---
 
 ## Solution
 
-**1. An acknowledgement on every route.** Jev decides while the user is still speaking, so when the hold ends Varnick knows where the request is going. It says so at once, before any answer is written:
+**Superseded in part by option 07** (the user's decision of 2026-10-14, relayed by the coordinator). Option 07 now says what a spoken request does:
+- every request searches History, Bookmarks and sessions together;
+- a Jev judge picks between the kept rows and the web;
+- the writer can escalate.
+
+These parts of this option no longer hold, and are marked where they stand:
+- the per-route acknowledgements (07 says "Let me check." and "Looking that up.");
+- "other" going straight to the web;
+- the History-led fallback, with its eval and questions.
+
+The reason is the routing eval (agent-lab `2437946`). "Other" caught 14 and 15 of 30 world questions and no fact or person question. A "web" answer caught 30, but sent 4–6 real requests to the web. So the words alone can't tell where a request belongs.
+
+What still holds, and 07 builds on:
+- the web call, what it sends, the prompt and cleaning, naming the source, and the 15 s deadline;
+- the switch and its needs, and the privacy text;
+- the clock answer and the can't-do line, with 07's fixes;
+- the voice queue, grown in 07.
+
+**1. An acknowledgement on every route.** (Superseded by option 07: one general line.) Jev decides while the user is still speaking, so when the hold ends Varnick knows where the request is going. It says so at once, before any answer is written:
 
 | Route | Said |
 |---|---|
@@ -30,8 +48,8 @@ This applies to everyone with Hey Varnick on, with the web switch on or off. It 
 
 **2. Answer from the web.** A new switch in Settings › Listening, below Point at the screen, off by default. Turning it on is the consent: there is no prompt per request. With it on, two kinds of request are answered from the web:
 
-- **Off-topic:** Jev finds it about none of the user's things ("other" at 0.5 or more), and it is not about the clock or something to do. It is answered instead of "I only look up your pages, bookmarks and Claude sessions." Its acknowledgement is "Looking that up."
-- **Nothing found locally:** its plan leads with History, and the local search finds nothing (defined under Implementation Decisions). It is answered instead of "I found nothing for …". Its "Checking your pages." has played, and "Looking that up." follows it.
+- **Off-topic** (superseded by option 07): Jev finds it about none of the user's things ("other" at 0.5 or more), and it is not about the clock or something to do. It is answered instead of "I only look up your pages, bookmarks and Claude sessions." Its acknowledgement is "Looking that up."
+- **Nothing found locally** (superseded by option 07): its plan leads with History, and the local search finds nothing (defined under Implementation Decisions). It is answered instead of "I found nothing for …". Its "Checking your pages." has played, and "Looking that up." follows it.
 
 Both are needed because the eval of 2026-10-14 found that "other" catches only about half of made-up world questions, and no fact or person question: those go to History as public topics. A public topic the user once visited ("what is MLX") is answered from History, as today. Either way:
 
@@ -85,7 +103,7 @@ Both are needed because the eval of 2026-10-14 found that "other" catches only a
 
 ## Implementation Decisions
 
-**The acknowledgement** (every route; no switch of its own)
+**The acknowledgement** (every route; no switch of its own; superseded by option 07, which keeps the queue)
 - **When:**
   - At the later of two moments: the hold's end, and the route being known for the request's final text.
   - Never before the hold ends. The user may still be speaking, and option 01's rule is that nothing is said before they finish.
@@ -124,7 +142,7 @@ Both are needed because the eval of 2026-10-14 found that "other" catches only a
 - Why for everyone: today the time gets a refusal, or a search for "time". The check is local, and it is the line the user would want with the web switch off too.
 - The phrases live in one place and are tuned with `--ask`.
 
-**Off-topic: can't-do, then the web**
+**Off-topic: can't-do, then the web** (the can't-do line stands, with option 07's fixes; the rest is superseded by option 07)
 - **Can't-do.** On a request Jev finds off-topic, a fixed list of phrases asking Varnick to do something is checked first: "set a timer", "timer for", "set an alarm", "wake me", "remind me to", "play" music or a song, "turn on", "turn off", "turn up", "turn down", "call", "text", "send a message".
   - A match gets "I can't do that." followed by what Varnick does: "I look up your pages, bookmarks and Claude sessions". With Point at the screen on, "…and what's on your screen". With Answer from the web on, "…and answer questions from the web".
   - It runs only on off-topic requests, since the same words appear in requests about the user's things ("remind me what I decided about Kestrel").
@@ -134,7 +152,7 @@ Both are needed because the eval of 2026-10-14 found that "other" catches only a
 - **The web call starts only after the hold,** in the answer step, with the final text, alongside the acknowledgement. A partial request is never searched, and a restart costs the plan nothing.
 - Never answered by this Mac's model or a server instead: neither can search, and a made-up opening time is worse than a failure line.
 
-**Nothing found locally: the fallback**
+**Nothing found locally: the fallback** (superseded by option 07)
 - **When:** with Answer from the web's needs met, a request falls back to the web when all of these hold:
   - Its plan leads with History, from Jev or from Text generation, with no sessions read ahead of the pages, so the request names none of the user's session folders.
   - It reads no session row. Sessions behind the pages count too: none matched by word, or reached the session floor by meaning.
@@ -281,7 +299,7 @@ Claude Code not found or not logged in before the call gets that same "isn't ans
     - the user's example crossed in every call, at 0.51–0.58.
   - A "web" action caught 30 of 30, but sent 4–6 real requests to the web ("what is MLX", "what is Varnick", the project names, a pricing page), and no threshold separated them.
   - Both failed the 27-of-30 rule. The user chose the fallback, and the off-topic path is built as specified.
-- **The fallback eval, before building the fallback** (agent-lab, through the `eval` agent, with Varnick pinned by commit). What it can measure without the user's History:
+- **The fallback eval, before building the fallback** (superseded by option 07's eval; not to be run) (agent-lab, through the `eval` agent, with Varnick pinned by commit). What it can measure without the user's History:
   - **Routing, from the routing eval's raw rows, with no new calls.** For each world question "other" misses, and each real request, it records:
     - the top source;
     - sessions' share, which says whether sessions would be read behind the pages;
@@ -415,7 +433,7 @@ Claude Code not found or not logged in before the call gets that same "isn't ans
   - No "web" action is added to Jev.
 
   The planner's reading, for the user to confirm below: what "nothing" means, the second "Looking that up.", and keeping requests led by sessions or bookmarks off the web.
-- **Left to the user,** new with the amendment, recommendation first:
+- **Left to the user,** new with the amendment (moot under option 07), recommendation first:
   1. **Only History-led requests fall back?** Yes. Requests led by sessions or bookmarks, or naming one of the user's project folders, keep "I found nothing for …". The eval sends the missed world questions to History, and a web answer about a project's name would be wrong and would send the name out.
   2. **A History-led request about the user's own reading ("that article I read about sourdough") that finds nothing goes to the web too?** Accept it. Its words go to Anthropic and its answer is general, but the two lines say the pages had nothing. Telling such requests apart would take another router question or a word list, neither measured.
 - **Verified in the code** (at a552c89):
