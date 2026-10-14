@@ -186,6 +186,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             // The Restart Varnick card takes every key.
             if self.model.answerRestartKey(event) { return nil }
+            // Esc cancels a pane being dragged by its grip (`PaneDrag`).
+            if self.model.cancelPaneDrag(event) { return nil }
             if self.model.pendingSplit != nil {
                 // The address of a page for another machine's tab is typed into the picker's field: its keys go there.
                 if self.model.pickerAsksAddress { return event }
@@ -307,6 +309,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .focusDown where inSession: model.moveFocus(.down)
         case .focusUp where inSession: model.moveFocus(.up)
         case .focusRight where inSession: model.moveFocus(.right)
+        case .swapLeft where inSession: model.swapPane(.left)
+        case .swapDown where inSession: model.swapPane(.down)
+        case .swapUp where inSession: model.swapPane(.up)
+        case .swapRight where inSession: model.swapPane(.right)
         case .webAddress: return model.webAction { $0.editingAddress = true }
         case .webReload: return model.webAction(includingRemoteFiles: true) { $0.reload() }
         case .fontBigger: Settings.shared.adjustFont(0.5)

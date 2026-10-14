@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 // A host's open tabs as it lists them to other machines (`tabs`, protocol 24, 25 for the proxied address): each tab's layout and what each pane shows. The host keeps
 // the tab (ADR 0034); the machine that asks sees it from this listing and nothing else.
@@ -99,6 +102,57 @@ public struct PeerLayout: Codable, Equatable, Sendable {
         if let first = parts[0].splitting(target, adding: new, axis: axis) { return .split(axis: axis0, fraction: fraction, first, parts[1]) }
         if let second = parts[1].splitting(target, adding: new, axis: axis) { return .split(axis: axis0, fraction: fraction, parts[0], second) }
         return nil
+    }
+
+    /// `a` and `b` in each other's places; every split stays.
+    public func swapping(_ a: String, _ b: String) -> PeerLayout {
+        if let pane { return .leaf(pane == a ? b : pane == b ? a : pane) }
+        return PeerLayout(axis: axis, fraction: fraction, parts: parts?.map { $0.swapping(a, b) })
+    }
+
+    /// `moved` taken out (its split closing up, as a close does) and put beside `target`, which is split at half along `axis`: first or second.
+    /// Nil when either is not in the layout, or they are one.
+    public func docking(_ moved: String, beside target: String, axis: String, first: Bool) -> PeerLayout? {
+        guard moved != target, panes.contains(moved), let rest = removing(moved), rest.panes.contains(target) else { return nil }
+        return rest.replacing(target) { leaf in .split(axis: axis, fraction: 0.5, first ? .leaf(moved) : leaf, first ? leaf : .leaf(moved)) }
+    }
+
+    /// `moved` taken out and put along a whole side of the layout at half of it, the rest as it was in the other half. Nil when it is not in it.
+    public func docking(_ moved: String, alongAxis axis: String, first: Bool) -> PeerLayout? {
+        guard panes.contains(moved), let rest = removing(moved) else { return nil }
+        return .split(axis: axis, fraction: 0.5, first ? .leaf(moved) : rest, first ? rest : .leaf(moved))
+    }
+
+    private func replacing(_ target: String, with make: (PeerLayout) -> PeerLayout) -> PeerLayout {
+        if let pane { return pane == target ? make(self) : self }
+        return PeerLayout(axis: axis, fraction: fraction, parts: parts?.map { $0.replacing(target, with: make) })
+    }
+
+    /// Whether the two place every pane the same way, each split's size aside.
+    public func sameArrangement(as other: PeerLayout) -> Bool {
+        if let pane { return other.pane == pane }
+        guard let parts, let theirs = other.parts, parts.count == theirs.count, axis == other.axis else { return false }
+        return zip(parts, theirs).allSatisfy { $0.sameArrangement(as: $1) }
+    }
+
+    /// Where each pane is in `area`, as the app lays it out: `divider` between the two parts, the first taking its share of what is left, rounded.
+    public func rects(in area: CGRect, divider: CGFloat) -> [String: CGRect] {
+        if let pane { return [pane: area] }
+        guard let parts, parts.count == 2, let fraction else { return [:] }
+        let sideBySide = axis == Self.sideBySide
+        let total = (sideBySide ? area.width : area.height) - divider
+        let first = (total * fraction).rounded()
+        let a = sideBySide ? CGRect(x: area.minX, y: area.minY, width: first, height: area.height)
+                           : CGRect(x: area.minX, y: area.minY, width: area.width, height: first)
+        let b = sideBySide ? CGRect(x: area.minX + first + divider, y: area.minY, width: total - first, height: area.height)
+                           : CGRect(x: area.minX, y: area.minY + first + divider, width: area.width, height: total - first)
+        return parts[0].rects(in: a, divider: divider).merging(parts[1].rects(in: b, divider: divider)) { $1 }
+    }
+
+    /// The layout with each split's fraction kept inside `range`: what the wire takes of a divider left at an edge.
+    public func clampingFractions(to range: ClosedRange<Double>) -> PeerLayout {
+        PeerLayout(pane: pane, axis: axis, fraction: fraction.map { min(range.upperBound, max(range.lowerBound, $0)) },
+                   parts: parts?.map { $0.clampingFractions(to: range) })
     }
 
     /// The layout with only the panes in `keep`; a split left with one part collapses into it. Nil when none is left.

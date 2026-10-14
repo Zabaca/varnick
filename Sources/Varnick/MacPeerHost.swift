@@ -280,14 +280,16 @@ enum PeerOpenTabs {
 }
 
 extension PaneLayout {
-    /// The layout as the wire has it (`PeerLayout`); a fraction a divider left at an edge is kept inside what the wire takes.
-    var peerLayout: PeerLayout {
+    /// The layout by pane id, each split's fraction as the tab has it.
+    var idLayout: PeerLayout {
         switch self {
         case .leaf(let record): .leaf(record.id.uuidString.lowercased())
-        case .split(let axis, let fraction, let first, let second):
-            .split(axis: axis.rawValue, fraction: min(0.95, max(0.05, fraction)), first.peerLayout, second.peerLayout)
+        case .split(let axis, let fraction, let first, let second): .split(axis: axis.rawValue, fraction: fraction, first.idLayout, second.idLayout)
         }
     }
+
+    /// The layout as the wire has it; a fraction a divider left at an edge is kept inside what the wire takes.
+    var peerLayout: PeerLayout { idLayout.clampingFractions(to: 0.05...0.95) }
 }
 
 /// Which of a Mac's closed tabs a peer's Recent lists.

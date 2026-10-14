@@ -2,7 +2,7 @@
 problem: panes-cant-be-moved
 title: Swap the focused pane with its neighbour by key
 summary: ⌃⌘⇧H/J/K/L swap the focused pane with the pane that ⌘⇧H/J/K/L would focus. The tab's shape and dividers stay as they are, the two panes trade places and sizes, and focus moves with the pane. This is the smallest change, but it can't change a tab's shape. It carries the groundwork every option needs, and is built with option 02 on one branch.
-status: accepted
+status: shipped
 ---
 
 ## Solution

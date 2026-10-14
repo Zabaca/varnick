@@ -82,6 +82,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
     case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
+    case swapLeft, swapDown, swapUp, swapRight
     case webAddress, webReload
     case fontBigger, fontSmaller, fontReset
 
@@ -89,6 +90,8 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     /// Registered system-wide, so never matched against keys pressed in the panel.
     var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening }
+
+    var isSwap: Bool { self == .swapLeft || self == .swapDown || self == .swapUp || self == .swapRight }
 
     /// Not offered now: the Outline's shortcut while its switch is off. A hidden action keeps its binding but takes no key and counts in no
     /// conflict, so binding its keys to another action leaves it as it was.
@@ -124,6 +127,10 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .focusDown: "Focus pane below"
         case .focusUp: "Focus pane above"
         case .focusRight: "Focus pane right"
+        case .swapLeft: "Swap with pane left"
+        case .swapDown: "Swap with pane below"
+        case .swapUp: "Swap with pane above"
+        case .swapRight: "Swap with pane right"
         case .webAddress: "Edit address (web pane)"
         case .webReload: "Reload (web pane)"
         case .fontBigger: "Bigger text"
@@ -137,7 +144,8 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleLauncher, .pinLauncher, .toggleListening, .settings, .outline, .resources: "Varnick"
         case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard,
              .toggleProjects, .previousProject, .nextProject: "Tabs"
-        case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight: "Splits"
+        case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight,
+             .swapLeft, .swapDown, .swapUp, .swapRight: "Splits"
         case .webAddress, .webReload: "Web"
         case .fontBigger, .fontSmaller, .fontReset: "Terminal"
         }
@@ -173,6 +181,10 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .focusDown: KeyCombo(keyCode: kVK_ANSI_J, [.command, .shift])
         case .focusUp: KeyCombo(keyCode: kVK_ANSI_K, [.command, .shift])
         case .focusRight: KeyCombo(keyCode: kVK_ANSI_L, [.command, .shift])
+        case .swapLeft: KeyCombo(keyCode: kVK_ANSI_H, [.command, .control, .shift])
+        case .swapDown: KeyCombo(keyCode: kVK_ANSI_J, [.command, .control, .shift])
+        case .swapUp: KeyCombo(keyCode: kVK_ANSI_K, [.command, .control, .shift])
+        case .swapRight: KeyCombo(keyCode: kVK_ANSI_L, [.command, .control, .shift])
         case .webAddress: KeyCombo(keyCode: kVK_ANSI_L, .command)
         case .webReload: KeyCombo(keyCode: kVK_ANSI_R, .command)
         case .fontBigger: KeyCombo(keyCode: kVK_ANSI_Equal, .command)
@@ -526,6 +538,8 @@ final class Settings: ObservableObject {
 
     func combo(_ action: ShortcutAction) -> KeyCombo? {
         if let override = overrides[action] { return override }
+        // A default added after users bound keys leaves a key they already gave another action to it.
+        if action.isSwap, overrides.contains(where: { $0.key != action && $0.value == action.defaultCombo }) { return nil }
         return action.defaultCombo
     }
 

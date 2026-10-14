@@ -1918,7 +1918,7 @@ struct ClaudePane: View {
                     ProjectsColumn(model: model, projects: projects)
                     Theme.hairline.frame(width: 1)
                 }
-                PaneView(node: tab.root, tab: tab)
+                PaneArea(tab: tab)
                     .id(tab.viewID)   // swap the whole tree when switching tabs
                     .padding(.leading, 2)
                     .background(Color(nsColor: NSColor(white: 0.1, alpha: 1)))

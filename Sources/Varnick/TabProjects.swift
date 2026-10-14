@@ -44,10 +44,15 @@ final class TabProjects: ObservableObject {
     /// The pane a tab's row is read from and the folder it had when first seen: a shell's `cd`, here or on its host, must not move its tab.
     private var anchors: [UUID: (pane: UUID, folder: String)] = [:]
 
-    /// A tab's row: that of its first Claude pane, else its first pane, by the pills' rule (its folder is one of its machine's projects). Focus
-    /// and a shell's `cd` don't move it. No project is Other.
+    /// A tab's row: that of its first Claude pane, else its first pane, by the pills' rule (its folder is one of its machine's projects). Focus,
+    /// a shell's `cd` and a move of panes don't move it. No project is Other.
     private func row(of tab: ClaudeTab) -> TabProject {
-        guard let model, let pane = tab.sessions.first(where: \.isClaude) ?? tab.sessions.first else { return .other }
+        guard let model else { return .other }
+        // The pane it had stays while it is still a Claude pane of the tab (or the tab has none): a move can change which pane is first, and
+        // must not move the tab between rows. A Claude pane added to a tab with none takes the row over; so does the first, once the pane is gone.
+        let claude = tab.sessions.first(where: \.isClaude)
+        let kept = tab.sessions.first { $0.id == anchors[tab.viewID]?.pane && ($0.isClaude || claude == nil) }
+        guard let pane = kept ?? claude ?? tab.sessions.first else { return .other }
         if anchors[tab.viewID]?.pane != pane.id { anchors[tab.viewID] = (pane.id, pane.record.directory) }
         let folder = anchors[tab.viewID]?.folder ?? pane.record.directory
         return model.pills(folder: folder, agent: nil, host: pane.record.host).project.map(TabProject.project) ?? .other

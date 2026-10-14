@@ -2,7 +2,7 @@
 problem: panes-cant-be-moved
 title: Drag a pane by a grip and drop it on another pane's edge or middle, or along a side of the tab
 summary: In a tab of several panes, hovering a pane shows a grip at its top centre. While a pane is dragged by it, thin bands mark the tab's four sides. The pane under the pointer shows its drop areas: four edge zones and a centre zone, each with a symbol of what a drop there does. The zone that will take the drop is highlighted, and a preview shows the space the pane will take. An edge drop splits that pane on that side, half each. A centre drop swaps the two panes. A band drop puts the pane along that whole side of the tab, at half the tab. The emptied split closes up as on close. With the bands, every arrangement of a tab's panes can be reached. Built with option 01 on one branch.
-status: accepted
+status: shipped
 ---
 
 ## Solution
