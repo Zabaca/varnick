@@ -2131,6 +2131,14 @@ final class LauncherModel: ObservableObject {
         arrangeOnHost(tab, showing: moved)
     }
 
+    /// Esc while a pane is being dragged: the drag goes on to its end and drops nothing. False when there is no drag to cancel.
+    func cancelPaneDrag(_ event: NSEvent) -> Bool {
+        guard Int(event.keyCode) == kVK_Escape, event.modifierFlags.intersection(KeyCombo.relevant).isEmpty,
+              let drag = activeTab?.paneDrag, drag.isActive else { return false }
+        drag.cancel()
+        return true
+    }
+
     /// A click in a pane's terminal focuses that pane.
     func focusPane(showing view: NSView) {
         guard let tab = activeTab, let session = tab.sessions.first(where: { $0.content === view }) else { return }
@@ -2161,6 +2169,10 @@ final class LauncherModel: ObservableObject {
             if let tab { self?.arrangeOnHost(tab) }
         }
         tab.layoutLock = { [weak self, weak tab] in tab.flatMap { self?.layoutLockReason(of: $0) } }
+        tab.onMove = { [weak self, weak tab] moved, change in
+            if let self, let tab { self.movePane(moved, in: tab, change) }
+        }
+        tab.paneDrag.isBlocked = { [weak self] in self?.pendingSplit != nil }
         // Keeps the tab as it is, for Completed or an ended card; Done has done so already.
         tab.onClosing = { [weak self, weak tab] in
             guard let self, let tab, self.closing[tab.id] == nil else { return }

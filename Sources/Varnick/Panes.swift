@@ -355,6 +355,12 @@ final class PaneNode: ObservableObject, Identifiable {
         return children[0].leafRects(in: a) + children[1].leafRects(in: b)
     }
 
+    /// The tree by pane id alone, as `PaneLayout.peerLayout` has it, without copying the records: a pane drag reads it at every move.
+    var peerLayout: PeerLayout {
+        if let session { return .leaf(session.id.layoutID) }
+        return .split(axis: axis.rawValue, fraction: min(0.95, max(0.05, Double(fraction))), children[0].peerLayout, children[1].peerLayout)
+    }
+
     var layout: PaneLayout {
         if let session { return .leaf(session.snapshot) }
         return .split(axis: axis, fraction: fraction, first: children[0].layout, second: children[1].layout)
@@ -385,6 +391,10 @@ final class ClaudeTab: ObservableObject {
     var onClosing: () -> Void = {}
     /// The tab is closing as a whole: the model tells the host of another machine's tab once, in place of each pane doing so (ADR 0034).
     var onEnding: () -> Void = {}
+    /// A pane moved by hand (a drop): the model checks the layout lock, runs the change, saves and tells the host (`LauncherModel.movePane`).
+    var onMove: (_ moved: ClaudeSession, _ change: () -> Bool) -> Void = { _, change in _ = change() }
+    /// A pane of the tab being dragged to another place in it.
+    let paneDrag = PaneDrag()
 
     init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
          history: [HeldConversation] = []) {
@@ -394,6 +404,7 @@ final class ClaudeTab: ObservableObject {
         self.completedAt = completedAt
         self.history = history
         self.focused = focused ?? root.leaves[0]
+        paneDrag.tab = self
     }
 
     var sessions: [ClaudeSession] { root.leaves }
@@ -658,7 +669,12 @@ struct TerminalLeaf: View {
                 .padding(6)
             }
         }
+        // Grabbed by the grip at its top centre to move the pane (`PaneDrag`); only a tab of several panes has one.
+        .overlay(alignment: .top) {
+            if split { PaneGrip(session: session, drag: tab.paneDrag, hovering: hovering) }
+        }
         .onHover { hovering = $0 }
+        .reportsPaneFrame(of: session)
     }
 
     @ViewBuilder private var terminal: some View {
