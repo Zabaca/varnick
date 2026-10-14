@@ -307,6 +307,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .focusDown where inSession: model.moveFocus(.down)
         case .focusUp where inSession: model.moveFocus(.up)
         case .focusRight where inSession: model.moveFocus(.right)
+        case .swapLeft where inSession: model.swapPane(.left)
+        case .swapDown where inSession: model.swapPane(.down)
+        case .swapUp where inSession: model.swapPane(.up)
+        case .swapRight where inSession: model.swapPane(.right)
         case .webAddress: return model.webAction { $0.editingAddress = true }
         case .webReload: return model.webAction(includingRemoteFiles: true) { $0.reload() }
         case .fontBigger: Settings.shared.adjustFont(0.5)
