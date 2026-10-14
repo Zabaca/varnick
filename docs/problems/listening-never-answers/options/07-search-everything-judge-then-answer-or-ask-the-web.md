@@ -47,7 +47,7 @@ It never shuts a source out.
 - **Answers start with a general line.** "Let me check." confirms the request was heard, but no longer says where Varnick is looking. A wrong turn is no longer audible, and there are fewer wrong turns to hear, since nothing is shut out.
 - **Slower when the web is asked late.** A web question the judge catches is answered in about 6–10 s, as in option 06. When the writer is the one to send it to the web, about 8–12 s (estimated).
 - **A local answer, estimated,** is heard at about 3–4.5 s after speech ends. Today's estimate is 2.5–3.5 s. The knowledge-base flow this follows measured about 4 s from a typed question; Varnick's extra second-or-two is the transcriber's.
-- **The writer's escalation is a model's judgement.** Haiku 5.5 is likely to follow it; this Mac's Gemma 4 E2B may escalate too often or too rarely. The eval measures both where it can.
+- **The writer's escalation is a model's judgement.** Haiku 5.5 is likely to follow it; this Mac's Gemma 4 E2B may escalate too often or too rarely. Whichever writer the user set may escalate, Gemma included (the user's decision). The eval measures both where it can, for information only.
 - **Requests reach the web that today stay local,** with the switch on: any request whose rows don't answer it. Only its words go, as option 06 says.
 
 ## User Stories
@@ -125,7 +125,7 @@ It never shuts a source out.
 **The writer**
 - Text generation, wherever Settings › Models says (Claude Code by default, this Mac's model or a server), with today's answer prompt and limits. It names the result that fits and when, and never reads an address.
 - It reads only the kept rows, or the top rows when unjudged.
-- **Escalation**, with Answer from the web on: the prompt adds "If these results don't hold what the request asks for, reply with only NEED_WEB."
+- **Escalation**, with Answer from the web on, for whichever writer Text generation is set to, this Mac's Gemma included: the prompt adds "If these results don't hold what the request asks for, reply with only NEED_WEB."
   - A reply holding the marker sends the request to the web, with "Looking that up." queued.
   - With the switch off, the marker isn't offered, and the prompt's "say so plainly" stands.
 - This is the knowledge-base flow's escalation to a tool loop, with the web in place of tools. A bounded loop over the user's own sources (options 02 and 03) stays out.
@@ -223,14 +223,14 @@ It never shuts a source out.
   - the judge's time with 23 rows, at p50 and p90;
   - input tokens per call.
 - **The writer's escalation:**
-  - Haiku 5.5, and this Mac's Gemma 4 E2B if agent-lab can run it, on kept rows that only near-miss a world question: they should escalate.
+  - Haiku 5.5, and this Mac's Gemma 4 E2B if agent-lab can run it (for information only: the user set which writer escalates), on kept rows that only near-miss a world question: they should escalate.
   - On kept rows that answer a real request: they should not.
 - **The rule:**
   - at least 27 of 30 world questions end at the web, through the judge or the writer;
   - no real request whose row is in the store goes to the web;
   - the judge's p90 is at most 0.5 s.
 
-  A failure goes back to the user before building. Then the writer's escalation decides whether the marker is offered to Gemma.
+  A failure goes back to the user before building. The writer's escalation is not part of the rule.
 - **The gap, stated:** in use, the user's own History and sessions decide what is found.
   - A near-miss the judge accepts keeps a world question local.
   - A page the user never visited sends a real request to the web.
@@ -271,6 +271,8 @@ It never shuts a source out.
   1. History, Bookmarks and sessions are searched together on every request. Jev's route only ranks and orders; it never shuts a source out.
   2. No "please reword" outcome. Every request ends in an answer, and what the local sources can't answer goes to the web.
   3. The writer can escalate to the web when the kept rows turn out too thin, catching Jev's misses.
+  4. The general line is "Let me check."
+  5. Whichever writer the user set in Text generation, this Mac's Gemma included, may reply `NEED_WEB`. It is the user's setting, so there is no eval gate; the eval measures Gemma's escalation for information only.
 - **The pattern** is a knowledge-base flow in another of the user's projects, described here in Varnick's terms only:
   - one fused search;
   - one Jev call scoring each passage at a 0.5 bar and picking the next step;
@@ -325,9 +327,7 @@ It never shuts a source out.
   - nothing is said first when the answer's one line is ready at the hold's end;
   - with Answer from the web off, nothing kept gets "I couldn't find that in your pages, bookmarks or Claude sessions." at once, with no writer call;
   - the Text generation decide call goes.
-- **Left to the user,** recommendation first:
-  1. **The general line's words:** "Let me check." It is three words, about 0.6 s, and fits a search, a screen read and the web alike. "Looking into it." is the other candidate.
-  2. **Offer the web marker to this Mac's Gemma too?** Yes, if the eval's escalation check passes on Gemma. Otherwise only to Claude Code and a server, and a Gemma answer from thin rows says so plainly instead.
+- **Left to the user:** nothing open. Decisions 4 and 5 above were these questions.
 - **Verified in the code** (at `57f4176`):
   - the TypeSafe relevance filter is already one Jev call with one yes/no question per page, asked by title, at a 0.5 threshold, on `jev-latest`;
   - sessions are never judged today;
