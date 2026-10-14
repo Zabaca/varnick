@@ -2,7 +2,7 @@
 problem: listening-never-answers
 title: Every spoken request is acknowledged by its route, and a question about none of the user's things is answered from the web by their own Claude Code
 summary: Two changes. First, every spoken request is acknowledged as soon as its route is known after the hold ("Checking your sessions.", "Checking your pages.", "Looking at your screen.", "Looking that up."), and the answer follows the acknowledgement without cutting it off. This changes the shipped local and screen answers for every Hey Varnick user. "What time is it" is answered from the clock and "set a timer" gets a fixed line, with no acknowledgement. Second, a new switch, Answer from the web, off by default, answers a request Jev finds off-topic from the web instead of refusing it. The text helper runs the user's own `claude` with one tool, WebSearch, on their plan, and Varnick speaks a one- or two-sentence answer naming its source. Only the question's words, the date, the time and the units go to Anthropic, and Claude's search words to its search provider. The switch needs Hey Varnick, the relevance filter on TypeSafe (only Jev flags off-topic) and Claude Code logged in.
-status: proposed
+status: accepted
 ---
 
 ## Solution
@@ -234,7 +234,7 @@ Claude Code not found or not logged in before the call gets that same "isn't ans
 
 ## Testing Decisions
 
-- **Eval first, before building the web path** (agent-lab, through the `eval` agent, with the repo pinned by commit):
+- **Eval first, before building the web path** (running in agent-lab since 2026-10-14, through the `eval` agent, with the repo pinned by commit; its result decides the web path's trigger):
   - About 30 made-up spoken questions about the world: opening hours, prices, scores, weather, definitions, people. Phrase them as the user does: "can you find out…", "look up…", "what time does…", "who won…". Include the user's Costco question in made-up form.
   - Add the existing set's real requests, especially public-topic ones such as "what is MLX", which must stay with History.
   - Ask Jev with today's questions, with and without the screen.
@@ -295,7 +295,7 @@ Claude Code not found or not logged in before the call gets that same "isn't ans
   - The call copies `ClaudeCodeState.generate`'s path through the text helper, with tools and its own deadline.
   - The acknowledgement extends `SpokenRequests.answer`, which today waits for the whole speculative run.
 - **Not options 02–05's ground.** Those answer from the user's own things or hand work to a session. This answers questions about the world, which today are refused, and changes how every answer starts.
-- **ADR on acceptance:** spoken requests are acknowledged by route before their answer, and an off-topic spoken question may be answered from the web by the user's own Claude Code. The ADR records:
+- **ADR, to write now that this is accepted:** spoken requests are acknowledged by route before their answer, and an off-topic spoken question may be answered from the web by the user's own Claude Code. The ADR records:
   - the switch as consent;
   - only the question's words, the date, the time and the units going, to Anthropic, and search words to its search provider;
   - the text helper's first tool, for this call alone;
@@ -327,12 +327,15 @@ Claude Code not found or not logged in before the call gets that same "isn't ans
   - the sources' addresses in the transcript, so the user can open them;
   - a home place for questions that name none;
   - a stop item in the menu bar (option 01's Later).
-- **Left to the user,** recommendation first:
-  1. **Name the source aloud?** Yes, a few words of the site's name, never an address. It is the only way to judge a heard answer.
-  2. **The trigger:** Jev's "other", with the eval before building, rather than a "web" answer in Jev's questions now.
-  3. **The date, the local time and the unit system go with the question?** Yes: "today" and "open now" need them. No place or time zone goes.
-  4. **Answer from the web is independent of Text generation's choice?** Yes. It is its own consent, and it sends only the question.
-  5. **The web switch needs the filter on TypeSafe?** Accept it: it follows from 2, and without TypeSafe the switch acts as off.
+- **Decided by the user on 2026-10-14,** relayed by the coordinator: this option, accepted with the five recommendations.
+  1. A web answer names its source aloud in a few words of the site's name, never an address.
+  2. The trigger is Jev's existing "other", with the eval run before the web path is built, rather than a "web" answer in Jev's questions now.
+  3. The date, the local time and the unit system go with the question. No place or time zone goes.
+  4. Answer from the web is a switch of its own, independent of Text generation's choice.
+  5. It needs the relevance filter on TypeSafe. Without it the switch acts as off.
+- **Defaults, not asked of the user,** kept as written. The user can still overrule either:
+  - The clock answer and the can't-do line work with Answer from the web off too, since both stay on this Mac.
+  - The acknowledgement has no switch of its own.
 - **Verified in the code** (at a552c89):
   - `minimalOptions()` defaults to no tools, and the SDK reads an empty list as no built-in tools;
   - the SDK's `allowedTools`, `maxTurns` and the result's own text and turn count;

@@ -4,7 +4,7 @@ description: Listening transcribes the mic and the Mac's audio into the day's tr
 impact: To find a page, a bookmark or a past session, the user has to stop, bring up the panel and type, even while Listening is already hearing them. The Voice setting is there and says "Nothing speaks yet".
 severity: low
 evidence: The user's request of 2026-10-08 (below). The code was read on 2026-10-08 at 253012d. The listening spec left a wake word and spoken replies for later. A throwaway prototype and a speech-to-text survey, both from 2026-10-02, are kept locally.
-status: closed
+status: open
 ---
 
 ## What the user asked (2026-10-08)
