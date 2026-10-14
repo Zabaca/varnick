@@ -2114,6 +2114,23 @@ final class LauncherModel: ObservableObject {
         tab.focus(next)
     }
 
+    /// ⌃⌘⇧H/J/K/L: the focused pane trades places with the pane ⌘⇧H/J/K/L would focus, the splits and so the sizes staying. Focus stays on it.
+    func swapPane(_ direction: PaneDirection) {
+        guard let tab = activeTab, let other = tab.neighbor(direction) else { return }
+        let moved = tab.focused
+        movePane(moved, in: tab) { tab.swap(moved, other) }
+    }
+
+    /// Changes `tab`'s layout by moving `moved`, as a divider's end does: refused with the reason on a tab this Mac can't change (only the
+    /// machine in control does, ADR 0034), else saved and, on another machine's tab this Mac controls, sent to the host as `arrange`,
+    /// which tells `moved` if it won't. `change` says whether it changed anything.
+    func movePane(_ moved: ClaudeSession, in tab: ClaudeTab, _ change: () -> Bool) {
+        if let reason = layoutLockReason(of: tab) { return moved.showRefusal(reason) }
+        guard change() else { return }
+        saveSessions()
+        arrangeOnHost(tab, showing: moved)
+    }
+
     /// A click in a pane's terminal focuses that pane.
     func focusPane(showing view: NSView) {
         guard let tab = activeTab, let session = tab.sessions.first(where: { $0.content === view }) else { return }

@@ -321,6 +321,13 @@ final class PaneNode: ObservableObject, Identifiable {
         for child in children { child.parent = self }
     }
 
+    /// This leaf and `other` trade sessions: every split, axis and fraction stays, so the two panes trade places and sizes.
+    func exchange(with other: PaneNode) {
+        guard let mine = session, let theirs = other.session else { return }
+        session = theirs
+        other.session = mine
+    }
+
     /// Removes this leaf; its sibling takes the parent's place.
     /// Returns false when this was the root (nothing left).
     func removeLeaf() -> Bool {
@@ -486,6 +493,15 @@ final class ClaudeTab: ObservableObject {
         return true
     }
 
+    /// `a` and `b` trade places in the tree; the splits, and so the sizes, stay where they are. False when either is not in the tab or they are one.
+    /// Focus stays on the pane that had it: its new container takes the keyboard a turn later (`TerminalHost`).
+    @discardableResult
+    func swap(_ a: ClaudeSession, _ b: ClaudeSession) -> Bool {
+        guard a !== b, let first = root.leaf(for: a), let second = root.leaf(for: b) else { return false }
+        first.exchange(with: second)
+        return true
+    }
+
     /// Lays the tab out as its host does (`layout`), with `sessions` by pane id; a pane of the tab that the layout has no place for (one
     /// that is closing) goes beside the last. Focus stays where it was if that pane is still in the tab.
     func rearrange(to layout: PeerLayout, using sessions: [String: ClaudeSession]) {
@@ -536,7 +552,10 @@ struct PaneView: View {
 
     var body: some View {
         if let session = node.session {
+            // Keyed by the session, so a place that comes to show another one (a move, a split closing, a host's layout) gets a whole new view:
+            // the container, a card's frozen screen, which binds its session when made, and an address being typed.
             TerminalLeaf(session: session, tab: tab)
+                .id(session.id)
         } else if node.children.count == 2 {
             GeometryReader { geo in
                 let sideBySide = node.axis == .sideBySide
@@ -584,7 +603,6 @@ struct TerminalLeaf: View {
                         AppExitedView(session: session) { tab.focus(session) }
                     } else {
                         TerminalHost(session: session, focused: tab.focused === session)
-                            .id(session.id)
                     }
                 }
                 .padding(4)
@@ -592,7 +610,6 @@ struct TerminalLeaf: View {
                 VStack(spacing: 0) {
                     FileBar(session: session)
                     TerminalHost(session: session, focused: tab.focused === session)
-                        .id(session.id)
                 }
                 .padding(4)
             } else {
@@ -652,7 +669,6 @@ struct TerminalLeaf: View {
             HostCard(session: session, card: card) { tab.focus(session) }
         case nil:
             TerminalHost(session: session, focused: tab.focused === session)
-                .id(session.id)   // swap the hosted terminal view when the tree changes
                 .padding(.leading, 8)
                 .padding(.trailing, 3)
                 .padding(.vertical, 5)
