@@ -799,8 +799,14 @@ if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.ar
         let app = CommandLine.arguments.firstIndex(of: "--app")
             .flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil }
         let draw = CommandLine.arguments.contains("--draw")
-        let now = CommandLine.arguments.firstIndex(of: "--at")
-            .flatMap { $0 + 1 < CommandLine.arguments.count ? ISO8601DateFormatter().date(from: CommandLine.arguments[$0 + 1]) : nil } ?? Date()
+        var now = Date()
+        if let at = CommandLine.arguments.firstIndex(of: "--at") {
+            guard at + 1 < CommandLine.arguments.count, let date = ISO8601DateFormatter().date(from: CommandLine.arguments[at + 1]) else {
+                print("--at needs an ISO 8601 date and time with its offset, such as 2026-10-14T15:00:00-07:00")
+                exit(1)
+            }
+            now = date
+        }
         Task { @MainActor in
             // The login shell is read once, here, as at launch, so it doesn't land in the first request's figure.
             if Settings.shared.activeTextGeneration.runOn == .claude { await delegate.claudeCode.checkLogin() }

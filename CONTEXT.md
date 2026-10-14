@@ -247,12 +247,24 @@ _Avoid_: Agent (an **Agent** is a Claude Code definition), Claude session
 What the user says after the **Wake phrase**. **History**, **Bookmark**s and **Session**s are all searched for it, sessions also by a project's folder name and by when they were used, and it is answered aloud from the rows the **Relevance filter** keeps or, with **Answer from the web** on, from the web when they can't answer it. A question about the time or the date is answered from this Mac's clock. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
 
+**Route**:
+Jev's reading of a **Spoken request**, before the search is judged: how likely each source is, whether it is about the screen, and whether it is about none of the user's things. It only orders the rows, sends a screen request to the screen and cuts something Varnick can't do short; it never shuts a source out.
+_Avoid_: Router, decide step (the step is gone)
+
+**Judge**:
+The Jev call that scores the first 20 pages and up to 3 sessions of a **Spoken request** for whether each helps answer it. Rows at 0.5 or more are kept, as are the sessions a named folder or a time-only window selected. For a typed search the **Relevance filter** is a call of its own.
+_Avoid_: Filter (for the spoken call), reranker
+
+**Writer**:
+Text generation as it writes the answer to a **Spoken request** from the rows the **Judge** kept. With **Answer from the web** on, and no session among the rows, it may reply that they don't hold the answer, and the request goes to the web.
+_Avoid_: Answerer, model
+
 **Acknowledgement**:
 The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and not written to the transcript. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
 _Avoid_: Cue, earcon (the wake sound is a sound, not a line)
 
 **Answer from the web**:
-The setting (Settings › Listening, off by default) that answers a **Spoken request** from the web, through the user's own Claude Code and its search tool, when the rows can't. A request that names a session folder or a time is never asked of the web.
+The setting (Settings › Listening, off by default) that answers a **Spoken request** from the web, through the user's own Claude Code and its search tool, when the rows can't. A request that names a session folder, or is only a time, is never asked of the web.
 _Avoid_: Web search (the tool is Claude Code's, not Varnick's)
 
 **Arrow**:

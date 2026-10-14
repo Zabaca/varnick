@@ -58,8 +58,10 @@ enum WebAnswer {
     static func read(_ reply: String) -> Reading {
         var kept: [Substring] = []
         for line in reply.split(separator: "\n", omittingEmptySubsequences: false) {
-            let bare = line.drop { $0 == "#" || $0 == "*" || $0 == "_" || $0 == " " }
-            if bare.lowercased().hasPrefix("sources") { break }
+            // A line that is only "Sources" (bold, a heading, a colon) or starts "Sources:"; not a sentence that begins with the word.
+            let mark = CharacterSet(charactersIn: "#*_ ")
+            let bare = line.trimmingCharacters(in: mark).lowercased()
+            if bare == "sources" || bare == "sources:" || line.drop(while: { "#*_ ".contains($0) }).lowercased().hasPrefix("sources:") { break }
             kept.append(line)
         }
         var text = kept.joined(separator: "\n")

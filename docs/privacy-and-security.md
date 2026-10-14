@@ -129,7 +129,7 @@ Settings › Listening › **Answer from the web** (off by default; it needs Hey
 TypeSafe with a key, and Claude Code found and logged in) answers what your pages, bookmarks and Claude sessions can't,
 such as when a shop opens, from the web. Turning it on is the consent: there is no prompt per request. A request goes
 to the web when nothing Varnick found helps answer it, or when the writer finds what it found too thin and no
-session was read. A request that names one of your session folders or a time ("today", "last week") never goes.
+session was read. A request that names one of your session folders, or is only a time ("what did I do last week"), never goes.
 
 - **What goes to Anthropic,** through your own `claude` on your plan: the request after "Hey Varnick", cut to 500
   characters, with today's date and time and your Mac's unit system, in Varnick's fixed prompt. **Nothing about what

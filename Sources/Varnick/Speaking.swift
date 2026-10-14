@@ -59,7 +59,8 @@ final class Speaker {
     static let shared = Speaker()
 
     /// Two synthesizers take turns, so the audio of a line queued behind another is rendered while the first plays, which one
-    /// synthesizer would only do after it. A line is back on a synthesizer only after the line before it has ended.
+    /// synthesizer would only do after it. A line waits for the line two before it, which had the same synthesizer, to end before it
+    /// renders (`speakInstalled`).
     private let synthesizers = [AVSpeechSynthesizer(), AVSpeechSynthesizer()]
     /// The lines being spoken or waiting their turn, so `stop` reaches each.
     private var lines: [Line] = []
@@ -129,8 +130,9 @@ final class Speaker {
             guard speaker.stops == stopsAtStart else { return }
             let previous = tasks.last
             let index = tasks.count
+            let sharing = index >= 2 ? tasks[index - 2] : nil
             tasks.append(Task {
-                await self.speaker.speakLine(text, queue: self, index: index, behind: previous)
+                await self.speaker.speakLine(text, queue: self, index: index, behind: previous, sharing: sharing)
             })
         }
 
@@ -147,7 +149,8 @@ final class Speaker {
     }
 
     /// One line in the voice chosen, ElevenLabs first when it is. Held back until `previous` has ended, when there is one.
-    private func speakLine(_ text: String, queue: VoiceQueue, index: Int, behind previous: Task<Speech, Never>?) async -> Speech {
+    private func speakLine(_ text: String, queue: VoiceQueue, index: Int, behind previous: Task<Speech, Never>?,
+                           sharing: Task<Speech, Never>?) async -> Speech {
         let (viaElevenLabs, voice, keyTask, stopsAtStart) = queue.voiceSettings
         let key = await keyTask.value
         // A stop since the line was handed over has nothing to reach yet.
@@ -168,7 +171,7 @@ final class Speaker {
             case .failed(let kind): by = "installed voice (ElevenLabs: \(kind))"
             }
         }
-        return Speech(first: await speakInstalled(text, stopsAtStart: stopsAtStart, line: line, index: index, behind: previous), by: by)
+        return Speech(first: await speakInstalled(text, stopsAtStart: stopsAtStart, line: line, index: index, behind: previous, sharing: sharing), by: by)
     }
 
     private enum Attempt {
@@ -242,8 +245,12 @@ final class Speaker {
     }
 
     /// The installed voice, through the synthesizer. A line behind another is held until that one has ended.
-    private func speakInstalled(_ text: String, stopsAtStart: Int, line: Line, index: Int, behind previous: Task<Speech, Never>?) async -> Date? {
+    private func speakInstalled(_ text: String, stopsAtStart: Int, line: Line, index: Int, behind previous: Task<Speech, Never>?,
+                                sharing: Task<Speech, Never>?) async -> Date? {
         let synthesizer = synthesizers[index % synthesizers.count]
+        // The line two before had this synthesizer: it is done with it before this one renders, however fast the lines came.
+        if let sharing { _ = await sharing.value }
+        guard stops == stopsAtStart else { return nil }
         let playback = makePlayback(for: line, stopsAtStart: stopsAtStart, behind: previous)
         synthesizer.write(utterance(text)) { buffer in playback.add(buffer) }
         await playback.finished()

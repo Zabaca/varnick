@@ -1,9 +1,9 @@
 import AppKit
 import Foundation
 
-/// The pure parts of a spoken request (ADR 0015, 0036): hearing the wake phrase, the clock and what Varnick can't do, what a request
-/// names, how the rows are ordered and reach the judge and the writer, and the writer's prompt and reply. None of it touches the app, so each is a seam for a first test once there is a test target.
-/// What may be logged: where-it-breaks.md, Listening and spoken requests.
+/// The pure parts of a spoken request (ADR 0015, 0036): the wake phrase, the clock, what a request names, how rows are ordered and
+/// described, and the writer's prompt and reply. None of it touches the app, so each is a seam for a first test once there is a
+/// test target. What may be logged: where-it-breaks.md, Listening and spoken requests.
 enum SpokenText {
     // MARK: The wake phrase
 
@@ -105,14 +105,21 @@ enum SpokenText {
 
     // MARK: What the request names: a session folder, a time
 
-    /// The session folder and the time a request names (option 07). Both are worked out on this Mac and sent nowhere. A request that
-    /// names either stays local: the web can't know what the user did in a project or at a time.
+    /// The session folder and the time a request names (option 07). Both are worked out on this Mac and sent nowhere.
     struct Scope: Equatable {
         /// The session folders named, as `sessionFolderNames` lowercases them.
         var folders: [String] = []
         var window: SpokenTime.Window?
+        /// The window chose the sessions itself: no search words are left once the time and folder words are taken out, so it filters
+        /// them. With words left it only moves the sessions in it up.
+        var timeOnly = false
 
-        var isNamed: Bool { !folders.isEmpty || window != nil }
+        /// A folder or a window shapes the session search.
+        var shapesSessions: Bool { !folders.isEmpty || window != nil }
+
+        /// The request stays local, never to the web: the web can't know what the user did in a project, or at a time the request
+        /// alone chose the sessions for. A time with search words ("when does Costco open today") is not that.
+        var staysLocal: Bool { !folders.isEmpty || timeOnly }
 
         /// What is said when nothing was found for it: "I found no sessions in pantry today."
         var nothingFound: String {
@@ -122,22 +129,35 @@ enum SpokenText {
     }
 
     static func scope(of request: String, folders: Set<String>, now: Date = Date(), calendar: Calendar = .current) -> Scope {
-        Scope(folders: namedFolders(request, in: folders), window: SpokenTime.window(in: request, now: now, calendar: calendar))
+        var scope = Scope(folders: namedFolders(request, in: folders), window: SpokenTime.window(in: request, now: now, calendar: calendar))
+        scope.timeOnly = scope.window != nil && sessionWords(from: queryWords(from: request), scope: scope).isEmpty
+        return scope
     }
 
-    /// The `folders` (lowercased names) the request names: their words one after another, or the name's words joined as one word
-    /// ("my-app" is "my app" or "myapp"). Case, punctuation and the folder's `-`, `_`, `.` and spaces are ignored. A folder of under
-    /// three letters, or of stop words only, is too likely to be a word. Sorted, so the same request names them the same way.
+    /// Words that, just before a one-word folder name, say it is a place ("in varnick", "my pantry").
+    private static let folderCues: Set<String> = ["in", "on", "into", "within", "from", "my", "our"]
+    /// Words that, just after one, do the same ("the varnick repo").
+    private static let folderNouns: Set<String> = ["repo", "repos", "project", "projects", "folder", "directory", "codebase", "app"]
+
+    /// The `folders` (lowercased names) the request names. A name of several words ("my-app") counts bare, as those words one after
+    /// another or joined as one ("myapp"): that is not a phrase people say by chance. A one-word name ("news", "pantry") is also a
+    /// word, so "what's the news" must not name a "news" folder: it counts only after a cue (`folderCues`) or before a noun
+    /// (`folderNouns`), as in "what did I do in news" or "the news repo". Case, punctuation and the folder's `-`, `_`, `.` and spaces
+    /// are ignored. A folder of under three letters, or of stop words only, is never named. Sorted, so a request names them the same way.
     static func namedFolders(_ request: String, in folders: Set<String>) -> [String] {
         let words = tokens(request)
         guard !words.isEmpty else { return [] }
-        let single = Set(words)
         return folders.filter { folder in
             let parts = tokens(folder)
             let joined = parts.joined()
             guard joined.count >= 3, !parts.allSatisfy(stopWords.contains) else { return false }
-            if single.contains(joined) { return true }
-            return parts.count > 1 && words.indices.contains { start in
+            if parts.count == 1 {
+                return words.indices.contains { i in
+                    words[i] == joined && ((i > 0 && folderCues.contains(words[i - 1]))
+                        || (i + 1 < words.count && folderNouns.contains(words[i + 1])))
+                }
+            }
+            return words.contains(joined) || words.indices.contains { start in
                 start + parts.count <= words.count && Array(words[start..<start + parts.count]) == parts
             }
         }.sorted()
@@ -195,7 +215,12 @@ enum SpokenText {
     static let maxDescription = 300
 
     /// Which kind of row the writer reads first when more than `maxPages` are kept.
-    private enum Kind: Int { case session, bookmark, page }
+    private enum Kind: Int {
+        case session, bookmark, page
+
+        /// How the writer and the judge are told what a row is.
+        var label: String { self == .session ? "Claude session" : self == .bookmark ? "bookmark" : "page" }
+    }
 
     private static func kind(of row: SearchResult) -> Kind {
         row.isSession ? .session : row.source == "bookmark" ? .bookmark : .page
@@ -207,7 +232,7 @@ enum SpokenText {
     /// score (unjudged) keep the search's order.
     static func ordered(_ rows: [SearchResult], route: SpokenRouter.Route?, namesFolder: Bool) -> [SearchResult] {
         let rank: (Kind) -> Int
-        if namesFolder || route.map({ $0.sessions >= max($0.history, $0.bookmarks) }) == true {
+        if sessionsLead(route: route, namesFolder: namesFolder) {
             rank = { $0 == .session ? 0 : 1 }
         } else if route.map({ $0.bookmarks > $0.history }) == true {
             rank = { $0 == .bookmark ? 0 : $0 == .page ? 1 : 2 }
@@ -225,6 +250,11 @@ enum SpokenText {
         }.prefix(maxPages).map(\.element)
     }
 
+    /// Sessions are the likelier kind: Jev's route leads with them, or the request names a session folder.
+    private static func sessionsLead(route: SpokenRouter.Route?, namesFolder: Bool) -> Bool {
+        namesFolder || route.map { $0.sessions >= max($0.history, $0.bookmarks) } == true
+    }
+
     /// The rows read when nothing judged them (the filter is off, the words too short, or the judge failed): sessions and pages both,
     /// the likelier kind first, at most `maxPages`. Sessions lead when Jev's route does or the request names a session folder, and
     /// bookmarks go ahead of the other pages when they lead. Behind pages, sessions get what the pages leave of `maxPages`, and
@@ -233,7 +263,7 @@ enum SpokenText {
         let sessions = rows.filter(\.isSession)
         var pages = rows.filter { !$0.isSession }
         if let route, route.bookmarks > route.history { pages = pages.filter { $0.source == "bookmark" } + pages.filter { $0.source != "bookmark" } }
-        if namesFolder || route.map({ $0.sessions >= max($0.history, $0.bookmarks) }) == true {
+        if sessionsLead(route: route, namesFolder: namesFolder) {
             return Array((sessions + pages).prefix(maxPages))
         }
         let lead = pages.prefix(maxPages - min(maxSessionsBehind, sessions.count))
@@ -263,8 +293,7 @@ enum SpokenText {
     /// addresses are long, read badly aloud and can carry ids. `macName` names the paired Mac a session or page came from.
     static func describe(_ rows: [SearchResult], context: RowContext) -> String {
         rows.enumerated().map { number, row in
-            var lines = ["Result \(number + 1)", "Kind: " + (row.isSession ? "Claude session" : row.source == "bookmark" ? "bookmark" : "page"),
-                         "Title: " + oneLine(row.title)]
+            var lines = ["Result \(number + 1)", "Kind: " + kind(of: row).label, "Title: " + oneLine(row.title)]
             if row.isSession {
                 lines.append("Folder: " + (row.url as NSString).lastPathComponent + (row.host.map { ", on " + context.macName($0) } ?? ""))
             } else if let site = site(of: row) {
@@ -292,13 +321,15 @@ enum SpokenText {
         return description
     }
 
-    /// The rows as the judge sees them (option 07): kind, title, site or folder, when, text. Never an address, a paired Mac's name
-    /// or a page's other fields. The ids are the rows' positions, as the questions name them.
+    /// **The body of the spoken judge** (`SpokenJudge`, option 07), the one place it is described. Each row is its id (its
+    /// position, as the questions name rows), kind (page, bookmark or Claude session), title, site (a page) or folder name (a
+    /// session), when (`SpokenTime.when`) and its own summary or a session's prompts cut to `maxDescription`. With the rows go the
+    /// request and today's date (`SpokenJudge.scores`). Never an address, a paired Mac's name or a page's other fields, and
+    /// anything more is a privacy change: `docs/privacy-and-security.md` and the Settings text change with it.
     static func judgeRows(_ rows: [SearchResult], context: RowContext) -> [[String: String]] {
         rows.enumerated().map { number, row in
-            var item = ["id": "r\(number + 1)", "kind": row.isSession ? "Claude session" : row.source == "bookmark" ? "bookmark" : "page",
-                        "title": row.title]
-            if row.isSession { item["folder"] = (row.url as NSString).lastPathComponent } else { item["site"] = URL(string: row.url)?.host() ?? "" }
+            var item = ["id": "r\(number + 1)", "kind": kind(of: row).label, "title": row.title]
+            if row.isSession { item["folder"] = (row.url as NSString).lastPathComponent } else { item["site"] = site(of: row) ?? "" }
             if let when = context.when(row) { item["when"] = when }
             let description = text(of: row)
             if !description.isEmpty { item["text"] = description }
@@ -366,11 +397,11 @@ enum SpokenText {
     private static let plainlyLine = "If none of the results fits the request, say so plainly instead of guessing."
     private static let sessionLine = "For a Claude session, say what it shows. If it asked for something but doesn't show it was done, say the session doesn't say whether it landed."
 
-    /// Whether the writer may hand the request to the web: Answer from the web is on, the request names no session folder or time,
-    /// and no row it reads is a session. The marker is left out rather than offered and ignored: an ignored one leaves no answer, and
+    /// Whether the writer may hand the request to the web: Answer from the web is on, the request doesn't stay local, and no row it
+    /// reads is a session. The marker is left out rather than offered and ignored: an ignored one leaves no answer, and
     /// the writer would be asked again.
     static func offersEscalation(rows: [SearchResult], web: Bool, scope: Scope) -> Bool {
-        web && !scope.isNamed && !rows.contains(where: \.isSession)
+        web && !scope.staysLocal && !rows.contains(where: \.isSession)
     }
 
     /// `escalation` takes the place of "say so plainly" when it is offered, as the first eval measured it; withheld, "say so plainly"
@@ -428,11 +459,8 @@ enum SpokenText {
 /// written from those it keeps or asked of the web.
 @MainActor
 enum SpokenPipeline {
-    enum Step: String { case respond }
-
-    /// A step that failed; the log names the step and the error's kind.
+    /// The writer failed; the log names the error's kind.
     struct Failure: Error {
-        let step: Step
         let underlying: Error
     }
 
@@ -447,7 +475,7 @@ enum SpokenPipeline {
         case cantDo(screen: Bool, web: Bool)
         /// Nothing was kept, and the web can't be asked (the switch is off or its needs aren't met).
         case nothingKept
-        /// A request that names a session folder or a time found no session, and the web can't know: the sentence says so.
+        /// A request that stays local (`Scope.staysLocal`) found no session, and the web can't know: the sentence says so.
         case noSessions(String)
         /// Nothing was kept and the web may be asked. Not said.
         case asking
@@ -543,6 +571,12 @@ enum SpokenPipeline {
         var api: Double?
         var total: Duration
         var end: String
+
+        /// "answered, 2 turns, start-up 1.30 s, API 3.20 s, total 4.80 s", for the timing line and `--ask`.
+        var summary: String {
+            "\(end), \(turns.map(String.init) ?? "-") turns, start-up \(startup?.seconds.secondsText ?? "-"), "
+                + "API \(api.map { String(format: "%.2f s", $0 / 1000) } ?? "-"), total \(total.seconds.secondsText)"
+        }
     }
 
     struct Run {
@@ -694,7 +728,7 @@ enum SpokenPipeline {
 
         if !run.rows.isEmpty {
             run.outcome = .reading
-        } else if scope.isNamed {
+        } else if scope.staysLocal {
             // The web can't know what the user did in a project or at a time.
             run.outcome = .noSessions(scope.nothingFound)
         } else {
@@ -722,7 +756,7 @@ enum SpokenPipeline {
         let search = model.search
         let sessionWords = SpokenText.sessionWords(from: words, scope: scope)
         // A request with only a time, or a folder, and no other words has nothing to search the pages for.
-        let pageWords = words.isEmpty ? (scope.isNamed ? "" : SpokenText.cleaned(request)) : words
+        let pageWords = words.isEmpty ? (scope.shapesSessions ? "" : SpokenText.cleaned(request)) : words
         var ranking = pageWords.isEmpty ? RelevanceSearch.Ranking() : search.keyword(pageWords)
         var meaningBy = pageWords.isEmpty ? "no page words" : "keyword only"
         if !pageWords.isEmpty {
@@ -740,14 +774,13 @@ enum SpokenPipeline {
         var sessions = ranking.sessions
         var selected: Set<Int64> = []
         var sessionsBy = "searched"
-        if scope.isNamed {
+        if scope.shapesSessions {
             // Sessions in a named folder only; with no words left, those in the window (and the folder), most recent first; with words,
             // those in the window go ahead of the others found.
-            let timeOnly = sessionWords.isEmpty
-            let filter = SessionFilter(folderNames: scope.folders, window: timeOnly ? scope.window?.interval : nil)
-            sessions = try await search.spokenSessions(words: sessionWords, filter: filter, boost: timeOnly ? nil : scope.window?.interval)
-            if !scope.folders.isEmpty || timeOnly { selected = Set(sessions.map(\.id)) }
-            sessionsBy = (scope.folders.isEmpty ? "" : "folder, ") + (scope.window.map { "\($0.kind) window, \(timeOnly ? "filter" : "boost")" } ?? "")
+            let filter = SessionFilter(folderNames: scope.folders, window: scope.timeOnly ? scope.window?.interval : nil)
+            sessions = try await search.spokenSessions(words: sessionWords, filter: filter, boost: scope.timeOnly ? nil : scope.window?.interval)
+            if !scope.folders.isEmpty || scope.timeOnly { selected = Set(sessions.map(\.id)) }
+            sessionsBy = (scope.folders.isEmpty ? "" : "folder, ") + (scope.window.map { "\($0.kind) window, \(scope.timeOnly ? "filter" : "boost")" } ?? "")
             sessionsBy = sessionsBy.trimmingCharacters(in: CharacterSet(charactersIn: ", "))
         }
         try Task.checkCancellation()
@@ -942,7 +975,7 @@ enum SpokenPipeline {
             text = try await generate(prompt, limits.tokens, on: model, places: &textPlaces)
         } catch {
             try Task.checkCancellation()
-            throw Failure(step: .respond, underlying: error)
+            throw Failure(underlying: error)
         }
         run.answeredAt = textPlaces.last
         if offered, SpokenText.escalates(text) {
@@ -957,7 +990,7 @@ enum SpokenPipeline {
     /// Why the writer was not offered the marker, for the timing line and `--ask`.
     private static func withheld(run: Run, session: Bool) -> String {
         if !run.web { return "Answer from the web off" }
-        if run.scope.isNamed { return "a folder or a time named" }
+        if run.scope.staysLocal { return "stays local" }
         return session ? "a session read" : "-"
     }
 
@@ -1077,7 +1110,7 @@ enum SpokenCommand {
         } catch is CancellationError {
             how = "cancelled"
         } catch let failure as SpokenPipeline.Failure {
-            how = "failed at \(failure.step.rawValue): \(failure.underlying.logKind)"
+            how = "failed: \(failure.underlying.logKind)"
         } catch {
             how = "failed: \(error.logKind)"
         }
@@ -1108,7 +1141,7 @@ enum SpokenCommand {
             // What is said before the answer: the first line when the run is ready at the hold's end, and the web's later.
             var acknowledgements = SpokenPipeline.firstLine(for: prepared).map { [$0] } ?? []
             let run = try await SpokenPipeline.respond(prepared, to: request, on: model, announce: { acknowledgements.append($0) })
-            describe(prepared, run: run, draw: draw)
+            await describe(prepared, run: run, draw: draw)
             print("ack: " + (acknowledgements.isEmpty ? "none (its one line is ready)" : acknowledgements.joined(separator: " then ")))
             if let writer = run.writer {
                 let how = writer.escalated ? "escalated" : writer.offered ? "answered, marker offered"
@@ -1116,8 +1149,7 @@ enum SpokenCommand {
                 print("writer: \(how)  [\(run.answeredAt.map { "\($0)" } ?? "-")]")
             }
             if let web = run.lookup {
-                print("web: \(web.end), \(web.turns.map { "\($0) turns" } ?? "- turns"), start-up \(web.startup?.seconds.secondsText ?? "-"), "
-                      + "API \(web.api.map { String(format: "%.2f s", $0 / 1000) } ?? "-"), total \(web.total.seconds.secondsText)")
+                print("web: \(web.summary)")
             }
             // Said as is; when no answer was written (nothing to search, nothing found) it is Varnick's own sentence.
             var says = run.outcome.spoken
@@ -1125,7 +1157,7 @@ enum SpokenCommand {
             print("says: \(says)  [\(run.respond.seconds.secondsText)]")
             return 0
         } catch let failure as SpokenPipeline.Failure {
-            print("Failed at \(failure.step.rawValue): \(failure.underlying.localizedDescription)")
+            print("Failed while writing: \(failure.underlying.localizedDescription)")
             return 1
         } catch {
             print("Failed: \(error.localizedDescription)")
@@ -1134,7 +1166,7 @@ enum SpokenCommand {
     }
 
     /// What `prepare` did: the route, what the request names, the search, the judge and the rows. `run` is the answered run.
-    private static func describe(_ prepared: SpokenPipeline.Run, run: SpokenPipeline.Run, draw: Bool) {
+    private static func describe(_ prepared: SpokenPipeline.Run, run: SpokenPipeline.Run, draw: Bool) async {
         switch prepared.outcome {
         case .nothingToSearch:
             print("search: nothing to search")
@@ -1151,7 +1183,7 @@ enum SpokenCommand {
                 if draw, case .point(let target) = run.outcome {
                     NSApplication.shared.setActivationPolicy(.accessory)
                     ArrowOverlay.shared.show(frame: target.frame, note: target.note)
-                    Thread.sleep(forTimeInterval: ArrowOverlay.lingers)
+                    try? await Task.sleep(for: .seconds(ArrowOverlay.lingers))
                     ArrowOverlay.shared.hide()
                 }
                 return

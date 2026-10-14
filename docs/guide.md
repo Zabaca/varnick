@@ -166,7 +166,7 @@ the date" are answered from the Mac's clock, and "set a timer" is told plainly t
 Settings › Listening › **Answer from the web** (off by default) answers from the web what none of that can, such as
 when a shop opens: your own Claude Code searches for it, on your plan, and Varnick says "Looking that up." and then
 where the answer came from. It needs Hey Varnick, the relevance filter on TypeSafe with a key, and Claude Code found
-and logged in. A request that names a project folder or a time never goes to the web: Varnick says it found no
+and logged in. A request that names a project folder, or is only a time, never goes to the web: Varnick says it found no
 sessions then. What is sent is in [privacy and security](privacy-and-security.md#anthropic-and-a-search-provider-through-answer-from-the-web).
 
 Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,

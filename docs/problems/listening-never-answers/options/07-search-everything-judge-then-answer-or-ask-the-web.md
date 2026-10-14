@@ -1,7 +1,7 @@
 ---
 problem: listening-never-answers
 title: Every spoken request searches History, Bookmarks and sessions together, Jev judges the rows, and the answer comes from them or from the web
-summary: The source router goes. Every spoken request searches History, Bookmarks and Claude sessions in one fused search, and finds sessions by a project's folder name and by when they were used ("this morning", "yesterday"). One Jev call, the judge, scores each of the top rows and keeps those at 0.5 or more. Text generation writes from the kept rows. With Answer from the web on, the web is asked when nothing is kept, or when the writer finds the kept rows too thin, but never when a session was kept or the request names a session folder or a time: then the writer says what the sessions show, or Varnick says it found no sessions then. Every request ends in an answer. The user hears "Let me check." once the hold ends, and "Looking that up." when the web is asked. Jev's route only orders the rows, cuts the can't-do line short and sends screen requests to the screen. Replaces option 06's web triggers; keeps 06's web call, switch and privacy text, the clock answer and the screen path. Amended after two evals (2026-10-14): the judge's answer-or-web choice is dropped, sessions a folder or a time selected are never dropped, and a row's "when" names the window it fell in.
+summary: The source router goes. Every spoken request searches History, Bookmarks and Claude sessions in one fused search, and finds sessions by a project's folder name and by when they were used ("this morning", "yesterday"). One Jev call, the judge, scores each of the top rows and keeps those at 0.5 or more. Text generation writes from the kept rows. With Answer from the web on, the web is asked when nothing is kept, or when the writer finds the kept rows too thin, but never when a session was kept or the request stays local (it names a session folder, or it is only a time): then the writer says what the sessions show, or Varnick says it found no sessions then. Every request ends in an answer. The user hears "Let me check." once the hold ends, and "Looking that up." when the web is asked. Jev's route only orders the rows, cuts the can't-do line short and sends screen requests to the screen. Replaces option 06's web triggers; keeps 06's web call, switch and privacy text, the clock answer and the screen path. Amended after two evals (2026-10-14): the judge's answer-or-web choice is dropped, sessions a folder or a time selected are never dropped, and a row's "when" names the window it fell in.
 status: accepted
 ---
 
@@ -21,7 +21,7 @@ Varnick's steps, after the wake phrase and the hold:
 3. **Answer.** Text generation writes one or two spoken sentences from the kept rows only, naming the page or session and when.
    - With the web switch on and no session among the kept rows, it can reply that the rows don't hold the answer, and the request goes to the web.
    - With a session kept, it says what the session shows, including that it doesn't say whether something was finished.
-4. **Or ask the web** when nothing is kept or the writer hands it over, never for a request that names a session folder or a time. This is option 06's call, unchanged: the user's own `claude`, WebSearch only, the request's words with the date, time and units, and the answer naming its source.
+4. **Or ask the web** when nothing is kept or the writer hands it over, never for a request that stays local (it names a session folder, or it is only a time; see "Never the web"). This is option 06's call, unchanged: the user's own `claude`, WebSearch only, the request's words with the date, time and units, and the answer naming its source.
 
 What the user hears:
 
@@ -32,7 +32,7 @@ What the user hears:
 | Rows answer it | the answer, naming the page or session |
 | The web answers it | the answer, naming its source |
 | Nothing kept, Answer from the web off | "I couldn't find that in your pages, bookmarks or Claude sessions." |
-| A session folder or a time named, and no session then | "I found no sessions in <folder> <time>.", from the request's own words, such as "I found no sessions in <project> today." |
+| A session folder named, or only a time, and no session then | "I found no sessions in <folder> <time>.", from the request's own words, such as "I found no sessions in <project> today." |
 | The time or date | the clock's answer, with nothing said first |
 | A timer or another thing to do | the can't-do line, with nothing said first |
 | About the screen (Point at the screen on) | as today |
@@ -52,7 +52,7 @@ It never shuts a source out.
 - **Sessions are found by project and by time,** which the eval showed they weren't. "What was I working on this morning" and "what did I work on in the Varnick repo" found nothing and went to the web.
   - A session counts as used in a window when the window falls between its first and last prompt. So a session used at 9 and again at 4 counts as used at noon.
   - Pages get no time window: a page holds only its last visit.
-  - A request that names a session folder or a time stays local. With no session then, Varnick says so rather than asking the web, which can't know.
+  - A request that names a session folder, or is only a time, stays local. With no session then, Varnick says so rather than asking the web, which can't know. A time with other words ("when does Costco open today") is not that: it goes to the web as any request does.
   - The sessions a folder or a time selected are never dropped by the judge, and their "when" names the window, so the judge and the writer can see why they were picked.
 - **A kept session never sends the request to the web.** The writer says what the session shows instead, such as that it asked for a fix but doesn't say it landed. In the eval Haiku sent that request to the web once in four tries.
   - A world question that keeps a session by mistake is answered from the session, not the web. How often that happens is for the re-run to count.
@@ -123,8 +123,11 @@ It never shuts a source out.
   - With no search words left (only a time, or a time and a folder), the session search returns the sessions in the window, in the folder when one is named, most recently used first, up to 3.
   - With search words, the sessions in the window go ahead of the others in the search's order, before the cut to 3. The boost only reorders sessions the search found; it adds none.
 - **Selected sessions are kept.** Sessions a named folder or a time-only window selected are kept whatever the judge scores them. Their score only orders them. Sessions the boost moved up are judged as usual.
-- **Never the web.** A request that names a session folder or makes a time window never goes to the web, by the judge or the writer, with the switch on or off.
-  - When nothing is kept, Varnick says "I found no sessions in <folder> <time>.", with the folder's name and the time as the request said them. With only a time: "I found no sessions <time>.". With only a folder: "I found no sessions in <folder>.".
+- **Never the web, for a request that stays local** (corrected by the coordinator to the user's intent, 2026-10-14; the amendment had worded it too broadly). It never goes to the web, by the judge or the writer, with the switch on or off, when either holds:
+  - it names a session folder;
+  - its time window chose the sessions itself: no search words are left once the time and folder words are taken out (the case that filters, above).
+  - With search words left, the window only moves the sessions in it up. The ordinary rule applies: a kept session means no marker, and nothing kept means the web. "When does Costco open today" goes to the web.
+  - When nothing is kept for a request that stays local, Varnick says "I found no sessions in <folder> <time>.", with the folder's name and the time as the request said them. With only a time: "I found no sessions <time>.". With only a folder: "I found no sessions in <folder>.".
   - Why: the web can't know what the user did in their own project or at a time, and the second eval sent such a request there, where it couldn't be answered.
 - Pages get no window: a page holds only its last visit, so a page read last week and again today would fall out of "last week".
 - **The typed `?` search doesn't take these,** a default the user can overrule. The panel already has `#project` for a folder. Reading time words out of typed text would change what a typed search shows without being asked for. If wanted later, it comes as an explicit word, as `#project` does.
@@ -154,7 +157,7 @@ It never shuts a source out.
 
 - **Reading it:**
   - Rows at 0.5 or more are kept (the filter's threshold), and so are sessions a folder or a time-only window selected, whatever their score.
-  - Nothing kept means the web, with the switch on, unless the request names a session folder or a time.
+  - Nothing kept means the web, with the switch on, unless the request stays local ("Never the web").
 - **When, in words** (amended after the second eval), for the judge and the writer alike:
   - A session in the request's window: the window, then the day, such as "Monday evening, 2 days ago".
   - Any other row last used or visited in the past week: its weekday and part of the day, then the day, such as "Thursday evening, 5 days ago".
@@ -177,13 +180,13 @@ It never shuts a source out.
 - **Escalation**, with Answer from the web on, for whichever writer Text generation is set to, this Mac's Gemma included: the prompt adds "If these results don't hold what the request asks for, reply with only NEED_WEB."
   - A reply holding the marker sends the request to the web, with "Looking that up." queued.
   - With the switch off, the marker isn't offered, and the prompt's "say so plainly" stands.
-- **No marker when a session is kept, or the request names a session folder or a time** (amended after the evals). Then the marker line is left out of the prompt, and "say so plainly" stays. When a row is a session, this line goes in too: "For a Claude session, say what it shows. If it asked for something but doesn't show it was done, say the session doesn't say whether it landed."
+- **No marker when a session is kept, or the request stays local** (amended after the evals). Then the marker line is left out of the prompt, and "say so plainly" stays. When a row is a session, this line goes in too: "For a Claude session, say what it shows. If it asked for something but doesn't show it was done, say the session doesn't say whether it landed."
   - When the marker is offered, it takes the place of "say so plainly", as the first eval measured. When it is withheld, "say so plainly" stays, as the second did.
   - The marker is not offered, rather than offered and ignored. An ignored marker leaves no answer, so the writer would be asked again without it: one more Haiku call, 1.65 s at the eval's median. Leaving it out gets the answer in one call, and lets the prompt ask for what the session does show.
 - This is the knowledge-base flow's escalation to a tool loop, with the web in place of tools. A bounded loop over the user's own sources (options 02 and 03) stays out.
 
 **Answer from the web**
-- **When:** the switch's needs are met, the request names no session folder and makes no time window, and either no row is kept, or the writer escalates (offered only when no session is kept).
+- **When:** the switch's needs are met, the request doesn't stay local (it names no session folder and is not only a time), and either no row is kept, or the writer escalates (offered only when no session is kept).
 - **The call:** option 06's, unchanged. The request's words with the date, time and units go, and nothing about the rows, kept or not.
 - **The switch's detail** becomes, in substance: what your pages, bookmarks and sessions can't answer is answered from the web by your own Claude Code. The rest of option 06's text stands.
 - **The switch off and nothing kept:** "I couldn't find that in your pages, bookmarks or Claude sessions." It is said at once with no writer call, so it is the quickest line after the clock. It replaces today's "I only look up your pages, bookmarks and Claude sessions.": an off-topic request is now searched like any other.
@@ -191,7 +194,7 @@ It never shuts a source out.
 **What is said, and the voice queue**
 - **At the hold's end:**
   - If the request's one line is ready, it is said with nothing before it: the clock, can't-do, the nothing line, the empty request, or a screen note whose pick finished during the hold.
-  - If nothing was kept, the switch is on, and the request names no session folder or time, "Looking that up." alone.
+  - If nothing was kept, the switch is on, and the request does not stay local, "Looking that up." alone.
   - Otherwise "Let me check.", and "Looking that up." later if the web is asked.
 - **The queue takes any number of lines.** Each line's audio is fetched or rendered while the one before plays, and it starts when that one ends, never over it. A stop drops every line.
 - **`SpeechSpans`** covers each line from its first sound to its last plus the tail, and covers nothing while Varnick is silent, waiting for the writer or the web.
@@ -225,7 +228,7 @@ It never shuts a source out.
 **Privacy and logs**
 - **TypeSafe,** with the filter on TypeSafe:
   - the route call, unchanged;
-  - the judge: the search words, and the first 20 pages' title, site and own description, as today;
+  - the judge: the request, and the first 20 pages' title, site and own description (as `SpokenText.judgeRows` builds them), as today;
   - new: up to 3 sessions' title, folder name, when and prompts cut to 300 characters.
 - **Worked out on this Mac:** the folder match and the time window. Folder names are compared with the request here and never sent, as today.
 - **New with the second eval's fix:** the judge's state and the writer's prompt name today's weekday and date and where this week started. A session row's "when" can name the window it fell in. The privacy doc's Text generation section, which says the date is never sent, is amended with option 06's.
@@ -249,7 +252,7 @@ It never shuts a source out.
   - `sessions:`, with the folder filter and the window used, if any;
   - each row with its kind and score;
   - `ack:`;
-  - the writer's reply kind (answer, escalated, or marker not offered because a session was kept or a folder or time was named);
+  - the writer's reply kind (answer, escalated, or marker not offered because a session was kept or the request stays local);
   - `web:` when asked;
   - `says:`.
 
@@ -257,7 +260,7 @@ It never shuts a source out.
 - `VARNICK_EVAL_FILTER` still chooses the judge for `--ask` without writing the settings. A way to set the clock for `--ask` (the time a request is asked at) lets time requests be tuned on fixed sessions.
 
 **State**
-- No new setting. Option 06's switch key holds Answer from the web. `sessions.json` is unchanged, and so is the store's schema: the first and last prompts are already kept.
+- No new setting. Option 06's switch key holds Answer from the web. `sessions.json` is unchanged, and so is the store's data: the first and last prompts are already kept. One index is added, `sessions (session_id, directory)`, so the window's lookup of those prompts is a lookup per row and not a scan of the table; the agent filter uses it too.
 
 ## Testing Decisions
 
@@ -304,6 +307,7 @@ It never shuts a source out.
   - "What was I working on this morning" and "what did I do in" one of your projects "yesterday": answered from the sessions used then.
   - "What did I work on" a weekday "evening", for a session used then: answered from it, its time named.
   - "What did I do in" one of your projects "today", when you didn't use it today: "I found no sessions in" that project "today.", with no "Looking that up.".
+  - "When does Costco open today": a time with search words, so it goes to the web as "when does Costco open" does.
   - "Did I touch" a project "this week", when you last used it last week: the answer says not this week, and when you last did.
   - Ask whether you fixed something a session worked on. The answer says what the session shows, not the web's.
   - "What is MLX", with MLX pages in your History, is answered from them. "What's the capital of Australia" gets "Looking that up." and the web's answer.
@@ -317,7 +321,7 @@ It never shuts a source out.
   1. On the user's own History and sessions, `--ask` on a dozen of their typical requests, a few time and project requests, and the eval's world questions: how many stay local and how many reach the web.
   2. Latency: about 10 requests of each kind, from the timing line. A local answer with a median well over 4.5 s goes back to the user.
   3. The judge's time on the user's rows, against the eval's.
-  4. The three fixes of the second amendment, which no eval measured: a session in a window is kept and named by its window, a folder or time request with no session gets the "no sessions" line, and "this week" is answered against the week's start.
+  4. The three fixes of the second amendment, which no eval measured: a session in a window is kept and named by its window, a folder or time-only request with no session gets the "no sessions" line, and "this week" is answered against the week's start.
 
 ## Out of Scope
 
@@ -344,7 +348,7 @@ It never shuts a source out.
   3. No escalation when a session row is kept. The writer says what the session shows instead. The planner chose "not offered" over "ignored", for the reason given under The writer.
 - **Amended by the user on 2026-10-14 after the second eval** (`ac5469e`, above), relayed by the coordinator. They accepted its result, 1 of 61 in place of none, and chose to build now with three fixes and no third run:
   1. A row's "when" names the window it fell in ("Monday evening, 2 days ago"), for the judge and the writer, with today and where this week started.
-  2. A request that names a session folder or a time window never goes to the web. With nothing found, Varnick says so ("I found no sessions in <project> today.").
+  2. A request that names a session folder or a time window never goes to the web. With nothing found, Varnick says so ("I found no sessions in <project> today."). **Corrected by the coordinator to the user's intent (2026-10-14):** only a request that names a session folder, or whose time window chose the sessions itself (no search words left), stays local. A time with search words goes the ordinary way, so "when does Costco open today" reaches the web.
   3. Sessions the window or the folder selected skip the judge's keep or drop. It may still rank them, but it can't drop them.
 - **The eval's gap-fills, now the spec's choices:**
   - a week starts on the Mac's calendar's first weekday (Sunday on a US calendar, as the eval used);

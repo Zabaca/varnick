@@ -5,9 +5,8 @@ import Foundation
 /// call grown to sessions and given today's date, and it is pinned to the route's model, since the threshold's meaning was measured
 /// on it (the panel's filter keeps `jev-latest`). It only scores: the answer-or-web choice was dropped after its eval.
 ///
-/// What goes: the request, today's date and where the week started, and for each row its kind, title, site or session folder, when
-/// in words and its own description or a session's prompts, cut to 300 characters. Never an address, a paired Mac's name or a page's
-/// other fields (`SpokenText.judgeRows`). Nothing here is logged.
+/// What goes: the request and today's date (here), and the rows (`SpokenText.judgeRows` describes them, and is the one place to
+/// change them). Nothing here is logged.
 struct SpokenJudge {
     let apiKey: String
     var model = SpokenRouter.pinnedModel

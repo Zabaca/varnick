@@ -771,7 +771,7 @@ struct SettingsView: View {
                                 VStack(alignment: .trailing, spacing: 6) {
                                     if !settings.heyVarnick {
                                         Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                                    } else if !screenGateOpen {
+                                    } else if !typesafeGateOpen {
                                         Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
                                             .buttonStyle(.link)
                                             .font(.system(size: 12))
@@ -780,14 +780,14 @@ struct SettingsView: View {
                                 }
                                 .fixedSize()
                                 Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !screenGateOpen))
+                                    .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !typesafeGateOpen))
                             }
                             SettingRow(title: "Answer from the web",
-                                       detail: "What your pages, bookmarks and Claude sessions can't answer, such as when a shop opens, is answered from the web by your own Claude Code, on your plan, and Varnick says where the answer came from. The words you say go to Anthropic with today's date and time, and Claude's search words go to Anthropic's search provider. Nothing of your history, bookmarks, sessions or screen goes. Each answer counts toward your plan's usage limits. A request that names one of your project folders or a time (\"today\", \"last week\") is never asked of the web: Varnick tells you it found no sessions then.") {
+                                       detail: "What your pages, bookmarks and Claude sessions can't answer, such as when a shop opens, is answered from the web by your own Claude Code, on your plan, and Varnick says where the answer came from. The words you say go to Anthropic with today's date and time, and Claude's search words go to Anthropic's search provider. Nothing of your history, bookmarks, sessions or screen goes. Each answer counts toward your plan's usage limits. A request that names one of your project folders, or is only a time (\"what did I do last week\"), is never asked of the web: Varnick tells you it found no sessions then.") {
                                 VStack(alignment: .trailing, spacing: 4) {
                                     if !settings.heyVarnick {
                                         Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                                    } else if !screenGateOpen {
+                                    } else if !typesafeGateOpen {
                                         Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
                                             .buttonStyle(.link)
                                             .font(.system(size: 12))
@@ -796,7 +796,7 @@ struct SettingsView: View {
                                     }
                                 }
                                 Toggle("", isOn: $settings.answerFromWeb).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.answerFromWeb && (!settings.heyVarnick || !screenGateOpen || !claudeCode.loginPassed))
+                                    .disabled(!settings.answerFromWeb && (!settings.heyVarnick || !typesafeGateOpen || !claudeCode.loginPassed))
                             }
                             SettingRow(title: "Voice",
                                        detail: "What Varnick speaks in. An ElevenLabs voice sends every line Varnick speaks to ElevenLabs, answers included, which can repeat words of your request and name your pages, sessions and folders; the voices installed on this Mac send nothing.") {
@@ -1144,8 +1144,9 @@ struct SettingsView: View {
         }
     }
 
-    /// Point at the screen can be turned on only with the gate open: only Jev chooses the element.
-    private var screenGateOpen: Bool { settings.typesafeGateKey != nil }
+    /// The relevance filter is on TypeSafe with a key. Point at the screen (only Jev chooses the element) and Answer from the web (the
+    /// judge's verdict decides what goes) can be turned on only with it.
+    private var typesafeGateOpen: Bool { settings.typesafeGateKey != nil }
 
     /// The TypeSafe key comes from the environment or `.env`.
     private var envKeyNote: some View {

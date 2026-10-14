@@ -314,7 +314,7 @@ final class SpokenRequests {
             guard !Task.isCancelled else { return }
             let failure = error as? SpokenPipeline.Failure
             let cause = failure?.underlying ?? error
-            NSLog("Varnick: spoken request failed at \(failure?.step.rawValue ?? "-"): \(cause.logKind)")
+            NSLog("Varnick: spoken request failed\(failure == nil ? "" : " while writing"): \(cause.logKind)")
             saying = cause is TextGenerator.Failure ? Self.unavailable(model.textGeneration.claude) : "I couldn't answer that."
         }
         guard !Task.isCancelled else { return }
@@ -382,8 +382,7 @@ final class SpokenRequests {
                 + (writer.escalated ? ", escalated" : "") + ", "
         }
         if let web = run?.lookup {
-            text += "web \(web.end), \(web.turns.map(String.init) ?? "-") turns, start-up \(web.startup?.seconds.secondsText ?? "-"), "
-                + "API \(web.api.map { String(format: "%.2f s", $0 / 1000) } ?? "-"), total \(web.total.seconds.secondsText), "
+            text += "web \(web.summary), "
         }
         return text
     }

@@ -42,7 +42,11 @@ enum SpokenTime {
         let words = request.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
         let today = calendar.startOfDay(for: now)
         func day(_ offset: Int) -> Date { calendar.date(byAdding: .day, value: offset, to: today) ?? today }
-        func hour(_ day: Date, _ hours: Int) -> Date { calendar.date(byAdding: .hour, value: hours, to: day) ?? day }
+        // The hour on that day's own clock, so a day the clocks change in still starts its parts at 5, noon and 5; 24 is the next midnight.
+        func hour(_ day: Date, _ hours: Int) -> Date {
+            if hours >= 24 { return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day)) ?? day }
+            return calendar.date(bySettingHour: hours, minute: 0, second: 0, of: day) ?? day
+        }
         func make(_ from: Date, _ to: Date, _ label: String, spoken: String? = nil, kind: String) -> Window {
             Window(interval: DateInterval(start: from, end: max(from, to)), label: label, spoken: spoken ?? label, kind: kind)
         }
