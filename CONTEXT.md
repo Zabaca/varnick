@@ -22,7 +22,7 @@ What was typed into a search engine before clicking through to a page of **Histo
 _Avoid_: Keyword, query (the query is what's typed into Varnick)
 
 **Relevance filter**:
-Search's last pass: a model judges which of the top 20 pages match what the search is after and moves them to the top, leaving the rest below in their order. Runs on TypeSafe or on this Mac, for a **Spoken request** as for a typed search; a Claude session is never judged.
+Search's last pass: a model judges which of the top 20 pages match what the search is after and moves them to the top, leaving the rest below in their order. Runs on TypeSafe or on this Mac, for a **Spoken request** as for a typed search; for a typed search a Claude session is never judged, and for a **Spoken request** it also scores up to 3 sessions.
 _Avoid_: Reranker (in the UI), Jev
 
 **Page description**:
@@ -244,8 +244,16 @@ The signed copy of Bun inside Varnick.app and the `agent.js` it runs, which writ
 _Avoid_: Agent (an **Agent** is a Claude Code definition), Claude session
 
 **Spoken request**:
-What the user says after the **Wake phrase**. It is answered aloud from **History**, **Bookmark**s and **Session**s. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
+What the user says after the **Wake phrase**. **History**, **Bookmark**s and **Session**s are all searched for it, sessions also by a project's folder name and by when they were used, and it is answered aloud from the rows the **Relevance filter** keeps or, with **Answer from the web** on, from the web when they can't answer it. A question about the time or the date is answered from this Mac's clock. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
+
+**Acknowledgement**:
+The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and not written to the transcript. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
+_Avoid_: Cue, earcon (the wake sound is a sound, not a line)
+
+**Answer from the web**:
+The setting (Settings › Listening, off by default) that answers a **Spoken request** from the web, through the user's own Claude Code and its search tool, when the rows can't. A request that names a session folder or a time is never asked of the web.
+_Avoid_: Web search (the tool is Claude Code's, not Varnick's)
 
 **Arrow**:
 What Varnick draws over the screen to point at the thing a **Spoken request** asked about, or that a **Session** points at with its screen tools: a big arrow with a sign holding the note Varnick says aloud, or the session's name and note. It lets clicks through, never takes focus and goes by itself.

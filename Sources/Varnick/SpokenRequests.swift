@@ -43,7 +43,7 @@ final class SpokenRequests {
         case answering
     }
 
-    /// Decide, search and filter run on the request's text as it stands, from when it last changed, through `hold` (ADR 0017).
+    /// The route, search and judge run on the request's text as it stands, from when it last changed, through `hold` (ADR 0017).
     /// Keyed by that exact text: a result is read only for the request dispatched, so a stale one is never used.
     private struct Speculation {
         let text: String
@@ -202,7 +202,7 @@ final class SpokenRequests {
 
     // MARK: Answering
 
-    /// Starts deciding, searching and filtering for `text` at once, unless that already runs for exactly this text. A run for
+    /// Starts routing, searching and judging for `text` at once, unless that already runs for exactly this text. A run for
     /// older text is cancelled and its result dropped whenever it ends. Nothing is written or spoken from here.
     private func speculate(on text: String) {
         var restarts = 0

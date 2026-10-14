@@ -53,9 +53,15 @@ Mac** or leave it off (it is off by default): then none of this happens.
 
 - **Searches.** Each search, with the title, site and page description of up to 20 results. Never full addresses
   or tags.
-- **Hey Varnick.** The text you say after "Hey Varnick" goes to TypeSafe's Jev to choose where to look, with no
-  titles, names or results. The request is then searched and filtered as a typed search is (above). This starts
-  before you have quite finished, so words said so far may be sent and then discarded.
+- **Hey Varnick.** Two calls. The text you say after "Hey Varnick" goes to TypeSafe's Jev to see whether it is about
+  your screen or something Varnick can't do, with no titles, names or results. Then the same text goes again, with
+  today's date and where this week started, and for each row Varnick found: its kind (page, bookmark or Claude
+  session), title, site or the session's folder name, when (its weekday and part of the day, such as "Monday
+  evening, 2 days ago", for the past week), and its own description or a session's prompts, cut to 300 characters.
+  That is the top 20 pages, as a typed search sends them, and up to 3 sessions, which a typed search never sends.
+  Never an address or a paired Mac's name. Which session folder a request names, and which time window, are worked
+  out on this Mac and not sent. Both calls start before you have quite finished, so words said so far may be sent
+  and then discarded.
 - **Point at the screen** (off by default). A request about the screen also sends the title of the window in
   front and, for each of its first 255 elements, the label, kind, nearby text and whether it is dimmed. That is
   the window's visible text, not only the text near its controls: a message list's subjects and senders, an open
@@ -93,23 +99,22 @@ lines private, leave the voice on one installed on this Mac, which is the defaul
 
 ### Anthropic, through Text generation
 
-Text generation writes Hey Varnick's answers, and its decide step whenever TypeSafe's Jev doesn't decide. Choosing
-**Claude Code** for it (Settings › Models; the default for an install that never chose) is consent to send what it
+Text generation writes Hey Varnick's answers. Choosing **Claude Code** for it (Settings › Models; the default for an install that never chose) is consent to send what it
 needs to Anthropic, under your own Claude account and on your plan. Hey Varnick is off until you turn it on, and its
 setting says so; nothing is sent before that. To keep the text on this Mac, choose **On this Mac**. An install that
 already answered with it stays there when it upgrades.
 
-- **What you say.** The request after "Hey Varnick", cut to 500 characters. The decide step starts before you have
-  quite finished, so words said so far may be sent and then discarded.
-- **The results it reads,** for the answer: each one's kind, title, site or folder, how long ago, and description (cut
-  to 300 characters), and for a Claude session its prompts, your paired Macs' too. The decide step sends the request
-  alone.
+- **What you say.** The request after "Hey Varnick", cut to 500 characters.
+- **The results it reads,** for the answer: each one's kind, title, site or folder, when (its weekday and part of the
+  day, how long ago), and description (cut to 300 characters), and for a Claude session its prompts, your paired Macs'
+  too. With them go today's date and where this week started, so "this week" is answered right.
 - **What Claude Code itself sends** with a call: your account's token, and device and account ids in metadata, as a
   pane's Claude does.
 
 It never sends your Claude settings, hooks, plugins, CLAUDE.md or memory, a `.env`, tools or files, nor the working
-folder, the OS or the date that Claude Code would add (a filter drops them). Nothing is saved as a transcript, so a
-call is not a session: it is on no board and in no search. Each answer counts toward your plan's usage limits.
+folder, the OS or the date that Claude Code would add (a filter drops them); the only date is the one in Varnick's own
+prompt, above. Nothing is saved as a transcript, so a call is not a session: it is on no board and in no search. Each
+answer counts toward your plan's usage limits.
 
 The call runs through a copy of Bun inside the app, driving your own `claude` with the environment your login shell
 builds, as a pane's does. Varnick reads that environment once per launch, keeps it in memory, never logs or writes it,
@@ -117,6 +122,27 @@ and gives it only to Bun and `claude`. It holds whatever your shell exports, oth
 pane's Claude does; the model has no tools to read it back. An `ANTHROPIC_API_KEY` in it is removed, so your plan is
 billed and not a key. When Claude Code can't answer or is slow, this Mac's Gemma writes the text if you have installed
 it, and nothing is sent for that.
+
+### Anthropic, and a search provider, through Answer from the web
+
+Settings › Listening › **Answer from the web** (off by default; it needs Hey Varnick, the relevance filter on
+TypeSafe with a key, and Claude Code found and logged in) answers what your pages, bookmarks and Claude sessions can't,
+such as when a shop opens, from the web. Turning it on is the consent: there is no prompt per request. A request goes
+to the web when nothing Varnick found helps answer it, or when the writer finds what it found too thin and no
+session was read. A request that names one of your session folders or a time ("today", "last week") never goes.
+
+- **What goes to Anthropic,** through your own `claude` on your plan: the request after "Hey Varnick", cut to 500
+  characters, with today's date and time and your Mac's unit system, in Varnick's fixed prompt. **Nothing about what
+  Varnick found:** no row, kept or not, no title, folder or project name, no screen text.
+- **What goes to Anthropic's search provider:** the search words Claude writes, sent by Anthropic. Claude Code's search
+  tool is described as US only, so elsewhere the search may be refused.
+- **What Claude Code itself sends** with a call, as above.
+- **The one tool** is WebSearch, which runs on Anthropic's side. There is no tool that reads your files, the shell
+  environment or the Mac, and none that fetches pages from your Mac.
+- The call is not a session: nothing is saved as a transcript. Each answer is two or three model turns and a search,
+  and counts toward your plan's usage limits.
+- Varnick speaks a sentence or two naming where the answer came from, and writes them to today's transcript. It does
+  not log the request, the prompt, the search words, the reply or the answer.
 
 ### Anthropic, through Screen access
 

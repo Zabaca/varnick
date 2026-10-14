@@ -62,11 +62,15 @@ Anything else leaves only when you turn it on:
 
 - **Pairing a Mac** copies your browsing history and Claude prompts to it.
 - **Choosing TypeSafe** for the relevance filter sends your searches, and the titles, sites and descriptions of
-  their results, to TypeSafe. With Hey Varnick on, so does what you say, and with Point at the screen, the text
-  of the window you ask about.
+  their results, to TypeSafe. With Hey Varnick on, so does what you say, with the titles, sites and descriptions of
+  the pages Varnick found for it and the titles, folders and prompts of the sessions, and with Point at the screen,
+  the text of the window you ask about.
 - **Hey Varnick, once on,** has your own Claude Code write its answers (Settings › Models › Text generation, the
   default for a new install), which sends what you say and the results it reads to Anthropic under your Claude
   account. Choose On this Mac to keep the text local.
+- **Answer from the web,** when you turn it on, has your own Claude Code look up what your pages, bookmarks and sessions
+  can't answer. Only the words you said, with the date and time, go to Anthropic, and Claude's search words go to its
+  search provider.
 - **Choosing an ElevenLabs voice** for Hey Varnick sends every line Varnick speaks to ElevenLabs. The voices installed
   on your Mac send nothing.
 - **Screen access** lets Claude sessions read the window in front, or take a picture of it (which shows everything

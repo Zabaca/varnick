@@ -50,7 +50,7 @@ struct SpokenRouter {
     }()
 
     // The wording was measured with the old name; "Varnick" in its place moved no decision rate beyond its confidence interval, so
-    // `offTopicFrom`, `alsoSessionsFrom` and the questions below keep their values (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "The code rename").
+    // `offTopicFrom` and the questions below keep their value (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md, "The code rename").
     private static let context = "The person said `request` aloud to Varnick, a launcher on their Mac. Varnick answers by searching one of three places: the web pages the person visited in their browser, the pages they bookmarked, or their own Claude Code sessions (the coding work they did with Claude on their own software projects)."
 
     /// With the screen, as measured (arm J4p of the screen-pointing eval, agent-lab 20fb286; "Varnick" for the old name, which
@@ -60,7 +60,7 @@ struct SpokenRouter {
 
     private static let screenCriterion = "What is on the person's screen right now: the buttons, switches, fields, menus and icons in the window in front of them. Pick this when the person asks where something is, which one to press or what something is in the app they are looking at, rather than about a page, bookmark or session from before."
 
-    /// Without the screen, these are the questions that were measured for `offTopicFrom` and `alsoSessionsFrom`.
+    /// Without the screen, these are the questions that were measured for `offTopicFrom`.
     static func questions(screen: Bool) -> [String: Any] {
         var sources = [
             "history": "The web pages the person visited, bookmarked or not: articles, docs, videos, repos, sites, products. Pick this for a public topic, technology, product or site, and when the request is about something the person read, watched or looked at.",
