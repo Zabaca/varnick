@@ -255,10 +255,33 @@ final class SpokenRequests {
         ArrowOverlay.shared.hide()
     }
 
-    /// Speaks the answer to `request`, now that `hold` has ended, from `speculated` (running still, or done). The answer is written
-    /// and spoken only here, never before the user has finished.
+    /// Says the answer to `request`, now that `hold` has ended, from `speculated` (running still, or done). The answer is written
+    /// and said only here, never before the user has finished. Its lines go through one queue (`Speaker.queue`), each starting when the
+    /// one before it ends: "Let me check." when the hold ends and the answer isn't ready, "Looking that up." when the web is asked,
+    /// then the answer. A request whose one line is ready (the clock, something Varnick can't do, nothing found) is said alone.
     private func answer(_ request: Request, speculated: Speculation) async {
         let began = Date()
+        let voice = Speaker.shared.queue()
+        /// The lines said, by kind: fixed lines are named, the answer is "answer". Never what was said.
+        var lines: [(kind: String, said: Date)] = []
+        func say(_ kind: String, _ text: String) {
+            guard !text.isEmpty else { return }
+            lines.append((kind, Date()))
+            voice.say(text)
+        }
+
+        // The run finished during the hold says whether the answer needs a line first; one still going gets "Let me check." at once.
+        // One that failed already says its failure line alone.
+        var ahead: SpokenPipeline.Run?
+        var failed = false
+        if speculated.ready {
+            switch await speculated.task.result {
+            case .success(let finished): ahead = finished
+            case .failure: failed = true
+            }
+        }
+        if !failed, let first = SpokenPipeline.firstLine(for: ahead) { say("let me check", first) }
+
         var waited: TimeInterval?
         var run: SpokenPipeline.Run?
         var pointing: (frame: CGRect, note: String)?
@@ -269,7 +292,7 @@ final class SpokenRequests {
             let found = try await speculated.task.value
             waited = Date().timeIntervalSince(began)
             try Task.checkCancellation()
-            var done = try await SpokenPipeline.respond(found, to: request.text, on: model)
+            var done = try await SpokenPipeline.respond(found, to: request.text, on: model, announce: { say("looking that up", $0) })
             // The window may have moved during the hold: the frame is read again, and an element that is gone is not pointed at.
             if case .point(let target) = done.outcome {
                 let rereading = Date()
@@ -313,31 +336,56 @@ final class SpokenRequests {
                 run?.screen?.miss = .gone
             }
         }
+        // The answer or the closing line is written to the transcript; "Let me check." and "Looking that up." say nothing it doesn't.
         record(saying)
-        let speaking = Date()
-        let speech = await Speaker.shared.speak(saying)
-        let first = speech.first
+        say("answer", saying)
+        let speeches = await voice.finished()
         if drawn, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
 
         // For the latency check: where the time went, as durations, places and kinds only.
         func seconds(_ duration: Duration?) -> String { duration?.seconds.secondsText ?? "-" }
+        func afterSpeech(_ date: Date?) -> String { date.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-" }
+        // Each line: when it was handed to the voice and when its sound began, by the clock of the speech's end.
+        let spoken = lines.enumerated().map { index, line in
+            "\(line.kind) said \(afterSpeech(line.said)), first heard \(afterSpeech(index < speeches.count ? speeches[index].first : nil))"
+        }.joined(separator: ", ")
         NSLog("Varnick: spoken request timing: said \(request.lastEnd.timeIntervalSince(request.began).secondsText), "
               + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
               + "held \(began.timeIntervalSince(request.lastArrived).secondsText), "
               + "speculation \(speculated.ready ? "ready" : "still running") when the hold ended, "
               + "restarted \(speculated.restarts) times, waited \(waited?.secondsText ?? "-") for it, "
-              + "decide \(seconds(run?.decide)) (\(run?.decidedBy ?? "-")), "
-              + "search \(seconds(run?.search)) (meaning by \(run?.meaningBy ?? "-")), "
-              + "filter \(seconds(run?.filter)) (\(run?.filteredBy ?? "-")), "
+              + Self.searchTiming(run)
               + "answer \(seconds(run?.respond)) (\(run?.answeredAt.map { "\($0)" } ?? "-")), "
+              + Self.writerTiming(run)
               + Self.screenTiming(run?.screen)
               + Self.arrowTiming(pointed: pointing != nil, reread: reread, drawing: drawing, drawn: drawn,
                                  upAfterSpeech: arrowUp.map { $0.timeIntervalSince(request.lastEnd) })
-              + "speaking began \(speaking.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
-              + "voice \(speech.by), "
-              + "render \(first.map { $0.timeIntervalSince(speaking).secondsText } ?? "-"), "
-              + "first sound \(first.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-") after speech ended, "
-              + "\(first.map { $0.timeIntervalSince(request.began).secondsText } ?? "-") after speech began")
+              + "lines: \(spoken), "
+              + "voice \(speeches.last?.by ?? "-")")
+    }
+
+    /// The route, search, judge and kept count of the timing line: durations, kinds and counts, never a word, a folder's name or a row.
+    private static func searchTiming(_ run: SpokenPipeline.Run?) -> String {
+        guard let run else { return "" }
+        func seconds(_ duration: Duration) -> String { duration.seconds.secondsText }
+        let scope = "folder " + (run.scope.folders.isEmpty ? "no" : "named") + ", window " + (run.scope.window?.kind ?? "none")
+        return "route \(seconds(run.routing)) (\(run.routedBy)), "
+            + "search \(seconds(run.search)) (meaning by \(run.meaningBy); \(scope); sessions \(run.sessionsBy)), "
+            + "judge \(seconds(run.judge)) (\(run.judgedBy)), kept \(run.rows.count) of \(run.judged.count) rows, "
+    }
+
+    /// Whether the writer was offered the marker and escalated, and the web call's turns and times.
+    private static func writerTiming(_ run: SpokenPipeline.Run?) -> String {
+        var text = ""
+        if let writer = run?.writer {
+            text += "writer marker \(writer.offered ? "offered" : "not offered (\(writer.withheld ?? "-"))")"
+                + (writer.escalated ? ", escalated" : "") + ", "
+        }
+        if let web = run?.lookup {
+            text += "web \(web.end), \(web.turns.map(String.init) ?? "-") turns, start-up \(web.startup?.seconds.secondsText ?? "-"), "
+                + "API \(web.api.map { String(format: "%.2f s", $0 / 1000) } ?? "-"), total \(web.total.seconds.secondsText), "
+        }
+        return text
     }
 
     /// The screen's part of the timing line: durations, the element count, who chose, whether Jev found the thing present, and the

@@ -1,7 +1,9 @@
 import Foundation
 
-/// Asks TypeSafe's Jev where a spoken request should look and whether it is about the user's things at all (ADR 0016).
-/// Only the request's text goes, never a title, a project name or a row; Text generation decides when this isn't used or fails.
+/// Asks TypeSafe's Jev about a spoken request: which of the user's sources it leans to, and whether it is about the screen or about
+/// none of the user's things (ADR 0016, amended by ADR 0036). The route no longer decides where to look: every request searches
+/// every source, and the route only orders the rows, sends a screen request to the screen and cuts the can't-do line short.
+/// Only the request's text goes, never a title, a project name or a row.
 struct SpokenRouter {
     let apiKey: String
     /// Pinned: the `jev-latest` alias moves, and the questions below were measured on this one.
@@ -10,7 +12,7 @@ struct SpokenRouter {
     var model = SpokenRouter.pinnedModel
     var endpoint = SpokenRouter.pinnedEndpoint
 
-    /// A decide slower than this is no faster than Gemma's, so it is given up on and Gemma decides.
+    /// A route slower than this is given up on: the request is searched and answered without it.
     static let timeout: TimeInterval = 1.5
 
     /// How likely each source is the one to look in, and how likely the request is about none of the user's things. `screen` is 0
@@ -27,8 +29,6 @@ struct SpokenRouter {
     }
 
     static let offTopicFrom = 0.5
-    /// At this chance of sessions or more, they are read beside the pages of the likelier source.
-    static let alsoSessionsFrom = 0.1
 
     /// The `source` probabilities and the `action` choice's "other" out of Jev's reply; nil when it holds no source.
     static func route(fromResponse data: Data) -> Route? {

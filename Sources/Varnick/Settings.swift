@@ -261,6 +261,9 @@ final class Settings: ObservableObject {
     /// Lets a spoken request point at the screen: Varnick reads the focused window's controls and draws an arrow (ADR 0019); off
     /// until turned on. `screenPointingOn` says whether its other conditions hold too.
     @Published var pointAtScreen: Bool { didSet { defaults.set(pointAtScreen, forKey: "pointAtScreen") } }
+    /// Answers from the web what a spoken request's pages, bookmarks and sessions can't, through the user's own Claude Code (listening-never-answers,
+    /// options 06 and 07); off until turned on, and turning it on is the consent. `webAnswersOn` says whether its other conditions hold too.
+    @Published var answerFromWeb: Bool { didSet { defaults.set(answerFromWeb, forKey: "answerFromWeb") } }
     /// Only changed bindings are stored; nil means deliberately unbound.
     @Published private(set) var overrides: [ShortcutAction: KeyCombo?] { didSet { saveOverrides() } }
     /// Action waiting for its new shortcut; the next key press is captured for it.
@@ -333,6 +336,12 @@ final class Settings: ObservableObject {
     /// no screen in them, and the switch acts as off.
     var screenPointingOn: Bool {
         pointAtScreen && heyVarnick && typesafeGateKey != nil
+    }
+
+    /// Whether a spoken request may be answered from the web: the switch, Hey Varnick and the filter on TypeSafe with a key. Claude Code
+    /// being found and logged in is checked when a request needs it, since it can change.
+    var webAnswersOn: Bool {
+        answerFromWeb && heyVarnick && typesafeGateKey != nil
     }
 
     /// Where the next search or sync embeds. VARNICK_EMBEDDINGS overrides the settings in every process, the app included:
@@ -409,6 +418,7 @@ final class Settings: ObservableObject {
         heyVarnick = defaults.bool(forKey: "heyVarnick")
         saveAudio = defaults.bool(forKey: "saveAudio")
         pointAtScreen = defaults.bool(forKey: "pointAtScreen")
+        answerFromWeb = defaults.bool(forKey: "answerFromWeb")
         semanticSearch = defaults.object(forKey: "semanticSearch") as? Bool ?? true
         searchEmbeddingsRunOn = defaults.string(forKey: "searchEmbeddingsRunOn").flatMap(ModelRunOn.init) ?? .local
         embeddingServerAddress = defaults.string(forKey: "embeddingServer") ?? ""
@@ -740,7 +750,7 @@ struct SettingsView: View {
                             }
                             case .listening:
                             SettingRow(title: "Hey Varnick",
-                                       detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. Varnick answers out loud from History, Bookmarks and your sessions, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to choose where to look, and the words it then searches for go with the titles, sites and descriptions of the top 20 pages, as a typed search sends them, to judge which match. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads go to Anthropic to write the answer. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
+                                       detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or when you used a project. Varnick searches History, Bookmarks and your sessions together, answers out loud from what helps, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe to see whether they ask about the screen or something Varnick can't do, and again, with today's date and where this week started, with the titles, sites and descriptions of the top 20 pages and the title, folder name, when and prompts of up to 3 sessions, to judge which help. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads, with today's date, go to Anthropic to write the answer. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
                                 if Listener.shared.state.isUnavailable {
                                     Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                                 } else if let need = textGenerationNeed {
@@ -771,6 +781,22 @@ struct SettingsView: View {
                                 .fixedSize()
                                 Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
                                     .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !screenGateOpen))
+                            }
+                            SettingRow(title: "Answer from the web",
+                                       detail: "What your pages, bookmarks and Claude sessions can't answer, such as when a shop opens, is answered from the web by your own Claude Code, on your plan, and Varnick says where the answer came from. The words you say go to Anthropic with today's date and time, and Claude's search words go to Anthropic's search provider. Nothing of your history, bookmarks, sessions or screen goes. Each answer counts toward your plan's usage limits. A request that names one of your project folders or a time (\"today\", \"last week\") is never asked of the web: Varnick tells you it found no sessions then.") {
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    if !settings.heyVarnick {
+                                        Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
+                                    } else if !screenGateOpen {
+                                        Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
+                                            .buttonStyle(.link)
+                                            .font(.system(size: 12))
+                                    } else if !claudeCode.loginPassed {
+                                        Text("Needs Claude Code: open a Claude pane and log in").font(.system(size: 12)).foregroundStyle(.orange)
+                                    }
+                                }
+                                Toggle("", isOn: $settings.answerFromWeb).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .disabled(!settings.answerFromWeb && (!settings.heyVarnick || !screenGateOpen || !claudeCode.loginPassed))
                             }
                             SettingRow(title: "Voice",
                                        detail: "What Varnick speaks in. An ElevenLabs voice sends every line Varnick speaks to ElevenLabs, answers included, which can repeat words of your request and name your pages, sessions and folders; the voices installed on this Mac send nothing.") {
@@ -1000,9 +1026,10 @@ struct SettingsView: View {
             }
         }
         .controlSize(.small)
-        // Models and Listening show whether Claude Code is found and logged in (a local check, nothing sent), as they appear and when it is chosen.
+        // Models and Listening show whether Claude Code is found and logged in (a local check, nothing sent), as they appear and when it is
+        // chosen. Listening shows it for Answer from the web too, whichever Text generation is on.
         .task(id: "\(sectionID) \(settings.textGenerationRunOn.rawValue)") {
-            guard settings.textGenerationRunOn == .claude, section == .models || section == .listening else { return }
+            guard section == .listening || (settings.textGenerationRunOn == .claude && section == .models) else { return }
             await claudeCode.prepareForUse()
         }
     }

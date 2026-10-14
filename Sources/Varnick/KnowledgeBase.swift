@@ -44,8 +44,12 @@ struct SessionFilter: Equatable {
     /// A paired peer's id; this Mac's own sessions have none, so no host keeps every peer's.
     var host: String?
     var agent: String?
+    /// A spoken request's: sessions in, or under, a folder of one of these names (lowercased), on any Mac. A spoken name has no path.
+    var folderNames: [String] = []
+    /// A spoken request's: the sessions whose first prompt is before the window's end and whose last is after its start.
+    var window: DateInterval?
 
-    var isEmpty: Bool { folder == nil && host == nil && agent == nil }
+    var isEmpty: Bool { folder == nil && host == nil && agent == nil && folderNames.isEmpty && window == nil }
 }
 
 /// Local SQLite index of Chrome history, bookmarks and Claude sessions: FTS5 for keywords, an in-memory
@@ -110,6 +114,28 @@ final class FavoritesStore {
         if let host = filter.host {
             sql += " AND f.host = ?"
             binds.append(host)
+        }
+        if !filter.folderNames.isEmpty {
+            // The last part of the folder's path, compared as `sessionFolderNames` lowercases it.
+            func escape(_ name: String) -> String {
+                name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
+            }
+            let each = "(lower(f.url) LIKE ? ESCAPE '\\' OR lower(f.url) LIKE ? ESCAPE '\\')"
+            sql += " AND (" + Array(repeating: each, count: filter.folderNames.count).joined(separator: " OR ") + ")"
+            for name in filter.folderNames { binds += ["%/" + escape(name), "%/" + escape(name) + "/%"] }
+        }
+        if let window = filter.window {
+            // This Mac's sessions keep their prompt times in `sessions` (the copy in the row's folder), a paired Mac's in `peer_sessions`.
+            let id = "substr(f.favorite_key, \(sessionKeyPrefix.count + 1))"
+            func prompt(_ column: String) -> String {
+                """
+                (CASE WHEN f.host IS NULL
+                   THEN (SELECT s.\(column) FROM sessions s WHERE s.session_id = \(id) AND s.directory = f.url ORDER BY s.modified DESC LIMIT 1)
+                   ELSE (SELECT p.\(column) FROM peer_sessions p WHERE p.peer_id = f.host AND p.session_id = \(id)) END)
+                """
+            }
+            sql += " AND \(prompt("first_prompt")) < CAST(? AS INTEGER) AND \(prompt("last_prompt")) > CAST(? AS INTEGER)"
+            binds += [String(Int(window.end.timeIntervalSince1970)), String(Int(window.start.timeIntervalSince1970))]
         }
         if let agent = filter.agent {
             let id = "substr(f.favorite_key, \(sessionKeyPrefix.count + 1))"
@@ -306,7 +332,7 @@ final class FavoritesStore {
     }
 
     /// The folder names of all the sessions, this Mac's and the paired Macs', lowercased: the projects the user has worked on with
-    /// Claude. A spoken request is compared with them here and they go nowhere (ADR 0016).
+    /// Claude. A spoken request is compared with them here and they go nowhere (ADR 0016, 0036).
     func sessionFolderNames() -> Set<String> {
         let sql = "SELECT DISTINCT url FROM favorites WHERE source = '\(Self.sessionSource)' LIMIT ?"
         return Set(rows(sql, [], limit: nil) { ((Self.text($0, 0) as NSString).lastPathComponent).lowercased() })

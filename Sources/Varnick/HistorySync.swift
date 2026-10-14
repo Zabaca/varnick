@@ -85,6 +85,8 @@ enum HistorySync {
           replies      TEXT,                       -- joined as prompts are, one per prompt; NULL: written by a build that kept none
           custom_title TEXT                        -- the last /rename name, '' if none; NULL: written by a build that kept none
         );
+        -- A search row's agent and prompt times are read from here by session and folder (`FavoritesStore` session filters), one lookup per row.
+        CREATE INDEX IF NOT EXISTS sessions_by_id ON sessions (session_id, directory);
         -- The name ⌘⇧R gave a conversation's one-pane tab (`SessionNames`), read from the saved sessions at each sync and kept after the
         -- tab goes. It outranks the transcript's names as the session's title in `sessionEntries`.
         CREATE TABLE IF NOT EXISTS session_names (
