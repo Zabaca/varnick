@@ -332,14 +332,24 @@ final class FavoritesStore {
     }
 
     /// The newest sessions' folder, title, last use and Mac (a paired Mac's peer id; nil is this Mac): what the project index is built
-    /// from (`ProjectIndex`, ADR 0037).
-    func sessionFolders(limit: Int = 3000) -> [ProjectIndex.Session] {
-        let sql = "SELECT url, title, coalesce(created_at, ''), host FROM favorites WHERE source = '\(Self.sessionSource)' ORDER BY created_at DESC LIMIT ?"
-        return rows(sql, [], limit: limit) { stmt in
-            ProjectIndex.Session(directory: Self.text(stmt, 0), title: Self.text(stmt, 1),
-                                 used: Self.timestamps.date(from: Self.text(stmt, 2)) ?? .distantPast,
-                                 host: sqlite3_column_type(stmt, 3) == SQLITE_TEXT ? Self.text(stmt, 3) : nil)
+    /// from (ADR 0037). Read on a connection of its own, so it can run off the main thread.
+    static func sessionFolders(databasePath: String, limit: Int = 3000) -> [ProjectIndex.Session] {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(databasePath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return [] }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 2000)
+        var stmt: OpaquePointer?
+        let sql = "SELECT url, title, coalesce(created_at, ''), host FROM favorites WHERE source = '\(sessionSource)' ORDER BY created_at DESC LIMIT ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        var sessions: [ProjectIndex.Session] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            sessions.append(ProjectIndex.Session(directory: text(stmt, 0), title: text(stmt, 1),
+                                                 used: timestamps.date(from: text(stmt, 2)) ?? .distantPast,
+                                                 host: sqlite3_column_type(stmt, 3) == SQLITE_TEXT ? text(stmt, 3) : nil))
         }
+        return sessions
     }
 
     /// The sessions a filter keeps, with no words to match: the `promoted` rows first, then the most recently used.

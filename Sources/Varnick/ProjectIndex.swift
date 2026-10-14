@@ -1,13 +1,8 @@
 import Foundation
 import VarnickPeer
 
-/// The project index (listening-never-answers, option 07, ADR 0037): one entry per project, which the route call's folder question
-/// reads as that project's label criterion, so Jev can tell a project from a word by what the project is called elsewhere, what it
-/// does and what was last worked on in it. A bare folder name lost common-word and misspelled projects in the eval.
-///
-/// Built here, mechanically, on this Mac, and kept in memory (`LauncherModel.projectIndex`): after each project scan and each session
-/// sync. Never logged. It goes to TypeSafe in the route call, and to wherever Text generation runs when that decides instead
-/// (`docs/privacy-and-security.md`). Picking an entry is Jev's; nothing here decides what a request means.
+/// The project index (option 07, ADR 0037): one entry per project, which the route's project question reads as that project's label, so
+/// a model can tell a project from a word. Built on this Mac after each project scan and session sync, in memory, never logged.
 enum ProjectIndex {
     /// At most this many entries, most recently used first. A choice takes at most 255 labels, and each entry costs about 50 tokens.
     static let maxProjects = 40
@@ -58,8 +53,8 @@ enum ProjectIndex {
     // MARK: Building
 
     /// The entries for `projects` (this Mac's repos) and `sessions` (this Mac's and the paired Macs'), most recently used first. A
-    /// session counts under the project that holds its folder: a worktree's under the project the worktree is in
-    /// (`.claude/worktrees/` in its path), otherwise the nearest repo above it. Reads files, so off the main thread.
+    /// session counts under the repo above its folder, or the project a worktree is in (`.claude/worktrees/` in its path); a folder in
+    /// no repo counts under none. Reads files, so off the main thread.
     static func build(projects: [Project], sessions: [Session], now: Date = Date()) -> [Entry] {
         struct Accumulated {
             var name: String
@@ -76,24 +71,28 @@ enum ProjectIndex {
             byName[key] = found
         }
         for project in projects { add(name: project.name, path: project.path, used: project.lastUsed) }
-        var roots: [String: String] = [:]
+        var roots: [String: String?] = [:]
         for session in sessions {
             let root: String
             if let held = worktreeProject(of: session.directory) {
                 root = held
             } else if session.host == nil {
-                root = roots[session.directory] ?? { let found = Project.root(of: session.directory); roots[session.directory] = found; return found }()
+                // A project is a repo: a folder in none (a subagent's scratchpad, say) is no project and no label.
+                if roots[session.directory] == nil { roots[session.directory] = .some(Project.repoRoot(of: session.directory)) }
+                guard let found = roots[session.directory] ?? nil else { continue }
+                root = found
             } else {
+                // A paired Mac's folder can't be checked for a repo from here.
                 root = session.directory
             }
             let name = (root as NSString).lastPathComponent
-            guard !name.isEmpty, name != "/", name.lowercased() != SpokenDecisions.noneLabel else { continue }
+            guard !name.isEmpty, name != "/", name.lowercased() != SpokenRoute.noneLabel else { continue }
             add(name: name, path: session.host == nil ? root : nil, used: session.used)
             let title = oneLine(session.title, limit: maxTitle)
             if !title.isEmpty { byName[name.lowercased()]?.titles.append((session.used, title)) }
         }
         let chosen = byName.values
-            .filter { $0.name.lowercased() != SpokenDecisions.noneLabel }
+            .filter { $0.name.lowercased() != SpokenRoute.noneLabel }
             .sorted { ($0.lastUsed ?? .distantPast) > ($1.lastUsed ?? .distantPast) }
             .prefix(maxProjects)
         return chosen.map { found in

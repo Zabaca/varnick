@@ -1,12 +1,7 @@
 import Foundation
 
-/// Asks TypeSafe's Jev every decision of a spoken request in one call (ADR 0016, 0036, 0037): which source it leans to, whether it
-/// asks the time or asks Varnick to do something it can't, whether it is about the screen, which of the user's projects and which
-/// time it means, whether only the user's own things can answer it, one result or several, and which of its words to search for.
-/// The questions are built, and the reply read, by `DecisionQuestions`, which the Text generation fallback shares. Every request
-/// searches every source; the route only orders the rows, and no phrase list decides anything.
-///
-/// What goes: the request, today's date and time, and the project index (`ProjectIndex`), which is a privacy surface.
+/// The Jev side of the route: one call that decides everything a spoken request means (ADR 0016, 0036, 0037). `RouteQuestions` builds
+/// the questions and reads the reply, and the Text generation fallback shares them. The body is a privacy surface.
 struct SpokenRouter {
     let apiKey: String
     /// Pinned: the `jev-latest` alias moves, and the questions below were measured on this one.
@@ -20,13 +15,26 @@ struct SpokenRouter {
 
     /// How likely each source is the one to look in (`screen` is 0 unless the questions asked about it, ADR 0019), and how likely the
     /// request asks the time, or asks Varnick to do something it can't.
-    struct Route: Equatable {
+    struct Sources: Equatable {
         var history = 0.0
         var bookmarks = 0.0
         var sessions = 0.0
         var screen = 0.0
         var time = 0.0
         var doing = 0.0
+
+        /// From the source answers' probabilities (by label) and the action answers' ("time" and "do" are read).
+        init(sources: [String: Double] = [:], actions: [String: Double] = [:]) {
+            history = sources["history"] ?? 0
+            bookmarks = sources["bookmarks"] ?? 0
+            sessions = sources["sessions"] ?? 0
+            screen = sources["screen"] ?? 0
+            time = actions["time"] ?? 0
+            doing = actions["do"] ?? 0
+        }
+
+        /// Whether a source answer was given at all.
+        static func named(_ sources: [String: Double]) -> Bool { ["history", "bookmarks", "sessions"].contains { sources[$0] != nil } }
     }
 
     private static let session: URLSession = {
@@ -41,17 +49,19 @@ struct SpokenRouter {
     private static let context = "The person said `request` aloud to Varnick, a launcher on their Mac. Varnick answers by searching one of three places: the web pages the person visited in their browser, the pages they bookmarked, or their own Claude Code sessions (the coding work they did with Claude on their own software projects)."
 
     /// With the screen, as measured (arm J4p of the screen-pointing eval, agent-lab 20fb286; "Varnick" for the old name, which
-    /// moved nothing). The `point` action is there so that a request about the screen is not read as "other" and refused; it is
-    /// not read itself.
+    /// moved nothing). The `point` action is there so that a request about the screen is not read as "other" and refused; it is not
+    /// read itself.
     private static let contextWithScreen = "The person said `request` aloud to Varnick, a launcher on their Mac. Varnick answers by searching one of four places: the web pages the person visited in their browser, the pages they bookmarked, their own Claude Code sessions (the coding work they did with Claude on their own software projects), or the window on their screen right now (its buttons, fields and other controls, so Varnick can point at one)."
 
     private static let screenCriterion = "What is on the person's screen right now: the buttons, switches, fields, menus and icons in the window in front of them. Pick this when the person asks where something is, which one to press or what something is in the app they are looking at, rather than about a page, bookmark or session from before."
 
-    /// The context every question shares.
-    static func context(screen: Bool) -> String { screen ? contextWithScreen : context }
+    /// The context every question shares, naming the request as `request`.
+    static func context(screen: Bool, request: String) -> String {
+        (screen ? contextWithScreen : context).replacingOccurrences(of: "`request`", with: request)
+    }
 
-    static let sourceQuestion = "Where should Varnick look to answer `request`?"
-    static let actionQuestion = "What does the person want Varnick to do with `request`?"
+    static func sourceQuestion(request: String) -> String { "Where should Varnick look to answer \(request)?" }
+    static func actionQuestion(request: String) -> String { "What does the person want Varnick to do with \(request)?" }
 
     /// "time" and "do", worded as measured (route-time-do, agent-lab 2d09ffb): 30 of 30 clock phrasings, 20 of 20 things to do, and
     /// none of 25 look-alikes. They are read before the screen, which the source question still picks for these requests.
@@ -84,16 +94,12 @@ struct SpokenRouter {
     }
 
     /// Throws on a network error, a timeout, a status other than 200 or a reply that lacks a question.
-    func decide(_ questions: DecisionQuestions) async throws -> SpokenDecisions {
+    func route(_ questions: RouteQuestions) async throws -> SpokenRoute {
         var req = URLRequest(url: endpoint)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": model,
-            "state": questions.state,
-            "questions": questions.jevQuestions,
-        ])
+        req.httpBody = questions.jevBody(model: model)
         let (data, response) = try await Self.session.data(for: req)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         return try questions.read(jev: data)

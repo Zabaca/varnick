@@ -1060,12 +1060,20 @@ final class LauncherModel: ObservableObject {
     private(set) var projectIndex: [ProjectIndex.Entry] = []
     private var indexBuild: Task<Void, Never>?
 
+    /// Returns once the project scan under way and the index built from it are done: `--ask` waits for them, a spoken request in the
+    /// app doesn't.
+    func projectIndexReady() async {
+        await projectScan?.value
+        await indexBuild?.value
+    }
+
     func rebuildProjectIndex() {
-        let sessions = store.sessionFolders()
-        let projects = self.projects
+        let (projects, path) = (self.projects, store.path)
         indexBuild?.cancel()
         indexBuild = Task { [weak self] in
-            let built = await Task.detached(priority: .utility) { ProjectIndex.build(projects: projects, sessions: sessions) }.value
+            let built = await Task.detached(priority: .utility) {
+                ProjectIndex.build(projects: projects, sessions: FavoritesStore.sessionFolders(databasePath: path))
+            }.value
             guard !Task.isCancelled, let self else { return }
             self.projectIndex = built
         }

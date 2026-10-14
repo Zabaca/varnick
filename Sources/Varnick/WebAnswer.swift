@@ -32,11 +32,8 @@ enum WebAnswer {
         """
 
     static func prompt(for request: String, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
-        let time = DateFormatter()
-        time.locale = locale
-        time.timeStyle = .short
         let when = SpokenTime.dateName(now, calendar: calendar) + ", " + String(calendar.component(.year, from: now)) + ", "
-            + time.string(from: now).replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ")
+            + SpokenTime.shortTime(now, locale: locale)
         return template.replacingOccurrences(of: "{when}", with: when)
             .replacingOccurrences(of: "{units}", with: locale.measurementSystem == .us ? "US (Fahrenheit, miles, pounds)" : "metric")
             .replacingOccurrences(of: "{request}", with: String(request.prefix(SpokenText.maxRequestCharacters)))

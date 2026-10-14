@@ -1,10 +1,7 @@
 import Foundation
 
-/// Time in a spoken request (listening-never-answers, option 07, ADR 0037): the labels of the times a request may ask about,
-/// built from the Mac's clock and calendar for Jev (or the Text generation model) to choose among, the hours a chosen label means,
-/// and how a row's time is said to the judge and the writer. Which label a request means is never decided here. Foundation only, with
-/// the clock and the calendar passed in, so each is a seam for a first test once there is a test target. A window is worked out on
-/// this Mac; only the labels' descriptions go to the model that chooses.
+/// Time in a spoken request (option 07, ADR 0037): the labels of the times a request may ask about, built from the Mac's clock and
+/// calendar for the route to choose among, the hours a chosen label means, and how a row's time is said. Foundation only.
 enum SpokenTime {
     /// Parts of a day, in hours. A named part of the day is one of these; "last night" runs from `lastNightFrom` to `lastNightTo`.
     static let morning = 5..<12
@@ -42,12 +39,8 @@ enum SpokenTime {
         var window: Window
     }
 
-    /// The labels at `now`, past and present first, then the future. The descriptions carry the dates and hours, built from now, so
-    /// the model only has to match a request to one of them:
-    /// - today, this morning / afternoon / evening (once under way), last night, yesterday and its parts, this week, last week,
-    ///   and each of the five days before yesterday by name and date, alone and with a part of the day;
-    /// - later today, this evening (before it starts), tomorrow, and each of the next six days by name and date.
-    /// A part of today that hasn't begun is a future label; one under way runs to now, as today and this week do.
+    /// The labels at `now`, past and present first, then the future, each described by its dates and hours so the model only has to
+    /// match a request to one. A part of today that hasn't begun is a future label; one under way, like today and this week, runs to now.
     static func labels(now: Date = Date(), calendar: Calendar = .current) -> [Label] {
         let today = calendar.startOfDay(for: now)
         func day(_ offset: Int) -> Date { calendar.date(byAdding: .day, value: offset, to: today) ?? today }
@@ -149,16 +142,19 @@ enum SpokenTime {
 
     /// Today's date and where this week started, which the judge and the writer need for "this week": "Wednesday, October 14; this
     /// week started Sunday, October 11".
+    /// The Mac's time in its own short format ("3:00 PM"); the narrow no-break space before AM and PM is not a pause worth keeping.
+    static func shortTime(_ date: Date, locale: Locale = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeStyle = .short
+        return formatter.string(from: date).replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ")
+    }
+
     /// With `withTime`, the Mac's time follows the date ("Wednesday, October 14, 3:00 PM; …"), as the route call's state has it.
     static func today(now: Date = Date(), calendar: Calendar = .current, withTime: Bool = false, locale: Locale = .current) -> String {
         let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
         var date = dateName(now, calendar: calendar)
-        if withTime {
-            let formatter = DateFormatter()
-            formatter.locale = locale
-            formatter.timeStyle = .short
-            date += ", " + formatter.string(from: now).replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ")
-        }
+        if withTime { date += ", " + shortTime(now, locale: locale) }
         return "\(date); this week started \(dateName(start, calendar: calendar))"
     }
 

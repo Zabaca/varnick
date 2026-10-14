@@ -811,6 +811,8 @@ if let i = CommandLine.arguments.firstIndex(of: "--ask"), i + 1 < CommandLine.ar
         Task { @MainActor in
             // The login shell is read once, here, as at launch, so it doesn't land in the first request's figure.
             if Settings.shared.activeTextGeneration.runOn == .claude { await delegate.claudeCode.checkLogin() }
+            // The project scan and the index built from it, which the app has long done by its first request.
+            await delegate.model.projectIndexReady()
             exit(await SpokenCommand.run(file: CommandLine.arguments[i + 1], restartAfter: restartAfter, app: app, draw: draw,
                                          now: now, model: delegate.model))
         }

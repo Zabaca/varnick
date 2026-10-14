@@ -44,15 +44,10 @@ enum SpokenText {
     /// The clock's answer, in the Mac's own formats, the time and the date together ("It's 9:41 AM, Wednesday, October 14."): "time"
     /// covers the time, the date and the day, so which was meant needs no further decision (ADR 0037).
     static func clockAnswer(at now: Date = Date(), locale: Locale = .current) -> String {
-        let time = DateFormatter()
-        time.locale = locale
-        time.timeStyle = .short
         let date = DateFormatter()
         date.locale = locale
         date.setLocalizedDateFormatFromTemplate("EEEEMMMMd")
-        // The narrow no-break space before AM and PM is not a pause worth keeping.
-        func plain(_ text: String) -> String { text.replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ") }
-        return "It's \(plain(time.string(from: now))), \(plain(date.string(from: now)))."
+        return "It's \(SpokenTime.shortTime(now, locale: locale)), \(date.string(from: now))."
     }
 
     /// What Varnick says to a request it can't do, with what it does do.
@@ -61,44 +56,44 @@ enum SpokenText {
         return "I can't do that. I look up \(looks)" + (web ? ", and answer questions from the web." : ".")
     }
 
-    // MARK: What the decisions name: a project, a time
+    // MARK: What the route names: a project, a time
 
-    /// The project and the time a request names, as the decisions chose them (option 07, ADR 0037), and whether only the user's own
+    /// The project and the time a request names, as the route chose them (option 07, ADR 0037), and whether only the user's own
     /// things can answer it. Worked out on this Mac from a model's choice of labels.
     struct Scope: Equatable {
         /// The project's name, as the index labels it.
-        var folder: String?
+        var project: String?
         /// The time asked about, when a session could have been used then: a future window never gets here.
         var window: SpokenTime.Window?
         /// Only the user's own pages, bookmarks, sessions and projects can answer it.
         var own = false
 
-        /// A folder or a window shapes the session search.
-        var shapesSessions: Bool { folder != nil || window != nil }
+        /// A project or a window shapes the session search.
+        var shapesSessions: Bool { project != nil || window != nil }
 
         /// The window chooses the sessions: with `own`, it filters them. Otherwise it only moves the sessions in it up.
         var windowFilters: Bool { own && window != nil }
 
         /// The request stays local, never to the web: it names a project, or only the user's own things can answer it. The web can't
         /// know what the user did in a project or at a time.
-        var staysLocal: Bool { folder != nil || own }
+        var staysLocal: Bool { project != nil || own }
 
         /// What is said when nothing was found for it: "I found no sessions in pantry today."
         var nothingFound: String {
-            "I found no sessions" + (folder.map { " in " + $0 } ?? "") + (window.map { " " + $0.spoken } ?? "") + "."
+            "I found no sessions" + (project.map { " in " + $0 } ?? "") + (window.map { " " + $0.spoken } ?? "") + "."
         }
     }
 
-    /// The scope the decisions chose. A future window, and a request about no time, leave none: no session was used then.
-    static func scope(from decisions: SpokenDecisions) -> Scope {
-        Scope(folder: decisions.folder, window: decisions.window.flatMap { $0.future ? nil : $0 }, own: decisions.own)
+    /// The scope the route chose. A future window, and a request about no time, leave none: no session was used then.
+    static func scope(from route: SpokenRoute) -> Scope {
+        Scope(project: route.project, window: route.window.flatMap { $0.future ? nil : $0 }, own: route.own)
     }
 
-    /// The words the session search uses: the decisions' words less those of the project's name, which only say where to look. The
+    /// The words the session search uses: the route's words less those of the project's name, which only say where to look. The
     /// pages keep every word.
     static func sessionWords(from words: [String], scope: Scope) -> String {
-        let dropped = Set(scope.folder.map { folder -> [String] in
-            let parts = tokens(folder)
+        let dropped = Set(scope.project.map { project -> [String] in
+            let parts = tokens(project)
             return parts + [parts.joined()]
         } ?? [])
         return words.filter { word in tokens(word).allSatisfy { !dropped.contains($0) } }.joined(separator: " ")
@@ -132,13 +127,13 @@ enum SpokenText {
 
     /// The rows the writer reads, at most `maxPages`: best score first.
     /// More kept than that, and the likelier kind's rows go first: sessions when Jev's route leads with them or the request names a
-    /// session folder, bookmarks when they lead, else pages. Without a route only a named folder puts sessions first. Rows with no
+    /// session folder, bookmarks when they lead, else pages. Without sources only a named folder puts sessions first. Rows with no
     /// score (unjudged) keep the search's order.
-    static func ordered(_ rows: [SearchResult], route: SpokenRouter.Route?, namesFolder: Bool) -> [SearchResult] {
+    static func ordered(_ rows: [SearchResult], sources: SpokenRouter.Sources?, namesFolder: Bool) -> [SearchResult] {
         let rank: (Kind) -> Int
-        if sessionsLead(route: route, namesFolder: namesFolder) {
+        if sessionsLead(sources: sources, namesFolder: namesFolder) {
             rank = { $0 == .session ? 0 : 1 }
-        } else if route.map({ $0.bookmarks > $0.history }) == true {
+        } else if sources.map({ $0.bookmarks > $0.history }) == true {
             rank = { $0 == .bookmark ? 0 : $0 == .page ? 1 : 2 }
         } else {
             rank = { $0 == .session ? 1 : 0 }
@@ -155,19 +150,19 @@ enum SpokenText {
     }
 
     /// Sessions are the likelier kind: Jev's route leads with them, or the request names a session folder.
-    private static func sessionsLead(route: SpokenRouter.Route?, namesFolder: Bool) -> Bool {
-        namesFolder || route.map { $0.sessions >= max($0.history, $0.bookmarks) } == true
+    private static func sessionsLead(sources: SpokenRouter.Sources?, namesFolder: Bool) -> Bool {
+        namesFolder || sources.map { $0.sessions >= max($0.history, $0.bookmarks) } == true
     }
 
     /// The rows read when nothing judged them (the filter is off, the words too short, or the judge failed): sessions and pages both,
     /// the likelier kind first, at most `maxPages`. Sessions lead when Jev's route does or the request names a session folder, and
     /// bookmarks go ahead of the other pages when they lead. Behind pages, sessions get what the pages leave of `maxPages`, and
     /// two places are kept for them.
-    static func topRows(_ rows: [SearchResult], route: SpokenRouter.Route?, namesFolder: Bool) -> [SearchResult] {
+    static func topRows(_ rows: [SearchResult], sources: SpokenRouter.Sources?, namesFolder: Bool) -> [SearchResult] {
         let sessions = rows.filter(\.isSession)
         var pages = rows.filter { !$0.isSession }
-        if let route, route.bookmarks > route.history { pages = pages.filter { $0.source == "bookmark" } + pages.filter { $0.source != "bookmark" } }
-        if sessionsLead(route: route, namesFolder: namesFolder) {
+        if let sources, sources.bookmarks > sources.history { pages = pages.filter { $0.source == "bookmark" } + pages.filter { $0.source != "bookmark" } }
+        if sessionsLead(sources: sources, namesFolder: namesFolder) {
             return Array((sessions + pages).prefix(maxPages))
         }
         let lead = pages.prefix(maxPages - min(maxSessionsBehind, sessions.count))
@@ -267,7 +262,7 @@ enum SpokenText {
     static let severalAnswerTokens = 144
     static let maxSeveralSentences = 3
 
-    /// `several` is the decisions' answer: the request asks for several results rather than one.
+    /// `several` is the route's answer: the request asks for several results rather than one.
     static func answerLimits(several: Bool) -> (tokens: Int, sentences: Int) {
         several ? (severalAnswerTokens, maxSeveralSentences) : (answerTokens, maxSentences)
     }
@@ -351,9 +346,9 @@ enum SpokenPipeline {
         case answer(String)
         /// The request was empty: the wake phrase and nothing after it.
         case nothingToSearch
-        /// The decisions found the request asks the time, the date or the day: answered from the Mac's clock, at the moment it is said.
+        /// The route found the request asks the time, the date or the day: answered from the Mac's clock, at the moment it is said.
         case clock
-        /// The decisions found it asks Varnick to do something it can't (a timer, music): said plainly, with what Varnick does do.
+        /// The route found it asks Varnick to do something it can't (a timer, music): said plainly, with what Varnick does do.
         /// `screen` and `web` are what Varnick does besides looking things up.
         case cantDo(screen: Bool, web: Bool)
         /// Nothing was kept, and the web can't be asked (the switch is off or its needs aren't met).
@@ -464,11 +459,11 @@ enum SpokenPipeline {
 
     struct Run {
         var outcome = Outcome.nothingToSearch
-        /// What the decisions chose, and who made them (Jev, or the Text generation model and why Jev wasn't used or failed).
-        var decisions: SpokenDecisions?
-        var decidedBy = "-"
-        var deciding: Duration = .zero
-        /// The project and time the decisions named, and whether only the user's own things can answer.
+        /// What the route chose, and who made it (Jev, or the Text generation model and why Jev wasn't used or failed).
+        var route: SpokenRoute?
+        var routedBy = "-"
+        var routing: Duration = .zero
+        /// The project and time the route named, and whether only the user's own things can answer.
         var scope = SpokenText.Scope()
         /// The search words, and what `prepare` found by them.
         var words = ""
@@ -476,10 +471,8 @@ enum SpokenPipeline {
         var rows: [SearchResult] = []
         /// Every row the judge was asked about, with its score when it gave one.
         var judged: [SearchResult] = []
-        /// The sessions a named folder or a time-only window selected: kept whatever the judge scores them.
+        /// The sessions a named project or a window with `own` selected: kept whatever the judge scores them.
         var selected: Set<Int64> = []
-        /// The sources' probabilities, when the decisions gave them: they order the rows.
-        var route: SpokenRouter.Route?
         /// The keyword and meaning passes, who answered the meaning pass, and how the sessions were found.
         var search: Duration = .zero
         var meaningBy = "-"
@@ -522,9 +515,9 @@ enum SpokenPipeline {
         return reply.text
     }
 
-    /// Decide, search, judge and keep: everything up to the rows to read, with no answer and no speech. Runs while a spoken request is
-    /// still being collected; throws `CancellationError` when more speech cancels it, and `Failure` when nothing can decide. The
-    /// decisions come first, since the search takes its words, project and time from them (ADR 0037).
+    /// Route, search, judge and keep: everything up to the rows to read, with no answer and no speech. Runs while a spoken request is
+    /// still being collected; throws `CancellationError` when more speech cancels it, and `Failure` when nothing can route. The
+    /// route comes first, since the search takes its words, project and time from it (ADR 0037).
     static func prepare(_ request: String, on model: LauncherModel, screen: ScreenOptions? = nil, now: Date = Date()) async throws -> Run {
         let screen = screen ?? ScreenOptions()
         var run = Run()
@@ -534,29 +527,28 @@ enum SpokenPipeline {
         run.web = Settings.shared.webAnswersOn
 
         let clock = ContinuousClock()
-        let questions = DecisionQuestions(request: request, screen: screen.on, index: model.projectIndex, now: now)
-        let decisions = try await decide(questions, on: model, into: &run)
-        run.decisions = decisions
-        run.route = decisions.route
+        let questions = RouteQuestions(request: request, screen: screen.on, index: model.projectIndex, now: now)
+        let route = try await askRoute(questions, on: model, into: &run)
+        run.route = route
 
         // "Time" and "do" are read before the screen, since the source question still sends these requests there.
-        if decisions.asksTime {
+        if route.asksTime {
             run.outcome = .clock
             return run
         }
-        if decisions.asksToDo {
+        if route.asksToDo {
             run.outcome = .cantDo(screen: screen.on, web: run.web)
             return run
         }
         // The window in front is read, not searched: no judge runs.
-        if let route = decisions.route, route.screen > max(route.history, route.bookmarks, route.sessions) {
+        if let sources = route.sources, sources.screen > max(sources.history, sources.bookmarks, sources.sessions) {
             return try await lookAtScreen(request, into: run, screen: screen)
         }
 
-        let scope = SpokenText.scope(from: decisions)
+        let scope = SpokenText.scope(from: route)
         run.scope = scope
-        run.words = decisions.words.joined(separator: " ")
-        let found = try await search(request, words: decisions.words, scope: scope, on: model)
+        run.words = route.words.joined(separator: " ")
+        let found = try await search(request, words: route.words, scope: scope, on: model)
         run.search = found.took
         run.meaningBy = found.meaningBy
         run.sessionsBy = found.sessionsBy
@@ -578,12 +570,12 @@ enum SpokenPipeline {
 
         // Kept: those the judge scored at the threshold or more, and the sessions a project or a filtering window selected whatever it
         // scored them. Unjudged, the top rows are read, as a typed search shows them.
-        let namesProject = scope.folder != nil
+        let namesProject = scope.project != nil
         if verdict.scores == nil {
-            run.rows = SpokenText.topRows(rows, route: decisions.route, namesFolder: namesProject)
+            run.rows = SpokenText.topRows(rows, sources: route.sources, namesFolder: namesProject)
         } else {
             let kept = rows.filter { run.selected.contains($0.id) || ($0.relevance ?? 0) >= RelevanceSearch.threshold }
-            run.rows = SpokenText.ordered(kept, route: decisions.route, namesFolder: namesProject)
+            run.rows = SpokenText.ordered(kept, sources: route.sources, namesFolder: namesProject)
         }
 
         if !run.rows.isEmpty {
@@ -597,23 +589,22 @@ enum SpokenPipeline {
         return run
     }
 
-    /// Nothing could decide: Jev wasn't used or failed, and the Text generation model's reply held no decisions.
-    struct Undecided: Error {}
+    /// Nothing could route: Jev wasn't used or failed, and the Text generation model's reply held no answers.
+    struct NoRoute: Error {}
 
-    /// The decisions, by Jev when the relevance filter is on TypeSafe with a key and it answers in time, else by the Text generation
-    /// model the user set, as one prompt. Throws `Failure` when nothing can decide, with Text generation's own error under it when it
-    /// is the one that is unavailable.
-    private static func decide(_ questions: DecisionQuestions, on model: LauncherModel, into run: inout Run) async throws -> SpokenDecisions {
+    /// The route, by Jev when the relevance filter is on TypeSafe with a key and it answers in time, else by the Text generation model
+    /// the user set, as one prompt. Throws `Failure` when neither can, with Text generation's own error under it when it is unavailable.
+    private static func askRoute(_ questions: RouteQuestions, on model: LauncherModel, into run: inout Run) async throws -> SpokenRoute {
         let clock = ContinuousClock()
         let began = clock.now
         var why = "relevance filter not on TypeSafe"
         if Settings.shared.activeRelevanceFilter == .typesafe {
             if let key = Settings.shared.typesafeKey {
                 do {
-                    let decisions = try await SpokenRouter(apiKey: key).decide(questions)
-                    run.decidedBy = "Jev"
-                    run.deciding = began.duration(to: clock.now)
-                    return decisions
+                    let route = try await SpokenRouter(apiKey: key).route(questions)
+                    run.routedBy = "Jev"
+                    run.routing = began.duration(to: clock.now)
+                    return route
                 } catch {
                     try Task.checkCancellation()
                     why = "Jev failed: \(error.logKind)"
@@ -630,10 +621,10 @@ enum SpokenPipeline {
             try Task.checkCancellation()
             throw Failure(underlying: error)
         }
-        guard let decisions = questions.read(fallback: reply) else { throw Failure(underlying: Undecided()) }
-        run.decidedBy = "\(places.first ?? "-") (\(why))"
-        run.deciding = began.duration(to: clock.now)
-        return decisions
+        guard let route = questions.read(fallback: reply) else { throw Failure(underlying: NoRoute()) }
+        run.routedBy = "\(places.first ?? "-") (\(why))"
+        run.routing = began.duration(to: clock.now)
+        return route
     }
 
     /// The fallback's reply is one line of JSON.
@@ -679,10 +670,10 @@ enum SpokenPipeline {
         if scope.shapesSessions {
             // Sessions in the named project only. A window with `own` filters them too, ranked by the words, or most recent first
             // when there are none; otherwise the sessions in it go ahead of the others found.
-            let filter = SessionFilter(folderNames: scope.folder.map { [$0.lowercased()] } ?? [], window: scope.windowFilters ? scope.window?.interval : nil)
+            let filter = SessionFilter(folderNames: scope.project.map { [$0.lowercased()] } ?? [], window: scope.windowFilters ? scope.window?.interval : nil)
             sessions = try await search.spokenSessions(words: sessionWords, filter: filter, boost: scope.windowFilters ? nil : scope.window?.interval)
-            if scope.folder != nil || scope.windowFilters { selected = Set(sessions.map(\.id)) }
-            sessionsBy = (scope.folder == nil ? "" : "folder, ") + (scope.window.map { "\($0.kind) window, \(scope.windowFilters ? "filter" : "boost")" } ?? "")
+            if scope.project != nil || scope.windowFilters { selected = Set(sessions.map(\.id)) }
+            sessionsBy = (scope.project == nil ? "" : "project, ") + (scope.window.map { "\($0.kind) window, \(scope.windowFilters ? "filter" : "boost")" } ?? "")
             sessionsBy = sessionsBy.trimmingCharacters(in: CharacterSet(charactersIn: ", "))
         }
         try Task.checkCancellation()
@@ -869,7 +860,7 @@ enum SpokenPipeline {
         let session = run.rows.contains(where: \.isSession)
         let offered = SpokenText.offersEscalation(rows: run.rows, web: run.web, scope: run.scope)
         run.writer = WriterNote(offered: offered, withheld: offered ? nil : withheld(run: run, session: session))
-        let several = run.decisions?.several ?? false
+        let several = run.route?.several ?? false
         let limits = SpokenText.answerLimits(several: several)
         let prompt = SpokenText.answerPrompt(for: request, rows: rows, today: SpokenTime.today(now: context.now, calendar: context.calendar),
                                              several: several, escalation: offered, session: session)
@@ -964,21 +955,21 @@ extension Double {
 /// `--draw` also shows the arrow for 8 s, to check placement.
 @MainActor
 enum SpokenCommand {
-    /// The decisions and who made them: the sources' probabilities with "time" and "do", the project and time labels, own, several and
-    /// the words. A fallback gives one label for each source, so its probabilities are 0 or 1.
-    private static func describe(_ decisions: SpokenDecisions?, by: String, took: Duration) -> [String] {
-        guard let decisions else { return ["decisions: none"] }
+    /// The route and who made it: the sources' probabilities with "time" and "do", the project and time labels, own, several and the
+    /// words. A fallback gives one label for each source, so its probabilities are 0 or 1.
+    private static func describe(_ route: SpokenRoute?, by: String, took: Duration) -> [String] {
+        guard let route else { return ["route: none"] }
         let p = { (value: Double) in String(format: "%.2f", value) }
-        var lines = ["decisions: by \(by)  [\(took.seconds.secondsText)]"]
-        if let route = decisions.route {
-            lines.append("  source: history \(p(route.history)), bookmarks \(p(route.bookmarks)), sessions \(p(route.sessions)), "
-                         + "screen \(p(route.screen)); time \(p(route.time)), do \(p(route.doing))")
+        var lines = ["route: by \(by)  [\(took.seconds.secondsText)]"]
+        if let sources = route.sources {
+            lines.append("  source: history \(p(sources.history)), bookmarks \(p(sources.bookmarks)), sessions \(p(sources.sessions)), "
+                         + "screen \(p(sources.screen)); time \(p(sources.time)), do \(p(sources.doing))")
         } else {
             lines.append("  source: none named")
         }
-        lines.append("  project: \(decisions.folder ?? "none"), time: \(decisions.window.map { $0.label + ($0.future ? " (future)" : "") } ?? "none"), "
-                     + "own \(decisions.own), several \(decisions.several)")
-        lines.append("  words: \(decisions.words.joined(separator: " "))")
+        lines.append("  project: \(route.project ?? "none"), time: \(route.window.map { $0.label + ($0.future ? " (future)" : "") } ?? "none"), "
+                     + "own \(route.own), several \(route.several)")
+        lines.append("  words: \(route.words.joined(separator: " "))")
         return lines
     }
 
@@ -1080,16 +1071,16 @@ enum SpokenCommand {
         }
     }
 
-    /// What `prepare` did: the decisions and who made them, the search, the judge and the rows. `run` is the answered run.
+    /// What `prepare` did: the route and who made it, the search, the judge and the rows. `run` is the answered run.
     private static func describe(_ prepared: SpokenPipeline.Run, run: SpokenPipeline.Run, draw: Bool) async {
         switch prepared.outcome {
         case .nothingToSearch:
             print("search: nothing to search")
         case .clock, .cantDo:
-            describe(prepared.decisions, by: prepared.decidedBy, took: prepared.deciding).forEach { print($0) }
+            describe(prepared.route, by: prepared.routedBy, took: prepared.routing).forEach { print($0) }
         default:
             if let look = prepared.screen {
-                describe(prepared.decisions, by: prepared.decidedBy, took: prepared.deciding).forEach { print($0) }
+                describe(prepared.route, by: prepared.routedBy, took: prepared.routing).forEach { print($0) }
                 describe(look, outcome: run.outcome).forEach { print($0) }
                 if draw, case .point(let target) = run.outcome {
                     NSApplication.shared.setActivationPolicy(.accessory)
@@ -1099,9 +1090,9 @@ enum SpokenCommand {
                 }
                 return
             }
-            describe(prepared.decisions, by: prepared.decidedBy, took: prepared.deciding).forEach { print($0) }
+            describe(prepared.route, by: prepared.routedBy, took: prepared.routing).forEach { print($0) }
             let scope = prepared.scope
-            print("sessions: \(scope.folder.map { "project " + $0 } ?? "no project named"), "
+            print("sessions: \(scope.project.map { "project " + $0 } ?? "no project named"), "
                   + "\(scope.window.map { "window \($0.label) (\($0.kind))" } ?? "no time used"), found \(prepared.sessionsBy)")
             print("search: \"\(prepared.words)\", meaning by \(prepared.meaningBy)  [\(prepared.search.seconds.secondsText)]")
             print("judge: \(prepared.judgedBy)  [\(prepared.judge.seconds.secondsText)]")
