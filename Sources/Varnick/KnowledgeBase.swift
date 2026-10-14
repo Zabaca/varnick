@@ -116,7 +116,7 @@ final class FavoritesStore {
             binds.append(host)
         }
         if !filter.folderNames.isEmpty {
-            // The last part of the folder's path, compared as `sessionFolderNames` lowercases it.
+            // The last part of the folder's path, compared lowercased with a project's name (`ProjectIndex`).
             func escape(_ name: String) -> String {
                 name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
             }
@@ -331,11 +331,15 @@ final class FavoritesStore {
         Set(sessionRows(filter, limit: nil, promoted: []))
     }
 
-    /// The folder names of all the sessions, this Mac's and the paired Macs', lowercased: the projects the user has worked on with
-    /// Claude. A spoken request is compared with them here and they go nowhere (ADR 0016, 0036).
-    func sessionFolderNames() -> Set<String> {
-        let sql = "SELECT DISTINCT url FROM favorites WHERE source = '\(Self.sessionSource)' LIMIT ?"
-        return Set(rows(sql, [], limit: nil) { ((Self.text($0, 0) as NSString).lastPathComponent).lowercased() })
+    /// The newest sessions' folder, title, last use and Mac (a paired Mac's peer id; nil is this Mac): what the project index is built
+    /// from (`ProjectIndex`, ADR 0037).
+    func sessionFolders(limit: Int = 3000) -> [ProjectIndex.Session] {
+        let sql = "SELECT url, title, coalesce(created_at, ''), host FROM favorites WHERE source = '\(Self.sessionSource)' ORDER BY created_at DESC LIMIT ?"
+        return rows(sql, [], limit: limit) { stmt in
+            ProjectIndex.Session(directory: Self.text(stmt, 0), title: Self.text(stmt, 1),
+                                 used: Self.timestamps.date(from: Self.text(stmt, 2)) ?? .distantPast,
+                                 host: sqlite3_column_type(stmt, 3) == SQLITE_TEXT ? Self.text(stmt, 3) : nil)
+        }
     }
 
     /// The sessions a filter keeps, with no words to match: the `promoted` rows first, then the most recently used.

@@ -1,8 +1,10 @@
 import Foundation
 
-/// Time in a spoken request (listening-never-answers, option 07): the words that name a window on the Mac's calendar, and how a
-/// row's time is said to the judge and the writer. Foundation only, with the clock and the calendar passed in, so each is a seam for
-/// a first test once there is a test target. Nothing here is sent anywhere: a window is worked out on this Mac.
+/// Time in a spoken request (listening-never-answers, option 07, ADR 0037): the labels of the times a request may ask about,
+/// built from the Mac's clock and calendar for Jev (or the Text generation model) to choose among, the hours a chosen label means,
+/// and how a row's time is said to the judge and the writer. Which label a request means is never decided here. Foundation only, with
+/// the clock and the calendar passed in, so each is a seam for a first test once there is a test target. A window is worked out on
+/// this Mac; only the labels' descriptions go to the model that chooses.
 enum SpokenTime {
     /// Parts of a day, in hours. A named part of the day is one of these; "last night" runs from `lastNightFrom` to `lastNightTo`.
     static let morning = 5..<12
@@ -16,10 +18,11 @@ enum SpokenTime {
     private static let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
                                  "November", "December"]
 
-    /// The words that name a weekday, lowercased: they leave the search words (`SpokenText.queryWords`).
-    static let weekdayWords = Set(weekdays)
+    /// How many days before yesterday, and after tomorrow's start, are named by weekday and date.
+    static let namedDaysBack = 5
+    static let namedDaysAhead = 6
 
-    /// A stretch of the Mac's calendar a request names.
+    /// A stretch of the Mac's calendar a request asks about.
     struct Window: Equatable {
         var interval: DateInterval
         /// How the row's "when" names it: "this morning", "Monday evening", "last week".
@@ -28,18 +31,24 @@ enum SpokenTime {
         var spoken: String
         /// A part of a day, a day or a week: all the log says of it.
         var kind: String
+        /// Still to come: no session was used then, so it never filters or boosts a session search.
+        var future = false
     }
 
-    /// The window the request's time words name at `now`, or nil. The first time word decides. Vague words ("recently", "earlier",
-    /// "lately") name none, and nor does a part of a day with no day ("in the morning").
-    ///
-    /// - "today", "this morning", "this afternoon", "this evening", "tonight"
-    /// - "yesterday", with a part of a day after it
-    /// - "last night": 5 PM yesterday to 5 AM today
-    /// - "this week", "last week": a week starts on the calendar's first weekday, and this week runs to the end of today
-    /// - a weekday, meaning the latest one before today, with a part of a day after it
-    static func window(in request: String, now: Date = Date(), calendar: Calendar = .current) -> Window? {
-        let words = request.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+    /// One answer to the window question: an id Jev answers with, its description (the criterion Jev reads), and the window it means.
+    struct Label: Equatable {
+        var id: String
+        var description: String
+        var window: Window
+    }
+
+    /// The labels at `now`, past and present first, then the future. The descriptions carry the dates and hours, built from now, so
+    /// the model only has to match a request to one of them:
+    /// - today, this morning / afternoon / evening (once under way), last night, yesterday and its parts, this week, last week,
+    ///   and each of the five days before yesterday by name and date, alone and with a part of the day;
+    /// - later today, this evening (before it starts), tomorrow, and each of the next six days by name and date.
+    /// A part of today that hasn't begun is a future label; one under way runs to now, as today and this week do.
+    static func labels(now: Date = Date(), calendar: Calendar = .current) -> [Label] {
         let today = calendar.startOfDay(for: now)
         func day(_ offset: Int) -> Date { calendar.date(byAdding: .day, value: offset, to: today) ?? today }
         // The hour on that day's own clock, so a day the clocks change in still starts its parts at 5, noon and 5; 24 is the next midnight.
@@ -47,46 +56,77 @@ enum SpokenTime {
             if hours >= 24 { return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day)) ?? day }
             return calendar.date(bySettingHour: hours, minute: 0, second: 0, of: day) ?? day
         }
-        func make(_ from: Date, _ to: Date, _ label: String, spoken: String? = nil, kind: String) -> Window {
-            Window(interval: DateInterval(start: from, end: max(from, to)), label: label, spoken: spoken ?? label, kind: kind)
+        func clock(_ hours: Int) -> String { hours == 12 ? "noon" : hours >= 24 ? "midnight" : "\(hours % 12) \(hours < 12 ? "AM" : "PM")" }
+        func slug(_ date: Date) -> String {
+            let parts = calendar.dateComponents([.month, .day], from: date)
+            return "\(weekdayName(date, calendar: calendar).lowercased())_\(months[(parts.month ?? 1) - 1].prefix(3).lowercased())\(parts.day ?? 1)"
         }
-        func part(of day: Date, _ name: String, label: String, spoken: String? = nil) -> Window? {
-            guard let hours = parts.first(where: { $0.name == name })?.hours else { return nil }
-            return make(hour(day, hours.lowerBound), hour(day, hours.upperBound), label, spoken: spoken, kind: "part of a day")
+        func window(_ from: Date, _ to: Date, _ label: String, spoken: String? = nil, kind: String, future: Bool = false) -> Window {
+            Window(interval: DateInterval(start: from, end: max(from, to)), label: label, spoken: spoken ?? label, kind: kind, future: future)
         }
+        var labels: [Label] = []
+        func add(_ id: String, _ description: String, _ window: Window) { labels.append(Label(id: id, description: description, window: window)) }
 
-        for (i, word) in words.enumerated() {
-            let next = i + 1 < words.count ? words[i + 1] : nil
-            let named = next.flatMap { name in parts.contains { $0.name == name } ? name : nil }
-            switch word {
-            case "this" where named != nil:
-                return part(of: today, named!, label: "this \(named!)")
-            case "tonight":
-                return part(of: today, "evening", label: "tonight")
-            case "today":
-                return make(today, day(1), "today", kind: "a day")
-            case "yesterday":
-                if let named { return part(of: day(-1), named, label: "yesterday \(named)") }
-                return make(day(-1), today, "yesterday", kind: "a day")
-            case "last" where next == "night":
-                return make(hour(day(-1), lastNightFrom), hour(today, lastNightTo), "last night", kind: "part of a day")
-            case "this" where next == "week", "last" where next == "week":
-                guard let week = calendar.dateInterval(of: .weekOfYear, for: now) else { return nil }
-                if word == "this" { return make(week.start, day(1), "this week", kind: "a week") }
-                let before = calendar.date(byAdding: .weekOfYear, value: -1, to: week.start) ?? week.start
-                return make(before, week.start, "last week", kind: "a week")
-            default:
-                guard let index = weekdays.firstIndex(of: word) else { continue }
-                // The latest one before today: today's own name means a week ago.
-                let current = calendar.component(.weekday, from: now) - 1
-                let back = (current - index + 7) % 7 == 0 ? 7 : (current - index + 7) % 7
-                let name = word.capitalized
-                if let named { return part(of: day(-back), named, label: "\(name) \(named)", spoken: "on \(name) \(named)") }
-                return make(day(-back), day(-back + 1), name, spoken: "on \(name)", kind: "a day")
+        // Past and present.
+        let todayName = dateName(today, calendar: calendar)
+        add("today", "Today, \(todayName), up to now", window(today, now, "today", kind: "a day"))
+        var comingToday: [(name: String, hours: Range<Int>)] = []
+        for part in parts {
+            let (start, end) = (hour(today, part.hours.lowerBound), hour(today, part.hours.upperBound))
+            if now >= start {
+                let to = now < end ? "now" : clock(part.hours.upperBound)
+                add("this_\(part.name)", "This \(part.name): \(todayName), \(clock(part.hours.lowerBound)) to \(to)",
+                    window(start, min(end, now), "this \(part.name)", kind: "part of a day"))
+            } else {
+                comingToday.append(part)
             }
         }
-        return nil
+        let yesterday = day(-1)
+        let yesterdayName = dateName(yesterday, calendar: calendar)
+        add("last_night", "Last night: \(yesterdayName), \(clock(lastNightFrom)) to \(clock(lastNightTo)) today",
+            window(hour(yesterday, lastNightFrom), min(hour(today, lastNightTo), now), "last night", kind: "part of a day"))
+        add("yesterday", "Yesterday: \(yesterdayName), the whole day", window(yesterday, today, "yesterday", kind: "a day"))
+        for part in parts {
+            add("yesterday_\(part.name)", "Yesterday \(part.name): \(yesterdayName), \(clock(part.hours.lowerBound)) to \(clock(part.hours.upperBound))",
+                window(hour(yesterday, part.hours.lowerBound), hour(yesterday, part.hours.upperBound), "yesterday \(part.name)", kind: "part of a day"))
+        }
+        let week = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? today
+        add("this_week", "This week: since \(dateName(week, calendar: calendar)), up to now", window(week, now, "this week", kind: "a week"))
+        let before = calendar.date(byAdding: .weekOfYear, value: -1, to: week) ?? week
+        add("last_week", "Last week: \(dateName(before, calendar: calendar)) to \(dateName(calendar.date(byAdding: .day, value: -1, to: week) ?? week, calendar: calendar))",
+            window(before, week, "last week", kind: "a week"))
+        for back in 2...(namedDaysBack + 1) {
+            let date = day(-back)
+            let name = weekdayName(date, calendar: calendar)
+            let dated = dateName(date, calendar: calendar)
+            let datePart = String(dated.drop { $0 != "," }.dropFirst(2))
+            add(slug(date), "\(dated), the whole day", window(date, day(-back + 1), name, spoken: "on \(name)", kind: "a day"))
+            for part in parts {
+                add("\(slug(date))_\(part.name)", "\(name) \(part.name), \(datePart), \(clock(part.hours.lowerBound)) to \(clock(part.hours.upperBound))",
+                    window(hour(date, part.hours.lowerBound), hour(date, part.hours.upperBound), "\(name) \(part.name)",
+                           spoken: "on \(name) \(part.name)", kind: "part of a day"))
+            }
+        }
+
+        // The future: no session was used then.
+        add("later_today", "Later today: \(todayName), from now to midnight, still to come",
+            window(now, hour(today, 24), "later today", kind: "part of a day", future: true))
+        for part in comingToday {
+            add("this_\(part.name)", "This \(part.name): \(todayName), \(clock(part.hours.lowerBound)) to \(clock(part.hours.upperBound)), still to come",
+                window(hour(today, part.hours.lowerBound), hour(today, part.hours.upperBound), "this \(part.name)", kind: "part of a day", future: true))
+        }
+        let tomorrow = day(1)
+        add("tomorrow", "Tomorrow: \(dateName(tomorrow, calendar: calendar))", window(tomorrow, day(2), "tomorrow", kind: "a day", future: true))
+        for ahead in 1...namedDaysAhead {
+            let date = day(ahead)
+            let name = weekdayName(date, calendar: calendar)
+            add(slug(date), "\(dateName(date, calendar: calendar)), still to come", window(date, day(ahead + 1), name, spoken: "on \(name)", kind: "a day", future: true))
+        }
+        return labels
     }
+
+    /// What the window question's "none" says: no time, this very moment, a time somewhere else, or a vague one.
+    static let noneDescription = "No time, this very moment (\"right now\"), a time somewhere else, or a vague one such as recently."
 
     // MARK: How a row's time is said
 
@@ -109,9 +149,17 @@ enum SpokenTime {
 
     /// Today's date and where this week started, which the judge and the writer need for "this week": "Wednesday, October 14; this
     /// week started Sunday, October 11".
-    static func today(now: Date = Date(), calendar: Calendar = .current) -> String {
+    /// With `withTime`, the Mac's time follows the date ("Wednesday, October 14, 3:00 PM; …"), as the route call's state has it.
+    static func today(now: Date = Date(), calendar: Calendar = .current, withTime: Bool = false, locale: Locale = .current) -> String {
         let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
-        return "\(dateName(now, calendar: calendar)); this week started \(dateName(start, calendar: calendar))"
+        var date = dateName(now, calendar: calendar)
+        if withTime {
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.timeStyle = .short
+            date += ", " + formatter.string(from: now).replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ")
+        }
+        return "\(date); this week started \(dateName(start, calendar: calendar))"
     }
 
     /// How a row's time reads to the judge and the writer.
