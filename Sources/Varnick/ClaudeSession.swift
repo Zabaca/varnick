@@ -1273,7 +1273,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func follow(_ status: PeerSessionStatus) -> Bool {
         guard isClaude, isOnPeer else { return false }
         turnHeardAt = Date()
-        turn = status.running ? status.turn.map { PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date())) } : nil
+        // The host's Esc mark and error kind come with the word (protocol 27): its Esc raises no Done here, and its error names its kind.
+        turn = status.running ? status.turn.map {
+            PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date()), failure: status.failure, interrupted: status.esc == true)
+        } : nil
         // Its work links are the host's (ADR 0020). Once it isn't running there, the history stays for the closing pane to save and
         // the live records go, so the card leaves Building.
         if status.running { work = status.work?.paneWork } else { dropHostLive() }

@@ -36,6 +36,18 @@ public enum TurnFailure: Equatable, Sendable {
         }
     }
 
+    /// The kind as it travels to a peer and to the Phone page (protocol 27): Claude Code's own word, `other` for a kind with none.
+    /// `init(error:)` reads it back, and a word this build doesn't know is `.other`, so a newer host's kind still reads as an error.
+    public var wire: String {
+        switch self {
+        case .rateLimit: "rate_limit"
+        case .overloaded: "overloaded"
+        case .serverError: "server_error"
+        case .authenticationFailed: "authentication_failed"
+        case .other: "other"
+        }
+    }
+
     /// The kind as a notice says it; "API error" for a kind with no word of its own.
     public var word: String {
         switch self {

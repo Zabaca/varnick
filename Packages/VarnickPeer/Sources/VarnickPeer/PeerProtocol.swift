@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 26
+    public static let version = 27
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -21,9 +21,59 @@ public enum PeerProtocol {
 /// A pane's turn as a host sends it (ADR 0010): the word, and how many seconds ago it began by the host's own
 /// clock, so two Macs' clocks needn't agree.
 public enum PeerTurn {
-    public static func read(for pane: UUID, now: Date = Date()) -> (turn: Turn, age: Int)? {
+    /// A pane's turn as a host sends it: the word and its age, and for a waiting turn made from the user's Esc or Deny, and a failed one's
+    /// kind, what the reader knows (protocol 27).
+    public struct Reading: Equatable, Sendable {
+        public var turn: Turn
+        public var age: Int
+        public var failure: TurnFailure?
+        public var interrupted: Bool
+    }
+
+    public static func read(for pane: UUID, now: Date = Date()) -> Reading? {
         guard let found = PaneFolder.turn(for: pane) else { return nil }
-        return (found.turn, Int(max(0, now.timeIntervalSince(found.since))))
+        return Reading(turn: found.turn, age: Int(max(0, now.timeIntervalSince(found.since))), failure: found.failure, interrupted: found.interrupted)
+    }
+}
+
+/// What a Mac says about its user, as the raw facts (protocol 27): the page server alone turns them into present or away
+/// (`docs/problems/phone-page-is-only-a-browser-tab`, option 02), so the threshold lives in one place.
+public struct PeerPresence: Codable, Equatable, Sendable {
+    /// Seconds since the last keyboard, mouse or trackpad input.
+    public var idle: Int
+    /// The screen is locked, the display is asleep, or the Mac's login session is not the active one.
+    public var away: Bool
+
+    public init(idle: Int, away: Bool) {
+        self.idle = idle
+        self.away = away
+    }
+}
+
+/// A Mac's last presence as its host holds it: one file per Mac in `presence/` of the support folder, written whole by rename (owner-only),
+/// by the Mac's own Varnick for itself as a host and by the host's relay for a peer that reported on a `status` request. `at` is the time on
+/// the host's clock when it was written, so a report's age never depends on the Mac's clock.
+public struct PresenceFile: Codable, Equatable, Sendable {
+    public var idle: Int
+    public var away: Bool
+    /// Unix seconds, host clock.
+    public var at: Int
+
+    public static var folder: URL { SupportFolder.url.appendingPathComponent("presence", isDirectory: true) }
+
+    /// Only a UUID names a file: ids come from a request.
+    public static func file(for id: String) -> URL? {
+        guard UUID(uuidString: id) != nil else { return nil }
+        return folder.appendingPathComponent("\(id.lowercased()).json")
+    }
+
+    /// Writes a Mac's report. A failure changes nothing: the old file ages into "can't be told", which pushes.
+    @discardableResult
+    public static func write(_ presence: PeerPresence, for id: String, now: Date = Date(), to folder: URL = folder) -> Bool {
+        guard UUID(uuidString: id) != nil else { return false }
+        let record = PresenceFile(idle: max(0, presence.idle), away: presence.away, at: Int(now.timeIntervalSince1970))
+        guard let data = try? JSONEncoder().encode(record) else { return false }
+        return (try? OwnerOnlyFile.replace(folder.appendingPathComponent("\(id.lowercased()).json"), with: data)) != nil
     }
 }
 
@@ -396,16 +446,24 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         get { turnWord.flatMap(Turn.init(rawValue:)) }
         set { turnWord = newValue?.rawValue }
     }
+    /// A `failed` turn's kind (`TurnFailure.wire`) and, for a `waiting` one, that it was made from the user's Esc or Deny (protocol 27). A
+    /// kind travels as text, so one this build doesn't know reads as `.other`.
+    var failureWord: String?
+    public var esc: Bool?
+    public var failure: TurnFailure? {
+        get { failureWord.map { TurnFailure(error: $0) } }
+        set { failureWord = newValue?.wire }
+    }
     /// The problems and options the pane worked on, from its work files on the host (ADR 0020). Nil when it linked nothing, and from a
     /// build before protocol 18.
     public var work: PeerWork?
 
     private enum CodingKeys: String, CodingKey {
-        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, work
+        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, failureWord = "failure", esc, work
     }
 
     public init(running: Bool, clients: Int? = nil, control: String? = nil, controlName: String? = nil, conversation: String? = nil,
-                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, work: PeerWork? = nil) {
+                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil) {
         self.running = running
         self.clients = clients
         self.control = control
@@ -414,7 +472,17 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         self.title = title
         self.turnWord = turn?.rawValue
         self.turnAge = turnAge
+        self.failureWord = failure?.wire
+        self.esc = esc
         self.work = work
+    }
+
+    /// Takes in a host's reading of the pane's turn.
+    public mutating func take(_ reading: PeerTurn.Reading) {
+        turn = reading.turn
+        turnAge = reading.age
+        failure = reading.failure
+        esc = reading.interrupted ? true : nil
     }
 }
 
@@ -681,6 +749,8 @@ public struct PeerRequest: Codable, Sendable {
     /// Resume: the conversation to resume, with the pane's new session id and the folder and agent
     /// in `start`.
     public var conversation: String?
+    /// Status, from a Mac (protocol 27): whether its user is at it. The host keeps it for its Phone page server to route a push by; a device's is ignored.
+    public var presence: PeerPresence?
     /// `upgrade` and `restart`'s fields, documented in `PeerMaintenanceAsk`.
     public var begin: Bool?
     public var fetch: Bool?

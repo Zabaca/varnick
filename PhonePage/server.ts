@@ -26,7 +26,7 @@ import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy
 import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 26;
+export const PROTOCOL_VERSION = 27;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */

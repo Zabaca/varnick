@@ -208,7 +208,7 @@ enum PeerFollow {
         for (name, var status) in statuses where status.running {
             guard let record = panes[name] else { continue }
             status.conversation = reported(record.id) ?? record.conversationID
-            if let found = PeerTurn.read(for: record.id) { (status.turn, status.turnAge) = (found.turn, found.age) }
+            if let found = PeerTurn.read(for: record.id) { status.take(found) }
             status.work = PeerWork.read(for: record.id)
             if status.control == nil || Zmx.sameID(status.control, host), !record.title.isEmpty { status.title = record.title }
             statuses[name] = status
@@ -275,7 +275,8 @@ enum PeerOpenTabs {
         let found = PeerTurn.read(for: record.id)
         return PeerPane(id: id, kind: .claude, title: title.isEmpty ? "New session" : title, folder: record.directory,
                         running: status?.running == true, clients: status?.clients, control: status?.control, agent: record.agent,
-                        conversation: record.conversation, turn: found?.turn, turnAge: found?.age, work: PeerWork.read(for: record.id))
+                        conversation: record.conversation, turn: found?.turn, turnAge: found?.age, failure: found?.failure,
+                        esc: found?.interrupted == true ? true : nil, work: PeerWork.read(for: record.id))
     }
 }
 
