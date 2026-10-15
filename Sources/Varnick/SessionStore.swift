@@ -26,6 +26,10 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// Code's conversation transcript.
     var liveTranscript: Bool?
 
+    /// Task pane (`!task`, the split picker's Task tile): a web pane whose task Varnick carries out. Never saved: a restart ends the task, and
+    /// the tab comes back without the pane (`SavedTab.withoutTasks`).
+    var task: Bool?
+
     /// Custom app pane: the app's folder name. It is a web pane too (`url` is the app's server).
     var app: String?
 
@@ -106,6 +110,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var isWeb: Bool { url != nil }
     var isFile: Bool { file != nil }
     var isApp: Bool { app != nil }
+    var isTask: Bool { task == true }
     var isLiveTranscript: Bool { liveTranscript == true }
 
     /// A pane of another machine's tab that is not shown here: the Transcript, which stays on its Mac, and an app or a page at a local address
@@ -317,6 +322,17 @@ struct SessionStore {
 
         /// A layout always holds a record.
         var resolvedID: UUID { id ?? layout.records[0].id }
+
+        /// The tab as it is kept: a Task pane is never saved (a restart ends its task), so a tab of Task panes alone is not kept at all.
+        func withoutTasks() -> SavedTab? {
+            guard layout.records.contains(where: \.isTask) else { return self }
+            guard let kept = layout.pruned({ !$0.isTask }) else { return nil }
+            var tab = self
+            tab.id = resolvedID
+            tab.layout = kept
+            if let focused, !kept.records.contains(where: { $0.id == focused }) { tab.focused = nil }
+            return tab
+        }
 
         /// The tab as `State.openTabs` hands it out: its id set, and a mark migrated from its panes' records.
         fileprivate func migrated() -> SavedTab {

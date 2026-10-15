@@ -54,6 +54,27 @@ enum Subprocess {
         }
     }
 
+    /// A command kept open for as long as the caller wants (a Task's conversation with the text helper): `send` writes to its input without
+    /// closing it, `end` closes the input and stops it (SIGTERM after a second, SIGKILL a second later), and `finished` resolves when it has
+    /// gone. Output goes to `onOutput` in chunks off the main actor, as for `stream`.
+    static func open(_ executable: String, _ arguments: [String], environment: [String: String], directory: URL? = nil,
+                     onOutput: @escaping @Sendable (Data) -> Void) -> Open {
+        Open(Stream(executable, arguments, environment, input: nil, directory: directory, onOutput))
+    }
+
+    final class Open: @unchecked Sendable {
+        private let stream: Stream
+        let finished: Task<ProcessResult, Never>
+
+        fileprivate init(_ stream: Stream) {
+            self.stream = stream
+            finished = Task { await withCheckedContinuation { stream.start($0, deadline: nil) } }
+        }
+
+        func send(_ data: Data) { stream.send(data) }
+        func end() { stream.cancel() }
+    }
+
     /// Reads one pipe end on a dispatch source over the descriptor itself. `FileHandle.readabilityHandler` reads
     /// through a duplicate that isn't close-on-exec, which a pane started meanwhile would inherit. An empty
     /// `Data` means the end of the pipe, once.
@@ -107,7 +128,7 @@ enum Subprocess {
         }
     }
 
-    private final class Stream: @unchecked Sendable {
+    fileprivate final class Stream: @unchecked Sendable {
         /// The error output kept, from its end: enough for ssh's last complaint.
         private static let errorLimit = 4096
         private let process = Process()
@@ -177,6 +198,21 @@ enum Subprocess {
                 writing = false
                 lock.unlock()
                 closeInput()
+            }
+        }
+
+        /// Writes to a command kept open (`Subprocess.open`), one write at a time on this stream's queue; the input stays open. A write after
+        /// the input was closed or the command ended is dropped.
+        func send(_ data: Data) {
+            queue.async { [self] in
+                lock.lock()
+                guard !inputClosed, !finished else { return lock.unlock() }
+                writing = true
+                lock.unlock()
+                try? stdin.fileHandleForWriting.write(contentsOf: data)
+                lock.lock()
+                writing = false
+                lock.unlock()
             }
         }
 

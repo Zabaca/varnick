@@ -72,4 +72,36 @@ wait $pid
 sleep 0.5
 pgrep -f fake-claude.py > /dev/null && bad "a claude was left after SIGTERM" || ok "SIGTERM ends the helper and its claude"
 
+# A conversation (a Task's): one claude kept open, each message answered in order with its own ready and result, the same process for all.
+printf '{"prompt":"first question","model":"claude-haiku-5-5","claude":"%s","filter":"%s","cwd":"%s","conversation":true}\n' "$fake" "$build/mods/reminders" "$work/cwd" > "$work/conv-first.json"
+(cd "$work/cwd" && export FAKE_CLAUDE_COUNT=1 FAKE_CLAUDE_LOG="$work/conv.log" && { cat "$work/conv-first.json"; sleep 1.5; printf '{"message":"second question"}\n'; sleep 1.5; printf '{"message":"third"}\n'; sleep 1.5; } \
+  | "$build/bun" --no-env-file --no-install "$build/agent.js" > "$work/conv.out" 2> "$work/stderr")
+[ "$(grep -c '"type":"result","ok":true' "$work/conv.out")" -eq 3 ] && grep -q '"text":"OK 1 after first"' "$work/conv.out" && grep -q '"type":"result","ok":true,"text":"OK 2 after first"' "$work/conv.out" \
+  && grep -q '"type":"result","ok":true,"text":"OK 3 after first"' "$work/conv.out" && ok "a conversation answers each message in order, from the same claude" || bad "a conversation's answers"
+[ "$(grep -c '"type":"ready"' "$work/conv.out")" -eq 3 ] && [ "$(grep -c '"argv"' "$work/conv.log")" -eq 1 ] && ok "one ready for each message, and one claude for the whole conversation" || bad "a conversation's ready lines or claude processes"
+[ -z "$(grep -v '^{' "$work/conv.out")" ] && [ ! -s "$work/stderr" ] && ok "a conversation writes JSON lines only" || bad "a conversation's output"
+grep -q -- '--no-session-persistence' "$work/conv.log" && grep -q -- '"--tools", ""' "$work/conv.log" && grep -q -- "--plugin-dir\", \"$build/mods/reminders" "$work/conv.log" \
+  && ok "a conversation has no transcript, no tools and the reminders filter, as a one-shot request does" || bad "a conversation's claude arguments"
+pgrep -f fake-claude.py > /dev/null && bad "a claude was left after the conversation's input closed" || ok "no claude left once the input closes"
+
+printf '{"prompt":"first question","model":"claude-haiku-5-5","claude":"%s","filter":"%s","cwd":"%s","conversation":true}\n' "$fake" "$work/no-such-filter" "$work/cwd" > "$work/conv-nofilter.json"
+helper "$work/conv-nofilter.json" "$work/conv-nofilter.out"
+grep -q '"ok":false,"kind":"filter missing"' "$work/conv-nofilter.out" && ok "a conversation with no filter fails its first message" || bad "a conversation with a missing filter"
+
+(cd "$work/cwd" && export FAKE_CLAUDE_HANG=1 && { cat "$work/conv-first.json"; sleep 30; } | "$build/bun" --no-env-file --no-install "$build/agent.js" > "$work/convhang.out" 2> "$work/stderr") &
+pid=$!
+sleep 2
+pkill -TERM -f "$build/agent.js"
+wait $pid
+sleep 0.5
+pgrep -f fake-claude.py > /dev/null && bad "a claude was left after SIGTERM in a conversation" || ok "SIGTERM ends a conversation's helper and its claude"
+
+# The input closing mid-message (Varnick gone) ends the helper and its claude without a signal: nothing outlives Varnick.
+(cd "$work/cwd" && export FAKE_CLAUDE_HANG=1 && { cat "$work/conv-first.json"; sleep 2; } | "$build/bun" --no-env-file --no-install "$build/agent.js" > "$work/convclose.out" 2> "$work/stderr") &
+pid=$!
+sleep 5
+if kill -0 $pid 2> /dev/null; then bad "the helper was still running after its input closed during a message"; kill -KILL $pid 2> /dev/null; else ok "the helper ends by itself when its input closes during a message"; fi
+wait $pid 2> /dev/null
+pgrep -f fake-claude.py > /dev/null && bad "a claude was left after the input closed during a message" || ok "and no claude is left"
+
 [ "$failed" -eq 0 ] && echo "all passed" || { echo "$failed failed"; exit 1; }

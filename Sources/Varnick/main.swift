@@ -335,6 +335,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .swapRight where inSession: model.swapPane(.right)
         case .webAddress: return model.webAction { $0.editingAddress = true }
         case .webReload: return model.webAction(includingRemoteFiles: true) { $0.reload() }
+        case .stopTask:
+            // Ends the task that runs, whichever pane has the keyboard; the key goes on when none does.
+            guard Settings.shared.tasksOn, let running = TaskController.running, running.phase.isActive else { return false }
+            running.stop()
         case .fontBigger: Settings.shared.adjustFont(0.5)
         case .fontSmaller: Settings.shared.adjustFont(-0.5)
         case .fontReset: Settings.shared.fontSize = Settings.defaultFontSize

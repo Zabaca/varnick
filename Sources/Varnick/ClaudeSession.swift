@@ -14,6 +14,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     let view: LocalProcessTerminalView
     /// Web panes only.
     private(set) var webView: WKWebView?
+    /// A Task pane's task (option 01 of tasks-cant-be-handed-to-varnick): its steps, its gates and its harness. Nil for any other pane.
+    private(set) var task: TaskController?
     /// File panes only.
     private(set) var fileViewer: FileViewer?
     /// File panes showing Markdown: the source instead of the rendered page.
@@ -260,6 +262,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var isWeb: Bool { record.isWeb }
     var isFile: Bool { record.isFile }
     var isApp: Bool { record.isApp }
+    var isTask: Bool { record.isTask }
     var isClaude: Bool { record.isClaude }
     var isLiveTranscript: Bool { record.isLiveTranscript }
     /// The session runs on a peer, and this pane is an ssh client of its host's zmx.
@@ -349,7 +352,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.nativeBackgroundColor = NSColor(white: 0.1, alpha: 1)
         view.nativeForegroundColor = NSColor(white: 0.9, alpha: 1)
         view.caretColor = .systemBlue
+        if record.isTask { task = TaskController() }
         if record.isWeb, !record.staysOnHost { makeWebView() }
+        task?.session = self
         if let file = record.file {
             fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize, remote: record.host.map { RemoteFile(host: $0, pane: record.id) })
         }
@@ -1449,6 +1454,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Shells: whatever title the shell sets (often the folder), else "Terminal".
     var label: String {
         if let file = record.file { return (file as NSString).lastPathComponent }
+        if let task {
+            // The tab title carries the task's state: running, needs you, done, stopped, gave up.
+            return task.titleSuffix.isEmpty ? "Task" : "Task: \(task.titleSuffix)"
+        }
         if isWeb {
             if !title.isEmpty { return title }
             if let app = customApp { return app.name }
@@ -1482,6 +1491,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let config = WKWebViewConfiguration()
         // Right-click › Inspect Element, and Safari's Develop menu.
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        if let task {
+            // A Task pane's website data is its own: not persistent, shared with no other pane, empty when the pane opens and gone when it closes.
+            config.websiteDataStore = .nonPersistent()
+            TaskWebPage.install(in: config, touch: task.touch)
+        }
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 760, height: 520), configuration: config)
         web.isInspectable = true
         web.navigationDelegate = self
@@ -1646,6 +1660,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     private func endNow() {
         endedByUser = true
+        task?.shutdown()
         endSessionOnHost()
         // No client to close. A card on a peer is this Mac's view only; with the check of an exited
         // client pending, the session is this pane's to end, as for any pane in control.

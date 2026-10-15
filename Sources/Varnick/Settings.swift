@@ -83,7 +83,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
     case swapLeft, swapDown, swapUp, swapRight
-    case webAddress, webReload
+    case webAddress, webReload, stopTask
     case fontBigger, fontSmaller, fontReset
 
     var id: String { rawValue }
@@ -93,9 +93,9 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var isSwap: Bool { self == .swapLeft || self == .swapDown || self == .swapUp || self == .swapRight }
 
-    /// Not offered now: the Outline's shortcut while its switch is off. A hidden action keeps its binding but takes no key and counts in no
-    /// conflict, so binding its keys to another action leaves it as it was.
-    @MainActor var isHidden: Bool { self == .outline && !Settings.shared.outlineOn }
+    /// Not offered now: the Outline's shortcut while its switch is off, and the stop-task shortcut while Tasks is. A hidden action keeps its
+    /// binding but takes no key and counts in no conflict, so binding its keys to another action leaves it as it was.
+    @MainActor var isHidden: Bool { (self == .outline && !Settings.shared.outlineOn) || (self == .stopTask && !Settings.shared.tasksOn) }
 
     var title: String {
         switch self {
@@ -133,6 +133,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .swapRight: "Swap with pane right"
         case .webAddress: "Edit address (web pane)"
         case .webReload: "Reload (web pane)"
+        case .stopTask: "Stop the task (Task pane)"
         case .fontBigger: "Bigger text"
         case .fontSmaller: "Smaller text"
         case .fontReset: "Default text size"
@@ -146,7 +147,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
              .toggleProjects, .previousProject, .nextProject: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight,
              .swapLeft, .swapDown, .swapUp, .swapRight: "Splits"
-        case .webAddress, .webReload: "Web"
+        case .webAddress, .webReload, .stopTask: "Web"
         case .fontBigger, .fontSmaller, .fontReset: "Terminal"
         }
     }
@@ -187,6 +188,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .swapRight: KeyCombo(keyCode: kVK_ANSI_L, [.command, .control, .shift])
         case .webAddress: KeyCombo(keyCode: kVK_ANSI_L, .command)
         case .webReload: KeyCombo(keyCode: kVK_ANSI_R, .command)
+        case .stopTask: KeyCombo(keyCode: kVK_ANSI_Period, .command)
         case .fontBigger: KeyCombo(keyCode: kVK_ANSI_Equal, .command)
         case .fontSmaller: KeyCombo(keyCode: kVK_ANSI_Minus, .command)
         case .fontReset: KeyCombo(keyCode: kVK_ANSI_0, .command)
@@ -235,6 +237,10 @@ final class Settings: ObservableObject {
     /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
     @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineOnKey) } }
     static let outlineOnKey = "outlineOn"
+    /// Experimental (Settings › Experimental): Tasks (`!task`, the split picker's Task tile and the Task pane). Off by default, for every install;
+    /// off means no command, no tile, and a running task stops at its next step.
+    @Published var tasksOn: Bool { didSet { defaults.set(tasksOn, forKey: Self.tasksOnKey) } }
+    static let tasksOnKey = "tasksOn"
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
@@ -414,6 +420,7 @@ final class Settings: ObservableObject {
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         outlineOn = defaults.bool(forKey: Self.outlineOnKey)
+        tasksOn = defaults.bool(forKey: Self.tasksOnKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
@@ -1034,6 +1041,10 @@ struct SettingsView: View {
                             SettingRow(title: "Outline",
                                        detail: "Your bullets, shown by \(settings.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac. Turning it off hides it, and Claude sessions' Outline tools stay listed but refuse; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Tasks",
+                                       detail: "!task or the split picker's Task tile opens a Task pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved; without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers. What goes to TypeSafe and to Anthropic is in Privacy and security. You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. Turning it off hides the command and the tile and stops a running task. Experimental.") {
+                                Toggle("", isOn: $settings.tasksOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             }
                         }
