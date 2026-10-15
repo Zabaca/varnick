@@ -5,20 +5,19 @@ import TaskHarness
 /// route's Jev version (the 0.7 bar and the rankings are measured on fixed questions; a change of version or wording is a change to re-measure).
 /// A call that fails or misses the deadline counts as a Jev failure for that step (`System1Switch`).
 ///
-/// What goes to TypeSafe: the task; each page's action labels; previews (titles, headings, first lines); the text blocks being read; field labels
-/// and the value bank's values (a value only the person gives is sent as "(the person's)"); Claude's hints. Never a password, a one-time code or a
-/// card field, which are never read. The body is a privacy surface. Never logged.
+/// What goes to TypeSafe is in docs/privacy-and-security.md (TypeSafe, Tasks); the body is a privacy surface. Never logged.
 ///
 /// The request shape for a yes-or-no with no criteria of its own (`noul`) is the judge's (`SpokenJudge`); it is unmeasured on the live endpoint for
 /// the task's questions (follow-up test 2 in agent-lab measures Jev itself).
 final class TaskJev: System1, @unchecked Sendable {
     let name = "Jev"
-    private let apiKey: String
+    /// The key, asked for before each call: nil once the relevance filter has left TypeSafe or the key is gone.
+    private let apiKey: @Sendable () async -> String?
     private let model: String
     private let endpoint: URL
     private let session: URLSession
 
-    init(apiKey: String, model: String = SpokenRouter.pinnedModel, endpoint: URL = SpokenRouter.pinnedEndpoint, deadline: TimeInterval = SpokenRouter.timeout) {
+    init(apiKey: @escaping @Sendable () async -> String?, model: String = SpokenRouter.pinnedModel, endpoint: URL = SpokenRouter.pinnedEndpoint, deadline: TimeInterval = SpokenRouter.timeout) {
         self.apiKey = apiKey
         self.model = model
         self.endpoint = endpoint
@@ -71,9 +70,10 @@ final class TaskJev: System1, @unchecked Sendable {
     }
 
     func ask(state: JSON, questions: [Question]) async throws -> [String: Answer] {
+        guard let key = await apiKey() else { throw System1Unavailable("the relevance filter isn't on TypeSafe with a key any more") }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body(state: state, questions: questions)
         let (data, response) = try await session.data(for: request)

@@ -27,9 +27,11 @@ final class ClaudeConversation: @unchecked Sendable {
 
     private let claude: String
     private let environment: [String: String]
-    /// What a conversation starts with (the role and the task), put before the message that starts one.
     private let lock = NSLock()
     private var process: Subprocess.Open?
+    /// Which helper the output belongs to: output from one that has been ended (a missed deadline, Stop) is dropped, or its replies would be
+    /// read as the answers of the messages that follow.
+    private var generation = 0
     private var lines = TextHelper.Lines()
     private var results: [TextHelper.Reply] = []
     private var waiter: (id: Int, continuation: CheckedContinuation<TextHelper.Reply?, Never>)?
@@ -61,6 +63,7 @@ final class ClaudeConversation: @unchecked Sendable {
         let (finished, waiting) = lock.withLock { () -> (Subprocess.Open?, (id: Int, continuation: CheckedContinuation<TextHelper.Reply?, Never>)?) in
             let p = process, w = waiter
             process = nil
+            generation += 1   // whatever the helper still says is no answer to a later message
             waiter = nil
             results = []
             lines = TextHelper.Lines()
@@ -101,13 +104,15 @@ final class ClaudeConversation: @unchecked Sendable {
         let start = Start(prompt: preface.isEmpty ? text : preface + "\n" + text, model: TextHelper.model, claude: claude, filter: TextHelper.filter.path, cwd: TextHelper.workingFolder.path)
         guard var line = try? JSONEncoder().encode(start) else { throw Failure(kind: "request unwritable") }
         line.append(0x0A)
-        let open = Subprocess.open(TextHelper.bun.path, ["--no-env-file", "--no-install", TextHelper.script.path], environment: environment,
-                                   directory: TextHelper.workingFolder) { [weak self] in self?.received($0) }
-        lock.withLock {
-            process = open
+        let born = lock.withLock { () -> Int in
+            generation += 1
             results = []
             lines = TextHelper.Lines()
+            return generation
         }
+        let open = Subprocess.open(TextHelper.bun.path, ["--no-env-file", "--no-install", TextHelper.script.path], environment: environment,
+                                   directory: TextHelper.workingFolder) { [weak self] in self?.received($0, from: born) }
+        lock.withLock { process = open }
         Task { [weak self] in
             _ = await open.finished.value
             self?.ended(open)
@@ -115,9 +120,10 @@ final class ClaudeConversation: @unchecked Sendable {
         open.send(line)
     }
 
-    private func received(_ data: Data) {
+    private func received(_ data: Data, from born: Int) {
         var resume: [(CheckedContinuation<TextHelper.Reply?, Never>, TextHelper.Reply)] = []
         lock.withLock {
+            guard born == generation else { return }
             for line in lines.add(data) {
                 guard case .result(let reply) = line else { continue }
                 if let w = waiter {
@@ -136,6 +142,7 @@ final class ClaudeConversation: @unchecked Sendable {
         let waiting = lock.withLock { () -> CheckedContinuation<TextHelper.Reply?, Never>? in
             guard process === open else { return nil }
             process = nil
+            generation += 1
             let w = waiter
             waiter = nil
             return w?.continuation
@@ -202,11 +209,16 @@ final class TaskClaude: System2, @unchecked Sendable {
 final class ClaudeSystem1: System1, @unchecked Sendable {
     let name = "Claude"
     private let claude: TaskClaude
+    private let preface: String
 
-    init(claude: TaskClaude) { self.claude = claude }
+    /// `preface` is the role and the task, which starts a guidance conversation that this System 1 is the first to speak in.
+    init(claude: TaskClaude, preface: String) {
+        self.claude = claude
+        self.preface = preface
+    }
 
     func ask(state: JSON, questions: [Question]) async throws -> [String: Answer] {
-        let reply = try await claude.ask(.guidance, Prompts.fallback(state: state, questions: questions), preface: "")
+        let reply = try await claude.ask(.guidance, Prompts.fallback(state: state, questions: questions), preface: preface)
         guard let answers = Prompts.readFallback(reply, questions: questions) else { throw ClaudeConversation.Failure(kind: "reply unreadable") }
         return answers
     }

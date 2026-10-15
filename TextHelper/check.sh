@@ -96,4 +96,12 @@ wait $pid
 sleep 0.5
 pgrep -f fake-claude.py > /dev/null && bad "a claude was left after SIGTERM in a conversation" || ok "SIGTERM ends a conversation's helper and its claude"
 
+# The input closing mid-message (Varnick gone) ends the helper and its claude without a signal: nothing outlives Varnick.
+(cd "$work/cwd" && export FAKE_CLAUDE_HANG=1 && { cat "$work/conv-first.json"; sleep 2; } | "$build/bun" --no-env-file --no-install "$build/agent.js" > "$work/convclose.out" 2> "$work/stderr") &
+pid=$!
+sleep 5
+if kill -0 $pid 2> /dev/null; then bad "the helper was still running after its input closed during a message"; kill -KILL $pid 2> /dev/null; else ok "the helper ends by itself when its input closes during a message"; fi
+wait $pid 2> /dev/null
+pgrep -f fake-claude.py > /dev/null && bad "a claude was left after the input closed during a message" || ok "and no claude is left"
+
 [ "$failed" -eq 0 ] && echo "all passed" || { echo "$failed failed"; exit 1; }

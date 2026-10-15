@@ -14,6 +14,12 @@ bought or sent anywhere. Open http://127.0.0.1:8780/ in a Task pane and try:
       (a masked phone field that rewrites the number, a password and a terms box that only you fill, and a submit that waits for Allow)
 
 GET /__log lists what the site saw (a submit and whether the password field was filled, never its value), for checking by hand.
+
+Also here, for the checks in scripts/check-task-bridge.sh and for trying by hand (none of them linked from the shop):
+  /checkout   a delivery step with an address lookup (a search input among other fields), a country that reveals a Province select between
+              the country and the postcode, a link that does nothing (#), and a Place order button
+  /autosubmit a field whose onchange submits its form
+  /showpw     a password field that a button flips to text, and another that a button swaps for a different input
 """
 import html, json, sys, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -75,6 +81,33 @@ def signup_form(values, errors):
             + f'<p class="f"><input id="terms" name="terms" type="checkbox" value="yes"{terms}><label for="terms">I accept the terms</label> '
               + (f'<span class="error">{html.escape(errors["terms"])}</span>' if errors.get("terms") else "") + "</p>"
             + '<p><a href="/terms">Terms of service</a></p><p><button type="submit">Create account</button></p></form>' + MASK)
+
+
+CHECKOUT = """<h1>Delivery address</h1><p>Where should it go?</p><p><a href="/shop">Back to cart</a> <a href="#">Gift options</a></p>
+<form method="post" action="/checkout">
+<p class="f"><label for="lookup">Find your address</label> <input id="lookup" name="lookup" type="search"> <button type="button" id="find">Find address</button></p>
+<p class="f"><label for="country">Country</label> <select id="country" name="country"><option value="">Choose a country</option><option>United States</option><option>Canada</option></select></p>
+<p class="f" id="postbox"><label for="postcode">Postcode</label> <input id="postcode" name="postcode" autocomplete="postal-code"></p>
+<p class="f"><input id="terms" name="terms" type="checkbox" value="yes"><label for="terms">I accept the terms</label></p>
+<p><button type="submit">Place order</button></p></form>
+<script>
+// A country that needs a province inserts a select before the postcode: the fields after it keep their elements, so they must keep their ids.
+document.getElementById('country').addEventListener('change', (e) => {
+  const old = document.getElementById('provincebox'); if (old) old.remove();
+  if (e.target.value !== 'Canada') return;
+  const p = document.createElement('p'); p.className = 'f'; p.id = 'provincebox';
+  p.innerHTML = '<label for="province">Province</label> <select id="province" name="province"><option value="">Choose a province</option><option>Ontario</option><option>Quebec</option></select>';
+  document.getElementById('postbox').before(p);
+});
+</script>"""
+
+AUTOSUBMIT = """<h1>Auto submit</h1><form method="post" action="/autosubmit"><p class="f"><label for="code">Promo code</label>
+<input id="code" name="code" onchange="this.form.submit()"></p><p><button type="submit">Apply</button></p></form>"""
+
+SHOWPW = """<h1>Show password</h1><form onsubmit="return false">
+<p class="f"><label for="pw">Password</label> <input id="pw" name="pw" type="password" autocomplete="new-password"> <button type="button" id="flip" onclick="const i = document.getElementById('pw'); i.type = i.type === 'password' ? 'text' : 'password'">Show</button></p>
+<p class="f" id="box2"><label for="pw2">Confirm password</label> <input id="pw2" name="pw2" type="password"> <button type="button" id="swap"
+ onclick="const i = document.getElementById('pw2'); const t = document.createElement('input'); t.type = 'text'; t.id = 'shown'; t.name = 'shown'; t.value = i.value; i.replaceWith(t)">Show</button></p></form>"""
 
 
 class H(BaseHTTPRequestHandler):
@@ -147,6 +180,12 @@ class H(BaseHTTPRequestHandler):
             return self.send(page("Search", f"<h1>Search</h1><p>Nothing found for {html.escape(q.get('q', [''])[0])}. This is a practice shop.</p>"))
         if p == "/terms":
             return self.send(page("Terms", "<h1>Terms of service</h1><p>Be kind.</p>"))
+        if p == "/checkout":
+            return self.send(page("Delivery address", CHECKOUT))
+        if p == "/autosubmit":
+            return self.send(page("Auto submit", AUTOSUBMIT))
+        if p == "/showpw":
+            return self.send(page("Show password", SHOWPW))
         if p == "/signup":
             return self.send(page("Sign up", signup_form({}, {})))
         if p == "/welcome":
@@ -156,6 +195,12 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         form = {k: v[0] for k, v in urllib.parse.parse_qs(self.rfile.read(length).decode(), keep_blank_values=True).items()}
+        if self.path.rstrip("/") == "/checkout":
+            LOG.append({"checkout": {k: v for k, v in form.items()}})
+            return self.send("", status=303, location="/welcome")
+        if self.path.rstrip("/") == "/autosubmit":
+            LOG.append({"autosubmit": form.get("code")})
+            return self.send(page("Applied", "<h1>Applied</h1>"))
         if self.path.rstrip("/") != "/signup":
             return self.send(page("Not found", "<h1>Not found</h1>"), status=404)
         digits = "".join(c for c in form.get("phone", "") if c.isdigit())

@@ -69,6 +69,30 @@ function isLoginError(error: string, status: number | null): boolean {
   return ['authentication_failed', 'oauth_org_not_allowed', 'billing_error'].includes(error) || status === 401 || status === 403
 }
 
+/** What a request and a conversation both ask of the SDK: the levers (ADR 0029), the user's `claude`, the reminders filter and a spawn the helper can stop. */
+function claudeOptions(request: Request, abortController: AbortController) {
+  return {
+    // Effort low is what stops Haiku 5.5 thinking: `thinking: disabled`, which minimalOptions() also sets, is accepted and ignored.
+    ...minimalOptions({ model: request.model, effort: 'low', abortController, tools: request.tools ?? [] }),
+    // A tool that would ask is refused when no one can answer, so a tool the call has is allowed outright.
+    ...(request.tools?.length ? { allowedTools: request.tools } : {}),
+    ...(request.maxTurns ? { maxTurns: request.maxTurns } : {}),
+    pathToClaudeCodeExecutable: request.claude,
+    persistSession: false,
+    includePartialMessages: true,
+    cwd: request.cwd,
+    // The SDK's own spawn, except that the child is known here, so it can be stopped. Its standard error goes nowhere.
+    spawnClaudeCodeProcess: ({ command, args, cwd, env, signal }: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal: AbortSignal }) => {
+      const child = spawn(command, args, { cwd, env, signal, stdio: ['pipe', 'pipe', 'ignore'] })
+      children.add(child)
+      child.once('exit', () => children.delete(child))
+      return child as unknown as SpawnedProcess
+    },
+    // Varnick's folder replaces the package's own, which is worked out from where this file sits.
+    plugins: [{ type: 'local' as const, path: request.filter }],
+  }
+}
+
 /** Runs that have sent their result and may still be shutting `claude` down. */
 const winding: Promise<unknown>[] = []
 
@@ -96,26 +120,7 @@ async function answer(request: Request): Promise<void> {
 
   const running = run(
     request.prompt,
-    {
-      // Effort low is what stops Haiku 5.5 thinking: `thinking: disabled`, which minimalOptions() also sets, is accepted and ignored.
-      ...minimalOptions({ model: request.model, effort: 'low', abortController, tools: request.tools ?? [] }),
-      // A tool that would ask is refused when no one can answer, so a tool the call has is allowed outright.
-      ...(request.tools?.length ? { allowedTools: request.tools } : {}),
-      ...(request.maxTurns ? { maxTurns: request.maxTurns } : {}),
-      pathToClaudeCodeExecutable: request.claude,
-      persistSession: false,
-      includePartialMessages: true,
-      cwd: request.cwd,
-      // The SDK's own spawn, except that the child is known here, so it can be stopped. Its standard error goes nowhere.
-      spawnClaudeCodeProcess: ({ command, args, cwd, env, signal }) => {
-        const child = spawn(command, args, { cwd, env, signal, stdio: ['pipe', 'pipe', 'ignore'] })
-        children.add(child)
-        child.once('exit', () => children.delete(child))
-        return child as unknown as SpawnedProcess
-      },
-      // Varnick's folder replaces the package's own, which is worked out from where this file sits.
-      plugins: [{ type: 'local', path: request.filter }],
-    },
+    claudeOptions(request, abortController),
     {
       onMessage(message) {
         if (message.type === 'stream_event') {
@@ -164,7 +169,7 @@ async function answer(request: Request): Promise<void> {
 }
 
 /** The open conversation of a Task, if one was asked for: its messages go in here, one JSON line each. */
-type Conversation = { push(message: string): void; close(): void }
+type Conversation = { push(message: string): void; abort(): void }
 let conversation: Conversation | undefined
 
 /**
@@ -201,9 +206,13 @@ async function converse(request: Request): Promise<void> {
       queue.push(message)
       wake?.()
     },
-    close() {
+    /** The input closed, which is how Varnick ends a conversation, or goes: the turn under way is aborted too, so nothing outlives it. */
+    abort() {
       closed = true
+      ended = true
       wake?.()
+      void stopChildren()
+      abortController.abort()
     },
   }
 
@@ -222,23 +231,7 @@ async function converse(request: Request): Promise<void> {
 
   const running = (async () => {
     try {
-      const stream = query({
-        prompt: messages(),
-        options: {
-          ...minimalOptions({ model: request.model, effort: 'low', abortController, tools: [] }),
-          pathToClaudeCodeExecutable: request.claude,
-          persistSession: false,
-          includePartialMessages: true,
-          cwd: request.cwd,
-          spawnClaudeCodeProcess: ({ command, args, cwd, env, signal }) => {
-            const child = spawn(command, args, { cwd, env, signal, stdio: ['pipe', 'pipe', 'ignore'] })
-            children.add(child)
-            child.once('exit', () => children.delete(child))
-            return child as unknown as SpawnedProcess
-          },
-          plugins: [{ type: 'local', path: request.filter }],
-        },
-      })
+      const stream = query({ prompt: messages(), options: claudeOptions(request, abortController) })
       for await (const message of stream) {
         const t = turn
         if (!t || t.settled) continue
@@ -320,7 +313,7 @@ input.on('line', (line) => {
   pending.push(answer(request))
 })
 input.on('close', async () => {
-  conversation?.close()
+  conversation?.abort()
   await Promise.all(pending)
   // `claude` ends by itself once its input closes; what is still running after a moment is stopped.
   await Promise.race([Promise.allSettled(winding), new Promise((resolve) => setTimeout(resolve, 400))])

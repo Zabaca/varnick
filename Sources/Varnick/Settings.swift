@@ -93,8 +93,8 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var isSwap: Bool { self == .swapLeft || self == .swapDown || self == .swapUp || self == .swapRight }
 
-    /// Not offered now: the Outline's shortcut while its switch is off. A hidden action keeps its binding but takes no key and counts in no
-    /// conflict, so binding its keys to another action leaves it as it was.
+    /// Not offered now: the Outline's shortcut while its switch is off, and the stop-task shortcut while Tasks is. A hidden action keeps its
+    /// binding but takes no key and counts in no conflict, so binding its keys to another action leaves it as it was.
     @MainActor var isHidden: Bool { (self == .outline && !Settings.shared.outlineOn) || (self == .stopTask && !Settings.shared.tasksOn) }
 
     var title: String {
@@ -1043,7 +1043,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Tasks",
-                                       detail: "!task or the split picker's Task tile opens a Task pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved (the task, each page's links and previews, the text it reads, and the field labels and values it types go there); without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers (the same, with the trail and whole pages, goes to Anthropic). You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. Turning it off hides the command and the tile and stops a running task. Experimental.") {
+                                       detail: "!task or the split picker's Task tile opens a Task pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved; without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers. What goes to TypeSafe and to Anthropic is in Privacy and security. You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. Turning it off hides the command and the tile and stops a running task. Experimental.") {
                                 Toggle("", isOn: $settings.tasksOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             }

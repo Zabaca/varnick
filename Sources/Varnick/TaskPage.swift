@@ -6,27 +6,76 @@ import WebKit
 // all as scripts in an isolated content world of the web view's own, so the page's scripts can't see or change them. Nothing is posted to
 // the system or the window and no app is brought forward.
 
-/// The script that runs in the world at document start: the snapshot, the acts, the peek, and the person's own clicks and keys, which pause the
-/// task (`touched`). Secret fields (a password, a one-time code, any card field, and any field that was ever a password) never have their value
-/// read here: the snapshot carries only whether they are filled.
+/// The scripts of a Task pane. Which fields are secret is `SecretField`'s rule (ADR 0039); the page script applies it before anything leaves the
+/// page, and sends a secret field's state (filled or not), never its value.
 enum TaskScript {
     static let world = WKContentWorld.world(name: "varnick-task")
     static let handlerName = "varnickTask"
 
+    /// In every frame: the person's own clicks and keys pause the task, wherever in the page they are made. Trusted events only, so the harness's
+    /// own script clicks never count.
+    static let touchSource = #"""
+    (() => {
+      const post = (m) => { try { window.webkit.messageHandlers.varnickTask.postMessage(m) } catch (e) {} };
+      for (const type of ['pointerdown', 'keydown']) addEventListener(type, (e) => { if (e.isTrusted) post({ touched: type }) }, true);
+    })();
+    """#
+
+    /// In the main frame, in the page's own world: while the harness fills fields, a form's `submit()` and `requestSubmit()` do nothing but mark
+    /// the form as held (an isolated world's changes to the built-ins are invisible to the page, so this one has to be the page's). The lock is
+    /// an attribute the harness's world sets on the document element.
+    static let guardSource = #"""
+    (() => {
+      for (const name of ['submit', 'requestSubmit']) {
+        const original = HTMLFormElement.prototype[name];
+        Object.defineProperty(HTMLFormElement.prototype, name, {
+          configurable: true, writable: true,
+          value: function (...args) {
+            if (document.documentElement && document.documentElement.hasAttribute('data-varnick-task-lock')) { this.setAttribute('data-varnick-task-held', name); return }
+            return original.apply(this, args);
+          },
+        });
+      }
+    })();
+    """#
+
+    /// In the main frame, in the harness's world: the snapshot, the acts and the peek.
     static let source = #"""
     (() => {
       if (window.__vt) return;
-      const everPassword = new WeakSet();
+      // Every element gets an id once, for as long as the document lives, so a field a form reveals moves no other: positions would shift.
+      const ids = new WeakMap();
+      const token = Math.random().toString(36).slice(2, 6);
+      let counter = 0;
+      const idOf = (el, prefix) => { let id = ids.get(el); if (!id) { id = prefix + (++counter) + '.' + token; ids.set(el, id) } return id };
       let els = {};
-      const post = (m) => { try { window.webkit.messageHandlers.varnickTask.postMessage(m) } catch (e) {} };
 
-      // A field that is a password stays one if the page turns it into a text box (a "show password" button).
+      // A field that is a password stays one if the page turns it into a text box, or swaps it for another input (a "show password" button).
+      const everPassword = new WeakSet(), secretNames = new Set(), secretIds = new Set(), secretParents = new WeakSet();
+      const markSecret = (el) => { everPassword.add(el); if (el.name) secretNames.add(el.name); if (el.id) secretIds.add(el.id) };
       new MutationObserver((records) => {
-        for (const r of records) if (r.attributeName === 'type' && r.oldValue === 'password' && r.target.tagName === 'INPUT') everPassword.add(r.target);
-      }).observe(document, { attributes: true, attributeOldValue: true, attributeFilter: ['type'], subtree: true });
+        for (const r of records) {
+          if (r.type === 'attributes' && (r.oldValue || '').toLowerCase() === 'password' && r.target.tagName === 'INPUT') markSecret(r.target);
+          for (const n of r.removedNodes) {
+            if (n.nodeType !== 1) continue;
+            for (const i of (n.tagName === 'INPUT' ? [n] : n.querySelectorAll('input'))) {
+              if (i.type === 'password' || everPassword.has(i)) { markSecret(i); if (r.target.nodeType === 1) secretParents.add(r.target) }
+            }
+          }
+          for (const n of r.addedNodes) {
+            if (n.nodeType !== 1 || !secretParents.has(r.target)) continue;
+            for (const i of (n.tagName === 'INPUT' ? [n] : n.querySelectorAll('input'))) markSecret(i);
+          }
+        }
+      }).observe(document, { attributes: true, attributeOldValue: true, attributeFilter: ['type'], childList: true, subtree: true });
 
-      // The person's own clicks and keys: only trusted events, so the harness's own script clicks never count.
-      for (const type of ['pointerdown', 'keydown']) addEventListener(type, (e) => { if (e.isTrusted) post({ touched: type }) }, true);
+      // A submit the page makes as a field is filled (its own onchange handler) is held: see guardSource for `submit()`.
+      addEventListener('submit', (e) => {
+        if (document.documentElement.hasAttribute('data-varnick-task-lock')) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          if (e.target.setAttribute) e.target.setAttribute('data-varnick-task-held', 'submit');
+        }
+      }, true);
 
       const text = (el) => ((el.innerText !== undefined ? el.innerText : el.textContent) || '').replace(/\s+/g, ' ').trim();
       const visible = (el) => {
@@ -36,12 +85,18 @@ enum TaskScript {
       };
       const regionOf = (el) => el.closest('header,[role=banner]') ? 'banner' : el.closest('footer,[role=contentinfo]') ? 'contentinfo'
         : el.closest('nav,[role=navigation]') ? 'navigation' : 'main';
-      const inSearch = (el) => !!(el.closest('[role=search], search') || (el.form && (el.form.matches('[role=search]') || el.form.querySelector('input[type=search]'))));
+
+      // A search box is a form with role search, a search element, or a form whose only text field is a search input. A form with a search input
+      // among other fields (a checkout with an address lookup) is not one: its submit asks.
+      const textFields = (form) => [...form.querySelectorAll('input, textarea')].filter((i) => !['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'file', 'range', 'color'].includes((i.type || '').toLowerCase()));
+      const searchForm = (form) => !!form && (form.matches('[role=search]') || !!form.closest('search, [role=search]') || (() => { const t = textFields(form); return t.length === 1 && t[0].type === 'search' })());
+      const inSearch = (el) => !!el.closest('[role=search], search') || searchForm(el.form);
+
       const autocompleteOf = (el) => (el.getAttribute('autocomplete') || '').toLowerCase();
       const isSecret = (el) => {
-        if (el.type === 'password') everPassword.add(el);
-        if (autocompleteOf(el).split(/\s+/).some((t) => t === 'current-password' || t === 'new-password' || t === 'one-time-code' || t.startsWith('cc-'))) everPassword.add(el);
-        return everPassword.has(el);
+        if (el.type === 'password') markSecret(el);
+        if (autocompleteOf(el).split(/\s+/).some((t) => t === 'current-password' || t === 'new-password' || t === 'one-time-code' || t.startsWith('cc-'))) markSecret(el);
+        return everPassword.has(el) || (!!el.name && secretNames.has(el.name)) || (!!el.id && secretIds.has(el.id));
       };
       const labelOf = (el) => {
         if (el.labels && el.labels.length) return text(el.labels[0]);
@@ -60,27 +115,31 @@ enum TaskScript {
         return t || null;
       };
       const nearby = (el) => { const p = el.closest('p, fieldset, li'); return p ? text(p).slice(0, 120) : '' };
+      const blocks = 'p, li, h1, h2, h3, h4, h5, h6, td, th, dd, dt, blockquote, figcaption, pre, [role=alert], [role=status]';
 
       const snapshot = () => {
         els = {};
-        let n = 0;
         const out = { address: location.href.split('#')[0], title: document.title, links: [], buttons: [], fields: [], texts: [] };
-        for (const a of document.querySelectorAll('a[href]')) {
+        for (const a of document.querySelectorAll('a[href], a[role=button]')) {
           if (out.links.length >= 300) break;
           const raw = a.getAttribute('href') || '';
-          if (!raw || raw.startsWith('#') || /^(javascript|mailto|tel):/i.test(raw) || !visible(a)) continue;
-          let u; try { u = new URL(a.href) } catch (e) { continue }
+          if (/^(mailto|tel):/i.test(raw) || !visible(a)) continue;
+          // A link with no address to go to (#, javascript:, a button in a link's clothes) is listed, and asks: its click does what the page's script says.
+          const noAddress = !raw || raw.startsWith('#') || /^javascript:/i.test(raw) || a.getAttribute('role') === 'button';
+          let u = null;
+          if (!noAddress) { try { u = new URL(a.href) } catch (e) { continue } }
           const label = text(a) || a.getAttribute('aria-label') || a.title || ((a.querySelector('img') || {}).alt) || '';
-          const id = 'l' + (++n); els[id] = a;
-          out.links.push({ id, label, href: u.href.split('#')[0], inBody: regionOf(a) === 'main', sameSite: u.origin === location.origin, isSelf: u.href.split('#')[0] === location.href.split('#')[0] });
+          const id = idOf(a, 'l'); els[id] = a;
+          out.links.push({ id, label, href: u ? u.href.split('#')[0] : '', inBody: regionOf(a) === 'main', sameSite: !!u && u.origin === location.origin,
+                           isSelf: !!u && u.href.split('#')[0] === location.href.split('#')[0], navigates: !noAddress });
         }
-        for (const b of document.querySelectorAll('button, input[type=submit], input[type=button], input[type=image], [role=button]')) {
+        for (const b of document.querySelectorAll('button, input[type=submit], input[type=button], input[type=image], [role=button]:not(a)')) {
           if (!visible(b)) continue;
           const isInput = b.tagName === 'INPUT';
           const label = (isInput ? b.value : text(b)) || b.getAttribute('aria-label') || b.title || '';
           const kind = (b.getAttribute('type') || (b.tagName === 'BUTTON' ? 'submit' : '')).toLowerCase();
           const submits = !!b.form && (kind === 'submit' || kind === 'image');
-          const id = 'b' + (++n); els[id] = b;
+          const id = idOf(b, 'b'); els[id] = b;
           out.buttons.push({ id, label, submits, isSearch: inSearch(b) });
         }
         const seenRadio = new Set();
@@ -89,18 +148,18 @@ enum TaskScript {
           if (['hidden', 'submit', 'button', 'reset', 'image'].includes(t) || !visible(el)) continue;
           const secret = isSecret(el);
           const base = { name: el.name || '', placeholder: el.getAttribute('placeholder') || '', autocomplete: autocompleteOf(el), nearby: nearby(el),
-                         required: el.required, error: errorOf(el), wasPassword: secret, isSearch: t === 'search' || inSearch(el) };
+                         required: el.required, error: errorOf(el), wasPassword: secret, isSearch: inSearch(el) };
           if (t === 'radio') {
             if (!el.name || seenRadio.has(el.name)) continue;
             seenRadio.add(el.name);
             const group = [...document.querySelectorAll('input[type=radio]')].filter((r) => r.name === el.name && (r.form || null) === (el.form || null));
             const fs = el.closest('fieldset'); const legend = fs && fs.querySelector('legend');
-            const id = 'f' + (++n); els[id] = group;
+            const id = idOf(group[0], 'f'); els[id] = group;
             const checked = group.find((r) => r.checked);
             out.fields.push({ ...base, id, label: legend ? text(legend) : el.name, type: 'radio', options: group.map(labelOf), value: checked ? labelOf(checked) : '', required: true });
             continue;
           }
-          const id = 'f' + (++n); els[id] = el;
+          const id = idOf(el, 'f'); els[id] = el;
           if (secret) { out.fields.push({ ...base, id, label: labelOf(el), type: t, filled: el.value.length > 0 }); continue }
           if (t === 'checkbox') { out.fields.push({ ...base, id, label: labelOf(el), type: t, checked: el.checked }); continue }
           if (el.tagName === 'SELECT') {
@@ -111,7 +170,6 @@ enum TaskScript {
           }
           out.fields.push({ ...base, id, label: labelOf(el), type: t === 'textarea' ? 'textarea' : t, value: el.value });
         }
-        const blocks = 'p, li, h1, h2, h3, h4, h5, h6, td, th, dd, dt, blockquote, figcaption, pre, [role=alert], [role=status]';
         let k = 0;
         for (const el of document.querySelectorAll(blocks)) {
           if (k >= 150) break;
@@ -133,6 +191,33 @@ enum TaskScript {
         el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
         el.dispatchEvent(new FocusEvent('blur'));
       };
+      const fill = (id, value) => {
+        const el = els[id];
+        if (!el) throw new Error('no such field');
+        const first = Array.isArray(el) ? el[0] : el;
+        if (isSecret(first)) throw new Error('a secret field is only ever the person\'s');
+        if (Array.isArray(el)) {
+          const wanted = el.find((r) => labelOf(r) === value);
+          if (!wanted) throw new Error('no such option');
+          wanted.click();
+        } else if (el.type === 'checkbox') {
+          if (el.checked !== (value === 'true')) el.click();
+        } else if (el.tagName === 'SELECT') {
+          const option = [...el.options].find((o) => text(o) === value);
+          if (!option) throw new Error('no such option');
+          nativeSet(el, option.value); events(el);
+        } else {
+          nativeSet(el, value); events(el);
+        }
+      };
+      const settle = (quiet, max) => new Promise((resolve) => {
+        let timer;
+        const done = () => { obs.disconnect(); resolve(true) };
+        const obs = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, quiet) });
+        obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+        timer = setTimeout(done, quiet);
+        setTimeout(done, max);
+      });
 
       window.__vt = {
         snapshot,
@@ -142,28 +227,23 @@ enum TaskScript {
           if (el.tagName === 'A' && el.target && el.target !== '_self') el.target = '_self';
           el.click();
         },
-        fill(id, value) {
-          const el = els[id];
-          if (!el) throw new Error('no such field');
-          const first = Array.isArray(el) ? el[0] : el;
-          if (isSecret(first)) throw new Error('a secret field is only ever the person\'s');
-          if (Array.isArray(el)) {
-            const wanted = el.find((r) => labelOf(r) === value);
-            if (!wanted) throw new Error('no such option');
-            wanted.click();
-          } else if (el.type === 'checkbox') {
-            if (el.checked !== (value === 'true')) el.click();
-          } else if (el.tagName === 'SELECT') {
-            const option = [...el.options].find((o) => text(o) === value);
-            if (!option) throw new Error('no such option');
-            nativeSet(el, option.value); events(el);
-          } else {
-            nativeSet(el, value); events(el);
-          }
+        // Fills one field with the document's submits locked: a submit the page makes meanwhile is held, and the result says whether one was.
+        async fill(id, value, quiet) {
+          document.querySelectorAll('[data-varnick-task-held]').forEach((f) => f.removeAttribute('data-varnick-task-held'));
+          document.documentElement.setAttribute('data-varnick-task-lock', '1');
+          try { fill(id, value); await settle(quiet, 2500) } finally { document.documentElement.removeAttribute('data-varnick-task-lock') }
+          return !!document.querySelector('[data-varnick-task-held]');
+        },
+        // Lets the held submit through, once the person has allowed it.
+        releaseHeld() {
+          const form = document.querySelector('[data-varnick-task-held]');
+          if (!form) return false;
+          form.removeAttribute('data-varnick-task-held');
+          form.requestSubmit();
+          return true;
         },
         mark(needle) {
           const want = needle.replace(/\s+/g, ' ').trim().slice(0, 500);
-          const blocks = 'p, li, h1, h2, h3, h4, h5, h6, td, th, dd, dt, blockquote, figcaption, pre, [role=alert], [role=status]';
           for (const el of document.querySelectorAll(blocks)) {
             if (el.querySelector(blocks) || text(el).slice(0, 500) !== want) continue;
             el.style.outline = '2px solid #f5a623'; el.style.background = 'rgba(245, 166, 35, 0.25)';
@@ -172,16 +252,7 @@ enum TaskScript {
           }
           return false;
         },
-        settle(quiet, max) {
-          return new Promise((resolve) => {
-            let timer;
-            const done = () => { obs.disconnect(); resolve(true) };
-            const obs = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, quiet) });
-            obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-            timer = setTimeout(done, quiet);
-            setTimeout(done, max);
-          });
-        },
+        settle,
         async peek(hrefs) {
           const out = new Array(hrefs.length).fill(null);
           let next = 0;
@@ -211,13 +282,11 @@ enum TaskScript {
 }
 
 enum TaskPageError: Error, LocalizedError {
-    case notReady
     case script(String)
     case unreadable
 
     var errorDescription: String? {
         switch self {
-        case .notReady: "the page is not ready to be read"
         case .script(let m): m
         case .unreadable: "the page could not be read"
         }
@@ -238,11 +307,13 @@ final class TaskTouchHandler: NSObject, WKScriptMessageHandler {
 final class TaskWebPage: TaskPage {
     private let web: WKWebView
 
-    /// Installs the script and the handler in `configuration`, before its web view is made.
+    /// Installs the scripts and the handler in `configuration`, before its web view is made.
     static func install(in configuration: WKWebViewConfiguration, touch: TaskTouchHandler) {
-        let script = WKUserScript(source: TaskScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: TaskScript.world)
-        configuration.userContentController.addUserScript(script)
-        configuration.userContentController.add(touch, contentWorld: TaskScript.world, name: TaskScript.handlerName)
+        let controller = configuration.userContentController
+        controller.addUserScript(WKUserScript(source: TaskScript.touchSource, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: TaskScript.world))
+        controller.addUserScript(WKUserScript(source: TaskScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: TaskScript.world))
+        controller.addUserScript(WKUserScript(source: TaskScript.guardSource, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        controller.add(touch, contentWorld: TaskScript.world, name: TaskScript.handlerName)
     }
 
     init(web: WKWebView) { self.web = web }
@@ -251,8 +322,6 @@ final class TaskWebPage: TaskPage {
         do {
             return try await web.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: TaskScript.world)
         } catch {
-            // The script is installed at document start; a page it did not run in (about:blank, an error page) has none.
-            if (error as NSError).localizedDescription.contains("__vt") { throw TaskPageError.notReady }
             throw TaskPageError.script(error.localizedDescription)
         }
     }
@@ -267,7 +336,7 @@ final class TaskWebPage: TaskPage {
     }
 
     private struct Snapshot: Decodable {
-        struct Link: Decodable { var id: String; var label: String; var href: String; var inBody: Bool; var sameSite: Bool; var isSelf: Bool }
+        struct Link: Decodable { var id: String; var label: String; var href: String; var inBody: Bool; var sameSite: Bool; var isSelf: Bool; var navigates: Bool }
         struct Button: Decodable { var id: String; var label: String; var submits: Bool; var isSearch: Bool }
         struct Field: Decodable {
             var id: String; var label: String; var type: String; var name: String?; var placeholder: String?; var autocomplete: String?
@@ -286,7 +355,7 @@ final class TaskWebPage: TaskPage {
         // A secret field arrives without its value; `PageField` drops one that did arrive.
         return PageSnapshot(
             address: Self.shown(s.address), title: s.title,
-            links: s.links.map { PageLink(id: $0.id, label: $0.label, href: $0.href, inBody: $0.inBody, sameSite: $0.sameSite, isSelf: $0.isSelf) },
+            links: s.links.map { PageLink(id: $0.id, label: $0.label, href: $0.href, inBody: $0.inBody, sameSite: $0.sameSite, isSelf: $0.isSelf, navigates: $0.navigates) },
             buttons: s.buttons.map { PageButton(id: $0.id, label: $0.label, submits: $0.submits, isSearch: $0.isSearch) },
             fields: s.fields.map {
                 PageField(id: $0.id, label: $0.label, type: $0.type, name: $0.name ?? "", placeholder: $0.placeholder ?? "", autocomplete: $0.autocomplete ?? "",
@@ -306,9 +375,15 @@ final class TaskWebPage: TaskPage {
         await settle(waitingForNavigation: true, quiet: 250)
     }
 
-    func fill(field id: String, value: String) async throws {
-        _ = try await call("window.__vt.fill(id, value)", ["id": id, "value": value])
-        await settle(waitingForNavigation: false, quiet: 120)
+    func fill(field id: String, value: String) async throws -> Bool {
+        let held = try await call("return await window.__vt.fill(id, value, 120)", ["id": id, "value": value]) as? Bool ?? false
+        await settle(waitingForNavigation: false)
+        return held
+    }
+
+    func releaseBlockedSubmit() async throws {
+        _ = try await call("return window.__vt.releaseHeld()")
+        await settle(waitingForNavigation: true, quiet: 250)
     }
 
     func mark(_ text: String) async {
