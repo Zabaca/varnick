@@ -1,7 +1,7 @@
 ---
 problem: phone-page-is-only-a-browser-tab
 title: Option 01, plus Web Push from each host's page server, routed by where the user is
-summary: Option 01, plus standard Web Push, sent only when the user isn't at the Mac driving the session. Each host's page server watches the turns of its own Claude panes and decides by sessions-finish-unnoticed option 01's table, so the Mac and the phone use one rule. It routes each notice by the pane's controller. A Mac whose user is present gets its own notice (that problem's option 01) and the phone stays quiet. If that Mac locks, sleeps or goes idle while the notice still stands, the push goes then. A Mac that is away or can't be told, and the phone in control, get the push after a 10-second settle. Each Mac reports whether its user is present (input idle time, screen locked or display asleep) to the hosts it follows, on the status requests it already sends every 5 s. The push goes from the host to Apple's or Google's push service, encrypted end to end, padded to one size, and holds ids and the kind of notice, never session content. The phone's worker reads the title over the tailnet when it can. Each host has its own signing key (in the Keychain on a Mac, an owner-only file on a headless host) and its own subscriptions. One protocol bump. Rough effort is six and a half days on top of option 01.
+summary: Option 01, plus standard Web Push, sent only when the user isn't at the Mac driving the session. Each host's page server watches the turns of its own Claude panes and decides by sessions-finish-unnoticed option 01's table, so the Mac and the phone use one rule. It routes each notice by the pane's controller. A Mac whose user is present gets its own notice (that problem's option 01) and the phone stays quiet. If that Mac locks, sleeps or goes idle while the notice still stands, the push goes then. A Mac that is away or can't be told, and the phone in control, get the push after a settle (10 seconds for Done, 2 for Needs you and errors). Each Mac reports whether its user is present (input idle time, screen locked or display asleep) to the hosts it follows, on the status requests it already sends every 5 s. The push goes from the host to Apple's or Google's push service, encrypted end to end, padded to one size, and holds ids and the kind of notice, never session content. The phone's worker reads the title over the tailnet when it can. Each host has its own signing key (in the Keychain on a Mac, an owner-only file on a headless host) and its own subscriptions. One protocol bump. Rough effort is six and a half days on top of option 01.
 status: shipped
 ---
 
@@ -40,7 +40,7 @@ status: shipped
   - the last keyboard, mouse or trackpad input was under 2 minutes ago.
 
   Anything else is **away**.
-- **The settle** is 10 seconds. A notice still standing then is pushed. It absorbs a turn that flickers and the up to 5 seconds a presence report takes.
+- **The settle** is 10 seconds for a Done and 2 seconds for Needs you (a permission, a question, a plan, an MCP request, the other dialog kinds) and for an error. A notice still standing then is pushed, after one more read of `tabs` for every kind. A Done's 10 seconds absorb a turn that flickers straight back to work and the up to 5 seconds a presence report takes; Needs you and an error don't flicker back that way, and the user is waiting on them. The Mac's own notice already differs in the same direction: Needs you is raised at once, and Done and an error wait about 1 second.
 - **A device that has looked at the pane while the notice stood gets no push for it.** The pane is open on a device while its terminal or live view is open and its page is visible: the page tells the host when it hides or shows, because Android keeps a hidden app's socket for over a minute. Looking for 3 seconds without a break is seeing; a shorter look waits, and the push goes once the pane is left. That holds in every row.
 - **A notice the controlling Mac has shown the user gets no push.** The page server only has its own copy of a notice, so the Mac's report also lists the panes it holds a notice for and the panes it shows on screen. A notice that a report written after it was raised listed and a later one doesn't, or whose pane a report of a present user shows on screen, is dropped for good, in every Mac row. A Mac that never listed it (its Settings switch for the category is off, or an older report) is no evidence, and the notice stands. A pane on the screen of a Mac that is away doesn't count.
 - **Each subscription has switches** for Needs me, Done and Errors, all on by default.
@@ -289,7 +289,7 @@ One bump (27), Swift and the server's version together:
   - **Lock that Mac** with the notice standing: the push arrives within about 15 s.
   - **Walk away** without locking: the push arrives about two minutes after the last input.
   - **Paired Macs:** a session hosted on one Mac and driven from another. Present at the driving Mac: no push. Lock it: push. Put it to sleep: push within about 30 s.
-  - **The phone in control,** with the app closed: a notice pushes after 10 s. With its terminal open on that pane: nothing.
+  - **The phone in control,** with the app closed: a Done pushes after 10 s, a question or an error after 2 s. With its terminal open on that pane: nothing.
   - **The headless host:** a session there driven from an idle Mac pushes.
   - **The title and taps:** the title with Tailscale on, the generic text with it off, and a tap landing on the tab.
   - **Remove the device:** the next notice doesn't come.
@@ -314,6 +314,7 @@ One bump (27), Swift and the server's version together:
 - **`status` gaining `failure` and `esc` closes the gap** the user wanted closed: a Mac's own notices on a peer's panes take the Esc mark and the error's kind, so a peer's Esc raises no Done there. It is recorded in `sessions-finish-unnoticed` option 01's Trade-offs, where the gap was written down.
 - **Send a test has its own 5-second limit** per device, and is sent once with no retry.
 - **Open on the phone means visible (first hand test, 2026-10-15).** A push did not come for a session the user sent a prompt to from the installed app and then left for the home screen: the terminal socket stayed up for 86 s, which counted as the pane being open, and the suppression was final. Now a hidden page is not an open pane, a suppression needs a 3-second look, and the log names each decision (`push decide …`).
+- **The settle is per kind (second hand test, 2026-10-15).** A question was raised, the user opened the app 5 s later, before the 10 s push, and looked for the 3 s that count as seen, so the push was suppressed. Needs you and errors now settle for 2 s; a Done keeps 10 s because a turn can flip straight back to work. The read of `tabs` after the settle stays for every kind. The Mac's notifier (`SessionNotifier`) already raised Needs you at once and settled Done and errors for about 1 s, so nothing changed there.
 - **The presence report lists the panes** the Mac holds a notice for and shows (protocol 27, which was unreleased, so no further bump), so a notice the user saw on the Mac is not pushed when they lock and leave.
 
 ### Asked by the user, 2026-10-14
@@ -367,7 +368,7 @@ Accepting this needs the ADR above.
 1. **Escalate by absence, not by time?** Recommendation: by absence.
 2. **Away after 2 minutes without input, at once on lock, display sleep or a switched session?** Recommendation: yes.
 3. **When the user is present at a Mac that isn't the controller, push or notify that Mac?** Recommendation: push. Notifying that Mac needs every Mac to follow every host's turns and report to it, for a case a Take over already fixes.
-4. **A 10-second settle in place of the 30 s and 60 s grace.** Presence now says where the user is, so the grace's guess isn't needed. Recommendation: yes.
+4. **A 10-second settle in place of the 30 s and 60 s grace.** Presence now says where the user is, so the grace's guess isn't needed. Recommendation: yes. (Amended 2026-10-15 after a hand test: 10 s for a Done, 2 s for Needs you and errors.)
 5. **Mac banners through `sessions-finish-unnoticed` option 02 (the notifier app, check first) rather than 03?** The user's Macs run checkout builds. Recommendation: 02, unless the user moves their Macs to the installed app.
 
 The user accepted on 2026-10-14 (relayed): the title read over the tailnet, one app per host, Varnick's site as the token's contact, and all switches on by default.
