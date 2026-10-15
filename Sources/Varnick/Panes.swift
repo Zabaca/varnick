@@ -408,6 +408,11 @@ final class ClaudeTab: ObservableObject {
 
     var sessions: [ClaudeSession] { root.leaves }
 
+    /// A run of an automation nobody has opened (option 01 of `prompts-cant-run-on-a-schedule`): kept out of the strip, the session list, the board,
+    /// the tab marks and the +N chip, Recent and search's tab rows until the user opens it (`LauncherModel.runOpened`). The list of tabs the model
+    /// keeps (`tabs`) still holds it, and everything that looks a pane up, saves, sweeps or notifies reads that one; `shownTabs` is the list for the eye.
+    var isHiddenRun: Bool { sessions.contains { $0.record.runUnopened == true } }
+
     /// The panes by id as a layout names them (lowercase).
     var sessionsByID: [String: ClaudeSession] {
         Dictionary(sessions.map { ($0.id.uuidString.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })

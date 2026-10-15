@@ -13,8 +13,9 @@ public enum ClaudeCommand {
     /// hook, the turn hooks of ADR 0010 and, with `problems`, the work-link hooks of ADR 0020 (`WorkHooks`): the host that runs
     /// the session decides, from its Problems board switch (Settings › Experimental, or the relay's `--problems`). With it off
     /// the settings are the same less the `WorkHooks` entries. The hook for a session's own message (`PaneMessage`) and the allowance for
-    /// `notify` are there with it on or off. The rules for the entries are in `docs/agents/where-it-breaks.md`.
-    public static func hookSettings(problems: Bool) -> String {
+    /// `notify` are there with it on or off. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
+    /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. The rules for the entries are in `docs/agents/where-it-breaks.md`.
+    public static func hookSettings(problems: Bool, allowedTools: [String] = []) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
             .init(matcher: matcher, command: turnCommand(turn))
@@ -45,17 +46,18 @@ public enum ClaudeCommand {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         // Plain strings and arrays: encoding can't fail, and a silent fallback would drop every hook.
-        return String(decoding: try! encoder.encode(HookSettings(hooks: hooks)), as: UTF8.self)
+        return String(decoding: try! encoder.encode(HookSettings(hooks: hooks, permissions: .init(allow: [NotifyTool.qualifiedName] + allowedTools))),
+                      as: UTF8.self)
     }
 
     private struct HookSettings: Encodable {
         var hooks: [String: [Entry]]
         /// `notify` is allowed in every session, so calling it never stops the turn on a permission dialog (which would itself raise Needs you).
         /// A list in `--settings` adds to the user's own (checked on Claude Code 2.1.300).
-        var permissions = Permissions()
+        var permissions: Permissions
 
         struct Permissions: Encodable {
-            var allow = [NotifyTool.qualifiedName]
+            var allow: [String]
         }
 
         struct Entry: Encodable {
@@ -186,12 +188,15 @@ public enum ClaudeCommand {
     /// part of the contract, and user text stays one argument each. `agent` is the one the host has found
     /// to exist, since claude exits on an unknown one. `problems` is the running host's own Problems board switch, read at each start
     /// like `mcpConfig` and not stored on the record. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
-    /// and stops at the next option, `--settings`.
+    /// and stops at the next option, `--settings`. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
+    /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
-                                 sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil) -> [String] {
+                                 sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
+                                 dontAsk: Bool = false, allowedTools: [String] = []) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
-            + ["--settings", hookSettings(problems: problems)]
+            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
+            + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])
             + (agent.map { ["--agent", $0] } ?? [])
             + (conversation.map { ["--resume", $0] }
                 ?? ["--session-id", sessionID] + (prompt.isEmpty ? [] : ["--", operand(prompt)]))

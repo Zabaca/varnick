@@ -226,7 +226,7 @@ final class TabStrip: ObservableObject {
     func refresh(mode: TabOverflow? = nil) {
         guard let model else { return }
         model.tabProjects.rebuild()
-        let tabs = model.tabs.filter { model.tabProjects.includes($0) }
+        let tabs = model.shownTabs.filter { model.tabProjects.includes($0) }
         if !tabs.elementsEqual(self.tabs, by: ===) { self.tabs = tabs }
         let items = tabs.map { tab -> TabFit.Item in
             if model.renamingTab === tab { return TabFit.Item(natural: TabMetrics.renameWidth, rigid: true) }
@@ -258,10 +258,7 @@ final class TabStrip: ObservableObject {
 
     /// The place in all the tabs (`LauncherModel.tabs`) of a gap among the strip's: a drop there puts the tab there in the full order.
     func fullGap(_ gap: Int) -> Int {
-        let all = model?.tabs ?? [], mine = tabs
-        if gap < mine.count, let i = all.firstIndex(where: { $0 === mine[gap] }) { return i }
-        if let last = mine.last, let i = all.firstIndex(where: { $0 === last }) { return i + 1 }
-        return all.count
+        model?.fullGap(gap, among: tabs) ?? gap
     }
 
     /// A tab the chip hides, and whether it comes before the run.

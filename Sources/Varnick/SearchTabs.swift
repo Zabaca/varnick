@@ -58,7 +58,7 @@ extension LauncherModel {
                 return TabRef(id: tabID, host: host, name: tab.name)
             }
         }
-        if let tab = tabs.first(where: { $0.host == host && $0.holds(id) }) { return TabRef(id: tab.id, host: host, name: tab.name) }
+        if let tab = shownTabs.first(where: { $0.host == host && $0.holds(id) }) { return TabRef(id: tab.id, host: host, name: tab.name) }
         for list in [recent, ended, completed] {
             if let tab = list.first(where: { $0.host == host && $0.holds(id) }) { return TabRef(id: tab.id, host: host, name: tab.name) }
         }

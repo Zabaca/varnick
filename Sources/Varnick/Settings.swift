@@ -241,6 +241,11 @@ final class Settings: ObservableObject {
     /// off means no command, no tile, and a running task stops at its next step.
     @Published var tasksOn: Bool { didSet { defaults.set(tasksOn, forKey: Self.tasksOnKey) } }
     static let tasksOnKey = "tasksOn"
+    /// Experimental (Settings › Experimental): Automations, prompts that run on a cadence as Claude sessions kept out of sight (option 01 of
+    /// `prompts-cant-run-on-a-schedule`), Settings › Automations and the board's Runs tab. Off by default, for every install; off means nothing
+    /// fires and every run tab not yet opened shows as an ordinary tab. The file is kept either way.
+    @Published var automationsOn: Bool { didSet { defaults.set(automationsOn, forKey: Self.automationsOnKey) } }
+    static let automationsOnKey = "automationsOn"
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
@@ -423,6 +428,7 @@ final class Settings: ObservableObject {
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         outlineOn = defaults.bool(forKey: Self.outlineOnKey)
         tasksOn = defaults.bool(forKey: Self.tasksOnKey)
+        automationsOn = defaults.bool(forKey: Self.automationsOnKey)
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
@@ -647,13 +653,18 @@ struct SettingsView: View {
     let askRestart: () -> Void
     /// Folder names of the apps that open panes run (`LauncherModel.openAppFolders`): turning a catalog app off waits for them.
     let openAppFolders: () -> Set<String>
+    /// Settings › Automations lists this Mac's automations and runs them now (`LauncherModel`).
+    let launcher: LauncherModel
     @State private var typesafeKeyDraft = ""
     @State private var modelServerKeyDraft = ""
     @State private var elevenLabsKeyDraft = ""
     /// Last section viewed, so Settings reopens where you left it.
     @AppStorage("settingsSection") private var sectionID = SettingsSection.claude.rawValue
 
-    private var section: SettingsSection { SettingsSection(rawValue: sectionID) ?? .claude }
+    private var section: SettingsSection {
+        let chosen = SettingsSection(rawValue: sectionID) ?? .claude
+        return chosen == .automations && !settings.automationsOn ? .claude : chosen
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -767,6 +778,8 @@ struct SettingsView: View {
                                        detail: "The session tells you something itself, through its notify tool or Claude Code's own push notification (\"notify me when the tests pass\"). The louder sound and the orange dot; at most one alert a minute for a session, and the menu line shows the message's title. A turn that ends right after a message adds no second notice.") {
                                 Toggle("", isOn: $settings.notifyMessages).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
+                            case .automations:
+                            AutomationsSettingsView(store: launcher.automations, model: launcher)
                             case .apps:
                             AppsSettingsView(openAppFolders: openAppFolders)
                             case .search:
@@ -1053,6 +1066,10 @@ struct SettingsView: View {
                                        detail: "!task or the split picker's Task tile opens a Task pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved; without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers. What goes to TypeSafe and to Anthropic is in Privacy and security. You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. Turning it off hides the command and the tile and stops a running task. Experimental.") {
                                 Toggle("", isOn: $settings.tasksOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
+                            SettingRow(title: "Automations",
+                                       detail: "Prompts Varnick starts as Claude sessions on a cadence, in a folder you choose, with nothing opened on your screen: Settings › Automations makes them, and the session board's Runs tab lists what each run did and opens it. A run is a Claude session like one you type, a hidden tab until you open it, and it tells you as any session does (Done, Needs you, a message). Only while Varnick runs on this Mac; a slot that passed while the Mac slept or Varnick was quit runs once at the next wake or launch if it is under 12 hours old. Each run draws on your Claude subscription. A run follows Skip permissions unless its automation says otherwise, never gets Screen access or Panel access tools, and on this Mac can reach the screen through Varnick's permissions like any session's shell (SECURITY.md). Turning it off stops every run from starting and shows the tabs of runs you haven't opened. Needs Keep sessions running. Experimental.") {
+                                Toggle("", isOn: $settings.automationsOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
                             }
                         }
                         .padding(.horizontal, 6)
@@ -1076,7 +1093,7 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         VStack(spacing: 2) {
-            ForEach(SettingsSection.allCases) { item in
+            ForEach(SettingsSection.allCases.filter { $0 != .automations || settings.automationsOn }) { item in
                 let selected = item == section
                 Button { sectionID = item.rawValue } label: {
                     HStack(spacing: 8) {
@@ -1260,13 +1277,14 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, apps, search, listening, peers, models, shortcuts, resources, experimental
+    case claude, automations, apps, search, listening, peers, models, shortcuts, resources, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self {
         case .claude: "sparkles"
+        case .automations: "clock.arrow.circlepath"
         case .apps: CustomApp.defaultIcon
         case .search: "magnifyingglass"
         case .listening: "waveform"

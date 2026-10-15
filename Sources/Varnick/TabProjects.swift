@@ -62,7 +62,7 @@ final class TabProjects: ObservableObject {
     /// tab is gone. Runs at the start of every `TabStrip.refresh`, so it sees every tab that opens, closes or is shown, and projects that change.
     func rebuild() {
         guard let model else { return }
-        let next = Dictionary(model.tabs.map { ($0.viewID, row(of: $0)) }, uniquingKeysWith: { first, _ in first })
+        let next = Dictionary(model.shownTabs.map { ($0.viewID, row(of: $0)) }, uniquingKeysWith: { first, _ in first })
         if next != rowOf { rowOf = next }
         if anchors.count > next.count { anchors = anchors.filter { next[$0.key] != nil } }
         var chosen = choice
@@ -100,7 +100,7 @@ final class TabProjects: ObservableObject {
     func infos(marks: [UUID: String]) -> [Info] {
         guard let model else { return [] }
         return orderedRows.map { row in
-            let tabs = model.tabs.filter { row == .all || rowOf[$0.viewID] == row }
+            let tabs = model.shownTabs.filter { row == .all || rowOf[$0.viewID] == row }
             let waiting = tabs.filter { marks[$0.viewID] != nil }.count
             var machines: [String: Int] = [:]
             for tab in tabs { machines[PeerManager.shared.name(of: tab.host), default: 0] += 1 }
@@ -120,7 +120,7 @@ final class TabProjects: ObservableObject {
             choice = .all
             return model.strip.refresh()
         }
-        let inRow = model.tabs.filter { rowOf[$0.viewID] == row }
+        let inRow = model.shownTabs.filter { rowOf[$0.viewID] == row }
         guard let target = lastShown[row].flatMap({ id in inRow.first { $0.viewID == id } }) ?? inRow.first else { return }
         choice = row
         model.activate(target)

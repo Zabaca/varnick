@@ -183,6 +183,16 @@ types and steers, in two conversations kept open for the length of the task, on 
 - Varnick doesn't log a task, a page's address or title, a label, a value or a reply; only each step's kind, who acted,
   how long it took and the task's counts.
 
+### Anthropic, through Automations
+
+An automation (Settings › Experimental › **Automations**, off by default) starts a Claude session on a cadence, with the prompt you
+saved. It is a session like one you type: its prompt, what Claude reads and the transcript go to Anthropic on your plan, and are
+kept in Claude Code's own folders on this Mac. Nothing else leaves because of it. A run never gets Screen access's or Panel access's
+tools, so what those send is not sent. Each run is at least one model turn and counts toward your plan's usage limits; nothing
+caps how many a day's cadence adds up to beyond its 15-minute floor and one run of an automation at a time. The automations
+(names, prompts, folders) are in `automations.json` in Varnick's support folder, owner-only, and are not sent to paired Macs or the
+phone; a run's tab is, as an ordinary tab with the automation's name, until a later version marks it.
+
 ### Anthropic, through Screen access
 
 With Screen access on (off by default), the Claude sessions started or restarted after you turn it on can read
@@ -427,6 +437,22 @@ never on your screen, needs no permission, and brings nothing to the front.
   task can't use them.
 - **What steers a task can steer it:** a page it reads is read by Jev and by Claude, and a page that talks to them is read like
   any text. The gates above are in code, not in the models' hands.
+
+### Automations act while you are away
+
+An automation (Settings › Experimental › Automations) starts Claude sessions with nobody there to answer a dialog. Which tools it
+may use without asking is yours to set per automation: by default it follows Skip permissions, as a prompt you type does, and an
+install that predates that setting has it on, so such a run runs any command, edit and fetch without asking, in its folder and as your
+account. The choices that narrow it are Ask (a command that is not allowed waits for you, and Needs you is raised) and Allowed tools only
+(anything not allowed is refused with no dialog; Claude Code's read-only tools and commands still run).
+
+- **A run reaches the screen the way every pane does.** It gets no Screen access or Panel access tool, but a shell command it
+  runs inherits Varnick's Accessibility and Screen Recording (see Screen permissions reach every pane, above). With permission
+  checks skipped that covers every command; with Ask or Allowed tools only it covers the commands you allowed. The editor says so.
+  A headless host has no screen, and will suit an automation that allows broad shell use once automations run there.
+- **What steers a run can steer it:** a file in the folder, a page it reads, a prompt that quotes either. A run is as exposed as
+  a session you leave unattended with the same permissions.
+- **Nothing a session says makes an automation.** They are made in Settings only.
 
 ### Screen access acts without asking
 

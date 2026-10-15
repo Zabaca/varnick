@@ -133,7 +133,10 @@ final class SessionNotifier: ObservableObject {
 
     /// What a notice shows in the menu: the pane's title as the board shows it, its Mac when it isn't this one, and what it says.
     func menuTitle(of notice: Notice) -> String? {
-        guard let pane = model?.claudePane(notice.id) else { return nil }
+        guard let pane = model?.claudePane(notice.id) else {
+            // A run whose process ended (option 01 of `prompts-cant-run-on-a-schedule`): the automation's name, and choosing it resumes the run.
+            return model?.endedRun(notice.id).map { "\($0.automation.name) · \(notice.kind.text)" }
+        }
         let title = pane.label
         return ([title.count > 48 ? String(title.prefix(47)) + "…" : title] + [pane.hostName].compactMap { $0 } + [notice.kind.text])
             .joined(separator: " · ")
@@ -217,7 +220,8 @@ final class SessionNotifier: ObservableObject {
         guard !notices.isEmpty else { return }
         let switches = Settings.shared.noticeSwitches
         let kept = notices.filter { notice in
-            guard let pane = model.claudePane(notice.id) else { return false }
+            // The notice of a run nobody opened outlives its ended process: choosing it resumes the conversation.
+            guard let pane = model.claudePane(notice.id) else { return model.endedRun(notice.id) != nil && switches.allows(notice.kind) }
             return switches.allows(notice.kind) && pane.away == nil && !model.isOnScreen(pane)
         }
         if kept != notices { notices = kept }

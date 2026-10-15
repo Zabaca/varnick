@@ -241,7 +241,7 @@ struct SearchPanelView: PanelKeyView {
                 ? "↩ on !listen turns on the microphone" : nil
         case .sessions:
             // An open tab comes up; Recent reopens a closed tab and a paired Mac's open tab opens its sessions on cards.
-            return !model.showsSessionList || model.tabs.indices.contains(model.sessionSelection)
+            return !model.showsSessionList || model.shownTabs.indices.contains(model.sessionSelection)
                 ? nil : "↩ on this row would reopen a closed tab or open a paired Mac's, which starts sessions"
         }
     }

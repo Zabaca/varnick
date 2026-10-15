@@ -615,13 +615,16 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             Agent.available(in: record.directory).contains { $0.name == name } ? name : nil
         }
         // Screen access (ADR 0023), Panel access (ADR 0031) and the Problems board's work-link hooks are read at each start, not stored: a
-        // pane gains or loses them at its next start or restart.
+        // pane gains or loses them at its next start or restart. A run of an automation never gets the first two, whatever they say: its MCP
+        // config lists `notify` alone (option 01 of `prompts-cant-run-on-a-schedule`).
+        let isRun = record.automation != nil
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
                                                  prompt: prompt, problems: Settings.shared.problemsBoard,
-                                                 mcpConfig: ScreenMCP.configuration(pane: record.id, screen: Settings.shared.screenAccess,
-                                                                                    panel: Settings.shared.panelAccess))
+                                                 mcpConfig: ScreenMCP.configuration(pane: record.id, screen: !isRun && Settings.shared.screenAccess,
+                                                                                    panel: !isRun && Settings.shared.panelAccess),
+                                                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [])
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.
@@ -1511,6 +1514,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if !record.title.isEmpty { return record.title }
         return prompt.isEmpty ? "New session" : prompt
     }
+
+    /// A run nobody had opened is shown or taken over: its tab is an ordinary one from now on (`LauncherModel.runOpened`).
+    func markRunOpened() { record.runUnopened = nil }
 
     /// Record with the current label, for saving.
     var snapshot: SessionRecord {

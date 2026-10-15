@@ -88,7 +88,10 @@ enum SessionTabs {
         var seen: Set<String> = []
         var found: [Entry] = []
         func add(_ entries: [Entry]) { found += entries.filter { seen.insert($0.conversation).inserted } }
-        for tab in state.openTabs { add(entries(of: tab.resolvedID, name: tab.name, history: tab.history, records: tab.layout.records)) }
+        // A run nobody has opened is not found under a tab: search lists its conversation alone until the run is opened.
+        for tab in state.openTabs where !tab.layout.records.contains(where: { $0.runUnopened == true }) {
+            add(entries(of: tab.resolvedID, name: tab.name, history: tab.history, records: tab.layout.records))
+        }
         for tab in state.recentList + state.endedList + state.completedList where tab.host == nil {
             add(entries(of: tab.id, name: tab.name, history: tab.history, records: tab.records))
         }

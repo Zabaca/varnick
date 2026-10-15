@@ -250,6 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ])
         }
         model.notifier.start(model: model)
+        // The saved tabs are restored and the notifier reads by now. The first check runs a slot missed while Varnick was quit, once.
+        model.startAutomations()
         PresenceReader.shared.start()
 
         settingsSubs = [
@@ -446,9 +448,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// Shows the panel on the notice's pane, over the board or Settings if either is open.
     @objc func openNotice(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? UUID, model.claudePane(id) != nil else { return }
+        guard let id = item.representedObject as? UUID, model.claudePane(id) != nil || model.endedRun(id) != nil else { return }
         if model.showingSettings { model.toggleSettings() }
-        model.showPane(id)
+        // A run whose process ended is resumed, as the Runs tab does.
+        if model.claudePane(id) != nil { model.showPane(id) } else if let why = model.openRun(id) { model.claudeError = why }
         show()
         model.notifier.clear(id)
     }
