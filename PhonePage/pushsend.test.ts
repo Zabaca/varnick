@@ -81,6 +81,16 @@ describe("sending", () => {
     expect(second.calls).toHaveLength(2);
   });
 
+  test("a send that asks for no retry is one attempt, however the push service answers", async () => {
+    const key = await generatePushKey();
+    for (const status of [429, 503]) {
+      const { fake, calls, sleeps } = world([status, 201]);
+      expect(await sendPush(fake, key, await subscription(), { v: 1, kind: "test" }, { retry: false })).toEqual({ outcome: "failed", status });
+      expect(calls).toHaveLength(1);
+      expect(sleeps).toEqual([]);
+    }
+  });
+
   test("anything else is one attempt, reported by its status", async () => {
     const key = await generatePushKey();
     for (const status of [400, 401, 403, 413, 301]) {

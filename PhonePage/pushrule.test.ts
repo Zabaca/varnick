@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
-  allows, awayAfterSeconds, decide, defaultSwitches, failureWord, noticeTurn, payloadOf, presenceOf, route, settleMs, staleAfterSeconds, turnWords,
+  allows, awayAfterSeconds, decide, defaultSwitches, failureWord, macView, payloadOf, presenceOf, route, settleMs, staleAfterSeconds, turnWords,
   type Controller, type Decision, type Presence, type TurnWord,
 } from "./pushrule";
 
@@ -90,12 +90,6 @@ describe("the switches", () => {
     expect(allows({ needsMe: true, done: false, errors: false }, { kind: "needs", turn: "permission" })).toBe(true);
     expect(allows({ needsMe: false, done: true, errors: false }, { kind: "done" })).toBe(true);
   });
-
-  test("the word a notice stands for", () => {
-    expect(noticeTurn({ kind: "done" })).toBe("waiting");
-    expect(noticeTurn({ kind: "needs", turn: "question" })).toBe("question");
-    expect(noticeTurn({ kind: "failed", failure: null })).toBe("failed");
-  });
 });
 
 describe("presence", () => {
@@ -132,7 +126,7 @@ describe("presence", () => {
 });
 
 describe("where a notice goes (the routing table)", () => {
-  const base = { elapsedMs: settleMs, deviceHasPaneOpen: false, allowed: true };
+  const base = { elapsedMs: settleMs, deviceHasPaneOpen: false, allowed: true, seen: false };
   const mac = (detached = false): Controller => ({ kind: "mac", detached });
   const host: Controller = { kind: "host" };
   const device: Controller = { kind: "device" };
@@ -177,19 +171,64 @@ describe("where a notice goes (the routing table)", () => {
   test("a device with the pane open gets no push for it, in every row", () => {
     for (const controller of [host, mac(), mac(true), device]) {
       for (const presence of ["present", "away", "unknown"] as Presence[]) {
-        expect(route({ controller, presence, elapsedMs: settleMs * 10, deviceHasPaneOpen: true, allowed: true })).toBe("drop");
+        expect(route({ controller, presence, elapsedMs: settleMs * 10, deviceHasPaneOpen: true, allowed: true, seen: false })).toBe("drop");
       }
     }
   });
 
   test("a switched-off category is dropped in every row", () => {
     for (const controller of [host, mac(), mac(true), device]) {
-      expect(route({ controller, presence: "away", elapsedMs: settleMs * 10, deviceHasPaneOpen: false, allowed: false })).toBe("drop");
+      expect(route({ controller, presence: "away", elapsedMs: settleMs * 10, deviceHasPaneOpen: false, allowed: false, seen: false })).toBe("drop");
+    }
+  });
+
+  test("a notice the controlling Mac has shown the user is dropped in every row, however long it has stood", () => {
+    for (const controller of [host, mac(), mac(true)]) {
+      for (const presence of ["present", "away", "unknown"] as Presence[]) {
+        expect(route({ controller, presence, elapsedMs: settleMs * 10, deviceHasPaneOpen: false, allowed: true, seen: true })).toBe("drop");
+      }
     }
   });
 
   test("the settle is 10 seconds", () => {
     expect(settleMs).toBe(10_000);
+  });
+});
+
+describe("what the controlling Mac's report says of a notice (macView)", () => {
+  const pane = "ffffffff-0000-4000-8000-000000000000", other = "ffffffff-0000-4000-8000-000000000001";
+  const view = (report: Partial<{ at: number; notices: string[]; onScreen: string[] }> | null, held = false, presence: Presence = "present") =>
+    macView({ report: report && { idle: 5, away: presence === "away", at: 1000, notices: [], onScreen: [], ...report }, presence, pane, raisedAtSeconds: 990, held });
+
+  test("a notice listed is held, and not seen", () => {
+    expect(view({ notices: [pane] })).toEqual({ held: true, seen: false });
+  });
+
+  test("a notice held and no longer listed has been shown to the user", () => {
+    expect(view({ notices: [] }, true)).toEqual({ held: true, seen: true });
+    expect(view({ notices: [other] }, true)).toEqual({ held: true, seen: true });
+  });
+
+  test("a notice the Mac never listed is no evidence: its switch may be off, or it hasn't raised it yet", () => {
+    expect(view({ notices: [] })).toEqual({ held: false, seen: false });
+    expect(view({ notices: [other] })).toEqual({ held: false, seen: false });
+  });
+
+  test("the pane on screen of a present user is seen, listed or not", () => {
+    expect(view({ onScreen: [pane] })).toEqual({ held: false, seen: true });
+    expect(view({ notices: [pane], onScreen: [pane] })).toEqual({ held: true, seen: true });
+  });
+
+  test("the pane on screen of a Mac that is away isn't: a locked Mac's panel may stay up", () => {
+    expect(view({ onScreen: [pane] }, false, "away")).toEqual({ held: false, seen: false });
+    expect(view({ notices: [] }, true, "away")).toEqual({ held: true, seen: true });
+  });
+
+  test("a report that predates the notice, a stale or missing one, or one from a Mac that lists nothing, counts for nothing", () => {
+    expect(view({ at: 989, notices: [], onScreen: [pane] }, true)).toEqual({ held: true, seen: false });
+    expect(view(null, true)).toEqual({ held: true, seen: false });
+    expect(view({ onScreen: [pane] }, false, "unknown")).toEqual({ held: false, seen: false });
+    expect(macView({ report: { idle: 1, away: false, at: 1000 }, presence: "present", pane, raisedAtSeconds: 990, held: true })).toEqual({ held: true, seen: false });
   });
 });
 

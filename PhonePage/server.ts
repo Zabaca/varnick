@@ -24,7 +24,7 @@ import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "
 import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
 import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
 import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
-import { pushPaths, pushRoute, pushStatus, setupPush, type Push } from "./pushserver";
+import { pushPaths, pushRoute, pushStatus, setupPush, takeKeyFile, type Push } from "./pushserver";
 import { Shared } from "./pushwatch";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
@@ -127,6 +127,8 @@ async function main(): Promise<void> {
   const read = readConfig(process.env);
   if ("error" in read) fail(read.error);
   const config: Config = read.config;
+  // The push key a Mac's Varnick left in a file, read and deleted before anything slow (pushserver.ts `takeKeyFile`).
+  const handedKey = takeKeyFile(config.push?.keyFile);
 
   // Who this host is on the tailnet, and its user: the Host and Origin checks and the own-node rule rest on them.
   const statusText = await capture([config.tailscale, "status", "--json"], 15_000);
@@ -310,7 +312,7 @@ async function main(): Promise<void> {
   // Push notifications, where the environment gives the folders and the host has a key (pushserver.ts).
   const push: Push | null = config.push && ownID && hostTabs
     ? await setupPush({
-      config, push: config.push, headless: host.headless, ownID, askTabs: () => hostTabs.get(), hostTabs, tabsStamp,
+      push: config.push, headless: host.headless, ownID, hostTabs, handedKey, tabsStamp,
       devices: () => { try { return readDevices(readFileSync(config.devices, "utf8")); } catch { return []; } }, log,
     })
     : null;

@@ -43,10 +43,17 @@ public struct PeerPresence: Codable, Equatable, Sendable {
     public var idle: Int
     /// The screen is locked, the display is asleep, or the Mac's login session is not the active one.
     public var away: Bool
+    /// The Claude panes this Mac holds a standing **Notice** for right now, and those it shows on screen (lowercase pane ids). The host's page
+    /// server drops a notice the controlling Mac held and no longer holds, or that was on its screen: the user has seen it, so locking the Mac
+    /// and leaving must not push it. Nil from a Mac that doesn't say, which drops nothing.
+    public var notices: [String]?
+    public var onScreen: [String]?
 
-    public init(idle: Int, away: Bool) {
+    public init(idle: Int, away: Bool, notices: [String]? = nil, onScreen: [String]? = nil) {
         self.idle = idle
         self.away = away
+        self.notices = notices
+        self.onScreen = onScreen
     }
 }
 
@@ -56,22 +63,26 @@ public struct PeerPresence: Codable, Equatable, Sendable {
 public struct PresenceFile: Codable, Equatable, Sendable {
     public var idle: Int
     public var away: Bool
+    public var notices: [String]?
+    public var onScreen: [String]?
     /// Unix seconds, host clock.
     public var at: Int
 
-    public static var folder: URL { SupportFolder.url.appendingPathComponent("presence", isDirectory: true) }
+    /// The most pane ids a report lists of either kind: a request names what it likes, and the file is read every few seconds.
+    static let paneLimit = 64
 
-    /// Only a UUID names a file: ids come from a request.
-    public static func file(for id: String) -> URL? {
-        guard UUID(uuidString: id) != nil else { return nil }
-        return folder.appendingPathComponent("\(id.lowercased()).json")
-    }
+    public static var folder: URL { SupportFolder.url.appendingPathComponent("presence", isDirectory: true) }
 
     /// Writes a Mac's report. A failure changes nothing: the old file ages into "can't be told", which pushes.
     @discardableResult
     public static func write(_ presence: PeerPresence, for id: String, now: Date = Date(), to folder: URL = folder) -> Bool {
         guard UUID(uuidString: id) != nil else { return false }
-        let record = PresenceFile(idle: max(0, presence.idle), away: presence.away, at: Int(now.timeIntervalSince1970))
+        // Only pane ids, lowercase, and not many: the lists come from a peer's request.
+        func panes(_ ids: [String]?) -> [String]? {
+            ids.map { Array($0.filter { UUID(uuidString: $0) != nil }.map { $0.lowercased() }.prefix(paneLimit)) }
+        }
+        let record = PresenceFile(idle: max(0, presence.idle), away: presence.away, notices: panes(presence.notices), onScreen: panes(presence.onScreen),
+                                  at: Int(now.timeIntervalSince1970))
         guard let data = try? JSONEncoder().encode(record) else { return false }
         return (try? OwnerOnlyFile.replace(folder.appendingPathComponent("\(id.lowercased()).json"), with: data)) != nil
     }

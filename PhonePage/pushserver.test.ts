@@ -1,9 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Device } from "./checks";
-import { folderWatch, keyFileName, loadKey, pushRoute, pushStatus, readPresence, readTurnDates, setupPush, subscriptionsFileName, testEveryMs, writePrivate } from "./pushserver";
+import { readConfig, type Config, type Device } from "./checks";
+import {
+  folderWatch, keyFileName, loadKey, pushRoute, pushStatus, readPresence, readTurnDates, setupPush, subscriptionsFileName, takeKeyFile, testEveryMs, writePrivate,
+} from "./pushserver";
 import { Shared } from "./pushwatch";
 import { b64u, fingerprint, generatePushKey, parsePushKey } from "./webpush";
 
@@ -24,11 +26,27 @@ const subscription = (n = 1) => ({ endpoint: `https://fcm.googleapis.com/fcm/sen
 describe("the key", () => {
   test("a Mac's comes from its Varnick; a Mac without one sends no push", async () => {
     const key = await generatePushKey();
-    const given = await loadKey({ folder: folder(), panes: "/p", presence: "/q", key: JSON.stringify(key) }, false);
-    expect(given).toEqual({ key });
-    expect("off" in (await loadKey({ folder: folder(), panes: "/p", presence: "/q" }, false))).toBe(true);
-    expect("off" in (await loadKey({ folder: folder(), panes: "/p", presence: "/q", key: "nonsense" }, false))).toBe(true);
+    const where = { folder: folder(), panes: "/p", presence: "/q" };
+    expect(await loadKey({ ...where, keyFile: "/handoff" }, false, JSON.stringify(key))).toEqual({ key });
+    expect("off" in (await loadKey(where, false))).toBe(true);
+    expect("off" in (await loadKey({ ...where, keyFile: "/handoff" }, false, "nonsense"))).toBe(true);
+    expect("off" in (await loadKey({ ...where, keyFile: "/handoff" }, false, undefined))).toBe(true);
     // A Mac never writes a key file of its own: the Keychain holds it.
+  });
+
+  test("the file Varnick hands the key over in is read and deleted at once, and nothing is left", () => {
+    const dir = folder();
+    const file = join(dir, "push-key-handoff");
+    writeFileSync(file, "the key", { mode: 0o600 });
+    expect(takeKeyFile(file)).toBe("the key");
+    expect(existsSync(file)).toBe(false);
+    expect(takeKeyFile(file)).toBeUndefined();
+    expect(takeKeyFile(undefined)).toBeUndefined();
+  });
+
+  test("a key in the environment is not read: only the handed-over file is", async () => {
+    const config = readConfig({ VARNICK_PAGE_LOOPBACK: "18449", VARNICK_RELAY: "/r", VARNICK_DEVICES: "/d", VARNICK_PUSH_FOLDER: "/p", VARNICK_PANES_FOLDER: "/a", VARNICK_PRESENCE_FOLDER: "/q", VARNICK_PUSH_KEY: JSON.stringify(await generatePushKey()) }) as { config: Config };
+    expect(config.config.push).toEqual({ folder: "/p", panes: "/a", presence: "/q", keyFile: undefined });
   });
 
   test("a headless host makes its key at the first start, owner-only, and keeps it", async () => {
@@ -66,6 +84,10 @@ describe("the files it reads", () => {
     writeFileSync(join(dir, `${id}.json`), JSON.stringify({ idle: 4, away: false, at: 1000 }));
     expect(readPresence(dir, id)).toEqual({ idle: 4, away: false, at: 1000 });
     expect(readPresence(dir, id.toUpperCase())).toEqual({ idle: 4, away: false, at: 1000 });
+    // The panes the Mac holds a notice for and shows: ids only, lowercase; a field that isn't a list is the Mac not saying.
+    const pane = "FFFFFFFF-0000-4000-8000-000000000000";
+    writeFileSync(join(dir, `${id}.json`), JSON.stringify({ idle: 4, away: false, at: 1000, notices: [pane, "not an id", 7], onScreen: "none" }));
+    expect(readPresence(dir, id)).toEqual({ idle: 4, away: false, at: 1000, notices: [pane.toLowerCase()], onScreen: undefined });
     expect(readPresence(dir, "33333333-3333-4333-8333-333333333333")).toBeNull();
     expect(readPresence(dir, "../etc/passwd")).toBeNull();
     writeFileSync(join(dir, `${id}.json`), JSON.stringify({ idle: "4", away: false, at: 1000 }));
@@ -98,21 +120,20 @@ describe("the files it reads", () => {
   });
 });
 
-async function pushIn(options: { headless?: boolean; devices?: Device[] } = {}) {
+async function pushIn(options: { headless?: boolean; devices?: Device[]; statuses?: number[] } = {}) {
   const dir = folder();
   const logs: string[] = [];
   const calls: unknown[] = [];
+  const statuses = [...(options.statuses ?? [])];
   const push = await setupPush({
-    config: {} as never,
     push: { folder: dir, panes: join(dir, "panes"), presence: join(dir, "presence") },
     headless: options.headless ?? true,
     ownID: "66666666-6666-4666-8666-666666666666",
-    askTabs: async () => ({ ok: true, reply: { tabs: [] } }),
     hostTabs: new Shared(async () => ({ ok: true as const, reply: { tabs: [] } }), () => Date.now(), 1500),
     tabsStamp: () => "none",
     devices: () => options.devices ?? [device],
     log: (line) => logs.push(line),
-    fetch: (async (url: string) => { calls.push(url); return new Response(null, { status: 201 }); }) as unknown as typeof fetch,
+    fetch: (async (url: string) => { calls.push(url); return new Response(null, { status: statuses.shift() ?? 201 }); }) as unknown as typeof fetch,
   });
   return { push: push!, dir, logs, calls };
 }
@@ -132,7 +153,7 @@ describe("setting push up", () => {
     const dir = folder();
     const logs: string[] = [];
     const push = await setupPush({
-      config: {} as never, push: { folder: dir, panes: "/p", presence: "/q" }, headless: false, ownID: "x", askTabs: async () => ({ ok: false, error: "x" }),
+      push: { folder: dir, panes: "/p", presence: "/q" }, headless: false, ownID: "x",
       hostTabs: new Shared(async () => ({ ok: false as const, error: "x" }), () => 0, 0), tabsStamp: () => "", devices: () => [], log: (line) => logs.push(line),
     });
     expect(push).toBeNull();
@@ -145,8 +166,8 @@ describe("setting push up", () => {
     // A new key (the file lost): the old subscription carried the old fingerprint.
     writeFileSync(join(dir, keyFileName), "x");
     const again = await setupPush({
-      config: {} as never, push: { folder: dir, panes: join(dir, "panes"), presence: join(dir, "presence") }, headless: true, ownID: "x",
-      askTabs: async () => ({ ok: true, reply: {} }), hostTabs: new Shared(async () => ({ ok: true as const, reply: {} }), () => 0, 0), tabsStamp: () => "", devices: () => [device], log: () => {},
+      push: { folder: dir, panes: join(dir, "panes"), presence: join(dir, "presence") }, headless: true, ownID: "x",
+      hostTabs: new Shared(async () => ({ ok: true as const, reply: {} }), () => 0, 0), tabsStamp: () => "", devices: () => [device], log: () => {},
     });
     expect(again!.fingerprint).not.toBe(push.fingerprint);
     expect(again!.store.all()).toEqual([]);
@@ -200,6 +221,17 @@ describe("the routes", () => {
     expect(logs.filter((line) => line.includes("test"))).toEqual(["push Phone test sent 201", "push Phone test sent 201"]);
     // Nothing logged names an endpoint.
     expect(logs.join("\n")).not.toContain("fcm.googleapis");
+  });
+
+  test("a test is not retried after a Retry-After: the push service's answer comes back at once", async () => {
+    const { push, calls } = await pushIn({ statuses: [503, 201] });
+    const clock = { now: () => 5_000_000, log: () => {} };
+    await pushRoute(push, device, "/api/push/subscribe", { subscription: subscription() }, clock);
+    const started = Date.now();
+    const answered = await pushRoute(push, { ...device, id: device.id }, "/api/push/test", { endpoint: subscription().endpoint }, clock);
+    expect(answered.status).toBe(502);
+    expect(calls).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   test("a host with no push answers 404 to every route", async () => {

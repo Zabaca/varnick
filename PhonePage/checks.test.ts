@@ -276,12 +276,13 @@ describe("the configuration", () => {
     expect("error" in read({ VARNICK_PROXY_FOLDER: "p", VARNICK_PROXY_STATUS: "/s.json" })).toBe(true);
   });
 
-  test("push has its three folders together, or is off, and a Mac's key comes in the environment", () => {
+  test("push has its three folders together, or is off, and a Mac's key comes as a file, never in the environment", () => {
     const read = (extra: Record<string, string>) => readConfig({ ...base, VARNICK_PAGE_LOOPBACK: "18449", ...extra });
     const three = { VARNICK_PUSH_FOLDER: "/p", VARNICK_PANES_FOLDER: "/panes", VARNICK_PRESENCE_FOLDER: "/presence" };
     expect((read({}) as any).config.push).toBeUndefined();
-    expect((read(three) as any).config.push).toEqual({ folder: "/p", panes: "/panes", presence: "/presence", key: undefined });
-    expect((read({ ...three, VARNICK_PUSH_KEY: "{}" }) as any).config.push.key).toBe("{}");
+    expect((read(three) as any).config.push).toEqual({ folder: "/p", panes: "/panes", presence: "/presence", keyFile: undefined });
+    expect((read({ ...three, VARNICK_PUSH_KEY_FILE: "/p/handoff" }) as any).config.push.keyFile).toBe("/p/handoff");
+    expect("error" in read({ ...three, VARNICK_PUSH_KEY_FILE: "handoff" })).toBe(true);
     expect("error" in read({ VARNICK_PUSH_FOLDER: "/p" })).toBe(true);
     expect("error" in read({ VARNICK_PUSH_FOLDER: "/p", VARNICK_PANES_FOLDER: "/panes" })).toBe(true);
     expect("error" in read({ ...three, VARNICK_PANES_FOLDER: "panes" })).toBe(true);

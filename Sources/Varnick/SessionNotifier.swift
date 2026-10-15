@@ -103,6 +103,7 @@ final class SessionNotifier: ObservableObject {
         unsettled[id] = nil
         guard notices.contains(where: { $0.id == id }) else { return }
         notices.removeAll { $0.id == id }
+        reportPanes()
     }
 
     /// What a notice shows in the menu: the pane's title as the board shows it, its Mac when it isn't this one, and what it says.
@@ -148,6 +149,7 @@ final class SessionNotifier: ObservableObject {
     private func post(_ kind: NoticeKind, for id: UUID) {
         notices.removeAll { $0.id == id }
         notices.insert(Notice(id: id, kind: kind), at: 0)
+        reportPanes()
         play(kind)
     }
 
@@ -163,12 +165,22 @@ final class SessionNotifier: ObservableObject {
         playing?.play()
     }
 
+    /// Tells the presence reader which panes hold a notice and which are on screen: it goes to the hosts' page servers, which push a notice to
+    /// the phone only while this Mac still holds it and hasn't shown the pane (phone-page-is-only-a-browser-tab, option 02).
+    private func reportPanes() {
+        guard let model else { return }
+        let onScreen = model.tabs.flatMap(\.sessions).filter { $0.isClaude && model.isOnScreen($0) }
+        PresenceReader.shared.setPanes(notices: Set(notices.map { $0.id.uuidString.lowercased() }),
+                                       onScreen: Set(onScreen.map { $0.id.uuidString.lowercased() }))
+    }
+
     /// Reads the dormant panes' turns, settles what is waiting, and clears the notices of a pane now on screen, closed, taken over elsewhere
     /// or whose category was switched off.
     private func tick() {
         guard let model else { return }
         model.readDormantTurns()
         settle()
+        defer { reportPanes() }
         guard !notices.isEmpty else { return }
         let switches = Settings.shared.noticeSwitches
         let kept = notices.filter { notice in

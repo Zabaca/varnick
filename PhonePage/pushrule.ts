@@ -55,11 +55,6 @@ export function decide(input: { old: TurnWord | null; next: TurnWord; failure?: 
   }
 }
 
-/** The word a Needs you or an error stands for in the turn: what the pane's turn must still be for the notice to hold. */
-export function noticeTurn(notice: Notice): TurnWord {
-  return notice.kind === "done" ? "waiting" : notice.kind === "needs" ? notice.turn : "failed";
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // Where a notice goes
 
@@ -79,6 +74,9 @@ export interface PresenceReport {
   away: boolean;
   /** Unix seconds on the host's clock when the host wrote the report. */
   at: number;
+  /** The Claude panes (lowercase ids) the Mac holds a standing notice for, and those it shows on screen; absent from a Mac that doesn't say. */
+  notices?: string[];
+  onScreen?: string[];
 }
 
 export type Presence = "present" | "away" | "unknown";
@@ -110,17 +108,33 @@ export type Route = "push" | "wait" | "drop";
  * | a Mac that can't be told (no report, or its client detached) | after the settle |
  * | a device | after the settle |
  *
- * `drop` is for good: the category is switched off, or this device has the pane open. `wait` is for now.
+ * `drop` is for good: the category is switched off, this device has the pane open, or the controlling Mac has shown the user the notice
+ * (`seen`, from `macView`). `wait` is for now.
  * The host itself is a Mac like any other, except that a pane of its own with no client attached (a restored pane nobody opened) is still
  * its own Varnick's to notify, so it isn't "can't be told" for that.
  */
-export function route(input: { controller: Controller; presence: Presence; elapsedMs: number; deviceHasPaneOpen: boolean; allowed: boolean }): Route {
-  if (!input.allowed || input.deviceHasPaneOpen) return "drop";
+export function route(input: { controller: Controller; presence: Presence; elapsedMs: number; deviceHasPaneOpen: boolean; allowed: boolean; seen: boolean }): Route {
+  if (!input.allowed || input.deviceHasPaneOpen || input.seen) return "drop";
   if (input.elapsedMs < settleMs) return "wait";
   const { controller } = input;
   if (controller.kind === "device") return "push";
   if (controller.kind === "mac" && controller.detached) return "push";
   return input.presence === "present" ? "wait" : "push";
+}
+
+/**
+ * What the controlling Mac's report says of one standing notice. The page server only has its own copy of the notice; the Mac may have shown it
+ * to the user since, and locking and leaving must not push what was seen. So a notice the Mac listed in a report and no longer lists, or whose
+ * pane a report of a present user shows on screen, is seen. A Mac that never listed it (its Settings switch for the category is off, the notice not yet raised, an
+ * old report) is no evidence: the notice stands. Only a fresh report written after the notice was raised counts. `held` is whether an earlier
+ * report listed it; both answers are kept by the caller once true.
+ */
+export function macView(input: { report: PresenceReport | null; presence: Presence; pane: string; raisedAtSeconds: number; held: boolean }): { held: boolean; seen: boolean } {
+  const { report, held } = input;
+  if (!report || input.presence === "unknown" || !report.notices || !report.onScreen || report.at < Math.floor(input.raisedAtSeconds)) return { held, seen: false };
+  const listed = report.notices.includes(input.pane);
+  // A pane on screen of a Mac that is away (locked, asleep) isn't looked at: its panel may well stay up.
+  return { held: held || listed, seen: (input.presence === "present" && report.onScreen.includes(input.pane)) || (held && !listed) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

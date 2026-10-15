@@ -319,8 +319,9 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   host over the tailnet when the push arrives; off the tailnet the notification names only the host. The push is signed with a key
   each host makes for itself: in the Keychain (Varnick's own item) on a Mac, an owner-only file on a headless host. It names
   Varnick's public site, never your email. To choose between your Mac's own notice and the phone, each Mac tells the hosts it has a
-  pane on whether you are at it (seconds since your last input, and whether the screen is locked or asleep) over the SSH link that already
-  carries its status requests. That goes to the host's page server on your own machines, and never into a push.
+  pane on whether you are at it (seconds since your last input, whether the screen is locked or asleep, and which sessions it holds a
+  notice for or shows on screen) over the SSH link that already carries its status requests. That goes to the host's page server on your
+  own machines, and never into a push. The push key reaches the server through an owner-only file it deletes at once, not its environment.
 - **A listed device can do most of what a Mac peer can:** list sessions, start one in a project the host lists,
   take over and type in a terminal. Not the search sync, upgrades or restarts. List only devices you control.
 

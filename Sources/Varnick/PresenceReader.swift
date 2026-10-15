@@ -23,13 +23,30 @@ final class PresenceReader: @unchecked Sendable {
     /// How often the host's own file is written when nothing changed: the page server calls a report older than 20 s "can't be told".
     private static let rewriteEvery: TimeInterval = 10
 
+    /// The panes this Mac holds a standing notice for, and those on its screen, as `SessionNotifier` last said (lowercase pane ids).
+    private var notices: Set<String> = []
+    private var onScreen: Set<String> = []
+
     /// The facts as they are now. Callable from any thread.
     func current() -> PeerPresence {
         lock.lock()
         let away = locked || !sessionActive || displayAsleep
+        let (notices, onScreen) = (self.notices, self.onScreen)
         lock.unlock()
         let idle = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: CGEventType(rawValue: ~0)!)
-        return PeerPresence(idle: idle.isFinite ? Int(max(0, idle)) : 0, away: away || CGDisplayIsAsleep(CGMainDisplayID()) != 0)
+        return PeerPresence(idle: idle.isFinite ? Int(max(0, idle)) : 0, away: away || CGDisplayIsAsleep(CGMainDisplayID()) != 0,
+                            notices: notices.sorted(), onScreen: onScreen.sorted())
+    }
+
+    /// What the notifier holds and the screen shows, from the main thread once a second. A change is written to the host's own file at once, so
+    /// the page server learns that a notice was seen without waiting for the next write.
+    func setPanes(notices: Set<String>, onScreen: Set<String>) {
+        lock.lock()
+        let changed = notices != self.notices || onScreen != self.onScreen
+        self.notices = notices
+        self.onScreen = onScreen
+        lock.unlock()
+        if changed { queue.async { [weak self] in self?.writeOwnFile() } }
     }
 
     /// Starts watching and writing this Mac's own file (the page server of this Mac reads it). Called once, from the main thread.

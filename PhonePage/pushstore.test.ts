@@ -136,14 +136,12 @@ describe("the subscription file", () => {
     expect(store.all()).toEqual([]);
   });
 
-  test("the last success and failure are kept, and Settings is told counts, never an endpoint", () => {
+  test("the last success and failure are kept", () => {
     const store = new SubscriptionStore(memory(), "k");
     const entry = store.upsert(alice, input(1), 1);
     store.upsert(alice, input(2), 2);
     store.record(entry, "success", 10);
     store.record(entry, "failure", 20);
     expect(store.find(alice, endpoint(1))).toMatchObject({ lastSuccess: 10, lastFailure: 20 });
-    expect(store.counts()).toEqual({ [alice]: 2 });
-    expect(JSON.stringify(store.counts())).not.toContain("fcm");
   });
 });

@@ -39,22 +39,30 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
     listed: new Map((options.listed ?? [phone, tablet]).map((id) => [id, id === phone ? "Phone" : "Tablet"])),
     result: { outcome: "sent", status: 201 } as SendResult,
     logs: [] as string[],
+    /** How long after an ask starts the relay runs, in ms. */
+    latency: 0,
+    /** While set, a send waits for it (a retry waiting out a Retry-After). */
+    hold: null as Promise<void> | null,
   };
   const world: PushWorld = {
     now: () => now,
     ownID: own,
     askTabs: async () => {
       state.asks += 1;
-      if (!state.ok) return { ok: false, error: "down" };
+      const startedAt = now;
+      // The relay runs after the ask starts, and its answer may be the shared one: a host's age is counted when it runs.
+      const ran = now + state.latency;
+      now = ran;
+      if (!state.ok) return { result: { ok: false as const, error: "down" }, startedAt };
       // A host's age is how long ago the turn began: a new word begins a turn, unless the test says the turn is the same (an error that follows its waiting).
       const panes = state.panes.map((p) => {
         const known = state.began.get(p.id);
-        if (!known || (known.word !== p.turn && !p.keepBegan)) state.began.set(p.id, { word: p.turn ?? "", at: now });
+        if (!known || (known.word !== p.turn && !p.keepBegan)) state.began.set(p.id, { word: p.turn ?? "", at: ran });
         else state.began.set(p.id, { word: p.turn ?? "", at: known.at });
         const { keepBegan: _, ...rest } = p;
-        return { kind: "claude", running: true, ...rest, turnAge: Math.floor((now - state.began.get(p.id)!.at) / 1000) };
+        return { kind: "claude", running: true, ...rest, turnAge: Math.floor((ran - state.began.get(p.id)!.at) / 1000) };
       });
-      return { ok: true, reply: { tabs: [{ tab, panes }] } };
+      return { result: { ok: true as const, reply: { tabs: [{ tab, panes }] } }, startedAt };
     },
     turnDates: (ids) => new Map(ids.map((id) => [id, state.dates.get(id) ?? 0])),
     newPaneFolder: () => { const seen = state.folder; state.folder = false; return seen; },
@@ -62,13 +70,22 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
     devices: () => state.listed,
     presence: (id) => state.presence.get(id) ?? null,
     hasPaneOpen: (device, id) => state.open.has(`${device}:${id}`),
-    send: async (subscription: Subscription, payload) => { state.sends.push({ device: subscription.device, payload }); return state.result; },
+    send: async (subscription: Subscription, payload) => {
+      state.sends.push({ device: subscription.device, payload });
+      if (state.hold) await state.hold;
+      return state.result;
+    },
     log: (line) => state.logs.push(line),
   };
   const watcher = new PushWatcher(world, store);
   const advance = async (ms: number) => {
     // The server ticks every 2 s.
-    for (let left = ms; left > 0; left -= tickMs) { now += Math.min(tickMs, left); await watcher.tick(); }
+    for (let left = ms; left > 0; left -= tickMs) {
+      now += Math.min(tickMs, left);
+      await watcher.tick();
+      // A send runs off the tick; unless a test holds it, it is over by the next one.
+      if (!state.hold) await watcher.settled();
+    }
   };
   const present = (id: string, extra: Partial<PresenceReport> = {}) => state.presence.set(id, { idle: 5, away: false, at: Math.floor(now / 1000), ...extra });
   /** A report kept fresh, as the Mac's 5 s status requests and the host's 10 s writes keep it. */
@@ -338,6 +355,170 @@ describe("who gets it", () => {
   });
 });
 
+describe("a notice the Mac has already shown the user", () => {
+  /** A Mac's report with its lists, as its Varnick writes them. */
+  const report = (r: ReturnType<typeof rig>, id: string, notices: string[], onScreen: string[], extra: Partial<PresenceReport> = {}) =>
+    r.keep(id, { notices, onScreen, ...extra });
+
+  /** Done is raised, and the Mac raises its own notice a second later. */
+  async function macHoldsNotice(r: ReturnType<typeof rig>, id: string) {
+    report(r, id, [], []);
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    await r.advance(tickMs);
+    for (let i = 0; i < 2; i += 1) { report(r, id, [pane], []); await r.advance(tickMs); }
+  }
+
+  test("seen at the Mac, then the user locks and leaves: nothing goes to the phone", async () => {
+    const r = rig();
+    await macHoldsNotice(r, own);
+    // The user opens the pane: the Mac's notice goes and the pane is on screen.
+    report(r, own, [], [pane]);
+    await r.advance(tickMs);
+    for (let i = 0; i < 20; i += 1) { report(r, own, [], [pane], { away: true }); await r.advance(tickMs); }
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "done" });
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("the Mac's notice gone without the pane on screen (cleared by the user in another way) is seen too", async () => {
+    const r = rig();
+    await macHoldsNotice(r, own);
+    report(r, own, [], []);
+    await r.advance(tickMs);
+    for (let i = 0; i < 20; i += 1) { report(r, own, [], [], { away: true }); await r.advance(tickMs); }
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a notice the Mac still holds when it turns away is pushed", async () => {
+    const r = rig();
+    await macHoldsNotice(r, own);
+    for (let i = 0; i < 12; i += 1) { report(r, own, [pane], []); await r.advance(tickMs); }
+    expect(r.state.sends).toEqual([]);
+    report(r, own, [pane], [], { away: true });
+    await r.advance(tickMs * 3);
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+
+  test("a Mac that never held the notice (its switch is off) is no evidence: leaving pushes it", async () => {
+    const r = rig();
+    report(r, own, [], []);
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    await r.advance(tickMs);
+    for (let i = 0; i < 4; i += 1) { report(r, own, [], []); await r.advance(tickMs); }
+    for (let i = 0; i < 8; i += 1) { report(r, own, [], [], { away: true }); await r.advance(tickMs); }
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+
+  test("the pane on the screen of a Mac that is away isn't looked at: it is pushed", async () => {
+    const r = rig();
+    report(r, own, [], [], { away: true });
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    for (let i = 0; i < 8; i += 1) { report(r, own, [], [pane], { away: true }); await r.advance(tickMs); }
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+
+  test("a peer Mac in control is told the same way, by its own report", async () => {
+    const r = rig();
+    r.state.panes[0].control = mac;
+    await macHoldsNotice(r, mac);
+    report(r, mac, [], [pane]);
+    await r.advance(tickMs);
+    for (let i = 0; i < 20; i += 1) { report(r, mac, [], [pane], { away: true }); await r.advance(tickMs); }
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a device in control has no Mac to ask", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    report(r, own, [], [pane]);
+    await finishTurn(r);
+    await r.advance(settleMs + tickMs * 2);
+    expect(r.state.sends).toHaveLength(1);
+  });
+});
+
+describe("a send is off the tick", () => {
+  test("a push waiting out a retry stalls nothing: the host is still asked, and the next pane's push goes", async () => {
+    const r = rig();
+    let release!: () => void;
+    r.state.hold = new Promise<void>((resolve) => { release = resolve; });
+    r.state.panes = [{ id: pane, turn: "working", control: phone, clients: 1 }, { id: other, turn: "working", control: phone, clients: 1 }];
+    await r.watcher.tick();
+    r.state.panes = [{ id: pane, turn: "permission", control: phone, clients: 1 }, { id: other, turn: "working", control: phone, clients: 1 }];
+    r.state.dates.set(pane, 1);
+    await r.advance(settleMs + tickMs * 2);
+    expect(r.state.sends).toHaveLength(1);
+    // The first is still in flight; a second pane's notice is raised and pushed meanwhile.
+    const asks = r.state.asks;
+    r.state.panes = [{ id: pane, turn: "permission", control: phone, clients: 1 }, { id: other, turn: "question", control: phone, clients: 1 }];
+    r.state.dates.set(other, 1);
+    await r.advance(settleMs + tickMs * 3);
+    expect(r.state.asks).toBeGreaterThan(asks);
+    expect(r.state.sends.map((s) => (s.payload as { pane: string }).pane)).toEqual([pane, other]);
+    expect(r.state.logs).toEqual([]);
+    release();
+    r.state.hold = null;
+    await r.watcher.settled();
+    expect(r.state.logs).toEqual(["push Phone permission sent 201", "push Phone question sent 201"]);
+  });
+});
+
+describe("how often the host is asked once everything is pushed", () => {
+  test("a Done pushed to every subscription drops back to the idle cadence", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r);
+    await r.advance(settleMs + tickMs * 2);
+    expect(r.state.sends).toHaveLength(1);
+    const asks = r.state.asks;
+    await r.advance(idleAskMs - tickMs * 3);
+    expect(r.state.asks).toBe(asks);
+    await r.advance(tickMs * 4);
+    expect(r.state.asks).toBe(asks + 1);
+  });
+
+  test("a notice with a subscription still waiting keeps the busy cadence", async () => {
+    const r = rig({ subscribed: [{ device: phone }, { device: tablet, switches: { done: true } }] });
+    r.state.panes[0].control = tablet;
+    r.state.open.add(`${phone}:${pane}`);
+    // Pushed to the tablet and dropped for the phone: every subscription is handled.
+    await finishTurn(r);
+    await r.advance(settleMs + tickMs * 2);
+    const settled = r.state.asks;
+    await r.advance(idleAskMs - tickMs * 3);
+    expect(r.state.asks).toBe(settled);
+
+    // A Mac that is present holds the notice for a subscription that may yet need it.
+    const waiting = rig();
+    waiting.keep(own);
+    await waiting.watcher.tick();
+    waiting.state.panes[0] = { ...waiting.state.panes[0], turn: "waiting" };
+    waiting.state.dates.set(pane, 1);
+    await waiting.advance(tickMs);
+    const before = waiting.state.asks;
+    for (let i = 0; i < 12; i += 1) { waiting.keep(own); await waiting.advance(tickMs); }
+    expect(waiting.state.asks).toBeGreaterThan(before);
+  });
+});
+
+describe("an error that follows its waiting is the same turn however slow the ask", () => {
+  test("a relay that runs a second and a half after its ask began, over a 1.5 s old shared answer", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    r.state.latency = 0;
+    await finishTurn(r);
+    r.state.latency = 1900;
+    r.state.panes[0] = { ...r.state.panes[0], turn: "failed", failure: "rate_limit", keepBegan: true };
+    await r.advance(settleMs + tickMs * 4);
+    expect(r.state.sends.map((s) => s.payload)).toEqual([{ v: 1, kind: "failed", tab, pane, failure: "rate limit" }]);
+  });
+});
+
 describe("what the push service says", () => {
   test("gone drops the subscription; a failure is kept and not repeated for the notice", async () => {
     const gone = rig();
@@ -496,5 +677,15 @@ describe("one ask for two readers", () => {
     await expect(shared.get()).rejects.toThrow();
     fail = false;
     expect(await shared.get()).toBe(4);
+  });
+
+  test("the answer says when its ask began, also to a caller that shares an earlier one", async () => {
+    let now = 1000;
+    const shared = new Shared(async () => "answer", () => now, 1500);
+    expect(await shared.stamped()).toEqual({ value: "answer", startedAt: 1000 });
+    now = 2000;
+    expect(await shared.stamped()).toEqual({ value: "answer", startedAt: 1000 });
+    now = 2600;
+    expect(await shared.stamped()).toEqual({ value: "answer", startedAt: 2600 });
   });
 });

@@ -21,6 +21,11 @@ export type SendResult =
   /** Not sent: refused, rate limited past one retry, a server error, a redirect, no answer in time, or an address that isn't a push service's. */
   | { outcome: "failed"; status: number | null };
 
+export interface SendOptions {
+  /** False sends once and reports what the push service said: Send a test, which must not wait through a Retry-After. Default true. */
+  retry?: boolean;
+}
+
 export interface SendWorld {
   fetch: typeof fetch;
   sleep: (ms: number) => Promise<void>;
@@ -36,13 +41,14 @@ export function retryDelay(header: string | null): number {
 /**
  * Sends the payload to the subscription. Every push is sent alike: a one-hour TTL, high urgency and no Topic, so the push service sees that a
  * push went, when, and to which browser, and nothing that tells one kind from another. Redirects aren't followed. Too many (429) or a server
- * error (5xx) is retried once, after Retry-After or 30 s; then the push is dropped.
+ * error (5xx) is retried once, after Retry-After or 30 s; then the push is dropped. The caller runs this off anything that must not wait.
  */
 export async function sendPush(
   world: SendWorld,
   key: PushKey,
   subscription: { endpoint: string; p256dh: string; auth: string },
   payload: PushPayload,
+  options: SendOptions = {},
 ): Promise<SendResult> {
   if (!isPushEndpoint(subscription.endpoint)) return { outcome: "failed", status: null };
   let body: Uint8Array;
@@ -72,7 +78,7 @@ export async function sendPush(
   };
 
   let answer = await attempt();
-  if (answer !== null && (answer.status === 429 || answer.status >= 500)) {
+  if (options.retry !== false && answer !== null && (answer.status === 429 || answer.status >= 500)) {
     await world.sleep(retryDelay(answer.retryAfter));
     answer = await attempt();
   }

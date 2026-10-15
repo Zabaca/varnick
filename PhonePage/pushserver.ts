@@ -2,10 +2,10 @@
 // and the loop that runs the watcher. server.ts calls `setupPush` once and `pushRoute` for `/api/push`. The files are reached through a few small
 // functions so `bun test` can run them in a temporary folder.
 
-import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Device } from "./checks";
-import { isObject } from "./json";
+import { isObject, uuidPattern } from "./json";
 import type { RelayResult } from "./home";
 import { OpenPanes, PushWatcher, Shared, tickMs, type PushWorld } from "./pushwatch";
 import type { PresenceReport } from "./pushrule";
@@ -32,14 +32,25 @@ const readText = (path: string): string | null => {
 };
 
 /**
- * The host's one key. A Mac's comes in the environment, from its Varnick, which keeps it in the Keychain; a Mac without one sends no push. A
- * headless host's server makes the key at its first start and keeps it as an owner-only file beside the proxy's certificate. If that file is lost
- * or unreadable a new one is made, and the subscriptions made for the old key are dropped (they carry its fingerprint).
+ * What a Mac's Varnick handed over: the text of the file `VARNICK_PUSH_KEY_FILE` names, which is deleted as it is read. It is the server's first
+ * act, before anything slow, so Varnick's own removal of the file a little later (`PhonePageRunner`) can't beat it. Undefined for no file.
  */
-export async function loadKey(push: PushConfig, headless: boolean): Promise<{ key: PushKey } | { off: string }> {
-  if (push.key !== undefined) {
-    const key = parsePushKey(push.key);
-    return key ? { key } : { off: "the key Varnick gave isn't a P-256 private key" };
+export function takeKeyFile(path: string | undefined): string | undefined {
+  if (path === undefined) return undefined;
+  const text = readText(path);
+  try { rmSync(path, { force: true }); } catch { /* the owner-only folder is Varnick's to clean */ }
+  return text ?? undefined;
+}
+
+/**
+ * The host's one key. A Mac's is handed over by its Varnick, which keeps it in the Keychain (`handed`, from `takeKeyFile`); a Mac without one
+ * sends no push. A headless host's server makes the key at its first start and keeps it as an owner-only file beside the proxy's certificate. If
+ * that file is lost or unreadable a new one is made, and the subscriptions made for the old key are dropped (they carry its fingerprint).
+ */
+export async function loadKey(push: PushConfig, headless: boolean, handed?: string): Promise<{ key: PushKey } | { off: string }> {
+  if (push.keyFile !== undefined) {
+    const key = parsePushKey(handed);
+    return key ? { key } : { off: "the key Varnick handed over is missing or isn't a P-256 private key" };
   }
   if (!headless) return { off: "Varnick gave this Mac's server no push key" };
   const file = join(push.folder, keyFileName);
@@ -57,13 +68,16 @@ export async function loadKey(push: PushConfig, headless: boolean): Promise<{ ke
 
 /** One Mac's presence file, as the relay or its Varnick wrote it. Anything else is no report. */
 export function readPresence(folder: string, id: string): PresenceReport | null {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null;
+  if (!uuidPattern.test(id)) return null;
   const text = readText(join(folder, `${id.toLowerCase()}.json`));
   if (text === null) return null;
   try {
     const json: unknown = JSON.parse(text);
     if (!isObject(json) || typeof json.idle !== "number" || typeof json.away !== "boolean" || typeof json.at !== "number") return null;
-    return { idle: json.idle, away: json.away, at: json.at };
+    // The panes the Mac holds a notice for and shows; a field that isn't a list of ids is the Mac not saying.
+    const panes = (value: unknown): string[] | undefined =>
+      Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && uuidPattern.test(item)).map((item) => item.toLowerCase()) : undefined;
+    return { idle: json.idle, away: json.away, at: json.at, notices: panes(json.notices), onScreen: panes(json.onScreen) };
   } catch {
     return null;
   }
@@ -104,12 +118,12 @@ export interface Push {
 }
 
 export interface PushInputs {
-  config: Config;
   push: PushConfig;
   headless: boolean;
   ownID: string;
-  askTabs: () => Promise<RelayResult>;
   hostTabs: Shared<RelayResult>;
+  /** What `takeKeyFile` read: a Mac's key from its Varnick. */
+  handedKey?: string;
   tabsStamp: () => string;
   devices: () => Device[];
   log: (line: string) => void;
@@ -120,7 +134,7 @@ export interface PushInputs {
 /** The key, the subscriptions and the watcher, or null (with the reason logged) when this host sends no push. */
 export async function setupPush(inputs: PushInputs): Promise<Push | null> {
   const { push, log } = inputs;
-  const loaded = await loadKey(push, inputs.headless);
+  const loaded = await loadKey(push, inputs.headless, inputs.handedKey);
   if ("off" in loaded) {
     log(`push off: ${loaded.off}`);
     return null;
@@ -139,14 +153,17 @@ export async function setupPush(inputs: PushInputs): Promise<Push | null> {
   const world: PushWorld = {
     now: () => Date.now(),
     ownID: inputs.ownID,
-    askTabs: () => inputs.hostTabs.get(),
+    askTabs: async () => {
+      const { value, startedAt } = await inputs.hostTabs.stamped();
+      return { result: value, startedAt };
+    },
     turnDates: (ids) => readTurnDates(push.panes, ids),
     newPaneFolder,
     tabsStamp: inputs.tabsStamp,
     devices: names,
     presence: (id) => readPresence(push.presence, id),
     hasPaneOpen: (device, pane) => openPanes.has(device, pane),
-    send: (subscription, payload) => sendPush({ fetch: inputs.fetch ?? fetch, sleep: Bun.sleep, now: Date.now }, key, subscription, payload),
+    send: (subscription, payload, options) => sendPush({ fetch: inputs.fetch ?? fetch, sleep: Bun.sleep, now: Date.now }, key, subscription, payload, options),
     log,
   };
   const watcher = new PushWatcher(world, store);
@@ -208,7 +225,8 @@ export async function pushRoute(
     const last = lastTest.get(device.id) ?? -Infinity;
     if (world.now() - last < testEveryMs) return { status: 429, body: { ok: false, error: "Wait a moment before another test" } };
     lastTest.set(device.id, world.now());
-    const result = await push.send(entry, { v: 1, kind: "test" });
+    // Once: a test is answered as the push service answered, not after a Retry-After.
+    const result = await push.send(entry, { v: 1, kind: "test" }, { retry: false });
     world.log(`push ${device.name} test ${result.outcome} ${result.status ?? "-"}`);
     if (result.outcome === "gone") push.store.drop(entry);
     return result.outcome === "sent" ? { status: 200, body: { ok: true } } : { status: 502, body: { ok: false, error: result.outcome === "gone" ? "The push service no longer knows this browser: turn notifications on again" : "The push service didn't take the test" } };

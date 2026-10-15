@@ -5,10 +5,12 @@
 import { objects } from "./json";
 import type { RelayResult } from "./home";
 import {
-  allows, decide, failureWord, isTurnWord, payloadOf, presenceOf, route, settleMs, type Controller, type Notice, type PresenceReport, type PushPayload, type TurnWord,
+  allows, decide, failureWord, isTurnWord, macView, payloadOf, presenceOf, route, settleMs, type Controller, type Notice, type PresenceReport, type PushPayload,
+  type TurnWord,
 } from "./pushrule";
-import type { SendResult } from "./pushsend";
+import type { SendOptions, SendResult } from "./pushsend";
 import type { Subscription, SubscriptionStore } from "./pushstore";
+import { isSessionName } from "./terminal";
 
 /** How often the watcher looks at the turn files' dates, the saved tabs and the standing notices. */
 export const tickMs = 2000;
@@ -18,15 +20,18 @@ export const idleAskMs = 60_000;
 /** At most this many pushes to one device in an hour; past it pushes are dropped and counted in the log. */
 export const perDeviceHourLimit = 60;
 const hourMs = 3_600_000;
-/** Two readings of a turn that began within this are one turn (a host's age is whole seconds). */
-const sameTurnMs = 2000;
+/**
+ * Two readings of a turn that began within this are one turn. A host's age is whole seconds, counted at the relay's run, and an answer may be the
+ * shared ask's up to 1.5 s old (`Shared`), so two readings of one turn differ by that and a relay run, not by a new turn.
+ */
+const sameTurnMs = 5000;
 
 export interface PushWorld {
   now(): number;
   /** The host's own id: the controller of a pane that names nobody or the host. */
   ownID: string;
-  /** `tabs` asked as the host itself; one ask serves this and the port proxy when both want one. */
-  askTabs(): Promise<RelayResult>;
+  /** `tabs` asked as the host itself; one ask serves this and the port proxy when both want one. `startedAt` is when that ask began (unix ms). */
+  askTabs(): Promise<{ result: RelayResult; startedAt: number }>;
   /** The date (unix ms) of each pane's turn file, 0 for a pane with none. */
   turnDates(panes: string[]): Map<string, number>;
   /** Whether a pane folder has appeared since the last call (a pane started that the listing may not have). */
@@ -38,13 +43,13 @@ export interface PushWorld {
   presence(controller: string): PresenceReport | null;
   /** Whether the device has the pane's terminal or live view open. */
   hasPaneOpen(device: string, pane: string): boolean;
-  send(subscription: Subscription, payload: PushPayload): Promise<SendResult>;
+  send(subscription: Subscription, payload: PushPayload, options?: SendOptions): Promise<SendResult>;
   log(line: string): void;
 }
 
 interface PaneReading {
   turn: TurnWord;
-  /** When the turn began, in ms on the host's clock (the listing's time less the age). */
+  /** When the turn began, in ms on the host's clock (the ask's start less the age). */
   since: number;
 }
 
@@ -58,8 +63,9 @@ interface Standing {
   notice: Notice;
   tab: string;
   raisedAt: number;
-  /** The running word the notice stands for: an error that follows its waiting stands for the word before it. */
-  from: TurnWord;
+  /** The controlling Mac listed it in a report, and has shown it to the user since (`macView`): once true, true. */
+  held: boolean;
+  seen: boolean;
   /** Read again after the settle, before it is pushed (the turn file is written just before the transcript says whether background work or an error goes with a waiting). */
   confirmed: boolean;
   /** The subscriptions (by endpoint) it was pushed to, and those it was dropped for. */
@@ -79,12 +85,27 @@ export class PushWatcher {
   private asking: Promise<void> | null = null;
   private busy = false;
   private ticking = false;
+  /** Sends under way. They run off the tick: a retry waits for a push service's Retry-After, up to two minutes, and the tick must not. */
+  private inFlight = new Set<Promise<void>>();
 
   constructor(private world: PushWorld, private store: SubscriptionStore) {}
 
   /** What the watcher holds for a pane, for the tests. */
   noticeFor(pane: string): Notice | undefined {
     return this.standing.get(pane)?.notice;
+  }
+
+  /** Resolves when the sends under way are over, for the tests. */
+  async settled(): Promise<void> {
+    while (this.inFlight.size > 0) await Promise.all([...this.inFlight]);
+  }
+
+  /** Whether any standing notice still has a subscription it may yet be pushed to: one pushed to every subscription is done. */
+  private anyWaiting(): boolean {
+    for (const standing of this.standing.values()) {
+      if (this.store.all().some((subscription) => !standing.pushed.has(subscription.endpoint) && !standing.handled.has(subscription.endpoint))) return true;
+    }
+    return false;
   }
 
   /** One look. Nothing is watched without a subscription, and what was learned goes with the last one. */
@@ -119,16 +140,16 @@ export class PushWatcher {
     let changed = stamp !== this.stamp || this.world.newPaneFolder();
     for (const [pane, date] of dates) if (this.dates.get(pane) !== date) changed = true;
     if (changed) return true;
-    return now - this.lastAsk >= (this.busy || this.standing.size > 0 ? busyAskMs : idleAskMs);
+    return now - this.lastAsk >= (this.busy || this.anyWaiting() ? busyAskMs : idleAskMs);
   }
 
   /** Asks the host's `tabs` and takes it in. A failure changes nothing: the old readings stand until an ask succeeds. */
   async refresh(): Promise<void> {
     this.asking ??= (async () => {
       try {
-        const result = await this.world.askTabs();
+        const { result, startedAt } = await this.world.askTabs();
         this.lastAsk = this.world.now();
-        if (result.ok) this.observe(objects(result.reply.tabs));
+        if (result.ok) this.observe(objects(result.reply.tabs), startedAt);
       } finally {
         this.asking = null;
       }
@@ -136,7 +157,8 @@ export class PushWatcher {
     return this.asking;
   }
 
-  private observe(tabs: Record<string, unknown>[]): void {
+  /** `startedAt` is when the ask began: a turn's age is counted at the relay's run, which is after it, never at the reply. */
+  private observe(tabs: Record<string, unknown>[], startedAt: number): void {
     const now = this.world.now();
     const seen = new Set<string>();
     const facts = new Map<string, PaneFacts>();
@@ -155,7 +177,7 @@ export class PushWatcher {
         // A word this watcher doesn't know is a newer host's: the pane stays as it was.
         if (!isTurnWord(pane.turn)) continue;
         if (pane.turn === "background") this.busy = true;
-        const since = now - (typeof pane.turnAge === "number" ? pane.turnAge : 0) * 1000;
+        const since = startedAt - (typeof pane.turnAge === "number" ? pane.turnAge : 0) * 1000;
         const before = this.readings.get(id);
         const decision = decide({
           old: before?.turn ?? null,
@@ -168,7 +190,7 @@ export class PushWatcher {
           // An error that follows its waiting in the same turn takes over the Done's wait: the settle is for the turn, not for each word.
           const replaces = before!.turn === "waiting" && decision.notice.kind === "failed" ? this.standing.get(id) : undefined;
           this.standing.set(id, {
-            notice: decision.notice, tab: tab.tab.toLowerCase(), raisedAt: replaces?.raisedAt ?? now, from: before!.turn === "waiting" ? "working" : before!.turn,
+            notice: decision.notice, tab: tab.tab.toLowerCase(), raisedAt: replaces?.raisedAt ?? now, held: false, seen: false,
             confirmed: false, pushed: new Set(), handled: new Set(),
           });
         } else if (decision.action === "clear") {
@@ -201,11 +223,17 @@ export class PushWatcher {
     const controller = this.controllerOf(pane);
     const report = controller.kind === "device" ? null : this.world.presence(controller.kind === "host" ? this.world.ownID : pane.control!);
     const presence = presenceOf(report, now / 1000);
+    // Whether the controlling Mac has shown the user the notice, which the page server can't see for itself: looked at on every tick, not only when due.
+    if (controller.kind !== "device") {
+      const view = macView({ report, presence, pane: id, raisedAtSeconds: standing.raisedAt / 1000, held: standing.held });
+      standing.held = view.held;
+      standing.seen ||= view.seen;
+    }
     const due: Subscription[] = [];
     for (const subscription of this.store.all()) {
       if (standing.pushed.has(subscription.endpoint) || standing.handled.has(subscription.endpoint)) continue;
       const decision = route({
-        controller, presence, elapsedMs: now - standing.raisedAt,
+        controller, presence, elapsedMs: now - standing.raisedAt, seen: standing.seen,
         deviceHasPaneOpen: this.world.hasPaneOpen(subscription.device, id), allowed: allows(subscription.switches, standing.notice),
       });
       if (decision === "drop") standing.handled.add(subscription.endpoint);
@@ -223,7 +251,11 @@ export class PushWatcher {
     }
     this.lastPush.set(id, now);
     const payload = payloadOf(standing.notice, standing.tab, id);
-    await Promise.all(due.map((subscription) => this.push(standing, subscription, payload)));
+    // Not awaited: a retry inside a send waits for the push service, and nothing else may wait with it.
+    for (const subscription of due) {
+      const sending = this.push(standing, subscription, payload).finally(() => this.inFlight.delete(sending));
+      this.inFlight.add(sending);
+    }
   }
 
   private async push(standing: Standing, subscription: Subscription, payload: PushPayload): Promise<void> {
@@ -257,8 +289,7 @@ export class OpenPanes {
 
   /** A session name `varnick-<pane id>` as a socket opens it. */
   static paneOf(session: string): string | null {
-    const match = /^varnick-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(session);
-    return match ? match[1].toLowerCase() : null;
+    return isSessionName(session) ? session.slice("varnick-".length) : null;
   }
 
   add(device: string, session: string): void {
@@ -282,17 +313,27 @@ export class OpenPanes {
 /** A value shared by every caller for a moment: one ask serves the port proxy and the watcher when both want it. */
 export class Shared<T> {
   private at = -Infinity;
+  private startedAt = -Infinity;
   private value: Promise<T> | null = null;
 
   constructor(private load: () => Promise<T>, private now: () => number, private maxAgeMs: number) {}
 
   get(): Promise<T> {
-    if (this.value && this.now() - this.at < this.maxAgeMs) return this.value;
-    this.at = this.now();
+    return this.stamped().then((answer) => answer.value);
+  }
+
+  /** The answer with the time its ask began, which is what a turn's age is counted from. */
+  stamped(): Promise<{ value: T; startedAt: number }> {
+    if (this.value && this.now() - this.at < this.maxAgeMs) {
+      const kept = this.startedAt;
+      return this.value.then((value) => ({ value, startedAt: kept }));
+    }
+    this.at = this.startedAt = this.now();
+    const startedAt = this.startedAt;
     const value = this.load();
     this.value = value;
     // A failure isn't kept: the next caller asks again.
     value.catch(() => { if (this.value === value) this.value = null; });
-    return value;
+    return value.then((answer) => ({ value: answer, startedAt }));
   }
 }

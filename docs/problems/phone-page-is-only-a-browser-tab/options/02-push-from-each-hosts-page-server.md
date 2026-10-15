@@ -42,6 +42,7 @@ status: accepted
   Anything else is **away**.
 - **The settle** is 10 seconds. A notice still standing then is pushed. It absorbs a turn that flickers and the up to 5 seconds a presence report takes.
 - **A device with the pane open gets no push for it.** Open means its terminal or its live view, which the page holds only while visible. That holds in every row.
+- **A notice the controlling Mac has shown the user gets no push.** The page server only has its own copy of a notice, so the Mac's report also lists the panes it holds a notice for and the panes it shows on screen. A notice that a report written after it was raised listed and a later one doesn't, or whose pane a report of a present user shows on screen, is dropped for good, in every Mac row. A Mac that never listed it (its Settings switch for the category is off, or an older report) is no evidence, and the notice stands. A pane on the screen of a Mac that is away doesn't count.
 - **Each subscription has switches** for Needs me, Done and Errors, all on by default.
 
 The Mac half (the notice on the controlling Mac, quiet when the pane is on screen) is `sessions-finish-unnoticed` option 01's, unchanged. This option is the phone half.
@@ -240,7 +241,7 @@ The page checks its subscription at each load. If it was made with a key the hos
 ### The protocol
 
 One bump (27), Swift and the server's version together:
-- **`status` requests from a Mac gain an optional presence field:** idle seconds and the away flag. A device's is ignored.
+- **`status` requests from a Mac gain an optional presence field:** idle seconds, the away flag, and the panes it holds a notice for and shows on screen. A device's is ignored.
 - **`tabs` gains, for a waiting Claude pane, a mark when the waiting came from the user's Esc or Deny.**
 - **The relay tells the host's own id the controller's id** in `tabs`, not only its name. It is the host's own page server, which already reads the device list and the paired Macs. A device is still told only its own id.
 
@@ -305,6 +306,14 @@ One bump (27), Swift and the server's version together:
 - Declarative Web Push on iOS 18.4 and later.
 
 ## Further Notes
+
+### Decided by the coordinator, 2026-10-15, on review of the build
+
+- **A host's own pane with no client follows the host's presence.** Only a peer Mac's detached client counts as can't-be-told. The host's own Varnick notifies for its dormant panes itself, so a present user is not pushed for them.
+- **The per-device line lives in Settings › Peers › Devices,** beside the device's other facts, not under Serve the phone page. It says whether the device gets notifications from this Mac, from a count in the subscription file.
+- **`status` gaining `failure` and `esc` closes the gap** the user wanted closed: a Mac's own notices on a peer's panes take the Esc mark and the error's kind, so a peer's Esc raises no Done there. It is recorded in `sessions-finish-unnoticed` option 01's Trade-offs, where the gap was written down.
+- **Send a test has its own 5-second limit** per device, and is sent once with no retry.
+- **The presence report lists the panes** the Mac holds a notice for and shows (protocol 27, which was unreleased, so no further bump), so a notice the user saw on the Mac is not pushed when they lock and leave.
 
 ### Asked by the user, 2026-10-14
 

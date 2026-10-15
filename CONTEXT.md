@@ -115,7 +115,7 @@ The web page a **Host** serves on port 8444 of its tailnet name, for a **Device*
 _Avoid_: Web UI, dashboard, remote
 
 **Presence**:
-Whether the user is at a Mac, as raw facts: the seconds since its last keyboard, mouse or trackpad input, and an away flag for a locked screen, a display asleep or a login session switched away. Each Mac reads its own (no permission) and tells every host it has a pane on, on the `status` request it sends every 5 s; the host's page server alone turns the facts into present (unlocked, awake, active and under 2 minutes of idle time) or away. A report older than 20 s means the Mac can't be told, which counts as away. It decides only where a **Notice** goes: a Mac whose user is present notifies there, and the phone is pushed when it isn't.
+Whether the user is at a Mac, as raw facts: the seconds since its last keyboard, mouse or trackpad input, an away flag for a locked screen, a display asleep or a login session switched away, and which Claude panes the Mac holds a **Notice** for and shows on screen. Each Mac reads its own (no permission) and tells every host it has a pane on, on the `status` request it sends every 5 s; the host's page server alone turns the facts into **present** (screen unlocked, display awake, login session active and under 2 minutes since the last input) or **away**. A report older than 20 s, or none, means the Mac can't be told, which counts as away. It decides only where a **Notice** goes: a Mac whose user is present notifies there, and the phone is pushed when it isn't, unless the Mac has shown the user the notice by then.
 _Avoid_: Idle, online, active (a session is active)
 
 **Port proxy**:

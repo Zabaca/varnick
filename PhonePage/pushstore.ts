@@ -152,11 +152,4 @@ export class SubscriptionStore {
     else entry.lastFailure = now;
     this.save();
   }
-
-  /** How many subscriptions each device has: all Settings is told (never an endpoint). */
-  counts(): Record<string, number> {
-    const counts: Record<string, number> = {};
-    for (const entry of this.entries) counts[entry.device] = (counts[entry.device] ?? 0) + 1;
-    return counts;
-  }
 }
