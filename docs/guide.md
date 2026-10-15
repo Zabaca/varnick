@@ -94,7 +94,7 @@ happened. Choosing it shows the panel on that pane.
   for any pane while the session board shows. A notice is cleared when its pane comes on screen or closes, or when the
   session's turn moves on (you answered a dialog, or sent a prompt). A pane has one notice at most.
 - **Done means done.** A turn that leaves background agents, teammates, workflows or shells running stays quiet until they
-  have all ended. Stopping Claude yourself with esc gives no notice.
+  have all ended. Stopping Claude yourself with Esc gives no notice.
 - **One Mac.** A session raises its notice on the Mac that is in control of it. A pane that shows a card (another Mac or the
   phone is in control, or its host doesn't answer) is silent. A session on a paired Mac is read every 5 seconds, so Done can
   come up to 5 seconds late. Sessions already waiting when Varnick starts, or when a Mac comes back, raise nothing, and

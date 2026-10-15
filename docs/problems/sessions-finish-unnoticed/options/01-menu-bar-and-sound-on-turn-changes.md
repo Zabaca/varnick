@@ -57,7 +57,7 @@ Then no notice is raised. Launchy is an accessory app, so "frontmost" means the 
 
 **The failed word.**
 - **What makes it.** The reader turns a waiting turn into failed when two things hold:
-  - the transcript's last conversation entry is Claude Code's API-error entry, dated at or after the turn's start;
+  - the transcript's last conversation entry is Claude Code's API-error entry, dated at or after the turn's start, allowing the 5 s window in which the `StopFailure` hook writes the turn file just after Claude Code writes the entry;
   - no background work is still running.
 
   The reader already corrects for Esc and derives background this way. Background wins, because that work starts Claude's next turn by itself.
@@ -74,6 +74,8 @@ Then no notice is raised. Launchy is an accessory app, so "frontmost" means the 
   - Nothing reaches Notification Center, and notices don't survive a restart.
 - **One Mac per session.** A session whose Mac in control is asleep raises no notice anywhere. Neither does one a Device controls, nor one whose host doesn't answer. A Mac showing a card for a session stays silent even when the user is at that Mac and not at the one in control.
 - **A peer's turn is read every 5 s.** A turn that starts and ends between two replies raises nothing, and Done can come up to 5 s late.
+- **A peer's Esc raises Done.** A paired Mac's reply carries the word alone, so there is no Esc mark for a session hosted there and controlled here. It lasts until the Esc mark that `phone-page-is-only-a-browser-tab` option 02 adds to `tabs`.
+- **Done and an error come about a second late.** They wait to be read again, since the turn file is written just before the transcript says whether background work or an error goes with the waiting.
 - **The failed word rests on an undocumented transcript field,** as Esc already does. If Claude Code renames it, those turns read as waiting and raise Done instead, with no error.
 - **Builds disagree for a while.** A paired Mac on an older build shows "Turn not known" for a failed session. Until the headless relay is reinstalled, its sessions raise Done for a failed turn.
 
