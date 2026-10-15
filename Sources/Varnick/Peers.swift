@@ -758,6 +758,8 @@ final class PeerManager: ObservableObject {
     func sessionStatuses(_ names: [String], on id: String) async -> [String: PeerSessionStatus]? {
         var request = PeerRequest(.status)
         request.sessions = names
+        // This is the request each host that has a pane of this Mac's gets every 5 s: it also tells that host whether the user is here.
+        request.presence = PresenceReader.shared.current()
         guard case .success(let reply) = await send(request, to: id) else { return nil }
         return reply.sessions ?? [:]
     }
