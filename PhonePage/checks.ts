@@ -20,6 +20,12 @@ interface CommonConfig {
    * `tabs` is the saved-tabs file whose date says whether to ask the relay again; without it the relay is asked only now and then.
    */
   proxy?: { folder: string; status: string; tabs?: string };
+  /**
+   * Push notifications (pushwatch.ts): an owner-only folder for the key (a headless host) and the subscriptions, the folder holding the panes' own
+   * folders (where their turn files are), and the folder of the Macs' presence files. All three set, or no push. `key` is a Mac's push key,
+   * given by its Varnick in the environment alone: a Mac without it sends no push.
+   */
+  push?: { folder: string; panes: string; presence: string; key?: string };
 }
 
 /** Socket mode (an owner-only Unix socket) or loopback (a port on 127.0.0.1): exactly one. */
@@ -46,9 +52,16 @@ export function readConfig(env: Record<string, string | undefined>): { config: C
   if ((folder && !folder.startsWith("/")) || (status && !status.startsWith("/")) || (tabs && !tabs.startsWith("/"))) {
     return { error: "VARNICK_PROXY_FOLDER, VARNICK_PROXY_STATUS and VARNICK_PROXY_TABS must be absolute paths" };
   }
+  const pushFolder = env.VARNICK_PUSH_FOLDER || undefined, panes = env.VARNICK_PANES_FOLDER || undefined, presence = env.VARNICK_PRESENCE_FOLDER || undefined;
+  const pushSet = [pushFolder, panes, presence].filter((value) => value !== undefined).length;
+  if (pushSet !== 0 && pushSet !== 3) return { error: "Set VARNICK_PUSH_FOLDER, VARNICK_PANES_FOLDER and VARNICK_PRESENCE_FOLDER together, or none" };
+  if ([pushFolder, panes, presence].some((value) => value !== undefined && !value.startsWith("/"))) {
+    return { error: "VARNICK_PUSH_FOLDER, VARNICK_PANES_FOLDER and VARNICK_PRESENCE_FOLDER must be absolute paths" };
+  }
   const shared = {
     port, relay, devices, tailscale, zmxDir: env.VARNICK_ZMX_DIR || undefined, userHome: env.CFFIXED_USER_HOME || undefined,
     proxy: folder && status ? { folder, status, tabs } : undefined,
+    push: pushFolder && panes && presence ? { folder: pushFolder, panes, presence, key: env.VARNICK_PUSH_KEY || undefined } : undefined,
   };
   if (socketPath) {
     if (!socketPath.startsWith("/")) return { error: "VARNICK_PAGE_SOCKET must be an absolute path" };

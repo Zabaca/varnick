@@ -24,6 +24,8 @@ import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "
 import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
 import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
 import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
+import { pushPaths, pushRoute, pushStatus, setupPush, type Push } from "./pushserver";
+import { Shared } from "./pushwatch";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 27;
@@ -238,10 +240,19 @@ async function main(): Promise<void> {
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
 
+  // The host's own `tabs`, asked as the host itself: one ask serves the port proxy and the push watcher when both want one.
+  const hostTabs = ownID ? new Shared(() => relay.ask("tabs", ownID, {}, undefined, "proxy"), Date.now, 1500) : null;
+  /** The saved tabs' date and size: a look that finds them as they were doesn't run the relay. A host that gives no file is asked only every few minutes. */
+  const tabsStamp = (): string => {
+    const tabsFile = config.proxy?.tabs;
+    if (!tabsFile) return "none";
+    try { const info = statSync(tabsFile); return `${info.mtimeMs}:${info.size}`; } catch { return "missing"; }
+  };
+
   // The port proxy (portproxy.ts), only where the environment gives it a folder and a status file, and the relay gave this host's id.
   let proxy: PortProxy | null = null;
-  if (config.proxy && ownID) {
-    const { folder, status, tabs: tabsFile } = config.proxy;
+  if (config.proxy && ownID && hostTabs) {
+    const { folder, status } = config.proxy;
     const certFiles = certificateFiles(folder);
     // The Macs this host lists, by tailnet name: asked of the relay as the host itself. One ask is shared by every request that comes while it runs,
     // and its answer is kept for a minute, a failure for ten seconds, like the other hosts' links.
@@ -249,12 +260,8 @@ async function main(): Promise<void> {
     let peersCache: { at: number; ttl: number; names: Set<string> | null } | null = null;
     let peersFetch: Promise<Set<string> | null> | null = null;
     const world: ProxyWorld = {
-      tabs: () => relay.ask("tabs", ownID, {}, undefined, "proxy"),
-      // The saved tabs' date and size: a look that finds them as they were doesn't run the relay. A host that gives no file is asked only every few minutes.
-      tabsStamp: () => {
-        if (!tabsFile) return "none";
-        try { const info = statSync(tabsFile); return `${info.mtimeMs}:${info.size}`; } catch { return "missing"; }
-      },
+      tabs: () => hostTabs.get(),
+      tabsStamp,
       servePorts: async () => {
         const text = await capture([config.tailscale, "serve", "status", "--json"], 8000);
         return text ? parseServePorts(text) : new Set<number>();
@@ -298,8 +305,15 @@ async function main(): Promise<void> {
     };
     proxy = new PortProxy(world, { dnsName: self.dnsName, userID: self.userID, reserved: [config.port, ...(config.mode === "loopback" ? [config.loopbackPort] : [])], statusPath: status });
   }
-  const terminals = new Terminals(config, relay, PROTOCOL_VERSION, homedir(), log);
-  const watches = new Watches(config, PROTOCOL_VERSION, homedir(), log);
+  // Push notifications, where the environment gives the folders and the host has a key (pushserver.ts).
+  const push: Push | null = config.push && ownID && hostTabs
+    ? await setupPush({
+      config, push: config.push, headless: host.headless, ownID, askTabs: () => hostTabs.get(), hostTabs, tabsStamp,
+      devices: () => { try { return readDevices(readFileSync(config.devices, "utf8")); } catch { return []; } }, log,
+    })
+    : null;
+  const terminals = new Terminals(config, relay, PROTOCOL_VERSION, homedir(), log, push?.openPanes);
+  const watches = new Watches(config, PROTOCOL_VERSION, homedir(), log, push?.openPanes);
   const json = (value: unknown, status = 200) => respond(JSON.stringify(value), status, "application/json; charset=utf-8");
 
   /** Null when the request was upgraded to a terminal websocket. */
@@ -339,9 +353,13 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take") return plain(404, "Not found");
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)) return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
+      if (pushPaths.includes(path)) {
+        const answered = await pushRoute(push, device, path, body, { now: Date.now, log });
+        return json(answered.body, answered.status);
+      }
       if (path === "/api/end") {
         const target = parseEndBody(body);
         if (!target.ok) return plain(400, target.error);
@@ -394,6 +412,10 @@ async function main(): Promise<void> {
         body = body.replace(appTitleToken, () => appTitleTag(host.name));
       }
       return respond(head ? null : body, 200, served.type);
+    }
+    if (path === "/api/push" && request.method === "GET") {
+      const answered = pushStatus(push, host.name);
+      return json(answered.body, answered.status);
     }
     if (path === "/api/session" && request.method === "GET") {
       const session = new URL(request.url).searchParams.get("name");
@@ -466,6 +488,7 @@ async function main(): Promise<void> {
   if (config.mode === "socket") chmodSync(config.socketPath, 0o600);
 
   const stop = () => {
+    push?.stop();
     server.stop(true);
     if (config.mode === "socket") rmSync(config.socketPath, { force: true });
     // Its status file goes first, so the relay stops listing proxied addresses at once.
@@ -475,6 +498,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", stop);
 
   proxy?.start();
+  push?.start();
   console.log(`${new Date().toISOString()} listening ${config.mode === "socket" ? config.socketPath : `127.0.0.1:${config.loopbackPort}`} as ${self.dnsName}:${config.port} for ${host.name}${host.headless ? " (headless)" : ""}, protocol ${PROTOCOL_VERSION}`);
 }
 

@@ -12,7 +12,7 @@ enum PhonePage {
     static let sessionName = "varnick-phone-page"
     /// The labels the session is made with: the server's files, where they are, and how it listens. A session with other values
     /// than the ones wanted now is ended and started again.
-    private static let digestKey = "varnick-page", modeKey = "varnick-page-mode", placeKey = "varnick-page-place"
+    private static let digestKey = "varnick-page", modeKey = "varnick-page-mode", placeKey = "varnick-page-place", pushKey = "varnick-page-push"
 
     // MARK: How the server listens
 
@@ -119,9 +119,11 @@ enum PhonePage {
     private static func hex(_ digest: SHA256.Digest) -> String { digest.map { String(format: "%02x", $0) }.joined() }
 
     /// The labels the session is created with. `place` names the folder holding `PhonePage/` (its last component): a
-    /// session without it, or in another folder, isn't current, so one started from the build folder is replaced.
-    static func labels(digest: String, mode: Mode, place: String) -> String {
-        "\(digestKey)=\(digest) \(modeKey)=\(mode.rawValue) \(placeKey)=\(place)"
+    /// session without it, or in another folder, isn't current, so one started from the build folder is replaced. `push` is the
+    /// fingerprint of the push key the server was given (`PhonePagePush.noKey` for none): a different key restarts the server, and the
+    /// fingerprint says nothing of the key.
+    static func labels(digest: String, mode: Mode, place: String, push: String) -> String {
+        "\(digestKey)=\(digest) \(modeKey)=\(mode.rawValue) \(placeKey)=\(place) \(pushKey)=\(push)"
     }
 
     /// The `place` label of a server run from `folder` (`serverFolder`).
@@ -139,9 +141,10 @@ enum PhonePage {
     }
 
     /// Whether a running session's labels (`zmx get`) are the ones this start would give it.
-    static func isCurrent(labels line: String, digest: String, mode: Mode, place: String) -> Bool {
+    static func isCurrent(labels line: String, digest: String, mode: Mode, place: String, push: String) -> Bool {
         let words = Set(line.split(whereSeparator: \.isWhitespace).map(String.init))
         return words.contains("\(digestKey)=\(digest)") && words.contains("\(modeKey)=\(mode.rawValue)") && words.contains("\(placeKey)=\(place)")
+            && words.contains("\(pushKey)=\(push)")
     }
 
     /// The first of Bun's usual homes that is executable, found the way `Tailscale.executable` finds the CLI: there is
@@ -153,12 +156,16 @@ enum PhonePage {
     // MARK: What the server is given
 
     /// The server's environment, and nothing else of Varnick's. `VARNICK_ZMX_DIR` goes along only when Varnick has it
-    /// (a check's throwaway folder), so the relay the server runs looks in the same zmx folder.
+    /// (a check's throwaway folder), so the relay the server runs looks in the same zmx folder. The push key (`pushKey`, one line of JSON) is in
+    /// the environment alone, never on a command line; without it the server sends no push.
     static func environment(mode: Mode, socketPath: String, relay: String, devices: String, tailscale: String?,
-                            home: String, zmxDirectory: String?, proxyFolder: String, proxyStatus: String, proxyTabs: String) -> [String] {
+                            home: String, zmxDirectory: String?, proxyFolder: String, proxyStatus: String, proxyTabs: String,
+                            pushFolder: String, panesFolder: String, presenceFolder: String, pushKey: String?) -> [String] {
         var environment = [mode == .socket ? "VARNICK_PAGE_SOCKET=\(socketPath)" : "VARNICK_PAGE_LOOPBACK=\(loopbackPort)",
                            "VARNICK_PAGE_PORT=\(publishedPort)", "VARNICK_RELAY=\(relay)", "VARNICK_DEVICES=\(devices)",
-                           "VARNICK_PROXY_FOLDER=\(proxyFolder)", "VARNICK_PROXY_STATUS=\(proxyStatus)", "VARNICK_PROXY_TABS=\(proxyTabs)"]
+                           "VARNICK_PROXY_FOLDER=\(proxyFolder)", "VARNICK_PROXY_STATUS=\(proxyStatus)", "VARNICK_PROXY_TABS=\(proxyTabs)",
+                           "VARNICK_PUSH_FOLDER=\(pushFolder)", "VARNICK_PANES_FOLDER=\(panesFolder)", "VARNICK_PRESENCE_FOLDER=\(presenceFolder)"]
+        if let pushKey { environment.append("VARNICK_PUSH_KEY=\(pushKey)") }
         if let tailscale { environment.append("VARNICK_TAILSCALE=\(tailscale)") }
         environment += ["HOME=\(home)", "PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"]
         if let zmxDirectory { environment.append("VARNICK_ZMX_DIR=\(zmxDirectory)") }

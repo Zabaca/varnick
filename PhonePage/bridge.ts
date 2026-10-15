@@ -8,6 +8,7 @@
 import type { ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import type { Config, Device } from "./checks";
 import { buildRequest, clean, relayArguments, relayEnvironment, Admissions, firstMessageMs, type Admission, type Relay } from "./relay";
+import type { OpenPanes } from "./pushwatch";
 import {
   attachEnvironment, closeCode, decideExit, firstOutput, fitReason, inputLimit, parseClient, parseOpen, recheckControl, refusal, type OpenRequest,
 } from "./terminal";
@@ -34,6 +35,8 @@ export interface TerminalData {
   held: Uint8Array[];
   holdTimer?: ReturnType<typeof setTimeout>;
   recheckTimer?: ReturnType<typeof setTimeout>;
+  /** Counted as open in `OpenPanes`, so it is counted out once. */
+  counted?: boolean;
 }
 
 type Socket = ServerWebSocket<TerminalData>;
@@ -41,7 +44,8 @@ type Socket = ServerWebSocket<TerminalData>;
 export class Terminals {
   private admissions = new Admissions(concurrentLimit, perDeviceLimit);
 
-  constructor(private config: Config, private relay: Relay, private version: number, private home: string, private log: (line: string) => void) {}
+  /** `panes` learns which pane a device has open, for the push that a device with the pane open doesn't get (pushwatch.ts). */
+  constructor(private config: Config, private relay: Relay, private version: number, private home: string, private log: (line: string) => void, private panes?: OpenPanes) {}
 
   /** A place for one more terminal of this device, or null when it, or the host, has its share open already. An admitted terminal that is never upgraded gives its slot back (`admission.giveBack`). */
   admit(device: Device): TerminalData | null {
@@ -89,6 +93,8 @@ export class Terminals {
     const data = ws.data;
     data.open = open;
     data.phase = "holding";
+    this.panes?.add(data.device.id, open.session);
+    data.counted = true;
     // `take` is whatever the page said it pressed: the relay is what decides, and without it refuses a session this device doesn't control.
     const request = buildRequest(this.version, "attach", data.device.id, open.take ? { session: open.session, take: true } : { session: open.session });
     let process: Subprocess;
@@ -200,6 +206,10 @@ export class Terminals {
     clearTimeout(data.holdTimer);
     clearTimeout(data.recheckTimer);
     data.held = [];
+    if (data.counted && data.open) {
+      data.counted = false;
+      this.panes?.remove(data.device.id, data.open.session);
+    }
     const process = data.process;
     if (process) {
       try { process.terminal?.close(); } catch { /* closed already */ }

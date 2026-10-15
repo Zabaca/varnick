@@ -33,11 +33,15 @@ enum PhonePageRunner {
         }
         guard Zmx.isAvailable else { return .failed("zmx isn't next to Varnick: build with make") }
         guard let folder = PhonePage.serverFolder(installedIn: install), let digest = PhonePage.digest(of: folder) else { return .noFiles }
-        if let running, PhonePage.isCurrent(labels: running, digest: digest, mode: mode, place: PhonePage.place(of: folder)) { return .running }
+        // The push key, made the first time. It is read from the Keychain, which may ask the user after an ad-hoc rebuild; a key that can't be read
+        // is never replaced, and the server then runs without push (its label says `none`).
+        let key = PhonePagePush.current()
+        let push = key?.fingerprint ?? PhonePagePush.noKey
+        if let running, PhonePage.isCurrent(labels: running, digest: digest, mode: mode, place: PhonePage.place(of: folder), push: push) { return .running }
         // Without Bun nothing can be started: an old session, if there is one, still serves what it served.
         guard let bun = PhonePage.bunExecutable() else { return .noBun }
         if running != nil, !stop() { return .failed("The old server's session didn't end") }
-        return start(bun: bun, folder: folder, digest: digest, mode: mode, relay: relay, tailscale: tailscale)
+        return start(bun: bun, folder: folder, digest: digest, mode: mode, relay: relay, tailscale: tailscale, key: key)
     }
 
     /// Ends the session, then waits for it to be gone and for the server to let go of its socket and port. False when
@@ -50,7 +54,7 @@ enum PhonePageRunner {
         return true
     }
 
-    private static func start(bun: String, folder: URL, digest: String, mode: PhonePage.Mode, relay: String, tailscale: String?) -> Outcome {
+    private static func start(bun: String, folder: URL, digest: String, mode: PhonePage.Mode, relay: String, tailscale: String?, key: PhonePagePush.Key?) -> Outcome {
         let support = SupportFolder.url
         let phone = PhonePage.folder(in: support)
         guard makePrivate(phone) else { return .failed("\(phone.path) couldn't be made") }
@@ -60,16 +64,19 @@ enum PhonePageRunner {
         let name = PhonePage.sessionName
 
         // The shell empties the log as the server starts: its output has nowhere else to go once the session ends.
-        guard let command = Zmx.attachCommand(named: name, labels: PhonePage.labels(digest: digest, mode: mode, place: PhonePage.place(of: folder)), running: "/bin/sh",
+        let push = key?.fingerprint ?? PhonePagePush.noKey
+        guard let command = Zmx.attachCommand(named: name, labels: PhonePage.labels(digest: digest, mode: mode, place: PhonePage.place(of: folder), push: push), running: "/bin/sh",
                                               ["-c", PhonePage.startScript, name, bun, folder.appendingPathComponent("server.ts").path, log.path]) else {
             return .failed("zmx isn't next to Varnick: build with make")
         }
         let environment = PhonePage.environment(mode: mode, socketPath: socket, relay: relay, devices: DeviceList.file.path, tailscale: tailscale,
                                                 home: NSHomeDirectory(), zmxDirectory: Zmx.overriddenDirectory, proxyFolder: phone.path,
-                                                proxyStatus: PeerProxyStatus.file.path, proxyTabs: SessionStore.fileURL.path) + Zmx.paneEnvironment
-        // The labels are how a later launch tells these files and this mode from others.
+                                                proxyStatus: PeerProxyStatus.file.path, proxyTabs: SessionStore.fileURL.path,
+                                                pushFolder: phone.path, panesFolder: SupportFolder.url.appendingPathComponent("panes", isDirectory: true).path,
+                                                presenceFolder: PresenceFile.folder.path, pushKey: key?.json) + Zmx.paneEnvironment
+        // The labels are how a later launch tells these files, this mode and this push key from others.
         let started = ZmxDetached.start(command, named: name, environment: environment, directory: folder.path) {
-            PhonePage.isCurrent(labels: $0, digest: digest, mode: mode, place: PhonePage.place(of: folder))
+            PhonePage.isCurrent(labels: $0, digest: digest, mode: mode, place: PhonePage.place(of: folder), push: push)
         }
         switch started {
         case .running: return .running
