@@ -74,14 +74,17 @@ public struct PageLink: Equatable, Sendable {
     public var sameSite: Bool
     /// Points at the page it is on.
     public var isSelf: Bool
+    /// Has a real address to go to: not `#`, `javascript:` or a `role=button` link, whose click does whatever the page's script says.
+    public var navigates: Bool
 
-    public init(id: String, label: String, href: String, inBody: Bool = true, sameSite: Bool = true, isSelf: Bool = false) {
+    public init(id: String, label: String, href: String, inBody: Bool = true, sameSite: Bool = true, isSelf: Bool = false, navigates: Bool = true) {
         self.id = id
         self.label = label
         self.href = href
         self.inBody = inBody
         self.sameSite = sameSite
         self.isSelf = isSelf
+        self.navigates = navigates
     }
 }
 

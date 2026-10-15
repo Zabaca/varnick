@@ -93,7 +93,13 @@ public final class TaskRunner {
     private var hints: [String] = []
     private var suggest: (choose: String, address: String)?
     private var exploreNext = false
-    private var askStreak = 0
+
+    // What each conversation is told of the other's replies since its last message
+    private var valuesReplies: [String] = []
+    private var guidanceReplies: [String] = []
+    private var relayedToGuidance = 0
+    private var relayedToValues = 0
+    private var lastStepAt: Date?
 
     /// A background request for values.
     private final class Job {
@@ -130,8 +136,11 @@ public final class TaskRunner {
 
     // MARK: Reporting
 
-    private func say(_ actor: Actor, _ text: String, _ milestone: Milestone? = nil) {
-        let step = Step(actor, text, milestone: milestone)
+    private func say(_ actor: Actor, _ text: String, _ milestone: Milestone? = nil, kind: String = "note", p: Double? = nil) {
+        let now = config.now()
+        let seconds = lastStepAt.map { now.timeIntervalSince($0) } ?? 0
+        lastStepAt = now
+        let step = Step(actor, text, milestone: milestone, kind: kind, p: p, seconds: seconds)
         steps.append(step)
         report(step)
     }
@@ -144,7 +153,7 @@ public final class TaskRunner {
         switch outcome {
         case .found(let text):
             await page.mark(text)
-            say(.harness, "Read \(quoted(text))", .found(text))
+            say(.harness, "Read \(quoted(text))", .found(text), kind: "read")
             say(.harness, "Done", .done)
             stateChanged(.done)
         case .finished:
@@ -179,18 +188,7 @@ public final class TaskRunner {
             while true {
                 try Task.checkCancellation()
                 if let over = budgetSpent() { return await finish(.gaveUp(over)) }
-                guard config.enabled() else { return await finish(.stopped) }
-                guard await waiting({ await control.checkpoint(onPause: { [self] in
-                    say(.harness, "Paused: \(pauseReason)")
-                    stateChanged(.paused(pauseReason))
-                }) }) else { return await finish(.stopped) }
-                pauseReason = "you're using the page"
-                if control.takeTouched() {
-                    let now = try await page.snapshot()
-                    trail.add(address: now.address, action: "the person acted in the page", result: "the harness read the page again")
-                    say(.harness, "Resumed from \(now.address)")
-                    stateChanged(.running)
-                }
+                try await checkpoint(inStep: false)
                 do {
                     if !shapeKnown {
                         shape = try await pickShape()
@@ -204,6 +202,9 @@ public final class TaskRunner {
                     if try await formPass() { failuresInARow = 0; continue }
                     if let outcome = try await turn() { return await finish(outcome) }
                     failuresInARow = 0
+                } catch is StepAborted {
+                    // The person touched the page while the step was under way: it starts again from the page as it is.
+                    continue
                 } catch let failure as ModelError {
                     // A model that doesn't answer pauses the task with Resume and Stop; the third in a row ends it.
                     failuresInARow += 1
@@ -217,6 +218,56 @@ public final class TaskRunner {
             return await finish(.stopped)
         } catch {
             return await finish(.gaveUp("the page could not be read: \(error.localizedDescription)"))
+        }
+    }
+
+    /// Before every action on the page: the Tasks switch, Stop and a pause. The person touching the page pauses the task, and when they resume it
+    /// the step under way ends (`StepAborted`), since the page may have changed under it.
+    private func checkpoint(inStep: Bool = true) async throws {
+        try Task.checkCancellation()
+        guard config.enabled() else { throw CancellationError() }
+        let go = await waiting {
+            await control.checkpoint(onPause: { [self] in
+                say(.harness, "Paused: \(pauseReason)", kind: "pause")
+                stateChanged(.paused(pauseReason))
+            })
+        }
+        guard go else { throw CancellationError() }
+        pauseReason = "you're using the page"
+        if control.takeTouched() {
+            let now = try await page.snapshot()
+            trail.add(address: now.address, action: "the person acted in the page", result: "the harness read the page again")
+            say(.harness, "Resumed from \(now.address)", kind: "resume")
+            stateChanged(.running)
+            if inStep { throw StepAborted() }
+        }
+    }
+
+    // The only ways the harness acts on the page: each one passes the checkpoint first.
+    private func click(_ id: String) async throws {
+        try await checkpoint()
+        try await page.click(id)
+    }
+
+    private func goBack() async throws {
+        try await checkpoint()
+        try await page.goBack()
+    }
+
+    private func open(_ href: String) async throws {
+        try await checkpoint()
+        try await page.open(href)
+    }
+
+    /// Fills one field. A submit the page made while it was filled is held and becomes a step the person gates.
+    private func fillField(_ id: String, _ value: String, _ snap: PageSnapshot) async throws {
+        do {
+            try await checkpoint()
+            if try await page.fill(field: id, value: value) { try await gateHeldSubmit(snap) }
+        } catch {
+            // A fill that did not happen (a pause ended the step) leaves the field to be filled when the step starts again.
+            settled.remove(id)
+            throw error
         }
     }
 
@@ -268,12 +319,33 @@ public final class TaskRunner {
         claudeMessages += 1
         stats.claudeCalls += 1
         do {
-            return try await system2.ask(role, text, preface: Prompts.role(task: task))
+            let reply = try await system2.ask(role, relay(to: role) + text, preface: Prompts.role(task: task))
+            if role == .guidance { guidanceReplies.append(Self.cut(reply)) }
+            return reply
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             throw ModelError(who: "Claude", reason: Self.describe(error))
         }
+    }
+
+    private static func cut(_ s: String) -> String { String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(600)) }
+
+    /// What the other conversation replied since this one's last message: each conversation is told, as the spec says, so Claude's values and
+    /// its guidance don't contradict each other.
+    private func relay(to role: System2Role) -> String {
+        let new: [String]
+        switch role {
+        case .guidance:
+            new = Array(valuesReplies[relayedToGuidance...])
+            relayedToGuidance = valuesReplies.count
+        case .values:
+            new = Array(guidanceReplies[relayedToValues...])
+            relayedToValues = guidanceReplies.count
+        }
+        guard !new.isEmpty else { return "" }
+        let from = role == .guidance ? "values" : "guidance"
+        return "Since your last message, the \(from) conversation replied:\n" + new.map { "- " + $0 }.joined(separator: "\n") + "\n\n"
     }
 
     /// What went wrong, in a line that may be shown: never more than the error's own description.
@@ -300,16 +372,17 @@ public final class TaskRunner {
         claudeMessages += 1
         stats.claudeCalls += 1
         let system2 = self.system2, preface = Prompts.role(task: task)
+        let message = relay(to: .values) + text
         let work = Task<String?, Never> {
             _ = await previous?.value
-            let reply = try? await system2.ask(.values, text, preface: preface)
+            let reply = try? await system2.ask(.values, message, preface: preface)
             job.markFinished()
             return reply
         }
         job.task = work
         valuesChain = Task { _ = await work.value }
         jobs.append(job)
-        say(.harness, "Asked Claude for values: \(why)")
+        say(.harness, "Asked Claude for values: \(why)", kind: "values")
     }
 
     private func formLine(_ f: PageField) -> String {
@@ -342,7 +415,11 @@ public final class TaskRunner {
             requested.remove(id)
             settled.remove(id)
         }
-        if !entries.isEmpty { say(.claude, "Wrote \(entries.count) value\(entries.count == 1 ? "" : "s")") }
+        if reply != nil {
+            let wrote = entries.map { "\($0.key) = \($0.isForUser ? "(the person's)" : JSON.string($0.value).text)" }.joined(separator: "; ")
+            valuesReplies.append(Self.cut("\(job.why): " + (wrote.isEmpty ? "no values" : wrote)))
+        }
+        if !entries.isEmpty { say(.claude, "Wrote \(entries.count) value\(entries.count == 1 ? "" : "s")", kind: "values") }
     }
 
     /// System 1 truly needs a value: waits for the first background reply.
@@ -443,8 +520,13 @@ extension TaskRunner {
         pairs.append(("links_and_buttons", .strings(offeredNames)))
         pairs.append(("text", .strings(snap.texts.prefix(20).map { "\($0.id): \($0.text.prefix(150))" })))
         pairs.append(("recent", .strings(Array(recent.suffix(4)))))
+        // The scores System 1 gave the previews of this page's links, the bank's meanings and values (a value only the person gives is never
+        // shown, and a secret is never in it), and whether Claude is working on values in the background.
+        let scores = frontier.entries.filter { $0.from == snap.address }
+        if !scores.isEmpty { pairs.append(("preview_scores", .object(scores.map { ($0.label, JSON.number(($0.score * 100).rounded() / 100)) }))) }
         if let hint = hints.last { pairs.append(("standing_hint_from_claude", .string(hint))) }
-        if !bank.isEmpty { pairs.append(("value_bank", .strings(bank.entries.map(\.key)))) }
+        if !bank.isEmpty { pairs.append(("value_bank", bankState)) }
+        pairs.append(("claude_thinking", .bool(!jobs.isEmpty)))
         let state = JSON.object(pairs)
         let questions: [Question] = [
             .choice("next", "What is the next step for `task`?", acts.map { ($0.id, $0.text) }),
@@ -461,8 +543,8 @@ extension TaskRunner {
             recent.append("\(snap.address): done")
             return .finished
         }
-        // After two asks in a row System 1 acts on its best other option.
-        if askStreak >= 2, act.act.key == Act.ask.key,
+        // Claude said to go on: System 1's best option other than asking stands for this step.
+        if exploreNext, act.act.key == Act.ask.key,
            let other = nextAnswer.sorted.first(where: { id, _ in acts.first { $0.id == id }.map { $0.act.key != Act.ask.key } ?? false }),
            let c = acts.first(where: { $0.id == other.0 }) {
             act = c
@@ -478,23 +560,22 @@ extension TaskRunner {
         if !links.isEmpty, !peekedPages.contains(key), !readOut {
             previewsForClaude = try await scoreLinks(snap, depth: depthOf[snap.address, default: 0] + 1, why: "the page's links")
             peekedPages.insert(key)
-            if try await frontierFollow() { askStreak = 0; return nil }
+            if try await frontierFollow() { return nil }
             if act.act.isBodyLinkClick, let ask = acts.first(where: { $0.act.key == Act.ask.key }) { act = ask }
         }
         let followsSuggestion = act.suggested || exploreNext
         if exploreNext { exploreNext = false }
         let asking = act.act.key == Act.ask.key
-        if (p < config.actBar && !followsSuggestion && askStreak < 2) || asking {
+        // Below the bar System 1 asks Claude and waits, however often; only Claude's own suggestion lets a choice below it stand.
+        if (p < config.actBar && !followsSuggestion) || asking {
             var why = asking ? "System 1 chose to ask" : "System 1 is unsure (its best option, \"\(act.text)\", has P \(String(format: "%.2f", p)))"
             if asking, !previewsForClaude.isEmpty { why = "no link on the page looked promising enough to follow" }
             let leading = acts.filter { $0.act.key != Act.ask.key }
                 .sorted { (nextAnswer.probability($0.id)) > (nextAnswer.probability($1.id)) }.prefix(2).map { shortLabel($0.act) }
-            say(.claude, "Asked Claude: unsure between \(leading.joined(separator: " and "))")
-            askStreak += 1
+            say(.claude, "Asked Claude: unsure between \(leading.joined(separator: " and "))", kind: "ask", p: p)
             let reply = try await guidance(why: why, snap: snap, acts: acts, previews: previewsForClaude)
             return try await apply(reply: reply, snap: snap, acts: acts)
         }
-        askStreak = 0
         return try await perform(act, snap: snap, by: system1Actor, p: p)
     }
 
@@ -515,41 +596,31 @@ extension TaskRunner {
         let score = p.map { " (\(actor.rawValue) \(String(format: "%.2f", $0)))" } ?? ""
         switch c.act {
         case .link(let l):
-            try await page.click(l.id)
-            say(actor, "Opened \(l.label)\(score)", .opening(l.label))
+            if Gate.asks(l, on: snap) {
+                guard try await gate(l.label, kind: .link, snap: snap, waitsForValues: false) == .go else { return nil }
+            }
+            try await click(l.id)
+            say(actor, "Opened \(l.label)\(score)", .opening(l.label), kind: "click", p: p)
             try await afterAction(from: snap, action: c.act.key, result: "went to")
         case .button(let b):
             if Gate.asks(b, on: snap) {
-                if !jobs.isEmpty, snap.hasForm, mustWait(snap) {
-                    await waitForJobs("about to submit with a value still on its way")
-                    recent.append("\(snap.address): waited for values")
-                    return nil
-                }
-                let marker = control.resumeCount
-                switch await askToSubmit(b, snap) {
-                case .stop: return .stopped
-                case .allow:
-                    try await page.click(b.id)
-                    say(.user, "Allowed \(b.label)")
-                case .willDo:
-                    say(.user, "Pressing \(b.label) in the page")
-                    try await waitForUserPress(from: snap, marker: marker)
-                    return nil
-                }
+                guard try await gate(b.label, kind: .submit, snap: snap, waitsForValues: true) == .go else { return nil }
+                try await click(b.id)
+                say(.user, "Allowed \(b.label)", kind: "gate")
             } else {
-                try await page.click(b.id)
-                say(actor, "Pressed \(b.label)\(score)")
+                try await click(b.id)
+                say(actor, "Pressed \(b.label)\(score)", kind: "click", p: p)
             }
             try await afterAction(from: snap, action: c.act.key, result: "went to", wasSubmit: true)
         case .back:
             if !jobs.isEmpty, snap.hasForm {
                 backRefused += 1
-                say(.harness, "Back refused: a value for this form is on its way")
+                say(.harness, "Back refused: a value for this form is on its way", kind: "rule")
                 await waitForJobs("back refused: a value for this form is on its way")
                 return nil
             }
-            try await page.goBack()
-            say(actor, "Went back\(score)")
+            try await goBack()
+            say(actor, "Went back\(score)", kind: "back", p: p)
             try await afterAction(from: snap, action: "back", result: "back to")
         case .read(let t):
             return try await readOut(t, snap: snap)
@@ -584,13 +655,15 @@ extension TaskRunner {
         switch stuck.record(address: now.address, form: now.formSignature, hasForm: now.hasForm, via: via) {
         case .none: break
         case .noProgress(let address, let action):
-            say(.harness, "Same page 3 times: barred \(action) and went back")
-            try await page.goBack()
+            say(.harness, "Same page 3 times: barred \(action) and went back", .stuck(now.title.isEmpty ? now.address : now.title), kind: "rule")
+            // The same wait as System 1's own back: not from a form page while a value for it is on its way.
+            if !jobs.isEmpty, now.hasForm { await waitForJobs("back refused: a value for this form is on its way") }
+            try await goBack()
             let back = try await page.snapshot()
             trail.add(address: address, action: "harness rule: bar \(action) and go back", result: "back to \(back.address)")
             _ = stuck.record(address: back.address, form: back.formSignature, hasForm: back.hasForm, via: "back")
         case .loop(let address, let action):
-            say(.harness, "A loop: barred \(action) on \(address)")
+            say(.harness, "A loop: barred \(action) on \(address)", .stuck(now.title.isEmpty ? now.address : now.title), kind: "rule")
             trail.add(address: address, action: "harness rule: loop, bar \(action)", result: "barred")
         case .loopIntoForm(let address):
             trail.add(address: address, action: "harness rule: loop into a form", result: "not barred")
@@ -603,13 +676,51 @@ extension TaskRunner {
         return !open.isEmpty && !jobs.isEmpty
     }
 
-    private func askToSubmit(_ b: PageButton, _ snap: PageSnapshot) async -> Decision {
-        let what = "Submit \(b.label)? Allow / I'll do it"
-        say(.harness, what)
+    fileprivate enum GateResult { case go, retry, byPerson }
+
+    /// The person's gate for a submit or a link: values still on their way are waited for first (a submit), then the person is asked. `.go` is
+    /// the person's Allow; `.retry` means the harness waited for values and the step starts again; `.byPerson` means they pressed it themselves.
+    /// Stop ends the task.
+    fileprivate func gate(_ label: String, kind: GateKind, snap: PageSnapshot, waitsForValues: Bool) async throws -> GateResult {
+        if waitsForValues, !jobs.isEmpty, snap.hasForm, mustWait(snap) {
+            await waitForJobs("about to submit with a value still on its way")
+            recent.append("\(snap.address): waited for values")
+            return .retry
+        }
+        let marker = control.resumeCount
+        let what = kind.question(label) + " Allow / I'll do it"
+        say(.harness, what, kind: "gate")
         stateChanged(.needsYou(what))
-        let decision = await waiting { await user.decide(submit: b.label) }
-        if decision != .stop { stateChanged(.running) }
-        return decision
+        let decision = await waiting { await user.decide(label, kind: kind) }
+        switch decision {
+        case .stop: throw CancellationError()
+        case .allow:
+            stateChanged(.running)
+            return .go
+        case .willDo:
+            stateChanged(.running)
+            say(.user, "Pressing \(label) in the page", kind: "gate")
+            try await waitForUserPress(from: snap, marker: marker)
+            return .byPerson
+        }
+    }
+
+    /// A submit the page made while a field was filled (its own onchange handler) is held by the page bridge and gated here, as a pressed
+    /// button is. Allowed, it goes through; "I'll do it" leaves the form to the person.
+    fileprivate func gateHeldSubmit(_ snap: PageSnapshot) async throws {
+        say(.harness, "The page tried to submit the form as a field was filled: held", kind: "gate")
+        while true {
+            switch try await gate("the form", kind: .submit, snap: snap, waitsForValues: true) {
+            case .retry: continue
+            case .byPerson: return
+            case .go:
+                try await checkpoint()
+                try await page.releaseBlockedSubmit()
+                say(.user, "Allowed the form", kind: "gate")
+                try await afterAction(from: snap, action: "submit", result: "went to", wasSubmit: true)
+                return
+            }
+        }
     }
 
     /// "I'll do it": waits for the person to press it in the page and Resume. The marker was taken before they were asked, so a Resume that
@@ -690,7 +801,7 @@ extension TaskRunner {
         let links = snap.bodyLinks.filter { !frontier.isExplored($0.href) }
         guard !links.isEmpty else { return [] }
         let previews = await peekAll(links)
-        say(.harness, "Peeked at \(links.count) link\(links.count == 1 ? "" : "s")")
+        say(.harness, "Peeked at \(links.count) link\(links.count == 1 ? "" : "s")", kind: "peek")
         var questions: [Question] = []
         for (i, l) in links.enumerated() {
             questions.append(.noul("pv\(i)", "`previews` shows what is behind the link \"\(l.label)\". Does that page lead toward, or hold, what `task` needs?"))
@@ -721,14 +832,17 @@ extension TaskRunner {
         let snap = try await page.snapshot()
         var how = "click"
         if entry.from == snap.address, let link = snap.links.first(where: { $0.label == entry.label && $0.href == entry.href }) {
-            try await page.click(link.id)
+            if Gate.asks(link, on: snap) {
+                guard try await gate(link.label, kind: .link, snap: snap, waitsForValues: false) == .go else { return true }
+            }
+            try await click(link.id)
         } else {
-            try await page.open(entry.href)
+            try await open(entry.href)
             how = "back up to \(entry.from)"
-            say(.harness, "Backed up to \(entry.from) for the next branch")
+            say(.harness, "Backed up to \(entry.from) for the next branch", kind: "back")
         }
         depthOf[entry.href] = entry.depth
-        say(.jev == system1Actor ? .jev : .claude, "Opened \(entry.label) (score \(String(format: "%.2f", entry.score)))", .opening(entry.label))
+        say(.jev == system1Actor ? .jev : .claude, "Opened \(entry.label) (score \(String(format: "%.2f", entry.score)))", .opening(entry.label), kind: "frontier", p: entry.score)
         landedFrom = entry
         let now = try await page.snapshot()
         trail.add(address: snap.address, action: "harness frontier: follow \"\(entry.label)\" (\(how), score \(String(format: "%.2f", entry.score)))", result: "went to \(now.address)")
@@ -838,16 +952,20 @@ extension TaskRunner {
             exploreNext = true
             return nil
         case "act":
-            guard let chosen else { return nil }
+            guard let chosen else { exploreNext = true; return nil }
             say(.claude, "Claude acts: \(chosen.text.replacingOccurrences(of: "(Claude suggests this) ", with: ""))")
             return try await perform(chosen, snap: snap, by: .claude)
         case "guide":
             if let chosen {
                 suggest = (chosen.text.replacingOccurrences(of: "(Claude suggests this) ", with: ""), snap.address)
-                say(.claude, "Claude suggests: \(shortLabel(chosen.act))")
+                say(.claude, "Claude suggests: \(shortLabel(chosen.act))", kind: "guide")
+            } else {
+                exploreNext = true
             }
             return nil
         default:
+            // "continue", or a reply with no usable action: System 1's choice stands for the next step.
+            exploreNext = true
             return nil
         }
     }
@@ -856,9 +974,13 @@ extension TaskRunner {
 // MARK: - Forms
 
 extension TaskRunner {
+    /// The bank's meanings and values as System 1 reads them; a value only the person gives is never shown.
+    fileprivate var bankState: JSON {
+        .array(bank.entries.map { .object(["key": .string($0.key), "value": .string($0.isForUser ? "(the person's)" : $0.value)]) })
+    }
+
     private func stateJSON(extra: [(String, JSON)] = []) -> JSON {
-        .object([("task", .string(task)),
-                 ("value_bank", .array(bank.entries.map { .object(["key": .string($0.key), "value": .string($0.isForUser ? "(the person's)" : $0.value)]) }))] + extra)
+        .object([("task", .string(task)), ("value_bank", bankState)] + extra)
     }
 
     /// Fills what the bank has, maps fields by meaning, requests the rest in the background, then reads back. True when it did something.
@@ -908,16 +1030,16 @@ extension TaskRunner {
                     requestValues(fields: [f], why: "System 1 couldn't match \"\(entry.value)\" to an option of \(f.label)", address: snap.address)
                     continue
                 }
-                if f.value != option.value { try await page.fill(field: f.id, value: option.value); fillCount += 1 }
+                if f.value != option.value { try await fillField(f.id, option.value, snap); fillCount += 1 }
                 filled.append((f.id, f.label, option.value))
             case "checkbox":
-                if ["true", "yes", "checked"].contains(entry.value.lowercased()), f.isEmpty { try await page.fill(field: f.id, value: "true"); fillCount += 1; did = true }
+                if ["true", "yes", "checked"].contains(entry.value.lowercased()), f.isEmpty { try await fillField(f.id, "true", snap); fillCount += 1; did = true }
             default:
-                if f.value != entry.value { try await page.fill(field: f.id, value: entry.value); fillCount += 1; did = true }
+                if f.value != entry.value { try await fillField(f.id, entry.value, snap); fillCount += 1; did = true }
                 filled.append((f.id, f.label, entry.value))
             }
         }
-        if fillCount > 0 { say(.harness, "Filled \(fillCount) field\(fillCount == 1 ? "" : "s")") }
+        if fillCount > 0 { say(.harness, "Filled \(fillCount) field\(fillCount == 1 ? "" : "s")", kind: "fill") }
         if !filled.isEmpty { try await readBack(filled) }
         // Everything the harness can fill is filled. What only the person gives is asked for once the values are in.
         if jobs.isEmpty, !did {
@@ -1004,6 +1126,9 @@ extension Answer {
         return 0
     }
 }
+
+/// The person touched the page while a step was under way and then resumed the task: the step ends, and the next starts from the page as it is.
+struct StepAborted: Error {}
 
 /// A model that did not answer: which one, and why in a line that may be shown.
 struct ModelError: Error {

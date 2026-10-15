@@ -23,6 +23,8 @@ final class ScriptedSystem1: System1 {
     private(set) var calls: [(state: String, keys: [String])] = []
     private(set) var lastNextOptions: [String] = []
     var failFromCall: Int?
+    /// Raised to say Jev cannot be used at all (the relevance filter left TypeSafe).
+    var unavailable = false
     private var count = 0
     private var nextCalls = 0
 
@@ -36,6 +38,7 @@ final class ScriptedSystem1: System1 {
     func ask(state: JSON, questions: [Question]) async throws -> [String: Answer] {
         count += 1
         calls.append((state.text, questions.map(\.key)))
+        if unavailable { throw System1Unavailable("the relevance filter left TypeSafe") }
         if let failFromCall, count >= failFromCall { throw Failure() }
         let address = state["page"]?["address"]?.string ?? state["page"]?.string ?? ""
         var out: [String: Answer] = [:]
@@ -142,13 +145,15 @@ final class ScriptedSystem2: System2 {
 final class ScriptedUser: TaskUser {
     var decisions: [Decision] = []
     private(set) var asked: [String] = []
+    private(set) var askedKinds: [GateKind] = []
     private(set) var needed: [String] = []
     /// What the person does when told to type something: in the page, then Resume.
     var onNeedsYou: (String) -> Void = { _ in }
     var onWillDo: () -> Void = {}
 
-    func decide(submit label: String) async -> Decision {
+    func decide(_ label: String, kind: GateKind) async -> Decision {
         asked.append(label)
+        askedKinds.append(kind)
         let d = decisions.isEmpty ? .allow : decisions.removeFirst()
         if d == .willDo { onWillDo() }
         return d

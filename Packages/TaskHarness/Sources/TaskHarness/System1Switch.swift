@@ -36,6 +36,13 @@ public final class System1Switch: System1 {
                 return answers
             } catch is CancellationError {
                 throw CancellationError()
+            } catch let unavailable as System1Unavailable {
+                let first = lock.withLock { () -> Bool in
+                    let was = degraded
+                    degraded = true
+                    return !was
+                }
+                if first { onWithoutJev(unavailable.reason) }
             } catch {
                 let giveUp = lock.withLock { () -> Bool in
                     failures += 1

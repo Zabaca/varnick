@@ -89,6 +89,12 @@ func unitChecks() {
     check(Gate.asks(formPage.buttons[0], on: formPage), "a script-handled button on a form page asks")
     check(!Gate.asks(plain.buttons[0], on: plain), "a plain button on a page with no form does not")
 
+    let linkPlain = PageSnapshot(address: "/p", links: [PageLink(id: "l", label: "Help", href: "/help")])
+    let linkOnForm = PageSnapshot(address: "/f", links: [PageLink(id: "l", label: "Help", href: "/help")], fields: [PageField(id: "f", label: "Name")])
+    check(!Gate.asks(linkPlain.links[0], on: linkPlain), "a link to a page on a page with no form does not ask")
+    check(Gate.asks(linkOnForm.links[0], on: linkOnForm), "any link on a page with a form asks")
+    check(Gate.asks(PageLink(id: "l", label: "More", href: "#", navigates: false), on: linkPlain), "a link with no real address asks")
+
     print("-- frontier")
     var f = Frontier()
     for (i, s) in [0.3, 0.9, 0.6, 0.55].enumerated() { f.add(.init(label: "L\(i)", href: "/\(i)", score: s, from: "/", depth: 1)) }
@@ -288,6 +294,57 @@ func formChecks() async {
         check(r.outcome == .finished, "and the task finished with the values that came", "\(r.outcome)")
     }
 
+    print("-- a field a form reveals does not move the identity of the others")
+    do {
+        let shop = makePracticeShop(start: "/checkout")
+        let before = try? await shop.snapshot()
+        _ = try? await shop.fill(field: "f.country", value: "Canada")
+        let after = try? await shop.snapshot()
+        func id(_ s: PageSnapshot?, _ label: String) -> String? { s?.fields.first { $0.label == label }?.id }
+        check(after?.fields.count == (before?.fields.count ?? 0) + 1 && id(before, "Postcode") == id(after, "Postcode") && id(before, "I accept the terms") == id(after, "I accept the terms"),
+              "revealing a Province select leaves the postcode's and the terms box's ids as they were")
+        let (shop2, claude, jev, user) = (makePracticeShop(start: "/checkout"), ScriptedSystem2(), ScriptedSystem1(policy: .init(
+            shape: .action, wanted: { a, _ in a == "/checkout" ? "Click the button \"Place order\"" : nil }, doneAt: ["/welcome"])), ScriptedUser())
+        claude.taskBank = [("country", "Canada"), ("province", "Ontario"), ("postcode", "M5V 2T6"), ("terms", ValueBank.askUser)]
+        user.onNeedsYou = { [unowned shop2] _ in shop2.userTicks("terms") }
+        let r = await runTask("Order it to Canada, postcode M5V 2T6.", shop: shop2, system1: jev, system2: claude, user: user)
+        check(r.outcome == .finished && shop2.value("province") == "Ontario" && shop2.value("postcode") == "M5V 2T6", "the form is filled around the field that appeared", "\(r.outcome) \(shop2.log)")
+        check(!shop2.log.contains { $0.contains("fill terms") } && shop2.value("terms") == "true", "and the terms box stayed the person's to tick")
+    }
+
+    print("-- a submit the page makes as a field is filled is held, and gated")
+    do {
+        let (shop, claude, jev, user) = signupSetup()
+        shop.submitsOnFill = ["phone"]
+        user.decisions = [.stop]
+        let r = await runTask("Create an account for Robin Vale.", shop: shop, system1: jev, system2: claude, user: user)
+        check(r.outcome == .stopped && shop.submits.isEmpty && shop.log.contains("held a submit") && user.asked == ["the form"], "a held submit that the person stops never goes", "\(r.outcome) \(shop.submits) \(user.asked)")
+        let (shop2, claude2, jev2, user2) = signupSetup()
+        shop2.submitsOnFill = ["phone"]
+        let r2 = await runTask("Create an account for Robin Vale.", shop: shop2, system1: jev2, system2: claude2, user: user2)
+        check(user2.asked.first == "the form" && shop2.log.contains("release held submit") && (shop2.log.firstIndex(of: "held a submit") ?? Int.max) < (shop2.log.firstIndex(of: "release held submit") ?? -1),
+              "an allowed one is let through after the person was asked", "\(user2.asked) \(shop2.log) \(r2.outcome)")
+    }
+
+    print("-- a link on a page with a form asks")
+    do {
+        let shop = makePracticeShop(start: "/checkout")
+        let user = ScriptedUser()
+        user.decisions = [.stop]
+        let jev = ScriptedSystem1(policy: .init(shape: .action, wanted: { _, _ in "Click the link \"Gift options\"" }))
+        let r = await runTask("Leave the checkout.", shop: shop, system1: jev, system2: ScriptedSystem2(), user: user)
+        check(r.outcome == .stopped && user.askedKinds == [.link] && user.asked == ["Gift options"] && !shop.log.contains { $0.hasPrefix("click link") }, "a link that does something, on a form page, waits for Allow", "\(r.outcome) \(user.asked) \(shop.log)")
+    }
+
+    print("-- each conversation is told the other's replies")
+    do {
+        let (shop, claude, jev, user) = signupSetup(masksPhone: true)
+        jev.policy.wanted = { address, call in address == "/signup" ? (call == 1 || call == 3 ? nil : "Click the button \"Create account\"") : nil }
+        let r = await runTask("Create an account for Robin Vale, robin@example.com, phone +1 503 555 0142.", shop: shop, system1: jev, system2: claude, user: user)
+        check(claude.messages.contains { $0.role == .values && $0.text.contains("the guidance conversation replied") }, "the values conversation hears the guidance's reply", "\(r.outcome)")
+        check(claude.messages.contains { $0.role == .guidance && $0.text.contains("the values conversation replied") }, "the guidance conversation hears the values'")
+    }
+
     print("-- a form that marks no field required still waits for a value on its way before it submits")
     do {
         let (shop, claude, jev, user) = signupSetup()
@@ -349,6 +406,33 @@ func controlChecks() async {
         check(off.outcome == .stopped, "turning the Tasks switch off stops the task at its next step", "\(off.outcome)")
     }
 
+    print("-- a pause stops the next fill, not just the next turn")
+    do {
+        let (shop, claude, jev, user) = signupSetup()
+        let control = TaskControl()
+        var touched = false
+        shop.afterFill = { _ in if !touched { touched = true; control.userActed() } }   // the person clicks in the page as the first field is filled
+        var logAtPause = -1, logAtResume = -2
+        let r = await runTask("Create an account for Robin Vale.", shop: shop, system1: jev, system2: claude, user: user, control: control, onStep: { step in
+            if step.text.hasPrefix("Paused") {
+                logAtPause = shop.log.count
+                Task { try? await Task.sleep(nanoseconds: 60_000_000); logAtResume = shop.log.count; control.resume() }
+            }
+        })
+        check(logAtPause > 0 && logAtPause == logAtResume && r.outcome == .finished, "no second field was filled while the task was paused", "\(logAtPause) \(logAtResume) \(r.outcome)")
+    }
+
+    print("-- below the bar System 1 asks Claude and waits, however often")
+    do {
+        let claude = ScriptedSystem2()
+        claude.guidance = Array(repeating: "{\"do\": \"wait\"}", count: 10)
+        let jev = ScriptedSystem1(policy: .init(shape: .number, wanted: { _, _ in "Click the link \"Delivery\"" }, confidence: 0.5))
+        let shop = makePracticeShop(start: "/help")
+        let r = await runTask("Find out how much delivery to Canada costs.", shop: shop, system1: jev, system2: claude, user: ScriptedUser()) { $0.maxClaudeMessages = 8 }
+        if case .gaveUp = r.outcome { check(!shop.log.contains { $0.hasPrefix("click") } && claude.messages.filter { $0.role == .guidance }.count >= 5, "it asked again and again and never acted below 0.7 on its own", "\(shop.log)") }
+        else { check(false, "it never acts below 0.7 on its own", "\(r.outcome) \(shop.log)") }
+    }
+
     print("-- no progress bars the action and goes back")
     do {
         let shop = makePracticeShop(start: "/")
@@ -397,6 +481,38 @@ func controlChecks() async {
         }
         let r = await runTask("Create an account for Robin Vale.", shop: shop, system1: jev, system2: claude, user: user) { $0.now = { clock }; $0.maxSeconds = 300 }
         check(r.outcome == .finished, "an hour waiting for the person did not spend a five minute budget", "\(r.outcome)")
+    }
+
+    print("-- Jev gone from TypeSafe: Claude takes over at once, not after three failures")
+    do {
+        let gone = ScriptedSystem1(policy: .init(shape: .number))
+        gone.unavailable = true
+        let claude1 = ScriptedSystem1(name: "Claude", policy: .init(shape: .number, wanted: { a, _ in a == "/help" ? "Click the link \"Delivery\"" : "Read out text" }, score: { l, _ in l == "Delivery" ? 0.9 : 0.1 }, keyword: "costs"))
+        let switcher = System1Switch(jev: gone, claude: claude1)
+        var told: [String] = []
+        switcher.onWithoutJev = { told.append($0) }
+        let r = await runTask("Find out how much delivery to Canada costs.", shop: makePracticeShop(start: "/help"), system1: switcher, system2: ScriptedSystem2(), user: ScriptedUser())
+        check(found(r) != nil && told.count == 1, "the first call that finds Jev unavailable gives it up, once", "\(r.outcome) \(told)")
+        check(r.runner.stats.jevCalls == 0 && r.runner.stats.claudeCalls > 0, "and every System 1 call went to Claude")
+    }
+
+    print("-- every step has a log line without what it said")
+    do {
+        let (shop, claude, jev, user) = signupSetup()
+        let r = await runTask("Create an account for Robin Vale.", shop: shop, system1: jev, system2: claude, user: user)
+        let lines = r.steps.map(\.logLine)
+        check(lines.allSatisfy { $0.hasPrefix("step ") && $0.contains(" by ") && $0.contains(" s") } && !lines.contains { $0.contains("Robin") || $0.contains("signup") },
+              "a step's log line has its kind, actor and time, and none of its words", "\(lines)")
+    }
+
+    print("-- the stuck rules say so aloud")
+    do {
+        let shop = makePracticeShop(start: "/")
+        shop.pages["/stuck"] = .init(title: "Stuck", texts: ["Nothing here."], buttons: [.init(label: "Refresh", submits: false)])
+        shop.pages["/"]!.body.append(("Stuck page", "/stuck"))
+        let jev = ScriptedSystem1(policy: .init(shape: .number, wanted: { a, _ in a == "/" ? "Click the link \"Stuck page\"" : a == "/stuck" ? "Click the button \"Refresh\"" : nil }, score: { _, _ in 0.1 }))
+        let r = await runTask("Find something.", shop: shop, system1: jev, system2: ScriptedSystem2(), user: ScriptedUser()) { $0.maxSystem1Turns = 12 }
+        check(r.steps.contains { $0.milestone == .stuck("Stuck") }, "the rule that fires says \"I'm stuck on Stuck\"", "\(r.steps.compactMap(\.milestone))")
     }
 
     print("-- without Jev")

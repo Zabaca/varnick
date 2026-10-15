@@ -12,6 +12,8 @@ final class FakeShop: TaskPage {
         var required = false
         var options: [String] = []
         var placeholder = ""
+        /// Shown only while another field has this value: a Province select that a country reveals.
+        var showWhen: (name: String, value: String)?
     }
 
     struct ButtonSpec {
@@ -47,6 +49,11 @@ final class FakeShop: TaskPage {
     private var errors: [String: String] = [:]
     /// Raised by a check that wants the page unreadable.
     var failSnapshot = false
+    /// Filling one of these fields makes the page try to submit its form (an onchange handler calling `submit()`): the bridge holds it.
+    var submitsOnFill: Set<String> = []
+    private(set) var heldSubmit = false
+    /// Called after each fill, with the field's name.
+    var afterFill: (String) -> Void = { _ in }
 
     init(start: String) { current = start }
 
@@ -81,9 +88,11 @@ final class FakeShop: TaskPage {
         guard let page = pages[current] else { return PageSnapshot(address: current, title: "Not found") }
         var links: [PageLink] = []
         for (i, l) in (page.bare ? [] : page.header).enumerated() { links.append(PageLink(id: "h\(i)", label: l.label, href: l.href, inBody: false, isSelf: l.href == current)) }
-        for (i, l) in page.body.enumerated() { links.append(PageLink(id: "l\(i)", label: l.label, href: l.href, inBody: true, isSelf: l.href == current)) }
+        for (i, l) in page.body.enumerated() {
+            links.append(PageLink(id: "l\(i)", label: l.label, href: l.href, inBody: true, sameSite: l.href != "#", isSelf: l.href == current, navigates: l.href != "#"))
+        }
         let buttons = page.buttons.enumerated().map { PageButton(id: "b\($0.offset)", label: $0.element.label, submits: $0.element.submits, isSearch: $0.element.isSearch) }
-        let fields = page.fields.map { f -> PageField in
+        let fields = page.fields.filter { f in f.showWhen.map { values[$0.name] == $0.value } ?? true }.map { f -> PageField in
             let isSecret = SecretField.isSecret(type: f.type, autocomplete: f.autocomplete)
             return PageField(id: "f.\(f.name)", label: f.label, type: f.type, name: f.name, placeholder: f.placeholder, autocomplete: f.autocomplete,
                              required: f.required, options: f.options, value: isSecret ? secretValues[f.name] : values[f.name],
@@ -101,6 +110,7 @@ final class FakeShop: TaskPage {
             let index = Int(id.dropFirst()) ?? 0
             let link = isHeader ? page.header[index] : page.body[index]
             log.append("click link \(link.label)")
+            if link.href == "#" { return }
             history.append(current)
             current = link.href
             errors = [:]
@@ -120,7 +130,7 @@ final class FakeShop: TaskPage {
         if let go = result.go { history.append(current); current = go }
     }
 
-    func fill(field id: String, value: String) async throws {
+    func fill(field id: String, value: String) async throws -> Bool {
         let name = String(id.dropFirst(2))
         guard let spec = pages[current]?.fields.first(where: { $0.name == name }) else { throw FakeError.unreadable }
         precondition(!SecretField.isSecret(type: spec.type, autocomplete: spec.autocomplete), "the harness filled a secret field")
@@ -128,6 +138,20 @@ final class FakeShop: TaskPage {
         if spec.type == "tel", masksPhone, v.hasPrefix("+") { v = "(150) 355-5014" }
         values[name] = v
         log.append("fill \(name)=\(value)")
+        afterFill(name)
+        if submitsOnFill.contains(name) {
+            heldSubmit = true
+            log.append("held a submit")
+            return true
+        }
+        return false
+    }
+
+    func releaseBlockedSubmit() async throws {
+        guard heldSubmit, let label = pages[current]?.buttons.first?.label else { return }
+        heldSubmit = false
+        log.append("release held submit")
+        press(label)
     }
 
     func goBack() async throws {
@@ -193,6 +217,19 @@ func makePracticeShop(start: String) -> FakeShop {
         ],
         buttons: [.init(label: "Create account")])
     shop.pages["/terms"] = .init(title: "Terms", texts: ["Be kind."])
+    // A checkout step: a country reveals a Province select between the country and the postcode.
+    shop.pages["/checkout"] = .init(
+        title: "Delivery address", body: [("Back to cart", "/shop"), ("Gift options", "#")], texts: ["Where should it go?"],
+        fields: [
+            .init(name: "country", label: "Country", type: "select", required: true, options: ["United States", "Canada"]),
+            .init(name: "province", label: "Province", type: "select", required: true, options: ["Ontario", "Quebec"], showWhen: ("country", "Canada")),
+            .init(name: "postcode", label: "Postcode", autocomplete: "postal-code", required: true),
+            .init(name: "terms", label: "I accept the terms", type: "checkbox", required: true),
+        ],
+        buttons: [.init(label: "Place order")])
+    shop.onSubmit["/checkout"] = { shop in
+        (shop.value("terms") == "true" && !(shop.value("postcode") ?? "").isEmpty) ? ("/welcome", [:]) : (nil, ["postcode": "Check the form"])
+    }
     shop.pages["/welcome"] = .init(title: "Welcome", texts: ["Your account is ready."])
     shop.onSubmit["/signup"] = { shop in
         var errors: [String: String] = [:]

@@ -117,6 +117,12 @@ public enum Gate {
         if button.isSearch { return false }
         return button.submits || page.hasForm
     }
+
+    /// Whether a click on `link` waits for the person's Allow: any link on a page with a form (a step of a checkout), and a link with no real
+    /// address to go to (`#`, `javascript:`, a button in a link's clothes), whose click does what the page's script says.
+    public static func asks(_ link: PageLink, on page: PageSnapshot) -> Bool {
+        !link.navigates || page.hasForm
+    }
 }
 
 /// Every page in order, the action taken there and what it led to: what Claude is shown whole.

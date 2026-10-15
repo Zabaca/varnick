@@ -27,8 +27,10 @@ public protocol TaskPage: AnyObject {
     func snapshot() async throws -> PageSnapshot
     func click(_ id: String) async throws
     /// A text field, a textarea or a select (by its option's label) takes `value`; a radio takes the option's label; a checkbox `true` or
-    /// `false`. Never a secret field: the harness does not call this for one.
-    func fill(field id: String, value: String) async throws
+    /// `false`. Never a secret field: the harness does not call this for one. While it fills, a form submit the page makes (its own onchange
+    /// handler calling `submit()`) is blocked; the result says one was, and `releaseBlockedSubmit` lets it through once the person has allowed it.
+    func fill(field id: String, value: String) async throws -> Bool
+    func releaseBlockedSubmit() async throws
     func goBack() async throws
     /// Opens a link's address in the pane: a branch of the frontier on another page.
     func open(_ href: String) async throws
@@ -83,6 +85,13 @@ public enum Answer: Equatable, Sendable {
 }
 
 /// System 1: Jev on TypeSafe, or Claude in its place. The state is what it reads; the questions are asked of it in one call.
+/// Jev can't be used now (the relevance filter has left TypeSafe, or no key is saved): the rest of the task goes to Claude at once, without waiting
+/// for three failures.
+public struct System1Unavailable: Error {
+    public let reason: String
+    public init(_ reason: String) { self.reason = reason }
+}
+
 public protocol System1: AnyObject {
     /// "Jev" or "Claude", for the steps column.
     var name: String { get }
@@ -120,9 +129,19 @@ public enum Decision: Equatable, Sendable {
 }
 
 /// The user: asked for what is theirs. Every call returns when they have answered, resumed or stopped.
+public enum GateKind: Sendable {
+    /// A form submit.
+    case submit
+    /// A click on a link that does something other than go to a page, or any link on a page with a form.
+    case link
+
+    /// "Submit Shipping details?" / "Open Terms of service?"
+    public func question(_ label: String) -> String { (self == .submit ? "Submit " : "Open ") + label + "?" }
+}
+
 public protocol TaskUser: AnyObject {
     /// "Submit Shipping details? Allow / I'll do it."
-    func decide(submit label: String) async -> Decision
+    func decide(_ label: String, kind: GateKind) async -> Decision
     /// "Type your password in the page, then Resume": returns when the user resumed, or false when they stopped the task.
     func needsYou(_ what: String) async -> Bool
 }
@@ -135,11 +154,25 @@ public struct Step: Equatable, Sendable {
     public var text: String
     /// What the line is about, for speaking and styling.
     public var milestone: Milestone?
+    /// What kind of step it was (`frontier`, `click`, `fill`, `ask`, ...), for the log.
+    public var kind: String
+    /// System 1's probability for the choice, when it made one.
+    public var p: Double?
+    /// Seconds since the step before.
+    public var seconds: Double
 
-    public init(_ actor: Actor, _ text: String, milestone: Milestone? = nil) {
+    public init(_ actor: Actor, _ text: String, milestone: Milestone? = nil, kind: String = "note", p: Double? = nil, seconds: Double = 0) {
         self.actor = actor
         self.text = text
         self.milestone = milestone
+        self.kind = kind
+        self.p = p
+        self.seconds = seconds
+    }
+
+    /// The step as the log has it: its kind, who acted, the probability and the time, and nothing it said (no address, label, value or text).
+    public var logLine: String {
+        "step \(kind) by \(actor.rawValue)" + (p.map { String(format: " p=%.2f", $0) } ?? "") + String(format: " in %.1f s", seconds)
     }
 }
 
