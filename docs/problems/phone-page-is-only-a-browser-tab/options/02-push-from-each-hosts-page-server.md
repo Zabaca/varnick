@@ -1,36 +1,65 @@
 ---
 problem: phone-page-is-only-a-browser-tab
-title: Option 01, plus Web Push from each host's page server for the sessions it hosts
-summary: Option 01, plus standard Web Push. Each host's page server watches the turns of its own Claude panes, whoever is in control of them. When a turn finishes, stops on a dialog or fails, and is still unanswered after a short grace, the server pushes to every subscribed device that doesn't have that pane open. It decides by sessions-finish-unnoticed option 01's table and uses its option 02's wording. The push goes from the host to Apple's or Google's push service, encrypted end to end. It is padded to one size and carries only ids and the kind of notice, never session content. The phone's worker then reads the session's title over the tailnet when it can, and shows a generic notification when it can't. Each host has its own signing key (in the Keychain on a Mac, an owner-only file on a headless host) and its own subscriptions. The phone turns notifications on per host, inside the installed app on an iPhone and in any Chrome tab on Android. One protocol bump, for the Esc mark on a turn. Rough effort is five days on top of option 01.
+title: Option 01, plus Web Push from each host's page server, routed by where the user is
+summary: Option 01, plus standard Web Push, sent only when the user isn't at the Mac driving the session. Each host's page server watches the turns of its own Claude panes and decides by sessions-finish-unnoticed option 01's table, so the Mac and the phone use one rule. It routes each notice by the pane's controller. A Mac whose user is present gets its own notice (that problem's option 01) and the phone stays quiet. If that Mac locks, sleeps or goes idle while the notice still stands, the push goes then. A Mac that is away or can't be told, and the phone in control, get the push after a 10-second settle. Each Mac reports whether its user is present (input idle time, screen locked or display asleep) to the hosts it follows, on the status requests it already sends every 5 s. The push goes from the host to Apple's or Google's push service, encrypted end to end, padded to one size, and holds ids and the kind of notice, never session content. The phone's worker reads the title over the tailnet when it can. Each host has its own signing key (in the Keychain on a Mac, an owner-only file on a headless host) and its own subscriptions. One protocol bump. Rough effort is six and a half days on top of option 01.
 status: proposed
 ---
 
 ## Solution
 
-### Who sends
+### One rule, two halves
 
-**The session's host, and only it.** Each host's page server pushes for the Claude panes of its own open tabs. That covers a session the host itself, a paired Mac or a device is in control of, and every session on a headless host, which has no Varnick app.
-
-A session has one host, so it raises one push however many Macs show it. The phone turns notifications on in the page of each host it cares about.
-
-### When
-
-The rule is `sessions-finish-unnoticed` option 01's table, applied to the turn words `tabs` reports, from the previous word to the new one:
+**When** something is worth telling the user is `sessions-finish-unnoticed` option 01's table, applied to the turn words `tabs` reports:
 
 | From | To | Notice |
 |---|---|---|
 | working or background | waiting, not from Esc or Deny | **Done** |
 | any other word | permission, question, plan or input | **Needs you**, saying which |
-| working or background | failed (once that word exists) | **Stopped on an error**, with the kind |
-| anything | working or background | none; drops a notice waiting out its grace |
+| working or background | failed (that option's new word) | **Stopped on an error**, with the kind |
+| anything | working or background | none; drops a standing notice |
 | permission, question, plan or input | waiting | none; drops it too (answered, denied or Esc) |
 
-- **The first word the server reads for a pane is its starting point.** That covers a server start, a pane it hasn't seen before and a host that answers again.
-- **Background stays silent** until the work drains and the turn reaches waiting.
-- **Grace.** A notice is pushed only if it still stands after its grace: 30 s for Needs you and an error, 60 s for Done. A dialog answered at a Mac within the grace sends nothing.
-- **The pane open on the phone stays quiet.** A device that has the pane open, its terminal or its live view, gets no push for it. The page holds those open only while it is visible.
-- **One notice per pane.** A newer one replaces a notice still in its grace.
-- **A switch for each kind.** Each subscription has switches for Needs me, Done and Errors, all on by default.
+- **The first word read for a pane is its starting point.**
+- **Background stays silent** until it drains.
+
+**Where** the notice goes depends on the pane's **controller**: the Mac or device in its control label, or the host when the label names nobody.
+- Control is a handoff with one keyboard, so the controller is the only place the session can have been typed into since it was taken.
+- That makes the controller where the user last drove the session, and on paired Macs it can differ from the host. A session on host A driven from Mac B has B as its controller.
+
+| The controller | Mac notice (`sessions-finish-unnoticed`) | Push to the phone |
+|---|---|---|
+| A Mac whose user is **present** | on that Mac, unless the pane is on screen there | none while it stays present; sent when it turns away with the notice still standing |
+| A Mac whose user is **away** | on that Mac, waiting for their return | after the settle |
+| A Mac that **can't be told** (no report for 20 s, or its client detached) | whatever that Mac does | after the settle |
+| A **device** (the phone) | none: the host's pane shows a card | after the settle |
+
+- **Present** means:
+  - the screen is unlocked;
+  - the display is awake;
+  - the Mac's own login session is the active one;
+  - the last keyboard, mouse or trackpad input was under 2 minutes ago.
+
+  Anything else is **away**.
+- **The settle** is 10 seconds. A notice still standing then is pushed. It absorbs a turn that flickers and the up to 5 seconds a presence report takes.
+- **A device with the pane open gets no push for it.** Open means its terminal or its live view, which the page holds only while visible. That holds in every row.
+- **Each subscription has switches** for Needs me, Done and Errors, all on by default.
+
+The Mac half (the notice on the controlling Mac, quiet when the pane is on screen) is `sessions-finish-unnoticed` option 01's, unchanged. This option is the phone half.
+
+### Presence: how the host learns where the user is
+
+- **Each Mac's Varnick reads its own presence:**
+  - the seconds since the last input;
+  - whether the screen is locked, the display asleep, or its login session switched away.
+
+  It needs no permission (inferred).
+- **For itself as a host,** it writes those facts to a small owner-only file for its page server. It writes on every change, and at least every 10 s while it runs.
+- **For the hosts it follows,** it adds the same facts to the `status` request it already sends every 5 s. A Mac sends that request to each host it has a pane on, which includes every host where it is in control of a session.
+  - The host's relay writes them to that Mac's own presence file, beside the host's.
+  - Only a listed Mac's report is taken. A device's is ignored.
+- **The facts are raw: idle seconds and away flags.** The page server alone turns them into present or away, so the threshold lives in one place.
+- **A report older than 20 s means "can't be told":** the Mac is asleep, Varnick isn't running, the link is down, or it runs an older build. A controller with its client detached (Last controlled on) counts the same. Both lean toward pushing.
+- **What it costs.** Presence never leaves the user's own machines. It goes over the SSH link that already carries the status requests, and never into a push.
 
 ### What a push carries, and what the phone shows
 
@@ -40,7 +69,7 @@ The rule is `sessions-finish-unnoticed` option 01's table, applied to the turn w
 - the kind of notice;
 - for an error, its kind's word ("rate limit").
 
-It holds no title, prompt, folder, project or screen. Every payload is padded to one size, and every push is sent alike: one-hour TTL, high urgency, no Topic. So Apple and Google see that a push went, when, and to which browser, and nothing that tells a Done from a Needs you.
+It holds no title, prompt, folder, project or screen. Every payload is padded to one size, and every push is sent alike: one-hour TTL, high urgency, no Topic. So Apple and Google see that a push went, when, and to which browser, and nothing that tells one kind from another.
 
 **The notification.** The worker knows its host's name, since it is served with it (option 01). On a push it asks the host for the tab, with a 3-second deadline, over the tailnet, as the page itself asks.
 
@@ -49,18 +78,20 @@ It holds no title, prompt, folder, project or screen. Every payload is padded to
 | yes | the session's title, as the board shows it | "Needs permission · Mac Studio" |
 | no (off the tailnet, the host asleep, slow) | "Mac Studio" | "A session needs permission" |
 
-The wordings are option 02's of `sessions-finish-unnoticed`:
+The wordings are `sessions-finish-unnoticed` option 02's:
 - "Needs permission", "Has a question", "Plan to approve" and "Waiting on an MCP server";
 - "Done";
 - "Stopped on an error: rate limit".
 
-The title therefore never passes through a push service. It shows only when the phone could open the session anyway.
+The title never passes through a push service.
 
 **A tap** focuses the app's open window, or opens one, at the tab and pane (`#t=…&p=…`). Off the tailnet that is option 01's note.
 
-**One notification per pane.** A newer notice for a pane replaces its notification and alerts again. A turn that moved on can't withdraw one, because every push must show a notification. So a notification goes when:
+**One notification per pane.** A newer notice for a pane replaces its notification and alerts again. A notification goes when:
 - the page opens that tab, which closes the tab's notifications;
 - the user swipes it away.
+
+A push can't withdraw one, since every push must show a notification.
 
 **The badge.** On iOS the app's badge is the number of its standing notifications, cleared when the app opens. Android shows its own dot.
 
@@ -72,7 +103,7 @@ Home gets a Notifications section at its foot, per host like everything on the p
 - **Blocked.** The permission was refused, and it says where the phone's settings allow it again.
 - **On.** The three switches, Send a test, and Turn off.
 
-The page checks its subscription at each load. If it was made with a key the host no longer has, the page subscribes again without asking, since the permission stands.
+The page checks its subscription at each load. If it was made with a key the host no longer has, the page subscribes again without asking.
 
 ### iOS and Android
 
@@ -86,39 +117,43 @@ The page checks its subscription at each load. If it was made with a key the hos
 
 ### Away from the host's network
 
-- **Pushes come wherever the phone is,** Tailscale on or off, because the host reaches the push service over its own internet connection.
-- **Titles and taps need the tailnet.** Without it the notification is the generic one, and a tap shows the offline note.
-- **A host that is asleep or offline sends nothing.** A push is held at most an hour by the push service, then dropped, so a phone that was off doesn't get a pile of stale ones.
+- **Pushes come wherever the phone is,** Tailscale on or off: the host reaches the push service over its own internet connection.
+- **Titles and taps need the tailnet.**
+- **A host that is asleep or offline sends nothing.** A push is held at most an hour by the push service, then dropped.
 
 ## Trade-offs
 
-- **Every host and every controller.** A headless host pushes too, and so does a session the phone started and left. At the desk, the Mac's own notices (if `sessions-finish-unnoticed` is built) are separate, and the grace keeps the phone quiet for what the user answers there.
-- **Set up per host.** One permission per host. On an iPhone that means one installed app per host (option 03 is the single-app alternative).
-- **The grace is a guess at "away".** A Done left unread at the desk for a minute still buzzes the phone. Nothing on a host knows whether the user is at some Mac (open question 4).
-- **A third party carries every push.** It can't read the payload, but it sees when and how often, from which address, to which phone. This is the page server's first request outside the tailnet. Today it reaches only the host's relay and Tailscale.
-- **A signing key per host, and it must never change.** Every subscription is bound to it.
-  - On a Mac the key rests in the Keychain. While the server runs it is in the server's environment, which the user's own processes can read, as they can read everything else of the user's.
+- **The phone buzzes only when the user is away from the Mac driving the session,** or drives it from the phone. That covers a session the phone started and every session on a headless host.
+- **Presence is a guess at attention.**
+  - A user reading a long answer for two minutes without touching anything counts as away, and the phone buzzes.
+  - A user present at a Mac that isn't the controller (they walked to the Air without taking over) counts as away from the session, and the phone buzzes (open question 3).
+- **It leans toward pushing.** Every case where a host can't tell (an asleep Mac, an older build, a dropped link) pushes rather than stays silent.
+- **Presence reaches a host only from Macs that follow it.** A Mac with no pane on that host never reports to it, which is only a gap when the user is at a Mac that isn't the controller.
+- **Set up per host.** One permission per host. On an iPhone, one installed app per host (option 03 is the single-app alternative).
+- **A third party carries every push.** It can't read the payload, but sees when and how often, from which address, to which phone. This is the page server's first request outside the tailnet.
+- **A signing key per host that must never change,** since every subscription is bound to it.
+  - On a Mac it rests in the Keychain, and sits in the server's environment while the server runs.
   - On a headless host it is an owner-only file, as the proxy's TLS key is.
-- **A protocol bump** for the Esc mark, so every Mac and the headless host run one commit.
-- **The page server reads the dates of Varnick's turn files.** It does this so it doesn't run a relay every few seconds, and it is a new coupling to the pane folder's layout.
-- **Errors come later.** "Stopped on an error" needs `sessions-finish-unnoticed` option 01's failed word. Until then a failed turn pushes Done.
-- **Late by design.** A change is seen within about 2 s, but a push leaves only after the grace.
+- **One protocol bump,** for the Esc mark, the presence report and the controller's id for the host's own page server. Every Mac and the headless host run one commit.
+- **New couplings.** The page server reads the dates of Varnick's turn files and the presence files, rather than running a relay every few seconds.
+- **Needs the Mac half for errors.** "Stopped on an error" needs `sessions-finish-unnoticed` option 01's failed word, and the order below builds that first.
 
 ## User Stories
 
-1. As the user away from my desk, I want a notification on my phone when a session on any of my hosts waits on a permission dialog, a question, a plan or an MCP request, so that it doesn't sit idle until I'm back.
-2. As the user, I want a notification when a session finishes its turn, and when it stops on an API error with the kind, so that I can tell a rate limit from done.
-3. As the user, I want no notification for something I answered at a Mac within a few seconds, so that my phone doesn't buzz while I'm at the desk working.
-4. As the user, I want no notification for the session I have open on the phone.
-5. As the user, I want the notification to name the session when my phone is on the tailnet, and to name only the host when it isn't, so that no session text goes through Apple's or Google's servers.
-6. As the user, I want to tap a notification and land on that tab and pane in the host's page.
-7. As the user, I want one notification per session, the latest, and a session's notifications gone when I open its tab.
-8. As the user, I want to turn notifications on for each host's page, with a switch for each kind and a test, and off again.
-9. As the user on an iPhone, I want the page to tell me to add it to the Home Screen first, since that is the only place iOS allows push.
-10. As the user, I want a session the phone started, or one on the headless host, to notify like any other.
-11. As the user, I want a device I remove from a host to stop getting its notifications at once.
-12. As the user, I want notifications to keep working across Varnick restarts, rebuilds and upgrades without subscribing again.
-13. As the user, I want to see in Settings which of my devices get notifications from this Mac.
+1. As the user at my Mac, I want a session I drive from that Mac to notify me there and not buzz my phone.
+2. As the user who walked away (screen locked, display asleep or idle for two minutes), I want the phone to get the notice that is still standing on my Mac, so that the session doesn't wait for my return.
+3. As the user driving a session on one Mac from another, I want the Mac I drive it from to be the one that notifies, and the phone to buzz only when I'm away from it.
+4. As the user away from my desk, I want a notification on my phone when a session waits on a permission dialog, a question, a plan or an MCP request, when it finishes, and when it stops on an API error with the kind.
+5. As the user, I want a session the phone started, or one on the headless host, to notify the phone.
+6. As the user, I want no notification for the session I have open on the phone.
+7. As the user, I want the notification to name the session when my phone is on the tailnet and only the host when it isn't, so that no session text goes through Apple's or Google's servers.
+8. As the user, I want to tap a notification and land on that tab and pane.
+9. As the user, I want one notification per session, the latest, and a session's notifications gone when I open its tab.
+10. As the user, I want to turn notifications on for each host's page, with a switch for each kind and a test, and off again.
+11. As the user on an iPhone, I want the page to tell me to add it to the Home Screen first.
+12. As the user, I want a device I remove from a host to stop getting its notifications at once.
+13. As the user, I want notifications to keep working across Varnick restarts, rebuilds and upgrades without subscribing again.
+14. As the user, I want to see in Settings which of my devices get notifications from this Mac.
 
 ## Implementation Decisions
 
@@ -133,32 +168,32 @@ The page checks its subscription at each load. If it was made with a key the hos
   - Gone (404, 410) drops the subscription.
   - Too many or a server error is retried once after its Retry-After or 30 s, then dropped.
   - Anything else is logged by status.
-- **Caps.** At most one push per pane per grace, and 60 per device an hour. Past that, pushes are dropped and counted in the log.
-- **The token's contact (`sub`)** is Varnick's public site address, the same on every install, never the user's (open question 5).
-- **Logs** hold the device's name, the kind, the status and the time. Never the endpoint, the payload, a title or the key.
+- **Caps.** At most one push per pane per settle, and 60 per device an hour. Past that, pushes are dropped and counted in the log.
+- **The token's contact (`sub`)** is Varnick's public site address, the same on every install.
+- **Logs** hold the device's name, the kind, the status and the time. Never the endpoint, the payload, a title, presence or the key.
 
 ### The key
 
-- **One P-256 key pair per host.** Only the public key ever reaches the page, from a GET under `/api/`.
+- **One P-256 key pair per host.** Only the public key reaches the page, from a GET under `/api/`.
 - **On a Mac.** Varnick makes the key when it first starts the server with the page on, and keeps the private key as a Keychain item of its own.
   - It gives the key to the server in its environment.
-  - The server's session gets a label with the public key's fingerprint, so a different key restarts the server, as the page's digest does today.
+  - The server's session gets a label with the public key's fingerprint, so a different key restarts the server.
   - A build signed ad hoc may be asked for Keychain access after a rebuild, as for any key Varnick keeps.
-- **On a headless host.** The server makes the key at its first start and keeps it as an owner-only file in its own owner-only folder, beside the proxy's certificate. The installer gives the unit that folder, as it does now.
-- **If the key is lost,** the host makes a new one. Every subscription is stored with the fingerprint of the key it was made for, so the old ones are dropped and the pages subscribe again at their next open.
+- **On a headless host.** The server makes the key at its first start and keeps it as an owner-only file in its own owner-only folder, beside the proxy's certificate.
+- **If the key is lost,** a new one is made. Subscriptions carry the fingerprint of the key they were made for, so old ones are dropped and the pages subscribe again at their next open.
 
 ### Subscriptions
 
-- **Where they are kept.** One owner-only file in the page server's owner-only folder, written only by the page server. Nothing goes in UserDefaults or `sessions.json`, and a missing file means no subscriptions.
+- **Where they are kept.** One owner-only file in the page server's owner-only folder, written only by the page server. Nothing goes in UserDefaults or `sessions.json`, and a missing file means none.
 - **What each holds:**
   - the device's id;
   - the endpoint and its two keys;
   - the key fingerprint;
   - the three switches;
   - when it was added, and the last success and failure.
-- **At most four per device** (Chrome, Safari and the installed app are separate). The same endpoint again replaces its entry.
+- **At most four per device.** The same endpoint again replaces its entry.
 - **When one is dropped:**
-  - the device is no longer listed, which is checked at every send, so removing a device stops it at once;
+  - the device is no longer listed, checked at every send;
   - the push service says it is gone;
   - the page turns it off;
   - the key changed.
@@ -168,113 +203,178 @@ The page checks its subscription at each load. If it was made with a key the hos
   - turn off;
   - send a test.
 
-  All of them sit behind the existing Host, caller, Origin and fetch-site checks. The changes are POSTs with JSON.
+  All of them sit behind the existing Host, caller, Origin and fetch-site checks.
+
+### Presence
+
+- **Varnick reads it.** A presence reader in Varnick gives idle seconds (the system's seconds since the last input event of any kind) and one away flag: screen locked, display asleep, or login session not active.
+  - It learns of the lock and sleep from the system's notifications, and reads idle time when it reports.
+  - It is one small type with no UI. Its first use is this option. `sessions-finish-unnoticed` can use it later if wanted.
+- **One file per Mac, each with one writer and written whole by rename:**
+  - the host's own presence file, written by its running Varnick;
+  - a peer's presence file, written by the host's relay when that peer's `status` request carries presence.
+- **On a headless host,** only the relay writes them, since it has no user of its own.
+- **The page server reads the controller's file** when a notice stands, and reads the dates of all of them on its 2-second tick, so a Mac turning away is seen within seconds.
 
 ### Watching turns
 
-- **Only while a subscription exists,** so a host nobody subscribed to does nothing new.
+- **Only while a subscription exists.**
 - **Turn file dates.** The server keeps the Claude panes of its last `tabs` listing and reads the date of each one's turn file every 2 s. The folder holding the pane folders comes in its environment, from Varnick or the installer.
 - **When it asks `tabs`,** as the host itself:
-  - when a date changed, or the saved tabs did;
-  - every 15 s while a pane is in background or a notice waits out its grace;
+  - when a turn date or the saved tabs changed;
+  - every 15 s while a pane is in background or a notice stands;
   - every 60 s otherwise.
 
-  One ask serves both this and the proxy when both want one.
-- **The rule** is a pure function: the old and new word, the Esc mark, whether the device has the pane open, the switches and the time since the notice. It returns push, drop or nothing. It is the table above, and when `sessions-finish-unnoticed` option 01 is built in Swift, the two must say the same, as `mayBeListed` is kept in both languages.
+  One ask serves both this and the port proxy when both want one.
+- **The rule** is a pure function, with these inputs:
+  - the old and new word, and the Esc mark;
+  - the controller: the host, a listed Mac, a device, or unknown;
+  - whether its client is attached;
+  - its presence facts and their age;
+  - whether each device has the pane open;
+  - the switches;
+  - the time since the notice.
+
+  It returns push now, wait, or drop. The table half must say the same as `sessions-finish-unnoticed` option 01's Swift rule, as `mayBeListed` is kept in both languages.
 
 ### The protocol
 
-`tabs` gains, for a Claude pane whose waiting turn came from the user's Esc or Deny, a mark saying so. The reader already knows this. It is an optional field, sent to devices too.
-
-That bumps the protocol: Swift and the server's version together, every Mac and the headless host on one commit.
+One bump (27), Swift and the server's version together:
+- **`status` requests from a Mac gain an optional presence field:** idle seconds and the away flag. A device's is ignored.
+- **`tabs` gains, for a waiting Claude pane, a mark when the waiting came from the user's Esc or Deny.**
+- **The relay tells the host's own id the controller's id** in `tabs`, not only its name. It is the host's own page server, which already reads the device list and the paired Macs. A device is still told only its own id.
 
 ### The Mac's Settings and the installer
 
 - **Settings.** Under Serve the phone page, each listed device says whether it gets notifications from this Mac. That is read from the subscription file as a count, never an endpoint.
-- **The installer.** It gives the unit the panes folder, and nothing else new: the key and the subscriptions sit in the folder it already gives.
+- **The installer.** It gives the unit the panes folder. The key, the subscriptions and the presence files sit in folders it already gives.
 
 ### Documents
 
-- An ADR amending ADR 0011: the page server pushes to the vendors' push services outside the tailnet, with a key per host and subscriptions per device, and the payload rule.
-- The privacy doc's Phone page section: what a push carries, what Apple and Google see, and where the key lives.
+- An ADR amending ADR 0011: the page server pushes to the vendors' push services outside the tailnet, with a key per host and subscriptions per device. It also records the payload rule, and the routing by controller and presence.
+- The privacy doc:
+  - what a push carries, what Apple and Google see, and where the key lives;
+  - that each Mac tells the hosts it follows whether its user is present.
 - where-it-breaks:
-  - the payload is a privacy surface, and a field added to it is a privacy change;
+  - the payload is a privacy surface;
   - the endpoint allowlist;
-  - the key never changes once made;
+  - the key never changes;
   - every push shows a notification;
-  - the page server reads turn file dates.
-- CONTEXT.md's **Phone page** entry mentions notifications.
+  - the page server reads turn and presence files;
+  - a missing or stale presence report must push, never silence.
+- CONTEXT.md:
+  - the **Phone page** entry mentions notifications;
+  - a **Presence** entry: whether the user is at a Mac, as its idle time and lock say.
 
 ## Testing Decisions
 
 - **`bun test`:**
   - the encryption against RFC 8291's example;
   - a token verified with its public key;
-  - padding to one size;
-  - the endpoint allowlist (localhost, a tailnet address, http, another port, a redirect);
-  - the rule over every row, the Esc mark, the grace, the pane open on the device and each switch;
-  - subscription file reads with bad entries, the cap, and drops for an unlisted device and a changed key;
+  - padding;
+  - the endpoint allowlist;
+  - the rule over every row of both tables;
+  - present to away while a notice stands;
+  - a stale report;
+  - a detached controller;
+  - a device with the pane open;
+  - each switch;
+  - the subscription file's drops;
   - the notification text with and without a title.
+- **Swift, once a test target exists:** the presence report's encoding, and the relay writing a listed peer's report and ignoring a device's.
 - `make build` passes. The protocol versions match.
-- **By hand, after the user restarts Varnick, on the Android phone in Chrome and then in the installed app:**
-  - Turn notifications on: one permission prompt, and Send a test arrives.
-  - A dialog in a session on the Mac, left 30 s: Needs you arrives with the session's title. Answered within 10 s: nothing.
-  - A prompt that finishes, left a minute: Done. Esc mid-turn: nothing.
-  - Tap: the app opens on that tab and pane, and that tab's notifications go.
-  - The pane open on the phone: nothing for it.
-  - Tailscale off on the phone: a push still arrives, generic. Tap: the offline note.
-  - A session the phone started, then the app closed: it notifies.
-  - A session on the headless host: it notifies from that host's page.
-  - Remove the device in Settings: the next notice doesn't come.
-  - Restart Varnick and rebuild: notifications go on without subscribing again, and nothing comes for turns already waiting.
+- **By hand, after the user restarts Varnick, with the Android phone subscribed:**
+  - **Present at the host Mac:** a dialog in a session driven from that Mac gives a Mac notice and no push, even after two minutes of typing elsewhere.
+  - **Lock that Mac** with the notice standing: the push arrives within about 15 s.
+  - **Walk away** without locking: the push arrives about two minutes after the last input.
+  - **Paired Macs:** a session hosted on one Mac and driven from another. Present at the driving Mac: no push. Lock it: push. Put it to sleep: push within about 30 s.
+  - **The phone in control,** with the app closed: a notice pushes after 10 s. With its terminal open on that pane: nothing.
+  - **The headless host:** a session there driven from an idle Mac pushes.
+  - **The title and taps:** the title with Tailscale on, the generic text with it off, and a tap landing on the tab.
+  - **Remove the device:** the next notice doesn't come.
+  - **Restart and rebuild:** no subscribing again, and nothing for turns already waiting.
 - **On an iPhone, if one is at hand,** the same in the Home Screen app, plus the badge and the hint in Safari.
 
 ## Out of Scope
 
 - One app and one subscription for every host: option 03.
-- Actions on the notification (Allow, Deny, a reply).
-- Withdrawing a notification when a turn moves on.
-- Knowing whether the user is at a Mac (open question 4), and sharing "seen" between a Mac's notices and the phone's.
-- Notifications for terminals and other pane kinds, and for sessions with no pane on their host.
+- Notifying a Mac that isn't the controller when the user is there (open question 3).
+- Escalating by time while the user is present at the controlling Mac.
+- Actions on the notification, and withdrawing a notification by push.
+- Notifications for terminals and other pane kinds.
 - Declarative Web Push on iOS 18.4 and later.
 
 ## Further Notes
 
+### Asked by the user, 2026-10-14
+
+"If I'm on my Mac and the session was interacted with on the Mac, it doesn't buzz the phone." The coordinator relayed it with three asks:
+- notify on the Mac the user drives the session from, not the host;
+- push when the last interaction was from the phone, or that Mac is idle or locked;
+- consider a Mac notice first and a push later.
+
+The routing above is that. The escalation is by absence (the Mac turns away), not by time.
+
+### What is detectable today, verified at 904d138
+
+- **Detectable:**
+  - **The controller** of every Claude pane, and whether it has a client attached. This is in `tabs`, but a host's own page server is told only its name.
+  - **Which pane is on screen** on a Mac: the panel key, a tab shown and its focused pane. Known in process only.
+  - **Which pane a device has open,** from the page server's sockets.
+  - **A Mac's reports to a host.** A Mac with any pane on another host already sends that host `status` every 5 s, whatever the board shows.
+- **Not detectable today:**
+  - **Idle time, screen lock and display sleep.** Nothing in Varnick reads them. Public system calls and notifications give them, expected without a permission (inferred).
+  - **When and from where a session was last typed into.** Neither zmx nor Varnick records it. The controller stands in for it: with one keyboard per session, the controller is the only place it could have been typed into since it was taken.
+  - **Whether the user is at a Mac that isn't the controller.** A Mac reports only to hosts it has a pane on.
+  - **Whether a Mac notice was seen.** Never sent anywhere, and not needed with escalation by absence.
+
 ### Considered within this option
 
-- **Varnick's Mac app sends,** from `sessions-finish-unnoticed` option 01's notifier, which knows what is on screen. Not chosen, for three reasons:
+- **Escalating by time** (a push N seconds after a Mac notice, even with the user present). Rejected: it buzzes the phone at the desk, which the user asked against.
+- **The controlling Mac decides and asks the host to push.** Two deciders, since the host must still decide for the phone and for a Mac that can't be told, and a new request carrying a push from Mac to host.
+- **The host asks each Mac for its presence.** A headless host has no way to reach a Mac, and the Mac already reports every 5 s.
+- **Varnick's Mac app sends pushes.** Not chosen, for three reasons:
   - a headless host has no app;
-  - a session a device controls shows a card on its host, which option 01 keeps silent;
-  - Web Push would be written twice, in Swift and in the server.
-- **The Mac in control sends.** The page its push opens lists only that Mac's own sessions, not a session hosted elsewhere.
-- **Asking `tabs` every 5 s.** That is a Varnick process every 5 s on a Mac, about 17,000 a day, for a change seen two seconds sooner than the turn file dates give.
-- **The title in the encrypted payload.** It would name the session off the tailnet too, but session text would then ride Apple's or Google's service, encrypted (open question 2).
-- **A push app such as ntfy, Pushover or Telegram.** It needs another app and account, its server reads the text (ntfy has no end-to-end encryption), and the user asked for the page itself to notify.
+  - a card on the host is silent;
+  - Web Push would be written twice.
+- **Asking `tabs` every 5 s** (about 17,000 Varnick processes a day on a Mac).
+- **The title in the encrypted payload, and a push app such as ntfy.**
 
 ### Records
 
-Accepting this needs the ADR above. If option 01 is built first, this is its second set of tickets.
+Accepting this needs the ADR above.
+
+### Build order, with `sessions-finish-unnoticed`
+
+1. **This problem's option 01** (install). It is page-only, so it can run beside step 2.
+2. **`sessions-finish-unnoticed` option 01:** Mac notices, the shared table in Swift, and the failed word the phone needs.
+3. **This option.** The presence reader and report, the protocol bump, Web Push, routing and the page.
+4. **`sessions-finish-unnoticed` option 02,** starting with its check: banners on the user's own Macs, which run checkout builds that are bare executables. Its option 03 banners reach only an installed Varnick.app.
+5. **`sessions-finish-unnoticed` option 04, later.**
 
 ### Open questions
 
-1. **One app per host, or one for every host (option 03)?** Recommendation: per host. It is ADR 0011's shape, keeps each key on its own host, and on Android costs only a permission per host.
-2. **Where the session's title comes from?** Recommendation: read over the tailnet when the push arrives, so no session text reaches a push service. The alternative is the title in the encrypted payload, which names the session off the tailnet too.
-3. **The grace: 30 s for Needs you and errors, 60 s for Done?** Recommendation: yes, fixed, and changed only if it proves wrong in use.
-4. **Stay quiet while someone uses the host Mac** (its keyboard and mouse idle time, which a page server can read on a Mac without a permission)? Recommendation: not now. It doesn't help when the user sits at another Mac, and the grace may be enough. Add it if the phone buzzes at the desk.
-5. **The token's contact.** Recommendation: Varnick's public site address, the same for every install. It is in the clear to Apple and Google, so never the user's address.
-6. **Switches on by default?** Recommendation: all three, as `sessions-finish-unnoticed` option 01 has them.
+1. **Escalate by absence, not by time?** Recommendation: by absence.
+2. **Away after 2 minutes without input, at once on lock, display sleep or a switched session?** Recommendation: yes.
+3. **When the user is present at a Mac that isn't the controller, push or notify that Mac?** Recommendation: push. Notifying that Mac needs every Mac to follow every host's turns and report to it, for a case a Take over already fixes.
+4. **A 10-second settle in place of the 30 s and 60 s grace.** Presence now says where the user is, so the grace's guess isn't needed. Recommendation: yes.
+5. **Mac banners through `sessions-finish-unnoticed` option 02 (the notifier app, check first) rather than 03?** The user's Macs run checkout builds. Recommendation: 02, unless the user moves their Macs to the installed app.
+
+The user accepted on 2026-10-14 (relayed): the title read over the tailnet, one app per host, Varnick's site as the token's contact, and all switches on by default.
 
 ### Verified and inferred
 
 - **Verified at 904d138:**
+  - the detectable list above;
   - how the page is served;
-  - that `tabs` carries turns to a device and the page drops them;
-  - that the proxy asks `tabs` as the host gated by a file's date;
-  - where keys live today;
-  - that the server's environment isn't on its command line;
-  - the page's fragment routes.
+  - that `tabs` carries turns and the page drops them;
+  - that the relay hides the controller's id from the host's own id;
+  - that the follow loop sends `status` every 5 s while any pane is on a peer;
+  - that checkout builds are bare executables and only `make app` makes a bundle;
+  - where keys live;
+  - that the server's environment isn't on its command line.
 - **Inferred:**
-  - every browser and push-service behaviour in the problem's "What the browsers and push services do";
-  - that a worker's fetch to its own page passes the fetch-site check;
-  - that iOS gives a push event time for a 3-second fetch;
-  - that turn file dates catch every change but the background drain and Esc, which the 15 s and 60 s asks catch.
+  - the browser and push-service behaviour in the problem;
+  - that idle time and lock state need no permission;
+  - that a worker's fetch passes the fetch-site check;
+  - that iOS allows a 3-second fetch in a push event.

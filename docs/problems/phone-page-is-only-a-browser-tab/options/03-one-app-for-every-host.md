@@ -35,7 +35,7 @@ status: proposed
 
 1. As the user on an iPhone with several hosts, I want one Home Screen app and one permission that bring every host's notifications.
 2. As the user, I want a notification from any host to say which host, and a tap to open that host's page.
-3. Option 02's stories 1 to 4, 6, 8, 11 and 12, across every host from one subscription.
+3. Option 02's stories, routing by controller and presence included, across every host from one subscription.
 
 ## Implementation Decisions
 

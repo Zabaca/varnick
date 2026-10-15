@@ -144,7 +144,7 @@ Then no notice is raised. Launchy is an accessory app, so "frontmost" means the 
 ## Out of Scope
 
 - **macOS notifications.** Options 02 and 03 add them on top of this one.
-- **A push to the phone,** and notifying for a session a Device controls.
+- **A push to the phone,** and notifying for a session a Device controls: `phone-page-is-only-a-browser-tab` option 02. It routes each notice by the pane's controller and whether that Mac's user is present. This option is the Mac half of that rule.
 - **Claude Code's own notification channel.** Setting `notifications_disabled` would change the claude command line, and with it every Mac's build and the relay install. `auto` already finds no channel in a Launchy pane (problem, Today). Revisit only if doubled notifications are seen, as when a zmx session is attached from another terminal.
 - **An idle reminder** like `idle_prompt`'s minute-later nag.
 - **A mute per session or per project.**
@@ -154,5 +154,6 @@ Then no notice is raised. Launchy is an accessory app, so "frontmost" means the 
 
 ## Further Notes
 
+- The table above is shared with `phone-page-is-only-a-browser-tab` option 02, whose page server keeps a copy for the phone. A change to one is a change to both.
 - Asked for by the user on 2026-10-08, relayed by the coordinator, after a research pass on cmux. The table's first four rows, the focused-pane rule and the switches per category follow cmux (problem, What cmux does). The failed word answers cmux's open complaint about errors.
 - A teammate's permission prompt is Claude Code's `worker_permission_prompt` notification. Whether it also fires the lead session's `PermissionRequest` hook is unknown. If it doesn't, it raises nothing here.
