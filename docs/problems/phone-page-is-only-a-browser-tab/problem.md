@@ -11,6 +11,7 @@ status: open
 
 1. **Install the Phone page as an app** on the phone: an icon on the Home Screen that opens the page full screen, without the browser's bars.
 2. **Push notifications** to the phone when a session needs the user, without the page open.
+3. **A session can tell the user something on its own** (added 2026-10-15): Claude in a pane notifies them, through what Claude Code already has, pushed when it happens.
 
 ## Why this is its own problem
 
