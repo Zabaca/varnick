@@ -107,7 +107,7 @@ Another device of the user's on the tailnet, such as the phone, listed on a **Ho
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
 
 **Phone page**:
-The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its open tabs, each shown one pane at a time, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages. The same server runs the host's **Port proxy**.
+The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its open tabs, each shown one pane at a time, **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages. It installs as an app on the phone, one per host (each host's page is its own origin), named for its host and opening full screen. The same server runs the host's **Port proxy**.
 _Avoid_: Web UI, dashboard, remote
 
 **Port proxy**:

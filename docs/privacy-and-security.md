@@ -307,6 +307,10 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   `tailscale serve` forwards, and serves only a device you listed on that host. Everything the page does is a request to the host's own relay,
   as that device. Changes need a `POST` with a
   matching `Origin`, and websockets are checked against it.
+- **Installing it as an app keeps no session content on the phone.** The page's service worker answers a page load that failed
+  on the network with a note naming the host, and nothing else: it caches no reply, and every other request goes to the host as
+  before. Every reply is still `no-store`. The only thing the page stores on the phone is whether you dismissed the install offer.
+  The manifest, the icons and the worker are served only to a listed device, like every file of the page.
 - **A listed device can do most of what a Mac peer can:** list sessions, start one in a project the host lists,
   take over and type in a terminal. Not the search sync, upgrades or restarts. List only devices you control.
 
