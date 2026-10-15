@@ -68,7 +68,7 @@ It can be turned on or off later from the sharing bar. Turning it off while the 
   - `start`, `arrange` and `reopen` stay refused;
   - turning the flag off refuses the next `attach`.
 - **`bun test`:** the terminal channel admits a guest who may type and refuses one who may not.
-- **By hand, with option 01's two accounts:**
+- **By hand, on option 01's test tailnets:**
   - the guest takes over, types in a terminal and a Claude pane, and closes a pane, which hands it back;
   - the host takes over in the middle of the guest's typing;
   - Stop sharing while the guest types, and check that their client is gone before the share is;

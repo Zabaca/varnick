@@ -1,7 +1,7 @@
 ---
 problem: work-cant-be-shared-with-other-people
 title: Share one window, or a whole display, as live video with a guest, who watches it in a pane of their own Varnick
-summary: Built on option 01's guest door. The user picks one window, or a display with Varnick's own windows and password managers left out, and shares it with a guest. Varnick captures it with ScreenCaptureKit, under the Screen Recording grant it already holds, encodes it with VideoToolbox H.264, and sends it over the tailnet through the host's page server to the guest, whose Varnick shows it in a pane. It covers what tab sharing can't reproduce, such as a browser on a logged-in page or any app outside Varnick. View only. The first build streams over the guest's websocket, with no new dependency. WebRTC (Google's libwebrtc as a binary package) is the step after, if the measured latency or quality calls for it. Behind its own Screen sharing switch in Settings › Experimental, off by default. Ordered after option 01. Rough effort is a spike of a day, then about seven days.
+summary: Built on option 01's guest door. The user picks one window, or a display with Varnick's own windows and password managers left out, and shares it with a guest. Varnick captures it with ScreenCaptureKit, under the Screen Recording grant it already holds, encodes it with VideoToolbox H.264, and sends it over the tailnet through the host's page server to the guest, whose Varnick shows it in a pane. It covers what tab sharing can't reproduce, such as a browser on a logged-in page or any app outside Varnick. View only. It streams over a websocket the guest opens, with no new dependency: Tailscale quarantines a shared machine so it can't start connections, which may keep WebRTC from forming a direct path at all. WebRTC (Google's libwebrtc as a binary package) is a later step only if that is solved and the measured latency or quality calls for it. Behind its own Screen sharing switch in Settings › Experimental, off by default. Ordered after option 01. Rough effort is a spike of a day, then about seven days.
 status: proposed
 ---
 
@@ -12,7 +12,7 @@ status: proposed
 - **One window, or one display.** `!share screen` (with the switch on) opens a picker in the panel, built from ScreenCaptureKit's list of shareable content:
   - the windows on screen, by app and title, with a small live thumbnail;
   - each display, as "Whole display".
-- **The person.** Below the list, the people who reach this Mac through a Tailscale share, as in option 01's sheet.
+- **The person.** Below the list, the people who reach this Mac through a Tailscale share, with New invite, as in option 01's sheet. The sheet also says, as option 01's does, that the guest sees the owner's tailnet name and account.
 - **What the sheet says.** "Sam will see this window live, as you see it, including anything that appears in it (messages, typed text, a page you're logged in to). Sam can't click or type in it."
   - **For a display,** it says instead "Sam will see everything on this display except Varnick and the apps listed below", with the exclusion list.
 - **A window share follows the window,** whatever is in front of it. A window covering it isn't captured, and the shared window's own menus and sheets may not be (inferred: each is a window of its own).
@@ -59,7 +59,7 @@ These are starting figures, set in the spike and measured on the tailnet:
   - Google's libwebrtc as a prebuilt binary package (an xcframework fetched like zmx and Bun), with signalling over the guest interface.
   - It brings congestion control, a jitter buffer, loss recovery, audio and a browser-compatible stream for the web viewer under Later.
   - It costs a large binary framework to fetch, sign and notarize inside the app, and a new dependency `CODING_STANDARDS.md` would have to list.
-  - It needs ICE to work over a one-way share, where the host can't open a path to the guest (unverified).
+  - **It may not connect at all over a share.** The shared Mac is quarantined in the guest's tailnet and can't start connections (Tailscale's documentation, read by a research agent). WebRTC's connection checks go both ways (inferred), so a direct path may never form, and it would then need a relay server, which this option exists to avoid. The websocket, which the guest opens, has no such problem.
 
 ## Trade-offs
 
@@ -94,11 +94,13 @@ These are starting figures, set in the spike and measured on the tailnet:
   - **Each guest has its own caps:** a few video channels.
 - **The picker is Varnick's own,** from ScreenCaptureKit's shareable content, so the exclusions are under Varnick's control. Whether to use macOS's own content picker instead is a spike finding: on recent macOS it may spare the periodic capture prompt (unverified).
 - **The guest's pane** is a new pane kind that decodes into a sample-buffer display layer and is never saved, so an older build never meets it in the saved file.
-- **The order.** After option 01, since it needs option 01's guest identity, shares file, guest interface and the guest's shared-Mac transport.
+- **Network reach.** A screen share needs only Varnick's guest port, so a person with only screen shares is in option 01's port rule with that port and nothing more. The rule's edits, the key, its expiry and the fallback without a key are option 01's.
+  - **When the key has lapsed,** a person not already in the rule can't be added, and the share sheet says so.
+- **The order.** After option 01, since it needs option 01's guest identity, shares file, guest interface, port rule and the guest's shared-Mac transport.
 
 ### The spike (first ticket)
 
-- Capture one window, encode it, send it over a websocket across the two Tailscale accounts of option 01's spike, and decode it in a pane.
+- Capture one window, encode it, send it over a websocket across option 01's test tailnets, and decode it in a pane.
 - Measure the frame rate, the bitrate, the delay and the CPU on both Macs, for a text editor and for a scrolling page, on a direct path and through a relay.
 - Check what a display filter leaves out, and how the shared window's menus and sheets appear.
 - Find out whether macOS's content picker gives a filter Varnick can add exclusions to, and whether it avoids the recurring prompt.
@@ -116,7 +118,7 @@ Figures are kept locally in the problem's scratch folder. No daemon or launchd c
   - the exclusion list's matching;
   - the drop-to-keyframe rule and the ceiling's steps, from a simulated socket that backs up and clears;
   - the guest interface's admission for a video channel, for a guest with and without a screen share.
-- **By hand, after a restart, with option 01's two accounts:**
+- **By hand, after a restart, on option 01's test tailnets:**
   - share a Safari window on a logged-in page, a terminal and a whole display;
   - check that the panel, a password manager and a banner don't appear on the guest's side;
   - type and scroll on the host and read the guest's pane;
