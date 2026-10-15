@@ -23,6 +23,8 @@ final class RunsBoard: ObservableObject {
         let opens: Bool
         /// Where it ran: this Mac, until runs can be on a headless host.
         let place: String
+        /// What a session last did to the automation through the automation tools, until the user has seen it: on its newest run only.
+        let mark: String?
 
         /// "Running", "Waiting on you: Needs permission", a message's title, "Missed: over 12 hours old".
         var text: String {
@@ -45,10 +47,11 @@ final class RunsBoard: ObservableObject {
         var next: [Row] = []
         let here = PeerIdentity.name ?? "this Mac"
         for automation in model.automations.automations {
-            for run in automation.runs {
+            for (index, run) in automation.runs.enumerated() {
                 let now = model.displayed(run)
                 next.append(Row(id: run.id, automation: automation.name, when: run.startedAt ?? run.slot, state: now.state, detail: now.detail,
-                                late: run.late, manual: run.manual, count: run.count ?? 1, opens: run.state.ran, place: here))
+                                late: run.late, manual: run.manual, count: run.count ?? 1, opens: run.state.ran, place: here,
+                                mark: index == 0 ? automation.mark?.line : nil))
             }
         }
         next.sort { $0.when > $1.when }
@@ -144,6 +147,10 @@ private struct RunRowView: View {
                 Text(row.automation).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 Text(row.text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                if let mark = row.mark {
+                    Text(mark).font(.system(size: 11.5)).foregroundStyle(Color.accentColor).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text(when).font(.system(size: 11)).foregroundStyle(.tertiary)
             }
             Spacer(minLength: 8)

@@ -365,7 +365,7 @@ The set is read at each start, as Screen and Panel access's are, so a pane gains
 | folder | an existing folder on this Mac. Absent is the calling session's own folder: "this repo every morning" means the session's folder, and the Default folder is a Settings choice the session can't see. The editor already shows a folder that isn't a project |
 | agent | an agent of that folder; another is refused, and the reply lists them |
 | permissions | absent follows Varnick's setting; else Ask or Allowed tools only. Skip is refused, and so is any edit of an automation set to Skip |
-| allowed tools | a list of Claude Code rules, one line each |
+| allowed tools | a list of Claude Code rules, one line each. A session may set any rule, a broad one such as `Bash` included (the user's decision, 2026-10-15, relayed by the coordinator), so with Skip off a run can get more than a typed prompt gets; the mark names the rules |
 | working limit | minutes, 5 to 1440, as the editor's; 60 when absent |
 | enabled | on when absent, as the editor's Add |
 

@@ -236,15 +236,20 @@ enum ScreenMCP {
         static let panel = Sets(rawValue: 2)
         /// `notify` (option 04 of `phone-page-is-only-a-browser-tab`): in every Claude pane, whatever the two switches say.
         static let notify = Sets(rawValue: 4)
+        /// The automation tools (option 01 of `prompts-cant-run-on-a-schedule`, slice 3): in every Claude pane started while Automations is on, a run's
+        /// excepted, and behind no switch of their own.
+        static let automations = Sets(rawValue: 8)
 
         static let screenArgument = "--screen"
         static let panelArgument = "--panel"
+        static let automationsArgument = "--automations"
 
         /// With none named, the screen tools alone: a session started before Panel access keeps the tools it had.
         init(arguments: [String]) {
             var found: Sets = []
             if arguments.contains(Self.screenArgument) { found.insert(.screen) }
             if arguments.contains(Self.panelArgument) { found.insert(.panel) }
+            if arguments.contains(Self.automationsArgument) { found.insert(.automations) }
             if arguments.contains(NotifyTool.argument) { found.insert(.notify) }
             self = found.isEmpty ? .screen : found
         }
@@ -255,10 +260,11 @@ enum ScreenMCP {
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
     /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off.
-    static func configuration(pane: UUID, screen: Bool, panel: Bool) -> String {
+    static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
-                                    + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : []) + [NotifyTool.argument])
+                                    + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])
+                                    + (automations ? [Sets.automationsArgument] : []) + [NotifyTool.argument])
     }
 
     // MARK: The tools
@@ -373,9 +379,10 @@ enum ScreenMCP {
 
     // MARK: The server
 
-    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, then `notify`.
+    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, the automation tools, then `notify`.
     static func tools(for sets: Sets) -> [[String: Any]] {
-        (sets.contains(.screen) ? tools : []) + (sets.contains(.panel) ? PanelMCP.tools : []) + (sets.contains(.notify) ? [NotifyTool.tool] : [])
+        (sets.contains(.screen) ? tools : []) + (sets.contains(.panel) ? PanelMCP.tools : [])
+            + (sets.contains(.automations) ? AutomationMCP.tools : []) + (sets.contains(.notify) ? [NotifyTool.tool] : [])
     }
 
     /// Runs until standard input ends; the exit status is 0.
@@ -394,6 +401,8 @@ enum ScreenMCP {
                 reply = ask(requestLine(pane: pane, tool: name, arguments: decoded))
             } else if sets.contains(.panel), PanelMCP.names.contains(name) {
                 reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
+            } else if sets.contains(.automations), AutomationMCP.names.contains(name) {
+                reply = ask(AutomationMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.notify), name == NotifyTool.name {
                 // Answered here: the hook records the call, and nothing is sent to the app.
                 return NotifyTool.call(arguments)

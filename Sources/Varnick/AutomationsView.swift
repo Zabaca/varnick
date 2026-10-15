@@ -45,7 +45,7 @@ struct AutomationsSettingsView: View {
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Each automation is a prompt that this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, while Varnick runs. It opens nothing: a run's tab stays out of sight until you open it from the board's Runs tab or a notice, and it tells you as any session does. A slot that passed while the Mac slept or Varnick was quit runs once at the next wake or launch if it is under 12 hours old. Each run draws on your Claude subscription, and at most one run of an automation goes at a time.")
+            Text("Each automation is a prompt that this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, while Varnick runs. It opens nothing: a run's tab stays out of sight until you open it from the board's Runs tab or a notice, and it tells you as any session does. A slot that passed while the Mac slept or Varnick was quit runs once at the next wake or launch if it is under 12 hours old. Each run draws on your Claude subscription, and at most one run of an automation goes at a time. A Claude session you start while Automations is on can also list, make, edit and switch these through Varnick's tools; a mark under an automation says what it did until you open its editor, switch it or press Seen. Only you can delete one, run one now or set Skip.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 8)
             if let problem = store.problem {
@@ -84,12 +84,22 @@ struct AutomationsSettingsView: View {
                     Text(automation.name.isEmpty ? "Untitled" : automation.name).font(.system(size: 13, weight: .medium))
                     Text(summary(automation)).font(.system(size: 11.5)).foregroundStyle(.secondary)
                     Text(status(automation)).font(.system(size: 11.5)).foregroundStyle(.tertiary)
+                    if let mark = automation.mark {
+                        // What a Claude session did to it through the automation tools: the only notice of it, until seen.
+                        HStack(spacing: 8) {
+                            Text(mark.line).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
+                            Button("Seen") { store.update(automation.id) { $0.mark = nil } }
+                                .controlSize(.small).disabled(store.problem != nil)
+                        }
+                    }
                 }
                 Spacer(minLength: 12)
                 Button("Run now") { notes[automation.id] = model.runNow(automation.id) }
                     .disabled(store.problem != nil || !settings.automationsOn)
                 Button("Edit") {
                     editingIsNew = false
+                    // Opening the editor is seeing the mark.
+                    store.update(automation.id) { $0.mark = nil }
                     editing = automation
                 }
                 .disabled(store.problem != nil)
@@ -98,6 +108,7 @@ struct AutomationsSettingsView: View {
                 Toggle("", isOn: Binding(get: { automation.enabled }, set: { on in
                     store.update(automation.id) { next in
                         next.enabled = on
+                        next.mark = nil
                         // Switched on: nothing before now is caught up.
                         if on { next.lastSlot = Date() }
                     }

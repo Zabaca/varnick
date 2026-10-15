@@ -985,6 +985,10 @@ final class PeerManager: ObservableObject {
         if head.op == nil, PeerJSON.decode(PanelRequestHead.self, from: line)?.panel != nil {
             return await PanelAccess.shared.answer(line)
         }
+        // An automation request (option 01 of `prompts-cant-run-on-a-schedule`, slice 3) is told apart the same way, by its own key.
+        if head.op == nil, PeerJSON.decode(AutomationRequestHead.self, from: line)?.automation != nil {
+            return AutomationAccess.shared.answer(line)
+        }
         // `upgrade` and `restart` are read before the version (the relay does the same), and only for a Mac in the list: not a device.
         if let op = head.op.flatMap(PeerOp.init), PeerProtocol.answersAnyVersion(op) {
             guard let by = head.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {

@@ -139,8 +139,58 @@ long_title = called({"title": "x" * 200, "body": "y" * 500})
 if long_title.get("isError") is not False or "title was cut to 80" not in long_title["content"][0]["text"] or "body was cut to 300" not in long_title["content"][0]["text"]:
     fail("a notify call with long text did not say what it cut: %s" % long_title)
 
+# The automation tools (option 01 of prompts-cant-run-on-a-schedule, slice 3): their own set, named by the app only while Automations is on and never
+# for an automation's run. Named alone it lists the four; with the others it comes after Panel access's and before notify; with none named the
+# server still lists the screen tools alone. NEVER call one of these tools here: with Varnick running, the call reaches it and makes a real
+# automation. Only a call to a server that does not list them is made (below), and that is refused before anything is sent.
+automation_tools = ["automations_list", "automation_create", "automation_edit", "automation_switch"]
+only_automations, with_all = listed(["--automations"]), listed(["--screen", "--panel", "--automations", "--notify"])
+if only_automations != automation_tools:
+    fail("--automations lists %s, not the four automation tools" % only_automations)
+if with_all != screen + only_panel + automation_tools + ["notify"]:
+    fail("all four sets list %s, not the screen tools, Panel access's, the automation tools and notify" % with_all)
+if listed(["--automations", "--notify"]) != automation_tools + ["notify"]:
+    fail("--automations --notify lists %s" % listed(["--automations", "--notify"]))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--screen", "--panel", "--notify"]):
+    if set(listed(arguments)) & set(automation_tools):
+        fail("%s lists an automation tool" % arguments)
+described = {t["name"]: t for t in listed(["--automations"], full=True)}
+for name in automation_tools:
+    if name not in described:
+        fail("--automations lists no %s" % name)
+if all(name in described for name in automation_tools):
+    create_schema = described["automation_create"]["inputSchema"]
+    properties = create_schema.get("properties", {})
+    if create_schema.get("required") != ["name", "prompt", "cadence"]:
+        fail("automation_create requires %s, not name, prompt and cadence" % create_schema.get("required"))
+    for field in ("name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled"):
+        if field not in properties:
+            fail("automation_create takes no %s" % field)
+    if properties.get("cadence", {}).get("properties", {}).get("kind", {}).get("enum") != ["minutes", "hours", "daily", "weekdays", "weekly"]:
+        fail("automation_create's cadence kinds are %s" % properties.get("cadence", {}).get("properties", {}).get("kind"))
+    if properties.get("cadence", {}).get("required") != ["kind"]:
+        fail("automation_create's cadence requires %s, not kind" % properties.get("cadence", {}).get("required"))
+    # A session may not set Skip: the values are following Varnick's setting, Ask, and Allowed tools only.
+    for name in ("automation_create", "automation_edit"):
+        permissions = described[name]["inputSchema"].get("properties", {}).get("permissions", {}).get("enum")
+        if permissions != ["varnick_setting", "ask", "allowed_tools_only"]:
+            fail("%s's permissions are %s: no skip, and nothing else" % (name, permissions))
+    limit = properties.get("working_limit_minutes", {})
+    if (limit.get("minimum"), limit.get("maximum")) != (5, 1440):
+        fail("automation_create's working limit is %s to %s, not 5 to 1440" % (limit.get("minimum"), limit.get("maximum")))
+    edit_schema = described["automation_edit"]["inputSchema"]
+    if edit_schema.get("required") != ["id"] or set(edit_schema.get("properties", {})) != set(properties) | {"id"}:
+        fail("automation_edit takes %s requiring %s: id and create's fields, only id required" % (sorted(edit_schema.get("properties", {})), edit_schema.get("required")))
+    switch_schema = described["automation_switch"]["inputSchema"]
+    if switch_schema.get("required") != ["id", "on"] or switch_schema.get("properties", {}).get("on", {}).get("type") != "boolean":
+        fail("automation_switch is %s: an id and a boolean on, both required" % switch_schema)
+    if described["automations_list"]["inputSchema"].get("required"):
+        fail("automations_list requires %s" % described["automations_list"]["inputSchema"].get("required"))
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
-for arguments, name in (([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look")):
+for arguments, name in (([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look"),
+                        ([], "automations_list"), (["--screen"], "automation_create"), (["--panel"], "automation_edit"), (["--notify"], "automation_switch"),
+                        (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
         fail("%s called %s and did not get Unknown tool: %s" % (arguments, name, replies.get(3)))

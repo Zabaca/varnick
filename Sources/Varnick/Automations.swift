@@ -35,16 +35,20 @@ final class AutomationStore: ObservableObject {
         return nil
     }
 
-    /// Adds or replaces an automation. Nothing happens while the file is unreadable.
-    func save(_ automation: Automation) {
-        guard problem == nil else { return }
+    /// Adds or replaces an automation. Nothing happens while the file is unreadable. With `rollingBack`, a write that fails puts the list back as it
+    /// was and answers false, so a change nothing saved is not left in memory to fire and be written later; a session's calls ask for it. The
+    /// user's own changes and the check's don't: a check that rolled back a run's record would start the same slot again.
+    @discardableResult
+    func save(_ automation: Automation, rollingBack: Bool = false) -> Bool {
+        guard problem == nil else { return false }
+        let before = automations
         if let index = automations.firstIndex(where: { $0.id == automation.id }) {
-            guard automations[index] != automation else { return }
+            guard automations[index] != automation else { return true }
             automations[index] = automation
         } else {
             automations.append(automation)
         }
-        write()
+        return write(rollingBackTo: rollingBack ? before : nil)
     }
 
     func remove(_ id: UUID) {
@@ -53,14 +57,16 @@ final class AutomationStore: ObservableObject {
         write()
     }
 
-    /// Changes one automation in place and writes it when it differs.
-    func update(_ id: UUID, _ change: (inout Automation) -> Void) {
-        guard problem == nil, let index = automations.firstIndex(where: { $0.id == id }) else { return }
+    /// Changes one automation in place and writes it when it differs; `rollingBack` as for `save`.
+    @discardableResult
+    func update(_ id: UUID, rollingBack: Bool = false, _ change: (inout Automation) -> Void) -> Bool {
+        guard problem == nil, let index = automations.firstIndex(where: { $0.id == id }) else { return false }
         var next = automations[index]
         change(&next)
-        guard next != automations[index] else { return }
+        guard next != automations[index] else { return true }
+        let before = automations
         automations[index] = next
-        write()
+        return write(rollingBackTo: rollingBack ? before : nil)
     }
 
     /// Changes one run of one automation in place.
@@ -71,13 +77,17 @@ final class AutomationStore: ObservableObject {
         }
     }
 
-    private func write() {
+    @discardableResult
+    private func write(rollingBackTo before: [Automation]? = nil) -> Bool {
         do {
             try AutomationFile.write(automations, to: url)
             if writeError != nil { writeError = nil }
+            return true
         } catch {
             writeError = "The automations couldn't be saved: \(error)"
             NSLog("Varnick: \(writeError ?? "")")
+            if let before { automations = before }
+            return false
         }
     }
 }
