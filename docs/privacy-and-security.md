@@ -123,11 +123,12 @@ already answered with it stays there when it upgrades.
   answer in time: the same questions as TypeSafe's first call, as one prompt, with today's date and time and the list
   of your projects above. With Claude Code that goes to Anthropic, with a server to the server, and with this Mac's
   model nowhere.
-- **The judging,** when TypeSafe isn't used or fails (the relevance filter is On this Mac and not ready, or off, or no key is
-  saved, or TypeSafe answers with an error or too late): the request and today's date with the same rows TypeSafe's judge
-  gets, up to 20 pages and 3 sessions (kind, title, site or folder, when and description or prompts, cut to 300 characters),
-  as one prompt to decide which help. With Claude Code that goes to Anthropic, with a server to the server, and with this
-  Mac's model nowhere. When the on-device reranker is ready it judges and nothing goes anywhere.
+- **The judging,** when the relevance filter is on TypeSafe and there is no key or TypeSafe doesn't answer (or the route's
+  call to it already failed in the same request), or the filter is off: the request and today's date with the same rows
+  TypeSafe's judge gets, up to 20 pages and 3 sessions (kind, title, site or folder, when and description or prompts, cut
+  to 300 characters), as one prompt to decide which help. With Claude Code that goes to Anthropic, with a server to the
+  server, and with this Mac's model nowhere. **With the filter On this Mac it never does:** if its model isn't ready, the
+  top results are read unjudged, and nothing is sent.
 - **The results it reads,** for the answer: each one's kind, title, site or folder, when (its weekday and part of the
   day, how long ago), and description (cut to 300 characters), and for a Claude session its prompts, your paired Macs'
   too. With them go today's date and where this week started, so "this week" is answered right.
