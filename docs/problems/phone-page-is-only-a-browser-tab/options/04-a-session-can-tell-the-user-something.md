@@ -246,6 +246,32 @@ This is a decision for the user (open question 1).
 
 The user asked to give Claude in a pane the ability to notify them, hooking into what Claude Code already has, pushed when it happens. Offered a `notify` tool of Varnick's or a hook on Claude Code's PushNotification, they chose "do both", with one notice kind, option 02's routing and the Mac notice included (relayed by the coordinator). The questions below are refinements within that choice.
 
+### Decided 2026-10-15
+
+The user took all five recommendations below, as written:
+
+1. Yes: Varnick sets `CLAUDE_CLIENT_PRESENCE_FILE` to a marker the page server keeps while the host has a push subscription.
+2. Yes: a Done is folded into a standing message with no time limit.
+3. Yes: each session's settings allow `notify`. The check (below) found that `--settings` adds to the user's allow list, so the condition under which this stopped did not arise.
+4. Yes: one alert per pane per minute, the newest words at the minute's end.
+5. Yes: the words stay out of the push payload, and ADR 0038's rule is unchanged.
+
+### The throwaway check, 2026-10-15
+
+Run with Claude Code 2.1.300, a scratch `claude -p` whose `--settings` carried a hook on PreToolUse, PostToolUse and PostToolUseFailure that copied its input to a file, and a stand-in MCP server named as Varnick's is. The dumps hold paths and stay in the problem's scratch folder.
+
+- **PostToolUse fires for an MCP tool.** Its input has `tool_name` (`mcp__<server>__<tool>`), `tool_input` (the arguments as sent), `tool_response` (the content blocks) and `mcp_server`.
+- **An MCP tool that answers `isError` fires PostToolUseFailure, not PostToolUse.** The failure input has `tool_name`, `tool_input` and `error`. So a refused `notify` is never recorded, whatever the reader does.
+- **`--settings` permissions add to the user's own.** The user's allow entry for a built-in tool kept working beside the `--settings` allow of the MCP tools; a tool allowed in neither was refused in print mode with no dialog. So `notify` can be allowed in each session's settings.
+- **PushNotification could not be made to appear.** It is behind a server-side feature flag of Claude Code's (`tengu_kairos_push_notifications`) and the user's `agentPushNotifEnabled`. In a print-mode run on the user's account the tool was not among the deferred tools, and a search for it found nothing. Remote Control was not started, because it registers a session with the user's account. So whether PostToolUse fires for it is **unverified**; Claude Code's hooks page says every tool call in the loop fires it.
+- **PushNotification's input, read from the 2.1.300 binary, not observed:** `message` (a non-empty string, described as under 200 characters) and `status` (always `"proactive"`). There is no title and no body. Its permission is none, so it needs no allow rule. Its result carries `message`, `pushSent`, `localSent`, `disabledReason` (`config_off`, `user_present` or `no_transport`) and `sentAt`; it succeeds with a `disabledReason` when it sent nothing.
+- **`CLAUDE_CLIENT_PRESENCE_FILE` skips Remote Control mobile pushes only,** while the file exists, checked once per push-triggering event (documented in Claude Code's environment-variable reference, v2.1.181 or later). The desktop notification is a separate check and is not muted.
+
+What the build does with it:
+- The reader maps PushNotification's `message` to the title when it is one line of at most 80 characters, with no body. Otherwise the title is the first line cut to 80 and the body is the message cut to 300.
+- The hook matches `notify` and PushNotification only, on PostToolUse alone.
+- A PushNotification result whose `disabledReason` is `config_off` is not a message: the user turned Claude's proactive pushes off. The other reasons record a message, since Varnick's own routing decides where it goes.
+
 ### Open questions, recommendation first
 
 1. **Set `CLAUDE_CLIENT_PRESENCE_FILE` to a marker kept while the host has a subscription?** Recommendation: yes. Without it, a pane with Remote Control on buzzes the phone twice: once from the Claude app and once from the Phone page. The cost is that the Claude app's own pushes stop while Varnick's are on.
