@@ -1179,7 +1179,25 @@ final class LauncherModel: ObservableObject {
         case .resources:
             if clearingQuery { query = "" }
             showResources()
+        case .task:
+            if clearingQuery { query = "" }
+            openTask()
         }
+    }
+
+    /// `!task`: a new tab holding one Task pane, or the pane of the task that is running (one task runs at a time on this Mac).
+    func openTask() {
+        guard Settings.shared.tasksOn else { return }
+        if let running = TaskController.running, running.phase.isActive, let pane = running.session,
+           let tab = tabs.first(where: { $0.contains(pane) }) {
+            activate(tab)
+            return tab.focus(pane)
+        }
+        claudeError = nil
+        var record = Self.newRecord(prompt: "", directory: Self.claudeDirectory)
+        record.url = ""
+        record.task = true
+        addTab(PaneNode(session: makeSession(record, resuming: false, query: "")))
     }
 
     /// `!transcript` and the menu bar: the live transcript pane, in a new tab unless one is open.
@@ -1989,6 +2007,11 @@ final class LauncherModel: ObservableObject {
         case .claude: break
         case .terminal: record.shell = true
         case .web: record.url = ""
+        case .task:
+            // Only with the switch on; the pane opens with its address bar focused, as a Browser pane does.
+            guard Settings.shared.tasksOn else { return }
+            record.url = ""
+            record.task = true
         case .hostApp: return
         case .app(let app):
             record.app = app.folderName
@@ -2067,7 +2090,7 @@ final class LauncherModel: ObservableObject {
             pickerItems = PickerItem.items(hostApps: [])
             askHostApps(host, folder: focused.record.directory, tab: tab)
         } else {
-            pickerItems = PickerItem.items(apps: CustomApp.available(from: focused.record.directory))
+            pickerItems = PickerItem.items(apps: CustomApp.available(from: focused.record.directory), tasks: Settings.shared.tasksOn)
         }
         pickerSelection = pickerItems.firstIndex { $0.kind == .terminal } ?? 0
         pendingSplit = axis
@@ -2227,6 +2250,7 @@ final class LauncherModel: ObservableObject {
             guard let self, let ended = ref else { return }
             self.sessionExited(ended, code: code, query: prompt)
         }
+        session.task?.model = self
         session.onLabelChange = { [weak self] in
             self?.strip.refresh()
             self?.saveSessions()
@@ -2450,7 +2474,7 @@ final class LauncherModel: ObservableObject {
         // Another machine's tabs are saved apart from this Mac's own, with the order of all of them, so an older build restores none of their panes.
         let hosted = tabs.filter { $0.host != nil }
         sessionStore.save(.init(
-            tabs: tabs.filter { $0.host == nil }.map(\.saved),
+            tabs: tabs.filter { $0.host == nil }.compactMap { $0.saved.withoutTasks() },
             hostTabs: hosted.isEmpty ? nil : hosted.map(\.saved),
             tabOrder: hosted.isEmpty ? nil : tabs.map(\.id),
             recent: SessionStore.State.flatRecent(recent),
@@ -2523,22 +2547,24 @@ final class LauncherModel: ObservableObject {
         let closed = going ?? ClosingTab(saved: .init(id: tab.id, layout: .leaf(record), focused: record.id, name: tab.name,
                                                       showsFiles: tab.showsFiles ? true : nil),
                                          done: false, leavesEnded: leavesEnded, waitsForRecent: waitsForRecent)
-        var saved = closed.saved
-        saved.history = tab.history.isEmpty ? nil : tab.history
-        if closed.done || markedAt != nil {
-            var done = TabRecord(saved: saved, completedAt: markedAt ?? Date())
-            if markedAt != nil, tab.host != nil { done.hostHoldsDone = true }
-            addDone(done)
-        } else if closed.leavesEnded, saved.layout.records.contains(where: \.isClaude) {
-            addClosed(TabRecord(saved: saved), waitsForRecent: closed.waitsForRecent)
-        }
-        // Done or not, a tab of this Mac that closes is the newest in Recent. One on a paired Mac is in that Mac's Recent, which this one lists.
-        // Search finds its sessions under it from now on, written at once rather than at the next sync.
-        if tab.host == nil {
-            let closedTab = TabRecord(saved: saved)
-            addRecent(closedTab)
-            HistorySync.keepTabs(SessionTabs.entries(of: closedTab.id, name: closedTab.name, history: closedTab.history, records: closedTab.records),
-                                 databasePath: store.path)
+        // A Task pane is never kept: a tab of Task panes alone leaves nothing in Completed, Recent or an ended card.
+        if var saved = closed.saved.withoutTasks() {
+            saved.history = tab.history.isEmpty ? nil : tab.history
+            if closed.done || markedAt != nil {
+                var done = TabRecord(saved: saved, completedAt: markedAt ?? Date())
+                if markedAt != nil, tab.host != nil { done.hostHoldsDone = true }
+                addDone(done)
+            } else if closed.leavesEnded, saved.layout.records.contains(where: \.isClaude) {
+                addClosed(TabRecord(saved: saved), waitsForRecent: closed.waitsForRecent)
+            }
+            // Done or not, a tab of this Mac that closes is the newest in Recent. One on a paired Mac is in that Mac's Recent, which this one lists.
+            // Search finds its sessions under it from now on, written at once rather than at the next sync.
+            if tab.host == nil {
+                let closedTab = TabRecord(saved: saved)
+                addRecent(closedTab)
+                HistorySync.keepTabs(SessionTabs.entries(of: closedTab.id, name: closedTab.name, history: closedTab.history, records: closedTab.records),
+                                     databasePath: store.path)
+            }
         }
         sessionSelection = min(sessionSelection, max(0, tabs.count - 1))
         guard activeTab === tab else { return }   // a background tab ended
@@ -3685,13 +3711,15 @@ extension PeerRecentTab {
 
 /// A `!` command; its name is what's typed after `!`. Run by `LauncherModel.runCommand`.
 enum LauncherCommand: String, CaseIterable, Identifiable {
-    case listen, transcript, kanban, outline, problems, resources
+    case listen, transcript, kanban, outline, problems, resources, task
 
     var id: String { rawValue }
 
-    /// The commands `!` lists and matches: `!problems` and `!outline` only with their switches on (Settings › Experimental).
+    /// The commands `!` lists and matches: `!problems`, `!outline` and `!task` only with their switches on (Settings › Experimental).
     @MainActor static var available: [LauncherCommand] {
-        allCases.filter { ($0 != .problems || Settings.shared.problemsBoard) && ($0 != .outline || Settings.shared.outlineOn) }
+        allCases.filter {
+            ($0 != .problems || Settings.shared.problemsBoard) && ($0 != .outline || Settings.shared.outlineOn) && ($0 != .task || Settings.shared.tasksOn)
+        }
     }
 
     /// What matches it after `!`: `!tabs` is another name for `!kanban` and `!wf` for `!outline`, so both find the one row.
@@ -3700,7 +3728,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .kanban: [rawValue, "tabs"]
         case .outline: [rawValue, "wf"]
         case .resources: [rawValue, "memory"]
-        case .listen, .transcript, .problems: [rawValue]
+        case .listen, .transcript, .problems, .task: [rawValue]
         }
     }
 
@@ -3712,6 +3740,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .outline: "list.bullet.indent"
         case .problems: "tray.full"
         case .resources: "memorychip"
+        case .task: "checklist"
         }
     }
 
@@ -3724,6 +3753,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .outline: "Show outline"
         case .problems: "Show problems board"
         case .resources: "Show Resources"
+        case .task: TaskController.running == nil ? "New task" : "Show the running task"
         }
     }
 
@@ -3735,6 +3765,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .outline: "Your bullets, kept on this Mac (also !wf)"
         case .problems: "Problems by stage: Backlog, Decided, Building, Shipped, Closed"
         case .resources: "Memory by tab, pane and helper (also !memory)"
+        case .task: "A browser of Varnick's own where it carries out a task on a site, step by step"
         }
     }
 
@@ -3742,7 +3773,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     @MainActor var needsAttention: Bool {
         switch self {
         case .listen: Listener.shared.state.needsAttention
-        case .transcript, .kanban, .outline, .problems, .resources: false
+        case .transcript, .kanban, .outline, .problems, .resources, .task: false
         }
     }
 }

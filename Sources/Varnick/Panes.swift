@@ -11,6 +11,8 @@ enum PaneDirection { case left, down, up, right }
 
 enum PaneKind: Equatable {
     case claude, terminal, web
+    /// Listed only while the Tasks switch is on (Settings › Experimental).
+    case task
     case app(CustomApp)
     /// A custom app of the host of another machine's tab, listed by `apps`: it runs there (ADR 0035).
     case hostApp(PeerApp)
@@ -22,6 +24,7 @@ enum PaneKind: Equatable {
         case .claude: "Claude"
         case .terminal: "Terminal"
         case .web: "Browser"
+        case .task: "Task"
         case .app(let app): app.name
         case .hostApp(let app): app.name
         }
@@ -32,6 +35,7 @@ enum PaneKind: Equatable {
         case .claude: "c"
         case .terminal: "t"
         case .web: "b"
+        case .task: "k"
         case .app, .hostApp: nil
         }
     }
@@ -39,7 +43,7 @@ enum PaneKind: Equatable {
         switch self {
         case .claude: "claude"
         case .terminal: "terminal"
-        case .web: "web"
+        case .web, .task: "web"
         case .app, .hostApp: "app"
         }
     }
@@ -48,6 +52,7 @@ enum PaneKind: Equatable {
         switch self {
         case .app(let app): app.symbol
         case .hostApp(let app): CustomApp.symbol(for: app.icon)
+        case .task: "checklist"
         default: nil
         }
     }
@@ -73,9 +78,9 @@ struct PickerItem: Equatable {
         return direction == .left || direction == .up ? (i + count - 1) % count : (i + 1) % count
     }
 
-    /// The built-ins, then the apps, each with its key.
-    static func items(apps: [CustomApp]) -> [PickerItem] {
-        let builtIns = PaneKind.builtIns
+    /// The built-ins (and the Task tile, with the Tasks switch on), then the apps, each with its key.
+    static func items(apps: [CustomApp], tasks: Bool = false) -> [PickerItem] {
+        let builtIns = PaneKind.builtIns + (tasks ? [.task] : [])
         let keys = CustomApp.assignKeys(taken: builtIns.compactMap(\.key), to: apps)
         return builtIns.map { PickerItem(kind: $0, key: $0.key) }
             + zip(apps, keys).map { PickerItem(kind: .app($0), key: $1) }
@@ -609,8 +614,14 @@ struct TerminalLeaf: View {
             } else if session.isWeb {
                 VStack(spacing: 0) {
                     AddressBar(session: session)
+                    if let task = session.task { TaskLine(task: task, session: session) }
                     if session.appExited {
                         AppExitedView(session: session) { tab.focus(session) }
+                    } else if let task = session.task {
+                        HStack(spacing: 4) {
+                            TerminalHost(session: session, focused: tab.focused === session)
+                            TaskSteps(task: task)
+                        }
                     } else {
                         TerminalHost(session: session, focused: tab.focused === session)
                     }

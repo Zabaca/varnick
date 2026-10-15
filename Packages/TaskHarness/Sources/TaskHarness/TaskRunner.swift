@@ -63,7 +63,7 @@ public final class TaskRunner {
     private var started = Date()
 
     // Page memory
-    private var peekCache: [String: Preview] = [:]
+    private var peekCache: [String: LinkPreview] = [:]
     private var peekedPages: Set<String> = []
     private var depthOf: [String: Int] = [:]
     private var landedFrom: Frontier.Entry?
@@ -626,7 +626,7 @@ extension TaskRunner {
 // MARK: - The frontier
 
 extension TaskRunner {
-    private func peekAll(_ links: [PageLink]) async -> [Preview?] {
+    private func peekAll(_ links: [PageLink]) async -> [LinkPreview?] {
         let missing = links.map(\.href).filter { peekCache[$0] == nil }
         if !missing.isEmpty {
             let found = await page.peek(missing)

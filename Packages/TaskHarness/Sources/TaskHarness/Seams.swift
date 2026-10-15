@@ -4,7 +4,7 @@ import Foundation
 // check command feeds the loop recorded pages and recorded answers through the same protocols.
 
 /// What a peek read of a page: its title, headings, first lines and links, as a plain fetch sees them.
-public struct Preview: Equatable, Sendable {
+public struct LinkPreview: Equatable, Sendable {
     public var title: String
     public var lines: [String]
     public var links: [String]
@@ -33,7 +33,7 @@ public protocol TaskPage: AnyObject {
     /// Opens a link's address in the pane: a branch of the frontier on another page.
     func open(_ href: String) async throws
     /// A peek at each address: nil where it could not be read. Parallel, with the pane's cookies, and the visible page does not move.
-    func peek(_ hrefs: [String]) async -> [Preview?]
+    func peek(_ hrefs: [String]) async -> [LinkPreview?]
 }
 
 public enum QuestionKind: Sendable {

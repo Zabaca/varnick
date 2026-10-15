@@ -19,6 +19,8 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers", exact: "1.3.4"),
         // The relay's shared code: Foundation only, so a Linux host builds it alone.
         .package(path: "Packages/VarnickPeer"),
+        // The loop of a Task: its rules alone, with a check command of its own (`swift run --package-path Packages/TaskHarness task-check`).
+        .package(path: "Packages/TaskHarness"),
     ],
     targets: [
         .executableTarget(
@@ -26,6 +28,7 @@ let package = Package(
             dependencies: [
                 "SwiftTerm",
                 .product(name: "VarnickPeer", package: "VarnickPeer"),
+                .product(name: "TaskHarness", package: "TaskHarness"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),

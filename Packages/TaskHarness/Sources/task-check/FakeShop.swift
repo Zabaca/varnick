@@ -142,11 +142,11 @@ final class FakeShop: TaskPage {
         errors = [:]
     }
 
-    func peek(_ hrefs: [String]) async -> [Preview?] {
+    func peek(_ hrefs: [String]) async -> [LinkPreview?] {
         peeked += hrefs
         return hrefs.map { href in
             guard let p = pages[href] else { return nil }
-            return Preview(title: p.title, lines: Array(p.texts.prefix(6)), links: p.body.map(\.label))
+            return LinkPreview(title: p.title, lines: Array(p.texts.prefix(6)), links: p.body.map(\.label))
         }
     }
 
