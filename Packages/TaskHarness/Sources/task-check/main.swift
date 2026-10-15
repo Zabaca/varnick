@@ -288,6 +288,14 @@ func formChecks() async {
         check(r.outcome == .finished, "and the task finished with the values that came", "\(r.outcome)")
     }
 
+    print("-- a form that marks no field required still waits for a value on its way before it submits")
+    do {
+        let (shop, claude, jev, user) = signupSetup()
+        for i in shop.pages["/signup"]!.fields.indices { shop.pages["/signup"]!.fields[i].required = false }
+        let r = await runTask("Create an account for Robin Vale.", shop: shop, system1: jev, system2: claude, user: user) { $0.jobDelayTurns = 3 }
+        check(r.outcome == .finished && shop.value("name") == "Robin Vale" && shop.submits == ["/signup: Create account"], "the one submit came after the values did", "\(r.outcome) \(shop.submits)")
+    }
+
     print("-- the site rejects the submit: only the failed fields go back to Claude")
     do {
         let (shop, claude, jev, user) = signupSetup()
@@ -358,6 +366,37 @@ func controlChecks() async {
         let jev = ScriptedSystem1(policy: .init(shape: .number, wanted: { _, _ in "Go back" }))
         let r = await runTask("Find nothing.", shop: makePracticeShop(start: "/market"), system1: jev, system2: ScriptedSystem2(), user: ScriptedUser()) { $0.maxSystem1Turns = 5 }
         if case .gaveUp = r.outcome { check(true, "a task that cannot finish gives up and says why: \(r.steps.last?.text ?? "")") } else { check(false, "a task that cannot finish gives up", "\(r.outcome)") }
+    }
+
+    print("-- a model that does not answer pauses the task; the third in a row ends it")
+    do {
+        let shop = makePracticeShop(start: "/help")
+        let claude = ScriptedSystem2()
+        claude.failing = true
+        let control = TaskControl()
+        var pauses = 0
+        let jev = ScriptedSystem1(policy: .init(shape: .number, wanted: { _, _ in nil }, score: { _, _ in 0.1 }))
+        let r = await runTask("Find out how much delivery to Canada costs.", shop: shop, system1: jev, system2: claude, user: ScriptedUser(), control: control, onStep: { step in
+            if step.text.hasPrefix("Paused: Claude didn't answer") {
+                pauses += 1
+                Task { try? await Task.sleep(nanoseconds: 30_000_000); control.resume() }
+            }
+        })
+        if case .gaveUp(let why) = r.outcome { check(why.contains("Claude didn't answer") && pauses == 2, "Claude not answering pauses twice with Resume, then gives up", "\(why) \(pauses)") }
+        else { check(false, "Claude not answering ends the task", "\(r.outcome)") }
+    }
+
+    print("-- time spent waiting for the person is not the task's")
+    do {
+        var clock = Date()
+        let (shop, claude, jev, user) = signupSetup()
+        user.onNeedsYou = { [unowned shop] _ in
+            shop.userTypes("password", password)
+            shop.userTicks("terms")
+            clock += 3600   // an hour at the keyboard
+        }
+        let r = await runTask("Create an account for Robin Vale.", shop: shop, system1: jev, system2: claude, user: user) { $0.now = { clock }; $0.maxSeconds = 300 }
+        check(r.outcome == .finished, "an hour waiting for the person did not spend a five minute budget", "\(r.outcome)")
     }
 
     print("-- without Jev")

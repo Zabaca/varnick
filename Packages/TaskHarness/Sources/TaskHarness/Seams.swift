@@ -32,8 +32,14 @@ public protocol TaskPage: AnyObject {
     func goBack() async throws
     /// Opens a link's address in the pane: a branch of the frontier on another page.
     func open(_ href: String) async throws
+    /// Marks the text block that holds `text` in the page and scrolls it into view: a finding task's answer, shown where it was found.
+    func mark(_ text: String) async
     /// A peek at each address: nil where it could not be read. Parallel, with the pane's cookies, and the visible page does not move.
     func peek(_ hrefs: [String]) async -> [LinkPreview?]
+}
+
+extension TaskPage {
+    public func mark(_ text: String) async {}
 }
 
 public enum QuestionKind: Sendable {

@@ -241,6 +241,12 @@ final class TaskController: ObservableObject, TaskUser {
         claude = nil
         run = nil
         if Self.running === self { Self.running = nil }
+        // The counts and kinds only: never an address, a title, a label, a value, the task or a reply.
+        if let runner {
+            let s = runner.stats
+            let kind: String = switch outcome { case .found: "found"; case .finished: "finished"; case .stopped: "stopped"; case .gaveUp: "gave up" }
+            NSLog("Varnick: a task ended (\(kind)) after \(Int(s.seconds.rounded())) s, \(s.jevCalls) Jev calls, \(s.claudeCalls) Claude calls, \(runner.steps.count) steps")
+        }
         switch outcome {
         case .found, .finished: phase = .done
         case .stopped: phase = .stopped

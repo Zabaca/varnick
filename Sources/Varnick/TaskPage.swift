@@ -161,6 +161,17 @@ enum TaskScript {
             nativeSet(el, value); events(el);
           }
         },
+        mark(needle) {
+          const want = needle.replace(/\s+/g, ' ').trim().slice(0, 500);
+          const blocks = 'p, li, h1, h2, h3, h4, h5, h6, td, th, dd, dt, blockquote, figcaption, pre, [role=alert], [role=status]';
+          for (const el of document.querySelectorAll(blocks)) {
+            if (el.querySelector(blocks) || text(el).slice(0, 500) !== want) continue;
+            el.style.outline = '2px solid #f5a623'; el.style.background = 'rgba(245, 166, 35, 0.25)';
+            el.scrollIntoView({ block: 'center' });
+            return true;
+          }
+          return false;
+        },
         settle(quiet, max) {
           return new Promise((resolve) => {
             let timer;
@@ -298,6 +309,10 @@ final class TaskWebPage: TaskPage {
     func fill(field id: String, value: String) async throws {
         _ = try await call("window.__vt.fill(id, value)", ["id": id, "value": value])
         await settle(waitingForNavigation: false, quiet: 120)
+    }
+
+    func mark(_ text: String) async {
+        _ = try? await call("return window.__vt.mark(text)", ["text": text])
     }
 
     func goBack() async throws {

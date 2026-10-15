@@ -58,6 +58,8 @@ func run() async {
         let outcome = await runner.run()
         check({ if case .found(let t) = outcome { t.contains("3 years") } else { false } }(), "a real page: gift card validity found behind Small print", "\(outcome) \(steps.map(\.text))")
         check(!(web.url?.absoluteString.contains("/gift") ?? false) && web.url?.absoluteString.hasSuffix("/small-print") == true, "it ended on Small print, not Gift cards", web.url?.absoluteString ?? "")
+        let marked = try? await web.evaluateJavaScript("(document.querySelector('p[style*=\"outline\"]') || {}).textContent || ''") as? String
+        check(marked?.contains("3 years") == true, "the text that answered is marked in the page", marked ?? "nil")
     }
     // 2. The dead end.
     do {
@@ -107,6 +109,7 @@ func run() async {
         let runner = TaskRunner(task: "Create an account for Robin Vale, robin@example.com, phone +1 503 555 0142.", page: TaskWebPage(web: web), system1: jev, system2: claude,
                                 user: user, control: TaskControl(), report: { steps.append($0) })
         let outcome = await runner.run()
+        if ProcessInfo.processInfo.environment["TASK_CHECK_STEPS"] != nil { for s in steps { print("      [\(s.actor.rawValue)] \(s.text)") } }
         check(outcome == .finished, "a real page: the account form was filled and submitted", "\(outcome) \(steps.map(\.text))")
         check(web.url?.absoluteString.hasSuffix("/welcome") == true, "the site took it and showed Welcome", web.url?.absoluteString ?? "")
         let log = await serverLog().compactMap { $0["signup"] as? [String: Any] }

@@ -61,6 +61,11 @@ public final class TaskRunner {
     public private(set) var readChecks: [(text: String, why: String, claude: Bool?, ok: Bool)] = []
     public private(set) var backRefused = 0
     private var started = Date()
+    /// Seconds spent waiting for the person.
+    private var waited: TimeInterval = 0
+    private var pauseReason = "you're using the page"
+    /// A background request for values that got no reply: the task pauses at its next step.
+    private var pendingModelFailure: ModelError?
 
     // Page memory
     private var peekCache: [String: LinkPreview] = [:]
@@ -89,7 +94,6 @@ public final class TaskRunner {
     private var suggest: (choose: String, address: String)?
     private var exploreNext = false
     private var askStreak = 0
-    private var lastUserTouch = false
 
     /// A background request for values.
     private final class Job {
@@ -132,13 +136,14 @@ public final class TaskRunner {
         report(step)
     }
 
-    private func finish(_ outcome: Outcome) -> Outcome {
+    private func finish(_ outcome: Outcome) async -> Outcome {
         stats.seconds = config.now().timeIntervalSince(started)
         // Whatever is still being asked of Claude is dropped with the task.
         jobs.forEach { $0.task.cancel() }
         valuesChain?.cancel()
         switch outcome {
         case .found(let text):
+            await page.mark(text)
             say(.harness, "Read \(quoted(text))", .found(text))
             say(.harness, "Done", .done)
             stateChanged(.done)
@@ -164,51 +169,84 @@ public final class TaskRunner {
         say(.harness, "Started", .started)
         stateChanged(.running)
         do {
-            var snap = try await page.snapshot()
-            guard !snap.address.isEmpty, snap.address != "about:blank" else { return finish(.gaveUp("no page is open: open the site first")) }
+            let snap = try await page.snapshot()
+            guard !snap.address.isEmpty, snap.address != "about:blank" else { return await finish(.gaveUp("no page is open: open the site first")) }
             recent.append("start on \(snap.address)")
-            // The task's values, asked of Claude in the background; the shape of the answer, asked of System 1.
+            // The task's values, asked of Claude in the background; the shape of the answer, asked of System 1 on the first turn.
             requestValues(fields: nil, why: "the task started")
-            shape = try await pickShape()
-            snap = try await page.snapshot()
-            _ = snap
+            var shapeKnown = false
+            var failuresInARow = 0
             while true {
                 try Task.checkCancellation()
-                if let over = budgetSpent() { return finish(.gaveUp(over)) }
-                guard config.enabled() else { return finish(.stopped) }
-                guard await control.checkpoint(onPause: { [self] in
-                    say(.harness, "Paused: you're using the page")
-                    stateChanged(.paused("you're using the page"))
-                }) else { return finish(.stopped) }
-                if control.takeTouched() || lastUserTouch {
-                    lastUserTouch = false
+                if let over = budgetSpent() { return await finish(.gaveUp(over)) }
+                guard config.enabled() else { return await finish(.stopped) }
+                guard await waiting({ await control.checkpoint(onPause: { [self] in
+                    say(.harness, "Paused: \(pauseReason)")
+                    stateChanged(.paused(pauseReason))
+                }) }) else { return await finish(.stopped) }
+                pauseReason = "you're using the page"
+                if control.takeTouched() {
                     let now = try await page.snapshot()
                     trail.add(address: now.address, action: "the person acted in the page", result: "the harness read the page again")
                     say(.harness, "Resumed from \(now.address)")
                     stateChanged(.running)
                 }
-                await deliverJobs()
-                if try await formPass() { continue }
-                if let outcome = try await turn() { return finish(outcome) }
+                do {
+                    if !shapeKnown {
+                        shape = try await pickShape()
+                        shapeKnown = true
+                    }
+                    if let failed = pendingModelFailure {
+                        pendingModelFailure = nil
+                        throw failed
+                    }
+                    await deliverJobs()
+                    if try await formPass() { failuresInARow = 0; continue }
+                    if let outcome = try await turn() { return await finish(outcome) }
+                    failuresInARow = 0
+                } catch let failure as ModelError {
+                    // A model that doesn't answer pauses the task with Resume and Stop; the third in a row ends it.
+                    failuresInARow += 1
+                    if failuresInARow >= 3 { return await finish(.gaveUp("\(failure.who) didn't answer \(failuresInARow) times in a row")) }
+                    say(.harness, "\(failure.who) didn't answer: \(failure.reason)")
+                    pauseReason = "\(failure.who) didn't answer"
+                    control.userActed()
+                }
             }
         } catch is CancellationError {
-            return finish(.stopped)
+            return await finish(.stopped)
         } catch {
-            return finish(.gaveUp("the page could not be read: \(error.localizedDescription)"))
+            return await finish(.gaveUp("the page could not be read: \(error.localizedDescription)"))
         }
     }
 
     private func budgetSpent() -> String? {
         if s1Turns >= config.maxSystem1Turns { return "\(config.maxSystem1Turns) steps without finishing" }
         if claudeMessages >= config.maxClaudeMessages { return "\(config.maxClaudeMessages) messages to Claude" }
-        if config.now().timeIntervalSince(started) > config.maxSeconds { return "\(Int(config.maxSeconds / 60)) minutes passed" }
+        // The minutes are the task's own: time spent waiting for the person (paused, asked to type, asked to allow) does not count.
+        if config.now().timeIntervalSince(started) - waited > config.maxSeconds { return "\(Int(config.maxSeconds / 60)) minutes passed" }
         return nil
+    }
+
+    /// Runs `wait`, which waits for the person, and keeps the time it took out of the task's budget.
+    private func waiting<T>(_ wait: () async -> T) async -> T {
+        let began = config.now()
+        let result = await wait()
+        waited += config.now().timeIntervalSince(began)
+        return result
     }
 
     // MARK: System 1
 
     private func askSystem1(_ state: JSON, _ questions: [Question]) async throws -> [String: Answer] {
-        let answers = try await system1.ask(state: state, questions: questions)
+        let answers: [String: Answer]
+        do {
+            answers = try await system1.ask(state: state, questions: questions)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw ModelError(who: system1.name, reason: Self.describe(error))
+        }
         try Task.checkCancellation()
         if system1.answeredBy == "Jev" { stats.jevCalls += 1 } else { stats.claudeCalls += 1 }
         return answers
@@ -229,7 +267,18 @@ public final class TaskRunner {
     private func askClaude(_ role: System2Role, _ text: String) async throws -> String {
         claudeMessages += 1
         stats.claudeCalls += 1
-        return try await system2.ask(role, text, preface: Prompts.role(task: task))
+        do {
+            return try await system2.ask(role, text, preface: Prompts.role(task: task))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw ModelError(who: "Claude", reason: Self.describe(error))
+        }
+    }
+
+    /// What went wrong, in a line that may be shown: never more than the error's own description.
+    private static func describe(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? "no answer"
     }
 
     private func requestValues(fields: [PageField]?, why: String, address: String = "") {
@@ -286,6 +335,7 @@ public final class TaskRunner {
 
     private func take(_ job: Job, reply: String?) {
         jobs.removeAll { $0 === job }
+        if reply == nil { pendingModelFailure = ModelError(who: "Claude", reason: "no values came back") }
         let entries = ValueBank.entries(from: reply.flatMap { JSON.firstObject(in: $0) })
         bank.merge(entries)
         for id in job.fields ?? [] {
@@ -341,8 +391,10 @@ extension TaskRunner {
 
     private func candidates(_ snap: PageSnapshot) -> [Candidate] {
         var acts: [Act] = []
-        for l in snap.links where !l.isSelf && !l.label.isEmpty { acts.append(.link(l)) }
-        for b in snap.buttons { acts.append(.button(b)) }
+        // A page can have hundreds of links: the body's first 40 and the header's and footer's first 10 are offered, so a call stays small enough for Jev's deadline.
+        let offered = snap.links.filter { !$0.isSelf && !$0.label.isEmpty }
+        for l in offered.filter(\.inBody).prefix(40) + offered.filter({ !$0.inBody }).prefix(10) { acts.append(.link(l)) }
+        for b in snap.buttons.prefix(30) { acts.append(.button(b)) }
         if shape.readsAnswer {
             for t in snap.readableTexts.filter({ !badReads.contains($0.text) }).prefix(20) { acts.append(.read(t)) }
         }
@@ -381,9 +433,14 @@ extension TaskRunner {
             ("task", .string(task)),
             ("page", .object(["address": .string(snap.address), "title": .string(snap.title)])),
         ]
-        let linkNames: [String] = snap.links.filter { !$0.isSelf }.map { "link \"\($0.label)\"" }
-        let buttonNames: [String] = snap.buttons.map { "button \"\($0.label)\"" }
-        pairs.append(("links_and_buttons", .strings(linkNames + buttonNames)))
+        let offeredNames: [String] = acts.compactMap { c in
+            switch c.act {
+            case .link(let l): "link \"\(l.label)\""
+            case .button(let b): "button \"\(b.label)\""
+            default: nil
+            }
+        }
+        pairs.append(("links_and_buttons", .strings(offeredNames)))
         pairs.append(("text", .strings(snap.texts.prefix(20).map { "\($0.id): \($0.text.prefix(150))" })))
         pairs.append(("recent", .strings(Array(recent.suffix(4)))))
         if let hint = hints.last { pairs.append(("standing_hint_from_claude", .string(hint))) }
@@ -396,7 +453,7 @@ extension TaskRunner {
         let answers = try await askSystem1(state, questions)
         s1Turns += 1
         guard let nextAnswer = answers["next"], let top = nextAnswer.top, let chosen = acts.first(where: { $0.id == top.label }) else {
-            throw HarnessError.unreadable("System 1 picked no listed action")
+            throw ModelError(who: system1.name, reason: "its choice was not one of the listed actions")
         }
         var act = chosen
         var p = top.p
@@ -540,10 +597,9 @@ extension TaskRunner {
         }
     }
 
+    /// A value is still on its way and a field the harness fills is empty (or asked for): a page need not mark its fields required, so any empty one counts.
     private func mustWait(_ snap: PageSnapshot) -> Bool {
-        let open = snap.formFields.filter { f in
-            (f.required || !(f.error ?? "").isEmpty || requested.contains(f.id)) && (f.isEmpty || requested.contains(f.id)) && !f.secret
-        }
+        let open = snap.formFields.filter { f in !f.secret && (f.isEmpty || requested.contains(f.id)) && !userOnly.contains(f.id) }
         return !open.isEmpty && !jobs.isEmpty
     }
 
@@ -551,7 +607,7 @@ extension TaskRunner {
         let what = "Submit \(b.label)? Allow / I'll do it"
         say(.harness, what)
         stateChanged(.needsYou(what))
-        let decision = await user.decide(submit: b.label)
+        let decision = await waiting { await user.decide(submit: b.label) }
         if decision != .stop { stateChanged(.running) }
         return decision
     }
@@ -560,7 +616,7 @@ extension TaskRunner {
     /// came first still counts.
     private func waitForUserPress(from snap: PageSnapshot, marker: Int) async throws {
         stateChanged(.paused("press it in the page, then Resume"))
-        guard await control.waitForResume(after: marker) else { throw CancellationError() }
+        guard await waiting({ await control.waitForResume(after: marker) }) else { throw CancellationError() }
         _ = control.takeTouched()
         let now = try await page.snapshot()
         trail.add(address: snap.address, action: "the person pressed a submit", result: now.address == snap.address ? "the same page" : "went to \(now.address)")
@@ -866,19 +922,19 @@ extension TaskRunner {
         // Everything the harness can fill is filled. What only the person gives is asked for once the values are in.
         if jobs.isEmpty, !did {
             let latest = try await page.snapshot()
-            let waiting = latest.formFields.filter { f in
+            let theirs = latest.formFields.filter { f in
                 let isUserField = !f.secret && f.isEmpty && userOnly.contains(f.id)
                 return ((f.secret && f.isEmpty && (f.required || f.type == "password")) || isUserField) && !askedUser.contains(latest.address + f.id)
             }
-            if !waiting.isEmpty {
-                for f in waiting { askedUser.insert(latest.address + f.id) }
-                let what = waiting.map { $0.type == "checkbox" ? "tick \"\($0.label)\" if you agree" : "type your \($0.label.lowercased()) in the page" }.joined(separator: " and ")
+            if !theirs.isEmpty {
+                for f in theirs { askedUser.insert(latest.address + f.id) }
+                let what = theirs.map { $0.type == "checkbox" ? "tick \"\($0.label)\" if you agree" : "type your \($0.label.lowercased()) in the page" }.joined(separator: " and ")
                 let line = what.prefix(1).uppercased() + what.dropFirst()
                 say(.harness, "\(line), then Resume", .needsYou(what.replacingOccurrences(of: "type your ", with: "your ").replacingOccurrences(of: " in the page", with: "")))
                 stateChanged(.needsYou(String(line)))
-                guard await user.needsYou(String(line)), !control.isStopped else { throw CancellationError() }
+                guard await waiting({ await user.needsYou(String(line)) }), !control.isStopped else { throw CancellationError() }
                 stateChanged(.running)
-                trail.add(address: latest.address, action: "the person filled \(waiting.map(\.label).joined(separator: ", "))", result: "the same page")
+                trail.add(address: latest.address, action: "the person filled \(theirs.map(\.label).joined(separator: ", "))", result: "the same page")
                 return true
             }
         }
@@ -949,7 +1005,8 @@ extension Answer {
     }
 }
 
-enum HarnessError: Error, LocalizedError {
-    case unreadable(String)
-    var errorDescription: String? { if case .unreadable(let s) = self { s } else { nil } }
+/// A model that did not answer: which one, and why in a line that may be shown.
+struct ModelError: Error {
+    let who: String
+    let reason: String
 }
