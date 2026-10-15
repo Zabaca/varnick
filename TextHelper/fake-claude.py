@@ -5,6 +5,7 @@
 #   FAKE_CLAUDE_HANG=1   never answers a user message, to check that a stop ends this process
 #   FAKE_CLAUDE_RETRY=1  reports a retrying request, as a login that fails does
 #   FAKE_CLAUDE_TRANSIENT=1  reports a retry for an overloaded API, then answers
+#   FAKE_CLAUDE_COUNT=1  numbers its answers, for a conversation of several messages
 import json, os, sys, time
 
 log = open(os.environ.get("FAKE_CLAUDE_LOG", "/dev/null"), "a")
@@ -35,11 +36,16 @@ for line in sys.stdin:
             send({"type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10, "retry_delay_ms": 100,
                   "error_status": 529, "error": "overloaded", "uuid": "u0", "session_id": "fake"})
             time.sleep(0.3)
+        # FAKE_CLAUDE_COUNT=1 numbers the answers ("OK 1", "OK 2") so a conversation's messages can be told apart, and keeps the first
+        # message's word in them: "OK 2 after <first word of message 1>" shows the second answer came from the same process.
+        replies = globals().setdefault("replies", [])
+        replies.append(msg.get("message", {}).get("content", ""))
+        said = f"OK {len(replies)} after {str(replies[0]).split()[0]}" if os.environ.get("FAKE_CLAUDE_COUNT") else "OK"
         send({"type": "stream_event", "uuid": "u2", "session_id": "fake", "parent_tool_use_id": None,
-              "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "OK"}}})
+              "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": said}}})
         send({"type": "assistant", "session_id": "fake", "parent_tool_use_id": None,
               "message": {"id": "m1", "type": "message", "role": "assistant", "model": "fake",
-                          "content": [{"type": "text", "text": "OK"}], "stop_reason": "end_turn", "usage": {}}})
-        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1, "result": "OK",
+                          "content": [{"type": "text", "text": said}], "stop_reason": "end_turn", "usage": {}}})
+        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1, "result": said,
               "session_id": "fake", "total_cost_usd": 0, "duration_ms": 1, "duration_api_ms": 1,
               "usage": {}, "modelUsage": {}, "permission_denials": []})
