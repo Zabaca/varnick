@@ -25,6 +25,8 @@ public struct Automation: Codable, Identifiable, Equatable {
     public var createdAt: Date
     /// Newest first, at most `runLimit`.
     public var runs: [AutomationRun]
+    /// What a Claude session last did to it through the automation tools (slice 3), until the user has seen it. Optional, so the file stays at version 1.
+    public var mark: AutomationMark?
 
     public static let runLimit = 20
     public static let defaultWorkingLimitMinutes = 60
@@ -36,7 +38,7 @@ public struct Automation: Codable, Identifiable, Equatable {
     public init(id: UUID = UUID(), name: String, prompt: String, folder: String? = nil, agent: String? = nil, cadence: AutomationCadence,
                 timeZone: String = TimeZone.current.identifier, permissions: AutomationPermissions? = nil, allowedTools: [String] = [],
                 workingLimitMinutes: Int = Automation.defaultWorkingLimitMinutes, enabled: Bool = true, lastSlot: Date? = nil,
-                createdAt: Date = Date(), runs: [AutomationRun] = []) {
+                createdAt: Date = Date(), runs: [AutomationRun] = [], mark: AutomationMark? = nil) {
         self.id = id
         self.name = name
         self.prompt = prompt
@@ -51,6 +53,7 @@ public struct Automation: Codable, Identifiable, Equatable {
         self.lastSlot = lastSlot
         self.createdAt = createdAt
         self.runs = runs
+        self.mark = mark
     }
 
     public var zone: TimeZone { TimeZone(identifier: timeZone) ?? .current }
@@ -75,6 +78,22 @@ public struct Automation: Codable, Identifiable, Equatable {
         }
         runs.insert(run, at: 0)
         while runs.count > Self.runLimit, let drop = runs.lastIndex(where: { !$0.isKept }) { runs.remove(at: drop) }
+    }
+}
+
+/// A session's create, edit or switch of an automation, shown on the automation's row and beside its runs until the user opens the editor, switches
+/// it or presses Seen. It is the user's only notice of it (there is no Notice).
+public struct AutomationMark: Codable, Equatable {
+    /// "Made", "Edited: prompt, cadence", "Turned on", "Turned off".
+    public var what: String
+    /// The title of the session that did it.
+    public var by: String
+    public var at: Date
+
+    public init(what: String, by: String, at: Date) {
+        self.what = what
+        self.by = by
+        self.at = at
     }
 }
 

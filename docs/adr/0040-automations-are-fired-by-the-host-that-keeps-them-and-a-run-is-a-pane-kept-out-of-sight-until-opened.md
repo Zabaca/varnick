@@ -25,4 +25,17 @@ An **Automation** (`CONTEXT.md`) is a saved prompt with a folder, an optional ag
 - **Each run draws on the user's Claude subscription,** unattended. The 15-minute floor and the one-run-at-a-time rule bound it; nothing caps it.
 - **Until the headless host has runs,** a run tab is listed to paired Macs and the phone as an ordinary tab, which is what lets the host's page server push its notices.
 - **A run ended at its limit tells no one.** The pane is gone, so neither the Mac's notifier nor the page server has a turn to read; it is marked in the run list only.
-- **Nothing lets a session make an automation.** That is deferred beyond this build.
+- **A session can make an automation that runs unattended,** as the amendment below records. Whoever reads a session's output with Anthropic reads the prompts the list shows.
+
+## Amendment, 2026-10-15: sessions make, edit and switch automations
+
+A Claude session on this Mac can list, make, edit and switch automations through four tools on Varnick's MCP server (`automations_list`, `automation_create`, `automation_edit`, `automation_switch`), with no approval step of Varnick's. The user decided it; this replaces the deferral above (slice 3 of option 01, this Mac only).
+
+- **Behind the Automations switch and nothing else.** The tools are listed in every Claude pane started or restarted while the switch is on, never in a run's session (which stays `notify` alone) and not behind Panel access, whose grant is reading every screen and pressing keys. The running Varnick refuses a call while the switch is off.
+- **Answered by the running Varnick, written only through the automation store,** as Panel access's calls are: one request line on the socket, the checks in a fixed order, the file's one writer. Not through the `notify` path, which records a call after it has been answered and so can't hand back an id, a list or a refusal.
+- **A session never gives an unattended run more than the user's setting gives a typed prompt.** It may follow Varnick's Skip permissions setting, choose Ask or Allowed tools only, and switch an automation the user set to Skip, but it can't set Skip or edit such an automation.
+- **The user's loss stays the user's.** Delete (which drops the run history) and Run now are not tools; a session that wants an automation to stop switches it off.
+- **The user sees a mark, not a notice,** on the automation's row and beside its runs until they have seen it. A run raises its own notices, so an automation made or turned on while the user was away is seen at its first run at the latest.
+- **Claude Code's own dialog is the only approval:** the tools are not in a session's allow list, so a pane with Skip permissions off asks before each call.
+
+Considered and not chosen: a `propose` tool the user approves (the user decided against an approval step); tying the tools to Panel access (it would make the user grant reading screens and pressing keys to get this); a switch of their own (the Automations switch is already that decision); a notice besides the mark (it is mostly raised for the pane the user is looking at, needs a message only the hook writes or a new kind in both languages, and the first run tells them anyway).

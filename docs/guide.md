@@ -410,6 +410,12 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   bar menu. It tells you as any session does: Done, Needs you, an error, or a message if the prompt asks for one ("…and notify me
   with the count"). Open while it works and you watch it live; open after it ended and its conversation is resumed in a new tab.
   The Runs tab also lists the slots that did not run and why: skipped, missed, couldn't start.
+- **Claude sessions can manage them.** With Automations on, every Claude session you start (or restart) lists four Varnick
+  tools: list, make, edit and turn on or off an automation, so "run this every weekday morning in this repo" works. There is no
+  approval step of Varnick's: with Skip permissions off, Claude Code asks before each call. A session can't set Skip, edit
+  an automation you set to Skip (it can switch it), delete one or run one now, and a run's own session never has the tools.
+  What a session did shows under the automation in Settings and in the Runs tab, as a mark, until you open its editor, switch it
+  or press **Seen**.
 - **It runs only while Varnick does on this Mac.** A slot that passed while the Mac slept or Varnick was quit runs once, when
   the Mac wakes or Varnick starts, if it is under 12 hours old; older ones are marked missed. At most one run of an automation goes
   at a time: a slot that falls due while the last run still works or waits on you is skipped. Keep sessions running must be on.

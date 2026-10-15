@@ -615,15 +615,17 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             Agent.available(in: record.directory).contains { $0.name == name } ? name : nil
         }
         // Screen access (ADR 0023), Panel access (ADR 0031) and the Problems board's work-link hooks are read at each start, not stored: a
-        // pane gains or loses them at its next start or restart. A run of an automation never gets the first two, whatever they say: its MCP
-        // config lists `notify` alone (option 01 of `prompts-cant-run-on-a-schedule`).
+        // pane gains or loses them at its next start or restart. A run of an automation never gets the first two, nor the automation tools
+        // (which come with the Automations switch alone), whatever they say: its MCP config lists `notify` alone (option 01 of
+        // `prompts-cant-run-on-a-schedule`).
         let isRun = record.automation != nil
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
                                                  prompt: prompt, problems: Settings.shared.problemsBoard,
                                                  mcpConfig: ScreenMCP.configuration(pane: record.id, screen: !isRun && Settings.shared.screenAccess,
-                                                                                    panel: !isRun && Settings.shared.panelAccess),
+                                                                                    panel: !isRun && Settings.shared.panelAccess,
+                                                                                    automations: !isRun && Settings.shared.automationsOn),
                                                  dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [])
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
