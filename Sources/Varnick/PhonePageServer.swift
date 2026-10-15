@@ -25,6 +25,8 @@ final class PhonePageServer: ObservableObject {
         var files: Bool
         /// What the server's port proxy last wrote, nil when it isn't running (`PeerProxyStatus.read`).
         var proxy: PeerProxyStatus?
+        /// How many browsers of each listed device (by id) get notifications from this Mac, from the server's subscription file: a count, never an endpoint.
+        var pushCounts: [String: Int] = [:]
     }
 
     enum Server: Equatable {
@@ -299,6 +301,7 @@ final class PhonePageServer: ObservableObject {
         return Look(dnsName: dnsName, mode: mode, reason: reason, version: chosen.version, hasCLI: cli != nil, serve: serve,
                     serveCommand: PhonePage.serveCommand(cli: cli, target: target), funnelOffCommand: PhonePage.funnelOffCommand(cli: cli),
                     running: running, logTail: tail, bun: PhonePage.bunExecutable() != nil,
-                    files: PhonePage.serverFolder(installedIn: LaunchSnapshot.serverInstall) != nil, proxy: PeerProxyStatus.read())
+                    files: PhonePage.serverFolder(installedIn: LaunchSnapshot.serverInstall) != nil, proxy: PeerProxyStatus.read(),
+                    pushCounts: PhonePagePush.counts(in: PhonePage.folder(in: SupportFolder.url)))
     }
 }

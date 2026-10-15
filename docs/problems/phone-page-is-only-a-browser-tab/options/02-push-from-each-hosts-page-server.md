@@ -2,7 +2,7 @@
 problem: phone-page-is-only-a-browser-tab
 title: Option 01, plus Web Push from each host's page server, routed by where the user is
 summary: Option 01, plus standard Web Push, sent only when the user isn't at the Mac driving the session. Each host's page server watches the turns of its own Claude panes and decides by sessions-finish-unnoticed option 01's table, so the Mac and the phone use one rule. It routes each notice by the pane's controller. A Mac whose user is present gets its own notice (that problem's option 01) and the phone stays quiet. If that Mac locks, sleeps or goes idle while the notice still stands, the push goes then. A Mac that is away or can't be told, and the phone in control, get the push after a 10-second settle. Each Mac reports whether its user is present (input idle time, screen locked or display asleep) to the hosts it follows, on the status requests it already sends every 5 s. The push goes from the host to Apple's or Google's push service, encrypted end to end, padded to one size, and holds ids and the kind of notice, never session content. The phone's worker reads the title over the tailnet when it can. Each host has its own signing key (in the Keychain on a Mac, an owner-only file on a headless host) and its own subscriptions. One protocol bump. Rough effort is six and a half days on top of option 01.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -41,7 +41,8 @@ status: accepted
 
   Anything else is **away**.
 - **The settle** is 10 seconds. A notice still standing then is pushed. It absorbs a turn that flickers and the up to 5 seconds a presence report takes.
-- **A device with the pane open gets no push for it.** Open means its terminal or its live view, which the page holds only while visible. That holds in every row.
+- **A device that has looked at the pane while the notice stood gets no push for it.** The pane is open on a device while its terminal or live view is open and its page is visible: the page tells the host when it hides or shows, because Android keeps a hidden app's socket for over a minute. Looking for 3 seconds without a break is seeing; a shorter look waits, and the push goes once the pane is left. That holds in every row.
+- **A notice the controlling Mac has shown the user gets no push.** The page server only has its own copy of a notice, so the Mac's report also lists the panes it holds a notice for and the panes it shows on screen. A notice that a report written after it was raised listed and a later one doesn't, or whose pane a report of a present user shows on screen, is dropped for good, in every Mac row. A Mac that never listed it (its Settings switch for the category is off, or an older report) is no evidence, and the notice stands. A pane on the screen of a Mac that is away doesn't count.
 - **Each subscription has switches** for Needs me, Done and Errors, all on by default.
 
 The Mac half (the notice on the controlling Mac, quiet when the pane is on screen) is `sessions-finish-unnoticed` option 01's, unchanged. This option is the phone half.
@@ -240,7 +241,7 @@ The page checks its subscription at each load. If it was made with a key the hos
 ### The protocol
 
 One bump (27), Swift and the server's version together:
-- **`status` requests from a Mac gain an optional presence field:** idle seconds and the away flag. A device's is ignored.
+- **`status` requests from a Mac gain an optional presence field:** idle seconds, the away flag, and the panes it holds a notice for and shows on screen. A device's is ignored.
 - **`tabs` gains, for a waiting Claude pane, a mark when the waiting came from the user's Esc or Deny.**
 - **The relay tells the host's own id the controller's id** in `tabs`, not only its name. It is the host's own page server, which already reads the device list and the paired Macs. A device is still told only its own id.
 
@@ -305,6 +306,15 @@ One bump (27), Swift and the server's version together:
 - Declarative Web Push on iOS 18.4 and later.
 
 ## Further Notes
+
+### Decided by the coordinator, 2026-10-15, on review of the build
+
+- **A host's own pane with no client follows the host's presence.** Only a peer Mac's detached client counts as can't-be-told. The host's own Varnick notifies for its dormant panes itself, so a present user is not pushed for them.
+- **The per-device line lives in Settings › Peers › Devices,** beside the device's other facts, not under Serve the phone page. It says whether the device gets notifications from this Mac, from a count in the subscription file.
+- **`status` gaining `failure` and `esc` closes the gap** the user wanted closed: a Mac's own notices on a peer's panes take the Esc mark and the error's kind, so a peer's Esc raises no Done there. It is recorded in `sessions-finish-unnoticed` option 01's Trade-offs, where the gap was written down.
+- **Send a test has its own 5-second limit** per device, and is sent once with no retry.
+- **Open on the phone means visible (first hand test, 2026-10-15).** A push did not come for a session the user sent a prompt to from the installed app and then left for the home screen: the terminal socket stayed up for 86 s, which counted as the pane being open, and the suppression was final. Now a hidden page is not an open pane, a suppression needs a 3-second look, and the log names each decision (`push decide …`).
+- **The presence report lists the panes** the Mac holds a notice for and shows (protocol 27, which was unreleased, so no further bump), so a notice the user saw on the Mac is not pushed when they lock and leave.
 
 ### Asked by the user, 2026-10-14
 

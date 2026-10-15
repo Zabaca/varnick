@@ -7,7 +7,7 @@ public enum NoticeKind: Equatable, Sendable {
     case done
     /// Needs you: a permission dialog, a question, a plan or an MCP request; the word says which.
     case needsYou(Turn)
-    /// Stopped on an error, with the kind when the reader knew it (a paired Mac's reply carries the word alone).
+    /// Stopped on an error, with the kind when the reader knew it (a paired Mac on protocol 27 sends it, an older one didn't).
     case failed(TurnFailure?)
 }
 

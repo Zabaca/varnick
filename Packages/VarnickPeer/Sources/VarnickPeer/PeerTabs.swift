@@ -214,6 +214,13 @@ public struct PeerPane: Codable, Equatable, Sendable {
         get { turnWord.flatMap(Turn.init(rawValue:)) }
         set { turnWord = newValue?.rawValue }
     }
+    /// A `failed` turn's kind and a `waiting` one made from the user's Esc or Deny, as in `PeerSessionStatus` (protocol 27).
+    var failureWord: String?
+    public var esc: Bool?
+    public var failure: TurnFailure? {
+        get { failureWord.map { TurnFailure(error: $0) } }
+        set { failureWord = newValue?.wire }
+    }
     public var work: PeerWork?
     /// Claude and terminal: why the pane doesn't run, when the host knows (a terminal on a Mac with Keep sessions running off).
     public var note: String?
@@ -228,14 +235,14 @@ public struct PeerPane: Codable, Equatable, Sendable {
     public var proxyNote: String?
 
     private enum CodingKeys: String, CodingKey {
-        case id, kindWord = "kind", title, folder, running, clients, control, controlName, agent, conversation, turnWord = "turn", turnAge, work,
-             note, url, app, port, file, proxy, proxyNote
+        case id, kindWord = "kind", title, folder, running, clients, control, controlName, agent, conversation, turnWord = "turn", turnAge,
+             failureWord = "failure", esc, work, note, url, app, port, file, proxy, proxyNote
     }
 
     public init(id: String, kind: PeerPaneKind, title: String, folder: String, running: Bool? = nil, clients: Int? = nil, control: String? = nil,
                 controlName: String? = nil, agent: String? = nil, conversation: String? = nil, turn: Turn? = nil, turnAge: Int? = nil,
-                work: PeerWork? = nil, note: String? = nil, url: String? = nil, app: String? = nil, port: Int? = nil, file: String? = nil,
-                proxy: String? = nil, proxyNote: String? = nil) {
+                failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil, note: String? = nil, url: String? = nil, app: String? = nil,
+                port: Int? = nil, file: String? = nil, proxy: String? = nil, proxyNote: String? = nil) {
         self.id = id
         self.kindWord = kind.rawValue
         self.title = title
@@ -248,6 +255,8 @@ public struct PeerPane: Codable, Equatable, Sendable {
         self.conversation = conversation
         self.turnWord = turn?.rawValue
         self.turnAge = turnAge
+        self.failureWord = failure?.wire
+        self.esc = esc
         self.work = work
         self.note = note
         self.url = url
@@ -256,6 +265,14 @@ public struct PeerPane: Codable, Equatable, Sendable {
         self.file = file
         self.proxy = proxy
         self.proxyNote = proxyNote
+    }
+
+    /// Takes in a host's reading of the pane's turn.
+    public mutating func take(_ reading: PeerTurn.Reading) {
+        turn = reading.turn
+        turnAge = reading.age
+        failure = reading.failure
+        esc = reading.interrupted ? true : nil
     }
 
     /// The zmx session name of a Claude or terminal pane.
@@ -310,14 +327,15 @@ public struct PeerTab: Codable, Equatable, Sendable {
         clients = running.isEmpty ? nil : running.compactMap(\.clients).reduce(0, +)
     }
 
-    /// What a device is told: the controller's id only when it is the device, no work links and no mark.
-    public func hiding(from device: String) -> PeerTab {
+    /// What a device is told: the controller's id only when it is the device, no work links and no mark. The host's own Phone page server
+    /// (`keepingControllers`, protocol 27) is told a device's answer with the controllers' ids too: it routes a push by who controls a pane.
+    public func hiding(from device: String, keepingControllers: Bool = false) -> PeerTab {
         var tab = self
-        if !Zmx.sameID(tab.control, device) { tab.control = nil }
+        if !keepingControllers, !Zmx.sameID(tab.control, device) { tab.control = nil }
         tab.doneAge = nil
         tab.panes = tab.panes.map { pane in
             var pane = pane
-            if !Zmx.sameID(pane.control, device) { pane.control = nil }
+            if !keepingControllers, !Zmx.sameID(pane.control, device) { pane.control = nil }
             pane.work = nil
             return pane
         }

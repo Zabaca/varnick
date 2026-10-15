@@ -16,6 +16,7 @@ Every host serves a web page, the Phone page, to the user's own devices, such as
 - The socket sits in a 0700 folder, since Bun binds it before it can be chmodded.
 - The terminal is the relay's `attach` in Bun's pseudo-terminal. Closing the tab ends only the phone's zmx client, and the phone stays in control, as a Mac whose link dropped does.
 - The protocol version goes up once, for devices as askers and for the controller's name in `status` and `sessions`. Every Mac and the headless host then run one commit (ADR 0009).
+- The server asks nobody outside the tailnet, except to push a notice to the phone: [ADR 0038](0038-each-hosts-phone-page-server-pushes-notices-to-the-phone-through-the-vendors-push-services.md) adds that one outbound request, to the vendors' push services, with its own rules.
 - Funnel stays off. Nothing in Varnick or the installer runs `tailscale funnel`, and each publishes only the one mount 8444 (see the note at the end).
 - On a headless host a device can be in control. This amends ADR 0009's "always in control" by a Mac.
 

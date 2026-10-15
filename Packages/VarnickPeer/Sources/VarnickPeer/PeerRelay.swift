@@ -79,6 +79,7 @@ public enum PeerRelay {
         // could otherwise ask. A listed device may ask for the same, but not for the search sync's `rows`
         // and `pages` (ADR 0011), nor to upgrade or restart a host.
         var device: String?
+        var ownPageServer = false
         if op != .hello {
             let peer = host.lists(head.by)
             let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || op == .apps || op == .files || PeerProtocol.answersAnyVersion(op)
@@ -86,8 +87,10 @@ public enum PeerRelay {
                 device = head.by
             } else if !peer, op == .tabs || op == .hosts, Zmx.sameID(head.by, host.ownID) {
                 // The host's own Phone page server, reading which ports the open tabs use and which Macs are paired, to run the port proxy
-                // (ADR 0035). It is told what a device is. Nothing else is answered to the host's own id.
+                // (ADR 0035), and which pane each Mac or device controls, to route a push (phone page option 02). It is told what a device is,
+                // with the controllers' ids as well (protocol 27). Nothing else is answered to the host's own id.
                 device = head.by
+                ownPageServer = true
             }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
         }
@@ -103,7 +106,7 @@ public enum PeerRelay {
         case .watch:
             return watch(PeerJSON.decode(PeerRequest.self, from: line), host: host)
         case .tabs:
-            return finish(named(host.tabs(), host: host, for: device))
+            return finish(named(host.tabs(), host: host, for: device, keepingControllers: ownPageServer))
         case .take:
             return take(PeerJSON.decode(PeerRequest.self, from: line), host: host)
         case .file:
@@ -165,6 +168,9 @@ public enum PeerRelay {
     }
 
     private static func status(_ request: PeerRequest?, host: PeerHost, for device: String?) -> Int32 {
+        // A listed Mac says whether its user is at it (protocol 27); the Phone page server reads the file. A device's report is ignored, so
+        // is the host's own id, and a write that fails leaves the old file to age into "can't be told".
+        if device == nil, let presence = request?.presence, let by = request?.by { PresenceFile.write(presence, for: by) }
         guard let names = request?.sessions, names.count <= 50, names.allSatisfy(Zmx.isPaneSession) else {
             return finish(.failure("Not a list of Varnick session names"))
         }
@@ -184,7 +190,7 @@ public enum PeerRelay {
     }
 
     /// `tabs` with each controller named, so a Mac with a pane for a tab can say "Phone", and a device told no more than it may be.
-    private static func named(_ reply: PeerReply, host: PeerHost, for device: String?) -> PeerReply {
+    private static func named(_ reply: PeerReply, host: PeerHost, for device: String?, keepingControllers: Bool = false) -> PeerReply {
         guard reply.ok, let tabs = reply.tabs else { return reply }
         let names = host.controllerNames()
         let proxy = PeerProxyStatus.read()
@@ -200,7 +206,7 @@ public enum PeerRelay {
             let held = tab.control != nil || tab.runningPanes.allSatisfy { $0.control == nil }
             tab.controlName = tab.runningPanes.isEmpty || !held ? nil : names.name(of: tab.control)
             tab = tab.settingProxy(from: proxy)
-            return device.map { tab.hiding(from: $0) } ?? tab
+            return device.map { tab.hiding(from: $0, keepingControllers: keepingControllers) } ?? tab
         }
         return reply
     }

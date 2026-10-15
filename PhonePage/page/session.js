@@ -314,6 +314,7 @@ function openSocket(s, take) {
     if (s.ws !== ws) return;
     // The first message goes before anything refits, so the server starts the attach at once.
     ws.send(JSON.stringify({ session: s.name, cols: s.term.cols, rows: s.term.rows, take }));
+    if (!visible()) announceVisibility(s);
     s.openedAt = Date.now();
     s.term.reset();
     refit(s);
@@ -553,9 +554,22 @@ $("term").addEventListener("click", () => current?.term?.focus());
   });
 }
 
+/**
+ * Tells the host whether this page is visible. Android keeps a hidden app's socket for over a minute, so the socket alone says the pane is open
+ * long after the user left; the host counts a pane as open on this phone only while the page says it is visible (a push for a notice the user
+ * didn't see is not held back). Announced again whenever the page shows, and by a socket that opens while it is hidden.
+ */
+function announceVisibility(s) {
+  send(s, { t: "visibility", visible: visible() });
+}
+
+// A page being left for good or frozen may never see its visibilitychange through.
+window.addEventListener("pagehide", () => { if (current) send(current, { t: "visibility", visible: false }); });
+
 document.addEventListener("visibilitychange", () => {
   const s = current;
   if (!s) return;
+  announceVisibility(s);
   if (!visible()) {
     clearTimeout(s.timer);
     s.timer = null;

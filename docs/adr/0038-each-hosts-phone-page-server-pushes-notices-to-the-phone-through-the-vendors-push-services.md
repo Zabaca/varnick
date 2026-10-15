@@ -1,0 +1,32 @@
+# Each host's Phone page server pushes notices to the phone through the vendors' push services
+
+Amends [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md) (the page server answers the tailnet and asks nobody outside it), and reads the turns [ADR 0010](0010-a-panes-turn-comes-from-hooks-that-write-to-the-pane-folder.md) describes. The problem and the option are in `docs/problems/phone-page-is-only-a-browser-tab/` (option 02, accepted 2026-10-14, with the user's decisions of that day). The mechanics and what breaks them are in `docs/agents/where-it-breaks.md` (Phone page › Push, and Peers › Presence); **Presence** and **Notice** are defined in `CONTEXT.md`.
+
+The page server of a host sends a standard Web Push (RFC 8030, VAPID RFC 8292, `aes128gcm` RFC 8291) to the phone's browser when a Claude session of that host needs the user and the user is away from it. It is the first request the server makes outside the tailnet.
+
+- **One rule, two languages.** When something is worth a push is `NoticeRule`'s table, kept in `PhonePage/pushrule.ts` for the host's own `tabs`. The first word read for a pane is a starting point; a waiting from the user's Esc or Deny raises nothing.
+- **Routed by the pane's controller and by Presence.** A Mac whose user is present gets its own notice and the phone stays quiet; the phone is pushed when that Mac turns away with the notice still standing, unless the Mac has shown the user the notice by then. A Mac that is away or can't be told, and a device in control, get the push after a 10-second settle. A device with the pane open gets none. A Mac that isn't the controller is not asked: the phone is pushed even if the user is sitting at it (a Take over fixes that).
+- **The host decides alone, from facts the Macs report.** Each Mac reads its own Presence and reports it, with the panes it holds a notice for and shows, on the `status` request it already sends each host every 5 s; the host's relay keeps the latest report of each listed Mac in a file. A host that can't tell pushes rather than stays silent.
+- **A push carries ids and the kind, never session content,** padded to one size and sent alike, so a push service learns that a push went, when and to which browser, and nothing about the session. The service worker reads the title from the host over the tailnet when the push arrives, and names only the host when it can't.
+- **One key per host,** bound to every subscription, so it must never change by itself: a Keychain item of Varnick's own on a Mac, handed to the server as a file it deletes, and an owner-only file on a headless host.
+- **A push may go only to a push service** (Google's, Apple's, Mozilla's or Microsoft's), never to an address a device chose.
+- **Protocol 27** carries what the rule needs from other machines: the presence on a Mac's `status` request, the Esc mark and the failure kind on a pane's turn in `status` and `tabs`, and the controllers' ids for the host's own page server. A Mac that follows a peer's pane takes the mark and the kind, so a peer's Esc raises no Done there and its error names its kind. Every Mac and the headless host run one commit.
+
+## Considered Options
+
+- **Varnick's Mac app sends the pushes:** a headless host has no app, a card on the host is silent, and Web Push would be written twice.
+- **The controlling Mac decides and asks the host to push:** two deciders, since the host must still decide for the phone and for a Mac that can't be told.
+- **The host asks each Mac for its presence:** a headless host can't reach a Mac, and the Mac already reports every 5 s.
+- **Escalating by time** (a push N seconds after a Mac notice even with the user present): rejected by the user, it buzzes the phone at the desk.
+- **Asking `tabs` every 5 s:** about 17,000 Varnick processes a day on a Mac.
+- **The title in the encrypted payload, or a push app such as ntfy:** the title would pass through the push service (encrypted, but sized and timed with the session), and ntfy adds a server and an app.
+- **The key in the server's environment:** `ps eww` shows it to the account's other programs.
+
+## Consequences
+
+- **A third party carries every push.** It can't read the payload, but sees when and how often, from which address, to which phone.
+- **A key per host that must never change by itself.** A Keychain item that is refused leaves the host without push until the user allows it; replacing it would void every subscription.
+- **Presence is a guess at attention, and it leans toward pushing.** Every case where a host can't tell (an asleep Mac, a dropped link) pushes. The lock notifications it reads are undocumented names; the idle counter and the display state are public.
+- **A host that is asleep or offline sends nothing,** and a push is held at most an hour.
+- **The page server reads Varnick's files:** the turn files, the presence files and the saved tabs' date.
+- **Not verified on a phone at build time:** the worker's title read passing the page's fetch-site check, how long iOS lets a push event run, and whether iOS honours a notification's `tag`.

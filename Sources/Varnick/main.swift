@@ -250,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ])
         }
         model.notifier.start(model: model)
+        PresenceReader.shared.start()
 
         settingsSubs = [
             model.notifier.$notices

@@ -251,6 +251,9 @@ Environment=VARNICK_PROXY_FOLDER=%h/.varnick/phone
 Environment=VARNICK_PROXY_STATUS=%h/.varnick/state/proxy-status.json
 Environment=VARNICK_RELAY=%h/.varnick/varnick-peer
 Environment=VARNICK_DEVICES=%h/.varnick/state/devices.json
+Environment=VARNICK_PUSH_FOLDER=%h/.varnick/phone
+Environment=VARNICK_PANES_FOLDER=%h/.varnick/state/panes
+Environment=VARNICK_PRESENCE_FOLDER=%h/.varnick/state/presence
 Environment=VARNICK_TAILSCALE=/usr/bin/tailscale
 KillMode=process
 Restart=on-failure

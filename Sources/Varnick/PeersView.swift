@@ -6,6 +6,7 @@ import SwiftUI
 /// by address. Nothing here waits on SSH; the manager publishes results as they arrive.
 struct PeersSettingsView: View {
     @ObservedObject var peers = PeerManager.shared
+    @ObservedObject var phone = PhonePageServer.shared
     @State private var addressDraft = ""
     @State private var adding = false
     @State private var addMessage: String?
@@ -70,7 +71,7 @@ struct PeersSettingsView: View {
                     .padding(.horizontal, 14).padding(.vertical, 5)
             }
             ForEach(peers.devices) { device in
-                SettingRow(title: device.name, detail: peers.tailnetNames[device.node] ?? device.node) {
+                SettingRow(title: device.name, detail: deviceDetail(device)) {
                     Button("Remove") { deviceMessage = peers.removeDevice(device.id) }
                 }
             }
@@ -112,6 +113,13 @@ struct PeersSettingsView: View {
             guard panelVisible else { return }
             await PeerBuilds.shared.poll()
         }
+    }
+
+    /// The device's tailnet name, and whether its browsers get notifications from this Mac (the phone page's push; a count from the server's file).
+    private func deviceDetail(_ device: PeerDevice) -> String {
+        let name = peers.tailnetNames[device.node] ?? device.node
+        guard let count = phone.look?.pushCounts[device.id.lowercased()], count > 0 else { return name }
+        return name + " · Gets notifications from this Mac" + (count > 1 ? " (\(count) browsers)" : "")
     }
 
     private func add() {

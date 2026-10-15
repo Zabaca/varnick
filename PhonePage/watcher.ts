@@ -10,6 +10,7 @@ import type { ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import type { Config, Device } from "./checks";
 import { buildRequest, clean, relayArguments, relayEnvironment, Admissions, firstMessageMs, type Admission } from "./relay";
 import { closeCode, fitReason } from "./terminal";
+import type { OpenPane, OpenPanes } from "./pushwatch";
 import { Outbox, parseWatchOpen, WatchDecoder, watchMessage, type WatchEvent } from "./watch";
 
 /** The relay is asked to end this long after its input closes, and killed this long after. */
@@ -37,6 +38,8 @@ export interface WatchData {
   outbox: Outbox;
   frames: number;
   flushTimer?: ReturnType<typeof setTimeout>;
+  /** This socket in `OpenPanes`: the pane is open on the device while the page says it is visible. */
+  pane?: OpenPane | null;
 }
 
 type Socket = ServerWebSocket<WatchData>;
@@ -44,7 +47,8 @@ type Socket = ServerWebSocket<WatchData>;
 export class Watches {
   private admissions = new Admissions(concurrentLimit, perDeviceLimit);
 
-  constructor(private config: Config, private version: number, private home: string, private log: (line: string) => void) {}
+  /** `panes` learns which pane a device has open, for the push that a device with the pane open doesn't get (pushwatch.ts). */
+  constructor(private config: Config, private version: number, private home: string, private log: (line: string) => void, private panes?: OpenPanes) {}
 
   /**
    * A place for one more watch of this device, or null when it, or the host, has its share open already. The slot goes back when the
@@ -98,6 +102,7 @@ export class Watches {
     }
     data.process = process;
     data.phase = "live";
+    data.pane = this.panes?.open(data.device.id, session);
     this.log(`watch start ${clean(data.device.name)} ${session}`);
     // The slot goes back when the relay does, not when the websocket does: a page that reconnects quickly can't pile relays up.
     void process.exited.then(() => {
@@ -190,6 +195,8 @@ export class Watches {
   }
 
   private stopRelay(data: WatchData): void {
+    data.pane?.close();
+    data.pane = null;
     const process = data.process;
     if (!process || stopped.has(process)) return;
     stopped.add(process);
