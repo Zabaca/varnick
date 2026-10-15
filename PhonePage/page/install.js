@@ -1,6 +1,5 @@
-// Installing the page as an app: the service worker's registration (sw.js: a note when a load fails, nothing cached) and the offer at the
-// foot of the home page. Chrome on Android fires `beforeinstallprompt`, which the Install button uses; Safari on an iPhone has no such
-// event, so it gets a one-line hint. Neither shows inside the installed app, nor after it is dismissed (kept in this host's local storage).
+// Installing the page as an app: the service worker's registration and the offer at the foot of Home (rules: installrules.js).
+// Chrome's `beforeinstallprompt` drives the Install button; Safari has no such event, so it gets a hint.
 
 import { dismissedKey, installLine, installOffer, iosHint, isIOS } from "/installrules.js";
 

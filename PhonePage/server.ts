@@ -23,7 +23,7 @@ import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
 import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
 import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
-import { appTitleTag, appTitleToken, iconFiles, manifestFor, pageContentPolicy, workerSource } from "./webapp";
+import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 26;
@@ -201,6 +201,8 @@ async function main(): Promise<void> {
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
+    // No other site may load a reply of the page as a script, image or frame's resource (a `no-cors` request still runs the caller's check).
+    "cross-origin-resource-policy": "same-origin",
   };
   const pageSecurity = {
     ...security,
@@ -376,10 +378,13 @@ async function main(): Promise<void> {
     const head = request.method === "HEAD";
     if (path === "/manifest.webmanifest") return respond(head ? null : manifestFor(host.name), 200, "application/manifest+json; charset=utf-8");
     if (path === "/sw.js") {
+      // The script holds the host's name, so another site's `<script src>` gets nothing.
+      if (!isWorkerFetch(request.headers)) return plain(404, "Not found");
       const template = await Bun.file(new URL("page/sw.js", import.meta.url)).text();
       return respond(head ? null : workerSource(template, host.name), 200, js);
     }
-    if (Object.hasOwn(iconFiles, path)) return respond(head ? null : await Bun.file(new URL(iconFiles[path], import.meta.url)).bytes(), 200, "image/png");
+    // The icons hold nothing private, and a browser may fetch one outside the page's own context (a Home Screen icon).
+    if (Object.hasOwn(iconFiles, path)) return respond(head ? null : await Bun.file(new URL(iconFiles[path].file, import.meta.url)).bytes(), 200, "image/png", { "cross-origin-resource-policy": "cross-origin" });
 
     const served = files[path];
     if (served) {
@@ -388,7 +393,7 @@ async function main(): Promise<void> {
         body = body.replace("<!--LOOPBACK-->", loopback ? `<p class="banner" role="note">${loopbackNote}</p>` : "");
         body = body.replace(appTitleToken, () => appTitleTag(host.name));
       }
-      return respond(request.method === "HEAD" ? null : body, 200, served.type);
+      return respond(head ? null : body, 200, served.type);
     }
     if (path === "/api/session" && request.method === "GET") {
       const session = new URL(request.url).searchParams.get("name");

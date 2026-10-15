@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
-import { appTitleTag, appTitleToken, iconFiles, manifestFor, pageContentPolicy, workerSource } from "./webapp";
+import { escapeHTML } from "./home";
+import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
 
 const hostNames = ["Test Mac", `Jam "the" Mac`, "O'Brien's <Mac> & $& $1", "Café Ünï 書斎 \u{1F4BB}", "</script><b>x</b>", "back\\slash"];
 const page = (path: string) => new URL(`./page/${path}`, import.meta.url);
@@ -24,10 +25,11 @@ describe("the manifest", () => {
     expect(manifest.orientation).toBeUndefined();
   });
 
-  test("names icons of 192 and 512, and a maskable one, all of them served files", () => {
+  test("names every served icon, and those Chrome asks for: 192 and 512, and a maskable one", () => {
     const icons = JSON.parse(manifestFor("Test Mac")).icons as { src: string; sizes: string; purpose: string }[];
-    expect(icons.map((icon) => `${icon.sizes} ${icon.purpose}`).sort()).toEqual(["192x192 any", "512x512 any", "512x512 maskable"]);
-    for (const icon of icons) expect(Object.keys(iconFiles)).toContain(icon.src);
+    expect(icons.map((icon) => icon.src).sort()).toEqual(Object.keys(iconFiles).sort());
+    const listed = icons.map((icon) => `${icon.sizes} ${icon.purpose}`);
+    for (const wanted of ["192x192 any", "512x512 any", "512x512 maskable"]) expect(listed).toContain(wanted);
   });
 });
 
@@ -70,7 +72,7 @@ describe("the worker", () => {
       const response = reply as Response;
       const html = await response.text();
       expect(response.status).toBe(503);
-      expect(html).toContain(`<title>Can't reach ${name.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)}</title>`);
+      expect(html).toContain(`<title>Can't reach ${escapeHTML(name)}</title>`);
       // The name never becomes markup: its only tags are the note's own.
       expect(html.match(/<[a-z][a-z0-9]*/g)!.sort()).toEqual(["<a", "<body", "<h1", "<head", "<html", "<meta", "<meta", "<meta", "<p", "<style", "<title"].sort());
       expect(html).toContain("Try again");
@@ -118,6 +120,19 @@ describe("the content policy", () => {
   });
 });
 
+describe("who may read the worker's script", () => {
+  test("a browser loading or updating a worker may", () => {
+    expect(isWorkerFetch(new Headers({ "service-worker": "script" }))).toBe(true);
+    expect(isWorkerFetch(new Headers({ "sec-fetch-dest": "serviceworker" }))).toBe(true);
+  });
+
+  test("another site's script tag, fetch or frame may not", () => {
+    expect(isWorkerFetch(new Headers())).toBe(false);
+    for (const dest of ["script", "empty", "document", "iframe", "worker", "sharedworker"]) expect(isWorkerFetch(new Headers({ "sec-fetch-dest": dest }))).toBe(false);
+    expect(isWorkerFetch(new Headers({ "service-worker": "other" }))).toBe(false);
+  });
+});
+
 describe("the page", () => {
   const index = readFileSync(page("index.html"), "utf8");
 
@@ -146,12 +161,11 @@ describe("the icons", () => {
     }
   });
 
-  test("every served icon is a file there, at the size its name gives", () => {
-    const sizes: Record<string, number> = { "apple-touch-icon.png": 180, "icon-192.png": 192, "icon-512.png": 512, "icon-maskable-512.png": 512 };
-    expect(Object.keys(iconFiles).map((path) => path.replace("/icons/", "")).sort()).toEqual(Object.keys(sizes).sort());
-    for (const [path, file] of Object.entries(iconFiles)) {
+  test("every served icon is a PNG of the size it is listed at, and every PNG there is served", () => {
+    const served = Object.values(iconFiles).map((icon) => icon.file.replace("page/icons/", ""));
+    expect(served.sort()).toEqual(readdirSync(folder).filter((file) => file.endsWith(".png")).sort());
+    for (const { file, size } of Object.values(iconFiles)) {
       const bytes = readFileSync(new URL(file, import.meta.url));
-      const size = sizes[path.replace("/icons/", "")];
       expect(bytes.subarray(1, 4).toString("latin1")).toBe("PNG");
       expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([size, size]);
     }

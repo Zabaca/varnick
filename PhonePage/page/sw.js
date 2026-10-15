@@ -1,7 +1,5 @@
-// The Phone page's service worker. It has one job: a page load that fails on the network gets a note that names the host, in place of
-// the browser's error. It caches nothing from the server (replies carry prompts and titles, and a cached copy of the page's code could
-// talk to a newer server), keeps no state, and leaves every other request alone: scripts, styles, /api/*. A websocket never reaches it.
-// The server writes the host's name into the next line (webapp.ts `workerSource`), so this file is a template.
+// The Phone page's service worker: a page load the network failed gets a note naming the host. It caches nothing and leaves every other
+// request alone (why: where-it-breaks, Phone page). The server writes the host's name into the next line (webapp.ts `workerSource`).
 const host = /*HOST*/ "";
 
 const escapeHTML = (value) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
