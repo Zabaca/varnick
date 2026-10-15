@@ -102,6 +102,7 @@ button.pane-tab.idle { opacity: .6; }
 .card-note { margin: 0 0 8px; font-weight: 600; color: var(--warn); }
 .card-text { margin: 0 0 16px; font-size: 16px; overflow-wrap: anywhere; }
 .card-error { margin: -8px 0 16px; font-size: 14px; color: var(--warn); overflow-wrap: anywhere; }
+.install { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); }
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 /* "Controlled on X" over a live screen is a bar with Take over; the screen takes the rest. */
 .card.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 8px 8px; padding: 8px 12px; flex: none; }

@@ -1,0 +1,6 @@
+# sha256 of the Phone page's icons, made by scripts/make-phone-icons.sh from scripts/phone-icons/*.svg (the Fold mark).
+# That script rewrites this file; `bun test` checks every PNG here against its line, and that no PNG is missing from it.
+fdffd1fd4b88990067034510fc7396adabe41f9ae2c4b531ff75222104c53553  apple-touch-icon.png
+2db612603b4d5b653fe4938917e4bdfa5a7ec1694feb601d6b92ade8eb94e2f4  icon-192.png
+e6cbfa7aed413098e262dd1aabcc9e412d0fc76fda83902a41cad00c9a129900  icon-512.png
+33dd913400ff2ecec3a19a1cb7c58dc7288abccb001080f95f8cf099d4aa1ef1  icon-maskable-512.png

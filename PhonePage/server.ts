@@ -23,6 +23,7 @@ import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
 import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
 import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
+import { appTitleTag, appTitleToken, iconFiles, manifestFor, pageContentPolicy, workerSource } from "./webapp";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 26;
@@ -203,10 +204,7 @@ async function main(): Promise<void> {
   };
   const pageSecurity = {
     ...security,
-    // xterm.js's renderer writes <style> elements, which `style-src 'self'` would refuse: styles may be inline, scripts may not.
-    // The terminal's websocket is named outright: not every browser takes 'self' to cover wss.
-    // Frames only from this host's own name, on the proxied ports (proxy.ts): the tab view shows an app of the tab in one.
-    "content-security-policy": `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://${wantHost}; frame-src https://${self.dnsName}:*; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    "content-security-policy": pageContentPolicy(self.dnsName, wantHost),
   };
 
   function respond(body: BodyInit | null, status: number, type: string, extra: Record<string, string> = {}): Response {
@@ -232,6 +230,8 @@ async function main(): Promise<void> {
     "/vendor/xterm.mjs": { file: "vendor/xterm.mjs", type: js },
     "/vendor/addon-fit.mjs": { file: "vendor/addon-fit.mjs", type: js },
     "/vendor/xterm.css": { file: "vendor/xterm.css", type: "text/css; charset=utf-8" },
+    "/install.js": { file: "page/install.js", type: js },
+    "/installrules.js": { file: "page/installrules.js", type: js },
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
@@ -371,10 +371,23 @@ async function main(): Promise<void> {
       return json(launched.body, launched.status);
     }
 
+    // The app's own files (webapp.ts): the manifest and the worker are written per request with the host's name, the icons are served as
+    // they are. They pass the same Host and caller checks as every file, so an unlisted device gets none of them.
+    const head = request.method === "HEAD";
+    if (path === "/manifest.webmanifest") return respond(head ? null : manifestFor(host.name), 200, "application/manifest+json; charset=utf-8");
+    if (path === "/sw.js") {
+      const template = await Bun.file(new URL("page/sw.js", import.meta.url)).text();
+      return respond(head ? null : workerSource(template, host.name), 200, js);
+    }
+    if (Object.hasOwn(iconFiles, path)) return respond(head ? null : await Bun.file(new URL(iconFiles[path], import.meta.url)).bytes(), 200, "image/png");
+
     const served = files[path];
     if (served) {
       let body = await Bun.file(new URL(served.file, import.meta.url)).text();
-      if (path === "/") body = body.replace("<!--LOOPBACK-->", loopback ? `<p class="banner" role="note">${loopbackNote}</p>` : "");
+      if (path === "/") {
+        body = body.replace("<!--LOOPBACK-->", loopback ? `<p class="banner" role="note">${loopbackNote}</p>` : "");
+        body = body.replace(appTitleToken, () => appTitleTag(host.name));
+      }
       return respond(request.method === "HEAD" ? null : body, 200, served.type);
     }
     if (path === "/api/session" && request.method === "GET") {
